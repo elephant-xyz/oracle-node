@@ -524,3 +524,4 @@ Outputs:
   MwaaDeadLetterQueueArn:
     Description: ARN of the MWAA Dead Letter Queue
     Value: !GetAtt MwaaDeadLetterQueue.Arn
+

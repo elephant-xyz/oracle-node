@@ -1,8 +1,8 @@
 [project]
 name = "airflow"
 version = "0.1.0"
-description = "Infrastucture for the MWAA"
-readme = "README.md"
+description = "MWAA environment dependencies"
+readme = "../README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "apache-airflow==2.10.3",
