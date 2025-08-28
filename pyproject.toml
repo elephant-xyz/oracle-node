@@ -1,0 +1,14 @@
+[project]
+name = "airflow"
+version = "0.1.0"
+description = "Infrastucture for the MWAA"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "apache-airflow==2.10.3",
+    "apache-airflow-providers-amazon[s3fs]==9.0.0",
+    "test-evaluator-agent",
+]
+
+[tool.uv.sources]
+test-evaluator-agent = { git = "https://github.com/elephant-xyz/AI-Agent", rev = "main" }
