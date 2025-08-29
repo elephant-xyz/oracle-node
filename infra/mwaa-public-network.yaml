@@ -70,14 +70,14 @@ Parameters:
     Type: String
     Default: ""
 
-  CrossAccountS3BucketArn:
-    Description: ARN of the S3 bucket in another account that will send events (e.g., arn:aws:s3:::bucket-name)
+  SourceS3BucketArn:
+    Description: ARN of the S3 bucket that will send S3 event notifications to the SQS queue (e.g., arn:aws:s3:::bucket-name)
     Type: String
 
 Conditions:
   HasStartupScript: !Not [!Equals [!Ref StartupScriptS3ObjectVersion, ""]]
   HasRequirements: !Not [!Equals [!Ref RequirementsS3ObjectVersion, ""]]
-  HasCrossAccountS3Bucket: !Not [!Equals [!Ref CrossAccountS3BucketArn, ""]]
+  # No condition for SourceS3BucketArn — it's required
 
 Resources:
   #####################################################################################################################
@@ -299,7 +299,6 @@ Resources:
 
   MwaaSqsQueuePolicy:
     Type: AWS::SQS::QueuePolicy
-    Condition: HasCrossAccountS3Bucket
     Properties:
       Queues:
         - !Ref MwaaSqsQueue
@@ -315,7 +314,7 @@ Resources:
             Resource: !GetAtt MwaaSqsQueue.Arn
             Condition:
               ArnLike:
-                aws:SourceArn: !Ref CrossAccountS3BucketArn
+                aws:SourceArn: !Ref SourceS3BucketArn
 
   #####################################################################################################################
   # CREATE MWAA
@@ -524,4 +523,3 @@ Outputs:
   MwaaDeadLetterQueueArn:
     Description: ARN of the MWAA Dead Letter Queue
     Value: !GetAtt MwaaDeadLetterQueue.Arn
-

@@ -30,12 +30,13 @@
 
 **Step 5 — Deploy Infrastructure (one-time)**
 
+- Required input:
+  - `SOURCE_S3_BUCKET_ARN` — the S3 bucket that will emit ObjectCreated events (format: `arn:aws:s3:::bucket-name`). Same-account or cross-account both work.
 - Minimal command:
-  - `./scripts/deploy-infra.sh`
+  - `SOURCE_S3_BUCKET_ARN=arn:aws:s3:::your-source-bucket ./scripts/deploy-infra.sh`
 - Optional settings (use env vars):
   - `STACK_NAME=elephant-mwaa` (default)
   - `MWAA_ENV_NAME=<STACK_NAME>-MwaaEnvironment` (default)
-  - `CROSS_ACCOUNT_S3_ARN=arn:aws:s3:::your-source-bucket` (if S3 events come from another account)
 - Duration: ~15–30 minutes on first create. The script prints:
   - Airflow UI URL
   - MWAA Environment Name
@@ -81,7 +82,7 @@ Note: `elephant_scripts_s3_uri` is set automatically in Step 9 when you upload t
   - ARN: `aws cloudformation describe-stacks --stack-name ${STACK_NAME:-elephant-mwaa} --query "Stacks[0].Outputs[?OutputKey=='MwaaSqsQueueArn'].OutputValue" --output text`
 - Example S3 event config (same-account):
   - `aws s3api put-bucket-notification-configuration --bucket <source-bucket> --notification-configuration '{"QueueConfigurations":[{"QueueArn":"<MwaaSqsQueueArn>","Events":["s3:ObjectCreated:*"],"Filter":{"Key":{"FilterRules":[{"Name":"suffix","Value":".zip"}]}}}]}'`
-- Cross-account: set `CROSS_ACCOUNT_S3_ARN` during Step 5, then configure events on the source bucket in the other account.
+- Cross-account: use the same `SOURCE_S3_BUCKET_ARN` (from Step 5) pointing to the source bucket in the other account, then configure events on that bucket.
 
 **Step 11 — Run and Monitor**
 
@@ -100,5 +101,6 @@ Note: `elephant_scripts_s3_uri` is set automatically in Step 9 when you upload t
 - Missing tools: install `aws`, `jq`, `zip`, and `curl` and ensure they’re on `PATH`.
 - Can’t reach UI: re-fetch URL (Step 6) and confirm you’re logged in with the same AWS account.
 - No runs: verify S3 event → SQS configuration and that `elephant_sqs_queue_url` is set in Airflow Variables.
+- Source bucket ARN error: If the script fails at create-stack, ensure `SOURCE_S3_BUCKET_ARN=arn:aws:s3:::your-bucket` is set and valid.
 
 Deploy once. Iterate fast on transforms.

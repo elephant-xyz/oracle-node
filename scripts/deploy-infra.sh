@@ -16,7 +16,7 @@ PYPROJECT_FILE="infra/pyproject.toml"
 BUILD_DIR="infra/build"
 REQUIREMENTS_FILE="${BUILD_DIR}/requirements.txt"
 AIRFLOW_CONSTRAINTS_URL="https://raw.githubusercontent.com/apache/airflow/constraints-2.10.3/constraints-3.12.txt"
-CROSS_ACCOUNT_S3_ARN="${CROSS_ACCOUNT_S3_ARN:-}"  # optional
+SOURCE_S3_BUCKET_ARN="${SOURCE_S3_BUCKET_ARN:-}"  # REQUIRED; example: arn:aws:s3:::source-bucket
 
 mkdir -p "$BUILD_DIR"
 
@@ -31,15 +31,32 @@ check_prereqs() {
   [[ -f "$TEMPLATE_FILE" && -f "$STARTUP_SCRIPT" && -f "$PYPROJECT_FILE" ]] || { err "Missing infra files"; exit 1; }
 }
 
+validate_source_bucket() {
+  if [[ -z "$SOURCE_S3_BUCKET_ARN" ]]; then
+    err "SOURCE_S3_BUCKET_ARN is required. Set it as environment variable. Example: arn:aws:s3:::my-source-bucket"
+    exit 1
+  fi
+  if ! [[ "$SOURCE_S3_BUCKET_ARN" =~ ^arn:aws:s3:::[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$ ]]; then
+    err "SOURCE_S3_BUCKET_ARN looks invalid. Expected format: arn:aws:s3:::bucket-name"
+    exit 1
+  fi
+}
+
 stack_exists() { aws cloudformation describe-stacks --stack-name "$STACK_NAME" >/dev/null 2>&1; }
 
 create_stack() {
   info "Creating stack: $STACK_NAME"
-  aws cloudformation create-stack \
-    --stack-name "$STACK_NAME" \
-    --template-body "file://$TEMPLATE_FILE" \
-    --capabilities CAPABILITY_IAM \
+  local params=(
+    --stack-name "$STACK_NAME"
+    --template-body "file://$TEMPLATE_FILE"
+    --capabilities CAPABILITY_IAM
     --on-failure DO_NOTHING
+    --parameters ParameterKey=SourceS3BucketArn,ParameterValue="${SOURCE_S3_BUCKET_ARN}"
+  )
+  if ! aws cloudformation create-stack "${params[@]}"; then
+    err "Stack creation failed. Please ensure SOURCE_S3_BUCKET_ARN is set (arn:aws:s3:::your-bucket)."
+    exit 1
+  fi
   info "Waiting for create to complete (≈15–20m) ..."
   aws cloudformation wait stack-create-complete --stack-name "$STACK_NAME"
   info "Stack created"
@@ -78,13 +95,10 @@ update_stack_versions() {
   {"ParameterKey":"StartupScriptS3Path","ParameterValue":"startup.sh"},
   {"ParameterKey":"StartupScriptS3ObjectVersion","ParameterValue":"$script_version"},
   {"ParameterKey":"RequirementsS3Path","ParameterValue":"requirements.txt"},
-  {"ParameterKey":"RequirementsS3ObjectVersion","ParameterValue":"$req_version"}
+  {"ParameterKey":"RequirementsS3ObjectVersion","ParameterValue":"$req_version"},
+  {"ParameterKey":"SourceS3BucketArn","ParameterValue":"$SOURCE_S3_BUCKET_ARN"}
 ]
 JSON
-  # Add cross-account S3 events permission if provided
-  if [[ -n "$CROSS_ACCOUNT_S3_ARN" ]]; then
-    jq ". + [{\"ParameterKey\":\"CrossAccountS3BucketArn\",\"ParameterValue\":\"$CROSS_ACCOUNT_S3_ARN\"}]" "$params" >"$params.tmp" && mv "$params.tmp" "$params"
-  fi
 
   if aws cloudformation update-stack \
       --stack-name "$STACK_NAME" \
@@ -101,6 +115,7 @@ JSON
 
 main() {
   check_prereqs
+  validate_source_bucket
   if ! stack_exists; then create_stack; else info "Stack exists; will update"; fi
   local bucket script_ver req_ver
   bucket=$(get_bucket)
@@ -127,4 +142,3 @@ main() {
 }
 
 main "$@"
-
