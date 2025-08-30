@@ -1,0 +1,68 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: SAM template defining downloader and updater Lambda functions.
+
+Globals:
+  Function:
+    Runtime: nodejs22.x
+    Timeout: 300
+    Tracing: Active
+    PackageType: Zip
+
+Resources:
+  DownloaderFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      EphemeralStorage:
+        Size: 1024
+      MemorySize: 2048
+      CodeUri: .
+      Handler: index.handler
+      Description: "Downloads data (granted full S3 access as requested)"
+      Policies:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+
+  UpdaterFunction:
+    Type: AWS::Serverless::Function
+    MemorySize: 128
+    Properties:
+      CodeUri: .
+      Handler: lambda-update.handler
+      Description: "Updates env var on DownloaderFunction and runs every minute."
+      Environment:
+        Variables:
+          TARGET_FUNCTION_NAME: !Ref DownloaderFunction
+          VAR_NAME: DEPLOY_TS
+      Policies:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:GetFunctionConfiguration
+                  - lambda:UpdateFunctionConfiguration
+                Resource: !GetAtt DownloaderFunction.Arn
+      Events:
+        UpdateSchedule:
+          Type: Schedule
+          Properties:
+            Name: UpdateDownloaderEveryMinute
+            Description: "Invoke updater every minute to refresh env var."
+            Schedule: "cron(* * * * ? *)"
+            Enabled: true
+
+Outputs:
+  DownloaderFunctionName:
+    Description: Name of the downloader Lambda function
+    Value: !Ref DownloaderFunction
+  DownloaderFunctionArn:
+    Description: ARN of the downloader Lambda function
+    Value: !GetAtt DownloaderFunction.Arn
+  UpdaterFunctionName:
+    Description: Name of the updater Lambda function
+    Value: !Ref UpdaterFunction
+  UpdaterFunctionArn:
+    Description: ARN of the updater Lambda function
+    Value: !GetAtt UpdaterFunction.Arn
