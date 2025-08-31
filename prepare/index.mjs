@@ -1,11 +1,6 @@
-import {
-  GetObjectCommand,
-  S3Client,
-  S3ServiceException,
-  NoSuchKey,
-  PutObjectCommand,
-} from "@aws-sdk/client-s3";
+import { GetObjectCommand, S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import { promises as fs } from "fs";
+import path from "path";
 import { prepare } from "@elephant-xyz/cli/dist/lib/prepare.js";
 
 /**
@@ -37,45 +32,45 @@ const split_s3_uri = (s3_uri) => {
  * @returns {Promise<string>} Success message
  */
 export const handler = async (event) => {
+  if (!event || !event.input_s3_uri) {
+    throw new Error("Missing required field: input_s3_uri");
+  }
   const { bucket, key } = split_s3_uri(event.input_s3_uri);
   const s3 = new S3Client({});
-  try {
-    const data = await s3.send(
-      new GetObjectCommand({
-        Bucket: bucket,
-        Key: key,
-      }),
-    );
-    console.log(data);
-  } catch (err) {
-    if (err instanceof NoSuchKey) {
-      console.error(
-        `Error from S3 while getting object "${key}" from "${bucketName}". No such key exists.`,
-      );
-    } else if (err instanceof S3ServiceException) {
-      console.error(
-        `Error from S3 while getting object from ${bucketName}.  ${caught.name}: ${caught.message}`,
-      );
-    }
-    throw err;
-  }
+
   const tempDir = await fs.mkdtemp("/tmp/prepare-");
   try {
-    const inputZip = path.join(tempDir, key);
-    await fs.writeFile(inputZip, data.Body);
+    const inputZip = path.join(tempDir, path.basename(key));
+    const getResp = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+    const inputBytes = await getResp.Body?.transformToByteArray();
+    if (!inputBytes) {
+      throw new Error("Failed to download input object body");
+    }
+    await fs.writeFile(inputZip, Buffer.from(inputBytes));
+
     const outputZip = path.join(tempDir, "output.zip");
     const useBrowser = event.browser ?? true;
     await prepare(inputZip, outputZip, { browser: useBrowser });
-    await s3.send(
-      new PutObjectCommand({
-        Bucket: bucket,
-        Key: key,
-        Body: fs.readFileSync(outputZip),
-      }),
-    );
+
+    // Determine upload destination
+    let outBucket = bucket;
+    let outKey = key;
+    if (event.output_s3_uri_prefix) {
+      const { bucket: outB, key: outPrefix } = split_s3_uri(event.output_s3_uri_prefix);
+      outBucket = outB;
+      outKey = path.posix.join(outPrefix.replace(/\/$/, ""), "output.zip");
+    } else {
+      // Default: write next to input with a suffix
+      const dir = path.posix.dirname(key);
+      const base = path.posix.basename(key, path.extname(key));
+      outKey = path.posix.join(dir, `${base}.prepared.zip`);
+    }
+
+    const outputBody = await fs.readFile(outputZip);
+    await s3.send(new PutObjectCommand({ Bucket: outBucket, Key: outKey, Body: outputBody }));
+
+    return { output_s3_uri: `s3://${outBucket}/${outKey}` };
   } finally {
-    await fs.rm(tempDir, { recursive: true });
+    await fs.rm(tempDir, { recursive: true, force: true });
   }
 };
-
-handler({});

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Simple, one-command infra deploy for MWAA + VPC + SQS
+# Unified deployment for SAM stack (MWAA + VPC + SQS + Lambdas)
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
 info() { echo -e "${GREEN}[INFO]${NC} $*"; }
@@ -10,7 +10,7 @@ err()  { echo -e "${RED}[ERROR]${NC} $*"; }
 
 # Config with sane defaults
 STACK_NAME="${STACK_NAME:-elephant-mwaa}"
-TEMPLATE_FILE="infra/mwaa-public-network.yaml"
+SAM_TEMPLATE="prepare/template.yaml"
 STARTUP_SCRIPT="infra/startup.sh"
 PYPROJECT_FILE="infra/pyproject.toml"
 BUILD_DIR="infra/build"
@@ -28,7 +28,8 @@ check_prereqs() {
   command -v zip >/dev/null || { err "zip not found"; exit 1; }
   command -v curl >/dev/null || { err "curl not found"; exit 1; }
   command -v uv >/dev/null || { err "uv not found. Install: https://docs.astral.sh/uv/getting-started/installation/"; exit 1; }
-  [[ -f "$TEMPLATE_FILE" && -f "$STARTUP_SCRIPT" && -f "$PYPROJECT_FILE" ]] || { err "Missing infra files"; exit 1; }
+  command -v sam >/dev/null || { err "sam CLI not found. Install: https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/install-sam-cli.html"; exit 1; }
+  [[ -f "$SAM_TEMPLATE" && -f "$STARTUP_SCRIPT" && -f "$PYPROJECT_FILE" ]] || { err "Missing required files"; exit 1; }
 }
 
 validate_source_bucket() {
@@ -40,26 +41,6 @@ validate_source_bucket() {
     err "SOURCE_S3_BUCKET_ARN looks invalid. Expected format: arn:aws:s3:::bucket-name"
     exit 1
   fi
-}
-
-stack_exists() { aws cloudformation describe-stacks --stack-name "$STACK_NAME" >/dev/null 2>&1; }
-
-create_stack() {
-  info "Creating stack: $STACK_NAME"
-  local params=(
-    --stack-name "$STACK_NAME"
-    --template-body "file://$TEMPLATE_FILE"
-    --capabilities CAPABILITY_IAM
-    --on-failure DO_NOTHING
-    --parameters ParameterKey=SourceS3BucketArn,ParameterValue="${SOURCE_S3_BUCKET_ARN}"
-  )
-  if ! aws cloudformation create-stack "${params[@]}"; then
-    err "Stack creation failed. Please ensure SOURCE_S3_BUCKET_ARN is set (arn:aws:s3:::your-bucket)."
-    exit 1
-  fi
-  info "Waiting for create to complete (≈15–20m) ..."
-  aws cloudformation wait stack-create-complete --stack-name "$STACK_NAME"
-  info "Stack created"
 }
 
 get_bucket() {
@@ -85,42 +66,52 @@ upload_with_version() {
     --query 'Versions[?IsLatest==`true`].VersionId' --output text
 }
 
-update_stack_versions() {
-  local bucket=$1 script_version=$2 req_version=$3
-  info "Updating stack with versions"
-  local params
-  params=$(mktemp)
-  cat >"$params" <<JSON
-[
-  {"ParameterKey":"StartupScriptS3Path","ParameterValue":"startup.sh"},
-  {"ParameterKey":"StartupScriptS3ObjectVersion","ParameterValue":"$script_version"},
-  {"ParameterKey":"RequirementsS3Path","ParameterValue":"requirements.txt"},
-  {"ParameterKey":"RequirementsS3ObjectVersion","ParameterValue":"$req_version"},
-  {"ParameterKey":"SourceS3BucketArn","ParameterValue":"$SOURCE_S3_BUCKET_ARN"}
-]
-JSON
+sam_build() {
+  info "Building SAM application"
+  sam build --template-file "$SAM_TEMPLATE" >/dev/null
+}
 
-  if aws cloudformation update-stack \
-      --stack-name "$STACK_NAME" \
-      --template-body "file://$TEMPLATE_FILE" \
-      --parameters "file://$params" \
-      --capabilities CAPABILITY_IAM >/dev/null 2>&1; then
-    info "Waiting for update to complete (≈10–20m) ..."
-    aws cloudformation wait stack-update-complete --stack-name "$STACK_NAME"
-    info "Stack updated"
-  else
-    warn "No updates to perform (already up-to-date)"
-  fi
+sam_deploy_initial() {
+  info "Deploying SAM stack (initial)"
+  sam deploy \
+    --template-file "$SAM_TEMPLATE" \
+    --stack-name "$STACK_NAME" \
+    --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \
+    --resolve-s3 \
+    --no-confirm-changeset \
+    --no-fail-on-empty-changeset \
+    --parameter-overrides SourceS3BucketArn="$SOURCE_S3_BUCKET_ARN" >/dev/null
+}
+
+sam_deploy_with_versions() {
+  local script_ver=$1 req_ver=$2
+  info "Deploying SAM stack with MWAA artifact versions"
+  sam deploy \
+    --template-file "$SAM_TEMPLATE" \
+    --stack-name "$STACK_NAME" \
+    --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \
+    --resolve-s3 \
+    --no-confirm-changeset \
+    --no-fail-on-empty-changeset \
+    --parameter-overrides \
+      SourceS3BucketArn="$SOURCE_S3_BUCKET_ARN" \
+      StartupScriptS3Path="startup.sh" \
+      StartupScriptS3ObjectVersion="$script_ver" \
+      RequirementsS3Path="requirements.txt" \
+      RequirementsS3ObjectVersion="$req_ver" >/dev/null
 }
 
 main() {
   check_prereqs
   validate_source_bucket
-  if ! stack_exists; then create_stack; else info "Stack exists; will update"; fi
+
+  sam_build
+  sam_deploy_initial
+
   local bucket script_ver req_ver
   bucket=$(get_bucket)
   [[ -n "$bucket" && "$bucket" != "None" ]] || { err "Could not resolve EnvironmentBucketName output"; exit 1; }
-  info "Using S3 bucket: $bucket"
+  info "Using MWAA Environment bucket: $bucket"
 
   compile_requirements
   info "Uploading startup.sh and requirements.txt"
@@ -129,7 +120,7 @@ main() {
   info "startup.sh version: $script_ver"
   info "requirements.txt version: $req_ver"
 
-  update_stack_versions "$bucket" "$script_ver" "$req_ver"
+  sam_deploy_with_versions "$script_ver" "$req_ver"
 
   local ui_url env_name
   env_name="${MWAA_ENV_NAME:-${STACK_NAME}-MwaaEnvironment}"

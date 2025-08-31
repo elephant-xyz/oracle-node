@@ -24,6 +24,8 @@ from airflow.decorators import task, task_group
 from airflow.io.path import ObjectStoragePath
 from airflow.models import Variable
 from airflow.providers.amazon.aws.sensors.sqs import SqsSensor
+import boto3
+from botocore.exceptions import BotoCoreError, ClientError
 
 logger = logging.getLogger("airflow.task")
 
@@ -47,6 +49,8 @@ class WorkflowState(TypedDict):
     submission_result: dict[str, Any] | None
     error: str | None
     error_step: str | None
+    # County preparation artifact produced by Lambda
+    county_prepared_input_uri: str | None
 
 
 class FileProcessingInfo(TypedDict):
@@ -59,7 +63,6 @@ class FileProcessingInfo(TypedDict):
     object_key: str
 
 
-# Helper functions
 
 
 def run_command(cmd: list[str], cwd: str, timeout: int = 300) -> subprocess.CompletedProcess[str]:
@@ -700,39 +703,22 @@ def process_single_file(file_info: dict):
         return state
 
     @task(
-        task_id="transform_and_validate",
+        task_id="transform_seed",
         multiple_outputs=False,
-        execution_timeout=timedelta(minutes=1),
+        execution_timeout=timedelta(minutes=5),
     )
-    def transform_and_validate(state: WorkflowState) -> WorkflowState:
-        """Transform and validate seed and county data"""
+    def transform_seed(state: WorkflowState) -> WorkflowState:
+        """Transform and validate seed data"""
         with tempfile.TemporaryDirectory() as tmpdir:
             try:
                 tmp_path = Path(tmpdir)
                 input_object_key = state["input_zip_uri"].split("/")[-1]
 
-                # Download and unzip input
-                logger.info("Downloading and unzipping input")
+                # Download input
+                logger.info("Downloading input zip for seed transform")
                 input_zip_path = tmp_path / input_object_key / "input.zip"
                 download_from_s3(state["input_zip_uri"], input_zip_path)
 
-                input_dir = tmp_path / input_object_key / "input"
-                extract_zip(input_zip_path, input_dir)
-
-                # Find CSV and HTML files
-                csv_file = find_file_with_extension(input_dir, ".csv")
-                html_file = find_file_with_extension(input_dir, ".html")
-
-                if not csv_file or not html_file:
-                    raise Exception("Input zip must contain both CSV and HTML files")
-
-                logger.info(f"Found CSV: {csv_file.name}, HTML: {html_file.name}")
-
-                scripts_path = tmp_path / "scripts.zip"
-                scripts_s3_uri = Variable.get("elephant_scripts_s3_uri")
-                if not scripts_s3_uri:
-                    raise Exception("Missing scripts S3 URI from Airflow Variable 'elephant_scripts_s3_uri'")
-                download_from_s3(scripts_s3_uri, scripts_path)
                 # Transform the seed
                 logger.info("Transforming seed")
                 seed_output_zip = tmp_path / "seed_seed_output.zip"
@@ -747,40 +733,154 @@ def process_single_file(file_info: dict):
                 ]
                 run_command(cmd, timeout=300, cwd=str(tmp_path))
 
-                # Unzip seed output
-                seed_output_dir = tmp_path / "seed_output"
-                extract_zip(seed_output_zip, seed_output_dir)
+                # Validate seed output
+                logger.info("Validating seed output")
+                cmd = ["elephant-cli", "validate", str(seed_output_zip)]
+                run_command(cmd, timeout=300, cwd=str(tmp_path))
+                errors_csv = tmp_path / "submit_errors.csv"
+                if errors_csv.exists():
+                    with open(errors_csv, "r") as f:
+                        reader = csv.DictReader(f)
+                        error_rows = list(reader)
+                    if error_rows:
+                        logger.error("Seed validation errors detected:")
+                        for row in error_rows:
+                            logger.error(json.dumps(row))
+                        raise Exception("Seed validation failed: submit_errors.csv contains errors")
+                    try:
+                        errors_csv.unlink(missing_ok=True)  # type: ignore[arg-type]
+                    except Exception:
+                        pass
 
-                # Find the unnormalized_address.json and property_seed.json
-                unnormalized_address = None
-                property_seed = None
+                # Upload seed output
+                logger.info("Uploading seed output to S3")
+                run_id_clean = state["run_id"].replace(":", "_").replace("+", "_")
+                seed_s3_uri = f"{state['output_base_uri']}/{run_id_clean}/{input_object_key}/seed_seed_output.zip"
+                upload_to_s3(seed_output_zip, seed_s3_uri)
+                state["seed_output_uri"] = seed_s3_uri
+                return state
+            except Exception as e:
+                logger.error(f"Error in transform_seed: {str(e)}")
+                state["error"] = str(e)
+                state["error_step"] = "transform_seed"
+                error_log = {
+                    "error": str(e),
+                    "step": "transform_seed",
+                    "timestamp": pendulum.now("UTC").isoformat(),
+                }
+                error_path = Path(tmpdir) / "error.json"
+                error_path.write_text(json.dumps(error_log))
+                input_object_key = state["input_zip_uri"].split("/")[-1]
+                error_s3_uri = f"{state['output_base_uri']}/{state['run_id']}/{input_object_key}/errors/transform_seed_error.json"
+                upload_to_s3(error_path, error_s3_uri)
+                raise
 
-                for json_file in seed_output_dir.rglob("*.json"):
-                    if "unnormalized_address" in json_file.name:
-                        unnormalized_address = json_file
-                    elif "property_seed" in json_file.name:
-                        property_seed = json_file
+    @task(
+        task_id="prepare_county_via_lambda",
+        multiple_outputs=False,
+        retries=2,
+        retry_delay=timedelta(minutes=1),
+        execution_timeout=timedelta(minutes=10),
+    )
+    def prepare_county_via_lambda(state: WorkflowState) -> WorkflowState:
+        """Invoke DownloaderFunction Lambda to prepare county input based on seed output"""
+        try:
+            lambda_arn = Variable.get("elephant_downloader_function_arn", default_var=None)
+            if not lambda_arn:
+                # Try SSM parameter name if provided
+                ssm_param_name = Variable.get("elephant_downloader_ssm_param_name", default_var=None)
+                if ssm_param_name:
+                    ssm = boto3.client("ssm")
+                    param = ssm.get_parameter(Name=ssm_param_name)
+                    lambda_arn = param["Parameter"]["Value"]
+            if not lambda_arn:
+                raise Exception(
+                    "Lambda ARN not configured. Set Airflow Variable 'elephant_downloader_function_arn' or 'elephant_downloader_ssm_param_name'"
+                )
 
-                if not unnormalized_address or not property_seed:
-                    raise Exception("Seed output missing required JSON files")
+            if not state.get("seed_output_uri"):
+                raise Exception("Missing seed_output_uri in state")
 
-                # Prepare county input
-                logger.info("Preparing county input")
-                county_input_dir = tmp_path / "county_input"
-                county_input_dir.mkdir(parents=True, exist_ok=True)
+            input_object_key = state["input_zip_uri"].split("/")[-1]
+            run_id_clean = state["run_id"].replace(":", "_").replace("+", "_")
+            output_prefix = f"{state['output_base_uri']}/{run_id_clean}/{input_object_key}/county_prep"
 
-                shutil.copy2(unnormalized_address, county_input_dir / unnormalized_address.name)
-                shutil.copy2(property_seed, county_input_dir / property_seed.name)
-                shutil.copy2(html_file, county_input_dir / html_file.name)
+            event = {
+                "input_s3_uri": state["seed_output_uri"],
+                "output_s3_uri_prefix": output_prefix,
+                "browser": True,
+            }
 
-                # Zip county input
+            client = boto3.client("lambda")
+            resp = client.invoke(
+                FunctionName=lambda_arn,
+                InvocationType="RequestResponse",
+                Payload=json.dumps(event).encode("utf-8"),
+            )
+            status = resp.get("StatusCode", 0)
+            if status < 200 or status >= 300 or "FunctionError" in resp:
+                payload = resp.get("Payload")
+                details = payload.read().decode("utf-8") if payload else ""
+                raise Exception(f"Lambda invocation failed (status={status}): {details}")
+
+            # Parse Lambda response for output S3 URI
+            payload = resp.get("Payload")
+            lambda_result = json.loads(payload.read().decode("utf-8")) if payload else {}
+            output_uri = None
+            # Direct return or wrapped body for proxy integrations
+            if isinstance(lambda_result, dict):
+                if "output_s3_uri" in lambda_result:
+                    output_uri = lambda_result["output_s3_uri"]
+                elif "body" in lambda_result:
+                    try:
+                        body = json.loads(lambda_result["body"]) if isinstance(lambda_result["body"], str) else lambda_result["body"]
+                        output_uri = body.get("output_s3_uri")
+                    except Exception:
+                        pass
+            if not output_uri:
+                # Fallback to expected path if Lambda didn't return a payload
+                output_uri = f"{output_prefix}/output.zip"
+            state["county_prepared_input_uri"] = output_uri
+            return state
+        except (BotoCoreError, ClientError) as be:
+            state["error"] = str(be)
+            state["error_step"] = "prepare_county_via_lambda"
+            raise
+        except Exception as e:
+            state["error"] = str(e)
+            state["error_step"] = "prepare_county_via_lambda"
+            raise
+
+    @task(
+        task_id="transform_county",
+        multiple_outputs=False,
+        execution_timeout=timedelta(minutes=5),
+    )
+    def transform_county(state: WorkflowState) -> WorkflowState:
+        """Transform and validate county data using prepared input from Lambda"""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            try:
+                tmp_path = Path(tmpdir)
+                input_object_key = state["input_zip_uri"].split("/")[-1]
+
+                prepared_uri = state.get("county_prepared_input_uri")
+                if not prepared_uri:
+                    raise Exception("Missing county_prepared_input_uri in state")
+
+                # Download prepared county input
                 county_input_zip = tmp_path / "county_input.zip"
-                create_zip(county_input_dir, county_input_zip)
+                download_from_s3(prepared_uri, county_input_zip)
+
+                # Download scripts bundle
+                scripts_path = tmp_path / "scripts.zip"
+                scripts_s3_uri = Variable.get("elephant_scripts_s3_uri")
+                if not scripts_s3_uri:
+                    raise Exception("Missing scripts S3 URI from Airflow Variable 'elephant_scripts_s3_uri'")
+                download_from_s3(scripts_s3_uri, scripts_path)
 
                 # Transform county
-                logger.info("Transforming county")
+                logger.info("Transforming county using prepared input")
                 county_output_zip = tmp_path / "county_output.zip"
-
                 cmd = [
                     "elephant-cli",
                     "transform",
@@ -793,32 +893,10 @@ def process_single_file(file_info: dict):
                 ]
                 run_command(cmd, timeout=300, cwd=str(tmp_path))
 
-                # Validate outputs using elephant-cli
-                logger.info("Validating seed output")
-                cmd = ["elephant-cli", "validate", str(seed_output_zip)]
-                # Run validation in tmp_path so elephant-cli writes submit_errors.csv there
-                run_command(cmd, timeout=300, cwd=str(tmp_path))
-                # Fail fast if submit_errors.csv contains any data rows (beyond header)
-                errors_csv = tmp_path / "submit_errors.csv"
-                if errors_csv.exists():
-                    with open(errors_csv, "r") as f:
-                        reader = csv.DictReader(f)
-                        error_rows = list(reader)
-                    if error_rows:
-                        logger.error("Seed validation errors detected:")
-                        for row in error_rows:
-                            logger.error(json.dumps(row))
-                        raise Exception("Seed validation failed: submit_errors.csv contains errors")
-                    # Remove empty errors file to avoid stale reads
-                    try:
-                        errors_csv.unlink(missing_ok=True)  # type: ignore[arg-type]
-                    except Exception:
-                        pass
-
+                # Validate county output
                 logger.info("Validating county output")
                 cmd = ["elephant-cli", "validate", str(county_output_zip)]
                 run_command(cmd, timeout=300, cwd=str(tmp_path))
-                # Fail fast if submit_errors.csv contains any data rows (beyond header)
                 errors_csv = tmp_path / "submit_errors.csv"
                 if errors_csv.exists():
                     with open(errors_csv, "r") as f:
@@ -834,52 +912,37 @@ def process_single_file(file_info: dict):
                     except Exception:
                         pass
 
-                # Upload to S3
-                logger.info("Uploading to S3")
+                # Upload county output
+                logger.info("Uploading county output to S3")
                 run_id_clean = state["run_id"].replace(":", "_").replace("+", "_")
-
-                seed_s3_uri = f"{state['output_base_uri']}/{run_id_clean}/{input_object_key}/seed_seed_output.zip"
                 county_s3_uri = f"{state['output_base_uri']}/{run_id_clean}/{input_object_key}/county_output.zip"
-
-                # Parallel uploads for efficiency
-                with ThreadPoolExecutor(max_workers=2) as executor:
-                    futures = [
-                        executor.submit(upload_to_s3, seed_output_zip, seed_s3_uri),
-                        executor.submit(upload_to_s3, county_output_zip, county_s3_uri),
-                    ]
-                    for future in futures:
-                        future.result()
-
-                # Update state
-                state["seed_output_uri"] = seed_s3_uri
+                upload_to_s3(county_output_zip, county_s3_uri)
                 state["county_output_uri"] = county_s3_uri
                 state["combined_output_uri"] = None
-
-                logger.info("Transform and validate completed successfully")
-
+                return state
             except Exception as e:
-                logger.error(f"Error in transform_and_validate: {str(e)}")
+                logger.error(f"Error in transform_county: {str(e)}")
                 state["error"] = str(e)
-                state["error_step"] = "transform_and_validate"
+                state["error_step"] = "transform_county"
                 # Upload error log
                 error_log = {
                     "error": str(e),
-                    "step": "transform_and_validate",
+                    "step": "transform_county",
                     "timestamp": pendulum.now("UTC").isoformat(),
                 }
                 error_path = Path(tmpdir) / "error.json"
                 error_path.write_text(json.dumps(error_log))
                 input_object_key = state["input_zip_uri"].split("/")[-1]
-                error_s3_uri = f"{state['output_base_uri']}/{state['run_id']}/{input_object_key}/errors/transform_validate_error.json"
+                error_s3_uri = f"{state['output_base_uri']}/{state['run_id']}/{input_object_key}/errors/transform_county_error.json"
                 upload_to_s3(error_path, error_s3_uri)
                 raise
-
-        return state
 
     # Initialize the workflow state and chain the tasks
     # Pass file_info to the first task, then chain the rest
     state = initialize_state(file_info)
-    state = transform_and_validate(state)
+    state = transform_seed(state)
+    state = prepare_county_via_lambda(state)
+    state = transform_county(state)
     state = hash_files(state)
     state = upload_hashed_results(state)
     state = prepare_submission(state)
