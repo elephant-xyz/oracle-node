@@ -1,0 +1,171 @@
+Comment: "Process S3 objects and send SQS messages for MWAA workflow with error handling"
+StartAt: ListObjects
+States:
+  ListObjects:
+    Type: Task
+    Resource: arn:aws:states:::aws-sdk:s3:listObjectsV2
+    Parameters:
+      Bucket.$: "$.bucketName"
+      Prefix: "source-data/"
+      MaxKeys: 1000
+    ResultPath: "$.listResult"
+    Next: ProcessObjects
+    Retry:
+      - ErrorEquals:
+          - States.TaskFailed
+          - S3.NoSuchBucket
+          - S3.AccessDenied
+        IntervalSeconds: 2
+        MaxAttempts: 3
+        BackoffRate: 2.0
+    Catch:
+      - ErrorEquals:
+          - States.ALL
+        ResultPath: "$.errorInfo"
+        CausePath: "$.errorCause"
+        Next: HandleError
+
+  ProcessObjects:
+    Type: Choice
+    Choices:
+      - Variable: "$.listResult.Contents"
+        IsPresent: true
+        Next: MapObjects
+    Default: Done
+
+  MapObjects:
+    Type: Map
+    ItemsPath: "$.listResult.Contents"
+    Iterator:
+      StartAt: CreateMessage
+      States:
+        CreateMessage:
+          Type: Pass
+          Parameters:
+            Records:
+              - s3:
+                  bucket:
+                    name.$: "$$.Execution.Input.bucketName"
+                  object:
+                    key.$: "$.Key"
+          ResultPath: "$.message"
+          Next: SendToSQS
+
+        SendToSQS:
+          Type: Task
+          Resource: arn:aws:states:::sqs:sendMessage
+          Parameters:
+            QueueUrl.$: "$$.Execution.Input.sqsQueueUrl"
+            MessageBody.$: "$states.string($states.toJson($.message))"
+          ResultPath: "$.sqsResult"
+          Next: Success
+          Retry:
+            - ErrorEquals:
+                - States.TaskFailed
+                - SQS.QueueDoesNotExist
+                - SQS.InvalidMessageContents
+              IntervalSeconds: 1
+              MaxAttempts: 3
+              BackoffRate: 2.0
+            - ErrorEquals:
+                - States.Timeout
+              IntervalSeconds: 3
+              MaxAttempts: 2
+              BackoffRate: 1.5
+          Catch:
+            - ErrorEquals:
+                - States.ALL
+              ResultPath: "$.errorInfo"
+              CausePath: "$.errorCause"
+              Next: LogError
+
+        LogError:
+          Type: Pass
+          Parameters:
+            errorType: "SQS_SEND_FAILED"
+            objectKey.$: "$.Key"
+            errorInfo.$: "$.errorInfo"
+            errorCause.$: "$.errorCause"
+            timestamp.$: "$$.Execution.StartTime"
+          ResultPath: "$.loggedError"
+          Next: Success
+
+        Success:
+          Type: Pass
+          Result:
+            status: "processed"
+            objectKey.$: "$.Key"
+          End: true
+
+    ResultPath: "$.processedObjects"
+    Next: CheckForMore
+    Catch:
+      - ErrorEquals:
+          - States.TaskFailed
+          - States.MapRunFailed
+        ResultPath: "$.mapError"
+        Next: LogMapError
+
+  LogMapError:
+    Type: Pass
+    Parameters:
+      errorType: "MAP_PROCESSING_FAILED"
+      errorDetails.$: "$.mapError"
+      timestamp.$: "$$.Execution.StartTime"
+    ResultPath: "$.loggedMapError"
+    Next: CheckForMore
+
+  CheckForMore:
+    Type: Choice
+    Choices:
+      - Variable: "$.listResult.IsTruncated"
+        BooleanEquals: true
+        Next: ListMoreObjects
+    Default: Done
+
+  ListMoreObjects:
+    Type: Task
+    Resource: arn:aws:states:::aws-sdk:s3:listObjectsV2
+    Parameters:
+      Bucket.$: "$.bucketName"
+      Prefix: "source-data/"
+      MaxKeys: 1000
+      ContinuationToken.$: "$.listResult.NextContinuationToken"
+    ResultPath: "$.listResult"
+    Next: ProcessObjects
+    Retry:
+      - ErrorEquals:
+          - States.TaskFailed
+          - S3.NoSuchBucket
+          - S3.AccessDenied
+        IntervalSeconds: 2
+        MaxAttempts: 3
+        BackoffRate: 2.0
+    Catch:
+      - ErrorEquals:
+          - States.ALL
+        ResultPath: "$.errorInfo"
+        CausePath: "$.errorCause"
+        Next: HandleError
+
+  HandleError:
+    Type: Pass
+    Parameters:
+      errorType: "EXECUTION_FAILED"
+      errorInfo.$: "$.errorInfo"
+      errorCause.$: "$.errorCause"
+      timestamp.$: "$$.Execution.StartTime"
+      executionArn.$: "$$.Execution.Id"
+    ResultPath: "$.finalError"
+    Next: Done
+
+  Done:
+    Type: Pass
+    Parameters:
+      executionSummary:
+        status: "completed"
+        totalObjectsProcessed.$: "States.ArrayLength($.processedObjects)"
+        errors.$: "States.JsonToString($.finalError)"
+        startTime.$: "$$.Execution.StartTime"
+        endTime.$: "$$.Execution.EndTime"
+    End: true

@@ -533,6 +533,48 @@ Resources:
       Value: !GetAtt DownloaderFunction.Arn
       Description: ARN of the downloader Lambda function for MWAA
 
+  #####################################################################################################################
+  # Step Function for S3 to SQS processing
+  #####################################################################################################################
+
+  StepFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: states.amazonaws.com
+            Action: sts:AssumeRole
+      Path: "/service-role/"
+      Policies:
+        - PolicyName: StepFunctionS3SqsPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:ListBucket
+                  - s3:GetObject
+                Resource:
+                  - !GetAtt EnvironmentBucket.Arn
+                  - !Sub "${EnvironmentBucket.Arn}/*"
+              - Effect: Allow
+                Action:
+                  - sqs:SendMessage
+                  - sqs:GetQueueUrl
+                Resource: !GetAtt MwaaSqsQueue.Arn
+
+  S3ToSqsStateMachine:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: !Sub "${AWS::StackName}-S3ToSqsProcessor"
+      RoleArn: !GetAtt StepFunctionRole.Arn
+      DefinitionS3Location:
+        Bucket: !Ref EnvironmentBucket
+        Key: step-functions/step-function.yaml
+
 Outputs:
   DownloaderFunctionName:
     Description: Name of the downloader Lambda function
@@ -576,3 +618,9 @@ Outputs:
   DownloaderFunctionArnParameterName:
     Description: SSM Parameter name containing DownloaderFunction ARN
     Value: !Ref DownloaderFunctionArnParameter
+  S3ToSqsStateMachineArn:
+    Description: ARN of the S3 to SQS processing Step Function
+    Value: !Ref S3ToSqsStateMachine
+  S3ToSqsStateMachineName:
+    Description: Name of the S3 to SQS processing Step Function
+    Value: !GetAtt S3ToSqsStateMachine.Name
