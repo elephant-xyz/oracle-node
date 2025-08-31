@@ -9,14 +9,13 @@ warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
 err()  { echo -e "${RED}[ERROR]${NC} $*"; }
 
 # Config with sane defaults
-STACK_NAME="${STACK_NAME:-elephant-mwaa}"
+STACK_NAME="${STACK_NAME:-oracle-node}"
 SAM_TEMPLATE="prepare/template.yaml"
 STARTUP_SCRIPT="infra/startup.sh"
 PYPROJECT_FILE="infra/pyproject.toml"
 BUILD_DIR="infra/build"
 REQUIREMENTS_FILE="${BUILD_DIR}/requirements.txt"
 AIRFLOW_CONSTRAINTS_URL="https://raw.githubusercontent.com/apache/airflow/constraints-2.10.3/constraints-3.12.txt"
-SOURCE_S3_BUCKET_ARN="${SOURCE_S3_BUCKET_ARN:-}"  # REQUIRED; example: arn:aws:s3:::source-bucket
 
 mkdir -p "$BUILD_DIR"
 
@@ -32,21 +31,19 @@ check_prereqs() {
   [[ -f "$SAM_TEMPLATE" && -f "$STARTUP_SCRIPT" && -f "$PYPROJECT_FILE" ]] || { err "Missing required files"; exit 1; }
 }
 
-validate_source_bucket() {
-  if [[ -z "$SOURCE_S3_BUCKET_ARN" ]]; then
-    err "SOURCE_S3_BUCKET_ARN is required. Set it as environment variable. Example: arn:aws:s3:::my-source-bucket"
-    exit 1
-  fi
-  if ! [[ "$SOURCE_S3_BUCKET_ARN" =~ ^arn:aws:s3:::[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$ ]]; then
-    err "SOURCE_S3_BUCKET_ARN looks invalid. Expected format: arn:aws:s3:::bucket-name"
-    exit 1
-  fi
-}
 
 get_bucket() {
   aws cloudformation describe-stacks \
     --stack-name "$STACK_NAME" \
     --query 'Stacks[0].Outputs[?OutputKey==`EnvironmentBucketName`].OutputValue' \
+    --output text
+}
+
+get_output() {
+  local key=$1
+  aws cloudformation describe-stacks \
+    --stack-name "$STACK_NAME" \
+    --query "Stacks[0].Outputs[?OutputKey=='${key}'].OutputValue" \
     --output text
 }
 
@@ -79,8 +76,7 @@ sam_deploy_initial() {
     --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \
     --resolve-s3 \
     --no-confirm-changeset \
-    --no-fail-on-empty-changeset \
-    --parameter-overrides SourceS3BucketArn="$SOURCE_S3_BUCKET_ARN" >/dev/null
+    --no-fail-on-empty-changeset >/dev/null
 }
 
 sam_deploy_with_versions() {
@@ -94,16 +90,85 @@ sam_deploy_with_versions() {
     --no-confirm-changeset \
     --no-fail-on-empty-changeset \
     --parameter-overrides \
-      SourceS3BucketArn="$SOURCE_S3_BUCKET_ARN" \
       StartupScriptS3Path="startup.sh" \
       StartupScriptS3ObjectVersion="$script_ver" \
       RequirementsS3Path="requirements.txt" \
       RequirementsS3ObjectVersion="$req_ver" >/dev/null
 }
 
+set_airflow_vars() {
+  local bucket=$1
+  local env_name
+  env_name="${MWAA_ENV_NAME:-${STACK_NAME}-MwaaEnvironment}"
+  info "Setting Airflow variables in MWAA environment: $env_name"
+
+  local token_json cli_token host
+  token_json=$(aws mwaa create-cli-token --name "$env_name" 2>/dev/null || true)
+  cli_token=$(echo "$token_json" | jq -r '.CliToken')
+  host=$(echo "$token_json" | jq -r '.WebServerHostname')
+  if [[ -z "$cli_token" || "$cli_token" == "null" || -z "$host" || "$host" == "null" ]]; then
+    warn "Could not acquire MWAA CLI token/hostname. Skipping Airflow variable setup."
+    return 0
+  fi
+
+  run_airflow() {
+    local cmd="$1"
+    curl -sS --location --request POST "https://${host}/aws_mwaa/cli" \
+      --header "Authorization: Bearer ${cli_token}" \
+      --header "Content-Type: text/plain" \
+      --data-raw "$cmd"
+  }
+
+  set_var() {
+    local name="$1" value="$2"
+    local resp stderr stdout
+    resp=$(run_airflow "variables set ${name} ${value}")
+    stderr=$(echo "$resp" | jq -r '.stderr' | base64 -d 2>/dev/null || true)
+    stdout=$(echo "$resp" | jq -r '.stdout' | base64 -d 2>/dev/null || true)
+    if [[ -z "$stdout" || "$stdout" == "null" ]]; then
+      warn "Failed to set Airflow variable: ${name}"
+    else
+      info "Set Airflow variable: ${name}"
+      [[ -n "$stderr" && "$stderr" != "null" ]] && warn "$stderr"
+    fi
+  }
+
+  # Core variables derived from stack outputs/bucket
+  local sqs_url ssm_param lambda_arn output_base batch_size
+  sqs_url=$(get_output MwaaSqsQueueUrl)
+  ssm_param=$(get_output DownloaderFunctionArnParameterName)
+  lambda_arn=$(get_output DownloaderFunctionArn)
+  if [[ -n "$sqs_url" && "$sqs_url" != "None" ]]; then
+    set_var elephant_sqs_queue_url "$sqs_url"
+  else
+    warn "Stack output MwaaSqsQueueUrl not found"
+  fi
+  if [[ -n "$ssm_param" && "$ssm_param" != "None" ]]; then
+    set_var elephant_downloader_ssm_param_name "$ssm_param"
+  else
+    warn "Stack output DownloaderFunctionArnParameterName not found"
+  fi
+  if [[ -n "$lambda_arn" && "$lambda_arn" != "None" ]]; then
+    set_var elephant_downloader_function_arn "$lambda_arn"
+  fi
+
+  output_base="${ELEPHANT_OUTPUT_BASE_URI:-s3://${bucket}/outputs}"
+  set_var elephant_output_base_uri "$output_base"
+
+  batch_size="${ELEPHANT_BATCH_SIZE:-10}"
+  set_var elephant_batch_size "$batch_size"
+
+  # Optional secrets pulled from environment if present
+  [[ -n "${ELEPHANT_DOMAIN:-}" ]] && set_var elephant_domain "$ELEPHANT_DOMAIN" || true
+  [[ -n "${ELEPHANT_API_KEY:-}" ]] && set_var elephant_api_key "$ELEPHANT_API_KEY" || true
+  [[ -n "${ELEPHANT_ORACLE_KEY_ID:-}" ]] && set_var elephant_oracle_key_id "$ELEPHANT_ORACLE_KEY_ID" || true
+  [[ -n "${ELEPHANT_FROM_ADDRESS:-}" ]] && set_var elephant_from_address "$ELEPHANT_FROM_ADDRESS" || true
+  [[ -n "${ELEPHANT_RPC_URL:-}" ]] && set_var elephant_rpc_url "$ELEPHANT_RPC_URL" || true
+  [[ -n "${ELEPHANT_PINATA_JWT:-}" ]] && set_var elephant_pinata_jwt "$ELEPHANT_PINATA_JWT" || true
+}
+
 main() {
   check_prereqs
-  validate_source_bucket
 
   sam_build
   sam_deploy_initial
@@ -126,6 +191,9 @@ main() {
   env_name="${MWAA_ENV_NAME:-${STACK_NAME}-MwaaEnvironment}"
   ui_url=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" \
     --query "Stacks[0].Outputs[?OutputKey=='MwaaApacheAirflowUI'].OutputValue" --output text)
+
+  # Configure Airflow variables now that the environment exists
+  set_airflow_vars "$bucket"
   echo
   info "Done! UI: $ui_url"
   info "MWAA Env: $env_name"
