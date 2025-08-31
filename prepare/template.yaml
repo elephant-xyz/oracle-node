@@ -79,8 +79,9 @@ Parameters:
     Default: ""
 
   SourceS3BucketArn:
-    Description: ARN of the S3 bucket that will send S3 event notifications to the SQS queue (e.g., arn:aws:s3:::bucket-name)
+    Description: ARN of the S3 bucket that will send S3 event notifications to the SQS queue (e.g., arn:aws:s3:::bucket-name) - now optional, allows any bucket
     Type: String
+    Default: "*"
 
 Conditions:
   HasStartupScript: !Not [!Equals [!Ref StartupScriptS3ObjectVersion, ""]]
@@ -88,10 +89,9 @@ Conditions:
 
 Globals:
   Function:
-    Runtime: nodejs22.x
+    Runtime: nodejs20.x
     Timeout: 300
     Tracing: Active
-    PackageType: Zip
 
 Resources:
   #####################################################################################################################
@@ -326,9 +326,6 @@ Resources:
             Action:
               - sqs:SendMessage
             Resource: !GetAtt MwaaSqsQueue.Arn
-            Condition:
-              ArnLike:
-                aws:SourceArn: !Ref SourceS3BucketArn
 
   #####################################################################################################################
   # MWAA Environment + IAM
@@ -440,10 +437,10 @@ Resources:
       Name: !Sub "${AWS::StackName}-MwaaEnvironment"
       SourceBucketArn: !GetAtt EnvironmentBucket.Arn
       ExecutionRoleArn: !GetAtt MwaaExecutionRole.Arn
-      AirflowConfigurationOptions:
-        core.parallelism: "0"
-        celery.worker_autoscale: "25,1"
-        core.dag_concurrency: "1000"
+      # AirflowConfigurationOptions:
+      #   core.parallelism: "0"
+      #   celery.worker_autoscale: "25,1"
+      #   core.dag_concurrency: "1000"
       DagS3Path: dags/
       StartupScriptS3Path: !If [HasStartupScript, !Ref StartupScriptS3Path, !Ref "AWS::NoValue"]
       StartupScriptS3ObjectVersion: !If [HasStartupScript, !Ref StartupScriptS3ObjectVersion, !Ref "AWS::NoValue"]
@@ -456,8 +453,8 @@ Resources:
         SubnetIds:
           - !Ref PrivateSubnet1
           - !Ref PrivateSubnet2
-      MaxWorkers: 25
       MinWorkers: 3
+      MaxWorkers: 25
       MinWebservers: 2
       MaxWebservers: 5
       WebserverAccessMode: PUBLIC_ONLY
@@ -496,8 +493,8 @@ Resources:
 
   UpdaterFunction:
     Type: AWS::Serverless::Function
-    MemorySize: 128
     Properties:
+      MemorySize: 128
       CodeUri: .
       Handler: lambda-update.handler
       Description: "Updates env var on DownloaderFunction and runs every minute."
@@ -507,14 +504,13 @@ Resources:
           VAR_NAME: DEPLOY_TS
       Policies:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
-        - PolicyDocument:
-            Version: "2012-10-17"
-            Statement:
-              - Effect: Allow
-                Action:
-                  - lambda:GetFunctionConfiguration
-                  - lambda:UpdateFunctionConfiguration
-                Resource: !GetAtt DownloaderFunction.Arn
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - lambda:GetFunctionConfiguration
+                - lambda:UpdateFunctionConfiguration
+              Resource: !GetAtt DownloaderFunction.Arn
       Events:
         UpdateSchedule:
           Type: Schedule
@@ -562,6 +558,10 @@ Resources:
                   - !Sub "${EnvironmentBucket.Arn}/*"
               - Effect: Allow
                 Action:
+                  - s3:ListBucket
+                Resource: "*"
+              - Effect: Allow
+                Action:
                   - sqs:SendMessage
                   - sqs:GetQueueUrl
                 Resource: !GetAtt MwaaSqsQueue.Arn
@@ -571,9 +571,214 @@ Resources:
     Properties:
       StateMachineName: !Sub "${AWS::StackName}-S3ToSqsProcessor"
       RoleArn: !GetAtt StepFunctionRole.Arn
-      DefinitionS3Location:
-        Bucket: !Ref EnvironmentBucket
-        Key: step-functions/step-function.yaml
+      DefinitionString: |
+        {
+          "Comment": "Process S3 objects and send SQS messages for MWAA workflow with error handling",
+          "StartAt": "ListObjects",
+          "States": {
+            "ListObjects": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::aws-sdk:s3:listObjectsV2",
+              "Parameters": {
+                "Bucket.$": "$.bucketName",
+                "Prefix": "source-data/",
+                "MaxKeys": 1000
+              },
+              "ResultPath": "$.listResult",
+              "Next": "ProcessObjects",
+              "Retry": [
+                {
+                  "ErrorEquals": ["States.TaskFailed", "S3.NoSuchBucket", "S3.AccessDenied"],
+                  "IntervalSeconds": 2,
+                  "MaxAttempts": 3,
+                  "BackoffRate": 2.0
+                }
+              ],
+              "Catch": [
+                {
+                  "ErrorEquals": ["States.ALL"],
+                  "ResultPath": "$.errorInfo",
+                  
+                  "Next": "HandleError"
+                }
+              ]
+            },
+            "ProcessObjects": {
+              "Type": "Choice",
+              "Choices": [
+                {
+                  "Variable": "$.listResult.Contents",
+                  "IsPresent": true,
+                  "Next": "MapObjects"
+                }
+              ],
+              "Default": "Done"
+            },
+            "MapObjects": {
+              "Type": "Map",
+              "ItemsPath": "$.listResult.Contents",
+              "Iterator": {
+                "StartAt": "CreateMessage",
+                "States": {
+                  "CreateMessage": {
+                    "Type": "Pass",
+                    "Parameters": {
+                      "Records": [
+                        {
+                          "s3": {
+                            "bucket": {
+                              "name.$": "$$.Execution.Input.bucketName"
+                            },
+                            "object": {
+                              "key.$": "$.Key"
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    "ResultPath": "$.message",
+                    "Next": "SendToSQS"
+                  },
+                  "SendToSQS": {
+                    "Type": "Task",
+                    "Resource": "arn:aws:states:::sqs:sendMessage",
+                    "Parameters": {
+                      "QueueUrl.$": "$$.Execution.Input.sqsQueueUrl",
+                      "MessageBody.$": "States.JsonToString($.message)"
+                    },
+                    "ResultPath": "$.sqsResult",
+                    "Next": "Success",
+                    "Retry": [
+                      {
+                        "ErrorEquals": ["States.TaskFailed", "SQS.QueueDoesNotExist", "SQS.InvalidMessageContents"],
+                        "IntervalSeconds": 1,
+                        "MaxAttempts": 3,
+                        "BackoffRate": 2.0
+                      },
+                      {
+                        "ErrorEquals": ["States.Timeout"],
+                        "IntervalSeconds": 3,
+                        "MaxAttempts": 2,
+                        "BackoffRate": 1.5
+                      }
+                    ],
+                    "Catch": [
+                      {
+                        "ErrorEquals": ["States.ALL"],
+                        "ResultPath": "$.errorInfo",
+                        
+                        "Next": "LogError"
+                      }
+                    ]
+                  },
+                  "LogError": {
+                    "Type": "Pass",
+                    "Parameters": {
+                      "errorType": "SQS_SEND_FAILED",
+                      "objectKey.$": "$.Key",
+                      "errorInfo.$": "$.errorInfo",
+                      "errorCause.$": "$.errorInfo.Cause",
+                      "timestamp.$": "$$.Execution.StartTime"
+                    },
+                    "ResultPath": "$.loggedError",
+                    "Next": "Success"
+                  },
+                  "Success": {
+                    "Type": "Pass",
+                    "Result": {
+                      "status": "processed",
+                      "objectKey.$": "$.Key"
+                    },
+                    "End": true
+                  }
+                }
+              },
+              "ResultPath": "$.processedObjects",
+              "Next": "CheckForMore",
+              "Catch": [
+                {
+                  "ErrorEquals": ["States.TaskFailed", "States.MapRunFailed"],
+                  "ResultPath": "$.mapError",
+                  "Next": "LogMapError"
+                }
+              ]
+            },
+            "LogMapError": {
+              "Type": "Pass",
+              "Parameters": {
+                "errorType": "MAP_PROCESSING_FAILED",
+                "errorDetails.$": "$.mapError",
+                "timestamp.$": "$$.Execution.StartTime"
+              },
+              "ResultPath": "$.loggedMapError",
+              "Next": "CheckForMore"
+            },
+            "CheckForMore": {
+              "Type": "Choice",
+              "Choices": [
+                {
+                  "Variable": "$.listResult.IsTruncated",
+                  "BooleanEquals": true,
+                  "Next": "ListMoreObjects"
+                }
+              ],
+              "Default": "Done"
+            },
+            "ListMoreObjects": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::aws-sdk:s3:listObjectsV2",
+              "Parameters": {
+                "Bucket.$": "$.bucketName",
+                "Prefix": "source-data/",
+                "MaxKeys": 1000,
+                "ContinuationToken.$": "$.listResult.NextContinuationToken"
+              },
+              "ResultPath": "$.listResult",
+              "Next": "ProcessObjects",
+              "Retry": [
+                {
+                  "ErrorEquals": ["States.TaskFailed", "S3.NoSuchBucket", "S3.AccessDenied"],
+                  "IntervalSeconds": 2,
+                  "MaxAttempts": 3,
+                  "BackoffRate": 2.0
+                }
+              ],
+              "Catch": [
+                {
+                  "ErrorEquals": ["States.ALL"],
+                  "ResultPath": "$.errorInfo",
+                  
+                  "Next": "HandleError"
+                }
+              ]
+            },
+            "HandleError": {
+              "Type": "Pass",
+              "Parameters": {
+                "errorType": "EXECUTION_FAILED",
+                "errorInfo.$": "$.errorInfo",
+                "errorCause.$": "$.errorInfo.Cause",
+                "timestamp.$": "$$.Execution.StartTime",
+                "executionArn.$": "$$.Execution.Id"
+              },
+              "ResultPath": "$.finalError",
+              "Next": "Done"
+            },
+            "Done": {
+              "Type": "Pass",
+              "Parameters": {
+                "executionSummary": {
+                  "status": "completed",
+                  "totalObjectsProcessed.$": "States.ArrayLength($.processedObjects)",
+                  "errors.$": "States.JsonToString($.finalError)",
+                  "startTime.$": "$$.Execution.StartTime",
+                  "endTime.$": "$$.Execution.EndTime"
+                }
+              },
+              "End": true
+            }
+          }
+        }
 
 Outputs:
   DownloaderFunctionName:

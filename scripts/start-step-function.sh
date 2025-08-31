@@ -9,7 +9,7 @@ warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
 err()  { echo -e "${RED}[ERROR]${NC} $*"; }
 
 # Config with defaults
-STACK_NAME="${STACK_NAME:-elephant-mwaa}"
+STACK_NAME="${STACK_NAME:-oracle-node}"
 
 usage() {
     cat <<EOF
@@ -21,7 +21,7 @@ Arguments:
     bucket-name    Name of the S3 bucket to process
 
 Environment Variables:
-    STACK_NAME     CloudFormation stack name (default: elephant-mwaa)
+    STACK_NAME     CloudFormation stack name (default: oracle-node)
 
 Example:
     $0 my-data-bucket

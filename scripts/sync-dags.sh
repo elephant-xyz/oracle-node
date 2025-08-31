@@ -7,7 +7,7 @@ RED='\033[0;31m'; GREEN='\033[0;32m'; NC='\033[0m'
 info() { echo -e "${GREEN}[INFO]${NC} $*"; }
 err()  { echo -e "${RED}[ERROR]${NC} $*"; }
 
-STACK_NAME="${STACK_NAME:-elephant-mwaa}"
+STACK_NAME="${STACK_NAME:-oracle-node}"
 DAGS_DIR="${DAGS_DIR:-dags}"
 
 command -v aws >/dev/null || { err "aws CLI not found"; exit 1; }
