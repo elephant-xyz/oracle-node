@@ -329,8 +329,8 @@ Resources:
       ExecutionRoleArn: !GetAtt MwaaExecutionRole.Arn
       AirflowConfigurationOptions:
         core.parallelism: "0"
-        celery.worker_autoscale: "25,1"
-        core.dag_concurrency: "1000"
+        celery.worker_autoscale: "50,5"
+        core.dag_concurrency: "4800"
       DagS3Path: dags/
       StartupScriptS3Path:
         !If [HasStartupScript, !Ref StartupScriptS3Path, !Ref "AWS::NoValue"]
