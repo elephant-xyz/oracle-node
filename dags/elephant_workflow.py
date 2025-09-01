@@ -1041,17 +1041,17 @@ default_args = {
     "email_on_failure": True,
     "email_on_retry": False,
     "retries": 1,  # Reduced retries since we handle requeuing via SQS
-    "retry_delay": timedelta(minutes=2),
+    "retry_delay": timedelta(minutes=1),
 }
 
 with DAG(
     dag_id="elephant_workflow",
     default_args=default_args,
     description="SQS-triggered Elephant workflow with dynamic task groups",
-    schedule=timedelta(minutes=1),
+    schedule=timedelta(seconds=10),
     start_date=pendulum.datetime(2024, 1, 1, tz="UTC"),
     catchup=False,
-    max_active_runs=100,
+    max_active_runs=60,
     tags=["elephant", "sqs-triggered", "production"],
     doc_md=__doc__,
     on_success_callback=dag_success_callback,
@@ -1067,8 +1067,8 @@ with DAG(
         visibility_timeout=3600,  # 1 hour visibility timeout
         aws_conn_id="aws_default",
         mode="poke",
-        poke_interval=30,
-        timeout=30,
+        poke_interval=5,
+        timeout=120,
         soft_fail=True,
         do_xcom_push=True,
         retries=0,
