@@ -6,7 +6,10 @@
 
 - AWS account with permissions to create CloudFormation stacks (VPC, S3, SQS, MWAA, IAM, Logs)
 - Tools: `aws` CLI v2, `jq`, `zip`, `curl`, `uv`, `sam` CLI
-- Configure AWS: run `aws configure` and verify with `aws sts get-caller-identity`
+- Configure AWS profile with Access Key ID and Secret Access Key:
+  - Create: `aws configure --profile <your-profile>`
+  - Use: `export AWS_PROFILE=<your-profile>`
+  - Verify: `aws sts get-caller-identity`
 
 ### 1) Deploy infrastructure (one-time)
 
@@ -25,6 +28,8 @@ This creates MWAA, VPC, S3, SQS, Lambdas, IAM, and CloudWatch. At the end it pri
 ### 2) Add your transform scripts (replace the samples)
 
 - Put your files under `transform/` (replace any existing examples in that folder).
+- Use the output of `elephant-cli generate-transform` (or your modified output) as the contents of `transform/`.
+  See: [Generate transform scripts](https://github.com/elephant-xyz/elephant-cli?tab=readme-ov-file#generate-transform-scripts)
 
 ### 3) Deploy DAGs and your transforms to MWAA
 
