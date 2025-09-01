@@ -56,7 +56,7 @@ start_execution() {
     local bucket_name="$1"
     local step_function_arn="$2"
     local sqs_queue_url="$3"
-    local execution_name="$bucket_name"
+    local execution_name="oracle-node-queue-processing"
 
     info "Starting Step Function execution: $execution_name"
     info "Step Function ARN: $step_function_arn"

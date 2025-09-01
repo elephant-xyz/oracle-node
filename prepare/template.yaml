@@ -284,6 +284,25 @@ Resources:
         IgnorePublicAcls: true
         RestrictPublicBuckets: true
 
+  EnvironmentBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref EnvironmentBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowDownloaderLambdaAccess
+            Effect: Allow
+            Principal:
+              AWS: !GetAtt DownloaderFunctionRole.Arn
+            Action:
+              - s3:GetObject
+              - s3:PutObject
+              - s3:ListBucket
+            Resource:
+              - !GetAtt EnvironmentBucket.Arn
+              - !Sub "${EnvironmentBucket.Arn}/*"
+
   #####################################################################################################################
   # SQS (DLQ + primary) + QueuePolicy for S3 events
   #####################################################################################################################
@@ -405,6 +424,7 @@ Resources:
               - sqs:GetQueueAttributes
               - sqs:ChangeMessageVisibility
               - sqs:GetQueueUrl
+              - sqs:SendMessage
             Resource:
               - !GetAtt MwaaSqsQueue.Arn
               - !GetAtt MwaaDeadLetterQueue.Arn
@@ -581,7 +601,6 @@ Resources:
               "Resource": "arn:aws:states:::aws-sdk:s3:listObjectsV2",
               "Parameters": {
                 "Bucket.$": "$.bucketName",
-                "Prefix": "source-data/",
                 "MaxKeys": 1000
               },
               "ResultPath": "$.listResult",
@@ -729,7 +748,6 @@ Resources:
               "Resource": "arn:aws:states:::aws-sdk:s3:listObjectsV2",
               "Parameters": {
                 "Bucket.$": "$.bucketName",
-                "Prefix": "source-data/",
                 "MaxKeys": 1000,
                 "ContinuationToken.$": "$.listResult.NextContinuationToken"
               },
@@ -766,15 +784,6 @@ Resources:
             },
             "Done": {
               "Type": "Pass",
-              "Parameters": {
-                "executionSummary": {
-                  "status": "completed",
-                  "totalObjectsProcessed.$": "States.ArrayLength($.processedObjects)",
-                  "errors.$": "States.JsonToString($.finalError)",
-                  "startTime.$": "$$.Execution.StartTime",
-                  "endTime.$": "$$.Execution.EndTime"
-                }
-              },
               "End": true
             }
           }

@@ -9,7 +9,7 @@ err()  { echo -e "${RED}[ERROR]${NC} $*"; }
 
 STACK_NAME="${STACK_NAME:-oracle-node}"
 MWAA_ENV_NAME="${MWAA_ENV_NAME:-${STACK_NAME}-MwaaEnvironment}"
-TRANSFORMS_DIR="${TRANSFORMS_DIR:-transforms}"
+TRANSFORMS_DIR="${TRANSFORMS_DIR:-transform}"
 ZIP_PATH="build/transforms.zip"
 
 command -v aws >/dev/null || { err "aws CLI not found"; exit 1; }

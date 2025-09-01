@@ -11,6 +11,7 @@ err()  { echo -e "${RED}[ERROR]${NC} $*"; }
 # Config with sane defaults
 STACK_NAME="${STACK_NAME:-oracle-node}"
 SAM_TEMPLATE="prepare/template.yaml"
+BUILT_TEMPLATE=".aws-sam/build/template.yaml"
 STARTUP_SCRIPT="infra/startup.sh"
 PYPROJECT_FILE="infra/pyproject.toml"
 BUILD_DIR="infra/build"
@@ -71,7 +72,7 @@ sam_build() {
 sam_deploy_initial() {
   info "Deploying SAM stack (initial)"
   sam deploy \
-    --template-file "$SAM_TEMPLATE" \
+    --template-file "$BUILT_TEMPLATE" \
     --stack-name "$STACK_NAME" \
     --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \
     --resolve-s3 \
@@ -83,7 +84,7 @@ sam_deploy_with_versions() {
   local script_ver=$1 req_ver=$2
   info "Deploying SAM stack with MWAA artifact versions"
   sam deploy \
-    --template-file "$SAM_TEMPLATE" \
+    --template-file "$BUILT_TEMPLATE" \
     --stack-name "$STACK_NAME" \
     --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \
     --resolve-s3 \
@@ -155,7 +156,7 @@ set_airflow_vars() {
   output_base="${ELEPHANT_OUTPUT_BASE_URI:-s3://${bucket}/outputs}"
   set_var elephant_output_base_uri "$output_base"
 
-  batch_size="${ELEPHANT_BATCH_SIZE:-10}"
+  batch_size="${ELEPHANT_BATCH_SIZE:-1}"
   set_var elephant_batch_size "$batch_size"
 
   # Optional secrets pulled from environment if present
