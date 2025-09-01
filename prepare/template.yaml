@@ -585,26 +585,67 @@ Resources:
                   - sqs:SendMessage
                   - sqs:GetQueueUrl
                 Resource: !GetAtt MwaaSqsQueue.Arn
+              - Effect: Allow
+                Action:
+                  - states:StartExecution
+                Resource:
+                  - !Sub "arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:${AWS::StackName}-*"
+              # Required for states:startExecution.sync to create the managed EventBridge rule
+              - Effect: Allow
+                Action:
+                  - events:PutRule
+                  - events:PutTargets
+                  - events:DescribeRule
+                  - events:DeleteRule
+                  - events:RemoveTargets
+                Resource:
+                  - !Sub "arn:aws:events:${AWS::Region}:${AWS::AccountId}:rule/StepFunctionsGetEventsForStepFunctionsExecutionRule"
 
-  S3ToSqsStateMachine:
+  # Child state machine: processes a single page starting after a given key and maps to SQS
+  S3PageProcessorStateMachine:
     Type: AWS::StepFunctions::StateMachine
     Properties:
-      StateMachineName: !Sub "${AWS::StackName}-S3ToSqsProcessor"
+      StateMachineName: !Sub "${AWS::StackName}-S3PageProcessor"
       RoleArn: !GetAtt StepFunctionRole.Arn
       DefinitionString: |
         {
-          "Comment": "Process S3 objects and send SQS messages for MWAA workflow with error handling",
-          "StartAt": "ListObjects",
+          "Comment": "Process one S3 page (MaxKeys=1000) starting after StartAfter and send SQS messages",
+          "StartAt": "BranchList",
           "States": {
-            "ListObjects": {
+            "BranchList": {
+              "Type": "Choice",
+              "Choices": [
+                { "Variable": "$.continuationToken", "IsPresent": true, "Next": "ListPageWithToken" },
+                { "Variable": "$.startAfter", "IsPresent": true, "Next": "ListPageWithStartAfter" }
+              ],
+              "Default": "ListPageNoStartAfter"
+            },
+            "ListPageWithToken": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::aws-sdk:s3:listObjectsV2",
+              "Parameters": {
+                "Bucket.$": "$.bucketName",
+                "MaxKeys": 1000,
+                "ContinuationToken.$": "$.continuationToken"
+              },
+              "ResultPath": "$.list",
+              "Next": "ProcessOrDone",
+              "Retry": [
+                { "ErrorEquals": ["States.TaskFailed", "S3.NoSuchBucket", "S3.AccessDenied"], "IntervalSeconds": 2, "MaxAttempts": 3, "BackoffRate": 2.0 }
+              ],
+              "Catch": [
+                { "ErrorEquals": ["States.ALL"], "ResultPath": "$.errorInfo", "Next": "ReturnEmpty" }
+              ]
+            },
+            "ListPageNoStartAfter": {
               "Type": "Task",
               "Resource": "arn:aws:states:::aws-sdk:s3:listObjectsV2",
               "Parameters": {
                 "Bucket.$": "$.bucketName",
                 "MaxKeys": 1000
               },
-              "ResultPath": "$.listResult",
-              "Next": "ProcessObjects",
+              "ResultPath": "$.list",
+              "Next": "ProcessOrDone",
               "Retry": [
                 {
                   "ErrorEquals": ["States.TaskFailed", "S3.NoSuchBucket", "S3.AccessDenied"],
@@ -617,25 +658,42 @@ Resources:
                 {
                   "ErrorEquals": ["States.ALL"],
                   "ResultPath": "$.errorInfo",
-                  
-                  "Next": "HandleError"
+                  "Next": "ReturnEmpty"
                 }
               ]
             },
-            "ProcessObjects": {
+            "ListPageWithStartAfter": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::aws-sdk:s3:listObjectsV2",
+              "Parameters": {
+                "Bucket.$": "$.bucketName",
+                "MaxKeys": 1000,
+                "StartAfter.$": "$.startAfter"
+              },
+              "ResultPath": "$.list",
+              "Next": "ProcessOrDone",
+              "Retry": [
+                { "ErrorEquals": ["States.TaskFailed", "S3.NoSuchBucket", "S3.AccessDenied"], "IntervalSeconds": 2, "MaxAttempts": 3, "BackoffRate": 2.0 }
+              ],
+              "Catch": [
+                { "ErrorEquals": ["States.ALL"], "ResultPath": "$.errorInfo", "Next": "ReturnEmpty" }
+              ]
+            },
+            "ProcessOrDone": {
               "Type": "Choice",
               "Choices": [
                 {
-                  "Variable": "$.listResult.Contents",
+                  "Variable": "$.list.Contents",
                   "IsPresent": true,
                   "Next": "MapObjects"
                 }
               ],
-              "Default": "Done"
+              "Default": "ReturnEmpty"
             },
             "MapObjects": {
               "Type": "Map",
-              "ItemsPath": "$.listResult.Contents",
+              "MaxConcurrency": 0,
+              "ItemsPath": "$.list.Contents",
               "Iterator": {
                 "StartAt": "CreateMessage",
                 "States": {
@@ -645,12 +703,8 @@ Resources:
                       "Records": [
                         {
                           "s3": {
-                            "bucket": {
-                              "name.$": "$$.Execution.Input.bucketName"
-                            },
-                            "object": {
-                              "key.$": "$.Key"
-                            }
+                            "bucket": { "name.$": "$$.Execution.Input.bucketName" },
+                            "object": { "key.$": "$.Key" }
                           }
                         }
                       ]
@@ -674,118 +728,154 @@ Resources:
                         "MaxAttempts": 3,
                         "BackoffRate": 2.0
                       },
-                      {
-                        "ErrorEquals": ["States.Timeout"],
-                        "IntervalSeconds": 3,
-                        "MaxAttempts": 2,
-                        "BackoffRate": 1.5
-                      }
+                      { "ErrorEquals": ["States.Timeout"], "IntervalSeconds": 3, "MaxAttempts": 2, "BackoffRate": 1.5 }
                     ],
                     "Catch": [
-                      {
-                        "ErrorEquals": ["States.ALL"],
-                        "ResultPath": "$.errorInfo",
-                        
-                        "Next": "LogError"
-                      }
+                      { "ErrorEquals": ["States.ALL"], "ResultPath": "$.errorInfo", "Next": "LogError" }
                     ]
                   },
-                  "LogError": {
-                    "Type": "Pass",
-                    "Parameters": {
-                      "errorType": "SQS_SEND_FAILED",
-                      "objectKey.$": "$.Key",
-                      "errorInfo.$": "$.errorInfo",
-                      "errorCause.$": "$.errorInfo.Cause",
-                      "timestamp.$": "$$.Execution.StartTime"
-                    },
-                    "ResultPath": "$.loggedError",
-                    "Next": "Success"
-                  },
-                  "Success": {
-                    "Type": "Pass",
-                    "Result": {
-                      "status": "processed",
-                      "objectKey.$": "$.Key"
-                    },
-                    "End": true
-                  }
+                  "LogError": { "Type": "Pass", "Result": { "status": "error" }, "End": true },
+                  "Success": { "Type": "Pass", "Result": { "status": "processed" }, "End": true }
                 }
               },
-              "ResultPath": "$.processedObjects",
-              "Next": "CheckForMore",
+              "ResultPath": "$.processed",
+              "Next": "ReturnResult",
               "Catch": [
-                {
-                  "ErrorEquals": ["States.TaskFailed", "States.MapRunFailed"],
-                  "ResultPath": "$.mapError",
-                  "Next": "LogMapError"
-                }
+                { "ErrorEquals": ["States.TaskFailed", "States.MapRunFailed"], "ResultPath": "$.mapError", "Next": "ReturnResult" }
               ]
             },
-            "LogMapError": {
+            "ReturnEmpty": {
+              "Type": "Pass",
+              "Result": { "nextToken": null, "count": 0, "isTruncated": false },
+              "End": true
+            },
+            "ReturnResult": {
               "Type": "Pass",
               "Parameters": {
-                "errorType": "MAP_PROCESSING_FAILED",
-                "errorDetails.$": "$.mapError",
-                "timestamp.$": "$$.Execution.StartTime"
+                "nextToken.$": "$.list.NextContinuationToken",
+                "count.$": "States.ArrayLength($.list.Contents)",
+                "isTruncated.$": "$.list.IsTruncated"
               },
-              "ResultPath": "$.loggedMapError",
-              "Next": "CheckForMore"
-            },
-            "CheckForMore": {
+              "End": true
+            }
+          }
+        }
+
+  # Parent/orchestrator state machine: loops child calls and recurses near history limit
+  S3ToSqsStateMachine:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: !Sub "${AWS::StackName}-S3ToSqsProcessor"
+      RoleArn: !GetAtt StepFunctionRole.Arn
+      DefinitionSubstitutions:
+        S3PageProcessorStateMachine: !Ref S3PageProcessorStateMachine
+      DefinitionString: |
+        {
+          "Comment": "Orchestrate S3 pagination by invoking child per page; recurse at ~24.5k iterations",
+          "StartAt": "InitBranch",
+          "States": {
+            "InitBranch": {
               "Type": "Choice",
               "Choices": [
-                {
-                  "Variable": "$.listResult.IsTruncated",
-                  "BooleanEquals": true,
-                  "Next": "ListMoreObjects"
+                { "Variable": "$.continuationToken", "IsPresent": true, "Next": "InitWithToken" }
+              ],
+              "Default": "InitNoToken"
+            },
+            "InitWithToken": {
+              "Type": "Pass",
+              "Parameters": {
+                "bucketName.$": "$.bucketName",
+                "sqsQueueUrl.$": "$.sqsQueueUrl",
+                "continuationToken.$": "$.continuationToken",
+                "loopCount": 0
+              },
+              "ResultPath": "$.ctx",
+              "Next": "ProcessPage"
+            },
+            "InitNoToken": {
+              "Type": "Pass",
+              "Parameters": {
+                "bucketName.$": "$.bucketName",
+                "sqsQueueUrl.$": "$.sqsQueueUrl",
+                "continuationToken": null,
+                "loopCount": 0
+              },
+              "ResultPath": "$.ctx",
+              "Next": "ProcessPage"
+            },
+            "ProcessPage": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::states:startExecution.sync",
+              "Parameters": {
+                "StateMachineArn": "${S3PageProcessorStateMachine}",
+                "Input": {
+                  "bucketName.$": "$.ctx.bucketName",
+                  "sqsQueueUrl.$": "$.ctx.sqsQueueUrl",
+                  "continuationToken.$": "$.ctx.continuationToken"
                 }
+              },
+              "ResultSelector": {
+                "parsed.$": "States.StringToJson($.Output)"
+              },
+              "ResultPath": "$.child",
+              "Next": "UpdateForNext",
+              "Retry": [
+                { "ErrorEquals": ["States.TaskFailed"], "IntervalSeconds": 2, "MaxAttempts": 3, "BackoffRate": 2.0 }
+              ],
+              "Catch": [
+                { "ErrorEquals": ["States.ALL"], "ResultPath": "$.errorInfo", "Next": "Done" }
+              ]
+            },
+            "UpdateForNext": {
+              "Type": "Pass",
+              "Parameters": {
+                "ctx": {
+                  "bucketName.$": "$.ctx.bucketName",
+                  "sqsQueueUrl.$": "$.ctx.sqsQueueUrl",
+                  "continuationToken.$": "$.child.parsed.nextToken",
+                  "loopCount.$": "States.MathAdd($.ctx.loopCount, 1)"
+                },
+                "hasMore.$": "$.child.parsed.isTruncated"
+              },
+              "ResultPath": "$.loop",
+              "Next": "ContinueOrRecurse"
+            },
+            "ContinueOrRecurse": {
+              "Type": "Choice",
+              "Choices": [
+                { "Variable": "$.loop.hasMore", "BooleanEquals": true, "Next": "CheckLimit" }
               ],
               "Default": "Done"
             },
-            "ListMoreObjects": {
-              "Type": "Task",
-              "Resource": "arn:aws:states:::aws-sdk:s3:listObjectsV2",
-              "Parameters": {
-                "Bucket.$": "$.bucketName",
-                "MaxKeys": 1000,
-                "ContinuationToken.$": "$.listResult.NextContinuationToken"
-              },
-              "ResultPath": "$.listResult",
-              "Next": "ProcessObjects",
-              "Retry": [
-                {
-                  "ErrorEquals": ["States.TaskFailed", "S3.NoSuchBucket", "S3.AccessDenied"],
-                  "IntervalSeconds": 2,
-                  "MaxAttempts": 3,
-                  "BackoffRate": 2.0
-                }
+            "CheckLimit": {
+              "Type": "Choice",
+              "Choices": [
+                { "Variable": "$.loop.ctx.loopCount", "NumericLessThan": 25, "Next": "ProcessPageFromLoop" }
               ],
-              "Catch": [
-                {
-                  "ErrorEquals": ["States.ALL"],
-                  "ResultPath": "$.errorInfo",
-                  
-                  "Next": "HandleError"
-                }
-              ]
+              "Default": "Recurse"
             },
-            "HandleError": {
+            "ProcessPageFromLoop": {
               "Type": "Pass",
+              "InputPath": "$.loop.ctx",
+              "ResultPath": "$.ctx",
+              "Next": "ProcessPage"
+            },
+            "Recurse": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::states:startExecution",
               "Parameters": {
-                "errorType": "EXECUTION_FAILED",
-                "errorInfo.$": "$.errorInfo",
-                "errorCause.$": "$.errorInfo.Cause",
-                "timestamp.$": "$$.Execution.StartTime",
-                "executionArn.$": "$$.Execution.Id"
+                "StateMachineArn.$": "$$.StateMachine.Id",
+                "Name.$": "States.Format('{}-{}', $$.Execution.Name, $.loop.ctx.loopCount)",
+                "Input": {
+                  "bucketName.$": "$.loop.ctx.bucketName",
+                  "sqsQueueUrl.$": "$.loop.ctx.sqsQueueUrl",
+                  "continuationToken.$": "$.loop.ctx.continuationToken"
+                }
               },
-              "ResultPath": "$.finalError",
+              "ResultPath": "$.restarted",
               "Next": "Done"
             },
-            "Done": {
-              "Type": "Pass",
-              "End": true
-            }
+            "Done": { "Type": "Pass", "End": true }
           }
         }
 

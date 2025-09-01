@@ -58,6 +58,7 @@ export const handler = async (event) => {
 
     const outputZip = path.join(tempDir, "output.zip");
     const useBrowser = event.browser ?? true;
+    console.log("Using browser:", useBrowser);
     await prepare(inputZip, outputZip, { browser: useBrowser });
 
     // Determine upload destination
