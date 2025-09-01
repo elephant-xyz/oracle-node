@@ -36,9 +36,6 @@ from botocore.exceptions import BotoCoreError, ClientError
 logger = logging.getLogger("airflow.task")
 
 
-
-
-
 class WorkflowState(TypedDict):
     """State object passed between tasks"""
 
@@ -74,8 +71,6 @@ class FileProcessingInfo(TypedDict):
     message_id: str
     bucket_name: str
     object_key: str
-
-
 
 
 def run_command(cmd: list[str], cwd: str, timeout: int = 300) -> subprocess.CompletedProcess[str]:
@@ -166,8 +161,6 @@ def find_file_with_extension(directory: Path, extension: str) -> Path | None:
 # Task implementations
 
 
-
-
 @task(retries=2, retry_delay=timedelta(seconds=30))
 def parse_sqs_messages(messages_input: Any) -> list[FileProcessingInfo]:
     """Parse SQS messages to extract S3 event information"""
@@ -208,7 +201,7 @@ def parse_sqs_messages(messages_input: Any) -> list[FileProcessingInfo]:
     for message in messages:
         try:
             body = json.loads(message["Body"])
-            
+
             # Store original message body for requeuing
             original_messages.append(message)
 
@@ -241,7 +234,7 @@ def parse_sqs_messages(messages_input: Any) -> list[FileProcessingInfo]:
     # Store original messages in XCom for requeuing
     if original_messages:
         ctx = get_current_context()
-        ctx['ti'].xcom_push(key='original_messages', value=original_messages)
+        ctx["ti"].xcom_push(key="original_messages", value=original_messages)
 
     logger.info(f"Total files to process: {len(files_to_process)}")
     return files_to_process
@@ -814,7 +807,9 @@ def process_single_file(file_info: dict):
                 error_path = Path(tmpdir) / "error.json"
                 error_path.write_text(json.dumps(error_log))
                 input_object_key = state["input_csv_uri"].split("/")[-1]
-                error_s3_uri = f"{state['output_base_uri']}/{state['run_id']}/{input_object_key}/errors/transform_seed_error.json"
+                error_s3_uri = (
+                    f"{state['output_base_uri']}/{state['run_id']}/{input_object_key}/errors/transform_seed_error.json"
+                )
                 upload_to_s3(error_path, error_s3_uri)
                 raise
 
@@ -844,7 +839,6 @@ def process_single_file(file_info: dict):
             if not state.get("seed_output_uri"):
                 raise Exception("Missing seed_output_uri in state")
 
-
             with tempfile.TemporaryDirectory() as tmpdir:
                 tmp_path = Path(tmpdir)
                 input_object_key = state["input_csv_uri"].split("/")[-1]
@@ -854,7 +848,7 @@ def process_single_file(file_info: dict):
                 download_from_s3(state["seed_output_uri"], seed_output_uri)
                 with zipfile.ZipFile(seed_output_uri, "r") as zipf:
                     zipf.extractall(tmp_path)
-                
+
                 print(os.listdir(tmp_path))
                 input_zip = tmp_path / "county_prep_input.zip"
                 with zipfile.ZipFile(input_zip, "w") as zipf:
@@ -890,7 +884,11 @@ def process_single_file(file_info: dict):
                     output_uri = lambda_result["output_s3_uri"]
                 elif "body" in lambda_result:
                     try:
-                        body = json.loads(lambda_result["body"]) if isinstance(lambda_result["body"], str) else lambda_result["body"]
+                        body = (
+                            json.loads(lambda_result["body"])
+                            if isinstance(lambda_result["body"], str)
+                            else lambda_result["body"]
+                        )
                         output_uri = body.get("output_s3_uri")
                     except Exception:
                         pass
@@ -920,6 +918,8 @@ def process_single_file(file_info: dict):
                 tmp_path = Path(tmpdir)
                 input_object_key = state["input_csv_uri"].split("/")[-1]
 
+                run_id_clean = state["run_id"].replace(":", "_").replace("+", "_")
+                common_output_uri = f"{state['output_base_uri']}/{run_id_clean}/{input_object_key}"
                 prepared_uri = state.get("county_prepared_input_uri")
                 if not prepared_uri:
                     raise Exception("Missing county_prepared_input_uri in state")
@@ -949,6 +949,8 @@ def process_single_file(file_info: dict):
                     str(scripts_path),
                 ]
                 run_command(cmd, timeout=300, cwd=str(tmp_path))
+                cli_log_s3_uri = f"{common_output_uri}/elephant-cli-transform-county.log"
+                upload_to_s3(tmp_path / "elephant-cli.log", cli_log_s3_uri)
 
                 # Validate county output
                 logger.info("Validating county output")
@@ -971,8 +973,7 @@ def process_single_file(file_info: dict):
 
                 # Upload county output
                 logger.info("Uploading county output to S3")
-                run_id_clean = state["run_id"].replace(":", "_").replace("+", "_")
-                county_s3_uri = f"{state['output_base_uri']}/{run_id_clean}/{input_object_key}/county_output.zip"
+                county_s3_uri = f"{common_output_uri}/county_output.zip"
                 upload_to_s3(county_output_zip, county_s3_uri)
                 state["county_output_uri"] = county_s3_uri
                 state["combined_output_uri"] = None
@@ -996,7 +997,7 @@ def process_single_file(file_info: dict):
 
     # Initialize the workflow state and chain the tasks
     state = initialize_state(file_info)
-    
+
     # Chain all processing tasks
     state = transform_seed(state)
     state = prepare_county_via_lambda(state)
@@ -1005,35 +1006,38 @@ def process_single_file(file_info: dict):
     state = upload_hashed_results(state)
     state = prepare_submission(state)
     final_state = submit_to_blockchain(state)
-    
+
     return final_state
 
 
 # Create the DAG
 
+
 def dag_success_callback(context):
     """DAG-level success callback to requeue message for next processing"""
     logger.info(f"DAG {context['dag'].dag_id} completed successfully at {context['ts']}")
-    
+
     # Get the original message from XCom
-    dag_run = context['dag_run']
-    message_info = dag_run.get_task_instance('poll_sqs_queue').xcom_pull(key='original_message')
-    
+    dag_run = context["dag_run"]
+    message_info = dag_run.get_task_instance("poll_sqs_queue").xcom_pull(key="original_message")
+
     if message_info:
         # Trigger a requeue task (this will be handled via separate task)
         logger.info("Will requeue message for continued processing")
-    
+
+
 def dag_failure_callback(context):
     """DAG-level failure callback to requeue message with delay"""
     logger.error(f"DAG {context['dag'].dag_id} failed at {context['ts']}")
-    
-    # Get the original message from XCom  
-    dag_run = context['dag_run']
-    message_info = dag_run.get_task_instance('poll_sqs_queue').xcom_pull(key='original_message')
-    
+
+    # Get the original message from XCom
+    dag_run = context["dag_run"]
+    message_info = dag_run.get_task_instance("poll_sqs_queue").xcom_pull(key="original_message")
+
     if message_info:
         # Trigger a requeue task with delay (this will be handled via separate task)
         logger.info("Will requeue message with delay for retry")
+
 
 default_args = {
     "owner": "elephant",
@@ -1080,7 +1084,7 @@ with DAG(
 
     # Process each file in parallel using dynamic task groups
     processing_results = process_single_file.expand(file_info=files_to_process)
-    
+
     # Requeue operators for success and failure scenarios
     requeue_on_success = SqsPublishOperator(
         task_id="requeue_on_success",
@@ -1089,15 +1093,15 @@ with DAG(
         trigger_rule=TriggerRule.ALL_SUCCESS,
         delay_seconds=0,  # Immediate requeue on success
     )
-    
+
     requeue_on_failure = SqsPublishOperator(
-        task_id="requeue_on_failure", 
+        task_id="requeue_on_failure",
         sqs_queue="{{ var.value.elephant_sqs_queue_url }}",
         message_content="{{ ti.xcom_pull(task_ids='parse_sqs_messages', key='original_messages')[0] if ti.xcom_pull(task_ids='parse_sqs_messages', key='original_messages') else '{}' }}",
         trigger_rule=TriggerRule.ONE_FAILED,
         delay_seconds=300,  # 5 minute delay on failure
     )
-    
+
     # Set up dependencies
     processing_results >> [requeue_on_success, requeue_on_failure]
 
