@@ -156,7 +156,7 @@ set_airflow_vars() {
   output_base="${ELEPHANT_OUTPUT_BASE_URI:-s3://${bucket}/outputs}"
   set_var elephant_output_base_uri "$output_base"
 
-  batch_size="${ELEPHANT_BATCH_SIZE:-1}"
+  batch_size="${ELEPHANT_BATCH_SIZE:-10}"
   set_var elephant_batch_size "$batch_size"
 
   # Optional secrets pulled from environment if present
