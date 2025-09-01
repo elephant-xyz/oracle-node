@@ -3,10 +3,12 @@ import { promises as fs } from "fs";
 import path from "path";
 import { prepare } from "@elephant-xyz/cli/dist/lib/prepare.js";
 
+const RE_S3PATH = /^s3:\/\/([^/]+)\/(.*)$/i;
+
 /**
  * Splits an Amazon S3 URI into its bucket name and object key.
  *
- * @param {string} s3_uri - A valid S3 URI in the format `s3://<bucket>/<key>`.
+ * @param {string} s3Uri - A valid S3 URI in the format `s3://<bucket>/<key>`.
  *   Example: `s3://my-bucket/folder/file.txt`
  *
  * @returns {{ bucket: string, key: string }} An object containing:
@@ -15,12 +17,15 @@ import { prepare } from "@elephant-xyz/cli/dist/lib/prepare.js";
  *
  * @throws {Error} If the input is not a valid S3 URI or does not include both bucket and key.
  */
-const split_s3_uri = (s3_uri) => {
-  const [bucket, ...rest] = s3_uri.split("/").slice(3);
-  if (!bucket || rest.length === 0) {
-    throw new Error(`Invalid S3 URI: ${s3_uri}`);
+const splitS3Uri = (s3Uri) => {
+  const match = RE_S3PATH.exec(s3Uri);
+
+  if (!match) {
+    throw new Error('S3 path should be like: s3://bucket/object');
   }
-  return { bucket, key: rest.join("/") };
+
+  const [, bucket, key] = match;
+  return { bucket, key };
 };
 
 /**
@@ -32,10 +37,13 @@ const split_s3_uri = (s3_uri) => {
  * @returns {Promise<string>} Success message
  */
 export const handler = async (event) => {
+  console.log("Event:", event);
   if (!event || !event.input_s3_uri) {
     throw new Error("Missing required field: input_s3_uri");
   }
-  const { bucket, key } = split_s3_uri(event.input_s3_uri);
+  const { bucket, key } = splitS3Uri(event.input_s3_uri);
+  console.log("Bucket:", bucket);
+  console.log("Key:", key);
   const s3 = new S3Client({});
 
   const tempDir = await fs.mkdtemp("/tmp/prepare-");
@@ -56,7 +64,7 @@ export const handler = async (event) => {
     let outBucket = bucket;
     let outKey = key;
     if (event.output_s3_uri_prefix) {
-      const { bucket: outB, key: outPrefix } = split_s3_uri(event.output_s3_uri_prefix);
+      const { bucket: outB, key: outPrefix } = splitS3Uri(event.output_s3_uri_prefix);
       outBucket = outB;
       outKey = path.posix.join(outPrefix.replace(/\/$/, ""), "output.zip");
     } else {

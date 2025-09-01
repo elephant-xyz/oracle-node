@@ -17,6 +17,10 @@ if [[ "${MWAA_AIRFLOW_COMPONENT}" != "webserver" ]]; then
     echo "Installing tar"
     sudo yum -y install tar
 
+    echo "Installing which"
+    sudo yum install -y which
+
+
     echo "Installing uv package manager..."
     if command -v uv >/dev/null 2>&1; then
         echo "uv is already installed: $(uv --version)"
@@ -36,6 +40,12 @@ if [[ "${MWAA_AIRFLOW_COMPONENT}" != "webserver" ]]; then
     nvm install 22
     node -v
     npm -v
+
+    curl -fsSL https://raw.githubusercontent.com/elephant-xyz/fact-sheet-template/main/install.sh | bash
+
+    echo "Fact Sheet Template installed"
+    echo "Fact sheet path:"
+    which fact-sheet
 
     echo "Installing elephant-cli"
     npm install -g @elephant-xyz/cli || true

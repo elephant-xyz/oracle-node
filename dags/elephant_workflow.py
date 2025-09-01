@@ -17,6 +17,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 from pathlib import Path
 from typing import Any, TypedDict
+import os
 
 import pendulum
 from airflow import DAG
@@ -24,16 +25,24 @@ from airflow.decorators import task, task_group
 from airflow.io.path import ObjectStoragePath
 from airflow.models import Variable
 from airflow.providers.amazon.aws.sensors.sqs import SqsSensor
+from airflow.providers.amazon.aws.operators.sqs import SqsPublishOperator
+from airflow.exceptions import AirflowException, AirflowSkipException, AirflowFailException
+from airflow.utils.trigger_rule import TriggerRule
+from airflow.models import DagRun
+from airflow.operators.python import get_current_context
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError
 
 logger = logging.getLogger("airflow.task")
 
 
+
+
+
 class WorkflowState(TypedDict):
     """State object passed between tasks"""
 
-    input_zip_uri: str
+    input_csv_uri: str
     output_base_uri: str
     run_id: str
     seed_output_uri: str | None
@@ -51,12 +60,16 @@ class WorkflowState(TypedDict):
     error_step: str | None
     # County preparation artifact produced by Lambda
     county_prepared_input_uri: str | None
+    # SQS message management - store original message for requeuing
+    original_message_body: str | None
+    message_id: str | None
+    queue_name: str | None
 
 
 class FileProcessingInfo(TypedDict):
     """Information about a file to process from SQS"""
 
-    input_zip_uri: str
+    input_csv_uri: str
     receipt_handle: str
     message_id: str
     bucket_name: str
@@ -69,6 +82,10 @@ def run_command(cmd: list[str], cwd: str, timeout: int = 300) -> subprocess.Comp
     """Execute a command with timeout and error handling"""
     logger.info(f"Running command: {' '.join(cmd)}")
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, cwd=cwd)
+    if result.stdout:
+        logger.info(f"Command stdout: {result.stdout}")
+    if result.stderr:
+        logger.error(f"Command stderr: {result.stderr}")
     if result.returncode != 0:
         errors_csv = Path(cwd) / "submit_errors.csv"
         if errors_csv.exists():
@@ -149,6 +166,8 @@ def find_file_with_extension(directory: Path, extension: str) -> Path | None:
 # Task implementations
 
 
+
+
 @task(retries=2, retry_delay=timedelta(seconds=30))
 def parse_sqs_messages(messages_input: Any) -> list[FileProcessingInfo]:
     """Parse SQS messages to extract S3 event information"""
@@ -184,10 +203,14 @@ def parse_sqs_messages(messages_input: Any) -> list[FileProcessingInfo]:
             return []
 
     files_to_process: list[FileProcessingInfo] = []
+    original_messages = []
 
     for message in messages:
         try:
-            body = json.loads(message.get("Body", "{}"))
+            body = json.loads(message["Body"])
+            
+            # Store original message body for requeuing
+            original_messages.append(message)
 
             # Handle S3 event notification format
             if "Records" in body:
@@ -198,10 +221,10 @@ def parse_sqs_messages(messages_input: Any) -> list[FileProcessingInfo]:
                         object_key = s3_info["object"]["key"]
 
                         # S3 event notifications already filter by prefix and suffix
-                        # We just need to validate it's a .zip file as a safety check
-                        if object_key.endswith(".zip"):
+                        # We just need to validate it's a .csv file as a safety check
+                        if object_key.endswith(".csv"):
                             file_info = FileProcessingInfo(
-                                input_zip_uri=f"s3://{bucket_name}/{object_key}",
+                                input_csv_uri=f"s3://{bucket_name}/{object_key}",
                                 receipt_handle=message["ReceiptHandle"],
                                 message_id=message["MessageId"],
                                 bucket_name=bucket_name,
@@ -210,10 +233,15 @@ def parse_sqs_messages(messages_input: Any) -> list[FileProcessingInfo]:
                             files_to_process.append(file_info)
                             logger.info(f"Found file to process: {object_key}")
                         else:
-                            logger.info(f"Skipping non-zip file: {object_key}")
+                            logger.info(f"Skipping non-csv file: {object_key}")
         except Exception as e:
             logger.error(f"Error parsing message {message.get('MessageId', 'unknown')}: {str(e)}")
             continue
+
+    # Store original messages in XCom for requeuing
+    if original_messages:
+        ctx = get_current_context()
+        ctx['ti'].xcom_push(key='original_messages', value=original_messages)
 
     logger.info(f"Total files to process: {len(files_to_process)}")
     return files_to_process
@@ -229,17 +257,18 @@ def process_single_file(file_info: dict):
         output_base_uri = Variable.get("elephant_output_base_uri", default_var="s3://elephant-outputs")
 
         # Create a unique run ID with timestamp, message ID, and UUID to prevent any conflicts
-        from datetime import datetime
+        from datetime import datetime, timezone
         import uuid
 
-        timestamp = datetime.utcnow().isoformat()
+        timestamp = datetime.now(tz=timezone.utc).isoformat()
         unique_suffix = str(uuid.uuid4())[:8]
         run_id = f"{timestamp}/{unique_suffix}"
         logger.info(f"Run ID: {run_id}")
-        logger.info(f"Processing file: {file_data['input_zip_uri']}")
+        logger.info(f"Processing file: {file_data['input_csv_uri']}")
+        logger.info(f"Message ID: {file_data['message_id']}")
 
         state = WorkflowState(
-            input_zip_uri=file_data["input_zip_uri"],
+            input_csv_uri=file_data["input_csv_uri"],
             output_base_uri=output_base_uri.rstrip("/"),
             run_id=run_id,
             seed_output_uri=None,
@@ -254,6 +283,10 @@ def process_single_file(file_info: dict):
             submission_result=None,
             error=None,
             error_step=None,
+            county_prepared_input_uri=None,
+            original_message_body=None,  # Not needed for operator-based approach
+            message_id=file_data.get("message_id"),
+            queue_name=None,  # Not needed for operator-based approach
         )
         return state
 
@@ -308,7 +341,7 @@ def process_single_file(file_info: dict):
 
                 # Upload the CSV to S3 for the submit task
                 run_id_clean = state["run_id"].replace(":", "_").replace("+", "_")
-                input_object_key = state["input_zip_uri"].split("/")[-1]
+                input_object_key = state["input_csv_uri"].split("/")[-1]
                 submission_csv_s3_uri = (
                     f"{state['output_base_uri']}/{run_id_clean}/{input_object_key}/submission_ready.csv"
                 )
@@ -328,7 +361,7 @@ def process_single_file(file_info: dict):
                 }
                 error_path = Path(tmpdir) / "error.json"
                 error_path.write_text(json.dumps(error_log))
-                input_object_key = state["input_zip_uri"].split("/")[-1]
+                input_object_key = state["input_csv_uri"].split("/")[-1]
                 error_s3_uri = (
                     f"{state['output_base_uri']}/{state['run_id']}/{input_object_key}/errors/upload_error.json"
                 )
@@ -384,6 +417,13 @@ def process_single_file(file_info: dict):
 
                 result = run_command(cmd, timeout=600, cwd=str(tmp_path))
 
+                with open(tmp_path / "transaction-status.csv", "r") as f:
+                    print(f.read())
+                with open(tmp_path / "submit_errors.csv", "r") as f:
+                    print(f.read())
+                with open(tmp_path / "submit_warnings.csv", "r") as f:
+                    print(f.read())
+
                 submission_result = {
                     "status": "success",
                     "stdout": result.stdout,
@@ -393,7 +433,7 @@ def process_single_file(file_info: dict):
 
                 logger.info("Uploading submission logs")
                 run_id_clean = state["run_id"].replace(":", "_").replace("+", "_")
-                input_object_key = state["input_zip_uri"].split("/")[-1]
+                input_object_key = state["input_csv_uri"].split("/")[-1]
 
                 submission_log_path = tmp_path / "submission_log.json"
                 submission_log_path.write_text(json.dumps(submission_result, indent=2))
@@ -417,7 +457,7 @@ def process_single_file(file_info: dict):
                 }
                 error_path = Path(tmpdir) / "error.json"
                 error_path.write_text(json.dumps(error_log))
-                input_object_key = state["input_zip_uri"].split("/")[-1]
+                input_object_key = state["input_csv_uri"].split("/")[-1]
                 error_s3_uri = (
                     f"{state['output_base_uri']}/{state['run_id']}/{input_object_key}/errors/submit_error.json"
                 )
@@ -434,7 +474,7 @@ def process_single_file(file_info: dict):
                 tmp_path = Path(tmpdir)
 
                 # Consistently extract the input object key (filename)
-                input_object_key = state["input_zip_uri"].split("/")[-1]
+                input_object_key = state["input_csv_uri"].split("/")[-1]
 
                 # Download outputs from S3
                 logger.info("Downloading validated outputs from S3")
@@ -576,7 +616,7 @@ def process_single_file(file_info: dict):
                 }
                 error_path = Path(tmpdir) / "error.json"
                 error_path.write_text(json.dumps(error_log))
-                input_object_key = state["input_zip_uri"].split("/")[-1]
+                input_object_key = state["input_csv_uri"].split("/")[-1]
                 error_s3_uri = f"{state['output_base_uri']}/{state['run_id']}/{input_object_key}/errors/hash_error.json"
                 upload_to_s3(error_path, error_s3_uri)
                 raise
@@ -595,7 +635,7 @@ def process_single_file(file_info: dict):
         with tempfile.TemporaryDirectory() as tmpdir:
             try:
                 tmp_path = Path(tmpdir)
-                input_object_key = state["input_zip_uri"].split("/")[-1]
+                input_object_key = state["input_csv_uri"].split("/")[-1]
 
                 # Required secret for upload to Pinata
                 pinata_jwt = Variable.get("elephant_pinata_jwt")
@@ -695,7 +735,7 @@ def process_single_file(file_info: dict):
                 }
                 error_path = Path(tmpdir) / "error.json"
                 error_path.write_text(json.dumps(error_log))
-                input_object_key = state["input_zip_uri"].split("/")[-1]
+                input_object_key = state["input_csv_uri"].split("/")[-1]
                 error_s3_uri = f"{state['output_base_uri']}/{state['run_id']}/{input_object_key}/errors/upload_hashed_results_error.json"
                 upload_to_s3(error_path, error_s3_uri)
                 raise
@@ -712,12 +752,15 @@ def process_single_file(file_info: dict):
         with tempfile.TemporaryDirectory() as tmpdir:
             try:
                 tmp_path = Path(tmpdir)
-                input_object_key = state["input_zip_uri"].split("/")[-1]
+                input_object_key = state["input_csv_uri"].split("/")[-1]
 
                 # Download input
-                logger.info("Downloading input zip for seed transform")
-                input_zip_path = tmp_path / input_object_key / "input.zip"
-                download_from_s3(state["input_zip_uri"], input_zip_path)
+                logger.info("Downloading input CSV for seed transform")
+                input_csv_path = tmp_path / "seed.csv"
+                download_from_s3(state["input_csv_uri"], input_csv_path)
+                input_zip_path = tmp_path / "input.zip"
+                with zipfile.ZipFile(input_zip_path, "w") as zipf:
+                    zipf.write(input_csv_path, "seed.csv")
 
                 # Transform the seed
                 logger.info("Transforming seed")
@@ -770,7 +813,7 @@ def process_single_file(file_info: dict):
                 }
                 error_path = Path(tmpdir) / "error.json"
                 error_path.write_text(json.dumps(error_log))
-                input_object_key = state["input_zip_uri"].split("/")[-1]
+                input_object_key = state["input_csv_uri"].split("/")[-1]
                 error_s3_uri = f"{state['output_base_uri']}/{state['run_id']}/{input_object_key}/errors/transform_seed_error.json"
                 upload_to_s3(error_path, error_s3_uri)
                 raise
@@ -801,12 +844,26 @@ def process_single_file(file_info: dict):
             if not state.get("seed_output_uri"):
                 raise Exception("Missing seed_output_uri in state")
 
-            input_object_key = state["input_zip_uri"].split("/")[-1]
-            run_id_clean = state["run_id"].replace(":", "_").replace("+", "_")
-            output_prefix = f"{state['output_base_uri']}/{run_id_clean}/{input_object_key}/county_prep"
 
+            with tempfile.TemporaryDirectory() as tmpdir:
+                tmp_path = Path(tmpdir)
+                input_object_key = state["input_csv_uri"].split("/")[-1]
+                run_id_clean = state["run_id"].replace(":", "_").replace("+", "_")
+                output_prefix = f"{state['output_base_uri']}/{run_id_clean}/{input_object_key}/county_prep"
+                seed_output_uri = tmp_path / "seed_output.zip"
+                download_from_s3(state["seed_output_uri"], seed_output_uri)
+                with zipfile.ZipFile(seed_output_uri, "r") as zipf:
+                    zipf.extractall(tmp_path)
+                
+                print(os.listdir(tmp_path))
+                input_zip = tmp_path / "county_prep_input.zip"
+                with zipfile.ZipFile(input_zip, "w") as zipf:
+                    zipf.write(tmp_path / "data/unnormalized_address.json", "unnormalized_address.json")
+                    zipf.write(tmp_path / "data/property_seed.json", "property_seed.json")
+                input_s3_uri = f"{state['output_base_uri']}/{run_id_clean}/{input_object_key}/county_prep/input.zip"
+                upload_to_s3(input_zip, input_s3_uri)
             event = {
-                "input_s3_uri": state["seed_output_uri"],
+                "input_s3_uri": input_s3_uri,
                 "output_s3_uri_prefix": output_prefix,
                 "browser": True,
             }
@@ -861,7 +918,7 @@ def process_single_file(file_info: dict):
         with tempfile.TemporaryDirectory() as tmpdir:
             try:
                 tmp_path = Path(tmpdir)
-                input_object_key = state["input_zip_uri"].split("/")[-1]
+                input_object_key = state["input_csv_uri"].split("/")[-1]
 
                 prepared_uri = state.get("county_prepared_input_uri")
                 if not prepared_uri:
@@ -932,14 +989,15 @@ def process_single_file(file_info: dict):
                 }
                 error_path = Path(tmpdir) / "error.json"
                 error_path.write_text(json.dumps(error_log))
-                input_object_key = state["input_zip_uri"].split("/")[-1]
+                input_object_key = state["input_csv_uri"].split("/")[-1]
                 error_s3_uri = f"{state['output_base_uri']}/{state['run_id']}/{input_object_key}/errors/transform_county_error.json"
                 upload_to_s3(error_path, error_s3_uri)
                 raise
 
     # Initialize the workflow state and chain the tasks
-    # Pass file_info to the first task, then chain the rest
     state = initialize_state(file_info)
+    
+    # Chain all processing tasks
     state = transform_seed(state)
     state = prepare_county_via_lambda(state)
     state = transform_county(state)
@@ -947,18 +1005,43 @@ def process_single_file(file_info: dict):
     state = upload_hashed_results(state)
     state = prepare_submission(state)
     final_state = submit_to_blockchain(state)
+    
     return final_state
 
 
 # Create the DAG
+
+def dag_success_callback(context):
+    """DAG-level success callback to requeue message for next processing"""
+    logger.info(f"DAG {context['dag'].dag_id} completed successfully at {context['ts']}")
+    
+    # Get the original message from XCom
+    dag_run = context['dag_run']
+    message_info = dag_run.get_task_instance('poll_sqs_queue').xcom_pull(key='original_message')
+    
+    if message_info:
+        # Trigger a requeue task (this will be handled via separate task)
+        logger.info("Will requeue message for continued processing")
+    
+def dag_failure_callback(context):
+    """DAG-level failure callback to requeue message with delay"""
+    logger.error(f"DAG {context['dag'].dag_id} failed at {context['ts']}")
+    
+    # Get the original message from XCom  
+    dag_run = context['dag_run']
+    message_info = dag_run.get_task_instance('poll_sqs_queue').xcom_pull(key='original_message')
+    
+    if message_info:
+        # Trigger a requeue task with delay (this will be handled via separate task)
+        logger.info("Will requeue message with delay for retry")
 
 default_args = {
     "owner": "elephant",
     "depends_on_past": False,
     "email_on_failure": True,
     "email_on_retry": False,
-    "retries": 2,
-    "retry_delay": timedelta(minutes=5),
+    "retries": 1,  # Reduced retries since we handle requeuing via SQS
+    "retry_delay": timedelta(minutes=2),
 }
 
 with DAG(
@@ -971,15 +1054,17 @@ with DAG(
     max_active_runs=100,
     tags=["elephant", "sqs-triggered", "production"],
     doc_md=__doc__,
+    on_success_callback=dag_success_callback,
+    on_failure_callback=dag_failure_callback,
 ) as dag:
     # Poll SQS for messages
     sqs_sensor = SqsSensor(
         task_id="poll_sqs_queue",
         sqs_queue="{{ var.value.elephant_sqs_queue_url }}",
-        max_messages=int(Variable.get("elephant_batch_size", default_var=10)),
+        max_messages=int(Variable.get("elephant_batch_size", default_var=1)),
         num_batches=1,
         wait_time_seconds=20,
-        visibility_timeout=3600,
+        visibility_timeout=3600,  # 1 hour visibility timeout
         aws_conn_id="aws_default",
         mode="poke",
         poke_interval=30,
@@ -987,15 +1072,34 @@ with DAG(
         soft_fail=True,
         do_xcom_push=True,
         retries=0,
-        delete_message_on_reception=True,
+        delete_message_on_reception=True,  # Keep auto-delete to prevent duplicates
     )
 
     # Parse SQS messages to extract file information from the sensor's XCom
-    # The SqsSensor pushes its result to XCom, we pass it directly to the next task
     files_to_process = parse_sqs_messages(sqs_sensor.output["messages"])
 
     # Process each file in parallel using dynamic task groups
     processing_results = process_single_file.expand(file_info=files_to_process)
+    
+    # Requeue operators for success and failure scenarios
+    requeue_on_success = SqsPublishOperator(
+        task_id="requeue_on_success",
+        sqs_queue="{{ var.value.elephant_sqs_queue_url }}",
+        message_content="{{ ti.xcom_pull(task_ids='parse_sqs_messages', key='original_messages')[0] if ti.xcom_pull(task_ids='parse_sqs_messages', key='original_messages') else '{}' }}",
+        trigger_rule=TriggerRule.ALL_SUCCESS,
+        delay_seconds=0,  # Immediate requeue on success
+    )
+    
+    requeue_on_failure = SqsPublishOperator(
+        task_id="requeue_on_failure", 
+        sqs_queue="{{ var.value.elephant_sqs_queue_url }}",
+        message_content="{{ ti.xcom_pull(task_ids='parse_sqs_messages', key='original_messages')[0] if ti.xcom_pull(task_ids='parse_sqs_messages', key='original_messages') else '{}' }}",
+        trigger_rule=TriggerRule.ONE_FAILED,
+        delay_seconds=300,  # 5 minute delay on failure
+    )
+    
+    # Set up dependencies
+    processing_results >> [requeue_on_success, requeue_on_failure]
 
 
 if __name__ == "__main__":
