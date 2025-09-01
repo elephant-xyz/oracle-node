@@ -1,106 +1,125 @@
 **Goal**
 
-- Deploy an MWAA (Managed Airflow) environment quickly, then iterate on transform scripts with a single command.
+- Get MWAA (Managed Airflow) running fast, deploy your own transform scripts, and run the workflow with minimal steps.
 
-**Who This Is For**
+### Prerequisites
 
-- Engineers who want a minimal, repeatable path to run and update a production-ready DAG without deep AWS setup.
+- AWS account with permissions to create CloudFormation stacks (VPC, S3, SQS, MWAA, IAM, Logs)
+- Tools: `aws` CLI v2, `jq`, `zip`, `curl`, `uv`, `sam` CLI
+- Configure AWS: run `aws configure` and verify with `aws sts get-caller-identity`
 
-**Step 1 — AWS Account and Access**
+### 1) Deploy infrastructure (one-time)
 
-- Use an AWS account with permissions to create CloudFormation stacks (creates VPC, S3, SQS, MWAA, IAM, Logs).
-- If you use multiple accounts, set `AWS_PROFILE` for commands below.
+Run:
 
-**Step 2 — Install Tools**
+```bash
+./scripts/deploy-infra.sh
+```
 
-- `aws` CLI v2
-- `jq`, `zip`, `curl`
-- `uv` (fast Python dependency resolver): https://docs.astral.sh/uv/getting-started/installation/
+Optional:
 
-**Step 3 — Configure AWS CLI**
+- Set `STACK_NAME` (default: `oracle-node`) and `MWAA_ENV_NAME` (default: `<STACK_NAME>-MwaaEnvironment`).
 
-- Run: `aws configure`
-- Provide Access Key, Secret, default region (e.g., `us-east-1`), and default output.
-- Verify: `aws sts get-caller-identity`
+This creates MWAA, VPC, S3, SQS, Lambdas, IAM, and CloudWatch. At the end it prints the Airflow UI URL and environment bucket.
 
-**Step 4 — Clone and Enter the Project**
+### 2) Add your transform scripts (replace the samples)
 
-- `git clone <this-repo>`
-- `cd <repo>`
+- Put your files under `transform/` (replace any existing examples in that folder).
 
-**Step 5 — Deploy Infrastructure (one-time)**
+### 3) Deploy DAGs and your transforms to MWAA
 
-- Required input:
-  - `SOURCE_S3_BUCKET_ARN` — the S3 bucket that will emit ObjectCreated events (format: `arn:aws:s3:::bucket-name`). Same-account or cross-account both work.
-- Minimal command:
-  - `SOURCE_S3_BUCKET_ARN=arn:aws:s3:::your-source-bucket ./scripts/deploy-infra.sh`
-- Optional settings (use env vars):
-  - `STACK_NAME=elephant-mwaa` (default)
-  - `MWAA_ENV_NAME=<STACK_NAME>-MwaaEnvironment` (default)
-- Duration: ~15–30 minutes on first create. The script prints:
-  - Airflow UI URL
-  - MWAA Environment Name
-  - S3 bucket used for DAGs and artifacts
+Run:
 
-**Step 6 — Open Airflow UI**
+```bash
+./scripts/deploy_to_mwaa.sh
+```
 
-- From the script output, open the printed UI URL.
-- If you need to re-fetch later:
-  - `aws cloudformation describe-stacks --stack-name ${STACK_NAME:-elephant-mwaa} --query "Stacks[0].Outputs[?OutputKey=='MwaaApacheAirflowUI'].OutputValue" --output text`
-- Authentication uses your AWS IAM identity (via MWAA’s default setup).
+What it does:
 
-**Step 7 — One-Time Airflow Variables**
+- Syncs `dags/` to MWAA
+- Zips `transform/` to `build/transforms.zip`, uploads to `s3://<EnvironmentBucketName>/scripts/transforms.zip`
+- Sets Airflow variable `elephant_scripts_s3_uri` to that S3 path
 
-- Go to Airflow UI → Admin → Variables and set:
-  - `elephant_sqs_queue_url`: value from stack output `MwaaSqsQueueUrl`.
-  - `elephant_output_base_uri`: e.g., `s3://<EnvironmentBucketName>/outputs`
-  - For submit/hash features:
-    - `elephant_pinata_jwt`
-    - `elephant_domain`, `elephant_api_key`, `elephant_oracle_key_id`, `elephant_from_address`, `elephant_rpc_url`
+Tip: To update only transforms later, run `./scripts/update-transforms.sh`.
 
-Note: `elephant_scripts_s3_uri` is set automatically in Step 9 when you upload transforms.
+### 4) Start the Step Function (seed SQS with your bucket)
 
-**Step 8 — Upload the DAG**
+Provide the source S3 bucket name containing your input files:
 
-- Push the DAG to MWAA’s S3 bucket:
-  - `./scripts/sync-dags.sh`
+```bash
+./scripts/start-step-function.sh <your-source-bucket>
+```
 
-**Step 9 — Upload Transforms (repeat often)**
+This seeds messages to the SQS queue that the DAG polls.
 
-- Place/update files under `transforms/`.
-- Run:
-  - `./scripts/update-transforms.sh`
-- What it does:
-  - Zips `transforms/` to `s3://<EnvironmentBucketName>/scripts/transforms.zip`
-  - Updates Airflow variable `elephant_scripts_s3_uri` to point to that zip
+### 5) Open the Airflow UI
 
-**Step 10 — Connect Your Source Data (S3 → SQS)**
+- Use the URL printed by the deploy script, or fetch it any time:
 
-- Configure your source S3 bucket to send ObjectCreated events for `.zip` files to the stack’s SQS queue.
-- Get queue info:
-  - URL: `aws cloudformation describe-stacks --stack-name ${STACK_NAME:-elephant-mwaa} --query "Stacks[0].Outputs[?OutputKey=='MwaaSqsQueueUrl'].OutputValue" --output text`
-  - ARN: `aws cloudformation describe-stacks --stack-name ${STACK_NAME:-elephant-mwaa} --query "Stacks[0].Outputs[?OutputKey=='MwaaSqsQueueArn'].OutputValue" --output text`
-- Example S3 event config (same-account):
-  - `aws s3api put-bucket-notification-configuration --bucket <source-bucket> --notification-configuration '{"QueueConfigurations":[{"QueueArn":"<MwaaSqsQueueArn>","Events":["s3:ObjectCreated:*"],"Filter":{"Key":{"FilterRules":[{"Name":"suffix","Value":".zip"}]}}}]}'`
-- Cross-account: use the same `SOURCE_S3_BUCKET_ARN` (from Step 5) pointing to the source bucket in the other account, then configure events on that bucket.
+```bash
+aws cloudformation describe-stacks \
+  --stack-name ${STACK_NAME:-oracle-node} \
+  --query "Stacks[0].Outputs[?OutputKey=='MwaaApacheAirflowUI'].OutputValue" \
+  --output text
+```
 
-**Step 11 — Run and Monitor**
+Authentication uses your AWS IAM identity.
 
-- The DAG (`elephant_workflow`) polls the SQS queue for new `.zip` events.
-- Watch runs and task logs in the Airflow UI.
-- CloudWatch logs are enabled for all components for deeper debugging.
+### 6) Set required Airflow Variables (Airflow 2.10.3 UI)
 
-**Everyday Updates**
+Exact clicks:
 
-- Update transforms: `./scripts/update-transforms.sh` (fast and frequent)
+1. In the top navigation, click "Admin" → "Variables".
+2. Click the "+" (Create) button.
+3. Add each variable (Key → Value), then click "Save". Repeat for all keys:
+   - `elephant_sqs_queue_url` → value from stack output `MwaaSqsQueueUrl`
+   - `elephant_output_base_uri` → `s3://<EnvironmentBucketName>/outputs`
+   - `elephant_domain`
+   - `elephant_api_key`
+   - `elephant_oracle_key_id`
+   - `elephant_from_address`
+   - `elephant_rpc_url`
+   - `elephant_pinata_jwt`
+
+Notes:
+
+- `elephant_scripts_s3_uri` is set automatically by step 3.
+- You can also re-run `./scripts/deploy_to_mwaa.sh` with environment variables set to auto-populate these.
+
+### 7) Enable the DAG
+
+In the Airflow UI:
+
+1. Click "DAGs" in the top left.
+2. Find `elephant_workflow`.
+3. Toggle the switch to "On".
+
+Optional: Click the play ▶ icon to trigger a run immediately.
+
+### 8) Control concurrency
+
+- In Airflow Variables, set `elephant_batch_size` to control how many SQS messages are processed per poll (default: `1`).
+- For overall DAG parallelism across runs, edit `dags/elephant_workflow.py` and adjust `max_active_runs` (default: `100`), then run `./scripts/sync-dags.sh`.
+
+### 9) View logs inside Airflow
+
+To see task logs for a run:
+
+1. Open `DAGs` → click `elephant_workflow`.
+2. In the Grid view, click a task square.
+3. Click "Log" to view live/archived logs (use the dropdown to switch tries).
+
+Tip: For historical runs, go to "Browse" → "DAG Runs", open a run, then click a task → "Log".
+
+### Everyday updates
+
+- Update transforms: edit `transform/` → `./scripts/update-transforms.sh`
 - Update DAGs: edit `dags/` → `./scripts/sync-dags.sh`
 
-**Troubleshooting**
+### Troubleshooting
 
-- Permissions: confirm with `aws sts get-caller-identity` and ensure your role can create CFN, S3, SQS, MWAA, IAM, Logs.
-- Missing tools: install `aws`, `jq`, `zip`, and `curl` and ensure they’re on `PATH`.
-- Can’t reach UI: re-fetch URL (Step 6) and confirm you’re logged in with the same AWS account.
-- No runs: verify S3 event → SQS configuration and that `elephant_sqs_queue_url` is set in Airflow Variables.
-- Source bucket ARN error: If the script fails at create-stack, ensure `SOURCE_S3_BUCKET_ARN=arn:aws:s3:::your-bucket` is set and valid.
+- Can’t reach UI: fetch the UI URL again (step 5) and confirm you’re logged in with the right AWS account.
+- No runs: ensure the DAG is enabled and `elephant_sqs_queue_url` is set. Re-run step 4 to seed SQS.
+- Permissions: verify identity with `aws sts get-caller-identity` and that your role can create CFN, S3, SQS, MWAA, IAM, Logs.
 
-Deploy once. Iterate fast on transforms.
+Deploy once. Iterate quickly on your transforms.
