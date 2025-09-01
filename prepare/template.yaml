@@ -276,6 +276,10 @@ Resources:
   EnvironmentBucket:
     Type: AWS::S3::Bucket
     Properties:
+      LifecycleConfiguration:
+        Rules:
+          - ExpirationInDays: 14
+            Status: Enabled
       VersioningConfiguration:
         Status: Enabled
       PublicAccessBlockConfiguration:
@@ -462,10 +466,22 @@ Resources:
       #   celery.worker_autoscale: "25,1"
       #   core.dag_concurrency: "1000"
       DagS3Path: dags/
-      StartupScriptS3Path: !If [HasStartupScript, !Ref StartupScriptS3Path, !Ref "AWS::NoValue"]
-      StartupScriptS3ObjectVersion: !If [HasStartupScript, !Ref StartupScriptS3ObjectVersion, !Ref "AWS::NoValue"]
-      RequirementsS3Path: !If [HasRequirements, !Ref RequirementsS3Path, !Ref "AWS::NoValue"]
-      RequirementsS3ObjectVersion: !If [HasRequirements, !Ref RequirementsS3ObjectVersion, !Ref "AWS::NoValue"]
+      StartupScriptS3Path:
+        !If [HasStartupScript, !Ref StartupScriptS3Path, !Ref "AWS::NoValue"]
+      StartupScriptS3ObjectVersion:
+        !If [
+          HasStartupScript,
+          !Ref StartupScriptS3ObjectVersion,
+          !Ref "AWS::NoValue",
+        ]
+      RequirementsS3Path:
+        !If [HasRequirements, !Ref RequirementsS3Path, !Ref "AWS::NoValue"]
+      RequirementsS3ObjectVersion:
+        !If [
+          HasRequirements,
+          !Ref RequirementsS3ObjectVersion,
+          !Ref "AWS::NoValue",
+        ]
       EnvironmentClass: mw1.large
       NetworkConfiguration:
         SecurityGroupIds:
