@@ -56,10 +56,21 @@ Provide the source S3 bucket name containing your input files:
 ```
 
 This seeds messages to the SQS queue that the DAG polls.
+Use one of those buckets depending on the county you use. Those buckets already have the data you need.
 
-### 5) Open the Airflow UI
-
-- Use the URL printed by the deploy script, or fetch it any time:
+- elephant-input-breavard-county
+- elephant-input-broward-county
+- elephant-input-charlotte-county
+- elephant-input-duval-county
+- elephant-input-hillsborough-county
+- elephant-input-lake-county
+- elephant-input-lee-county
+- elephant-input-leon-county
+- elephant-input-manatee-county
+- elephant-input-palm-beach-county
+- elephant-input-pinellas-county
+- elephant-input-polk-county
+- elephant-input-santa-county
 
 ```bash
 aws cloudformation describe-stacks \
