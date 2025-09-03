@@ -9,7 +9,7 @@ warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
 err()  { echo -e "${RED}[ERROR]${NC} $*"; }
 
 # Config with defaults
-STACK_NAME="${STACK_NAME:-oracle-node}"
+STACK_NAME="${STACK_NAME:-elephant-oracle-node}"
 
 usage() {
     cat <<EOF
@@ -21,7 +21,7 @@ Arguments:
     bucket-name    Name of the S3 bucket to process
 
 Environment Variables:
-    STACK_NAME     CloudFormation stack name (default: oracle-node)
+    STACK_NAME     CloudFormation stack name (default: elephant-oracle-node)
 
 Example:
     $0 my-data-bucket
@@ -56,7 +56,7 @@ start_execution() {
     local bucket_name="$1"
     local step_function_arn="$2"
     local sqs_queue_url="$3"
-    local execution_name="oracle-node-queue-seeding"
+    local execution_name="elephant-oracle-node-queue-seeding"
 
     info "Starting Step Function execution: $execution_name"
     info "Step Function ARN: $step_function_arn"

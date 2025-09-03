@@ -259,6 +259,17 @@ Resources:
       RouteTableId: !Ref PrivateRouteTable2
       SubnetId: !Ref PrivateSubnet2
 
+  # S3 Gateway VPC Endpoint to avoid NAT charges for S3 access from private subnets
+  S3GatewayEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VPC
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.s3"
+      VpcEndpointType: Gateway
+      RouteTableIds:
+        - !Ref PrivateRouteTable1
+        - !Ref PrivateRouteTable2
+
   SecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
@@ -278,7 +289,7 @@ Resources:
     Properties:
       LifecycleConfiguration:
         Rules:
-          - ExpirationInDays: 14
+          - ExpirationInDays: 2
             Status: Enabled
       VersioningConfiguration:
         Status: Enabled
