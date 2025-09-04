@@ -388,7 +388,7 @@ Resources:
     Properties:
       LifecycleConfiguration:
         Rules:
-          - ExpirationInDays: 2
+          - ExpirationInDays: 14
             Status: Enabled
       VersioningConfiguration:
         Status: Enabled
