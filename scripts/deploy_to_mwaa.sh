@@ -11,7 +11,7 @@ info() { echo -e "${GREEN}[INFO]${NC} $*"; }
 warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
 err()  { echo -e "${RED}[ERROR]${NC} $*"; }
 
-STACK_NAME="${STACK_NAME:-oracle-node}"
+STACK_NAME="${STACK_NAME:-elephant-oracle-node}"
 MWAA_ENV_NAME="${MWAA_ENV_NAME:-${STACK_NAME}-MwaaEnvironment}"
 
 echo -e "${GREEN}🚀 MWAA Deploy (DAGs + Transforms)${NC}"
