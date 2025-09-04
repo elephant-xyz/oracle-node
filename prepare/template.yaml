@@ -83,9 +83,17 @@ Parameters:
     Type: String
     Default: "*"
 
+  UseSingleNatGateway:
+    Description: Use a single NAT Gateway for cost optimization (less resilient but cheaper)
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+
 Conditions:
   HasStartupScript: !Not [!Equals [!Ref StartupScriptS3ObjectVersion, ""]]
   HasRequirements: !Not [!Equals [!Ref RequirementsS3ObjectVersion, ""]]
+  UseSingleNat: !Equals [!Ref UseSingleNatGateway, "true"]
+  UseDualNat: !Not [!Equals [!Ref UseSingleNatGateway, "true"]]
 
 Globals:
   Function:
@@ -173,6 +181,7 @@ Resources:
 
   NatGateway2EIP:
     Type: AWS::EC2::EIP
+    Condition: UseDualNat
     DependsOn: InternetGatewayAttachment
     Properties:
       Domain: vpc
@@ -185,6 +194,7 @@ Resources:
 
   NatGateway2:
     Type: AWS::EC2::NatGateway
+    Condition: UseDualNat
     Properties:
       AllocationId: !GetAtt NatGateway2EIP.AllocationId
       SubnetId: !Ref PublicSubnet2
@@ -251,13 +261,113 @@ Resources:
     Properties:
       RouteTableId: !Ref PrivateRouteTable2
       DestinationCidrBlock: 0.0.0.0/0
-      NatGatewayId: !Ref NatGateway2
+      NatGatewayId: !If [UseSingleNat, !Ref NatGateway1, !Ref NatGateway2]
 
   PrivateSubnet2RouteTableAssociation:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
       RouteTableId: !Ref PrivateRouteTable2
       SubnetId: !Ref PrivateSubnet2
+
+  # S3 Gateway VPC Endpoint to avoid NAT charges for S3 access from private subnets
+  S3GatewayEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VPC
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.s3"
+      VpcEndpointType: Gateway
+      RouteTableIds:
+        - !Ref PrivateRouteTable1
+        - !Ref PrivateRouteTable2
+
+  # SQS Interface VPC Endpoint to avoid NAT charges for SQS access
+  SQSInterfaceEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VPC
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.sqs"
+      VpcEndpointType: Interface
+      SubnetIds:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+      SecurityGroupIds:
+        - !Ref SecurityGroup
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: "*"
+            Action:
+              - sqs:*
+            Resource: "*"
+
+  # Lambda Interface VPC Endpoint to avoid NAT charges for Lambda invocations
+  LambdaInterfaceEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VPC
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.lambda"
+      VpcEndpointType: Interface
+      SubnetIds:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+      SecurityGroupIds:
+        - !Ref SecurityGroup
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: "*"
+            Action:
+              - lambda:InvokeFunction
+            Resource: "*"
+
+  # SSM Interface VPC Endpoint to avoid NAT charges for SSM parameter access
+  SSMInterfaceEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VPC
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.ssm"
+      VpcEndpointType: Interface
+      SubnetIds:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+      SecurityGroupIds:
+        - !Ref SecurityGroup
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: "*"
+            Action:
+              - ssm:GetParameter
+              - ssm:GetParameters
+            Resource: "*"
+
+  # CloudWatch Logs Interface VPC Endpoint to avoid NAT charges for logging
+  CloudWatchLogsInterfaceEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VPC
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.logs"
+      VpcEndpointType: Interface
+      SubnetIds:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+      SecurityGroupIds:
+        - !Ref SecurityGroup
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: "*"
+            Action:
+              - logs:CreateLogGroup
+              - logs:CreateLogStream
+              - logs:PutLogEvents
+              - logs:DescribeLogGroups
+              - logs:DescribeLogStreams
+            Resource: "*"
 
   SecurityGroup:
     Type: AWS::EC2::SecurityGroup
