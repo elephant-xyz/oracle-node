@@ -455,7 +455,7 @@ def process_single_file(file_info: dict):
                     f"{state['output_base_uri']}/{state['run_id']}/{input_object_key}/errors/submit_error.json"
                 )
                 upload_to_s3(error_path, error_s3_uri)
-                raise
+                raise AirflowFailException(f"Blockchain submission failed: {str(e)}")
 
         return state
 
