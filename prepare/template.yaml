@@ -876,9 +876,29 @@ Resources:
               "End": true
             },
             "ReturnResult": {
+              "Type": "Choice",
+              "Choices": [
+                {
+                  "Variable": "$.list.NextContinuationToken",
+                  "IsPresent": true,
+                  "Next": "ReturnWithToken"
+                }
+              ],
+              "Default": "ReturnWithoutToken"
+            },
+            "ReturnWithToken": {
               "Type": "Pass",
               "Parameters": {
                 "nextToken.$": "$.list.NextContinuationToken",
+                "count.$": "States.ArrayLength($.list.Contents)",
+                "isTruncated.$": "$.list.IsTruncated"
+              },
+              "End": true
+            },
+            "ReturnWithoutToken": {
+              "Type": "Pass",
+              "Parameters": {
+                "nextToken": null,
                 "count.$": "States.ArrayLength($.list.Contents)",
                 "isTruncated.$": "$.list.IsTruncated"
               },
