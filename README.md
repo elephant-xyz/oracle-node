@@ -74,7 +74,7 @@ Use one of those buckets depending on the county you use. Those buckets already 
 
 ```bash
 aws cloudformation describe-stacks \
-  --stack-name ${STACK_NAME:-oracle-node} \
+  --stack-name ${STACK_NAME:-elephant-oracle-node} \
   --query "Stacks[0].Outputs[?OutputKey=='MwaaApacheAirflowUI'].OutputValue" \
   --output text
 ```
