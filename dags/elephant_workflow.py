@@ -410,12 +410,44 @@ def process_single_file(file_info: dict):
 
                 result = run_command(cmd, timeout=600, cwd=str(tmp_path))
 
-                with open(tmp_path / "transaction-status.csv", "r") as f:
-                    print(f.read())
-                with open(tmp_path / "submit_errors.csv", "r") as f:
-                    print(f.read())
-                with open(tmp_path / "submit_warnings.csv", "r") as f:
-                    print(f.read())
+                # Check for submission failures in CSV files
+                transaction_status_file = tmp_path / "transaction-status.csv"
+                submit_errors_file = tmp_path / "submit_errors.csv"
+                
+                has_failures = False
+                failure_details = []
+                
+                # Check transaction status for failed transactions
+                if transaction_status_file.exists():
+                    with open(transaction_status_file, "r") as f:
+                        transaction_content = f.read()
+                        print(transaction_content)
+                        # Check if any transactions failed
+                        if "failed" in transaction_content.lower():
+                            has_failures = True
+                            failure_details.append("Failed transactions detected in transaction-status.csv")
+                
+                # Check submit errors file for validation errors
+                if submit_errors_file.exists():
+                    with open(submit_errors_file, "r") as f:
+                        errors_content = f.read()
+                        print(errors_content)
+                        # Check if there are actual error entries (more than just header)
+                        error_lines = [line.strip() for line in errors_content.split('\n') if line.strip()]
+                        if len(error_lines) > 1:  # More than just header
+                            has_failures = True
+                            failure_details.append("Submission errors detected in submit_errors.csv")
+                
+                # Print warnings for logging
+                submit_warnings_file = tmp_path / "submit_warnings.csv"
+                if submit_warnings_file.exists():
+                    with open(submit_warnings_file, "r") as f:
+                        print(f.read())
+
+                # If failures detected, raise exception to mark task as failed
+                if has_failures:
+                    failure_message = "; ".join(failure_details)
+                    raise Exception(f"Blockchain submission failed: {failure_message}")
 
                 submission_result = {
                     "status": "success",
