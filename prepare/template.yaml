@@ -121,7 +121,7 @@ Parameters:
     Type: String
     Default: elephant-workflow-queue
   WorkflowStarterReservedConcurrency:
-    Description: Max concurrent SQS messages to process (limits workflow concurrency)
+    Description: Max concurrent SQS messages to process via EventSourceMapping ScalingConfig
     Type: Number
     Default: 5
   WorkflowStateMachineName:
@@ -757,7 +757,6 @@ Resources:
       CodeUri: ../workflow
       Handler: starter/index.handler
       Description: "SQS-triggered starter that sync-starts the Express state machine"
-      ReservedConcurrentExecutions: !Ref WorkflowStarterReservedConcurrency
       Policies:
         - AWSLambdaBasicExecutionRole
         - Version: "2012-10-17"
@@ -776,6 +775,8 @@ Resources:
             Queue: !GetAtt WorkflowSqsQueue.Arn
             BatchSize: 1
             MaximumBatchingWindowInSeconds: 0
+            ScalingConfig:
+              MaximumConcurrency: !Ref WorkflowStarterReservedConcurrency
 
   WorkflowPreProcessorFunction:
     Type: AWS::Serverless::Function
