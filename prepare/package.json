@@ -13,6 +13,6 @@
   "dependencies": {
     "@aws-sdk/client-lambda": "^3.879.0",
     "@aws-sdk/client-s3": "^3.879.0",
-    "@elephant-xyz/cli": "^1.31.0"
+    "@elephant-xyz/cli": "^1.31.11"
   }
 }

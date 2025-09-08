@@ -383,6 +383,59 @@ Resources:
       IpProtocol: "-1"
       SourceSecurityGroupId: !Ref SecurityGroup
 
+  #####################################################################################################################
+  # VPC Flow Logs
+  #####################################################################################################################
+
+  # CloudWatch Log Group for VPC Flow Logs
+  VPCFlowLogsGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/vpc/flowlogs/${AWS::StackName}"
+      RetentionInDays: 14
+      Tags:
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  # IAM Role for VPC Flow Logs
+  VPCFlowLogsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: vpc-flow-logs.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: VPCFlowLogsPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - logs:DescribeLogGroups
+                  - logs:DescribeLogStreams
+                Resource: !GetAtt VPCFlowLogsGroup.Arn
+
+  # VPC Flow Logs with enhanced format for richer insights
+  VPCFlowLogs:
+    Type: AWS::EC2::FlowLog
+    Properties:
+      ResourceType: VPC
+      ResourceId: !Ref VPC
+      TrafficType: ALL
+      LogDestinationType: cloud-watch-logs
+      LogGroupName: !Ref VPCFlowLogsGroup
+      DeliverLogsPermissionArn: !GetAtt VPCFlowLogsRole.Arn
+      LogFormat: "${version} ${account-id} ${interface-id} ${srcaddr} ${dstaddr} ${srcport} ${dstport} ${protocol} ${packets} ${bytes} ${start} ${end} ${action} ${log-status} ${vpc-id} ${subnet-id} ${instance-id} ${tcp-flags} ${type} ${pkt-srcaddr} ${pkt-dstaddr} ${region} ${az-id} ${pkt-src-aws-service} ${pkt-dst-aws-service} ${flow-direction} ${traffic-path}"
+      MaxAggregationInterval: 60
+
+
   EnvironmentBucket:
     Type: AWS::S3::Bucket
     Properties:
@@ -592,7 +645,7 @@ Resources:
           !Ref RequirementsS3ObjectVersion,
           !Ref "AWS::NoValue",
         ]
-      EnvironmentClass: mw1.large
+      EnvironmentClass: mw1.medium
       NetworkConfiguration:
         SecurityGroupIds:
           - !GetAtt SecurityGroup.GroupId
@@ -1074,3 +1127,9 @@ Outputs:
   S3ToSqsStateMachineName:
     Description: Name of the S3 to SQS processing Step Function
     Value: !GetAtt S3ToSqsStateMachine.Name
+  VPCFlowLogsGroupName:
+    Description: CloudWatch Log Group for VPC Flow Logs
+    Value: !Ref VPCFlowLogsGroup
+  VPCFlowLogsGroupArn:
+    Description: ARN of the CloudWatch Log Group for VPC Flow Logs
+    Value: !GetAtt VPCFlowLogsGroup.Arn
