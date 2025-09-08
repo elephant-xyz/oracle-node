@@ -17,6 +17,9 @@ PYPROJECT_FILE="infra/pyproject.toml"
 BUILD_DIR="infra/build"
 REQUIREMENTS_FILE="${BUILD_DIR}/requirements.txt"
 AIRFLOW_CONSTRAINTS_URL="https://raw.githubusercontent.com/apache/airflow/constraints-2.10.3/constraints-3.12.txt"
+WORKFLOW_DIR="workflow"
+TRANSFORMS_SRC_DIR="transform"
+TRANSFORMS_TARGET_ZIP="${WORKFLOW_DIR}/post/transforms.zip"
 
 mkdir -p "$BUILD_DIR"
 
@@ -77,7 +80,8 @@ sam_deploy_initial() {
     --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \
     --resolve-s3 \
     --no-confirm-changeset \
-    --no-fail-on-empty-changeset >/dev/null
+    --no-fail-on-empty-changeset \
+    --parameter-overrides ${PARAM_OVERRIDES:-} >/dev/null
 }
 
 sam_deploy_with_versions() {
@@ -91,10 +95,50 @@ sam_deploy_with_versions() {
     --no-confirm-changeset \
     --no-fail-on-empty-changeset \
     --parameter-overrides \
+      ${PARAM_OVERRIDES:-} \
       StartupScriptS3Path="startup.sh" \
       StartupScriptS3ObjectVersion="$script_ver" \
       RequirementsS3Path="requirements.txt" \
       RequirementsS3ObjectVersion="$req_ver" >/dev/null
+}
+
+compute_param_overrides() {
+  # Required secrets (fail if missing)
+  : "${ELEPHANT_DOMAIN?Set ELEPHANT_DOMAIN}"
+  : "${ELEPHANT_API_KEY?Set ELEPHANT_API_KEY}"
+  : "${ELEPHANT_ORACLE_KEY_ID?Set ELEPHANT_ORACLE_KEY_ID}"
+  : "${ELEPHANT_FROM_ADDRESS?Set ELEPHANT_FROM_ADDRESS}"
+  : "${ELEPHANT_RPC_URL?Set ELEPHANT_RPC_URL}"
+  : "${ELEPHANT_PINATA_JWT?Set ELEPHANT_PINATA_JWT}"
+
+  local parts=()
+  parts+=("ElephantDomain=\"$ELEPHANT_DOMAIN\"")
+  parts+=("ElephantApiKey=\"$ELEPHANT_API_KEY\"")
+  parts+=("ElephantOracleKeyId=\"$ELEPHANT_ORACLE_KEY_ID\"")
+  parts+=("ElephantFromAddress=\"$ELEPHANT_FROM_ADDRESS\"")
+  parts+=("ElephantRpcUrl=\"$ELEPHANT_RPC_URL\"")
+  parts+=("ElephantPinataJwt=\"$ELEPHANT_PINATA_JWT\"")
+
+  [[ -n "${WORKFLOW_QUEUE_NAME:-}" ]] && parts+=("WorkflowQueueName=\"$WORKFLOW_QUEUE_NAME\"")
+  [[ -n "${WORKFLOW_STARTER_RESERVED_CONCURRENCY:-}" ]] && parts+=("WorkflowStarterReservedConcurrency=\"$WORKFLOW_STARTER_RESERVED_CONCURRENCY\"")
+  [[ -n "${WORKFLOW_STATE_MACHINE_NAME:-}" ]] && parts+=("WorkflowStateMachineName=\"$WORKFLOW_STATE_MACHINE_NAME\"")
+
+  PARAM_OVERRIDES="${parts[*]}"
+}
+
+bundle_transforms_for_lambda() {
+  if [[ ! -d "$TRANSFORMS_SRC_DIR" ]]; then
+    warn "Transforms source dir not found: $TRANSFORMS_SRC_DIR (skipping bundle)"
+    return 0
+  fi
+  mkdir -p "$(dirname "$TRANSFORMS_TARGET_ZIP")"
+  local tmp_zip
+  tmp_zip=$(mktemp -t transforms.XXXXXX.zip)
+  info "Bundling transforms from $TRANSFORMS_SRC_DIR to $TRANSFORMS_TARGET_ZIP"
+  pushd "$TRANSFORMS_SRC_DIR" >/dev/null
+  zip -qr "$tmp_zip" .
+  popd >/dev/null
+  mv -f "$tmp_zip" "$TRANSFORMS_TARGET_ZIP"
 }
 
 set_airflow_vars() {
@@ -170,6 +214,9 @@ set_airflow_vars() {
 
 main() {
   check_prereqs
+
+  compute_param_overrides
+  bundle_transforms_for_lambda
 
   sam_build
   sam_deploy_initial
