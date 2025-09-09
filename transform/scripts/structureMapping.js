@@ -87,16 +87,16 @@ function extractGeneratedYear($) {
     return m ? parseInt(m[1], 10) : undefined;
 }
 
-function extractRoofYearFromPermits($) {
-    // Look in Permit Details table for a row where Permit Type contains 'Roof'
+function extractPropertyBuiltYear($) {
+    // Look for Year Built in property details tables
     let year;
-    $("#PermitDetails table.detailsTable tr").each((i, el) => {
+    $("table.appraisalAttributes tr").each((i, el) => {
         const tds = $(el).find("td");
-        if (tds.length >= 3) {
-            const type = $(tds[1]).text().trim();
-            const date = $(tds[2]).text().trim();
-            if (/\broof\b/i.test(type)) {
-                const m = date.match(/(\d{4})/);
+        if (tds.length >= 4) {
+            const desc = $(tds[0]).text().trim();
+            if (/Year Built/i.test(desc)) {
+                const yearText = $(tds[2]).text().trim();
+                const m = yearText.match(/(\d{4})/);
                 if (m) {
                     year = parseInt(m[1], 10);
                     return false; // break
@@ -107,12 +107,34 @@ function extractRoofYearFromPermits($) {
     return year;
 }
 
-function computeRoofAgeYears(genYear, roofYear) {
-    if (!genYear || !roofYear) return null;
-    const diff = genYear - roofYear;
-    if (diff < 1) return 1; // schema minimum 1
-    return diff;
+function extractRoofDateFromPermits($) {
+    // Look in Permit Details table for a row where Permit Type contains 'Roof'
+    let roofDate;
+    $("#PermitDetails table.detailsTable tr").each((i, el) => {
+        const tds = $(el).find("td");
+        if (tds.length >= 3) {
+            const type = $(tds[1]).text().trim();
+            const date = $(tds[2]).text().trim();
+            if (/\broof\b/i.test(type)) {
+                // Try to parse full date format (MM/DD/YYYY)
+                const fullDateMatch = date.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+                if (fullDateMatch) {
+                    const [, month, day, year] = fullDateMatch;
+                    roofDate = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+                    return false; // break
+                }
+                // Fallback to year only
+                const yearMatch = date.match(/(\d{4})/);
+                if (yearMatch) {
+                    roofDate = yearMatch[1];
+                    return false; // break
+                }
+            }
+        }
+    });
+    return roofDate;
 }
+
 
 function main() {
     const inputPath = path.resolve("input.html");
@@ -123,9 +145,11 @@ function main() {
     const style = detectStyle($);
     const attachment = detectAttachment($);
     const areas = extractAreas($);
-    const genYear = extractGeneratedYear($);
-    const roofPermitYear = extractRoofYearFromPermits($);
-    const roofAgeYears = computeRoofAgeYears(genYear, roofPermitYear);
+    const propertyBuiltYear = extractPropertyBuiltYear($);
+    const roofPermitDate = extractRoofDateFromPermits($);
+    
+    // Use roof permit date if available, otherwise use property built year
+    const roofDate = roofPermitDate || (propertyBuiltYear ? propertyBuiltYear.toString() : null);
 
     // Default null for most unknowns per schema enums
     const structure = {
@@ -151,7 +175,7 @@ function main() {
         roof_structure_material: null,
         roof_design_type: null,
         roof_condition: null,
-        roof_age_years: roofAgeYears ?? null,
+        roof_date: roofDate,
         gutters_material: null,
         gutters_condition: null,
         roof_material_type: null,
