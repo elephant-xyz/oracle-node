@@ -342,7 +342,7 @@ main() {
     else
         # Default mode: Use MwaaSqsQueue for MWAA workflow
         local sqs_queue_url
-        sqs_queue_url=$(get_sqs_queue_url)
+        sqs_queue_url=$(get_workflow_sqs_queue_url)
         if [[ -z "$sqs_queue_url" || "$sqs_queue_url" == "None" ]]; then
             err "Could not find SQS Queue URL in stack outputs"
             err "Make sure the stack is deployed and contains MwaaSqsQueueUrl output"

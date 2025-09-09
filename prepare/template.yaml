@@ -670,7 +670,7 @@ Resources:
       EphemeralStorage:
         Size: 1024
       MemorySize: 2048
-      CodeUri: .
+      CodeUri: lambdas/downloader
       Handler: index.handler
       Description: "Downloads data (granted full S3 access as requested)"
       Policies:
@@ -681,8 +681,8 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       MemorySize: 128
-      CodeUri: .
-      Handler: lambda-update.handler
+      CodeUri: lambdas/updater
+      Handler: index.handler
       Description: "Updates env var on DownloaderFunction and runs every minute."
       Environment:
         Variables:
@@ -747,17 +747,6 @@ Resources:
   # Workflow Lambdas (starter -> pre -> prepare -> post)
   #####################################################################################################################
 
-  FactSheetLayer:
-    Type: AWS::Serverless::LayerVersion
-    Properties:
-      LayerName: FactSheetLayer
-      Description: "CLI and libraries for fact-sheet generation"
-      ContentUri: layers/fact-sheet
-      CompatibleRuntimes:
-        - nodejs20.x
-      CompatibleArchitectures:
-        - arm64
-
   WorkflowStarterFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -765,8 +754,8 @@ Resources:
         - arm64
       MemorySize: 512
       Timeout: 60
-      CodeUri: ../workflow
-      Handler: starter/index.handler
+      CodeUri: ../workflow/lambdas/starter
+      Handler: index.handler
       Description: "SQS-triggered starter that sync-starts the Express state machine"
       Policies:
         - AWSLambdaBasicExecutionRole
@@ -798,15 +787,13 @@ Resources:
       Timeout: 300
       EphemeralStorage:
         Size: 1024
-      CodeUri: ../workflow
-      Handler: pre/index.handler
+      CodeUri: ../workflow/lambdas/pre
+      Handler: index.handler
       Description: "Prepares seed output and input.zip for prepare step"
       Policies:
         - AWSLambdaBasicExecutionRole
         - S3CrudPolicy:
             BucketName: !Ref EnvironmentBucket
-      Layers:
-        - !Ref FactSheetLayer
       Environment:
         Variables:
           OUTPUT_BASE_URI: !Sub "s3://${EnvironmentBucket}/outputs"
@@ -820,15 +807,13 @@ Resources:
       Timeout: 900
       EphemeralStorage:
         Size: 2048
-      CodeUri: ../workflow
-      Handler: post/index.handler
+      CodeUri: ../workflow/lambdas/post
+      Handler: index.handler
       Description: "Performs county transform, hash, upload, and submit"
       Policies:
         - AWSLambdaBasicExecutionRole
         - S3CrudPolicy:
             BucketName: !Ref EnvironmentBucket
-      Layers:
-        - !Ref FactSheetLayer
       Environment:
         Variables:
           OUTPUT_BASE_URI: !Sub "s3://${EnvironmentBucket}/outputs"
@@ -909,7 +894,6 @@ Resources:
                   - logs:DescribeLogGroups
                 Resource: "*"
 
-
   #####################################################################################################################
   # Step Function for S3 to SQS processing
   #####################################################################################################################
@@ -945,7 +929,9 @@ Resources:
                 Action:
                   - sqs:SendMessage
                   - sqs:GetQueueUrl
-                Resource: !GetAtt MwaaSqsQueue.Arn
+                Resource:
+                  - !GetAtt MwaaSqsQueue.Arn
+                  - !GetAtt WorkflowQueue.Arn
               - Effect: Allow
                 Action:
                   - states:StartExecution

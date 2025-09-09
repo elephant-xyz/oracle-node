@@ -148,68 +148,6 @@ bundle_transforms_for_lambda() {
   rm -rf "$tmp_dir"
 }
 
-# Build and package the fact-sheet CLI as a Lambda layer under prepare/layers/fact-sheet
-build_fact_sheet_layer() {
-  local repo ref cache_dir layer_dir tarball ver commit
-  repo="${FACT_SHEET_REPO:-https://github.com/elephant-xyz/fact-sheet-template.git}"
-  ref="${FACT_SHEET_REF:-main}"
-  cache_dir=".cache/fact-sheet-template"
-  layer_dir="prepare/layers/fact-sheet"
-
-  info "Preparing fact-sheet layer (repo: $repo ref: $ref)"
-  mkdir -p ".cache"
-
-  if [[ -d "$cache_dir/.git" ]]; then
-    info "Updating local cache at $cache_dir"
-    pushd "$cache_dir" >/dev/null
-    git fetch --all --tags >/dev/null 2>&1 || true
-    git checkout -f "$ref" >/dev/null 2>&1 || git checkout -f "origin/$ref" >/dev/null 2>&1 || true
-    git pull --ff-only >/dev/null 2>&1 || true
-  else
-    info "Cloning $repo to $cache_dir"
-    git clone "$repo" "$cache_dir" >/dev/null
-    pushd "$cache_dir" >/dev/null
-    git checkout -f "$ref" >/dev/null 2>&1 || git checkout -f "origin/$ref" >/dev/null 2>&1 || true
-  fi
-
-  commit=$(git rev-parse --short=12 HEAD 2>/dev/null || echo "unknown")
-  ver=$(node -p "require('./package.json').version" 2>/dev/null || echo "0.0.0")
-  info "fact-sheet commit: $commit version: $ver"
-
-  # Skip rebuild if existing packaged layer is already at the same commit (unless forced)
-  if [[ -f "$layer_dir/FACT_SHEET_BUILD.info" && -z "${FACT_SHEET_FORCE:-}" ]]; then
-    local existing_commit
-    existing_commit=$(awk -F= '/^commit=/{print $2}' "$layer_dir/FACT_SHEET_BUILD.info" 2>/dev/null || true)
-    if [[ "$existing_commit" == "$commit" && -f "$layer_dir/bin/fact-sheet" ]]; then
-      info "Fact-sheet layer up-to-date ($commit); skipping rebuild"
-      popd >/dev/null
-      return 0
-    fi
-  fi
-
-  # Build and pack the module
-  npm ci >/dev/null 2>&1 || npm install >/dev/null
-  npm run build >/dev/null
-  tarball=$(npm pack --silent)
-
-  popd >/dev/null
-
-  # Install packed tarball into layer structure without running scripts
-  rm -rf "$layer_dir"
-  mkdir -p "$layer_dir/nodejs" "$layer_dir/bin"
-  npm install --ignore-scripts --omit=dev --prefix "$layer_dir/nodejs" "$cache_dir/$tarball" >/dev/null
-
-  # Expose CLI in /opt/bin so it is on PATH in Lambda
-  if [[ -f "$layer_dir/nodejs/node_modules/.bin/fact-sheet" ]]; then
-    cp "$layer_dir/nodejs/node_modules/.bin/fact-sheet" "$layer_dir/bin/fact-sheet"
-    chmod +x "$layer_dir/bin/fact-sheet"
-  else
-    warn "fact-sheet binary not found after install"
-  fi
-
-  printf "ref=%s\ncommit=%s\nversion=%s\n" "$ref" "$commit" "$ver" >"$layer_dir/FACT_SHEET_BUILD.info"
-  info "Fact-sheet layer ready at $layer_dir (version $ver, $commit)"
-}
 
 # Check the Lambda "Concurrent executions" service quota and request an increase if it's 10
 ensure_lambda_concurrency_quota() {
@@ -336,9 +274,6 @@ main() {
 
   compute_param_overrides
   bundle_transforms_for_lambda
-
-  # Ensure the fact-sheet layer content is up-to-date before building SAM
-  build_fact_sheet_layer
 
   sam_build
   sam_deploy_initial

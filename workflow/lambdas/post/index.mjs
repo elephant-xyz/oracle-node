@@ -66,7 +66,7 @@ export const handler = async (event) => {
         const countyOut = path.join(tmp, "county_output.zip");
         const cli = resolveElephantCliBin();
         const maybeTransformsZip = path.join(path.dirname(fileURLToPath(import.meta.url)), "transforms.zip");
-        const transformArgs = ["transform", "--input-zip", localZip, "--output-zip", countyOut];
+        const transformArgs = ["transform", "--input-zip", countyZipLocal, "--output-zip", countyOut];
         try { await fs.stat(maybeTransformsZip); transformArgs.push("--scripts-zip", maybeTransformsZip); } catch { }
         await run(cli, transformArgs, tmp);
         // Validate
