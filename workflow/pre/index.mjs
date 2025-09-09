@@ -15,7 +15,10 @@ const s3 = new S3Client({});
 
 const resolveElephantCliBin = () => {
     const __dirname = path.dirname(fileURLToPath(import.meta.url));
-    return path.join(__dirname, "node_modules", ".bin", "elephant-cli");
+    // Lambda handler is pre/index.handler, so __dirname is /var/task/pre/
+    // Need to go up one level to /var/task/ to find node_modules
+    // Use the direct path to the binary instead of the symlink
+    return path.join(__dirname, "..", "node_modules", "@elephant-xyz", "cli", "bin", "elephant-cli");
 };
 
 /**
