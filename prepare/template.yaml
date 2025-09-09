@@ -747,6 +747,17 @@ Resources:
   # Workflow Lambdas (starter -> pre -> prepare -> post)
   #####################################################################################################################
 
+  FactSheetLayer:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      LayerName: FactSheetLayer
+      Description: "CLI and libraries for fact-sheet generation"
+      ContentUri: layers/fact-sheet
+      CompatibleRuntimes:
+        - nodejs20.x
+      CompatibleArchitectures:
+        - arm64
+
   WorkflowStarterFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -794,6 +805,8 @@ Resources:
         - AWSLambdaBasicExecutionRole
         - S3CrudPolicy:
             BucketName: !Ref EnvironmentBucket
+      Layers:
+        - !Ref FactSheetLayer
       Environment:
         Variables:
           OUTPUT_BASE_URI: !Sub "s3://${EnvironmentBucket}/outputs"
@@ -814,6 +827,8 @@ Resources:
         - AWSLambdaBasicExecutionRole
         - S3CrudPolicy:
             BucketName: !Ref EnvironmentBucket
+      Layers:
+        - !Ref FactSheetLayer
       Environment:
         Variables:
           OUTPUT_BASE_URI: !Sub "s3://${EnvironmentBucket}/outputs"

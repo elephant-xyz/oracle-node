@@ -366,3 +366,4 @@ elephant-cli*.log
 
 
 .aws-sam/
+prepare/layers/
