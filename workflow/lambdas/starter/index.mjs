@@ -1,6 +1,7 @@
 /**
  * Starter Lambda: triggered by SQS with BatchSize=1. Starts Express SFN synchronously.
- * Logs in structured JSON and never fails silently.
+ * Always returns success to SQS to acknowledge message processing.
+ * The state machine handles requeuing on failures.
  */
 
 import { SFNClient, StartSyncExecutionCommand } from "@aws-sdk/client-sfn";
@@ -51,15 +52,14 @@ export const handler = async (event) => {
       JSON.stringify({
         ...logBase,
         level: "info",
-        msg: "started",
+        msg: "completed",
         executionArn: resp.executionArn,
         status: resp.status,
       }),
     );
-    if (resp.status !== "SUCCEEDED") {
-      throw new Error(`Workflow did not succeed: ${resp.status}`);
-    }
-    return { status: "ok", executionArn: resp.executionArn };
+    // Always return success to SQS to acknowledge message processing
+    // The state machine handles requeuing on failures
+    return { status: "ok", executionArn: resp.executionArn, workflowStatus: resp.status };
   } catch (err) {
     console.error(
       JSON.stringify({
@@ -69,6 +69,8 @@ export const handler = async (event) => {
         error: String(err),
       }),
     );
-    throw err;
+    // Always return success to SQS even on errors
+    // SQS message should be acknowledged to prevent infinite retries
+    return { status: "error", error: String(err) };
   }
 };
