@@ -132,10 +132,46 @@ Tip: For historical runs, go to "Browse" → "DAG Runs", open a run, then click 
 - Update transforms: edit `transform/` → `./scripts/update-transforms.sh`
 - Update DAGs: edit `dags/` → `./scripts/sync-dags.sh`
 
+### Queue Message Fixing
+
+If you encounter JSON parsing errors like "Expecting property name enclosed in double quotes" in your Airflow DAG, you may have malformed messages in your SQS queue. This can happen when messages are requeued incorrectly.
+
+**Quick Fix:**
+```bash
+# Auto-fix script (finds queue automatically and fixes malformed messages)
+./scripts/auto-fix-queue.sh
+
+# Or specify parameters for more control
+./scripts/auto-fix-queue.sh --queue-url "YOUR_QUEUE_URL" --batch-size 100 --max-batches 10 --verbosesq
+```
+
+**Parameters:**
+- `--queue-url URL` - SQS queue URL (optional, auto-discovers if not provided)
+- `--batch-size SIZE` - Messages per batch (default: 100)
+- `--max-batches COUNT` - Maximum batches to process (default: 1000)
+- `--profile PROFILE` - AWS profile to use (default: oracle-3)
+- `--verbose` - Enable detailed output
+- `--help` - Show all options
+
+**Examples:**
+```bash
+# Test with small batch
+./scripts/auto-fix-queue.sh --batch-size 10 --max-batches 1 --verbose
+
+# Process specific queue with custom settings
+./scripts/auto-fix-queue.sh --queue-url "https://sqs.us-east-1.amazonaws.com/123456789012/my-queue" --batch-size 50 --max-batches 100
+
+# Show help
+./scripts/auto-fix-queue.sh --help
+```
+
+
+
 ### Troubleshooting
 
-- Can’t reach UI: fetch the UI URL again (step 5) and confirm you’re logged in with the right AWS account.
+- Can't reach UI: fetch the UI URL again (step 5) and confirm you're logged in with the right AWS account.
 - No runs: ensure the DAG is enabled and `elephant_sqs_queue_url` is set. Re-run step 4 to seed SQS.
+- JSON parsing errors: use the queue fix scripts above to clean up malformed messages.
 - Permissions: verify identity with `aws sts get-caller-identity` and that your role can create CFN, S3, SQS, MWAA, IAM, Logs.
 
 Deploy once. Iterate quickly on your transforms.
