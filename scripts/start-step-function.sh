@@ -56,7 +56,10 @@ start_execution() {
     local bucket_name="$1"
     local step_function_arn="$2"
     local sqs_queue_url="$3"
-    local execution_name="elephant-oracle-node-queue-seeding"
+    
+    # Create unique execution name with timestamp and bucket name
+    local timestamp=$(date +"%Y%m%d-%H%M%S")
+    local execution_name="elephant-oracle-node-${bucket_name}-${timestamp}"
 
     info "Starting Step Function execution: $execution_name"
     info "Step Function ARN: $step_function_arn"
@@ -95,7 +98,8 @@ start_execution() {
         if echo "$error_output" | grep -q "ExecutionAlreadyExists"; then
             warn "⚠️  Execution '$execution_name' already exists"
             err "An execution with this name is already running or has completed recently."
-            err "Please choose a different bucket name or wait for the existing execution to complete."
+            err "This is unexpected since execution names are now unique with timestamps."
+            err "Please try again in a moment."
             return 1
         else
             err "❌ Failed to start Step Function execution"
