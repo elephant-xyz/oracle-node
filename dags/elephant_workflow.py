@@ -158,6 +158,38 @@ def find_file_with_extension(directory: Path, extension: str) -> Path | None:
     return None
 
 
+def safe_parse_json(json_string: str, message_id: str = "unknown") -> dict | None:
+    """Safely parse JSON string with detailed error logging and common fixes"""
+    if not json_string or not json_string.strip():
+        logger.warning(f"Empty or whitespace-only JSON string for message {message_id}")
+        return None
+    
+    # Try direct parsing first
+    try:
+        return json.loads(json_string)
+    except json.JSONDecodeError as e:
+        logger.warning(f"Initial JSON parsing failed for message {message_id}: {e}")
+        
+        # Try common fixes
+        fixed_json = json_string.strip()
+        
+        # Fix common single quote issues
+        if fixed_json.startswith("'") and fixed_json.endswith("'"):
+            logger.info(f"Attempting to fix single-quoted JSON for message {message_id}")
+            fixed_json = fixed_json[1:-1]  # Remove outer quotes
+            # Replace single quotes with double quotes (simple approach)
+            fixed_json = fixed_json.replace("'", '"')
+        
+        # Try parsing the fixed version
+        try:
+            return json.loads(fixed_json)
+        except json.JSONDecodeError as e2:
+            logger.error(f"JSON parsing failed even after fixes for message {message_id}: {e2}")
+            logger.error(f"Original content: {repr(json_string)}")
+            logger.error(f"Fixed content: {repr(fixed_json)}")
+            return None
+
+
 # Task implementations
 
 
@@ -200,7 +232,18 @@ def parse_sqs_messages(messages_input: Any) -> list[FileProcessingInfo]:
 
     for message in messages:
         try:
-            body = json.loads(message["Body"])
+            # Log the raw message body for debugging
+            message_body = message["Body"]
+            message_id = message.get('MessageId', 'unknown')
+            logger.info(f"Raw message body for {message_id}: {repr(message_body)}")
+            logger.info(f"Message body type: {type(message_body)}")
+            logger.info(f"Message body length: {len(message_body) if message_body else 0}")
+            
+            # Use safe JSON parsing
+            body = safe_parse_json(message_body, message_id)
+            if body is None:
+                logger.warning(f"Failed to parse JSON for message {message_id}, skipping")
+                continue
 
             # Store original message body for requeuing
             original_messages.append(message)
@@ -227,8 +270,18 @@ def parse_sqs_messages(messages_input: Any) -> list[FileProcessingInfo]:
                             logger.info(f"Found file to process: {object_key}")
                         else:
                             logger.info(f"Skipping non-csv file: {object_key}")
+        except json.JSONDecodeError as json_err:
+            logger.error(f"JSON parsing error for message {message.get('MessageId', 'unknown')}: {str(json_err)}")
+            logger.error(f"Problematic JSON content: {repr(message_body)}")
+            logger.error(f"JSON error at line {json_err.lineno}, column {json_err.colno}: {json_err.msg}")
+            continue
+        except KeyError as key_err:
+            logger.error(f"Missing key in message {message.get('MessageId', 'unknown')}: {str(key_err)}")
+            logger.error(f"Available keys: {list(message.keys())}")
+            continue
         except Exception as e:
-            logger.error(f"Error parsing message {message.get('MessageId', 'unknown')}: {str(e)}")
+            logger.error(f"Unexpected error parsing message {message.get('MessageId', 'unknown')}: {str(e)}")
+            logger.error(f"Message content: {repr(message)}")
             continue
 
     # Store original messages in XCom for requeuing
@@ -1117,25 +1170,76 @@ with DAG(
     # Process each file in parallel using dynamic task groups
     processing_results = process_single_file.expand(file_info=files_to_process)
 
-    # Requeue operators for success and failure scenarios
-    requeue_on_success = SqsPublishOperator(
-        task_id="requeue_on_success",
-        sqs_queue="{{ var.value.elephant_sqs_queue_url }}",
-        message_content="{{ ti.xcom_pull(task_ids='parse_sqs_messages', key='original_messages')[0] if ti.xcom_pull(task_ids='parse_sqs_messages', key='original_messages') else '{}' }}",
-        trigger_rule=TriggerRule.ALL_SUCCESS,
-        delay_seconds=0,  # Immediate requeue on success
-    )
+    @task(task_id="requeue_on_success", trigger_rule=TriggerRule.ALL_SUCCESS)
+    def requeue_message_on_success():
+        """Requeue the original message for continued processing"""
+        try:
+            # Get the original messages from XCom
+            original_messages = get_current_context()["ti"].xcom_pull(task_ids="parse_sqs_messages", key="original_messages")
+            
+            if not original_messages:
+                logger.warning("No original messages found for requeuing")
+                return
+            
+            # Get SQS queue URL
+            queue_url = Variable.get("elephant_sqs_queue_url")
+            if not queue_url:
+                logger.error("SQS queue URL not configured")
+                return
+            
+            # Send each original message back to the queue
+            sqs = boto3.client("sqs")
+            for message in original_messages:
+                try:
+                    # Send only the message body, not the entire message object
+                    response = sqs.send_message(
+                        QueueUrl=queue_url,
+                        MessageBody=message["Body"],
+                        DelaySeconds=0  # Immediate processing
+                    )
+                    logger.info(f"Successfully requeued message {message.get('MessageId', 'unknown')}: {response.get('MessageId')}")
+                except Exception as e:
+                    logger.error(f"Failed to requeue message {message.get('MessageId', 'unknown')}: {str(e)}")
+                    
+        except Exception as e:
+            logger.error(f"Error in requeue_on_success task: {str(e)}")
 
-    requeue_on_failure = SqsPublishOperator(
-        task_id="requeue_on_failure",
-        sqs_queue="{{ var.value.elephant_sqs_queue_url }}",
-        message_content="{{ ti.xcom_pull(task_ids='parse_sqs_messages', key='original_messages')[0] if ti.xcom_pull(task_ids='parse_sqs_messages', key='original_messages') else '{}' }}",
-        trigger_rule=TriggerRule.ONE_FAILED,
-        delay_seconds=300,  # 5 minute delay on failure
-    )
+    @task(task_id="requeue_on_failure", trigger_rule=TriggerRule.ONE_FAILED)
+    def requeue_message_on_failure():
+        """Requeue the original message with delay for retry"""
+        try:
+            # Get the original messages from XCom
+            original_messages = get_current_context()["ti"].xcom_pull(task_ids="parse_sqs_messages", key="original_messages")
+            
+            if not original_messages:
+                logger.warning("No original messages found for requeuing")
+                return
+            
+            # Get SQS queue URL
+            queue_url = Variable.get("elephant_sqs_queue_url")
+            if not queue_url:
+                logger.error("SQS queue URL not configured")
+                return
+            
+            # Send each original message back to the queue with delay
+            sqs = boto3.client("sqs")
+            for message in original_messages:
+                try:
+                    # Send only the message body, not the entire message object
+                    response = sqs.send_message(
+                        QueueUrl=queue_url,
+                        MessageBody=message["Body"],
+                        DelaySeconds=300  # 5 minute delay for retry
+                    )
+                    logger.info(f"Successfully requeued message {message.get('MessageId', 'unknown')} with delay: {response.get('MessageId')}")
+                except Exception as e:
+                    logger.error(f"Failed to requeue message {message.get('MessageId', 'unknown')}: {str(e)}")
+                    
+        except Exception as e:
+            logger.error(f"Error in requeue_on_failure task: {str(e)}")
 
     # Set up dependencies
-    processing_results >> [requeue_on_success, requeue_on_failure]
+    processing_results >> [requeue_message_on_success(), requeue_message_on_failure()]
 
 
 if __name__ == "__main__":
