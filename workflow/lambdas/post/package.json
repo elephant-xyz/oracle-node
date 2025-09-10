@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.879.0",
-    "@elephant-xyz/cli": "github:elephant-xyz/elephant-cli#fbe94f7"
+    "@elephant-xyz/cli": "github:elephant-xyz/elephant-cli#93c288f",
+    "csv-parse": "^5.6.0"
   }
 }

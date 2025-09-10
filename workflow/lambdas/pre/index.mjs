@@ -8,6 +8,7 @@ import path from "path";
 import os from "os";
 import AdmZip from "adm-zip";
 import { transform, validate } from "@elephant-xyz/cli/lib";
+import { parse } from "csv-parse/sync";
 
 /**
  * @typedef {Object} PreOutput
@@ -16,6 +17,25 @@ import { transform, validate } from "@elephant-xyz/cli/lib";
  */
 
 const s3 = new S3Client({});
+
+/**
+ * Convert CSV file to JSON array
+ * @param {string} csvPath - Path to CSV file
+ * @returns {Promise<Object[]>} - Array of objects representing CSV rows
+ */
+async function csvToJson(csvPath) {
+  try {
+    const csvContent = await fs.readFile(csvPath, 'utf8');
+    const records = parse(csvContent, {
+      columns: true,
+      skip_empty_lines: true,
+      trim: true
+    });
+    return records;
+  } catch (error) {
+    return [];
+  }
+}
 
 /**
  * Build paths and derive prepare input from SQS/S3 event message.
@@ -72,7 +92,52 @@ export const handler = async (event) => {
 
     const validationResult = await validate({ input: seedOutputZip, cwd: tmp });
     if (!validationResult.success) {
-      throw new Error(validationResult.error);
+      // Try to read submit_errors.csv and log as JSON
+      const submitErrorsPath = path.join(tmp, 'submit_errors.csv');
+      let submitErrorsS3Uri = null;
+      
+      try {
+        const submitErrors = await csvToJson(submitErrorsPath);
+        
+        // Upload submit_errors.csv to S3
+        try {
+          const submitErrorsCsv = await fs.readFile(submitErrorsPath);
+          const errorFileKey = `${runPrefix.replace(/^s3:\/\//, "")}/submit_errors.csv`;
+          const [errorBucket, ...errorParts] = errorFileKey.split("/");
+          await s3.send(
+            new PutObjectCommand({
+              Bucket: errorBucket,
+              Key: errorParts.join("/"),
+              Body: submitErrorsCsv,
+            }),
+          );
+          submitErrorsS3Uri = `s3://${errorBucket}/${errorParts.join("/")}`;
+        } catch (uploadError) {
+          console.error(`Failed to upload submit_errors.csv: ${uploadError}`);
+        }
+        
+        console.error(JSON.stringify({
+          ...base,
+          level: "error",
+          msg: "validation_failed",
+          error: validationResult.error,
+          submit_errors: submitErrors,
+          submit_errors_s3_uri: submitErrorsS3Uri
+        }));
+      } catch (csvError) {
+        console.error(JSON.stringify({
+          ...base,
+          level: "error", 
+          msg: "validation_failed",
+          error: validationResult.error,
+          submit_errors_read_error: String(csvError)
+        }));
+      }
+      
+      const errorMessage = submitErrorsS3Uri 
+        ? `Validation failed. Submit errors CSV: ${submitErrorsS3Uri}`
+        : "Validation failed";
+      throw new Error(errorMessage);
     }
     console.log((await fs.readdir(tmp)).join("\n"));
     console.log("Validation complete");
