@@ -1,13 +1,6 @@
 Comment: Elephant Express workflow. Triggered by Starter Lambda with one SQS message payload.
-StartAt: ValidateInput
+StartAt: Preprocess
 States:
-  ValidateInput:
-    Type: Choice
-    Choices:
-      - Variable: $.Records[0].s3.bucket.name
-        IsPresent: true
-        Next: Preprocess
-    Default: FailInvalid
   Preprocess:
     Type: Task
     Resource: arn:aws:states:::lambda:invoke
@@ -17,7 +10,12 @@ States:
     ResultPath: $.pre
     Next: Prepare
     Retry:
-      - ErrorEquals: [States.TaskFailed, Lambda.ServiceException, Lambda.AWSLambdaException, Lambda.SdkClientException]
+      - ErrorEquals:
+          [
+            Lambda.ServiceException,
+            Lambda.AWSLambdaException,
+            Lambda.SdkClientException,
+          ]
         IntervalSeconds: 2
         MaxAttempts: 2
         BackoffRate: 2
@@ -37,7 +35,12 @@ States:
     ResultPath: $.prepare
     Next: Postprocess
     Retry:
-      - ErrorEquals: [States.TaskFailed, Lambda.ServiceException, Lambda.AWSLambdaException, Lambda.SdkClientException]
+      - ErrorEquals:
+          [
+            Lambda.ServiceException,
+            Lambda.AWSLambdaException,
+            Lambda.SdkClientException,
+          ]
         IntervalSeconds: 5
         MaxAttempts: 3
         BackoffRate: 2
@@ -57,7 +60,12 @@ States:
     ResultPath: $.post
     Next: RequeueOnSuccess
     Retry:
-      - ErrorEquals: [States.TaskFailed, Lambda.ServiceException, Lambda.AWSLambdaException, Lambda.SdkClientException]
+      - ErrorEquals:
+          [
+            Lambda.ServiceException,
+            Lambda.AWSLambdaException,
+            Lambda.SdkClientException,
+          ]
         IntervalSeconds: 5
         MaxAttempts: 2
         BackoffRate: 2
@@ -73,13 +81,7 @@ States:
       MessageBody.$: States.JsonToString($)
     ResultPath: $.requeue
     End: true
-  FailInvalid:
-    Type: Fail
-    Error: InvalidInput
-    Cause: Missing S3 event structure in SQS message
   FailRuntime:
     Type: Fail
     Error: WorkflowFailed
     Cause: A task failed. See error field.
-
-

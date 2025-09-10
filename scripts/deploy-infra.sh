@@ -19,7 +19,7 @@ REQUIREMENTS_FILE="${BUILD_DIR}/requirements.txt"
 AIRFLOW_CONSTRAINTS_URL="https://raw.githubusercontent.com/apache/airflow/constraints-2.10.3/constraints-3.12.txt"
 WORKFLOW_DIR="workflow"
 TRANSFORMS_SRC_DIR="transform"
-TRANSFORMS_TARGET_ZIP="${WORKFLOW_DIR}/post/transforms.zip"
+TRANSFORMS_TARGET_ZIP="${WORKFLOW_DIR}/lambdas/post/transforms.zip"
 
 mkdir -p "$BUILD_DIR"
 
@@ -141,7 +141,7 @@ bundle_transforms_for_lambda() {
   tmp_zip="$tmp_dir/transforms.zip"
   info "Bundling transforms from $TRANSFORMS_SRC_DIR to $TRANSFORMS_TARGET_ZIP"
   pushd "$TRANSFORMS_SRC_DIR" >/dev/null
-  zip -qr "$tmp_zip" .
+  zip -r "$tmp_zip" .
   popd >/dev/null
   mv -f "$tmp_zip" "$TRANSFORMS_TARGET_ZIP"
   # Cleanup temp directory
@@ -278,31 +278,31 @@ main() {
   sam_build
   sam_deploy_initial
 
-  local bucket script_ver req_ver
-  bucket=$(get_bucket)
-  [[ -n "$bucket" && "$bucket" != "None" ]] || { err "Could not resolve EnvironmentBucketName output"; exit 1; }
-  info "Using MWAA Environment bucket: $bucket"
-
-  compile_requirements
-  info "Uploading startup.sh and requirements.txt"
-  script_ver=$(upload_with_version "$STARTUP_SCRIPT" startup.sh "$bucket")
-  req_ver=$(upload_with_version "$REQUIREMENTS_FILE" requirements.txt "$bucket")
-  info "startup.sh version: $script_ver"
-  info "requirements.txt version: $req_ver"
-
-  sam_deploy_with_versions "$script_ver" "$req_ver"
-
-  local ui_url env_name
-  env_name="${MWAA_ENV_NAME:-${STACK_NAME}-MwaaEnvironment}"
-  ui_url=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" \
-    --query "Stacks[0].Outputs[?OutputKey=='MwaaApacheAirflowUI'].OutputValue" --output text)
-
-  # Configure Airflow variables now that the environment exists
-  set_airflow_vars "$bucket"
-  echo
-  info "Done! UI: $ui_url"
-  info "MWAA Env: $env_name"
-  info "DAGs bucket: $bucket (prefix: dags/)"
+  # local bucket script_ver req_ver
+  # bucket=$(get_bucket)
+  # [[ -n "$bucket" && "$bucket" != "None" ]] || { err "Could not resolve EnvironmentBucketName output"; exit 1; }
+  # info "Using MWAA Environment bucket: $bucket"
+  #
+  # compile_requirements
+  # info "Uploading startup.sh and requirements.txt"
+  # script_ver=$(upload_with_version "$STARTUP_SCRIPT" startup.sh "$bucket")
+  # req_ver=$(upload_with_version "$REQUIREMENTS_FILE" requirements.txt "$bucket")
+  # info "startup.sh version: $script_ver"
+  # info "requirements.txt version: $req_ver"
+  #
+  # sam_deploy_with_versions "$script_ver" "$req_ver"
+  #
+  # local ui_url env_name
+  # env_name="${MWAA_ENV_NAME:-${STACK_NAME}-MwaaEnvironment}"
+  # ui_url=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" \
+  #   --query "Stacks[0].Outputs[?OutputKey=='MwaaApacheAirflowUI'].OutputValue" --output text)
+  #
+  # # Configure Airflow variables now that the environment exists
+  # set_airflow_vars "$bucket"
+  # echo
+  # info "Done! UI: $ui_url"
+  # info "MWAA Env: $env_name"
+  # info "DAGs bucket: $bucket (prefix: dags/)"
 }
 
 main "$@"
