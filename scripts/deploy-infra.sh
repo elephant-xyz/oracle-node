@@ -17,6 +17,9 @@ PYPROJECT_FILE="infra/pyproject.toml"
 BUILD_DIR="infra/build"
 REQUIREMENTS_FILE="${BUILD_DIR}/requirements.txt"
 AIRFLOW_CONSTRAINTS_URL="https://raw.githubusercontent.com/apache/airflow/constraints-2.10.3/constraints-3.12.txt"
+WORKFLOW_DIR="workflow"
+TRANSFORMS_SRC_DIR="transform"
+TRANSFORMS_TARGET_ZIP="${WORKFLOW_DIR}/lambdas/post/transforms.zip"
 
 mkdir -p "$BUILD_DIR"
 
@@ -29,6 +32,8 @@ check_prereqs() {
   command -v curl >/dev/null || { err "curl not found"; exit 1; }
   command -v uv >/dev/null || { err "uv not found. Install: https://docs.astral.sh/uv/getting-started/installation/"; exit 1; }
   command -v sam >/dev/null || { err "sam CLI not found. Install: https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/install-sam-cli.html"; exit 1; }
+  command -v git >/dev/null || { err "git not found"; exit 1; }
+  command -v npm >/dev/null || { err "npm not found"; exit 1; }
   [[ -f "$SAM_TEMPLATE" && -f "$STARTUP_SCRIPT" && -f "$PYPROJECT_FILE" ]] || { err "Missing required files"; exit 1; }
 }
 
@@ -77,7 +82,8 @@ sam_deploy_initial() {
     --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \
     --resolve-s3 \
     --no-confirm-changeset \
-    --no-fail-on-empty-changeset >/dev/null
+    --no-fail-on-empty-changeset \
+    --parameter-overrides ${PARAM_OVERRIDES:-} >/dev/null
 }
 
 sam_deploy_with_versions() {
@@ -91,10 +97,104 @@ sam_deploy_with_versions() {
     --no-confirm-changeset \
     --no-fail-on-empty-changeset \
     --parameter-overrides \
+      ${PARAM_OVERRIDES:-} \
       StartupScriptS3Path="startup.sh" \
       StartupScriptS3ObjectVersion="$script_ver" \
       RequirementsS3Path="requirements.txt" \
       RequirementsS3ObjectVersion="$req_ver" >/dev/null
+}
+
+compute_param_overrides() {
+  # Required secrets (fail if missing)
+  : "${ELEPHANT_DOMAIN?Set ELEPHANT_DOMAIN}"
+  : "${ELEPHANT_API_KEY?Set ELEPHANT_API_KEY}"
+  : "${ELEPHANT_ORACLE_KEY_ID?Set ELEPHANT_ORACLE_KEY_ID}"
+  : "${ELEPHANT_FROM_ADDRESS?Set ELEPHANT_FROM_ADDRESS}"
+  : "${ELEPHANT_RPC_URL?Set ELEPHANT_RPC_URL}"
+  : "${ELEPHANT_PINATA_JWT?Set ELEPHANT_PINATA_JWT}"
+
+  local parts=()
+  parts+=("ElephantDomain=\"$ELEPHANT_DOMAIN\"")
+  parts+=("ElephantApiKey=\"$ELEPHANT_API_KEY\"")
+  parts+=("ElephantOracleKeyId=\"$ELEPHANT_ORACLE_KEY_ID\"")
+  parts+=("ElephantFromAddress=\"$ELEPHANT_FROM_ADDRESS\"")
+  parts+=("ElephantRpcUrl=\"$ELEPHANT_RPC_URL\"")
+  parts+=("ElephantPinataJwt=\"$ELEPHANT_PINATA_JWT\"")
+
+  [[ -n "${WORKFLOW_QUEUE_NAME:-}" ]] && parts+=("WorkflowQueueName=\"$WORKFLOW_QUEUE_NAME\"")
+  [[ -n "${WORKFLOW_STARTER_RESERVED_CONCURRENCY:-}" ]] && parts+=("WorkflowStarterReservedConcurrency=\"$WORKFLOW_STARTER_RESERVED_CONCURRENCY\"")
+  [[ -n "${WORKFLOW_STATE_MACHINE_NAME:-}" ]] && parts+=("WorkflowStateMachineName=\"$WORKFLOW_STATE_MACHINE_NAME\"")
+
+  PARAM_OVERRIDES="${parts[*]}"
+}
+
+bundle_transforms_for_lambda() {
+  if [[ ! -d "$TRANSFORMS_SRC_DIR" ]]; then
+    warn "Transforms source dir not found: $TRANSFORMS_SRC_DIR (skipping bundle)"
+    return 1
+  fi
+  mkdir -p "$(dirname "$TRANSFORMS_TARGET_ZIP")"
+  # Create a temp directory to hold the zip to avoid mktemp creating
+  # an empty file that confuses `zip` with "Zip file structure invalid".
+  local tmp_dir tmp_zip
+  tmp_dir=$(mktemp -d -t transforms.XXXXXX)
+  tmp_zip="$tmp_dir/transforms.zip"
+  info "Bundling transforms from $TRANSFORMS_SRC_DIR to $TRANSFORMS_TARGET_ZIP"
+  pushd "$TRANSFORMS_SRC_DIR" >/dev/null
+  zip -r "$tmp_zip" .
+  popd >/dev/null
+  mv -f "$tmp_zip" "$TRANSFORMS_TARGET_ZIP"
+  # Cleanup temp directory
+  rm -rf "$tmp_dir"
+}
+
+
+# Check the Lambda "Concurrent executions" service quota and request an increase if it's 10
+ensure_lambda_concurrency_quota() {
+  info "Checking Lambda 'Concurrent executions' service quota"
+  local quota_code="L-B99A9384" # Concurrent executions
+  local current desired=1000 resp req_id status
+
+  # Try to fetch quota directly by code
+  current=$(aws service-quotas get-service-quota \
+    --service-code lambda \
+    --quota-code "$quota_code" \
+    --query 'Quota.Value' --output text 2>/dev/null || true)
+
+  # Fallback via list if direct call didn't return a value
+  if [[ -z "$current" || "$current" == "None" || "$current" == "null" ]]; then
+    current=$(aws service-quotas list-service-quotas \
+      --service-code lambda \
+      --query "Quotas[?QuotaCode=='$quota_code'].Value | [0]" \
+      --output text 2>/dev/null || true)
+  fi
+
+  if [[ -z "$current" || "$current" == "None" || "$current" == "null" ]]; then
+    warn "Could not determine Lambda 'Concurrent executions' quota; skipping quota request"
+    return 0
+  fi
+
+  info "Current Lambda concurrent executions quota: $current"
+
+  # If the quota is 10 (handle values like 10 or 10.0), request increase to 1000
+  local current_int
+  current_int=${current%%.*}
+  if [[ "$current_int" =~ ^[0-9]+$ && "$current_int" -eq 10 ]]; then
+    info "Requesting quota increase to ${desired}"
+    resp=$(aws service-quotas request-service-quota-increase \
+      --service-code lambda \
+      --quota-code "$quota_code" \
+      --desired-value "$desired" 2>/dev/null || true)
+    req_id=$(echo "$resp" | jq -r '.RequestedQuota.Id // empty')
+    status=$(echo "$resp" | jq -r '.RequestedQuota.Status // empty')
+    if [[ -n "$req_id" ]]; then
+      info "Submitted quota increase request. Id: $req_id Status: $status"
+    else
+      warn "Failed to submit quota increase request. Response: $resp"
+    fi
+  else
+    info "No increase requested (quota not equal to 10)"
+  fi
 }
 
 set_airflow_vars() {
@@ -170,6 +270,10 @@ set_airflow_vars() {
 
 main() {
   check_prereqs
+  ensure_lambda_concurrency_quota
+
+  compute_param_overrides
+  bundle_transforms_for_lambda
 
   sam_build
   sam_deploy_initial
