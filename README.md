@@ -18,7 +18,7 @@ export ELEPHANT_PINATA_JWT=...
 # Optional (deployment)
 export STACK_NAME=elephant-oracle-node
 export WORKFLOW_QUEUE_NAME=elephant-workflow-queue
-export WORKFLOW_STARTER_RESERVED_CONCURRENCY=5
+export WORKFLOW_STARTER_RESERVED_CONCURRENCY=225
 export WORKFLOW_STATE_MACHINE_NAME=ElephantExpressWorkflow
 
 # Optional (AWS CLI)
