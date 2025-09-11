@@ -219,9 +219,63 @@ Resources:
         - Key: Environment
           Value: !Ref EnvironmentName
 
+  TransactionsSqsQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      VisibilityTimeout: 331
+      MessageRetentionPeriod: 1209600
+      SqsManagedSseEnabled: true
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt TransactionsDeadLetterQueue.Arn
+        maxReceiveCount: 3
+      Tags:
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  TransactionsDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      MessageRetentionPeriod: 1209600
+      VisibilityTimeout: 331
+      SqsManagedSseEnabled: true
+      Tags:
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
   #####################################################################################################################
   # Workflow Lambdas (starter -> pre -> prepare -> post)
   #####################################################################################################################
+
+  SubmitterFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Architectures:
+        - arm64
+      MemorySize: 256
+      Timeout: 300
+      EphemeralStorage:
+        Size: 1024
+      CodeUri: ../workflow/lambdas/submit/
+      Handler: index.handler
+      Description: "Submits data to the blockchain"
+      Policies:
+        - AWSLambdaBasicExecutionRole
+      Environment:
+        Variables:
+          ELEPHANT_DOMAIN: !Ref ElephantDomain
+          ELEPHANT_API_KEY: !Ref ElephantApiKey
+          ELEPHANT_ORACLE_KEY_ID: !Ref ElephantOracleKeyId
+          ELEPHANT_FROM_ADDRESS: !Ref ElephantFromAddress
+          ELEPHANT_RPC_URL: !Ref ElephantRpcUrl
+      Events:
+        Submit:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt TransactionsSqsQueue.Arn
+            BatchSize: 150
+            MaximumBatchingWindowInSeconds: 300
+            ScalingConfig:
+              MaximumConcurrency: 2
 
   WorkflowStarterFunction:
     Type: AWS::Serverless::Function
@@ -318,6 +372,7 @@ Resources:
         DownloaderFunction: !GetAtt DownloaderFunction.Arn
         WorkflowPostProcessorFunction: !GetAtt WorkflowPostProcessorFunction.Arn
         WorkflowSqsQueueUrl: !Ref WorkflowSqsQueue
+        TransactionsSqsQueueUrl: !Ref TransactionsSqsQueue
       Role: !GetAtt ElephantExpressStateMachineRole.Arn
       Logging:
         Destinations:
@@ -360,7 +415,9 @@ Resources:
               - Effect: Allow
                 Action:
                   - sqs:SendMessage
-                Resource: !GetAtt WorkflowSqsQueue.Arn
+                Resource:
+                  - !GetAtt WorkflowSqsQueue.Arn
+                  - !GetAtt TransactionsSqsQueue.Arn
               - Effect: Allow
                 Action:
                   - logs:CreateLogDelivery
