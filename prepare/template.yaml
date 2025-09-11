@@ -123,7 +123,7 @@ Parameters:
   WorkflowStarterReservedConcurrency:
     Description: Max concurrent SQS messages to process via EventSourceMapping ScalingConfig
     Type: Number
-    Default: 2
+    Default: 225
   WorkflowStateMachineName:
     Description: Name for the Express Step Functions state machine
     Type: String
@@ -1051,14 +1051,10 @@ Resources:
                   "CreateMessage": {
                     "Type": "Pass",
                     "Parameters": {
-                      "Records": [
-                        {
-                          "s3": {
-                            "bucket": { "name.$": "$$.Execution.Input.bucketName" },
-                            "object": { "key.$": "$.Key" }
-                          }
-                        }
-                      ]
+                      "s3": {
+                        "bucket": { "name.$": "$$.Execution.Input.bucketName" },
+                        "object": { "key.$": "$.Key" }
+                      }
                     },
                     "ResultPath": "$.message",
                     "Next": "SendToSQS"

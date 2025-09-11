@@ -81,6 +81,7 @@ async function csvToJson(csvPath) {
  * @returns {Promise<{status:string}>}
  */
 export const handler = async (event) => {
+  console.log(`Event is : ${JSON.stringify(event)}`);
   const base = { component: "post", at: new Date().toISOString() };
   let tmp;
   try {
@@ -144,7 +145,7 @@ export const handler = async (event) => {
         try {
           const submitErrorsCsv = await fs.readFile(submitErrorsPath);
           const inputKey = path.posix.basename(
-            event?.input?.Records?.[0]?.s3?.object?.key || "input.csv",
+            event?.s3?.object?.key || "input.csv",
           );
           const runPrefix = `${outputBase.replace(/\/$/, "")}/${inputKey}`;
           const errorFileKey = `${runPrefix.replace(/^s3:\/\//, "")}/submit_errors.csv`;
@@ -243,9 +244,7 @@ export const handler = async (event) => {
     const combinedCsv = await combineCsv(seedHashCsv, countyHashCsv, tmp);
     // Prepare submission CSV
     const uploadResults = combinedCsv;
-    const inputKey = path.posix.basename(
-      event?.Records?.[0]?.s3?.object?.key || "input.csv",
-    );
+    const inputKey = path.posix.basename(event?.object?.key || "input.csv");
     const runPrefix = `${outputBase.replace(/\/$/, "")}/${inputKey}`;
     const [outBucket, ...outKeyParts] = runPrefix
       .replace(/^s3:\/\//, "")
@@ -311,14 +310,18 @@ export const handler = async (event) => {
       path.join(tmp, "submit_errors.csv"),
       "utf8",
     );
-    const submitErrors =
-      parse(submitErrrorsCsv, {
-        columns: true,
-        skip_empty_lines: true,
-        trim: true,
-      }) + submitResults.filter((row) => row.status === "failed");
+    const submitErrors = parse(submitErrrorsCsv, {
+      columns: true,
+      skip_empty_lines: true,
+      trim: true,
+    });
+    console.log(`Submit errors type is : ${typeof submitErrors}`);
+    const allErrors = [
+      ...submitErrors,
+      ...submitResults.filter((row) => row.status === "failed"),
+    ];
 
-    const submitErrorsJson = submitErrors.map((row) => {
+    const submitErrorsJson = allErrors.map((row) => {
       return {
         ...row,
         propertyCid: propertyCid,
@@ -332,9 +335,9 @@ export const handler = async (event) => {
         submit_errors: submitErrorsJson,
       }),
     );
-    if (submitErrors.length > 0) {
+    if (allErrors.length > 0) {
       throw new Error(
-        "Submit to the blockchain failed" + JSON.stringify(submitErrorsJson),
+        "Submit to the blockchain failed" + JSON.stringify(allErrors),
       );
     }
     console.log(JSON.stringify({ ...base, level: "info", msg: "completed" }));

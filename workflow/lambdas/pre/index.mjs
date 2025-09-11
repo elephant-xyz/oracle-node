@@ -25,11 +25,11 @@ const s3 = new S3Client({});
  */
 async function csvToJson(csvPath) {
   try {
-    const csvContent = await fs.readFile(csvPath, 'utf8');
+    const csvContent = await fs.readFile(csvPath, "utf8");
     const records = parse(csvContent, {
       columns: true,
       skip_empty_lines: true,
-      trim: true
+      trim: true,
     });
     return records;
   } catch (error) {
@@ -46,10 +46,11 @@ async function csvToJson(csvPath) {
  * @returns {Promise<PreOutput>}
  */
 export const handler = async (event) => {
+  console.log(`Event is : ${JSON.stringify(event)}`);
   const base = { component: "pre", at: new Date().toISOString() };
   let tmp;
   try {
-    const rec = event?.Records?.[0];
+    const rec = event;
     if (!rec?.s3?.bucket?.name || !rec?.s3?.object?.key) {
       throw new Error("Missing S3 bucket/key in message");
     }
@@ -93,12 +94,12 @@ export const handler = async (event) => {
     const validationResult = await validate({ input: seedOutputZip, cwd: tmp });
     if (!validationResult.success) {
       // Try to read submit_errors.csv and log as JSON
-      const submitErrorsPath = path.join(tmp, 'submit_errors.csv');
+      const submitErrorsPath = path.join(tmp, "submit_errors.csv");
       let submitErrorsS3Uri = null;
-      
+
       try {
         const submitErrors = await csvToJson(submitErrorsPath);
-        
+
         // Upload submit_errors.csv to S3
         try {
           const submitErrorsCsv = await fs.readFile(submitErrorsPath);
@@ -115,26 +116,30 @@ export const handler = async (event) => {
         } catch (uploadError) {
           console.error(`Failed to upload submit_errors.csv: ${uploadError}`);
         }
-        
-        console.error(JSON.stringify({
-          ...base,
-          level: "error",
-          msg: "validation_failed",
-          error: validationResult.error,
-          submit_errors: submitErrors,
-          submit_errors_s3_uri: submitErrorsS3Uri
-        }));
+
+        console.error(
+          JSON.stringify({
+            ...base,
+            level: "error",
+            msg: "validation_failed",
+            error: validationResult.error,
+            submit_errors: submitErrors,
+            submit_errors_s3_uri: submitErrorsS3Uri,
+          }),
+        );
       } catch (csvError) {
-        console.error(JSON.stringify({
-          ...base,
-          level: "error", 
-          msg: "validation_failed",
-          error: validationResult.error,
-          submit_errors_read_error: String(csvError)
-        }));
+        console.error(
+          JSON.stringify({
+            ...base,
+            level: "error",
+            msg: "validation_failed",
+            error: validationResult.error,
+            submit_errors_read_error: String(csvError),
+          }),
+        );
       }
-      
-      const errorMessage = submitErrorsS3Uri 
+
+      const errorMessage = submitErrorsS3Uri
         ? `Validation failed. Submit errors CSV: ${submitErrorsS3Uri}`
         : "Validation failed";
       throw new Error(errorMessage);

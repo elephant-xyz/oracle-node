@@ -40,12 +40,13 @@ export const handler = async (event) => {
     if (!event || !Array.isArray(event.Records) || event.Records.length !== 1) {
       throw new Error("Expect exactly one SQS record per invocation");
     }
+    console.log(`Event is : ${JSON.stringify(event)}`);
     const bodyRaw = event.Records[0].body;
     const parsed = JSON.parse(bodyRaw);
     // Start the Express workflow synchronously
     const cmd = new StartSyncExecutionCommand({
       stateMachineArn: process.env.STATE_MACHINE_ARN,
-      input: JSON.stringify(parsed),
+      input: JSON.stringify({ message: parsed }),
     });
     const resp = await sfn.send(cmd);
     console.log(
@@ -59,7 +60,11 @@ export const handler = async (event) => {
     );
     // Always return success to SQS to acknowledge message processing
     // The state machine handles requeuing on failures
-    return { status: "ok", executionArn: resp.executionArn, workflowStatus: resp.status };
+    return {
+      status: "ok",
+      executionArn: resp.executionArn,
+      workflowStatus: resp.status,
+    };
   } catch (err) {
     console.error(
       JSON.stringify({
