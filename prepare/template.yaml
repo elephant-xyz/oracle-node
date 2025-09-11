@@ -754,7 +754,7 @@ Resources:
       Architectures:
         - arm64
       MemorySize: 128
-      Timeout: 60
+      Timeout: 330
       CodeUri: ../workflow/lambdas/starter
       Handler: index.handler
       Description: "SQS-triggered starter that sync-starts the Express state machine"
@@ -1232,7 +1232,7 @@ Resources:
               "Resource": "arn:aws:states:::states:startExecution",
               "Parameters": {
                 "StateMachineArn.$": "$$.StateMachine.Id",
-                "Name.$": "States.Format('{}-{}', $$.Execution.Name, $.loop.ctx.loopCount)",
+                "Name.$": "States.UUID()",
                 "Input": {
                   "bucketName.$": "$.loop.ctx.bucketName",
                   "sqsQueueUrl.$": "$.loop.ctx.sqsQueueUrl",
