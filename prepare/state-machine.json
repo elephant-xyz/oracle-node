@@ -7,7 +7,6 @@
       "Resource": "arn:aws:states:::aws-sdk:s3:listObjectsV2",
       "Parameters": {
         "Bucket.$": "$.bucketName",
-        "Prefix": "source-data/",
         "MaxKeys": 1000
       },
       "ResultPath": "$.listResult",
@@ -170,7 +169,6 @@
       "Resource": "arn:aws:states:::aws-sdk:s3:listObjectsV2",
       "Parameters": {
         "Bucket.$": "$.bucketName",
-        "Prefix": "source-data/",
         "MaxKeys": 1000,
         "ContinuationToken.$": "$.listResult.NextContinuationToken"
       },

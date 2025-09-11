@@ -89,6 +89,46 @@ Parameters:
     Default: "false"
     AllowedValues: ["true", "false"]
 
+  # Parameters for new Step Functions workflow (replaces Airflow UI variables as deployment inputs)
+  ElephantDomain:
+    Description: Elephant API domain for submit step
+    Type: String
+    Default: ""
+  ElephantApiKey:
+    Description: Elephant API key
+    Type: String
+    NoEcho: true
+    Default: ""
+  ElephantOracleKeyId:
+    Description: Elephant oracle key id
+    Type: String
+    Default: ""
+  ElephantFromAddress:
+    Description: From address for blockchain submission
+    Type: String
+    Default: ""
+  ElephantRpcUrl:
+    Description: RPC URL for blockchain submission
+    Type: String
+    Default: ""
+  ElephantPinataJwt:
+    Description: Pinata JWT for uploads
+    Type: String
+    NoEcho: true
+    Default: ""
+  WorkflowQueueName:
+    Description: Name for the Step Functions SQS trigger queue
+    Type: String
+    Default: elephant-workflow-queue
+  WorkflowStarterReservedConcurrency:
+    Description: Max concurrent SQS messages to process via EventSourceMapping ScalingConfig
+    Type: Number
+    Default: 225
+  WorkflowStateMachineName:
+    Description: Name for the Express Step Functions state machine
+    Type: String
+    Default: ElephantExpressWorkflow
+
 Conditions:
   HasStartupScript: !Not [!Equals [!Ref StartupScriptS3ObjectVersion, ""]]
   HasRequirements: !Not [!Equals [!Ref RequirementsS3ObjectVersion, ""]]
@@ -97,7 +137,7 @@ Conditions:
 
 Globals:
   Function:
-    Runtime: nodejs20.x
+    Runtime: nodejs22.x
     Timeout: 300
     Tracing: Active
 
@@ -630,7 +670,7 @@ Resources:
       EphemeralStorage:
         Size: 1024
       MemorySize: 2048
-      CodeUri: .
+      CodeUri: lambdas/downloader
       Handler: index.handler
       Description: "Downloads data (granted full S3 access as requested)"
       Policies:
@@ -641,8 +681,8 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       MemorySize: 128
-      CodeUri: .
-      Handler: lambda-update.handler
+      CodeUri: lambdas/updater
+      Handler: index.handler
       Description: "Updates env var on DownloaderFunction and runs every minute."
       Environment:
         Variables:
@@ -650,6 +690,7 @@ Resources:
           VAR_NAME: DEPLOY_TS
       Policies:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
         - Version: "2012-10-17"
           Statement:
             - Effect: Allow
@@ -674,6 +715,188 @@ Resources:
       Type: String
       Value: !GetAtt DownloaderFunction.Arn
       Description: ARN of the downloader Lambda function for MWAA
+
+  #####################################################################################################################
+  # SQS (Workflow queue + DLQ for Step Functions trigger)
+  #####################################################################################################################
+
+  WorkflowDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      MessageRetentionPeriod: 1209600
+      VisibilityTimeout: 300
+      SqsManagedSseEnabled: true
+      Tags:
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  WorkflowSqsQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Ref WorkflowQueueName
+      VisibilityTimeout: 300
+      MessageRetentionPeriod: 1209600
+      SqsManagedSseEnabled: true
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt WorkflowDeadLetterQueue.Arn
+        maxReceiveCount: 3
+      Tags:
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  #####################################################################################################################
+  # Workflow Lambdas (starter -> pre -> prepare -> post)
+  #####################################################################################################################
+
+  WorkflowStarterFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Architectures:
+        - arm64
+      MemorySize: 128
+      Timeout: 60
+      CodeUri: ../workflow/lambdas/starter
+      Handler: index.handler
+      Description: "SQS-triggered starter that sync-starts the Express state machine"
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - states:StartSyncExecution
+              Resource: !Sub "arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:${WorkflowStateMachineName}"
+      Environment:
+        Variables:
+          STATE_MACHINE_ARN: !Sub "arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:${WorkflowStateMachineName}"
+      Events:
+        SqsEvent:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt WorkflowSqsQueue.Arn
+            BatchSize: 1
+            MaximumBatchingWindowInSeconds: 0
+            ScalingConfig:
+              MaximumConcurrency: !Ref WorkflowStarterReservedConcurrency
+
+  WorkflowPreProcessorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Architectures:
+        - arm64
+      MemorySize: 512
+      Timeout: 300
+      EphemeralStorage:
+        Size: 1024
+      CodeUri: ../workflow/lambdas/pre
+      Handler: index.handler
+      Description: "Prepares seed output and input.zip for prepare step"
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+        - S3CrudPolicy:
+            BucketName: !Ref EnvironmentBucket
+      Environment:
+        Variables:
+          OUTPUT_BASE_URI: !Sub "s3://${EnvironmentBucket}/outputs"
+
+  WorkflowPostProcessorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Architectures:
+        - arm64
+      MemorySize: 512
+      Timeout: 900
+      EphemeralStorage:
+        Size: 2048
+      CodeUri: ../workflow/lambdas/post
+      Handler: index.handler
+      Description: "Performs county transform, hash, upload, and submit"
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - S3CrudPolicy:
+            BucketName: !Ref EnvironmentBucket
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+      Environment:
+        Variables:
+          OUTPUT_BASE_URI: !Sub "s3://${EnvironmentBucket}/outputs"
+          ELEPHANT_DOMAIN: !Ref ElephantDomain
+          ELEPHANT_API_KEY: !Ref ElephantApiKey
+          ELEPHANT_ORACLE_KEY_ID: !Ref ElephantOracleKeyId
+          ELEPHANT_FROM_ADDRESS: !Ref ElephantFromAddress
+          ELEPHANT_RPC_URL: !Ref ElephantRpcUrl
+          ELEPHANT_PINATA_JWT: !Ref ElephantPinataJwt
+
+  #####################################################################################################################
+  # Express Step Functions State Machine (separate definition file)
+  #####################################################################################################################
+
+  ElephantExpressStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Name: !Ref WorkflowStateMachineName
+      Type: EXPRESS
+      DefinitionUri: ../workflow/state-machines/elephant-express.asl.yaml
+      DefinitionSubstitutions:
+        WorkflowPreProcessorFunction: !GetAtt WorkflowPreProcessorFunction.Arn
+        DownloaderFunction: !GetAtt DownloaderFunction.Arn
+        WorkflowPostProcessorFunction: !GetAtt WorkflowPostProcessorFunction.Arn
+        WorkflowSqsQueueUrl: !Ref WorkflowSqsQueue
+      Role: !GetAtt ElephantExpressStateMachineRole.Arn
+      Logging:
+        Destinations:
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !GetAtt ElephantExpressLogGroup.Arn
+        IncludeExecutionData: true
+        Level: ALL
+      Tracing:
+        Enabled: true
+
+  ElephantExpressLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/vendedlogs/states/${WorkflowStateMachineName}"
+      RetentionInDays: 14
+
+  ElephantExpressStateMachineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: states.amazonaws.com
+            Action: sts:AssumeRole
+      Path: "/service-role/"
+      Policies:
+        - PolicyName: ElephantExpressInline
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource:
+                  - !GetAtt WorkflowPreProcessorFunction.Arn
+                  - !GetAtt DownloaderFunction.Arn
+                  - !GetAtt WorkflowPostProcessorFunction.Arn
+              - Effect: Allow
+                Action:
+                  - sqs:SendMessage
+                Resource: !GetAtt WorkflowSqsQueue.Arn
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogDelivery
+                  - logs:GetLogDelivery
+                  - logs:UpdateLogDelivery
+                  - logs:DeleteLogDelivery
+                  - logs:ListLogDeliveries
+                  - logs:PutResourcePolicy
+                  - logs:DescribeResourcePolicies
+                  - logs:DescribeLogGroups
+                Resource: "*"
 
   #####################################################################################################################
   # Step Function for S3 to SQS processing
@@ -710,7 +933,9 @@ Resources:
                 Action:
                   - sqs:SendMessage
                   - sqs:GetQueueUrl
-                Resource: !GetAtt MwaaSqsQueue.Arn
+                Resource:
+                  - !GetAtt MwaaSqsQueue.Arn
+                  - !GetAtt WorkflowSqsQueue.Arn
               - Effect: Allow
                 Action:
                   - states:StartExecution
@@ -826,14 +1051,10 @@ Resources:
                   "CreateMessage": {
                     "Type": "Pass",
                     "Parameters": {
-                      "Records": [
-                        {
-                          "s3": {
-                            "bucket": { "name.$": "$$.Execution.Input.bucketName" },
-                            "object": { "key.$": "$.Key" }
-                          }
-                        }
-                      ]
+                      "s3": {
+                        "bucket": { "name.$": "$$.Execution.Input.bucketName" },
+                        "object": { "key.$": "$.Key" }
+                      }
                     },
                     "ResultPath": "$.message",
                     "Next": "SendToSQS"
@@ -1074,3 +1295,15 @@ Outputs:
   S3ToSqsStateMachineName:
     Description: Name of the S3 to SQS processing Step Function
     Value: !GetAtt S3ToSqsStateMachine.Name
+  WorkflowQueueUrl:
+    Description: URL of the workflow SQS queue (Step Functions trigger)
+    Value: !Ref WorkflowSqsQueue
+  WorkflowQueueArn:
+    Description: ARN of the workflow SQS queue
+    Value: !GetAtt WorkflowSqsQueue.Arn
+  ElephantExpressStateMachineArn:
+    Description: ARN of the Elephant Express state machine
+    Value: !Ref ElephantExpressStateMachine
+  ElephantExpressStateMachineName:
+    Description: Name of the Elephant Express state machine
+    Value: !GetAtt ElephantExpressStateMachine.Name
