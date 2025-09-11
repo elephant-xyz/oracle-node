@@ -7,13 +7,7 @@ import { promises as fs } from "fs";
 import path from "path";
 import os from "os";
 import { fileURLToPath } from "url";
-import {
-  transform,
-  validate,
-  hash,
-  upload,
-  submitToContract,
-} from "@elephant-xyz/cli/lib";
+import { transform, validate, hash, upload } from "@elephant-xyz/cli/lib";
 import { parse } from "csv-parse/sync";
 
 const s3 = new S3Client({});
@@ -269,79 +263,13 @@ export const handler = async (event) => {
     ];
     for (const v of reqVars)
       if (!process.env[v]) throw new Error(`${v} required`);
-    const submitResult = await submitToContract({
-      csvFile: uploadResults,
-      domain: process.env.ELEPHANT_DOMAIN,
-      apiKey: process.env.ELEPHANT_API_KEY,
-      oracleKeyId: process.env.ELEPHANT_ORACLE_KEY_ID,
-      fromAddress: process.env.ELEPHANT_FROM_ADDRESS,
-      rpcUrl: process.env.ELEPHANT_RPC_URL,
-      cwd: tmp,
-    });
-    if (!submitResult.success)
-      throw new Error(`Submit failed: ${submitResult.error}`);
-    const submitResultsCsv = await fs.readFile(
-      path.join(tmp, "transaction-status.csv"),
-      "utf8",
-    );
-
-    const submitResults = parse(submitResultsCsv, {
+    const combinedCsvContent = await fs.readFile(uploadResults, "utf8");
+    const transactionItems = await parse(combinedCsvContent, {
       columns: true,
       skip_empty_lines: true,
       trim: true,
     });
-
-    const submitResultsJson = submitResults.map((row) => {
-      return {
-        ...row,
-        propertyCid: propertyCid,
-      };
-    });
-    console.log(
-      JSON.stringify({
-        ...base,
-        level: "info",
-        msg: "completed",
-        submit_results: submitResultsJson,
-      }),
-    );
-
-    const submitErrrorsCsv = await fs.readFile(
-      path.join(tmp, "submit_errors.csv"),
-      "utf8",
-    );
-    const submitErrors = parse(submitErrrorsCsv, {
-      columns: true,
-      skip_empty_lines: true,
-      trim: true,
-    });
-    console.log(`Submit errors type is : ${typeof submitErrors}`);
-    const allErrors = [
-      ...submitErrors,
-      ...submitResults.filter((row) => row.status === "failed"),
-    ];
-
-    const submitErrorsJson = allErrors.map((row) => {
-      return {
-        ...row,
-        propertyCid: propertyCid,
-      };
-    });
-    console.log(
-      JSON.stringify({
-        ...base,
-        level: "info",
-        msg: "completed",
-        submit_errors: submitErrorsJson,
-      }),
-    );
-    if (allErrors.length > 0) {
-      throw new Error(
-        "Submit to the blockchain failed" + JSON.stringify(allErrors),
-      );
-    }
-    console.log(JSON.stringify({ ...base, level: "info", msg: "completed" }));
-    return { status: "success" };
+    return { status: "success", transactionItems };
   } catch (err) {
     console.error(
       JSON.stringify({
