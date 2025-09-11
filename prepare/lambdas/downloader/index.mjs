@@ -1,7 +1,11 @@
-import { GetObjectCommand, S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
+import {
+  GetObjectCommand,
+  S3Client,
+  PutObjectCommand,
+} from "@aws-sdk/client-s3";
 import { promises as fs } from "fs";
 import path from "path";
-import { prepare } from "@elephant-xyz/cli/dist/lib/prepare.js";
+import { prepare } from "@elephant-xyz/cli/lib";
 
 const RE_S3PATH = /^s3:\/\/([^/]+)\/(.*)$/i;
 
@@ -21,7 +25,7 @@ const splitS3Uri = (s3Uri) => {
   const match = RE_S3PATH.exec(s3Uri);
 
   if (!match) {
-    throw new Error('S3 path should be like: s3://bucket/object');
+    throw new Error("S3 path should be like: s3://bucket/object");
   }
 
   const [, bucket, key] = match;
@@ -49,7 +53,9 @@ export const handler = async (event) => {
   const tempDir = await fs.mkdtemp("/tmp/prepare-");
   try {
     const inputZip = path.join(tempDir, path.basename(key));
-    const getResp = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+    const getResp = await s3.send(
+      new GetObjectCommand({ Bucket: bucket, Key: key }),
+    );
     const inputBytes = await getResp.Body?.transformToByteArray();
     if (!inputBytes) {
       throw new Error("Failed to download input object body");
@@ -65,7 +71,9 @@ export const handler = async (event) => {
     let outBucket = bucket;
     let outKey = key;
     if (event.output_s3_uri_prefix) {
-      const { bucket: outB, key: outPrefix } = splitS3Uri(event.output_s3_uri_prefix);
+      const { bucket: outB, key: outPrefix } = splitS3Uri(
+        event.output_s3_uri_prefix,
+      );
       outBucket = outB;
       outKey = path.posix.join(outPrefix.replace(/\/$/, ""), "output.zip");
     } else {
@@ -76,7 +84,13 @@ export const handler = async (event) => {
     }
 
     const outputBody = await fs.readFile(outputZip);
-    await s3.send(new PutObjectCommand({ Bucket: outBucket, Key: outKey, Body: outputBody }));
+    await s3.send(
+      new PutObjectCommand({
+        Bucket: outBucket,
+        Key: outKey,
+        Body: outputBody,
+      }),
+    );
 
     return { output_s3_uri: `s3://${outBucket}/${outKey}` };
   } finally {

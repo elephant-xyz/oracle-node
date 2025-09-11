@@ -807,7 +807,7 @@ Resources:
       Architectures:
         - arm64
       MemorySize: 512
-      Timeout: 900
+      Timeout: 120
       EphemeralStorage:
         Size: 2048
       CodeUri: ../workflow/lambdas/post
