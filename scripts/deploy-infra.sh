@@ -65,7 +65,7 @@ sam_deploy() {
     --stack-name "$STACK_NAME" \
     --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \
     --resolve-s3 \
-    --confirm-changeset \
+    --no-confirm-changeset \
     --no-fail-on-empty-changeset \
     --parameter-overrides ${PARAM_OVERRIDES:-} >/dev/null
 }
@@ -191,6 +191,7 @@ main() {
   sam_build
   sam_deploy
 
+  bucket=$(get_bucket)
   echo
   info "Done!"
   info "Environment bucket: $bucket"

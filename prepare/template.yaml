@@ -48,12 +48,6 @@ Parameters:
     Type: String
     Default: ElephantExpressWorkflow
 
-Conditions:
-  HasStartupScript: !Not [!Equals [!Ref StartupScriptS3ObjectVersion, ""]]
-  HasRequirements: !Not [!Equals [!Ref RequirementsS3ObjectVersion, ""]]
-  UseSingleNat: !Equals [!Ref UseSingleNatGateway, "true"]
-  UseDualNat: !Not [!Equals [!Ref UseSingleNatGateway, "true"]]
-
 Globals:
   Function:
     Runtime: nodejs22.x
@@ -205,7 +199,7 @@ Resources:
     Type: AWS::SQS::Queue
     Properties:
       MessageRetentionPeriod: 1209600
-      VisibilityTimeout: 300
+      VisibilityTimeout: 331
       SqsManagedSseEnabled: true
       Tags:
         - Key: Environment
@@ -215,7 +209,7 @@ Resources:
     Type: AWS::SQS::Queue
     Properties:
       QueueName: !Ref WorkflowQueueName
-      VisibilityTimeout: 300
+      VisibilityTimeout: 331
       MessageRetentionPeriod: 1209600
       SqsManagedSseEnabled: true
       RedrivePolicy:
