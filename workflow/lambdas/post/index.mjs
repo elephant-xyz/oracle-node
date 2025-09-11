@@ -127,7 +127,7 @@ export const handler = async (event) => {
       inputZip: countyZipLocal,
       outputZip: countyOut,
       scriptsZip: scriptsZip,
-      cwed: tmp,
+      cwd: tmp,
     });
     console.log("Transform complete");
     if (!transformResult.success) throw new Error(transformResult.error);
