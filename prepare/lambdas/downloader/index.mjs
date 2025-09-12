@@ -64,8 +64,45 @@ export const handler = async (event) => {
 
     const outputZip = path.join(tempDir, "output.zip");
     const useBrowser = event.browser ?? true;
-    console.log("Using browser:", useBrowser);
-    await prepare(inputZip, outputZip, { browser: useBrowser });
+    
+    console.log("Building prepare options...");
+    console.log(`Event browser setting: ${event.browser} (using: ${useBrowser})`);
+    
+    // Configuration map for prepare flags
+    const flagConfig = [
+      {
+        envVar: 'ELEPHANT_PREPARE_USE_BROWSER',
+        optionKey: 'useBrowser',
+        description: 'Force browser mode'
+      },
+      {
+        envVar: 'ELEPHANT_PREPARE_NO_FAST',
+        optionKey: 'noFast',
+        description: 'Disable fast mode'
+      },
+      {
+        envVar: 'ELEPHANT_PREPARE_NO_CONTINUE',
+        optionKey: 'noContinue',
+        description: 'Disable continue mode'
+      }
+    ];
+    
+    // Build prepare options based on environment variables
+    const prepareOptions = { useBrowser };
+    
+    console.log("Checking environment variables for prepare flags:");
+    
+    for (const { envVar, optionKey, description } of flagConfig) {
+      if (process.env[envVar] === 'true') {
+        prepareOptions[optionKey] = true;
+        console.log(`✓ ${envVar}='true' → adding ${optionKey}: true (${description})`);
+      } else {
+        console.log(`✗ ${envVar}='${process.env[envVar]}' → not adding ${optionKey} flag (${description})`);
+      }
+    }
+    
+    console.log("Calling prepare() with these options...");
+    await prepare(inputZip, outputZip, prepareOptions);
 
     // Determine upload destination
     let outBucket = bucket;

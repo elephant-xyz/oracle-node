@@ -117,16 +117,37 @@ export const handler = async (event) => {
       "transforms.zip",
     );
     await fs.stat(scriptsZip);
+    
+    console.log("Starting transform operation (includes fact sheet generation)...");
+    const transformStart = Date.now();
     const transformResult = await transform({
       inputZip: countyZipLocal,
       outputZip: countyOut,
       scriptsZip: scriptsZip,
       cwd: tmp,
     });
-    console.log("Transform complete");
+    const transformDuration = Date.now() - transformStart;
+    console.log(JSON.stringify({
+      ...base,
+      operation: "transform",
+      duration_ms: transformDuration,
+      duration_seconds: (transformDuration / 1000).toFixed(2),
+      includes_fact_sheet_generation: true,
+      msg: "Transform complete (includes fact sheet generation)"
+    }));
     if (!transformResult.success) throw new Error(transformResult.error);
+    
+    console.log("Starting validation operation...");
+    const validationStart = Date.now();
     const validationResult = await validate({ input: countyOut, cwd: tmp });
-    console.log("Validation complete");
+    const validationDuration = Date.now() - validationStart;
+    console.log(JSON.stringify({
+      ...base,
+      operation: "validation",
+      duration_ms: validationDuration,
+      duration_seconds: (validationDuration / 1000).toFixed(2),
+      msg: "Validation complete"
+    }));
     if (!validationResult.success) {
       // Try to read submit_errors.csv and log as JSON
       const submitErrorsPath = path.join(tmp, "submit_errors.csv");
@@ -191,13 +212,23 @@ export const handler = async (event) => {
     const countyHashCsv = path.join(tmp, "county_hash.csv");
     const seedHashZip = path.join(tmp, "seed_hash.zip");
     const seedHashCsv = path.join(tmp, "seed_hash.csv");
+    
+    console.log("Starting seed hash operation...");
+    const seedHashStart = Date.now();
     const hashResult = await hash({
       input: seedZipLocal,
       outputZip: seedHashZip,
       outputCsv: seedHashCsv,
       cwd: tmp,
     });
-    console.log("Seed hash complete");
+    const seedHashDuration = Date.now() - seedHashStart;
+    console.log(JSON.stringify({
+      ...base,
+      operation: "seed_hash",
+      duration_ms: seedHashDuration,
+      duration_seconds: (seedHashDuration / 1000).toFixed(2),
+      msg: "Seed hash complete"
+    }));
     if (!hashResult.success)
       throw new Error(`Seed hash failed: ${hashResult.error}`);
     const csv = await fs.readFile(seedHashCsv, "utf8");
@@ -207,6 +238,9 @@ export const handler = async (event) => {
       trim: true,
     });
     const propertyCid = records[0].propertyCid;
+    
+    console.log("Starting county hash operation...");
+    const countyHashStart = Date.now();
     const countyHashResult = await hash({
       input: countyOut,
       outputZip: countyHashZip,
@@ -214,25 +248,54 @@ export const handler = async (event) => {
       propertyCid: propertyCid,
       cwd: tmp,
     });
-    console.log("County hash complete");
+    const countyHashDuration = Date.now() - countyHashStart;
+    console.log(JSON.stringify({
+      ...base,
+      operation: "county_hash",
+      duration_ms: countyHashDuration,
+      duration_seconds: (countyHashDuration / 1000).toFixed(2),
+      msg: "County hash complete"
+    }));
     if (!countyHashResult.success)
       throw new Error(`County hash failed: ${countyHashResult.error}`);
 
     // Upload to IPFS
     const pinataJwt = process.env.ELEPHANT_PINATA_JWT;
     if (!pinataJwt) throw new Error("ELEPHANT_PINATA_JWT is required");
+    
+    console.log("Starting IPFS upload operation...");
+    const uploadStart = Date.now();
     await Promise.all(
       [seedHashZip, countyHashZip].map(async (f) => {
+        const fileName = path.basename(f);
+        console.log(`Uploading ${fileName} to IPFS...`);
+        const fileUploadStart = Date.now();
         const uploadResult = await upload({
           input: f,
           pinataJwt: pinataJwt,
           cwd: tmp,
         });
+        const fileUploadDuration = Date.now() - fileUploadStart;
+        console.log(JSON.stringify({
+          ...base,
+          operation: "ipfs_upload_file",
+          file: fileName,
+          duration_ms: fileUploadDuration,
+          duration_seconds: (fileUploadDuration / 1000).toFixed(2),
+          msg: `Upload complete for ${fileName}`
+        }));
         if (!uploadResult.success)
           throw new Error(`Upload failed: ${uploadResult.error}`);
       }),
     );
-    console.log("Upload complete");
+    const totalUploadDuration = Date.now() - uploadStart;
+    console.log(JSON.stringify({
+      ...base,
+      operation: "ipfs_upload_total",
+      duration_ms: totalUploadDuration,
+      duration_seconds: (totalUploadDuration / 1000).toFixed(2),
+      msg: "All uploads complete"
+    }));
 
     // Combine CSVs
     const combinedCsv = await combineCsv(seedHashCsv, countyHashCsv, tmp);
@@ -269,6 +332,16 @@ export const handler = async (event) => {
       skip_empty_lines: true,
       trim: true,
     });
+    const totalOperationDuration = Date.now() - Date.parse(base.at);
+    console.log(JSON.stringify({
+      ...base,
+      operation: "post_lambda_total",
+      duration_ms: totalOperationDuration,
+      duration_seconds: (totalOperationDuration / 1000).toFixed(2),
+      transaction_items_count: transactionItems.length,
+      msg: "Post Lambda execution complete"
+    }));
+    
     return { status: "success", transactionItems };
   } catch (err) {
     console.error(
