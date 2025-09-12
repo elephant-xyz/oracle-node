@@ -64,8 +64,39 @@ export const handler = async (event) => {
 
     const outputZip = path.join(tempDir, "output.zip");
     const useBrowser = event.browser ?? true;
-    console.log("Using browser:", useBrowser);
-    await prepare(inputZip, outputZip, { browser: useBrowser });
+    
+    console.log("Building prepare options...");
+    console.log(`Event browser setting: ${event.browser} (using: ${useBrowser})`);
+    
+    // Build prepare options based on environment variables
+    const prepareOptions = { browser: useBrowser };
+    
+    // Add flags only if environment variables are set
+    console.log("Checking environment variables for prepare flags:");
+    
+    if (process.env.ELEPHANT_PREPARE_USE_BROWSER === 'true') {
+      prepareOptions.useBrowser = true;
+      console.log("✓ ELEPHANT_PREPARE_USE_BROWSER='true' → adding useBrowser: true");
+    } else {
+      console.log(`✗ ELEPHANT_PREPARE_USE_BROWSER='${process.env.ELEPHANT_PREPARE_USE_BROWSER}' → not adding useBrowser flag`);
+    }
+    
+    if (process.env.ELEPHANT_PREPARE_NO_FAST === 'true') {
+      prepareOptions.noFast = true;
+      console.log("✓ ELEPHANT_PREPARE_NO_FAST='true' → adding noFast: true");
+    } else {
+      console.log(`✗ ELEPHANT_PREPARE_NO_FAST='${process.env.ELEPHANT_PREPARE_NO_FAST}' → not adding noFast flag`);
+    }
+    
+    if (process.env.ELEPHANT_PREPARE_NO_CONTINUE === 'true') {
+      prepareOptions.noContinue = true;
+      console.log("✓ ELEPHANT_PREPARE_NO_CONTINUE='true' → adding noContinue: true");
+    } else {
+      console.log(`✗ ELEPHANT_PREPARE_NO_CONTINUE='${process.env.ELEPHANT_PREPARE_NO_CONTINUE}' → not adding noContinue flag`);
+    }
+    
+    console.log("Calling prepare() with these options...");
+    await prepare(inputZip, outputZip, prepareOptions);
 
     // Determine upload destination
     let outBucket = bucket;
