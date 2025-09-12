@@ -48,6 +48,29 @@ Parameters:
     Type: String
     Default: ElephantExpressWorkflow
 
+  # Prepare function flags (only applied if set to 'true')
+  ElephantPrepareUseBrowser:
+    Description: Force browser mode for prepare function
+    Type: String
+    Default: "false"
+    AllowedValues:
+      - "true"
+      - "false"
+  ElephantPrepareNoFast:
+    Description: Disable fast mode for prepare function
+    Type: String
+    Default: "false"
+    AllowedValues:
+      - "true"
+      - "false"
+  ElephantPrepareNoContinue:
+    Description: Disable continue mode for prepare function
+    Type: String
+    Default: "false"
+    AllowedValues:
+      - "true"
+      - "false"
+
 Globals:
   Function:
     Runtime: nodejs22.x
@@ -148,6 +171,11 @@ Resources:
       CodeUri: lambdas/downloader
       Handler: index.handler
       Description: "Downloads data (granted full S3 access as requested)"
+      Environment:
+        Variables:
+          ELEPHANT_PREPARE_USE_BROWSER: !Ref ElephantPrepareUseBrowser
+          ELEPHANT_PREPARE_NO_FAST: !Ref ElephantPrepareNoFast
+          ELEPHANT_PREPARE_NO_CONTINUE: !Ref ElephantPrepareNoContinue
       Policies:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
         - arn:aws:iam::aws:policy/AmazonS3FullAccess

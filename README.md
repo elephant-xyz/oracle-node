@@ -24,6 +24,11 @@ export WORKFLOW_STATE_MACHINE_NAME=ElephantExpressWorkflow
 # Optional (AWS CLI)
 export AWS_PROFILE=your-profile
 export AWS_REGION=your-region
+
+# Optional (Prepare function flags - only set to 'true' if needed)
+export ELEPHANT_PREPARE_USE_BROWSER=false  # Force browser mode
+export ELEPHANT_PREPARE_NO_FAST=false      # Disable fast mode  
+export ELEPHANT_PREPARE_NO_CONTINUE=false  # Disable continue mode
 ```
 
 Put your transform files under `transform/` (if applicable).
@@ -35,6 +40,45 @@ Put your transform files under `transform/` (if applicable).
 ```
 
 This creates the VPC, S3 buckets, SQS queues, Lambdas, and the Express Step Functions state machine.
+
+### Configure Prepare Function Behavior
+
+The `DownloaderFunction` uses the `prepare` command from `@elephant-xyz/cli` to fetch and process data. You can control its behavior using environment variables that map to CLI flags:
+
+| Environment Variable | Default | CLI Flag | Description |
+|---------------------|---------|----------|-------------|
+| `ELEPHANT_PREPARE_USE_BROWSER` | `false` | `--use-browser` | Force browser mode for fetching |
+| `ELEPHANT_PREPARE_NO_FAST` | `false` | `--no-fast` | Disable fast mode |
+| `ELEPHANT_PREPARE_NO_CONTINUE` | `false` | `--no-continue` | Disable continue mode |
+
+**Deploy with custom prepare flags:**
+
+```bash
+# Deploy with browser mode enabled
+sam deploy --parameter-overrides \
+  ElephantPrepareUseBrowser="true" \
+  ElephantPrepareNoFast="false" \
+  ElephantPrepareNoContinue="false"
+
+# Or set as environment variables before deploy-infra.sh
+export ELEPHANT_PREPARE_USE_BROWSER=true
+export ELEPHANT_PREPARE_NO_FAST=true
+./scripts/deploy-infra.sh
+```
+
+**View prepare function logs:**
+
+The Lambda logs will show exactly which options are being used:
+
+```
+Building prepare options...
+Event browser setting: undefined (using: true)
+Checking environment variables for prepare flags:
+✓ ELEPHANT_PREPARE_USE_BROWSER='true' → adding useBrowser: true
+✗ ELEPHANT_PREPARE_NO_FAST='false' → not adding noFast flag
+✗ ELEPHANT_PREPARE_NO_CONTINUE='false' → not adding noContinue flag
+Calling prepare() with these options...
+```
 
 ### Update transform scripts
 
