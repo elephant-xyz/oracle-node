@@ -68,31 +68,37 @@ export const handler = async (event) => {
     console.log("Building prepare options...");
     console.log(`Event browser setting: ${event.browser} (using: ${useBrowser})`);
     
-    // Build prepare options based on environment variables
-    const prepareOptions = { browser: useBrowser };
+    // Configuration map for prepare flags
+    const flagConfig = [
+      {
+        envVar: 'ELEPHANT_PREPARE_USE_BROWSER',
+        optionKey: 'useBrowser',
+        description: 'Force browser mode'
+      },
+      {
+        envVar: 'ELEPHANT_PREPARE_NO_FAST',
+        optionKey: 'noFast',
+        description: 'Disable fast mode'
+      },
+      {
+        envVar: 'ELEPHANT_PREPARE_NO_CONTINUE',
+        optionKey: 'noContinue',
+        description: 'Disable continue mode'
+      }
+    ];
     
-    // Add flags only if environment variables are set
+    // Build prepare options based on environment variables
+    const prepareOptions = { useBrowser };
+    
     console.log("Checking environment variables for prepare flags:");
     
-    if (process.env.ELEPHANT_PREPARE_USE_BROWSER === 'true') {
-      prepareOptions.useBrowser = true;
-      console.log("✓ ELEPHANT_PREPARE_USE_BROWSER='true' → adding useBrowser: true");
-    } else {
-      console.log(`✗ ELEPHANT_PREPARE_USE_BROWSER='${process.env.ELEPHANT_PREPARE_USE_BROWSER}' → not adding useBrowser flag`);
-    }
-    
-    if (process.env.ELEPHANT_PREPARE_NO_FAST === 'true') {
-      prepareOptions.noFast = true;
-      console.log("✓ ELEPHANT_PREPARE_NO_FAST='true' → adding noFast: true");
-    } else {
-      console.log(`✗ ELEPHANT_PREPARE_NO_FAST='${process.env.ELEPHANT_PREPARE_NO_FAST}' → not adding noFast flag`);
-    }
-    
-    if (process.env.ELEPHANT_PREPARE_NO_CONTINUE === 'true') {
-      prepareOptions.noContinue = true;
-      console.log("✓ ELEPHANT_PREPARE_NO_CONTINUE='true' → adding noContinue: true");
-    } else {
-      console.log(`✗ ELEPHANT_PREPARE_NO_CONTINUE='${process.env.ELEPHANT_PREPARE_NO_CONTINUE}' → not adding noContinue flag`);
+    for (const { envVar, optionKey, description } of flagConfig) {
+      if (process.env[envVar] === 'true') {
+        prepareOptions[optionKey] = true;
+        console.log(`✓ ${envVar}='true' → adding ${optionKey}: true (${description})`);
+      } else {
+        console.log(`✗ ${envVar}='${process.env[envVar]}' → not adding ${optionKey} flag (${description})`);
+      }
     }
     
     console.log("Calling prepare() with these options...");
