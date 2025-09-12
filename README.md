@@ -75,8 +75,8 @@ Building prepare options...
 Event browser setting: undefined (using: true)
 Checking environment variables for prepare flags:
 ✓ ELEPHANT_PREPARE_USE_BROWSER='true' → adding useBrowser: true
-✗ ELEPHANT_PREPARE_NO_FAST='true' → not adding noFast flag
-✗ ELEPHANT_PREPARE_NO_CONTINUE='true' → not adding noContinue flag
+✗ ELEPHANT_PREPARE_NO_FAST='false' → not adding noFast flag
+✗ ELEPHANT_PREPARE_NO_CONTINUE='false' → not adding noContinue flag
 Calling prepare() with these options...
 ```
 
