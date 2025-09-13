@@ -18,7 +18,7 @@ export ELEPHANT_PINATA_JWT=...
 # Optional (deployment)
 export STACK_NAME=elephant-oracle-node
 export WORKFLOW_QUEUE_NAME=elephant-workflow-queue
-export WORKFLOW_STARTER_RESERVED_CONCURRENCY=225
+export WORKFLOW_STARTER_RESERVED_CONCURRENCY=100
 export WORKFLOW_STATE_MACHINE_NAME=ElephantExpressWorkflow
 
 # Optional (AWS CLI)
@@ -27,7 +27,7 @@ export AWS_REGION=your-region
 
 # Optional (Prepare function flags - only set to 'true' if needed)
 export ELEPHANT_PREPARE_USE_BROWSER=false  # Force browser mode
-export ELEPHANT_PREPARE_NO_FAST=false      # Disable fast mode  
+export ELEPHANT_PREPARE_NO_FAST=false      # Disable fast mode
 export ELEPHANT_PREPARE_NO_CONTINUE=false  # Disable continue mode
 ```
 
@@ -45,11 +45,11 @@ This creates the VPC, S3 buckets, SQS queues, Lambdas, and the Express Step Func
 
 The `DownloaderFunction` uses the `prepare` command from `@elephant-xyz/cli` to fetch and process data. You can control its behavior using environment variables that map to CLI flags:
 
-| Environment Variable | Default | CLI Flag | Description |
-|---------------------|---------|----------|-------------|
+| Environment Variable           | Default | CLI Flag        | Description                     |
+| ------------------------------ | ------- | --------------- | ------------------------------- |
 | `ELEPHANT_PREPARE_USE_BROWSER` | `false` | `--use-browser` | Force browser mode for fetching |
-| `ELEPHANT_PREPARE_NO_FAST` | `false` | `--no-fast` | Disable fast mode |
-| `ELEPHANT_PREPARE_NO_CONTINUE` | `false` | `--no-continue` | Disable continue mode |
+| `ELEPHANT_PREPARE_NO_FAST`     | `false` | `--no-fast`     | Disable fast mode               |
+| `ELEPHANT_PREPARE_NO_CONTINUE` | `false` | `--no-continue` | Disable continue mode           |
 
 **Deploy with custom prepare flags:**
 

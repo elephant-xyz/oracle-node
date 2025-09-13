@@ -42,7 +42,7 @@ Parameters:
   WorkflowStarterReservedConcurrency:
     Description: Max concurrent SQS messages to process via EventSourceMapping ScalingConfig
     Type: Number
-    Default: 225
+    Default: 100
   WorkflowStateMachineName:
     Description: Name for the Express Step Functions state machine
     Type: String
