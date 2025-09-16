@@ -37,7 +37,7 @@ export ELEPHANT_PREPARE_NO_CONTINUE=false  # Disable continue mode
 
 #### Option B: Keystore Mode (using encrypted private key)
 
-For enhanced security, you can use a keystore file (encrypted private key) instead of API credentials:
+For enhanced security, you can use a keystore file (encrypted private key) instead of API credentials. The keystore file follows the [EIP-2335 standard](https://eips.ethereum.org/EIPS/eip-2335) for BLS12-381 key encryption.
 
 ```bash
 # Required for keystore mode
@@ -67,6 +67,7 @@ export ELEPHANT_PREPARE_NO_CONTINUE=false  # Disable continue mode
 - The password must be correct to decrypt the keystore
 - The keystore file will be securely uploaded to S3 during deployment
 - When using keystore mode, you don't need to provide: `ELEPHANT_DOMAIN`, `ELEPHANT_API_KEY`, `ELEPHANT_ORACLE_KEY_ID`, or `ELEPHANT_FROM_ADDRESS`
+- To create a keystore file, see the [Elephant CLI documentation on encrypted JSON keystores](https://github.com/elephant-xyz/elephant-cli?tab=readme-ov-file#encrypted-json-keystore)
 
 Put your transform files under `transform/` (if applicable).
 
@@ -119,17 +120,24 @@ Calling prepare() with these options...
 
 ### Keystore Mode Details
 
-When using keystore mode, the deployment process:
-1. Validates that the keystore file exists and the password is provided
-2. Uploads the keystore file to S3 in the environment bucket under `keystores/` prefix
-3. Configures the Lambda functions with the S3 location and password
-4. The submit Lambda will download the keystore from S3 and use it for blockchain submissions
+The keystore mode provides a secure way to manage private keys for blockchain submissions using the industry-standard [EIP-2335](https://eips.ethereum.org/EIPS/eip-2335) encryption format.
+
+**How it works:**
+1. The deployment script validates that the keystore file exists and the password is provided
+2. The keystore file is securely uploaded to S3 in the environment bucket under `keystores/` prefix
+3. Lambda functions are configured with the S3 location and password as encrypted environment variables
+4. During execution, the submit Lambda downloads the keystore from S3 and uses it for blockchain submissions
+
+**Creating a Keystore File:**
+You can create a keystore file using the Elephant CLI tool. For detailed instructions, refer to the [Elephant CLI Encrypted JSON Keystore documentation](https://github.com/elephant-xyz/elephant-cli?tab=readme-ov-file#encrypted-json-keystore).
 
 **Security considerations:**
+- The keystore uses EIP-2335 standard encryption (PBKDF2 with SHA-256 for key derivation, AES-128-CTR for encryption)
 - The keystore file is stored encrypted in S3 with versioning enabled
 - The password is stored as an encrypted environment variable in Lambda
-- Lambda functions have minimal S3 permissions (read-only access to keystores)
+- Lambda functions have minimal S3 permissions (read-only access to keystores only)
 - Keystore files in S3 are automatically deleted after 14 days (lifecycle policy)
+- The keystore is only downloaded to Lambda's temporary storage during execution and is cleaned up after
 
 ### Update transform scripts
 
