@@ -73,21 +73,47 @@ export const handler = async (event) => {
         }),
       );
 
-      // Download keystore from S3
-      const keystorePath = path.resolve(tmp, "keystore.json");
+      // Download keystore from S3 with unique filename to avoid conflicts
+      const keystorePath = path.resolve(
+        tmp,
+        `keystore-${Date.now()}-${Math.random().toString(36).substring(7)}.json`,
+      );
       await downloadKeystoreFromS3(
         process.env.ENVIRONMENT_BUCKET,
         process.env.ELEPHANT_KEYSTORE_S3_KEY,
         keystorePath,
       );
 
-      submitResult = await submitToContract({
-        csvFile: csvFilePath,
-        keystoreJson: keystorePath,
-        keystorePassword: process.env.ELEPHANT_KEYSTORE_PASSWORD,
-        rpcUrl: process.env.ELEPHANT_RPC_URL,
-        cwd: tmp,
-      });
+      try {
+        submitResult = await submitToContract({
+          csvFile: csvFilePath,
+          keystoreJson: keystorePath,
+          keystorePassword: process.env.ELEPHANT_KEYSTORE_PASSWORD,
+          rpcUrl: process.env.ELEPHANT_RPC_URL,
+          cwd: tmp,
+        });
+      } finally {
+        // Clean up keystore file immediately after use for security
+        try {
+          await fs.unlink(keystorePath);
+          console.log(
+            JSON.stringify({
+              ...base,
+              level: "info",
+              msg: "Keystore file cleaned up successfully",
+            }),
+          );
+        } catch (cleanupError) {
+          console.error(
+            JSON.stringify({
+              ...base,
+              level: "warn",
+              msg: "Failed to clean up keystore file",
+              error: cleanupError.message,
+            }),
+          );
+        }
+      }
     } else {
       console.log(
         JSON.stringify({
