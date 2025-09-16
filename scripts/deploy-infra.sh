@@ -89,21 +89,51 @@ sam_deploy_with_versions() {
 }
 
 compute_param_overrides() {
-  # Required secrets (fail if missing)
-  : "${ELEPHANT_DOMAIN?Set ELEPHANT_DOMAIN}"
-  : "${ELEPHANT_API_KEY?Set ELEPHANT_API_KEY}"
-  : "${ELEPHANT_ORACLE_KEY_ID?Set ELEPHANT_ORACLE_KEY_ID}"
-  : "${ELEPHANT_FROM_ADDRESS?Set ELEPHANT_FROM_ADDRESS}"
-  : "${ELEPHANT_RPC_URL?Set ELEPHANT_RPC_URL}"
-  : "${ELEPHANT_PINATA_JWT?Set ELEPHANT_PINATA_JWT}"
+  # Check if using keystore mode
+  if [[ -n "${ELEPHANT_KEYSTORE_FILE:-}" ]]; then
+    # Keystore mode - verify requirements
+    [[ ! -f "$ELEPHANT_KEYSTORE_FILE" ]] && { err "Keystore file not found: $ELEPHANT_KEYSTORE_FILE"; exit 1; }
+    : "${ELEPHANT_KEYSTORE_PASSWORD?Set ELEPHANT_KEYSTORE_PASSWORD when using keystore}"
+    : "${ELEPHANT_RPC_URL?Set ELEPHANT_RPC_URL}"
+    : "${ELEPHANT_PINATA_JWT?Set ELEPHANT_PINATA_JWT}"
 
-  local parts=()
-  parts+=("ElephantDomain=\"$ELEPHANT_DOMAIN\"")
-  parts+=("ElephantApiKey=\"$ELEPHANT_API_KEY\"")
-  parts+=("ElephantOracleKeyId=\"$ELEPHANT_ORACLE_KEY_ID\"")
-  parts+=("ElephantFromAddress=\"$ELEPHANT_FROM_ADDRESS\"")
-  parts+=("ElephantRpcUrl=\"$ELEPHANT_RPC_URL\"")
-  parts+=("ElephantPinataJwt=\"$ELEPHANT_PINATA_JWT\"")
+    # Upload keystore to S3 and get the S3 key
+    info "Uploading keystore file to S3..."
+    local keystore_s3_key="keystores/keystore-$(date +%s).json"
+    local bucket=$(get_bucket 2>/dev/null || echo "")
+
+    if [[ -z "$bucket" ]]; then
+      # Bucket will be created during first deploy
+      info "Bucket will be created during initial deployment"
+      KEYSTORE_S3_KEY_PENDING="$keystore_s3_key"
+      KEYSTORE_FILE_PENDING="$ELEPHANT_KEYSTORE_FILE"
+    else
+      aws s3 cp "$ELEPHANT_KEYSTORE_FILE" "s3://$bucket/$keystore_s3_key"
+      ELEPHANT_KEYSTORE_S3_KEY="$keystore_s3_key"
+    fi
+
+    local parts=()
+    parts+=("ElephantRpcUrl=\"$ELEPHANT_RPC_URL\"")
+    parts+=("ElephantPinataJwt=\"$ELEPHANT_PINATA_JWT\"")
+    parts+=("ElephantKeystoreS3Key=\"${ELEPHANT_KEYSTORE_S3_KEY:-pending}\"")
+    parts+=("ElephantKeystorePassword=\"$ELEPHANT_KEYSTORE_PASSWORD\"")
+  else
+    # Traditional mode - require all API credentials
+    : "${ELEPHANT_DOMAIN?Set ELEPHANT_DOMAIN}"
+    : "${ELEPHANT_API_KEY?Set ELEPHANT_API_KEY}"
+    : "${ELEPHANT_ORACLE_KEY_ID?Set ELEPHANT_ORACLE_KEY_ID}"
+    : "${ELEPHANT_FROM_ADDRESS?Set ELEPHANT_FROM_ADDRESS}"
+    : "${ELEPHANT_RPC_URL?Set ELEPHANT_RPC_URL}"
+    : "${ELEPHANT_PINATA_JWT?Set ELEPHANT_PINATA_JWT}"
+
+    local parts=()
+    parts+=("ElephantDomain=\"$ELEPHANT_DOMAIN\"")
+    parts+=("ElephantApiKey=\"$ELEPHANT_API_KEY\"")
+    parts+=("ElephantOracleKeyId=\"$ELEPHANT_ORACLE_KEY_ID\"")
+    parts+=("ElephantFromAddress=\"$ELEPHANT_FROM_ADDRESS\"")
+    parts+=("ElephantRpcUrl=\"$ELEPHANT_RPC_URL\"")
+    parts+=("ElephantPinataJwt=\"$ELEPHANT_PINATA_JWT\"")
+  fi
 
   [[ -n "${WORKFLOW_QUEUE_NAME:-}" ]] && parts+=("WorkflowQueueName=\"$WORKFLOW_QUEUE_NAME\"")
   [[ -n "${WORKFLOW_STARTER_RESERVED_CONCURRENCY:-}" ]] && parts+=("WorkflowStarterReservedConcurrency=\"$WORKFLOW_STARTER_RESERVED_CONCURRENCY\"")
@@ -186,6 +216,22 @@ ensure_lambda_concurrency_quota() {
   fi
 }
 
+handle_pending_keystore_upload() {
+  if [[ -n "${KEYSTORE_S3_KEY_PENDING:-}" && -n "${KEYSTORE_FILE_PENDING:-}" ]]; then
+    local bucket=$(get_bucket)
+    if [[ -n "$bucket" ]]; then
+      info "Uploading pending keystore file to S3..."
+      aws s3 cp "$KEYSTORE_FILE_PENDING" "s3://$bucket/$KEYSTORE_S3_KEY_PENDING"
+
+      # Update the stack with the actual S3 key
+      ELEPHANT_KEYSTORE_S3_KEY="$KEYSTORE_S3_KEY_PENDING"
+      compute_param_overrides
+      info "Updating stack with keystore S3 key..."
+      sam_deploy
+    fi
+  fi
+}
+
 main() {
   check_prereqs
   ensure_lambda_concurrency_quota
@@ -195,6 +241,8 @@ main() {
 
   sam_build
   sam_deploy
+
+  handle_pending_keystore_upload
 
   bucket=$(get_bucket)
   echo
