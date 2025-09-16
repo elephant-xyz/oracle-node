@@ -4,10 +4,14 @@ This repo deploys an AWS Step Functions (Express) workflow with SQS and Lambda. 
 
 ### 1) Set environment variables
 
-Export these before deploying (replace values with your own):
+The oracle node supports two authentication modes:
+
+#### Option A: Traditional Mode (using API credentials)
+
+Export these environment variables before deploying:
 
 ```bash
-# Required (application)
+# Required for traditional mode
 export ELEPHANT_DOMAIN=...
 export ELEPHANT_API_KEY=...
 export ELEPHANT_ORACLE_KEY_ID=...
@@ -30,6 +34,39 @@ export ELEPHANT_PREPARE_USE_BROWSER=false  # Force browser mode
 export ELEPHANT_PREPARE_NO_FAST=false      # Disable fast mode
 export ELEPHANT_PREPARE_NO_CONTINUE=false  # Disable continue mode
 ```
+
+#### Option B: Keystore Mode (using encrypted private key)
+
+For enhanced security, you can use a keystore file (encrypted private key) instead of API credentials:
+
+```bash
+# Required for keystore mode
+export ELEPHANT_KEYSTORE_FILE=/path/to/your/keystore.json  # Path to your keystore JSON file
+export ELEPHANT_KEYSTORE_PASSWORD=your-keystore-password   # Password to decrypt the keystore
+export ELEPHANT_RPC_URL=...                                # RPC URL for blockchain submission
+export ELEPHANT_PINATA_JWT=...                             # Pinata JWT for uploads
+
+# Optional (deployment)
+export STACK_NAME=elephant-oracle-node
+export WORKFLOW_QUEUE_NAME=elephant-workflow-queue
+export WORKFLOW_STARTER_RESERVED_CONCURRENCY=100
+export WORKFLOW_STATE_MACHINE_NAME=ElephantExpressWorkflow
+
+# Optional (AWS CLI)
+export AWS_PROFILE=your-profile
+export AWS_REGION=your-region
+
+# Optional (Prepare function flags - only set to 'true' if needed)
+export ELEPHANT_PREPARE_USE_BROWSER=false  # Force browser mode
+export ELEPHANT_PREPARE_NO_FAST=false      # Disable fast mode
+export ELEPHANT_PREPARE_NO_CONTINUE=false  # Disable continue mode
+```
+
+**Important Notes for Keystore Mode:**
+- The keystore file must exist at the specified path
+- The password must be correct to decrypt the keystore
+- The keystore file will be securely uploaded to S3 during deployment
+- When using keystore mode, you don't need to provide: `ELEPHANT_DOMAIN`, `ELEPHANT_API_KEY`, `ELEPHANT_ORACLE_KEY_ID`, or `ELEPHANT_FROM_ADDRESS`
 
 Put your transform files under `transform/` (if applicable).
 
@@ -79,6 +116,20 @@ Checking environment variables for prepare flags:
 ✗ ELEPHANT_PREPARE_NO_CONTINUE='false' → not adding noContinue flag
 Calling prepare() with these options...
 ```
+
+### Keystore Mode Details
+
+When using keystore mode, the deployment process:
+1. Validates that the keystore file exists and the password is provided
+2. Uploads the keystore file to S3 in the environment bucket under `keystores/` prefix
+3. Configures the Lambda functions with the S3 location and password
+4. The submit Lambda will download the keystore from S3 and use it for blockchain submissions
+
+**Security considerations:**
+- The keystore file is stored encrypted in S3 with versioning enabled
+- The password is stored as an encrypted environment variable in Lambda
+- Lambda functions have minimal S3 permissions (read-only access to keystores)
+- Keystore files in S3 are automatically deleted after 14 days (lifecycle policy)
 
 ### Update transform scripts
 
