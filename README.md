@@ -37,7 +37,9 @@ export ELEPHANT_PREPARE_NO_CONTINUE=false  # Disable continue mode
 
 #### Option B: Keystore Mode (using encrypted private key)
 
-For enhanced security, you can use a keystore file (encrypted private key) instead of API credentials. The keystore file follows the [EIP-2335 standard](https://eips.ethereum.org/EIPS/eip-2335) for BLS12-381 key encryption.
+For non-institutional oracles, you can use your own wallter as a keystore file (encrypted private key) instead of API credentials. The keystore file follows the [EIP-2335 standard](https://eips.ethereum.org/EIPS/eip-2335) for BLS12-381 key encryption.
+
+To create a keystore file, see the [Elephant CLI documentation on encrypted JSON keystores](https://github.com/elephant-xyz/elephant-cli?tab=readme-ov-file#encrypted-json-keystore)
 
 ```bash
 # Required for keystore mode
@@ -126,18 +128,17 @@ The keystore mode provides a secure way to manage private keys for blockchain su
 1. The deployment script validates that the keystore file exists and the password is provided
 2. The keystore file is securely uploaded to S3 in the environment bucket under `keystores/` prefix
 3. Lambda functions are configured with the S3 location and password as encrypted environment variables
-4. During execution, the submit Lambda downloads the keystore from S3 and uses it for blockchain submissions
+4. During execution, the submit Lambda downloads the keys tore from S3 and uses it for blockchain submissions
 
 **Creating a Keystore File:**
 You can create a keystore file using the Elephant CLI tool. For detailed instructions, refer to the [Elephant CLI Encrypted JSON Keystore documentation](https://github.com/elephant-xyz/elephant-cli?tab=readme-ov-file#encrypted-json-keystore).
 
 **Security considerations:**
 - The keystore uses EIP-2335 standard encryption (PBKDF2 with SHA-256 for key derivation, AES-128-CTR for encryption)
-- The keystore file is stored encrypted in S3 with versioning enabled
+- The keystore file is stored encrypted in S3 with versioning enabled for audit trails
 - The password is stored as an encrypted environment variable in Lambda
 - Lambda functions have minimal S3 permissions (read-only access to keystores only)
-- Keystore files in S3 are automatically deleted after 14 days (lifecycle policy)
-- The keystore is only downloaded to Lambda's temporary storage during execution and is cleaned up after
+- The keystore is only downloaded to Lambda's temporary storage during execution and is immediately cleaned up after use
 
 ### Update transform scripts
 
