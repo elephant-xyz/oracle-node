@@ -35,6 +35,15 @@ Parameters:
     Type: String
     NoEcho: true
     Default: ""
+  ElephantKeystoreS3Key:
+    Description: S3 key for keystore JSON file (when using keystore mode)
+    Type: String
+    Default: ""
+  ElephantKeystorePassword:
+    Description: Password for keystore file (when using keystore mode)
+    Type: String
+    NoEcho: true
+    Default: ""
   WorkflowQueueName:
     Description: Name for the Step Functions SQS trigger queue
     Type: String
@@ -87,8 +96,11 @@ Resources:
     Properties:
       LifecycleConfiguration:
         Rules:
-          - ExpirationInDays: 14
+          - Id: DeleteOutputs
             Status: Enabled
+            ExpirationInDays: 14
+            Filter:
+              Prefix: outputs/
       VersioningConfiguration:
         Status: Enabled
       PublicAccessBlockConfiguration:
@@ -288,6 +300,12 @@ Resources:
       Description: "Submits data to the blockchain"
       Policies:
         - AWSLambdaBasicExecutionRole
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+              Resource: !Sub "${EnvironmentBucket.Arn}/keystores/*"
       Environment:
         Variables:
           ELEPHANT_DOMAIN: !Ref ElephantDomain
@@ -295,6 +313,9 @@ Resources:
           ELEPHANT_ORACLE_KEY_ID: !Ref ElephantOracleKeyId
           ELEPHANT_FROM_ADDRESS: !Ref ElephantFromAddress
           ELEPHANT_RPC_URL: !Ref ElephantRpcUrl
+          ELEPHANT_KEYSTORE_S3_KEY: !Ref ElephantKeystoreS3Key
+          ELEPHANT_KEYSTORE_PASSWORD: !Ref ElephantKeystorePassword
+          ENVIRONMENT_BUCKET: !Ref EnvironmentBucket
       Events:
         Submit:
           Type: SQS
