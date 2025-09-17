@@ -108,8 +108,7 @@ Resources:
           - Id: DeleteOutputs
             Status: Enabled
             ExpirationInDays: 14
-            Filter:
-              Prefix: outputs/
+            Prefix: outputs/
       VersioningConfiguration:
         Status: Enabled
       PublicAccessBlockConfiguration:
