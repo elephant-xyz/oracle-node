@@ -41,7 +41,10 @@ const splitS3Uri = (s3Uri) => {
  * @returns {Promise<string>} Success message
  */
 export const handler = async (event) => {
+  const startTime = Date.now();
   console.log("Event:", event);
+  console.log(`🚀 Lambda handler started at: ${new Date().toISOString()}`);
+  
   if (!event || !event.input_s3_uri) {
     throw new Error("Missing required field: input_s3_uri");
   }
@@ -52,6 +55,10 @@ export const handler = async (event) => {
 
   const tempDir = await fs.mkdtemp("/tmp/prepare-");
   try {
+    // S3 Download Phase
+    console.log("📥 Starting S3 download...");
+    const s3DownloadStart = Date.now();
+    
     const inputZip = path.join(tempDir, path.basename(key));
     const getResp = await s3.send(
       new GetObjectCommand({ Bucket: bucket, Key: key }),
@@ -61,6 +68,10 @@ export const handler = async (event) => {
       throw new Error("Failed to download input object body");
     }
     await fs.writeFile(inputZip, Buffer.from(inputBytes));
+    
+    const s3DownloadDuration = Date.now() - s3DownloadStart;
+    console.log(`✅ S3 download completed: ${s3DownloadDuration}ms (${(s3DownloadDuration/1000).toFixed(2)}s)`);
+    console.log(`📊 Downloaded ${inputBytes.length} bytes from s3://${bucket}/${key}`);
 
     const outputZip = path.join(tempDir, "output.zip");
     const useBrowser = event.browser ?? true;
@@ -101,8 +112,20 @@ export const handler = async (event) => {
       }
     }
     
+    // Prepare Phase (Main bottleneck)
+    console.log("🔄 Starting prepare() function...");
+    const prepareStart = Date.now();
     console.log("Calling prepare() with these options...");
+    
     await prepare(inputZip, outputZip, prepareOptions);
+    
+    const prepareDuration = Date.now() - prepareStart;
+    console.log(`✅ Prepare function completed: ${prepareDuration}ms (${(prepareDuration/1000).toFixed(2)}s)`);
+    console.log(`🔍 PERFORMANCE: Local=2s, Lambda=${(prepareDuration/1000).toFixed(1)}s - ${prepareDuration > 3000 ? '⚠️ SLOW' : '✅ OK'}`);
+    
+    // Check output file size
+    const outputStats = await fs.stat(outputZip);
+    console.log(`📊 Output file size: ${outputStats.size} bytes`);
 
     // Determine upload destination
     let outBucket = bucket;
@@ -120,6 +143,10 @@ export const handler = async (event) => {
       outKey = path.posix.join(dir, `${base}.prepared.zip`);
     }
 
+    // S3 Upload Phase
+    console.log("📤 Starting S3 upload...");
+    const s3UploadStart = Date.now();
+    
     const outputBody = await fs.readFile(outputZip);
     await s3.send(
       new PutObjectCommand({
@@ -128,6 +155,19 @@ export const handler = async (event) => {
         Body: outputBody,
       }),
     );
+    
+    const s3UploadDuration = Date.now() - s3UploadStart;
+    console.log(`✅ S3 upload completed: ${s3UploadDuration}ms (${(s3UploadDuration/1000).toFixed(2)}s)`);
+    console.log(`📊 Uploaded ${outputBody.length} bytes to s3://${outBucket}/${outKey}`);
+    
+    // Total timing summary
+    const totalDuration = Date.now() - startTime;
+    console.log(`\n🎯 TIMING SUMMARY:`);
+    console.log(`   S3 Download: ${s3DownloadDuration}ms (${(s3DownloadDuration/1000).toFixed(2)}s)`);
+    console.log(`   Prepare:     ${prepareDuration}ms (${(prepareDuration/1000).toFixed(2)}s)`);
+    console.log(`   S3 Upload:   ${s3UploadDuration}ms (${(s3UploadDuration/1000).toFixed(2)}s)`);
+    console.log(`   TOTAL:       ${totalDuration}ms (${(totalDuration/1000).toFixed(2)}s)`);
+    console.log(`🏁 Lambda handler completed at: ${new Date().toISOString()}\n`);
 
     return { output_s3_uri: `s3://${outBucket}/${outKey}` };
   } finally {

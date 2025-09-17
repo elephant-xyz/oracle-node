@@ -70,6 +70,15 @@ Parameters:
     AllowedValues:
       - "true"
       - "false"
+  
+  UpdaterScheduleRate:
+    Description: How often the updater function runs (e.g., '1 minute', '5 minutes', or 'cron(*/1 * * * ? *)' for every minute)
+    Type: String
+    Default: "1 minute"
+    AllowedPattern: "^([0-9]+ (minute|minutes|hour|hours|day|days)|cron\\(.+\\))$"
+
+Conditions:
+  IsRateExpression: !Not [!Equals [!Select [0, !Split ["(", !Ref UpdaterScheduleRate]], "cron"]]
 
 Globals:
   Function:
@@ -167,7 +176,7 @@ Resources:
     Properties:
       EphemeralStorage:
         Size: 1024
-      MemorySize: 768
+      MemorySize: 1024
       CodeUri: lambdas/downloader
       Handler: index.handler
       Description: "Downloads data (granted full S3 access as requested)"
@@ -205,9 +214,12 @@ Resources:
         UpdateSchedule:
           Type: Schedule
           Properties:
-            Name: UpdateDownloaderEveryMinute
-            Description: "Invoke updater every minute to refresh env var."
-            Schedule: "cron(* * * * ? *)"
+            Name: UpdateDownloaderSchedule
+            Description: !Sub "Invoke updater every ${UpdaterScheduleRate} to refresh env var."
+            Schedule: !If 
+              - IsRateExpression
+              - !Sub "rate(${UpdaterScheduleRate})"
+              - !Ref UpdaterScheduleRate
             Enabled: true
 
   # Persist the DownloaderFunction ARN to SSM for Airflow to consume

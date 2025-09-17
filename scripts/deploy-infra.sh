@@ -67,7 +67,7 @@ sam_deploy() {
     --resolve-s3 \
     --no-confirm-changeset \
     --no-fail-on-empty-changeset \
-    --parameter-overrides ${PARAM_OVERRIDES:-} >/dev/null
+    --parameter-overrides "${PARAM_OVERRIDES:-}" >/dev/null
 }
 
 sam_deploy_with_versions() {
@@ -81,7 +81,7 @@ sam_deploy_with_versions() {
     --no-confirm-changeset \
     --no-fail-on-empty-changeset \
     --parameter-overrides \
-      ${PARAM_OVERRIDES:-} \
+      "${PARAM_OVERRIDES:-}" \
       StartupScriptS3Path="startup.sh" \
       StartupScriptS3ObjectVersion="$script_ver" \
       RequirementsS3Path="requirements.txt" \
@@ -113,6 +113,9 @@ compute_param_overrides() {
   [[ -n "${ELEPHANT_PREPARE_USE_BROWSER:-}" ]] && parts+=("ElephantPrepareUseBrowser=\"$ELEPHANT_PREPARE_USE_BROWSER\"")
   [[ -n "${ELEPHANT_PREPARE_NO_FAST:-}" ]] && parts+=("ElephantPrepareNoFast=\"$ELEPHANT_PREPARE_NO_FAST\"")
   [[ -n "${ELEPHANT_PREPARE_NO_CONTINUE:-}" ]] && parts+=("ElephantPrepareNoContinue=\"$ELEPHANT_PREPARE_NO_CONTINUE\"")
+  
+  # Updater schedule rate (only add if set locally)
+  [[ -n "${UPDATER_SCHEDULE_RATE:-}" ]] && parts+=("UpdaterScheduleRate=\"$UPDATER_SCHEDULE_RATE\"")
 
   PARAM_OVERRIDES="${parts[*]}"
 }
