@@ -67,13 +67,6 @@ sam deploy --parameter-overrides \
   ElephantPrepareNoFast="false" \
   ElephantPrepareNoContinue="false"
 
-# Deploy with custom updater schedule (5 minutes)
-sam deploy --parameter-overrides \
-  UpdaterScheduleRate="5 minutes"
-
-# Deploy with sub-minute schedule using cron (every 30 seconds)
-sam deploy --parameter-overrides \
-  UpdaterScheduleRate="cron(0/30 * * * ? *)"
 
 # Or set as environment variables before deploy-infra.sh
 export ELEPHANT_PREPARE_USE_BROWSER=true

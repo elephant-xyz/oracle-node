@@ -176,7 +176,7 @@ Resources:
     Properties:
       EphemeralStorage:
         Size: 1024
-      MemorySize: 1024
+      MemorySize: 768
       CodeUri: lambdas/downloader
       Handler: index.handler
       Description: "Downloads data (granted full S3 access as requested)"
