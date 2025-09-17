@@ -33,6 +33,12 @@ export AWS_REGION=your-region
 export ELEPHANT_PREPARE_USE_BROWSER=false  # Force browser mode
 export ELEPHANT_PREPARE_NO_FAST=false      # Disable fast mode
 export ELEPHANT_PREPARE_NO_CONTINUE=false  # Disable continue mode
+
+# Optional (Updater schedule - only set if you want to change from default)
+export UPDATER_SCHEDULE_RATE="1 minute"    # How often updater runs (default: "1 minute")
+# For sub-minute intervals, use cron expressions:
+# export UPDATER_SCHEDULE_RATE="cron(*/1 * * * ? *)"  # Every minute
+# export UPDATER_SCHEDULE_RATE="cron(0/30 * * * ? *)" # Every 30 seconds (at :00 and :30)
 ```
 
 #### Option B: Keystore Mode (using encrypted private key)
@@ -90,6 +96,7 @@ The `DownloaderFunction` uses the `prepare` command from `@elephant-xyz/cli` to 
 | `ELEPHANT_PREPARE_USE_BROWSER` | `false` | `--use-browser` | Force browser mode for fetching |
 | `ELEPHANT_PREPARE_NO_FAST`     | `false` | `--no-fast`     | Disable fast mode               |
 | `ELEPHANT_PREPARE_NO_CONTINUE` | `false` | `--no-continue` | Disable continue mode           |
+| `UPDATER_SCHEDULE_RATE`        | `"1 minute"` | N/A        | Updater frequency (e.g., "5 minutes", "cron(*/1 * * * ? *)") |
 
 **Deploy with custom prepare flags:**
 
@@ -100,9 +107,11 @@ sam deploy --parameter-overrides \
   ElephantPrepareNoFast="false" \
   ElephantPrepareNoContinue="false"
 
+
 # Or set as environment variables before deploy-infra.sh
 export ELEPHANT_PREPARE_USE_BROWSER=true
 export ELEPHANT_PREPARE_NO_FAST=true
+export UPDATER_SCHEDULE_RATE="2 minutes"
 ./scripts/deploy-infra.sh
 ```
 
