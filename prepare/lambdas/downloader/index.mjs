@@ -125,61 +125,8 @@ export const handler = async (event) => {
     console.log(`⚠️ Could not get IP information: ${error.message}`);
   }
   
-  // Input validation with structured error logging
-  const validationErrors = [];
-  
-  if (!event) {
-    validationErrors.push({
-      field: "event",
-      error: "Event object is null or undefined",
-      received: event
-    });
-  }
-  
-  if (!event?.input_s3_uri) {
-    validationErrors.push({
-      field: "input_s3_uri", 
-      error: "Missing required field",
-      received: event?.input_s3_uri,
-      expected: "Valid S3 URI (s3://bucket/key)"
-    });
-  } else {
-    // Validate S3 URI format
-    const s3UriPattern = /^s3:\/\/[a-z0-9.\-]{3,63}\/(.+)$/i;
-    if (!s3UriPattern.test(event.input_s3_uri)) {
-      validationErrors.push({
-        field: "input_s3_uri",
-        error: "Invalid S3 URI format", 
-        received: event.input_s3_uri,
-        expected: "s3://bucket-name/object-key",
-        pattern: "s3://[bucket]/[key]"
-      });
-    }
-  }
-  
-  if (validationErrors.length > 0) {
-    const validationError = {
-      timestamp: new Date().toISOString(),
-      level: "ERROR",
-      type: "VALIDATION_ERROR",
-      message: "Input validation failed",
-      errors: validationErrors,
-      event: event,
-      lambda: {
-        function: process.env.AWS_LAMBDA_FUNCTION_NAME,
-        version: process.env.AWS_LAMBDA_FUNCTION_VERSION,
-        requestId: process.env.AWS_REQUEST_ID,
-        region: process.env.AWS_REGION
-      }
-    };
-    
-    console.error("❌ VALIDATION FAILED");
-    console.error(JSON.stringify(validationError, null, 2));
-    
-    const error = new Error(`Validation failed: ${validationErrors.map(e => e.error).join(', ')}`);
-    error.validationErrors = validationErrors;
-    error.type = "VALIDATION_ERROR";
-    throw error;
+  if (!event || !event.input_s3_uri) {
+    throw new Error("Missing required field: input_s3_uri");
   }
   const { bucket, key } = splitS3Uri(event.input_s3_uri);
   console.log("Bucket:", bucket);

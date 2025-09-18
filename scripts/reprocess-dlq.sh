@@ -29,7 +29,7 @@ OPTIONS:
     --dlq-type TYPE         DLQ type: workflow or transactions (required)
     --batch-size SIZE       Messages to process per batch (default: 10)
     --max-messages COUNT    Maximum messages to reprocess (default: 100)
-    --profile PROFILE       AWS profile to use (default: oracle-3)
+    --profile PROFILE       AWS profile to use (default: oracle-saman)
     --stack-name NAME       CloudFormation stack name (default: elephant-oracle-node)
     --dry-run              Show what would be done without actually moving messages
     --verbose              Enable verbose output
