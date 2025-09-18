@@ -1,5 +1,5 @@
 {
-  "Comment": "Process S3 objects and send SQS messages for MWAA workflow with error handling",
+  "Comment": "Process S3 objects and send SQS messages for workflow processing with error handling",
   "StartAt": "ListObjects",
   "States": {
     "ListObjects": {

@@ -340,7 +340,7 @@ main() {
         info "Express mode: Directly invoking ElephantExpressWorkflow"
         start_express_workflow "$bucket_name" "$s3_object_key" "$express_workflow_arn"
     else
-        # Default mode: Use MwaaSqsQueue for MWAA workflow
+        # Default mode: Use MwaaSqsQueue for workflow processing
         local sqs_queue_url
         sqs_queue_url=$(get_workflow_sqs_queue_url)
         if [[ -z "$sqs_queue_url" || "$sqs_queue_url" == "None" ]]; then
@@ -348,7 +348,7 @@ main() {
             err "Make sure the stack is deployed and contains MwaaSqsQueueUrl output"
             exit 1
         fi
-        info "Default mode: Using S3ToSqsStateMachine -> MwaaSqsQueue (MWAA workflow)"
+        info "Default mode: Using S3ToSqsStateMachine -> MwaaSqsQueue (workflow processing)"
         start_execution "$bucket_name" "$step_function_arn" "$sqs_queue_url"
     fi
 }
