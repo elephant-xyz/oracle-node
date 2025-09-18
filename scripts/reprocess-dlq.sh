@@ -26,7 +26,7 @@ Usage: $0 [OPTIONS]
 Reprocess messages from Dead Letter Queue (DLQ) back to main queue.
 
 OPTIONS:
-    --dlq-type TYPE         DLQ type: mwaa, workflow, or transactions (required)
+    --dlq-type TYPE         DLQ type: workflow or transactions (required)
     --batch-size SIZE       Messages to process per batch (default: 10)
     --max-messages COUNT    Maximum messages to reprocess (default: 100)
     --profile PROFILE       AWS profile to use (default: oracle-3)
@@ -99,13 +99,13 @@ parse_arguments() {
     done
 
     if [[ -z "$DLQ_TYPE" ]]; then
-        print_error "DLQ type is required. Use --dlq-type [mwaa|workflow|transactions]"
+        print_error "DLQ type is required. Use --dlq-type [workflow|transactions]"
         show_usage
         exit 1
     fi
 
-    if [[ ! "$DLQ_TYPE" =~ ^(mwaa|workflow|transactions)$ ]]; then
-        print_error "Invalid DLQ type: $DLQ_TYPE. Must be one of: mwaa, workflow, transactions"
+    if [[ ! "$DLQ_TYPE" =~ ^(workflow|transactions)$ ]]; then
+        print_error "Invalid DLQ type: $DLQ_TYPE. Must be one of: workflow, transactions"
         exit 1
     fi
 }
@@ -116,19 +116,6 @@ get_queue_urls() {
     print_info "Getting queue URLs from CloudFormation stack: $STACK_NAME"
     
     case "$dlq_type" in
-        mwaa)
-            DLQ_URL=$(aws cloudformation describe-stacks \
-                --stack-name "$STACK_NAME" \
-                --query "Stacks[0].Outputs[?OutputKey=='MwaaDeadLetterQueueUrl'].OutputValue" \
-                --output text \
-                --profile "$PROFILE" 2>/dev/null)
-            
-            MAIN_URL=$(aws cloudformation describe-stacks \
-                --stack-name "$STACK_NAME" \
-                --query "Stacks[0].Outputs[?OutputKey=='MwaaSqsQueueUrl'].OutputValue" \
-                --output text \
-                --profile "$PROFILE" 2>/dev/null)
-            ;;
         workflow)
             DLQ_URL=$(aws cloudformation describe-stacks \
                 --stack-name "$STACK_NAME" \
@@ -162,13 +149,32 @@ get_queue_urls() {
         print_warning "CloudFormation output not found, searching for queues by name pattern..."
         
         case "$dlq_type" in
-            mwaa)
-                DLQ_URL=$(aws sqs list-queues --queue-name-prefix "$STACK_NAME-MwaaDeadLetterQueue" --profile "$PROFILE" --output text --query 'QueueUrls[0]' 2>/dev/null)
-                MAIN_URL=$(aws sqs list-queues --queue-name-prefix "$STACK_NAME-MwaaSqsQueue" --profile "$PROFILE" --output text --query 'QueueUrls[0]' 2>/dev/null)
-                ;;
             workflow)
                 DLQ_URL=$(aws sqs list-queues --queue-name-prefix "$STACK_NAME-WorkflowDeadLetterQueue" --profile "$PROFILE" --output text --query 'QueueUrls[0]' 2>/dev/null)
-                MAIN_URL=$(aws sqs list-queues --queue-name-prefix "$STACK_NAME-WorkflowSqsQueue" --profile "$PROFILE" --output text --query 'QueueUrls[0]' 2>/dev/null)
+                
+                # WorkflowSqsQueue has explicit QueueName from parameter (defaults to "elephant-workflow-queue")
+                # First try the default name
+                MAIN_URL=$(aws sqs list-queues --queue-name-prefix "elephant-workflow-queue" --profile "$PROFILE" --output text --query 'QueueUrls[0]' 2>/dev/null)
+                
+                if [[ -z "$MAIN_URL" || "$MAIN_URL" == "None" ]]; then
+                    # Try to get the actual WorkflowQueueName parameter value from CloudFormation
+                    local workflow_queue_name
+                    workflow_queue_name=$(aws cloudformation describe-stacks \
+                        --stack-name "$STACK_NAME" \
+                        --query "Stacks[0].Parameters[?ParameterKey=='WorkflowQueueName'].ParameterValue" \
+                        --output text \
+                        --profile "$PROFILE" 2>/dev/null)
+                    
+                    if [[ -n "$workflow_queue_name" && "$workflow_queue_name" != "None" ]]; then
+                        print_info "Found WorkflowQueueName parameter: $workflow_queue_name"
+                        MAIN_URL=$(aws sqs list-queues --queue-name-prefix "$workflow_queue_name" --profile "$PROFILE" --output text --query 'QueueUrls[0]' 2>/dev/null)
+                    fi
+                fi
+                
+                if [[ -z "$MAIN_URL" || "$MAIN_URL" == "None" ]]; then
+                    # Final fallback to stack-based pattern (shouldn't be needed, but just in case)
+                    MAIN_URL=$(aws sqs list-queues --queue-name-prefix "$STACK_NAME-WorkflowSqsQueue" --profile "$PROFILE" --output text --query 'QueueUrls[0]' 2>/dev/null)
+                fi
                 ;;
             transactions)
                 DLQ_URL=$(aws sqs list-queues --queue-name-prefix "$STACK_NAME-TransactionsDeadLetterQueue" --profile "$PROFILE" --output text --query 'QueueUrls[0]' 2>/dev/null)

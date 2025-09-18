@@ -230,12 +230,6 @@ That's it — set env vars, deploy, start, monitor, and tune concurrency.
 
 When messages fail processing multiple times, they are moved to Dead Letter Queues. You can reprocess these messages back to the main queue after fixing underlying issues:
 
-**Reprocess MWAA DLQ messages (dry run first):**
-```bash
-./scripts/reprocess-dlq.sh --dlq-type transaction --dry-run
-./scripts/reprocess-dlq.sh --dlq-type transaction --max-messages 50
-```
-
 **Reprocess Workflow DLQ messages:**
 ```bash
 ./scripts/reprocess-dlq.sh --dlq-type workflow --batch-size 10 --max-messages 100
