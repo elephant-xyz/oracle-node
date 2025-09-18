@@ -186,7 +186,7 @@ Available bucket names as of now:
 
 ### 4) Pause your Airflow DAG
 
-If you also run an Airflow/MWAA pipeline for the same data, open the Airflow UI and toggle the DAG off (pause) to avoid duplicate processing.
+If you also run an Airflow pipeline for the same data, open the Airflow UI and toggle the DAG off (pause) to avoid duplicate processing.
 
 ### Monitor the workflow
 
@@ -222,7 +222,33 @@ Docs:
 - View Step Functions execution history and errors: https://docs.aws.amazon.com/step-functions/latest/dg/concepts-states.html#concepts-states-errors
 - CloudWatch Logs for Step Functions: https://docs.aws.amazon.com/step-functions/latest/dg/cloudwatch-log-standard.html
 
-That’s it — set env vars, deploy, start, monitor, and tune concurrency.
+That's it — set env vars, deploy, start, monitor, and tune concurrency.
+
+## Dead Letter Queue (DLQ) Management
+
+### Reprocessing Failed Messages
+
+When messages fail processing multiple times, they are moved to Dead Letter Queues. You can reprocess these messages back to the main queue after fixing underlying issues:
+
+**Reprocess Workflow DLQ messages:**
+```bash
+./scripts/reprocess-dlq.sh --dlq-type workflow --batch-size 10 --max-messages 100
+```
+
+**Reprocess Transactions DLQ messages:**
+```bash
+./scripts/reprocess-dlq.sh --dlq-type transactions --max-messages 1000
+```
+
+**DLQ Types:**
+- `workflow` - Workflow Dead Letter Queue → Workflow SQS Queue  
+- `transactions` - Transactions Dead Letter Queue → Transactions SQS Queue
+
+**Parameters:**
+- `--dry-run` - Show what would be done without moving messages
+- `--batch-size` - Messages per batch (default: 10)
+- `--max-messages` - Maximum messages to reprocess (default: 100)
+- `--verbose` - Detailed output
 
 ```
 

@@ -887,3 +887,21 @@ Outputs:
   ElephantExpressStateMachineName:
     Description: Name of the Elephant Express state machine
     Value: !GetAtt ElephantExpressStateMachine.Name
+  WorkflowDeadLetterQueueUrl:
+    Description: URL of the Workflow Dead Letter Queue
+    Value: !Ref WorkflowDeadLetterQueue
+  WorkflowDeadLetterQueueArn:
+    Description: ARN of the Workflow Dead Letter Queue
+    Value: !GetAtt WorkflowDeadLetterQueue.Arn
+  TransactionsSqsQueueUrl:
+    Description: URL of the Transactions SQS Queue
+    Value: !Ref TransactionsSqsQueue
+  TransactionsSqsQueueArn:
+    Description: ARN of the Transactions SQS Queue
+    Value: !GetAtt TransactionsSqsQueue.Arn
+  TransactionsDeadLetterQueueUrl:
+    Description: URL of the Transactions Dead Letter Queue
+    Value: !Ref TransactionsDeadLetterQueue
+  TransactionsDeadLetterQueueArn:
+    Description: ARN of the Transactions Dead Letter Queue
+    Value: !GetAtt TransactionsDeadLetterQueue.Arn
