@@ -6,8 +6,64 @@ import {
 import { promises as fs } from "fs";
 import path from "path";
 import { prepare } from "@elephant-xyz/cli/lib";
+import { networkInterfaces } from "os";
 
 const RE_S3PATH = /^s3:\/\/([^/]+)\/(.*)$/i;
+
+/**
+ * Gets IP address information for the Lambda instance
+ * @returns {Promise<Object>} Object containing local and public IP addresses
+ */
+const getIPAddresses = async () => {
+  const result = {
+    localIPs: [],
+    publicIP: null,
+    awsRegion: process.env.AWS_REGION || 'unknown',
+    lambdaFunction: process.env.AWS_LAMBDA_FUNCTION_NAME || 'unknown'
+  };
+
+  try {
+    // Get local network interfaces
+    const nets = networkInterfaces();
+    for (const name of Object.keys(nets)) {
+      for (const net of nets[name]) {
+        // Skip internal and non-IPv4 addresses
+        if (net.family === 'IPv4' && !net.internal) {
+          result.localIPs.push(`${name}: ${net.address}`);
+        }
+      }
+    }
+  } catch (error) {
+    console.log(`⚠️ Could not get local IPs: ${error.message}`);
+  }
+
+  try {
+    // Try to get public IP via external service
+    const response = await fetch('https://api.ipify.org?format=json', {
+      timeout: 3000
+    });
+    if (response.ok) {
+      const data = await response.json();
+      result.publicIP = data.ip;
+    }
+  } catch (error) {
+    console.log(`⚠️ Could not get public IP: ${error.message}`);
+    
+    // Fallback: try AWS metadata service for ECS/EC2 (won't work in Lambda but just in case)
+    try {
+      const metadataResponse = await fetch('http://169.254.169.254/latest/meta-data/public-ipv4', {
+        timeout: 1000
+      });
+      if (metadataResponse.ok) {
+        result.publicIP = await metadataResponse.text();
+      }
+    } catch (metaError) {
+      // Silent fail for metadata service
+    }
+  }
+
+  return result;
+};
 
 /**
  * Splits an Amazon S3 URI into its bucket name and object key.
@@ -45,8 +101,85 @@ export const handler = async (event) => {
   console.log("Event:", event);
   console.log(`🚀 Lambda handler started at: ${new Date().toISOString()}`);
   
-  if (!event || !event.input_s3_uri) {
-    throw new Error("Missing required field: input_s3_uri");
+  // Log IP address and Lambda environment information
+  console.log("🌐 Getting Lambda IP address information...");
+  try {
+    const ipInfo = await getIPAddresses();
+    console.log(`🔍 Lambda Instance Info:`);
+    console.log(`   Function: ${ipInfo.lambdaFunction}`);
+    console.log(`   Version: ${process.env.AWS_LAMBDA_FUNCTION_VERSION || 'unknown'}`);
+    console.log(`   Region: ${ipInfo.awsRegion}`);
+    console.log(`   Memory: ${process.env.AWS_LAMBDA_FUNCTION_MEMORY_SIZE || 'unknown'}MB`);
+    console.log(`   Runtime: ${process.env.AWS_EXECUTION_ENV || 'unknown'}`);
+    console.log(`   Request ID: ${process.env.AWS_REQUEST_ID || 'unknown'}`);
+    console.log(`   Local IPs: ${ipInfo.localIPs.length > 0 ? ipInfo.localIPs.join(', ') : 'None found'}`);
+    console.log(`   Public IP: ${ipInfo.publicIP || 'Not available'}`);
+    
+    // Also log some additional network diagnostics
+    if (ipInfo.publicIP) {
+      console.log(`🌍 Network: Lambda has outbound internet access via IP ${ipInfo.publicIP}`);
+    } else {
+      console.log(`🚫 Network: No public IP detected (may be VPC-only or blocked)`);
+    }
+  } catch (error) {
+    console.log(`⚠️ Could not get IP information: ${error.message}`);
+  }
+  
+  // Input validation with structured error logging
+  const validationErrors = [];
+  
+  if (!event) {
+    validationErrors.push({
+      field: "event",
+      error: "Event object is null or undefined",
+      received: event
+    });
+  }
+  
+  if (!event?.input_s3_uri) {
+    validationErrors.push({
+      field: "input_s3_uri", 
+      error: "Missing required field",
+      received: event?.input_s3_uri,
+      expected: "Valid S3 URI (s3://bucket/key)"
+    });
+  } else {
+    // Validate S3 URI format
+    const s3UriPattern = /^s3:\/\/[a-z0-9.\-]{3,63}\/(.+)$/i;
+    if (!s3UriPattern.test(event.input_s3_uri)) {
+      validationErrors.push({
+        field: "input_s3_uri",
+        error: "Invalid S3 URI format", 
+        received: event.input_s3_uri,
+        expected: "s3://bucket-name/object-key",
+        pattern: "s3://[bucket]/[key]"
+      });
+    }
+  }
+  
+  if (validationErrors.length > 0) {
+    const validationError = {
+      timestamp: new Date().toISOString(),
+      level: "ERROR",
+      type: "VALIDATION_ERROR",
+      message: "Input validation failed",
+      errors: validationErrors,
+      event: event,
+      lambda: {
+        function: process.env.AWS_LAMBDA_FUNCTION_NAME,
+        version: process.env.AWS_LAMBDA_FUNCTION_VERSION,
+        requestId: process.env.AWS_REQUEST_ID,
+        region: process.env.AWS_REGION
+      }
+    };
+    
+    console.error("❌ VALIDATION FAILED");
+    console.error(JSON.stringify(validationError, null, 2));
+    
+    const error = new Error(`Validation failed: ${validationErrors.map(e => e.error).join(', ')}`);
+    error.validationErrors = validationErrors;
+    error.type = "VALIDATION_ERROR";
+    throw error;
   }
   const { bucket, key } = splitS3Uri(event.input_s3_uri);
   console.log("Bucket:", bucket);
@@ -115,13 +248,94 @@ export const handler = async (event) => {
     // Prepare Phase (Main bottleneck)
     console.log("🔄 Starting prepare() function...");
     const prepareStart = Date.now();
-    console.log("Calling prepare() with these options...");
+    console.log("Calling prepare() with these options:", JSON.stringify(prepareOptions, null, 2));
     
-    await prepare(inputZip, outputZip, prepareOptions);
-    
-    const prepareDuration = Date.now() - prepareStart;
-    console.log(`✅ Prepare function completed: ${prepareDuration}ms (${(prepareDuration/1000).toFixed(2)}s)`);
-    console.log(`🔍 PERFORMANCE: Local=2s, Lambda=${(prepareDuration/1000).toFixed(1)}s - ${prepareDuration > 3000 ? '⚠️ SLOW' : '✅ OK'}`);
+    let prepareDuration;
+    try {
+      await prepare(inputZip, outputZip, prepareOptions);
+      prepareDuration = Date.now() - prepareStart;
+      console.log(`✅ Prepare function completed: ${prepareDuration}ms (${(prepareDuration/1000).toFixed(2)}s)`);
+      console.log(`🔍 PERFORMANCE: Local=2s, Lambda=${(prepareDuration/1000).toFixed(1)}s - ${prepareDuration > 3000 ? '⚠️ SLOW' : '✅ OK'}`);
+    } catch (prepareError) {
+      prepareDuration = Date.now() - prepareStart;
+      
+      // Gather file system context
+      let inputFileInfo = null;
+      let outputFileInfo = null;
+      
+      try {
+        const inputStats = await fs.stat(inputZip);
+        inputFileInfo = {
+          exists: true,
+          size: inputStats.size,
+          path: inputZip
+        };
+      } catch (statsError) {
+        inputFileInfo = {
+          exists: false,
+          error: statsError.message,
+          path: inputZip
+        };
+      }
+      
+      try {
+        const outputStats = await fs.stat(outputZip);
+        outputFileInfo = {
+          exists: true,
+          size: outputStats.size,
+          partiallyCreated: true,
+          path: outputZip
+        };
+      } catch (outputError) {
+        outputFileInfo = {
+          exists: false,
+          partiallyCreated: false,
+          path: outputZip
+        };
+      }
+      
+      // Structured error log
+      const prepareErrorLog = {
+        timestamp: new Date().toISOString(),
+        level: "ERROR",
+        type: "PREPARE_FUNCTION_ERROR",
+        message: "Prepare function execution failed",
+        error: {
+          name: prepareError.name,
+          message: prepareError.message,
+          stack: prepareError.stack
+        },
+        execution: {
+          duration: prepareDuration,
+          durationSeconds: (prepareDuration / 1000).toFixed(2),
+          phase: "prepare"
+        },
+        context: {
+          inputS3Uri: event.input_s3_uri,
+          inputFile: inputFileInfo,
+          outputFile: outputFileInfo,
+          options: prepareOptions
+        },
+        lambda: {
+          function: process.env.AWS_LAMBDA_FUNCTION_NAME,
+          version: process.env.AWS_LAMBDA_FUNCTION_VERSION,
+          requestId: process.env.AWS_REQUEST_ID,
+          region: process.env.AWS_REGION,
+          memorySize: process.env.AWS_LAMBDA_FUNCTION_MEMORY_SIZE
+        }
+      };
+      
+      console.error("❌ PREPARE FUNCTION FAILED");
+      console.error(JSON.stringify(prepareErrorLog, null, 2));
+      
+      // Re-throw with enhanced context
+      const enhancedError = new Error(`Prepare function failed: ${prepareError.message}`);
+      enhancedError.originalError = prepareError;
+      enhancedError.type = "PREPARE_FUNCTION_ERROR";
+      enhancedError.context = prepareErrorLog.context;
+      enhancedError.execution = prepareErrorLog.execution;
+      throw enhancedError;
+    }
     
     // Check output file size
     const outputStats = await fs.stat(outputZip);
@@ -170,7 +384,51 @@ export const handler = async (event) => {
     console.log(`🏁 Lambda handler completed at: ${new Date().toISOString()}\n`);
 
     return { output_s3_uri: `s3://${outBucket}/${outKey}` };
+  } catch (lambdaError) {
+    const totalDuration = Date.now() - startTime;
+    
+    // Structured Lambda error log
+    const lambdaErrorLog = {
+      timestamp: new Date().toISOString(),
+      level: "ERROR", 
+      type: lambdaError.type || "LAMBDA_EXECUTION_ERROR",
+      message: "Lambda execution failed",
+      error: {
+        name: lambdaError.name,
+        message: lambdaError.message,
+        stack: lambdaError.stack
+      },
+      execution: {
+        totalDuration: totalDuration,
+        totalDurationSeconds: (totalDuration / 1000).toFixed(2),
+        failed: true
+      },
+      input: {
+        event: event,
+        inputS3Uri: event?.input_s3_uri || null
+      },
+      context: lambdaError.context || null,
+      validationErrors: lambdaError.validationErrors || null,
+      lambda: {
+        function: process.env.AWS_LAMBDA_FUNCTION_NAME,
+        version: process.env.AWS_LAMBDA_FUNCTION_VERSION,
+        requestId: process.env.AWS_REQUEST_ID,
+        region: process.env.AWS_REGION,
+        memorySize: process.env.AWS_LAMBDA_FUNCTION_MEMORY_SIZE,
+        runtime: process.env.AWS_EXECUTION_ENV
+      }
+    };
+    
+    console.error("💥 LAMBDA EXECUTION FAILED");
+    console.error(JSON.stringify(lambdaErrorLog, null, 2));
+    
+    throw lambdaError;
   } finally {
-    await fs.rm(tempDir, { recursive: true, force: true });
+    try {
+      await fs.rm(tempDir, { recursive: true, force: true });
+      console.log(`🧹 Cleaned up temporary directory: ${tempDir}`);
+    } catch (cleanupError) {
+      console.error(`⚠️ Failed to cleanup temp directory ${tempDir}: ${cleanupError.message}`);
+    }
   }
 };
