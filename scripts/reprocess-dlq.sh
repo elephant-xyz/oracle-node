@@ -36,8 +36,8 @@ OPTIONS:
     --help                 Show this help message
 
 EXAMPLES:
-    # Reprocess MWAA DLQ messages (dry run)
-    $0 --dlq-type mwaa --dry-run
+    # Reprocess Workflow DLQ messages (dry run)
+    $0 --dlq-type workflow --dry-run
 
     # Reprocess workflow DLQ messages (10 at a time, max 50)
     $0 --dlq-type workflow --batch-size 10 --max-messages 50
@@ -46,7 +46,6 @@ EXAMPLES:
     $0 --dlq-type transactions --max-messages 1000
 
 DLQ TYPES:
-    mwaa         - MWAA Dead Letter Queue → MWAA SQS Queue
     workflow     - Workflow Dead Letter Queue → Workflow SQS Queue  
     transactions - Transactions Dead Letter Queue → Transactions SQS Queue
 

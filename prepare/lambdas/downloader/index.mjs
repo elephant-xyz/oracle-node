@@ -39,9 +39,14 @@ const getIPAddresses = async () => {
 
   try {
     // Try to get public IP via external service
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3000);
+    
     const response = await fetch('https://api.ipify.org?format=json', {
-      timeout: 3000
+      signal: controller.signal
     });
+    clearTimeout(timeoutId);
+    
     if (response.ok) {
       const data = await response.json();
       result.publicIP = data.ip;
@@ -51,9 +56,14 @@ const getIPAddresses = async () => {
     
     // Fallback: try AWS metadata service for ECS/EC2 (won't work in Lambda but just in case)
     try {
+      const metadataController = new AbortController();
+      const metadataTimeoutId = setTimeout(() => metadataController.abort(), 1000);
+      
       const metadataResponse = await fetch('http://169.254.169.254/latest/meta-data/public-ipv4', {
-        timeout: 1000
+        signal: metadataController.signal
       });
+      clearTimeout(metadataTimeoutId);
+      
       if (metadataResponse.ok) {
         result.publicIP = await metadataResponse.text();
       }

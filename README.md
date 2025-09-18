@@ -186,7 +186,7 @@ Available bucket names as of now:
 
 ### 4) Pause your Airflow DAG
 
-If you also run an Airflow/MWAA pipeline for the same data, open the Airflow UI and toggle the DAG off (pause) to avoid duplicate processing.
+If you also run an Airflow pipeline for the same data, open the Airflow UI and toggle the DAG off (pause) to avoid duplicate processing.
 
 ### Monitor the workflow
 
