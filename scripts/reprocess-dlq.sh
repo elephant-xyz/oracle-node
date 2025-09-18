@@ -103,8 +103,8 @@ parse_arguments() {
         exit 1
     fi
 
-    if [[ ! "$DLQ_TYPE" =~ ^(workflow|transactions)$ ]]; then
-        print_error "Invalid DLQ type: $DLQ_TYPE. Must be one of: workflow, transactions"
+    if [[ ! "$DLQ_TYPE" =~ ^(workflow|transactions|mwaa)$ ]]; then
+        print_error "Invalid DLQ type: $DLQ_TYPE. Must be one of: workflow, transactions, mwaa"
         exit 1
     fi
 }
