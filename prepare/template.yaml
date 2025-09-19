@@ -433,6 +433,7 @@ Resources:
         DownloaderFunction: !GetAtt DownloaderFunction.Arn
         WorkflowPostProcessorFunction: !GetAtt WorkflowPostProcessorFunction.Arn
         WorkflowSqsQueueUrl: !Ref WorkflowSqsQueue
+        WorkflowDeadLetterQueueUrl: !Ref WorkflowDeadLetterQueue
         TransactionsSqsQueueUrl: !Ref TransactionsSqsQueue
       Role: !GetAtt ElephantExpressStateMachineRole.Arn
       Logging:
@@ -478,6 +479,7 @@ Resources:
                   - sqs:SendMessage
                 Resource:
                   - !GetAtt WorkflowSqsQueue.Arn
+                  - !GetAtt WorkflowDeadLetterQueue.Arn
                   - !GetAtt TransactionsSqsQueue.Arn
               - Effect: Allow
                 Action:
