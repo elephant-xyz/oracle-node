@@ -107,7 +107,7 @@ States:
     Type: Task
     Resource: arn:aws:states:::sqs:sendMessage
     Parameters:
-      QueueUrl: ${WorkflowSqsQueueUrl}
+      QueueUrl: ${WorkflowDeadLetterQueueUrl}
       MessageBody.$: "States.JsonToString($.message)"
     ResultPath: null
     Next: FailRuntime
