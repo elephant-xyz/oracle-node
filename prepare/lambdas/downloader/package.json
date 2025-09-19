@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.879.0",
-    "@elephant-xyz/cli": "git+https://github.com/elephant-xyz/elephant-cli.git#feat/dynamic-browser"
+    "@elephant-xyz/cli": "git+https://github.com/elephant-xyz/elephant-cli.git#feat/dynamic-browser",
+    "adm-zip": "^0.5.10"
   }
 }
