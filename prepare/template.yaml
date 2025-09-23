@@ -196,7 +196,6 @@ Resources:
           ELEPHANT_PREPARE_USE_BROWSER: !Ref ElephantPrepareUseBrowser
           ELEPHANT_PREPARE_NO_FAST: !Ref ElephantPrepareNoFast
           ELEPHANT_PREPARE_NO_CONTINUE: !Ref ElephantPrepareNoContinue
-          WEIRED_COUNTY: "true"
       Policies:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
         - arn:aws:iam::aws:policy/AmazonS3FullAccess
