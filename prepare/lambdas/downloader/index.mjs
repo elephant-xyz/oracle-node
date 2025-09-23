@@ -212,27 +212,48 @@ export const handler = async (event) => {
 
       if (browserFlowParameters && browserFlowParameters.trim() !== '') {
         try {
-          // Check if the parameters are base64 encoded (no curly braces or quotes at the start)
-          const isBase64 = !browserFlowParameters.startsWith('{') && !browserFlowParameters.startsWith('"');
+          // Parse simple key:value format (e.g., "timeout:30000,retries:3,selector:#main-content")
+          const parsedParams = {};
+          const pairs = browserFlowParameters.split(',');
 
-          if (isBase64) {
-            console.log("Detected base64 encoded parameters, decoding...");
-            // Decode from base64
-            const decoded = Buffer.from(browserFlowParameters, 'base64').toString('utf-8');
-            browserFlowParameters = decoded;
-            console.log("Successfully decoded parameters from base64");
+          for (const pair of pairs) {
+            const colonIndex = pair.indexOf(':');
+            if (colonIndex === -1) {
+              throw new Error(`Invalid parameter format: "${pair}" - expected key:value`);
+            }
+
+            const key = pair.substring(0, colonIndex).trim();
+            const value = pair.substring(colonIndex + 1).trim();
+
+            if (!key) {
+              throw new Error(`Empty key in parameter: "${pair}"`);
+            }
+
+            // Try to parse numeric values
+            if (/^\d+$/.test(value)) {
+              parsedParams[key] = parseInt(value, 10);
+            } else if (/^\d+\.\d+$/.test(value)) {
+              parsedParams[key] = parseFloat(value);
+            } else if (value.toLowerCase() === 'true') {
+              parsedParams[key] = true;
+            } else if (value.toLowerCase() === 'false') {
+              parsedParams[key] = false;
+            } else {
+              // Keep as string
+              parsedParams[key] = value;
+            }
           }
 
-          // Parse and validate the JSON parameters
-          const parsedParams = JSON.parse(browserFlowParameters);
           prepareOptions.browserFlowTemplate = browserFlowTemplate;
-          prepareOptions.browserFlowParameters = parsedParams;
+          // Pass as JSON string, not as object
+          prepareOptions.browserFlowParameters = JSON.stringify(parsedParams);
           console.log(`✓ ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS parsed successfully:`, JSON.stringify(parsedParams, null, 2));
         } catch (parseError) {
           console.error(`✗ Failed to parse ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS: ${parseError.message}`);
-          console.error(`Invalid JSON or base64: ${browserFlowParameters.substring(0, 100)}...`);
+          console.error(`Invalid format: ${browserFlowParameters.substring(0, 100)}...`);
+          console.error(`Expected format: key1:value1,key2:value2`);
           // Continue without browser flow parameters rather than failing
-          console.warn("Continuing without browser flow configuration due to invalid JSON");
+          console.warn("Continuing without browser flow configuration due to invalid format");
         }
       } else {
         console.log(`✗ ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS not set or empty - browser flow template will not be used`);

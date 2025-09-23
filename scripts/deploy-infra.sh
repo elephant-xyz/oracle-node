@@ -100,19 +100,18 @@ compute_param_overrides() {
       exit 1
     fi
 
-    # Validate that ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS contains valid JSON
-    if ! echo "${ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS}" | jq . >/dev/null 2>&1; then
-      err "ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS must contain valid JSON"
+    # Validate that ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS follows key:value format
+    # Format: key1:value1,key2:value2,key3:value3
+    if [[ ! "${ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS}" =~ ^[a-zA-Z0-9_]+:[^,]+(,[a-zA-Z0-9_]+:[^,]+)*$ ]]; then
+      err "ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS must follow format: key1:value1,key2:value2"
+      err "Example: timeout:30000,retries:3,selector:#main-content"
       exit 1
     fi
     info "Browser flow template configuration validated successfully"
   fi
 
-  # Check if we need to use a parameter file (when JSON parameters are present)
+  # No need for parameter file with simple format
   local use_param_file=false
-  if [[ -n "${ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS:-}" ]]; then
-    use_param_file=true
-  fi
 
   # Check if using keystore mode
   if [[ -n "${ELEPHANT_KEYSTORE_FILE:-}" ]]; then
@@ -160,51 +159,24 @@ compute_param_overrides() {
     parts+=("ElephantPinataJwt=\"$ELEPHANT_PINATA_JWT\"")
   fi
 
-  # Build parameters - either for file or command line
-  if [[ "$use_param_file" == true ]]; then
-    # When we have JSON parameters, base64 encode them to avoid escaping issues
-    # The Lambda will decode it
-    if [[ -n "${ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS:-}" ]]; then
-      # Base64 encode the JSON (no line wrapping)
-      ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS_B64=$(echo -n "$ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS" | base64 | tr -d '\n')
-      info "Encoded browser flow parameters for safe transport"
-    fi
+  # Build parameters with simple format
+  [[ -n "${WORKFLOW_QUEUE_NAME:-}" ]] && parts+=("WorkflowQueueName=\"$WORKFLOW_QUEUE_NAME\"")
+  [[ -n "${WORKFLOW_STARTER_RESERVED_CONCURRENCY:-}" ]] && parts+=("WorkflowStarterReservedConcurrency=\"$WORKFLOW_STARTER_RESERVED_CONCURRENCY\"")
+  [[ -n "${WORKFLOW_STATE_MACHINE_NAME:-}" ]] && parts+=("WorkflowStateMachineName=\"$WORKFLOW_STATE_MACHINE_NAME\"")
 
-    # Add optional parameters to parts array if not already there
-    [[ -n "${WORKFLOW_QUEUE_NAME:-}" ]] && parts+=("WorkflowQueueName=\"$WORKFLOW_QUEUE_NAME\"")
-    [[ -n "${WORKFLOW_STARTER_RESERVED_CONCURRENCY:-}" ]] && parts+=("WorkflowStarterReservedConcurrency=\"$WORKFLOW_STARTER_RESERVED_CONCURRENCY\"")
-    [[ -n "${WORKFLOW_STATE_MACHINE_NAME:-}" ]] && parts+=("WorkflowStateMachineName=\"$WORKFLOW_STATE_MACHINE_NAME\"")
-    [[ -n "${ELEPHANT_PREPARE_USE_BROWSER:-}" ]] && parts+=("ElephantPrepareUseBrowser=\"$ELEPHANT_PREPARE_USE_BROWSER\"")
-    [[ -n "${ELEPHANT_PREPARE_NO_FAST:-}" ]] && parts+=("ElephantPrepareNoFast=\"$ELEPHANT_PREPARE_NO_FAST\"")
-    [[ -n "${ELEPHANT_PREPARE_NO_CONTINUE:-}" ]] && parts+=("ElephantPrepareNoContinue=\"$ELEPHANT_PREPARE_NO_CONTINUE\"")
-    [[ -n "${ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE:-}" ]] && parts+=("ElephantPrepareBrowserFlowTemplate=\"$ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE\"")
+  # Prepare function flags
+  [[ -n "${ELEPHANT_PREPARE_USE_BROWSER:-}" ]] && parts+=("ElephantPrepareUseBrowser=\"$ELEPHANT_PREPARE_USE_BROWSER\"")
+  [[ -n "${ELEPHANT_PREPARE_NO_FAST:-}" ]] && parts+=("ElephantPrepareNoFast=\"$ELEPHANT_PREPARE_NO_FAST\"")
+  [[ -n "${ELEPHANT_PREPARE_NO_CONTINUE:-}" ]] && parts+=("ElephantPrepareNoContinue=\"$ELEPHANT_PREPARE_NO_CONTINUE\"")
 
-    # Use the base64 encoded version for the JSON parameter
-    [[ -n "${ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS_B64:-}" ]] && parts+=("ElephantPrepareBrowserFlowParameters=\"$ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS_B64\"")
+  # Browser flow template and parameters (simple format)
+  [[ -n "${ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE:-}" ]] && parts+=("ElephantPrepareBrowserFlowTemplate=\"$ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE\"")
+  [[ -n "${ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS:-}" ]] && parts+=("ElephantPrepareBrowserFlowParameters=\"$ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS\"")
 
-    [[ -n "${UPDATER_SCHEDULE_RATE:-}" ]] && parts+=("UpdaterScheduleRate=\"$UPDATER_SCHEDULE_RATE\"")
+  # Updater schedule rate
+  [[ -n "${UPDATER_SCHEDULE_RATE:-}" ]] && parts+=("UpdaterScheduleRate=\"$UPDATER_SCHEDULE_RATE\"")
 
-    # Build command line parameters string (base64 encoding makes it safe for command line)
-    PARAM_OVERRIDES="${parts[*]}"
-  else
-    # Use command-line parameters
-    [[ -n "${WORKFLOW_QUEUE_NAME:-}" ]] && parts+=("WorkflowQueueName=\"$WORKFLOW_QUEUE_NAME\"")
-    [[ -n "${WORKFLOW_STARTER_RESERVED_CONCURRENCY:-}" ]] && parts+=("WorkflowStarterReservedConcurrency=\"$WORKFLOW_STARTER_RESERVED_CONCURRENCY\"")
-    [[ -n "${WORKFLOW_STATE_MACHINE_NAME:-}" ]] && parts+=("WorkflowStateMachineName=\"$WORKFLOW_STATE_MACHINE_NAME\"")
-
-    # Prepare function flags (only add if set locally)
-    [[ -n "${ELEPHANT_PREPARE_USE_BROWSER:-}" ]] && parts+=("ElephantPrepareUseBrowser=\"$ELEPHANT_PREPARE_USE_BROWSER\"")
-    [[ -n "${ELEPHANT_PREPARE_NO_FAST:-}" ]] && parts+=("ElephantPrepareNoFast=\"$ELEPHANT_PREPARE_NO_FAST\"")
-    [[ -n "${ELEPHANT_PREPARE_NO_CONTINUE:-}" ]] && parts+=("ElephantPrepareNoContinue=\"$ELEPHANT_PREPARE_NO_CONTINUE\"")
-
-    # Browser flow template (only when no JSON parameters)
-    [[ -n "${ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE:-}" ]] && parts+=("ElephantPrepareBrowserFlowTemplate=\"$ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE\"")
-
-    # Updater schedule rate (only add if set locally)
-    [[ -n "${UPDATER_SCHEDULE_RATE:-}" ]] && parts+=("UpdaterScheduleRate=\"$UPDATER_SCHEDULE_RATE\"")
-
-    PARAM_OVERRIDES="${parts[*]}"
-  fi
+  PARAM_OVERRIDES="${parts[*]}"
 }
 
 bundle_transforms_for_lambda() {

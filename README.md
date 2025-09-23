@@ -36,11 +36,7 @@ export ELEPHANT_PREPARE_NO_CONTINUE=false  # Disable continue mode
 
 # Optional (Browser flow template - both must be provided together)
 export ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE=""    # Browser flow template name
-export ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS=""  # Browser flow parameters as JSON string
-
-# Optional (Browser flow template - both must be provided together)
-export ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE=""    # Browser flow template name
-export ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS=""  # Browser flow parameters as JSON string
+export ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS=""  # Browser flow parameters in key:value format
 
 # Optional (Updater schedule - only set if you want to change from default)
 export UPDATER_SCHEDULE_RATE="1 minute"    # How often updater runs (default: "1 minute")
@@ -79,7 +75,7 @@ export ELEPHANT_PREPARE_NO_CONTINUE=false  # Disable continue mode
 
 # Optional (Browser flow template - both must be provided together)
 export ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE=""    # Browser flow template name
-export ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS=""  # Browser flow parameters as JSON string
+export ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS=""  # Browser flow parameters in key:value format
 ```
 
 **Important Notes for Keystore Mode:**
@@ -117,22 +113,31 @@ For advanced browser automation scenarios, you can provide custom browser flow t
 | Environment Variable           | Default | Description                                                    |
 | ------------------------------ | ------- | -------------------------------------------------------------- |
 | `ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE`   | `""`    | Browser flow template name to use                             |
-| `ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS`  | `""`    | JSON string containing parameters for the browser flow template |
+| `ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS`  | `""`    | Browser flow parameters in key:value format (e.g., `key1:value1,key2:value2`) |
 
 **Important:** These two environment variables must be provided together. If only one is set, the deployment will fail with a validation error.
+
+**Parameter Format:**
+The `ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS` uses a simple key:value format separated by commas:
+- Format: `key1:value1,key2:value2,key3:value3`
+- Values are automatically parsed as:
+  - Numbers if they contain only digits (e.g., `timeout:30000` → `{timeout: 30000}`)
+  - Floats if they contain digits and a decimal point (e.g., `rate:1.5` → `{rate: 1.5}`)
+  - Booleans if they are "true" or "false" (e.g., `enabled:true` → `{enabled: true}`)
+  - Strings for everything else (e.g., `selector:#main-content` → `{selector: "#main-content"}`)
 
 **Example usage:**
 
 ```bash
-# Set browser flow template configuration
+# Set browser flow template configuration with simple format
 export ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE="custom-flow-v2"
-export ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS='{"timeout": 30000, "retries": 3, "selector": "#main-content"}'
+export ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS="timeout:30000,retries:3,selector:#main-content,enabled:true"
 
 # Deploy with the configuration
 ./scripts/deploy-infra.sh
 ```
 
-The JSON parameters must be valid JSON. The deployment script will validate the JSON structure before proceeding. If the JSON is invalid, the deployment will fail with an error message indicating the issue.
+The deployment script will validate the parameter format before proceeding. The format must follow the pattern: `key:value` pairs separated by commas.
 
 **Deploy with custom prepare flags:**
 
@@ -168,7 +173,8 @@ Browser flow template configuration detected:
 {
   "timeout": 30000,
   "retries": 3,
-  "selector": "#main-content"
+  "selector": "#main-content",
+  "enabled": true
 }
 Calling prepare() with these options...
 ```
