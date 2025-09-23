@@ -100,14 +100,15 @@ compute_param_overrides() {
       exit 1
     fi
 
-    # Validate that ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS follows key:value format
-    # Format: key1:value1,key2:value2,key3:value3
-    if [[ ! "${ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS}" =~ ^[a-zA-Z0-9_]+:[^,]+(,[a-zA-Z0-9_]+:[^,]+)*$ ]]; then
-      err "ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS must follow format: key1:value1,key2:value2"
-      err "Example: timeout:30000,retries:3,selector:#main-content"
+    # Validate that ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS contains valid JSON
+    if ! echo "${ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS}" | jq . >/dev/null 2>&1; then
+      err "ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS must contain valid JSON"
       exit 1
     fi
-    info "Browser flow template configuration validated successfully"
+
+    # Convert JSON to simple key:value format for safe transport
+    ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS_SIMPLE=$(echo "${ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS}" | jq -r 'to_entries | map("\(.key):\(.value)") | join(",")')
+    info "Browser flow template configuration validated and converted to simple format"
   fi
 
   # No need for parameter file with simple format
@@ -169,9 +170,9 @@ compute_param_overrides() {
   [[ -n "${ELEPHANT_PREPARE_NO_FAST:-}" ]] && parts+=("ElephantPrepareNoFast=\"$ELEPHANT_PREPARE_NO_FAST\"")
   [[ -n "${ELEPHANT_PREPARE_NO_CONTINUE:-}" ]] && parts+=("ElephantPrepareNoContinue=\"$ELEPHANT_PREPARE_NO_CONTINUE\"")
 
-  # Browser flow template and parameters (simple format)
+  # Browser flow template and parameters (use converted simple format)
   [[ -n "${ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE:-}" ]] && parts+=("ElephantPrepareBrowserFlowTemplate=\"$ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE\"")
-  [[ -n "${ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS:-}" ]] && parts+=("ElephantPrepareBrowserFlowParameters=\"$ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS\"")
+  [[ -n "${ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS_SIMPLE:-}" ]] && parts+=("ElephantPrepareBrowserFlowParameters=\"$ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS_SIMPLE\"")
 
   # Updater schedule rate
   [[ -n "${UPDATER_SCHEDULE_RATE:-}" ]] && parts+=("UpdaterScheduleRate=\"$UPDATER_SCHEDULE_RATE\"")
