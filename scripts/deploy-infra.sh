@@ -67,7 +67,7 @@ sam_deploy() {
     --resolve-s3 \
     --no-confirm-changeset \
     --no-fail-on-empty-changeset \
-    --parameter-overrides "${PARAM_OVERRIDES:-}" >/dev/null
+    --parameter-overrides ${PARAM_OVERRIDES:-} >/dev/null
 }
 
 sam_deploy_with_versions() {
@@ -81,7 +81,7 @@ sam_deploy_with_versions() {
     --no-confirm-changeset \
     --no-fail-on-empty-changeset \
     --parameter-overrides \
-      "${PARAM_OVERRIDES:-}" \
+      ${PARAM_OVERRIDES:-} \
       StartupScriptS3Path="startup.sh" \
       StartupScriptS3ObjectVersion="$script_ver" \
       RequirementsS3Path="requirements.txt" \
@@ -89,6 +89,31 @@ sam_deploy_with_versions() {
 }
 
 compute_param_overrides() {
+  # Validate browser flow template parameters (must be provided together)
+  if [[ -n "${ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE:-}" || -n "${ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS:-}" ]]; then
+    if [[ -z "${ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE:-}" ]]; then
+      err "ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS is set but ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE is not. Both must be provided together."
+      exit 1
+    fi
+    if [[ -z "${ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS:-}" ]]; then
+      err "ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE is set but ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS is not. Both must be provided together."
+      exit 1
+    fi
+
+    # Validate that ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS contains valid JSON
+    if ! echo "${ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS}" | jq . >/dev/null 2>&1; then
+      err "ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS must contain valid JSON"
+      exit 1
+    fi
+    info "Browser flow template configuration validated successfully"
+  fi
+
+  # Check if we need to use a parameter file (when JSON parameters are present)
+  local use_param_file=false
+  if [[ -n "${ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS:-}" ]]; then
+    use_param_file=true
+  fi
+
   # Check if using keystore mode
   if [[ -n "${ELEPHANT_KEYSTORE_FILE:-}" ]]; then
     # Keystore mode - verify requirements
@@ -135,19 +160,51 @@ compute_param_overrides() {
     parts+=("ElephantPinataJwt=\"$ELEPHANT_PINATA_JWT\"")
   fi
 
-  [[ -n "${WORKFLOW_QUEUE_NAME:-}" ]] && parts+=("WorkflowQueueName=\"$WORKFLOW_QUEUE_NAME\"")
-  [[ -n "${WORKFLOW_STARTER_RESERVED_CONCURRENCY:-}" ]] && parts+=("WorkflowStarterReservedConcurrency=\"$WORKFLOW_STARTER_RESERVED_CONCURRENCY\"")
-  [[ -n "${WORKFLOW_STATE_MACHINE_NAME:-}" ]] && parts+=("WorkflowStateMachineName=\"$WORKFLOW_STATE_MACHINE_NAME\"")
+  # Build parameters - either for file or command line
+  if [[ "$use_param_file" == true ]]; then
+    # When we have JSON parameters, base64 encode them to avoid escaping issues
+    # The Lambda will decode it
+    if [[ -n "${ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS:-}" ]]; then
+      # Base64 encode the JSON (no line wrapping)
+      ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS_B64=$(echo -n "$ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS" | base64 | tr -d '\n')
+      info "Encoded browser flow parameters for safe transport"
+    fi
 
-  # Prepare function flags (only add if set locally)
-  [[ -n "${ELEPHANT_PREPARE_USE_BROWSER:-}" ]] && parts+=("ElephantPrepareUseBrowser=\"$ELEPHANT_PREPARE_USE_BROWSER\"")
-  [[ -n "${ELEPHANT_PREPARE_NO_FAST:-}" ]] && parts+=("ElephantPrepareNoFast=\"$ELEPHANT_PREPARE_NO_FAST\"")
-  [[ -n "${ELEPHANT_PREPARE_NO_CONTINUE:-}" ]] && parts+=("ElephantPrepareNoContinue=\"$ELEPHANT_PREPARE_NO_CONTINUE\"")
-  
-  # Updater schedule rate (only add if set locally)
-  [[ -n "${UPDATER_SCHEDULE_RATE:-}" ]] && parts+=("UpdaterScheduleRate=\"$UPDATER_SCHEDULE_RATE\"")
+    # Add optional parameters to parts array if not already there
+    [[ -n "${WORKFLOW_QUEUE_NAME:-}" ]] && parts+=("WorkflowQueueName=\"$WORKFLOW_QUEUE_NAME\"")
+    [[ -n "${WORKFLOW_STARTER_RESERVED_CONCURRENCY:-}" ]] && parts+=("WorkflowStarterReservedConcurrency=\"$WORKFLOW_STARTER_RESERVED_CONCURRENCY\"")
+    [[ -n "${WORKFLOW_STATE_MACHINE_NAME:-}" ]] && parts+=("WorkflowStateMachineName=\"$WORKFLOW_STATE_MACHINE_NAME\"")
+    [[ -n "${ELEPHANT_PREPARE_USE_BROWSER:-}" ]] && parts+=("ElephantPrepareUseBrowser=\"$ELEPHANT_PREPARE_USE_BROWSER\"")
+    [[ -n "${ELEPHANT_PREPARE_NO_FAST:-}" ]] && parts+=("ElephantPrepareNoFast=\"$ELEPHANT_PREPARE_NO_FAST\"")
+    [[ -n "${ELEPHANT_PREPARE_NO_CONTINUE:-}" ]] && parts+=("ElephantPrepareNoContinue=\"$ELEPHANT_PREPARE_NO_CONTINUE\"")
+    [[ -n "${ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE:-}" ]] && parts+=("ElephantPrepareBrowserFlowTemplate=\"$ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE\"")
 
-  PARAM_OVERRIDES="${parts[*]}"
+    # Use the base64 encoded version for the JSON parameter
+    [[ -n "${ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS_B64:-}" ]] && parts+=("ElephantPrepareBrowserFlowParameters=\"$ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS_B64\"")
+
+    [[ -n "${UPDATER_SCHEDULE_RATE:-}" ]] && parts+=("UpdaterScheduleRate=\"$UPDATER_SCHEDULE_RATE\"")
+
+    # Build command line parameters string (base64 encoding makes it safe for command line)
+    PARAM_OVERRIDES="${parts[*]}"
+  else
+    # Use command-line parameters
+    [[ -n "${WORKFLOW_QUEUE_NAME:-}" ]] && parts+=("WorkflowQueueName=\"$WORKFLOW_QUEUE_NAME\"")
+    [[ -n "${WORKFLOW_STARTER_RESERVED_CONCURRENCY:-}" ]] && parts+=("WorkflowStarterReservedConcurrency=\"$WORKFLOW_STARTER_RESERVED_CONCURRENCY\"")
+    [[ -n "${WORKFLOW_STATE_MACHINE_NAME:-}" ]] && parts+=("WorkflowStateMachineName=\"$WORKFLOW_STATE_MACHINE_NAME\"")
+
+    # Prepare function flags (only add if set locally)
+    [[ -n "${ELEPHANT_PREPARE_USE_BROWSER:-}" ]] && parts+=("ElephantPrepareUseBrowser=\"$ELEPHANT_PREPARE_USE_BROWSER\"")
+    [[ -n "${ELEPHANT_PREPARE_NO_FAST:-}" ]] && parts+=("ElephantPrepareNoFast=\"$ELEPHANT_PREPARE_NO_FAST\"")
+    [[ -n "${ELEPHANT_PREPARE_NO_CONTINUE:-}" ]] && parts+=("ElephantPrepareNoContinue=\"$ELEPHANT_PREPARE_NO_CONTINUE\"")
+
+    # Browser flow template (only when no JSON parameters)
+    [[ -n "${ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE:-}" ]] && parts+=("ElephantPrepareBrowserFlowTemplate=\"$ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE\"")
+
+    # Updater schedule rate (only add if set locally)
+    [[ -n "${UPDATER_SCHEDULE_RATE:-}" ]] && parts+=("UpdaterScheduleRate=\"$UPDATER_SCHEDULE_RATE\"")
+
+    PARAM_OVERRIDES="${parts[*]}"
+  fi
 }
 
 bundle_transforms_for_lambda() {

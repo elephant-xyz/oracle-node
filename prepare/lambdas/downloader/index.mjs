@@ -187,12 +187,12 @@ export const handler = async (event) => {
         description: 'Disable continue mode'
       }
     ];
-    
+
     // Build prepare options based on environment variables
     const prepareOptions = { useBrowser };
-    
+
     console.log("Checking environment variables for prepare flags:");
-    
+
     for (const { envVar, optionKey, description } of flagConfig) {
       if (process.env[envVar] === 'true') {
         prepareOptions[optionKey] = true;
@@ -200,6 +200,45 @@ export const handler = async (event) => {
       } else {
         console.log(`✗ ${envVar}='${process.env[envVar]}' → not adding ${optionKey} flag (${description})`);
       }
+    }
+
+    // Handle browser flow template configuration
+    const browserFlowTemplate = process.env.ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE;
+    let browserFlowParameters = process.env.ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS;
+
+    if (browserFlowTemplate && browserFlowTemplate.trim() !== '') {
+      console.log("Browser flow template configuration detected:");
+      console.log(`✓ ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE='${browserFlowTemplate}'`);
+
+      if (browserFlowParameters && browserFlowParameters.trim() !== '') {
+        try {
+          // Check if the parameters are base64 encoded (no curly braces or quotes at the start)
+          const isBase64 = !browserFlowParameters.startsWith('{') && !browserFlowParameters.startsWith('"');
+
+          if (isBase64) {
+            console.log("Detected base64 encoded parameters, decoding...");
+            // Decode from base64
+            const decoded = Buffer.from(browserFlowParameters, 'base64').toString('utf-8');
+            browserFlowParameters = decoded;
+            console.log("Successfully decoded parameters from base64");
+          }
+
+          // Parse and validate the JSON parameters
+          const parsedParams = JSON.parse(browserFlowParameters);
+          prepareOptions.browserFlowTemplate = browserFlowTemplate;
+          prepareOptions.browserFlowParameters = parsedParams;
+          console.log(`✓ ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS parsed successfully:`, JSON.stringify(parsedParams, null, 2));
+        } catch (parseError) {
+          console.error(`✗ Failed to parse ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS: ${parseError.message}`);
+          console.error(`Invalid JSON or base64: ${browserFlowParameters.substring(0, 100)}...`);
+          // Continue without browser flow parameters rather than failing
+          console.warn("Continuing without browser flow configuration due to invalid JSON");
+        }
+      } else {
+        console.log(`✗ ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS not set or empty - browser flow template will not be used`);
+      }
+    } else if (browserFlowParameters && browserFlowParameters.trim() !== '') {
+      console.warn("⚠️ ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS is set but ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE is not - ignoring parameters");
     }
     
     // Prepare Phase (Main bottleneck)

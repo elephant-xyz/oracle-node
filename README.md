@@ -34,6 +34,14 @@ export ELEPHANT_PREPARE_USE_BROWSER=false  # Force browser mode
 export ELEPHANT_PREPARE_NO_FAST=false      # Disable fast mode
 export ELEPHANT_PREPARE_NO_CONTINUE=false  # Disable continue mode
 
+# Optional (Browser flow template - both must be provided together)
+export ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE=""    # Browser flow template name
+export ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS=""  # Browser flow parameters as JSON string
+
+# Optional (Browser flow template - both must be provided together)
+export ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE=""    # Browser flow template name
+export ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS=""  # Browser flow parameters as JSON string
+
 # Optional (Updater schedule - only set if you want to change from default)
 export UPDATER_SCHEDULE_RATE="1 minute"    # How often updater runs (default: "1 minute")
 # For sub-minute intervals, use cron expressions:
@@ -68,6 +76,10 @@ export AWS_REGION=your-region
 export ELEPHANT_PREPARE_USE_BROWSER=false  # Force browser mode
 export ELEPHANT_PREPARE_NO_FAST=false      # Disable fast mode
 export ELEPHANT_PREPARE_NO_CONTINUE=false  # Disable continue mode
+
+# Optional (Browser flow template - both must be provided together)
+export ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE=""    # Browser flow template name
+export ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS=""  # Browser flow parameters as JSON string
 ```
 
 **Important Notes for Keystore Mode:**
@@ -98,6 +110,30 @@ The `DownloaderFunction` uses the `prepare` command from `@elephant-xyz/cli` to 
 | `ELEPHANT_PREPARE_NO_CONTINUE` | `false` | `--no-continue` | Disable continue mode           |
 | `UPDATER_SCHEDULE_RATE`        | `"1 minute"` | N/A        | Updater frequency (e.g., "5 minutes", "cron(*/1 * * * ? *)") |
 
+#### Browser Flow Template Configuration
+
+For advanced browser automation scenarios, you can provide custom browser flow templates and parameters:
+
+| Environment Variable           | Default | Description                                                    |
+| ------------------------------ | ------- | -------------------------------------------------------------- |
+| `ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE`   | `""`    | Browser flow template name to use                             |
+| `ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS`  | `""`    | JSON string containing parameters for the browser flow template |
+
+**Important:** These two environment variables must be provided together. If only one is set, the deployment will fail with a validation error.
+
+**Example usage:**
+
+```bash
+# Set browser flow template configuration
+export ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE="custom-flow-v2"
+export ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS='{"timeout": 30000, "retries": 3, "selector": "#main-content"}'
+
+# Deploy with the configuration
+./scripts/deploy-infra.sh
+```
+
+The JSON parameters must be valid JSON. The deployment script will validate the JSON structure before proceeding. If the JSON is invalid, the deployment will fail with an error message indicating the issue.
+
 **Deploy with custom prepare flags:**
 
 ```bash
@@ -126,6 +162,14 @@ Checking environment variables for prepare flags:
 ✓ ELEPHANT_PREPARE_USE_BROWSER='true' → adding useBrowser: true
 ✗ ELEPHANT_PREPARE_NO_FAST='false' → not adding noFast flag
 ✗ ELEPHANT_PREPARE_NO_CONTINUE='false' → not adding noContinue flag
+Browser flow template configuration detected:
+✓ ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE='custom-flow-v2'
+✓ ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS parsed successfully:
+{
+  "timeout": 30000,
+  "retries": 3,
+  "selector": "#main-content"
+}
 Calling prepare() with these options...
 ```
 
