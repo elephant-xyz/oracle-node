@@ -11,10 +11,28 @@ import { networkInterfaces } from "os";
 const RE_S3PATH = /^s3:\/\/([^/]+)\/(.*)$/i;
 
 /**
+ * @typedef {Object} IPInfo
+ * @property {string[]} localIPs
+ * @property {string | null} publicIP
+ * @property {string} awsRegion
+ * @property {string} lambdaFunction
+ */
+
+/**
+ * @typedef {Object} FlagConfig
+ * @property {string} envVar
+ * @property {"useBrowser" | "noFast" | "noContinue"} optionKey
+ * @property {string} description
+ */
+
+/** @typedef {Error & { originalError?: Error, type?: string, context?: Object, execution?: Object, validationErrors?: Object }} EnhancedError */
+
+/**
  * Gets IP address information for the Lambda instance
- * @returns {Promise<Object>} Object containing local and public IP addresses
+ * @returns {Promise<IPInfo>} Object containing local and public IP addresses
  */
 const getIPAddresses = async () => {
+  /** @type {IPInfo} */
   const result = {
     localIPs: [],
     publicIP: null,
@@ -26,7 +44,7 @@ const getIPAddresses = async () => {
     // Get local network interfaces
     const nets = networkInterfaces();
     for (const name of Object.keys(nets)) {
-      for (const net of nets[name]) {
+      for (const net of nets[name] || []) {
         // Skip internal and non-IPv4 addresses
         if (net.family === "IPv4" && !net.internal) {
           result.localIPs.push(`${name}: ${net.address}`);
@@ -34,7 +52,7 @@ const getIPAddresses = async () => {
       }
     }
   } catch (error) {
-    console.log(`⚠️ Could not get local IPs: ${error.message}`);
+    console.log(`⚠️ Could not get local IPs: ${error instanceof Error ? error.message : String(error)}`);
   }
 
   try {
@@ -49,10 +67,12 @@ const getIPAddresses = async () => {
 
     if (response.ok) {
       const data = await response.json();
-      result.publicIP = data.ip;
+      if (data.ip) {
+        result.publicIP = data.ip;
+      }
     }
   } catch (error) {
-    console.log(`⚠️ Could not get public IP: ${error.message}`);
+    console.log(`⚠️ Could not get public IP: ${error instanceof Error ? error.message : String(error)}`);
 
     // Fallback: try AWS metadata service for ECS/EC2 (won't work in Lambda but just in case)
     try {
@@ -101,6 +121,9 @@ const splitS3Uri = (s3Uri) => {
   }
 
   const [, bucket, key] = match;
+  if (!bucket || !key) {
+    throw new Error("S3 path should be like: s3://bucket/object");
+  }
   return { bucket, key };
 };
 
@@ -110,7 +133,7 @@ const splitS3Uri = (s3Uri) => {
  * @param {string} event.input_s3_uri - S3 URI of input file
  * @param {string} event.output_s3_uri_prefix - S3 URI prefix for output files
  * @param {boolean} event.browser - Whether to run in headless browser
- * @returns {Promise<string>} Success message
+ * @returns {Promise<{ output_s3_uri: string }>} Success message
  */
 export const handler = async (event) => {
   const startTime = Date.now();
@@ -148,7 +171,7 @@ export const handler = async (event) => {
       );
     }
   } catch (error) {
-    console.log(`⚠️ Could not get IP information: ${error.message}`);
+    console.log(`⚠️ Could not get IP information: ${error instanceof Error ? error.message : String(error)}`);
   }
 
   if (!event || !event.input_s3_uri) {
@@ -192,6 +215,8 @@ export const handler = async (event) => {
     );
 
     // Configuration map for prepare flags
+
+    /** @type {FlagConfig[]} */
     const flagConfig = [
       {
         envVar: "ELEPHANT_PREPARE_USE_BROWSER",
@@ -211,6 +236,7 @@ export const handler = async (event) => {
     ];
 
     // Build prepare options based on environment variables
+    /** @type {{ useBrowser: boolean, noFast?: boolean, noContinue?: boolean }} */
     const prepareOptions = { useBrowser };
 
     console.log("Checking environment variables for prepare flags:");
@@ -263,7 +289,7 @@ export const handler = async (event) => {
       } catch (statsError) {
         inputFileInfo = {
           exists: false,
-          error: statsError.message,
+          error: statsError instanceof Error ? statsError.message : String(statsError),
           path: inputZip,
         };
       }
@@ -291,9 +317,9 @@ export const handler = async (event) => {
         type: "PREPARE_FUNCTION_ERROR",
         message: "Prepare function execution failed",
         error: {
-          name: prepareError.name,
-          message: prepareError.message,
-          stack: prepareError.stack,
+          name: prepareError instanceof Error ? prepareError.name : String(prepareError),
+          message: prepareError instanceof Error ? prepareError.message : String(prepareError),
+          stack: prepareError instanceof Error ? prepareError.stack : String(prepareError),
         },
         execution: {
           duration: prepareDuration,
@@ -319,10 +345,11 @@ export const handler = async (event) => {
       console.error(JSON.stringify(prepareErrorLog, null, 2));
 
       // Re-throw with enhanced context
+      /** @type {EnhancedError} */
       const enhancedError = new Error(
-        `Prepare function failed: ${prepareError.message}`,
+        `Prepare function failed: ${prepareError instanceof Error ? prepareError.message : String(prepareError)}`,
       );
-      enhancedError.originalError = prepareError;
+      enhancedError.originalError = prepareError instanceof Error ? prepareError : undefined;
       enhancedError.type = "PREPARE_FUNCTION_ERROR";
       enhancedError.context = prepareErrorLog.context;
       enhancedError.execution = prepareErrorLog.execution;
@@ -392,17 +419,22 @@ export const handler = async (event) => {
     return { output_s3_uri: `s3://${outBucket}/${outKey}` };
   } catch (lambdaError) {
     const totalDuration = Date.now() - startTime;
+    if (!(lambdaError instanceof Error)) {
+      throw new Error("Lambda execution failed, but no error was thrown");
+    }
+    /** @type {EnhancedError} */
+    const error = lambdaError;
 
     // Structured Lambda error log
     const lambdaErrorLog = {
       timestamp: new Date().toISOString(),
       level: "ERROR",
-      type: lambdaError.type || "LAMBDA_EXECUTION_ERROR",
+      type: error.type || "LAMBDA_EXECUTION_ERROR",
       message: "Lambda execution failed",
       error: {
-        name: lambdaError.name,
-        message: lambdaError.message,
-        stack: lambdaError.stack,
+        name: error.name,
+        message: error.message,
+        stack: error.stack,
       },
       execution: {
         totalDuration: totalDuration,
@@ -413,8 +445,8 @@ export const handler = async (event) => {
         event: event,
         inputS3Uri: event?.input_s3_uri || null,
       },
-      context: lambdaError.context || null,
-      validationErrors: lambdaError.validationErrors || null,
+      context: error.context || null,
+      validationErrors: error.validationErrors || null,
       lambda: {
         function: process.env.AWS_LAMBDA_FUNCTION_NAME,
         version: process.env.AWS_LAMBDA_FUNCTION_VERSION,
@@ -425,7 +457,7 @@ export const handler = async (event) => {
       },
     };
 
-    console.error("💥 LAMBDA EXECUTION FAILED");
+    console.error("LAMBDA EXECUTION FAILED");
     console.error(JSON.stringify(lambdaErrorLog, null, 2));
 
     throw lambdaError;
@@ -435,7 +467,7 @@ export const handler = async (event) => {
       console.log(`🧹 Cleaned up temporary directory: ${tempDir}`);
     } catch (cleanupError) {
       console.error(
-        `⚠️ Failed to cleanup temp directory ${tempDir}: ${cleanupError.message}`,
+        `⚠️ Failed to cleanup temp directory ${tempDir}: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`,
       );
     }
   }
