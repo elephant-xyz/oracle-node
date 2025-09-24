@@ -293,14 +293,18 @@ You can create a keystore file using the Elephant CLI tool. For detailed instruc
 
 ### Update transform scripts
 
-To update your transforms:
+Transforms are stored as raw files under `transform/<county>/`. Each county folder can contain any structure you need (for example `transform/brevard/scripts/*.js`). During deployment the scripts are zipped and uploaded automatically; you no longer manage zip files by hand.
 
-- Place or update files under `transform/scripts/`.
-- Redeploy to package and upload the latest transforms:
+To ship new or updated transform code:
 
-```bash
-./scripts/deploy-infra.sh
-```
+1. Edit the files in the appropriate county directory under `transform/`.
+2. Run `./scripts/deploy-infra.sh`.
+   - The script rebuilds `workflow/lambdas/post/transforms/<county>.zip` for each county.
+   - It synchronizes those archives (plus a manifest) to the environment bucket under `transforms/` and updates the `TransformS3Prefix` parameter used by the post Lambda.
+3. On first invocation per county, the post Lambda downloads `s3://<prefix>/<county>.zip`, caches it in `/tmp/county-transforms/<county>.zip`, verifies the MD5/ETag, and reuses the cache until the remote ETag changes.
+4. Subsequent deployments automatically refresh S3 and the Lambda detects updated archives by comparing ETags.
+
+Tip: during local testing, remove `/tmp/county-transforms` to force a fresh download.
 
 ### 3) Start the workflow
 

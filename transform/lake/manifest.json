@@ -1,0 +1,26 @@
+{
+  "model": "gpt-5",
+  "generatedAt": "2025-09-12T01:28:24.553Z",
+  "files": [
+    {
+      "path": "scripts/data_extractor.js",
+      "bytes": 22381
+    },
+    {
+      "path": "scripts/layoutMapping.js",
+      "bytes": 6235
+    },
+    {
+      "path": "scripts/ownerMapping.js",
+      "bytes": 10746
+    },
+    {
+      "path": "scripts/structureMapping.js",
+      "bytes": 6233
+    },
+    {
+      "path": "scripts/utilityMapping.js",
+      "bytes": 2865
+    }
+  ]
+}

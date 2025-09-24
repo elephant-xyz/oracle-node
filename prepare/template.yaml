@@ -35,6 +35,9 @@ Parameters:
     Type: String
     NoEcho: true
     Default: ""
+  TransformS3Prefix:
+    Description: S3 URI prefix containing county transform archives
+    Type: String
   ElephantKeystoreS3Key:
     Description: S3 key for keystore JSON file (when using keystore mode)
     Type: String
@@ -428,6 +431,7 @@ Resources:
           ELEPHANT_FROM_ADDRESS: !Ref ElephantFromAddress
           ELEPHANT_RPC_URL: !Ref ElephantRpcUrl
           ELEPHANT_PINATA_JWT: !Ref ElephantPinataJwt
+          TRANSFORM_S3_PREFIX: !Ref TransformS3Prefix
 
   #####################################################################################################################
   # Express Step Functions State Machine (separate definition file)
