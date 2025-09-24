@@ -1,18 +1,19 @@
 {
-    "name": "oracle-node",
-    "private": true,
-    "workspaces": [
-        "prepare/lambdas/*",
-        "workflow/lambdas/*"
-    ],
-    "scripts": {
-        "typecheck": "tsc --pretty false --noEmit -p jsconfig.json",
-        "format": "prettier --write .",
-        "format:check": "prettier --check ."
-    },
-    "devDependencies": {
-        "@types/node": "^20.16.3",
-        "prettier": "^3.3.3",
-        "typescript": "^5.5.4"
-    }
+  "name": "oracle-node",
+  "private": true,
+  "workspaces": [
+    "prepare/lambdas/*",
+    "workflow/lambdas/*"
+  ],
+  "scripts": {
+    "typecheck": "tsc --pretty false --noEmit -p jsconfig.json",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "install-workspaces": "npm install --workspaces"
+  },
+  "devDependencies": {
+    "@types/node": "^20.16.3",
+    "prettier": "^3.3.3",
+    "typescript": "^5.5.4"
+  }
 }
