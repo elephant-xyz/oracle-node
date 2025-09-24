@@ -13,6 +13,19 @@ import { parse } from "csv-parse/sync";
 const s3 = new S3Client({});
 
 /**
+ * @typedef {object} PrepareOutput
+ * @property {string} output_s3_uri
+ */
+
+/**
+ * @typedef {object} PostOutput
+ * @property {PrepareOutput} prepare
+ * @property {string} seed_output_s3_uri
+ * @property {{ object?: { key?: string } }} [s3]
+ * @property {{ key?: string }} [object]
+ */
+
+/**
  * Combine two CSV files by keeping a single header row
  * from the first file and appending the data rows from both.
  *
@@ -66,22 +79,21 @@ async function csvToJson(csvPath) {
   }
 }
 
-/** @typedef {Object} PostOutput */
-/** @property {string} output_s3_uri - "success" */
-/** @property {string} seed_output_s3_uri - S3 URI of submission ready CSV */
 
 /**
- * @param {PostOutput} event - { input: original input, prepare: prepare result }
- * @returns {Promise<{status:string}>}
+ * @param {PostOutput} event - { prepare: prepare result, seed_output_s3_uri: S3 URI of seed output }
+ * @returns {Promise<{status:string, transactionItems: object[]}>}
  */
+/** @type {(event: PostOutput) => Promise<{status:string, transactionItems: object[]}>} */
 export const handler = async (event) => {
   console.log(`Event is : ${JSON.stringify(event)}`);
   const base = { component: "post", at: new Date().toISOString() };
+  /** @type {string | undefined} */
   let tmp;
   try {
-    if (!event?.prepare?.output_s3_uri)
+    if (!event.prepare.output_s3_uri)
       throw new Error("prepare.output_s3_uri missing");
-    if (!event?.seed_output_s3_uri)
+    if (!event.seed_output_s3_uri)
       throw new Error("seed_output_s3_uri missing");
     const outputBase = process.env.OUTPUT_BASE_URI;
     if (!outputBase) throw new Error("OUTPUT_BASE_URI is required");
@@ -89,9 +101,14 @@ export const handler = async (event) => {
     tmp = await fs.mkdtemp(path.join(os.tmpdir(), "post-"));
     const prepared = event.prepare.output_s3_uri;
     const seedZipS3 = event.seed_output_s3_uri;
+    /**
+     * @param {string} u
+     * @returns {{ bucket: string, key: string }}
+     */
     const parseS3Uri = (u) => {
       const m = /^s3:\/\/([^/]+)\/(.*)$/.exec(u);
       if (!m) throw new Error("Bad S3 URI");
+      if (typeof m[1] !== "string" || typeof m[2] !== "string") throw new Error("S3 URI must be a string");
       return { bucket: m[1], key: m[2] };
     };
     const { bucket: pBucket, key: pKey } = parseS3Uri(prepared);
@@ -117,7 +134,7 @@ export const handler = async (event) => {
       "transforms.zip",
     );
     await fs.stat(scriptsZip);
-    
+
     console.log("Starting transform operation (includes fact sheet generation)...");
     const transformStart = Date.now();
     const transformResult = await transform({
@@ -136,7 +153,7 @@ export const handler = async (event) => {
       msg: "Transform complete (includes fact sheet generation)"
     }));
     if (!transformResult.success) throw new Error(transformResult.error);
-    
+
     console.log("Starting validation operation...");
     const validationStart = Date.now();
     const validationResult = await validate({ input: countyOut, cwd: tmp });
@@ -183,7 +200,6 @@ export const handler = async (event) => {
             level: "error",
             msg: "validation_failed",
             error: validationResult.error,
-            path: validationResult.path,
             submit_errors: submitErrors,
             submit_errors_s3_uri: submitErrorsS3Uri,
           }),
@@ -195,7 +211,6 @@ export const handler = async (event) => {
             level: "error",
             msg: "validation_failed",
             error: validationResult.error,
-            path: validationResult.path,
             submit_errors_read_error: String(csvError),
           }),
         );
@@ -212,7 +227,7 @@ export const handler = async (event) => {
     const countyHashCsv = path.join(tmp, "county_hash.csv");
     const seedHashZip = path.join(tmp, "seed_hash.zip");
     const seedHashCsv = path.join(tmp, "seed_hash.csv");
-    
+
     console.log("Starting seed hash operation...");
     const seedHashStart = Date.now();
     const hashResult = await hash({
@@ -238,7 +253,7 @@ export const handler = async (event) => {
       trim: true,
     });
     const propertyCid = records[0].propertyCid;
-    
+
     console.log("Starting county hash operation...");
     const countyHashStart = Date.now();
     const countyHashResult = await hash({
@@ -262,7 +277,7 @@ export const handler = async (event) => {
     // Upload to IPFS
     const pinataJwt = process.env.ELEPHANT_PINATA_JWT;
     if (!pinataJwt) throw new Error("ELEPHANT_PINATA_JWT is required");
-    
+
     console.log("Starting IPFS upload operation...");
     const uploadStart = Date.now();
     await Promise.all(
@@ -270,6 +285,7 @@ export const handler = async (event) => {
         const fileName = path.basename(f);
         console.log(`Uploading ${fileName} to IPFS...`);
         const fileUploadStart = Date.now();
+        if (!tmp) throw new Error("tmp is required");
         const uploadResult = await upload({
           input: f,
           pinataJwt: pinataJwt,
@@ -341,7 +357,7 @@ export const handler = async (event) => {
       transaction_items_count: transactionItems.length,
       msg: "Post Lambda execution complete"
     }));
-    
+
     return { status: "success", transactionItems };
   } catch (err) {
     console.error(
@@ -356,6 +372,6 @@ export const handler = async (event) => {
   } finally {
     try {
       if (tmp) await fs.rm(tmp, { recursive: true, force: true });
-    } catch {}
+    } catch { }
   }
 };

@@ -103,7 +103,7 @@ export const handler = async (event) => {
         // Upload submit_errors.csv to S3
         try {
           const submitErrorsCsv = await fs.readFile(submitErrorsPath);
-          const errorFileKey = `${runPrefix.replace(/^s3:\/\//, "")}/submit_errors.csv`;
+          const errorFileKey = `${outputPrefix.replace(/^s3:\/\//, "")}/submit_errors.csv`;
           const [errorBucket, ...errorParts] = errorFileKey.split("/");
           await s3.send(
             new PutObjectCommand({
@@ -203,6 +203,6 @@ export const handler = async (event) => {
   } finally {
     try {
       if (tmp) await fs.rm(tmp, { recursive: true, force: true });
-    } catch {}
+    } catch { }
   }
 };

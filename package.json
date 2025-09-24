@@ -1,0 +1,15 @@
+{
+    "name": "oracle-node",
+    "private": true,
+    "workspaces": [
+        "prepare/lambdas/*",
+        "workflow/lambdas/*"
+    ],
+    "scripts": {
+        "typecheck": "tsc --pretty false --noEmit -p jsconfig.json"
+    },
+    "devDependencies": {
+        "@types/node": "^20.16.3",
+        "typescript": "^5.5.4"
+    }
+}
