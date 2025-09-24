@@ -211,14 +211,66 @@ export const handler = async (event) => {
     console.log(
       `📊 Downloaded ${inputBytes.length} bytes from s3://${bucket}/${key}`,
     );
+    console.log(`✅ S3 download completed: ${s3DownloadDuration}ms (${(s3DownloadDuration/1000).toFixed(2)}s)`);
+    console.log(`📊 Downloaded ${inputBytes.length} bytes from s3://${bucket}/${key}`);
+
+    // Extract county name from unnormalized_address.json
+    let countyName = null;
+    console.log("📍 Extracting county information from input...");
+
+    try {
+      // Create a temporary directory for extraction
+      const extractDir = path.join(tempDir, "extract");
+      await fs.mkdir(extractDir);
+
+      // Extract the zip file
+      const { execSync } = await import('child_process');
+      execSync(`unzip -q "${inputZip}" -d "${extractDir}"`, { encoding: 'utf8' });
+
+      // Read unnormalized_address.json
+      const addressJsonPath = path.join(extractDir, "unnormalized_address.json");
+      const addressData = JSON.parse(await fs.readFile(addressJsonPath, 'utf8'));
+
+      if (addressData.county_jurisdiction) {
+        countyName = addressData.county_jurisdiction;
+        console.log(`✅ Detected county: ${countyName}`);
+      } else {
+        console.log("⚠️ No county_jurisdiction found in unnormalized_address.json");
+      }
+
+      // Clean up extraction directory
+      await fs.rm(extractDir, { recursive: true, force: true });
+    } catch (error) {
+      console.error(`⚠️ Could not extract county information: ${error.message}`);
+      console.log("Continuing with general configuration...");
+    }
 
     const outputZip = path.join(tempDir, "output.zip");
     const useBrowser = event.browser ?? true;
+
 
     console.log("Building prepare options...");
     console.log(
       `Event browser setting: ${event.browser} (using: ${useBrowser})`,
     );
+
+    console.log(`Event browser setting: ${event.browser} (using: ${useBrowser})`);
+
+    // Helper function to get environment variable with county-specific fallback
+    const getEnvWithCountyFallback = (baseEnvVar, countyName) => {
+      if (countyName) {
+        const countySpecificVar = `${baseEnvVar}_${countyName}`;
+        if (process.env[countySpecificVar] !== undefined) {
+          console.log(`  Using county-specific: ${countySpecificVar}='${process.env[countySpecificVar]}'`);
+          return process.env[countySpecificVar];
+        }
+      }
+      if (process.env[baseEnvVar] !== undefined) {
+        console.log(`  Using general: ${baseEnvVar}='${process.env[baseEnvVar]}'`);
+        return process.env[baseEnvVar];
+      }
+      return undefined;
+    };
 
     // Configuration map for prepare flags
 
@@ -246,23 +298,30 @@ export const handler = async (event) => {
     const prepareOptions = { useBrowser };
 
     console.log("Checking environment variables for prepare flags:");
+    if (countyName) {
+      console.log(`🏛️ Looking for county-specific configurations for: ${countyName}`);
+    }
 
     for (const { envVar, optionKey, description } of flagConfig) {
       if (process.env[envVar] === "true") {
+      const envValue = getEnvWithCountyFallback(envVar, countyName);
+      if (envValue === 'true') {
         prepareOptions[optionKey] = true;
         console.log(
           `✓ ${envVar}='true' → adding ${optionKey}: true (${description})`,
         );
+        console.log(`✓ Setting ${optionKey}: true (${description})`);
       } else {
         console.log(
           `✗ ${envVar}='${process.env[envVar]}' → not adding ${optionKey} flag (${description})`,
         );
+        console.log(`✗ Not setting ${optionKey} flag (${description})`);
       }
     }
 
-    // Handle browser flow template configuration
-    const browserFlowTemplate = process.env.ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE;
-    let browserFlowParameters = process.env.ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS;
+    // Handle browser flow template configuration with county-specific lookup
+    const browserFlowTemplate = getEnvWithCountyFallback('ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE', countyName);
+    let browserFlowParameters = getEnvWithCountyFallback('ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS', countyName);
 
     if (browserFlowTemplate && browserFlowTemplate.trim() !== '') {
       console.log("Browser flow template configuration detected:");

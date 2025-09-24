@@ -265,6 +265,26 @@ handle_pending_keystore_upload() {
   fi
 }
 
+apply_county_configs() {
+  # Check if there are any county-specific environment variables
+  local has_county_vars=false
+  for var in $(env | grep -E "^ELEPHANT_PREPARE_(USE_BROWSER|NO_FAST|NO_CONTINUE|BROWSER_FLOW_TEMPLATE|BROWSER_FLOW_PARAMETERS)_[A-Za-z]+" | cut -d= -f1 || true); do
+    if [[ -n "$var" ]]; then
+      has_county_vars=true
+      break
+    fi
+  done
+
+  if [[ "$has_county_vars" == true ]]; then
+    info "Detected county-specific configurations. Applying them..."
+    if ./scripts/set-county-configs.sh; then
+      info "County-specific configurations applied successfully"
+    else
+      warn "Failed to apply some county-specific configurations"
+    fi
+  fi
+}
+
 main() {
   check_prereqs
   ensure_lambda_concurrency_quota
@@ -276,6 +296,9 @@ main() {
   sam_deploy
 
   handle_pending_keystore_upload
+
+  # Apply county-specific configurations if present
+  apply_county_configs
 
   bucket=$(get_bucket)
   echo

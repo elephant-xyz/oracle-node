@@ -107,6 +107,59 @@ The `DownloaderFunction` uses the `prepare` command from `@elephant-xyz/cli` to 
 | `ELEPHANT_PREPARE_NO_CONTINUE` | `false`      | `--no-continue` | Disable continue mode                                         |
 | `UPDATER_SCHEDULE_RATE`        | `"1 minute"` | N/A             | Updater frequency (e.g., "5 minutes", "cron(_/1 _ \* _ ? _)") |
 
+#### County-Specific Configuration
+
+When processing inputs from multiple counties, you can provide county-specific configurations that override the general settings. The Lambda automatically detects the county from the `county_jurisdiction` field in `unnormalized_address.json` and applies the appropriate configuration.
+
+**How it works:**
+1. The Lambda extracts the county name from the input ZIP file's `unnormalized_address.json`
+2. For each configuration variable, it checks for a county-specific version first (e.g., `ELEPHANT_PREPARE_USE_BROWSER_Alachua`)
+3. If not found, it falls back to the general version (e.g., `ELEPHANT_PREPARE_USE_BROWSER`)
+4. If neither exists, it uses the default value
+
+**Setting county-specific configurations:**
+
+```bash
+# General configuration (applies to all counties without specific config)
+export ELEPHANT_PREPARE_USE_BROWSER=false
+export ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE="DEFAULT_TEMPLATE"
+
+# County-specific configurations (override general settings)
+export ELEPHANT_PREPARE_USE_BROWSER_Alachua=true
+export ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE_Alachua="ALACHUA_SPECIAL"
+export ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS_Alachua='{"timeout": 60000}'
+
+export ELEPHANT_PREPARE_USE_BROWSER_Sarasota=true
+export ELEPHANT_PREPARE_NO_FAST_Sarasota=true
+export ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE_Sarasota="SEARCH_BY_PARCEL_ID"
+export ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS_Sarasota='{"search_selector": "#parcel"}'
+
+# Deploy - county-specific configs are automatically applied
+./scripts/deploy-infra.sh
+```
+
+**Manual configuration update:**
+
+If you need to update county-specific configurations after deployment:
+
+```bash
+# Set county-specific environment variables
+export ELEPHANT_PREPARE_USE_BROWSER_Charlotte=true
+export ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE_Charlotte="CHARLOTTE_FLOW"
+
+# Apply to existing Lambda
+./scripts/set-county-configs.sh
+```
+
+**Supported county-specific variables:**
+- `ELEPHANT_PREPARE_USE_BROWSER_<CountyName>`
+- `ELEPHANT_PREPARE_NO_FAST_<CountyName>`
+- `ELEPHANT_PREPARE_NO_CONTINUE_<CountyName>`
+- `ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE_<CountyName>`
+- `ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS_<CountyName>`
+
+**Note:** County names in environment variables should match exactly as they appear in `county_jurisdiction` field (case-sensitive). For example, if the JSON contains `"county_jurisdiction": "Alachua"`, use `_Alachua` suffix.
+
 #### Browser Flow Template Configuration
 
 For advanced browser automation scenarios, you can provide custom browser flow templates and parameters:
