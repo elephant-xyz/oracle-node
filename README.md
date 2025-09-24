@@ -368,6 +368,84 @@ Docs:
 - View Step Functions execution history and errors: https://docs.aws.amazon.com/step-functions/latest/dg/concepts-states.html#concepts-states-errors
 - CloudWatch Logs for Step Functions: https://docs.aws.amazon.com/step-functions/latest/dg/cloudwatch-log-standard.html
 
+### Query Post-Processing Logs
+
+The post-processing Lambda logs detailed execution metrics that can be aggregated and analyzed using the built-in query script. This provides county-level success rates, transaction counts, and failure breakdowns.
+
+**Query recent post-processing logs (last hour):**
+
+```bash
+npm run query-post-logs
+```
+
+**Query logs for a specific time range:**
+
+```bash
+# Query logs from 2 hours ago to 1 hour ago
+npm run query-post-logs -- --start 2025-09-24T14:00 --end 2025-09-24T15:00
+
+# Query logs for the last 24 hours
+npm run query-post-logs -- --start 2025-09-23T15:30 --end 2025-09-24T15:30
+```
+
+**Query with custom AWS profile/region:**
+
+```bash
+# Use specific AWS profile
+AWS_PROFILE=your-profile npm run query-post-logs
+
+# Use specific AWS region
+npm run query-post-logs -- --region us-east-1
+```
+
+**Sample output:**
+
+```
+County: Lake
+  Total executions: 60
+  Success rate: 63.33% (38 successes / 60 runs)
+  Total successful transactions: 76
+  Failure counts by step:
+    post_lambda_failed: 14
+    validation_failed: 8
+
+County: Brevard
+  Total executions: 45
+  Success rate: 71.11% (32 successes / 45 runs)
+  Total successful transactions: 128
+  Failure counts by step:
+    transform_failed: 10
+    hash_failed: 3
+```
+
+**What the metrics mean:**
+
+- **Total executions**: Number of post-processing Lambda invocations for this county
+- **Success rate**: Percentage of executions that completed successfully (generated transaction items)
+- **Total successful transactions**: Sum of all transaction items generated across successful runs
+- **Failure counts by step**: Breakdown of failures by the step where they occurred:
+  - `post_lambda_failed`: General execution failures
+  - `validation_failed`: Data validation errors
+  - `transform_failed`: Data transformation errors
+  - `hash_failed`: IPFS hashing errors
+  - `upload_failed`: IPFS upload errors
+
+**Command options:**
+
+```bash
+Usage: npm run query-post-logs [-- --stack <stack-name>] [-- --start <ISO-8601>] [-- --end <ISO-8601>] [-- --profile <aws_profile>] [-- --region <aws_region>]
+
+Options:
+  --stack, -s       CloudFormation stack name (default: elephant-oracle-node)
+  --start           ISO-8601 start time (default: one hour ago, UTC)
+  --end             ISO-8601 end time (default: now, UTC)
+  --profile         AWS profile for credentials (optional)
+  --region          AWS region override (optional)
+  --help            Show this help text
+```
+
+This query tool uses CloudWatch Logs Insights to efficiently analyze large volumes of log data and provides actionable metrics for monitoring post-processing performance across different counties.
+
 That's it — set env vars, deploy, start, monitor, and tune concurrency.
 
 ## Dead Letter Queue (DLQ) Management
