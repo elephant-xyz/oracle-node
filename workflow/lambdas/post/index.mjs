@@ -254,7 +254,7 @@ function resolveTransformLocation({ countyName, transformPrefixUri }) {
   }
   const { bucket, key } = parseS3Uri(prefixUri);
   const normalizedPrefix = key.replace(/\/$/, "");
-  const transformKey = `${normalizedPrefix}/${countyName}.zip`;
+  const transformKey = `${normalizedPrefix}/${countyName.toLowerCase()}.zip`;
   return { transformBucket: bucket, transformKey };
 }
 
@@ -336,6 +336,7 @@ async function runTransformAndValidation({
     const transformDurationError = Date.now() - transformStart;
     log("error", "transform_failed", {
       operation: "transform",
+      step: "transform",
       duration_ms: transformDurationError,
       duration_seconds: (transformDurationError / 1000).toFixed(2),
       includes_fact_sheet_generation: true,
@@ -347,6 +348,7 @@ async function runTransformAndValidation({
   if (!transformResult.success) {
     log("error", "transform_failed", {
       operation: "transform",
+      step: "transform",
       duration_ms: transformDuration,
       duration_seconds: (transformDuration / 1000).toFixed(2),
       includes_fact_sheet_generation: true,
@@ -424,12 +426,14 @@ async function handleValidationFailure({
     }
 
     log("error", "validation_failed", {
+      step: "validate",
       error,
       submit_errors: submitErrors,
       submit_errors_s3_uri: submitErrorsS3Uri,
     });
   } catch (csvError) {
     log("error", "validation_failed", {
+      step: "validate",
       error,
       submit_errors_read_error: String(csvError),
     });
@@ -479,6 +483,11 @@ async function generateHashArtifacts({
     duration_seconds: (seedHashDuration / 1000).toFixed(2),
   });
   if (!seedHashResult.success) {
+    log("error", "hash_failed", {
+      step: "hash",
+      operation: "seed_hash",
+      error: seedHashResult.error,
+    });
     throw new Error(`Seed hash failed: ${seedHashResult.error}`);
   }
 
@@ -506,6 +515,11 @@ async function generateHashArtifacts({
     duration_seconds: (countyHashDuration / 1000).toFixed(2),
   });
   if (!countyHashResult.success) {
+    log("error", "hash_failed", {
+      step: "hash",
+      operation: "county_hash",
+      error: countyHashResult.error,
+    });
     throw new Error(`County hash failed: ${countyHashResult.error}`);
   }
 
@@ -557,6 +571,12 @@ async function uploadHashOutputs({
         duration_seconds: (fileUploadDuration / 1000).toFixed(2),
       });
       if (!uploadResult.success) {
+        log("error", "upload_failed", {
+          step: "upload",
+          operation: "ipfs_upload",
+          file: fileName,
+          error: uploadResult.error,
+        });
         throw new Error(`Upload failed: ${uploadResult.error}`);
       }
     }),
@@ -604,11 +624,33 @@ async function combineAndParseTransactions({
  */
 /** @type {(event: PostInput) => Promise<PostOutput>} */
 export const handler = async (event) => {
+  // Early setup and county extraction before logging
+  if (!event.prepare.output_s3_uri)
+    throw new Error("prepare.output_s3_uri missing");
+  if (!event.seed_output_s3_uri) throw new Error("seed_output_s3_uri missing");
+  const outputBase = process.env.OUTPUT_BASE_URI;
+  if (!outputBase) throw new Error("OUTPUT_BASE_URI is required");
+
+  const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "post-"));
+  const prepared = event.prepare.output_s3_uri;
+  const seedZipS3 = event.seed_output_s3_uri;
+
+  // Download seed zip early to extract county name
+  const seedZipLocal = path.join(tmp, "seed_seed_output.zip");
+  await downloadS3Object(
+    parseS3Uri(seedZipS3),
+    seedZipLocal,
+    () => {}, // No logging yet
+  );
+
+  const countyName = await extractCountyName(seedZipLocal, tmp);
+
   const base = {
     component: "post",
     at: new Date().toISOString(),
-    county: "unknown",
+    county: countyName,
   };
+
   /**
    * Emit structured log messages with consistent shape.
    *
@@ -625,29 +667,13 @@ export const handler = async (event) => {
       console.log(serialized);
     }
   };
-  /** @type {string | undefined} */
-  let tmp;
+
+  log("info", "post_lambda_start", { input_s3_key: event?.s3?.object?.key });
+
   try {
-    if (!event.prepare.output_s3_uri)
-      throw new Error("prepare.output_s3_uri missing");
-    if (!event.seed_output_s3_uri)
-      throw new Error("seed_output_s3_uri missing");
-    const outputBase = process.env.OUTPUT_BASE_URI;
-    if (!outputBase) throw new Error("OUTPUT_BASE_URI is required");
-
-    tmp = await fs.mkdtemp(path.join(os.tmpdir(), "post-"));
-    const prepared = event.prepare.output_s3_uri;
-    const seedZipS3 = event.seed_output_s3_uri;
-
-    const { countyZipLocal, seedZipLocal } = await downloadInputArchives({
-      prepareUri: prepared,
-      seedUri: seedZipS3,
-      tmpDir: tmp,
-      log,
-    });
-
-    const countyName = await extractCountyName(seedZipLocal, tmp);
-    base.county = countyName;
+    // Download the prepared county archive
+    const countyZipLocal = path.join(tmp, "county_input.zip");
+    await downloadS3Object(parseS3Uri(prepared), countyZipLocal, log);
 
     const { transformBucket, transformKey } = resolveTransformLocation({
       countyName,
@@ -731,12 +757,13 @@ export const handler = async (event) => {
     return { status: "success", transactionItems };
   } catch (err) {
     log("error", "post_lambda_failed", {
+      step: "unknown",
       error: String(err),
     });
     throw err;
   } finally {
     try {
       if (tmp) await fs.rm(tmp, { recursive: true, force: true });
-    } catch { }
+    } catch {}
   }
 };

@@ -2,52 +2,61 @@
 
 set -euo pipefail
 
+# Logging setup like deploy-infra.sh
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
+info() { echo -e "${GREEN}[INFO]${NC} $*"; }
+warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
+err()  { echo -e "${RED}[ERROR]${NC} $*"; }
+
 usage() {
   cat <<'EOF'
-Usage: query_post_logs.sh --log-group <name> [--log-group <name> ...] [--start <ISO-8601>] [--end <ISO-8601>] [--profile <aws_profile>] [--region <aws_region>]
+Usage: query_post_logs.sh [--stack <stack-name>] [--start <ISO-8601>] [--end <ISO-8601>] [--profile <aws_profile>] [--region <aws_region>]
 
 Summarize Elephant post-processing Lambda logs by county using CloudWatch Logs Insights.
 
 Options:
-  --log-group, -g   CloudWatch Logs group (may be provided multiple times, required)
+  --stack, -s       CloudFormation stack name (default: elephant-oracle-node)
   --start           ISO-8601 start time (default: one hour ago, UTC)
   --end             ISO-8601 end time (default: now, UTC)
   --profile         AWS profile for credentials (optional)
   --region          AWS region override (optional)
   --help            Show this help text
 
-Example:
-  ./scripts/query_post_logs.sh -g /aws/lambda/ElephantExpressPostFunction --start 2025-09-24T10:00 --end 2025-09-24T12:00
+Examples:
+  ./scripts/query_post_logs.sh
+  ./scripts/query_post_logs.sh -s my-stack-name --start 2025-09-24T10:00 --end 2025-09-24T12:00
 EOF
 }
 
 check_dependencies() {
+  info "Checking dependencies..."
   command -v aws >/dev/null 2>&1 || {
-    echo "Error: aws CLI not found in PATH." >&2
+    err "aws CLI not found in PATH"
     exit 1
   }
   command -v jq >/dev/null 2>&1 || {
-    echo "Error: jq is required for processing query results." >&2
+    err "jq is required for processing query results"
     exit 1
   }
   command -v date >/dev/null 2>&1 || {
-    echo "Error: date command not available." >&2
+    err "date command not available"
     exit 1
   }
+  info "All dependencies found"
 }
 
 # Default values
-declare -a LOG_GROUPS=()
+STACK_NAME="elephant-oracle-node"
 START_TIME=""
 END_TIME=""
-AWS_PROFILE=""
-AWS_REGION=""
+AWS_PROFILE="${AWS_PROFILE:-}"
+AWS_REGION="${AWS_REGION:-}"
 
 parse_args() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --log-group|-g)
-        LOG_GROUPS+=("$2")
+      --stack|-s)
+        STACK_NAME="$2"
         shift 2
         ;;
       --start)
@@ -77,12 +86,6 @@ parse_args() {
         ;;
     esac
   done
-
-  if [[ ${#LOG_GROUPS[@]} -eq 0 ]]; then
-    echo "Error: at least one --log-group must be specified." >&2
-    usage
-    exit 1
-  fi
 }
 
 iso_to_epoch() {
@@ -104,6 +107,7 @@ iso_to_epoch() {
 }
 
 calculate_time_range() {
+  info "Calculating time range for query..."
   local now_epoch
   now_epoch=$(date -u +%s)
 
@@ -120,9 +124,27 @@ calculate_time_range() {
   fi
 
   if (( START_EPOCH >= END_EPOCH )); then
-    echo "Error: --start must be earlier than --end." >&2
+    err "--start must be earlier than --end"
     exit 1
   fi
+
+  info "Query time range: $(date -u -d "@$START_EPOCH") to $(date -u -d "@$END_EPOCH")"
+}
+
+get_log_group_from_stack() {
+  info "Querying CloudFormation stack for log group name..."
+  local log_group
+  log_group=$(aws "${AWS_ARGS[@]}" cloudformation describe-stacks \
+    --stack-name "$STACK_NAME" \
+    --query "Stacks[0].Outputs[?OutputKey=='WorkflowPostProcessorLogGroupName'].OutputValue" \
+    --output text)
+
+  if [[ -z "$log_group" || "$log_group" == "None" ]]; then
+    err "Could not find WorkflowPostProcessorLogGroupName output in stack $STACK_NAME"
+    exit 1
+  fi
+
+  echo "$log_group"
 }
 
 build_aws_args() {
@@ -153,6 +175,15 @@ join_log_groups() {
 
 run_insights_query() {
   local query_string="$1"
+  local log_group="$2"
+
+  info "Running CloudWatch Insights query on log group: $log_group"
+
+  # Check if log group exists
+  if ! aws logs describe-log-groups "${AWS_ARGS[@]}" --log-group-name-prefix "$log_group" --query 'logGroups[0].logGroupName' --output text >/dev/null 2>&1; then
+    err "Log group $log_group does not exist"
+    exit 1
+  fi
 
   local -a start_query_cmd=(
     aws logs start-query
@@ -160,18 +191,17 @@ run_insights_query() {
     --start-time "$START_EPOCH"
     --end-time "$END_EPOCH"
     --query-string "$query_string"
+    --log-group-name "$log_group"
   )
-
-  for lg in "${LOG_GROUPS[@]}"; do
-    start_query_cmd+=(--log-group-name "$lg")
-  done
 
   local query_id
   query_id=$("${start_query_cmd[@]}" | jq -r '.queryId')
   if [[ -z "$query_id" || "$query_id" == "null" ]]; then
-    echo "Error: failed to start query." >&2
+    err "Failed to start CloudWatch Insights query"
     exit 1
   fi
+
+  info "Started query with ID: $query_id"
 
   local status="Running"
   local result_json
@@ -182,35 +212,29 @@ run_insights_query() {
   done
 
   if [[ "$status" != "Complete" ]]; then
-    echo "Error: query $query_id finished with status $status" >&2
+    err "Query $query_id finished with status: $status"
     exit 1
   fi
 
+  info "Query completed successfully"
   echo "$result_json" | jq -c '.results[] | map({(.field): .value}) | add'
 }
 
 # Query strings mirror CloudWatch Logs Insights syntax.
-read -r -d '' SUCCESS_QUERY <<'EOF'
-fields level, msg, county, transaction_items_count
+SUCCESS_QUERY='fields level, msg, county, transaction_items_count
 | filter component = "post"
 | stats
     sum(if msg = "post_lambda_complete", coalesce(transaction_items_count, 0), 0) as totalSuccessfulTransactions,
     sum(if msg = "post_lambda_complete", 1, 0) as successExecutions,
-    sum(if level = "error", 1, 0) as failedExecutions,
-    sum(if msg = "transform_failed", 1, 0) as transformFailures,
-    sum(if msg = "validation_failed", 1, 0) as validationFailures,
-    sum(if msg = "post_lambda_failed", 1, 0) as postFailures
+    sum(if level = "error", 1, 0) as failedExecutions
   by county
 | eval successRate = if((successExecutions + failedExecutions) = 0, 0, successExecutions * 100 / (successExecutions + failedExecutions))
-| sort county asc
-EOF
+| sort county asc'
 
-read -r -d '' FAILURE_QUERY <<'EOF'
-fields county, msg
+FAILURE_QUERY='fields county, msg, step
 | filter component = "post" and level = "error"
-| stats count() as failureCount by county, msg
-| sort county asc, failureCount desc
-EOF
+| stats count() as failureCount by county, step
+| sort county asc, failureCount desc'
 
 aggregate_results() {
   local success_json="$1"
@@ -227,11 +251,7 @@ aggregate_results() {
           success_rate: toNum($row.successRate),
           success_executions: toNum($row.successExecutions),
           failed_executions: toNum($row.failedExecutions),
-          failure_counts: {
-            transform_failed: toNum($row.transformFailures),
-            validation_failed: toNum($row.validationFailures),
-            post_lambda_failed: toNum($row.postFailures)
-          }
+          failure_counts: {}
         }
       );
 
@@ -244,7 +264,7 @@ aggregate_results() {
           failed_executions: 0,
           failure_counts: {}
         };
-        .[( $row.county // "unknown" )].failure_counts[( $row.msg // "unknown" )] = toNum($row.failureCount)
+        .[( $row.county // "unknown" )].failure_counts[( $row.step // "unknown" )] = toNum($row.failureCount)
       );
 
     (indexRows($success))
@@ -270,10 +290,11 @@ format_output() {
       else
         map(
           "County: \(.key)\n" +
-          "  Total successful transactions: \(.value.total_successful_transactions)\n" +
+          "  Total executions: \(.value.success_executions + .value.failed_executions)\n" +
           "  Success rate: \(formatRate(.value.success_rate; .value.success_executions; .value.failed_executions))\n" +
+          "  Total successful transactions: \(.value.total_successful_transactions)\n" +
           (if (.value.failure_counts | type) == "object" and (.value.failure_counts | length) > 0 then
-            "  Failure counts:\n" +
+            "  Failure counts by step:\n" +
             ( .value.failure_counts | to_entries | sort_by(.key) | map("    \(.key): \(.value)") | join("\n") )
           else
             "  Failure counts: none"
@@ -285,17 +306,34 @@ format_output() {
 }
 
 main() {
+  info "Starting post-processing logs query"
   check_dependencies
   parse_args "$@"
   calculate_time_range
   build_aws_args
 
-  local success_rows failure_rows aggregated
-  success_rows=$(run_insights_query "$SUCCESS_QUERY" | jq -s '.')
-  failure_rows=$(run_insights_query "$FAILURE_QUERY" | jq -s '.')
+  info "Using CloudFormation stack: $STACK_NAME"
+  local log_group
+  log_group=$(get_log_group_from_stack)
+  info "Found log group: $log_group"
 
+  info "Querying success metrics..."
+  local success_rows failure_rows aggregated
+  local raw_success
+  raw_success=$(run_insights_query "$SUCCESS_QUERY" "$log_group")
+  info "Raw success query result: $raw_success"
+  success_rows=$(echo "$raw_success" | jq -s '.')
+  info "Querying failure metrics..."
+  local raw_failure
+  raw_failure=$(run_insights_query "$FAILURE_QUERY" "$log_group")
+  info "Raw failure query result: $raw_failure"
+  failure_rows=$(echo "$raw_failure" | jq -s '.')
+
+  info "Aggregating results..."
   aggregated=$(aggregate_results "$success_rows" "$failure_rows")
+  info "Formatting output..."
   format_output "$aggregated"
+  info "Query completed successfully"
 }
 
 main "$@"

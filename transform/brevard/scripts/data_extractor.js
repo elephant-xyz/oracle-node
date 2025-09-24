@@ -60,166 +60,326 @@ function mapUnitsType(n) {
 function mapStreetSuffix(usps) {
   if (!usps) return null;
   const suffixMap = {
-    'STREET': 'St', 'ST': 'St',
-    'AVENUE': 'Ave', 'AVE': 'Ave',
-    'BOULEVARD': 'Blvd', 'BLVD': 'Blvd',
-    'ROAD': 'Rd', 'RD': 'Rd',
-    'LANE': 'Ln', 'LN': 'Ln',
-    'DRIVE': 'Dr', 'DR': 'Dr',
-    'COURT': 'Ct', 'CT': 'Ct',
-    'PLACE': 'Pl', 'PL': 'Pl',
-    'TERRACE': 'Ter', 'TER': 'Ter',
-    'CIRCLE': 'Cir', 'CIR': 'Cir',
-    'WAY': 'Way', 'LOOP': 'Loop',
-    'PARKWAY': 'Pkwy', 'PKWY': 'Pkwy',
-    'PLAZA': 'Plz', 'PLZ': 'Plz',
-    'TRAIL': 'Trl', 'TRL': 'Trl',
-    'BEND': 'Bnd', 'BND': 'Bnd',
-    'CRESCENT': 'Cres', 'CRES': 'Cres',
-    'MANOR': 'Mnr', 'MNR': 'Mnr',
-    'SQUARE': 'Sq', 'SQ': 'Sq',
-    'CROSSING': 'Xing', 'XING': 'Xing',
-    'PATH': 'Path', 'RUN': 'Run',
-    'WALK': 'Walk', 'ROW': 'Row',
-    'ALLEY': 'Aly', 'ALY': 'Aly',
-    'BEACH': 'Bch', 'BCH': 'Bch',
-    'BRIDGE': 'Br', 'BRG': 'Br',
-    'BROOK': 'Brk', 'BRK': 'Brk',
-    'BROOKS': 'Brks', 'BRKS': 'Brks',
-    'BUG': 'Bg', 'BG': 'Bg',
-    'BUGS': 'Bgs', 'BGS': 'Bgs',
-    'CLUB': 'Clb', 'CLB': 'Clb',
-    'CLIFF': 'Clf', 'CLF': 'Clf',
-    'CLIFFS': 'Clfs', 'CLFS': 'Clfs',
-    'COMMON': 'Cmn', 'CMN': 'Cmn',
-    'COMMONS': 'Cmns', 'CMNS': 'Cmns',
-    'CORNER': 'Cor', 'COR': 'Cor',
-    'CORNERS': 'Cors', 'CORS': 'Cors',
-    'CREEK': 'Crk', 'CRK': 'Crk',
-    'COURSE': 'Crse', 'CRSE': 'Crse',
-    'CREST': 'Crst', 'CRST': 'Crst',
-    'CAUSEWAY': 'Cswy', 'CSWY': 'Cswy',
-    'COVE': 'Cv', 'CV': 'Cv',
-    'CANYON': 'Cyn', 'CYN': 'Cyn',
-    'DALE': 'Dl', 'DL': 'Dl',
-    'DAM': 'Dm', 'DM': 'Dm',
-    'DRIVES': 'Drs', 'DRS': 'Drs',
-    'DIVIDE': 'Dv', 'DV': 'Dv',
-    'ESTATE': 'Est', 'EST': 'Est',
-    'ESTATES': 'Ests', 'ESTS': 'Ests',
-    'EXPRESSWAY': 'Expy', 'EXPY': 'Expy',
-    'EXTENSION': 'Ext', 'EXT': 'Ext',
-    'EXTENSIONS': 'Exts', 'EXTS': 'Exts',
-    'FALL': 'Fall', 'FALL': 'Fall',
-    'FALLS': 'Fls', 'FLS': 'Fls',
-    'FLAT': 'Flt', 'FLT': 'Flt',
-    'FLATS': 'Flts', 'FLTS': 'Flts',
-    'FORD': 'Frd', 'FRD': 'Frd',
-    'FORDS': 'Frds', 'FRDS': 'Frds',
-    'FORGE': 'Frg', 'FRG': 'Frg',
-    'FORGES': 'Frgs', 'FRGS': 'Frgs',
-    'FORK': 'Frk', 'FRK': 'Frk',
-    'FORKS': 'Frks', 'FRKS': 'Frks',
-    'FOREST': 'Frst', 'FRST': 'Frst',
-    'FREEWAY': 'Fwy', 'FWY': 'Fwy',
-    'FIELD': 'Fld', 'FLD': 'Fld',
-    'FIELDS': 'Flds', 'FLDS': 'Flds',
-    'GARDEN': 'Gdn', 'GDN': 'Gdn',
-    'GARDENS': 'Gdns', 'GDNS': 'Gdns',
-    'GLEN': 'Gln', 'GLN': 'Gln',
-    'GLENS': 'Glns', 'GLNS': 'Glns',
-    'GREEN': 'Grn', 'GRN': 'Grn',
-    'GREENS': 'Grns', 'GRNS': 'Grns',
-    'GROVE': 'Grv', 'GRV': 'Grv',
-    'GROVES': 'Grvs', 'GRVS': 'Grvs',
-    'GATEWAY': 'Gtwy', 'GTWY': 'Gtwy',
-    'HARBOR': 'Hbr', 'HBR': 'Hbr',
-    'HARBORS': 'Hbrs', 'HBRS': 'Hbrs',
-    'HILL': 'Hl', 'HL': 'Hl',
-    'HILLS': 'Hls', 'HLS': 'Hls',
-    'HOLLOW': 'Holw', 'HOLW': 'Holw',
-    'HEIGHTS': 'Hts', 'HTS': 'Hts',
-    'HAVEN': 'Hvn', 'HVN': 'Hvn',
-    'HIGHWAY': 'Hwy', 'HWY': 'Hwy',
-    'INLET': 'Inlt', 'INLT': 'Inlt',
-    'ISLAND': 'Is', 'IS': 'Is',
-    'ISLANDS': 'Iss', 'ISS': 'Iss',
-    'ISLE': 'Isle', 'SPUR': 'Spur',
-    'JUNCTION': 'Jct', 'JCT': 'Jct',
-    'JUNCTIONS': 'Jcts', 'JCTS': 'Jcts',
-    'KNOLL': 'Knl', 'KNL': 'Knl',
-    'KNOLLS': 'Knls', 'KNLS': 'Knls',
-    'LOCK': 'Lck', 'LCK': 'Lck',
-    'LOCKS': 'Lcks', 'LCKS': 'Lcks',
-    'LODGE': 'Ldg', 'LDG': 'Ldg',
-    'LIGHT': 'Lgt', 'LGT': 'Lgt',
-    'LIGHTS': 'Lgts', 'LGTS': 'Lgts',
-    'LAKE': 'Lk', 'LK': 'Lk',
-    'LAKES': 'Lks', 'LKS': 'Lks',
-    'LANDING': 'Lndg', 'LNDG': 'Lndg',
-    'MALL': 'Mall', 'MEWS': 'Mews',
-    'MEADOW': 'Mdw', 'MDW': 'Mdw',
-    'MEADOWS': 'Mdws', 'MDWS': 'Mdws',
-    'MILL': 'Ml', 'ML': 'Ml',
-    'MILLS': 'Mls', 'MLS': 'Mls',
-    'MANORS': 'Mnrs', 'MNRS': 'Mnrs',
-    'MOUNT': 'Mt', 'MT': 'Mt',
-    'MOUNTAIN': 'Mtn', 'MTN': 'Mtn',
-    'MOUNTAINS': 'Mtns', 'MTNS': 'Mtns',
-    'OVERPASS': 'Opas', 'OPAS': 'Opas',
-    'ORCHARD': 'Orch', 'ORCH': 'Orch',
-    'OVAL': 'Oval', 'PARK': 'Park',
-    'PASS': 'Pass', 'PIKE': 'Pike',
-    'PLAIN': 'Pln', 'PLN': 'Pln',
-    'PLAINS': 'Plns', 'PLNS': 'Plns',
-    'PINE': 'Pne', 'PNE': 'Pne',
-    'PINES': 'Pnes', 'PNES': 'Pnes',
-    'PRAIRIE': 'Pr', 'PR': 'Pr',
-    'PORT': 'Prt', 'PRT': 'Prt',
-    'PORTS': 'Prts', 'PRTS': 'Prts',
-    'PASSAGE': 'Psge', 'PSGE': 'Psge',
-    'POINT': 'Pt', 'PT': 'Pt',
-    'POINTS': 'Pts', 'PTS': 'Pts',
-    'RADIAL': 'Radl', 'RADL': 'Radl',
-    'RAMP': 'Ramp', 'REST': 'Rst',
-    'RIDGE': 'Rdg', 'RDG': 'Rdg',
-    'RIDGES': 'Rdgs', 'RDGS': 'Rdgs',
-    'ROADS': 'Rds', 'RDS': 'Rds',
-    'RANCH': 'Rnch', 'RNCH': 'Rnch',
-    'RAPID': 'Rpd', 'RPD': 'Rpd',
-    'RAPIDS': 'Rpds', 'RPDS': 'Rpds',
-    'ROUTE': 'Rte', 'RTE': 'Rte',
-    'SHOAL': 'Shl', 'SHL': 'Shl',
-    'SHOALS': 'Shls', 'SHLS': 'Shls',
-    'SHORE': 'Shr', 'SHR': 'Shr',
-    'SHORES': 'Shrs', 'SHRS': 'Shrs',
-    'SKYWAY': 'Skwy', 'SKWY': 'Skwy',
-    'SUMMIT': 'Smt', 'SMT': 'Smt',
-    'SPRING': 'Spg', 'SPG': 'Spg',
-    'SPRINGS': 'Spgs', 'SPGS': 'Spgs',
-    'SQUARES': 'Sqs', 'SQS': 'Sqs',
-    'STATION': 'Sta', 'STA': 'Sta',
-    'STRAVENUE': 'Stra', 'STRA': 'Stra',
-    'STREAM': 'Strm', 'STRM': 'Strm',
-    'STREETS': 'Sts', 'STS': 'Sts',
-    'THROUGHWAY': 'Trwy', 'TRWY': 'Trwy',
-    'TRACE': 'Trce', 'TRCE': 'Trce',
-    'TRAFFICWAY': 'Trfy', 'TRFY': 'Trfy',
-    'TRAILER': 'Trlr', 'TRLR': 'Trlr',
-    'TUNNEL': 'Tunl', 'TUNL': 'Tunl',
-    'UNION': 'Un', 'UN': 'Un',
-    'UNIONS': 'Uns', 'UNS': 'Uns',
-    'UNDERPASS': 'Upas', 'UPAS': 'Upas',
-    'VIEW': 'Vw', 'VIEWS': 'Vws',
-    'VILLAGE': 'Vlg', 'VLG': 'Vlg',
-    'VILLAGES': 'Vlgs', 'VLGS': 'Vlgs',
-    'VALLEY': 'Vl', 'VLY': 'Vl',
-    'VALLEYS': 'Vlys', 'VLYS': 'Vlys',
-    'WAYS': 'Ways', 'VIA': 'Via',
-    'WELL': 'Wl', 'WL': 'Wl',
-    'WELLS': 'Wls', 'WLS': 'Wls',
-    'CROSSROAD': 'Xrd', 'XRD': 'Xrd',
-    'CROSSROADS': 'Xrds', 'XRDS': 'Xrds'
+    STREET: "St",
+    ST: "St",
+    AVENUE: "Ave",
+    AVE: "Ave",
+    BOULEVARD: "Blvd",
+    BLVD: "Blvd",
+    ROAD: "Rd",
+    RD: "Rd",
+    LANE: "Ln",
+    LN: "Ln",
+    DRIVE: "Dr",
+    DR: "Dr",
+    COURT: "Ct",
+    CT: "Ct",
+    PLACE: "Pl",
+    PL: "Pl",
+    TERRACE: "Ter",
+    TER: "Ter",
+    CIRCLE: "Cir",
+    CIR: "Cir",
+    WAY: "Way",
+    LOOP: "Loop",
+    PARKWAY: "Pkwy",
+    PKWY: "Pkwy",
+    PLAZA: "Plz",
+    PLZ: "Plz",
+    TRAIL: "Trl",
+    TRL: "Trl",
+    BEND: "Bnd",
+    BND: "Bnd",
+    CRESCENT: "Cres",
+    CRES: "Cres",
+    MANOR: "Mnr",
+    MNR: "Mnr",
+    SQUARE: "Sq",
+    SQ: "Sq",
+    CROSSING: "Xing",
+    XING: "Xing",
+    PATH: "Path",
+    RUN: "Run",
+    WALK: "Walk",
+    ROW: "Row",
+    ALLEY: "Aly",
+    ALY: "Aly",
+    BEACH: "Bch",
+    BCH: "Bch",
+    BRIDGE: "Br",
+    BRG: "Br",
+    BROOK: "Brk",
+    BRK: "Brk",
+    BROOKS: "Brks",
+    BRKS: "Brks",
+    BUG: "Bg",
+    BG: "Bg",
+    BUGS: "Bgs",
+    BGS: "Bgs",
+    CLUB: "Clb",
+    CLB: "Clb",
+    CLIFF: "Clf",
+    CLF: "Clf",
+    CLIFFS: "Clfs",
+    CLFS: "Clfs",
+    COMMON: "Cmn",
+    CMN: "Cmn",
+    COMMONS: "Cmns",
+    CMNS: "Cmns",
+    CORNER: "Cor",
+    COR: "Cor",
+    CORNERS: "Cors",
+    CORS: "Cors",
+    CREEK: "Crk",
+    CRK: "Crk",
+    COURSE: "Crse",
+    CRSE: "Crse",
+    CREST: "Crst",
+    CRST: "Crst",
+    CAUSEWAY: "Cswy",
+    CSWY: "Cswy",
+    COVE: "Cv",
+    CV: "Cv",
+    CANYON: "Cyn",
+    CYN: "Cyn",
+    DALE: "Dl",
+    DL: "Dl",
+    DAM: "Dm",
+    DM: "Dm",
+    DRIVES: "Drs",
+    DRS: "Drs",
+    DIVIDE: "Dv",
+    DV: "Dv",
+    ESTATE: "Est",
+    EST: "Est",
+    ESTATES: "Ests",
+    ESTS: "Ests",
+    EXPRESSWAY: "Expy",
+    EXPY: "Expy",
+    EXTENSION: "Ext",
+    EXT: "Ext",
+    EXTENSIONS: "Exts",
+    EXTS: "Exts",
+    FALL: "Fall",
+    FALL: "Fall",
+    FALLS: "Fls",
+    FLS: "Fls",
+    FLAT: "Flt",
+    FLT: "Flt",
+    FLATS: "Flts",
+    FLTS: "Flts",
+    FORD: "Frd",
+    FRD: "Frd",
+    FORDS: "Frds",
+    FRDS: "Frds",
+    FORGE: "Frg",
+    FRG: "Frg",
+    FORGES: "Frgs",
+    FRGS: "Frgs",
+    FORK: "Frk",
+    FRK: "Frk",
+    FORKS: "Frks",
+    FRKS: "Frks",
+    FOREST: "Frst",
+    FRST: "Frst",
+    FREEWAY: "Fwy",
+    FWY: "Fwy",
+    FIELD: "Fld",
+    FLD: "Fld",
+    FIELDS: "Flds",
+    FLDS: "Flds",
+    GARDEN: "Gdn",
+    GDN: "Gdn",
+    GARDENS: "Gdns",
+    GDNS: "Gdns",
+    GLEN: "Gln",
+    GLN: "Gln",
+    GLENS: "Glns",
+    GLNS: "Glns",
+    GREEN: "Grn",
+    GRN: "Grn",
+    GREENS: "Grns",
+    GRNS: "Grns",
+    GROVE: "Grv",
+    GRV: "Grv",
+    GROVES: "Grvs",
+    GRVS: "Grvs",
+    GATEWAY: "Gtwy",
+    GTWY: "Gtwy",
+    HARBOR: "Hbr",
+    HBR: "Hbr",
+    HARBORS: "Hbrs",
+    HBRS: "Hbrs",
+    HILL: "Hl",
+    HL: "Hl",
+    HILLS: "Hls",
+    HLS: "Hls",
+    HOLLOW: "Holw",
+    HOLW: "Holw",
+    HEIGHTS: "Hts",
+    HTS: "Hts",
+    HAVEN: "Hvn",
+    HVN: "Hvn",
+    HIGHWAY: "Hwy",
+    HWY: "Hwy",
+    INLET: "Inlt",
+    INLT: "Inlt",
+    ISLAND: "Is",
+    IS: "Is",
+    ISLANDS: "Iss",
+    ISS: "Iss",
+    ISLE: "Isle",
+    SPUR: "Spur",
+    JUNCTION: "Jct",
+    JCT: "Jct",
+    JUNCTIONS: "Jcts",
+    JCTS: "Jcts",
+    KNOLL: "Knl",
+    KNL: "Knl",
+    KNOLLS: "Knls",
+    KNLS: "Knls",
+    LOCK: "Lck",
+    LCK: "Lck",
+    LOCKS: "Lcks",
+    LCKS: "Lcks",
+    LODGE: "Ldg",
+    LDG: "Ldg",
+    LIGHT: "Lgt",
+    LGT: "Lgt",
+    LIGHTS: "Lgts",
+    LGTS: "Lgts",
+    LAKE: "Lk",
+    LK: "Lk",
+    LAKES: "Lks",
+    LKS: "Lks",
+    LANDING: "Lndg",
+    LNDG: "Lndg",
+    MALL: "Mall",
+    MEWS: "Mews",
+    MEADOW: "Mdw",
+    MDW: "Mdw",
+    MEADOWS: "Mdws",
+    MDWS: "Mdws",
+    MILL: "Ml",
+    ML: "Ml",
+    MILLS: "Mls",
+    MLS: "Mls",
+    MANORS: "Mnrs",
+    MNRS: "Mnrs",
+    MOUNT: "Mt",
+    MT: "Mt",
+    MOUNTAIN: "Mtn",
+    MTN: "Mtn",
+    MOUNTAINS: "Mtns",
+    MTNS: "Mtns",
+    OVERPASS: "Opas",
+    OPAS: "Opas",
+    ORCHARD: "Orch",
+    ORCH: "Orch",
+    OVAL: "Oval",
+    PARK: "Park",
+    PASS: "Pass",
+    PIKE: "Pike",
+    PLAIN: "Pln",
+    PLN: "Pln",
+    PLAINS: "Plns",
+    PLNS: "Plns",
+    PINE: "Pne",
+    PNE: "Pne",
+    PINES: "Pnes",
+    PNES: "Pnes",
+    PRAIRIE: "Pr",
+    PR: "Pr",
+    PORT: "Prt",
+    PRT: "Prt",
+    PORTS: "Prts",
+    PRTS: "Prts",
+    PASSAGE: "Psge",
+    PSGE: "Psge",
+    POINT: "Pt",
+    PT: "Pt",
+    POINTS: "Pts",
+    PTS: "Pts",
+    RADIAL: "Radl",
+    RADL: "Radl",
+    RAMP: "Ramp",
+    REST: "Rst",
+    RIDGE: "Rdg",
+    RDG: "Rdg",
+    RIDGES: "Rdgs",
+    RDGS: "Rdgs",
+    ROADS: "Rds",
+    RDS: "Rds",
+    RANCH: "Rnch",
+    RNCH: "Rnch",
+    RAPID: "Rpd",
+    RPD: "Rpd",
+    RAPIDS: "Rpds",
+    RPDS: "Rpds",
+    ROUTE: "Rte",
+    RTE: "Rte",
+    SHOAL: "Shl",
+    SHL: "Shl",
+    SHOALS: "Shls",
+    SHLS: "Shls",
+    SHORE: "Shr",
+    SHR: "Shr",
+    SHORES: "Shrs",
+    SHRS: "Shrs",
+    SKYWAY: "Skwy",
+    SKWY: "Skwy",
+    SUMMIT: "Smt",
+    SMT: "Smt",
+    SPRING: "Spg",
+    SPG: "Spg",
+    SPRINGS: "Spgs",
+    SPGS: "Spgs",
+    SQUARES: "Sqs",
+    SQS: "Sqs",
+    STATION: "Sta",
+    STA: "Sta",
+    STRAVENUE: "Stra",
+    STRA: "Stra",
+    STREAM: "Strm",
+    STRM: "Strm",
+    STREETS: "Sts",
+    STS: "Sts",
+    THROUGHWAY: "Trwy",
+    TRWY: "Trwy",
+    TRACE: "Trce",
+    TRCE: "Trce",
+    TRAFFICWAY: "Trfy",
+    TRFY: "Trfy",
+    TRAILER: "Trlr",
+    TRLR: "Trlr",
+    TUNNEL: "Tunl",
+    TUNL: "Tunl",
+    UNION: "Un",
+    UN: "Un",
+    UNIONS: "Uns",
+    UNS: "Uns",
+    UNDERPASS: "Upas",
+    UPAS: "Upas",
+    VIEW: "Vw",
+    VIEWS: "Vws",
+    VILLAGE: "Vlg",
+    VLG: "Vlg",
+    VILLAGES: "Vlgs",
+    VLGS: "Vlgs",
+    VALLEY: "Vl",
+    VLY: "Vl",
+    VALLEYS: "Vlys",
+    VLYS: "Vlys",
+    WAYS: "Ways",
+    VIA: "Via",
+    WELL: "Wl",
+    WL: "Wl",
+    WELLS: "Wls",
+    WLS: "Wls",
+    CROSSROAD: "Xrd",
+    XRD: "Xrd",
+    CROSSROADS: "Xrds",
+    XRDS: "Xrds",
   };
   return suffixMap[usps.toUpperCase()] || null;
 }
@@ -243,22 +403,36 @@ function mapBrevardUseCodeToPropertyType(useCodeDesc) {
   const desc = useCodeDesc.toUpperCase();
 
   // Map Brevard County codes to property types
-  if (desc.includes('VACANT RESIDENTIAL') || desc.includes('VACANT LAND')) return 'VacantLand';
-  if (desc.includes('SINGLE FAMILY RESIDENCE') || desc.includes('SINGLE FAMILY')) return 'SingleFamily';
-  if (desc.includes('MANUFACTURED HOUSING')) return 'ManufacturedHousing';
-  if (desc.includes('MOBILE HOME')) return 'MobileHome';
-  if (desc.includes('MODULAR')) return 'Modular';
-  if (desc.includes('TOWNHOUSE')) return 'Townhouse';
-  if (desc.includes('DUPLEX') || desc.includes('HALF-DUPLEX')) return 'Duplex';
-  if (desc.includes('TRIPLEX')) return 'TwoToFourFamily';
-  if (desc.includes('QUADRUPLEX')) return 'TwoToFourFamily';
-  if (desc.includes('MULTIPLE LIVING UNITS - 5 TO 9') || desc.includes('GARDEN APARTMENTS') || desc.includes('LOW RISE APARTMENTS') || desc.includes('HIGH RISE APARTMENTS')) return 'MultipleFamily';
-  if (desc.includes('CONDOMINIUM')) return 'Condominium';
-  if (desc.includes('COOPERATIVE') || desc.includes('CO-OP')) return 'Cooperative';
-  if (desc.includes('RETIREMENT HOME')) return 'Retirement';
-  if (desc.includes('TIME SHARE')) return 'Timeshare';
-  if (desc.includes('MISC RESIDENTIAL') || desc.includes('MIGRANT')) return 'MiscellaneousResidential';
-  if (desc.includes('RESIDENTIAL COMMON AREA') || desc.includes('COMMON AREA')) return 'ResidentialCommonElementsAreas';
+  if (desc.includes("VACANT RESIDENTIAL") || desc.includes("VACANT LAND"))
+    return "VacantLand";
+  if (
+    desc.includes("SINGLE FAMILY RESIDENCE") ||
+    desc.includes("SINGLE FAMILY")
+  )
+    return "SingleFamily";
+  if (desc.includes("MANUFACTURED HOUSING")) return "ManufacturedHousing";
+  if (desc.includes("MOBILE HOME")) return "MobileHome";
+  if (desc.includes("MODULAR")) return "Modular";
+  if (desc.includes("TOWNHOUSE")) return "Townhouse";
+  if (desc.includes("DUPLEX") || desc.includes("HALF-DUPLEX")) return "Duplex";
+  if (desc.includes("TRIPLEX")) return "TwoToFourFamily";
+  if (desc.includes("QUADRUPLEX")) return "TwoToFourFamily";
+  if (
+    desc.includes("MULTIPLE LIVING UNITS - 5 TO 9") ||
+    desc.includes("GARDEN APARTMENTS") ||
+    desc.includes("LOW RISE APARTMENTS") ||
+    desc.includes("HIGH RISE APARTMENTS")
+  )
+    return "MultipleFamily";
+  if (desc.includes("CONDOMINIUM")) return "Condominium";
+  if (desc.includes("COOPERATIVE") || desc.includes("CO-OP"))
+    return "Cooperative";
+  if (desc.includes("RETIREMENT HOME")) return "Retirement";
+  if (desc.includes("TIME SHARE")) return "Timeshare";
+  if (desc.includes("MISC RESIDENTIAL") || desc.includes("MIGRANT"))
+    return "MiscellaneousResidential";
+  if (desc.includes("RESIDENTIAL COMMON AREA") || desc.includes("COMMON AREA"))
+    return "ResidentialCommonElementsAreas";
 
   // Default to null for non-residential or unrecognized codes
   return null;
@@ -358,7 +532,7 @@ function main() {
   });
 
   // If no units found in building details, default to 1 for residential properties
-  if (!bldgDetails.resUnits && propertyType && propertyType !== 'VacantLand') {
+  if (!bldgDetails.resUnits && propertyType && propertyType !== "VacantLand") {
     bldgDetails.resUnits = 1;
   }
 
@@ -416,7 +590,7 @@ function main() {
     .text()
     .trim();
 
-  const validDirectionals = ['N', 'S', 'E', 'W', 'NE', 'NW', 'SE', 'SW'];
+  const validDirectionals = ["N", "S", "E", "W", "NE", "NW", "SE", "SW"];
 
   let street_number = null,
     street_name = null,
@@ -430,7 +604,7 @@ function main() {
   if (siteAddr) {
     // Match pattern: "1910 N COCOA BLVD COCOA FL 32922"
     const addrMatch = siteAddr.match(
-      /^(\d+)\s+(?:(N|S|E|W|NE|NW|SE|SW)\s+)?(.+?)\s+(?:(N|S|E|W|NE|NW|SE|SW)\s+)?([A-Z]+)\s+([A-Z\s]+)\s+([A-Z]{2})\s+(\d{5})$/i
+      /^(\d+)\s+(?:(N|S|E|W|NE|NW|SE|SW)\s+)?(.+?)\s+(?:(N|S|E|W|NE|NW|SE|SW)\s+)?([A-Z]+)\s+([A-Z\s]+)\s+([A-Z]{2})\s+(\d{5})$/i,
     );
 
     if (addrMatch) {
@@ -567,13 +741,19 @@ function main() {
         to: { "/": `./sales_${salesFileIndex}.json` },
         from: { "/": `./deed_${salesFileIndex}.json` },
       };
-      writeJSON(path.join(dataDir, `relationship_sales_deed_${salesFileIndex}.json`), relSalesDeed);
+      writeJSON(
+        path.join(dataDir, `relationship_sales_deed_${salesFileIndex}.json`),
+        relSalesDeed,
+      );
 
       const relDeedFile = {
         to: { "/": `./deed_${salesFileIndex}.json` },
         from: { "/": `./file_${salesFileIndex}.json` },
       };
-      writeJSON(path.join(dataDir, `relationship_deed_file_${salesFileIndex}.json`), relDeedFile);
+      writeJSON(
+        path.join(dataDir, `relationship_deed_file_${salesFileIndex}.json`),
+        relDeedFile,
+      );
 
       salesFileIndex++; // Only increment when we actually create files
     }
@@ -581,78 +761,82 @@ function main() {
 
   // Process owners only if we created at least one sales file
   if (salesFileIndex > 1) {
-  // Find the first row that actually has a price
-  let firstSaleRow = null;
-  salesRows.each((index, row) => {
-    const $row = $(row);
-    const priceText = $row.find("td").eq(1).text().trim();
-    if (parseMoney(priceText) !== null && !firstSaleRow) {
-      firstSaleRow = $row;
-      return false; // break the loop
-    }
-  });
+    // Find the first row that actually has a price
+    let firstSaleRow = null;
+    salesRows.each((index, row) => {
+      const $row = $(row);
+      const priceText = $row.find("td").eq(1).text().trim();
+      if (parseMoney(priceText) !== null && !firstSaleRow) {
+        firstSaleRow = $row;
+        return false; // break the loop
+      }
+    });
 
-  if (firstSaleRow) {
-    const dateText = firstSaleRow.find("td").eq(0).text().trim();
+    if (firstSaleRow) {
+      const dateText = firstSaleRow.find("td").eq(0).text().trim();
 
-    // Owners at sale date and current -> deduplicate to single person files
-    const ownersKey = `property_${propertyId}`;
-    const ownersByDate = ownersData[ownersKey]?.owners_by_date || {};
-    const saleDateIso = toISODate(dateText);
-    const saleOwners =
-      (ownersByDate && (ownersByDate[saleDateIso] || ownersByDate[dateText])) ||
-      [];
-    const currentOwners = ownersByDate["current"] || [];
+      // Owners at sale date and current -> deduplicate to single person files
+      const ownersKey = `property_${propertyId}`;
+      const ownersByDate = ownersData[ownersKey]?.owners_by_date || {};
+      const saleDateIso = toISODate(dateText);
+      const saleOwners =
+        (ownersByDate &&
+          (ownersByDate[saleDateIso] || ownersByDate[dateText])) ||
+        [];
+      const currentOwners = ownersByDate["current"] || [];
 
-    const combined = [...saleOwners, ...currentOwners];
-    const uniqueOwners = [];
-    const seen = new Set();
-    combined.forEach((o) => {
-      if (o && o.type === "person") {
-        const key = normalizeOwnerKey(o);
-        if (key && !seen.has(key)) {
-          seen.add(key);
-          uniqueOwners.push({ o, key });
+      const combined = [...saleOwners, ...currentOwners];
+      const uniqueOwners = [];
+      const seen = new Set();
+      combined.forEach((o) => {
+        if (o && o.type === "person") {
+          const key = normalizeOwnerKey(o);
+          if (key && !seen.has(key)) {
+            seen.add(key);
+            uniqueOwners.push({ o, key });
+          }
         }
-      }
-    });
+      });
 
-    // Create a person file for each unique owner
-    uniqueOwners.forEach((entry, idx) => {
-      const o = entry.o;
-      const person = {
-        birth_date: null,
-        first_name: o.first_name || "",
-        last_name: o.last_name || "",
-        middle_name: o.middle_name || null,
-        prefix_name: null,
-        suffix_name: null,
-        us_citizenship_status: null,
-        veteran_status: null,
-      };
-      const pFile = `person_${idx + 1}.json`;
-      writeJSON(path.join(dataDir, pFile), person);
-      personFilesByKey[entry.key] = pFile;
-    });
+      // Create a person file for each unique owner
+      uniqueOwners.forEach((entry, idx) => {
+        const o = entry.o;
+        const person = {
+          birth_date: null,
+          first_name: o.first_name || "",
+          last_name: o.last_name || "",
+          middle_name: o.middle_name || null,
+          prefix_name: null,
+          suffix_name: null,
+          us_citizenship_status: null,
+          veteran_status: null,
+        };
+        const pFile = `person_${idx + 1}.json`;
+        writeJSON(path.join(dataDir, pFile), person);
+        personFilesByKey[entry.key] = pFile;
+      });
 
-    // Relationships from sales to persons who owned on sale date
-    saleOwnersNormKeys = saleOwners
-      .map((o) => normalizeOwnerKey(o))
-      .filter(Boolean);
-    let relIdx = 0;
-    saleOwnersNormKeys.forEach((k) => {
-      const pf = personFilesByKey[k];
-      if (pf) {
-        relIdx += 1;
-        const rel = { to: { "/": `./${pf}` }, from: { "/": "./sales_1.json" } };
-        writeJSON(
-          path.join(dataDir, `relationship_sales_person_${relIdx}.json`),
-          rel,
-        );
-      }
-    });
+      // Relationships from sales to persons who owned on sale date
+      saleOwnersNormKeys = saleOwners
+        .map((o) => normalizeOwnerKey(o))
+        .filter(Boolean);
+      let relIdx = 0;
+      saleOwnersNormKeys.forEach((k) => {
+        const pf = personFilesByKey[k];
+        if (pf) {
+          relIdx += 1;
+          const rel = {
+            to: { "/": `./${pf}` },
+            from: { "/": "./sales_1.json" },
+          };
+          writeJSON(
+            path.join(dataDir, `relationship_sales_person_${relIdx}.json`),
+            rel,
+          );
+        }
+      });
+    }
   }
-}
 
   // ---------- Taxes (Value table) ----------
   const valuesTable = $("#tValues");
