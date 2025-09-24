@@ -7,6 +7,7 @@ import { promises as fs } from "fs";
 import path from "path";
 import { prepare } from "@elephant-xyz/cli/lib";
 import { networkInterfaces } from "os";
+import AdmZip from "adm-zip";
 
 const RE_S3PATH = /^s3:\/\/([^/]+)\/(.*)$/i;
 
@@ -211,62 +212,72 @@ export const handler = async (event) => {
     console.log(
       `📊 Downloaded ${inputBytes.length} bytes from s3://${bucket}/${key}`,
     );
-    console.log(`✅ S3 download completed: ${s3DownloadDuration}ms (${(s3DownloadDuration/1000).toFixed(2)}s)`);
-    console.log(`📊 Downloaded ${inputBytes.length} bytes from s3://${bucket}/${key}`);
 
     // Extract county name from unnormalized_address.json
     let countyName = null;
     console.log("📍 Extracting county information from input...");
 
     try {
-      // Create a temporary directory for extraction
-      const extractDir = path.join(tempDir, "extract");
-      await fs.mkdir(extractDir);
+      // Use adm-zip to read the zip file directly without extracting to disk
+      const zip = new AdmZip(inputZip);
+      const zipEntries = zip.getEntries();
 
-      // Extract the zip file
-      const { execSync } = await import('child_process');
-      execSync(`unzip -q "${inputZip}" -d "${extractDir}"`, { encoding: 'utf8' });
+      // Find unnormalized_address.json in the zip
+      const addressEntry = zipEntries.find(
+        (entry) => entry.entryName === "unnormalized_address.json",
+      );
 
-      // Read unnormalized_address.json
-      const addressJsonPath = path.join(extractDir, "unnormalized_address.json");
-      const addressData = JSON.parse(await fs.readFile(addressJsonPath, 'utf8'));
+      if (addressEntry) {
+        // Read the file content directly from zip
+        const addressContent = zip.readAsText(addressEntry);
+        const addressData = JSON.parse(addressContent);
 
-      if (addressData.county_jurisdiction) {
-        countyName = addressData.county_jurisdiction;
-        console.log(`✅ Detected county: ${countyName}`);
+        if (addressData.county_jurisdiction) {
+          countyName = addressData.county_jurisdiction;
+          console.log(`✅ Detected county: ${countyName}`);
+        } else {
+          console.log(
+            "⚠️ No county_jurisdiction found in unnormalized_address.json",
+          );
+        }
       } else {
-        console.log("⚠️ No county_jurisdiction found in unnormalized_address.json");
+        console.log("⚠️ unnormalized_address.json not found in zip file");
       }
-
-      // Clean up extraction directory
-      await fs.rm(extractDir, { recursive: true, force: true });
     } catch (error) {
-      console.error(`⚠️ Could not extract county information: ${error.message}`);
+      console.error(
+        `⚠️ Could not extract county information: ${error instanceof Error ? error.message : String(error)}`,
+      );
       console.log("Continuing with general configuration...");
     }
 
     const outputZip = path.join(tempDir, "output.zip");
     const useBrowser = event.browser ?? true;
 
-
     console.log("Building prepare options...");
     console.log(
       `Event browser setting: ${event.browser} (using: ${useBrowser})`,
     );
 
-    console.log(`Event browser setting: ${event.browser} (using: ${useBrowser})`);
-
     // Helper function to get environment variable with county-specific fallback
+    /**
+     * @param {string} baseEnvVar
+     * @param {string | null} countyName
+     * @returns {string | undefined}
+     */
     const getEnvWithCountyFallback = (baseEnvVar, countyName) => {
       if (countyName) {
         const countySpecificVar = `${baseEnvVar}_${countyName}`;
         if (process.env[countySpecificVar] !== undefined) {
-          console.log(`  Using county-specific: ${countySpecificVar}='${process.env[countySpecificVar]}'`);
+          console.log(
+            `  Using county-specific: ${countySpecificVar}='${process.env[countySpecificVar]}'`,
+          );
           return process.env[countySpecificVar];
         }
       }
       if (process.env[baseEnvVar] !== undefined) {
-        console.log(`  Using general: ${baseEnvVar}='${process.env[baseEnvVar]}'`);
+        console.log(
+          `  Using general: ${baseEnvVar}='${process.env[baseEnvVar]}'`,
+        );
         return process.env[baseEnvVar];
       }
       return undefined;
@@ -294,49 +305,55 @@ export const handler = async (event) => {
     ];
 
     // Build prepare options based on environment variables
-    /** @type {{ useBrowser: boolean, noFast?: boolean, noContinue?: boolean }} */
+    /** @type {{ useBrowser: boolean, noFast?: boolean, noContinue?: boolean, browserFlowTemplate?: string, browserFlowParameters?: string, [key: string]: any }} */
     const prepareOptions = { useBrowser };
 
     console.log("Checking environment variables for prepare flags:");
     if (countyName) {
-      console.log(`🏛️ Looking for county-specific configurations for: ${countyName}`);
+      console.log(
+        `🏛️ Looking for county-specific configurations for: ${countyName}`,
+      );
     }
 
     for (const { envVar, optionKey, description } of flagConfig) {
-      if (process.env[envVar] === "true") {
       const envValue = getEnvWithCountyFallback(envVar, countyName);
-      if (envValue === 'true') {
+      if (envValue === "true") {
         prepareOptions[optionKey] = true;
-        console.log(
-          `✓ ${envVar}='true' → adding ${optionKey}: true (${description})`,
-        );
         console.log(`✓ Setting ${optionKey}: true (${description})`);
       } else {
-        console.log(
-          `✗ ${envVar}='${process.env[envVar]}' → not adding ${optionKey} flag (${description})`,
-        );
         console.log(`✗ Not setting ${optionKey} flag (${description})`);
       }
     }
 
     // Handle browser flow template configuration with county-specific lookup
-    const browserFlowTemplate = getEnvWithCountyFallback('ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE', countyName);
-    let browserFlowParameters = getEnvWithCountyFallback('ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS', countyName);
+    const browserFlowTemplate = getEnvWithCountyFallback(
+      "ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE",
+      countyName,
+    );
+    let browserFlowParameters = getEnvWithCountyFallback(
+      "ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS",
+      countyName,
+    );
 
-    if (browserFlowTemplate && browserFlowTemplate.trim() !== '') {
+    if (browserFlowTemplate && browserFlowTemplate.trim() !== "") {
       console.log("Browser flow template configuration detected:");
-      console.log(`✓ ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE='${browserFlowTemplate}'`);
+      console.log(
+        `✓ ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE='${browserFlowTemplate}'`,
+      );
 
-      if (browserFlowParameters && browserFlowParameters.trim() !== '') {
+      if (browserFlowParameters && browserFlowParameters.trim() !== "") {
         try {
           // Parse simple key:value format (e.g., "timeout:30000,retries:3,selector:#main-content")
+          /** @type {{ [key: string]: string | number | boolean }} */
           const parsedParams = {};
-          const pairs = browserFlowParameters.split(',');
+          const pairs = browserFlowParameters.split(",");
 
           for (const pair of pairs) {
-            const colonIndex = pair.indexOf(':');
+            const colonIndex = pair.indexOf(":");
             if (colonIndex === -1) {
-              throw new Error(`Invalid parameter format: "${pair}" - expected key:value`);
+              throw new Error(
+                `Invalid parameter format: "${pair}" - expected key:value`,
+              );
             }
 
             const key = pair.substring(0, colonIndex).trim();
@@ -351,9 +368,9 @@ export const handler = async (event) => {
               parsedParams[key] = parseInt(value, 10);
             } else if (/^\d+\.\d+$/.test(value)) {
               parsedParams[key] = parseFloat(value);
-            } else if (value.toLowerCase() === 'true') {
+            } else if (value.toLowerCase() === "true") {
               parsedParams[key] = true;
-            } else if (value.toLowerCase() === 'false') {
+            } else if (value.toLowerCase() === "false") {
               parsedParams[key] = false;
             } else {
               // Keep as string
@@ -364,21 +381,34 @@ export const handler = async (event) => {
           prepareOptions.browserFlowTemplate = browserFlowTemplate;
           // Pass as JSON string, not as object
           prepareOptions.browserFlowParameters = JSON.stringify(parsedParams);
-          console.log(`✓ ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS parsed successfully:`, JSON.stringify(parsedParams, null, 2));
+          console.log(
+            `✓ ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS parsed successfully:`,
+            JSON.stringify(parsedParams, null, 2),
+          );
         } catch (parseError) {
-          console.error(`✗ Failed to parse ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS: ${parseError.message}`);
-          console.error(`Invalid format: ${browserFlowParameters.substring(0, 100)}...`);
+          console.error(
+            `✗ Failed to parse ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS: ${parseError instanceof Error ? parseError.message : String(parseError)}`,
+          );
+          console.error(
+            `Invalid format: ${browserFlowParameters.substring(0, 100)}...`,
+          );
           console.error(`Expected format: key1:value1,key2:value2`);
           // Continue without browser flow parameters rather than failing
-          console.warn("Continuing without browser flow configuration due to invalid format");
+          console.warn(
+            "Continuing without browser flow configuration due to invalid format",
+          );
         }
       } else {
-        console.log(`✗ ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS not set or empty - browser flow template will not be used`);
+        console.log(
+          `✗ ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS not set or empty - browser flow template will not be used`,
+        );
       }
-    } else if (browserFlowParameters && browserFlowParameters.trim() !== '') {
-      console.warn("⚠️ ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS is set but ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE is not - ignoring parameters");
+    } else if (browserFlowParameters && browserFlowParameters.trim() !== "") {
+      console.warn(
+        "⚠️ ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS is set but ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE is not - ignoring parameters",
+      );
     }
-    
+
     // Prepare Phase (Main bottleneck)
     console.log("🔄 Starting prepare() function...");
     const prepareStart = Date.now();

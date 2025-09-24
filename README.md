@@ -112,6 +112,7 @@ The `DownloaderFunction` uses the `prepare` command from `@elephant-xyz/cli` to 
 When processing inputs from multiple counties, you can provide county-specific configurations that override the general settings. The Lambda automatically detects the county from the `county_jurisdiction` field in `unnormalized_address.json` and applies the appropriate configuration.
 
 **How it works:**
+
 1. The Lambda extracts the county name from the input ZIP file's `unnormalized_address.json`
 2. For each configuration variable, it checks for a county-specific version first (e.g., `ELEPHANT_PREPARE_USE_BROWSER_Alachua`)
 3. If not found, it falls back to the general version (e.g., `ELEPHANT_PREPARE_USE_BROWSER`)
@@ -152,6 +153,7 @@ export ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE_Charlotte="CHARLOTTE_FLOW"
 ```
 
 **Supported county-specific variables:**
+
 - `ELEPHANT_PREPARE_USE_BROWSER_<CountyName>`
 - `ELEPHANT_PREPARE_NO_FAST_<CountyName>`
 - `ELEPHANT_PREPARE_NO_CONTINUE_<CountyName>`
@@ -164,10 +166,10 @@ export ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE_Charlotte="CHARLOTTE_FLOW"
 
 For advanced browser automation scenarios, you can provide custom browser flow templates and parameters:
 
-| Environment Variable           | Default | Description                                                    |
-| ------------------------------ | ------- | -------------------------------------------------------------- |
-| `ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE`   | `""`    | Browser flow template name to use                             |
-| `ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS`  | `""`    | JSON string containing parameters for the browser flow template |
+| Environment Variable                       | Default | Description                                                     |
+| ------------------------------------------ | ------- | --------------------------------------------------------------- |
+| `ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE`   | `""`    | Browser flow template name to use                               |
+| `ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS` | `""`    | JSON string containing parameters for the browser flow template |
 
 **Important:** These two environment variables must be provided together. If only one is set, the deployment will fail with a validation error.
 
