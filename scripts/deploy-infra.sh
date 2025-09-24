@@ -67,7 +67,7 @@ sam_deploy() {
     --resolve-s3 \
     --no-confirm-changeset \
     --no-fail-on-empty-changeset \
-    --parameter-overrides "${PARAM_OVERRIDES:-}" >/dev/null
+    --parameter-overrides ${PARAM_OVERRIDES:-} >/dev/null
 }
 
 sam_deploy_with_versions() {
@@ -81,7 +81,7 @@ sam_deploy_with_versions() {
     --no-confirm-changeset \
     --no-fail-on-empty-changeset \
     --parameter-overrides \
-      "${PARAM_OVERRIDES:-}" \
+      ${PARAM_OVERRIDES:-} \
       StartupScriptS3Path="startup.sh" \
       StartupScriptS3ObjectVersion="$script_ver" \
       RequirementsS3Path="requirements.txt" \
@@ -89,6 +89,31 @@ sam_deploy_with_versions() {
 }
 
 compute_param_overrides() {
+  # Validate browser flow template parameters (must be provided together)
+  if [[ -n "${ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE:-}" || -n "${ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS:-}" ]]; then
+    if [[ -z "${ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE:-}" ]]; then
+      err "ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS is set but ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE is not. Both must be provided together."
+      exit 1
+    fi
+    if [[ -z "${ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS:-}" ]]; then
+      err "ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE is set but ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS is not. Both must be provided together."
+      exit 1
+    fi
+
+    # Validate that ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS contains valid JSON
+    if ! echo "${ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS}" | jq . >/dev/null 2>&1; then
+      err "ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS must contain valid JSON"
+      exit 1
+    fi
+
+    # Convert JSON to simple key:value format for safe transport
+    ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS_SIMPLE=$(echo "${ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS}" | jq -r 'to_entries | map("\(.key):\(.value)") | join(",")')
+    info "Browser flow template configuration validated and converted to simple format"
+  fi
+
+  # No need for parameter file with simple format
+  local use_param_file=false
+
   # Check if using keystore mode
   if [[ -n "${ELEPHANT_KEYSTORE_FILE:-}" ]]; then
     # Keystore mode - verify requirements
@@ -135,16 +160,21 @@ compute_param_overrides() {
     parts+=("ElephantPinataJwt=\"$ELEPHANT_PINATA_JWT\"")
   fi
 
+  # Build parameters with simple format
   [[ -n "${WORKFLOW_QUEUE_NAME:-}" ]] && parts+=("WorkflowQueueName=\"$WORKFLOW_QUEUE_NAME\"")
   [[ -n "${WORKFLOW_STARTER_RESERVED_CONCURRENCY:-}" ]] && parts+=("WorkflowStarterReservedConcurrency=\"$WORKFLOW_STARTER_RESERVED_CONCURRENCY\"")
   [[ -n "${WORKFLOW_STATE_MACHINE_NAME:-}" ]] && parts+=("WorkflowStateMachineName=\"$WORKFLOW_STATE_MACHINE_NAME\"")
 
-  # Prepare function flags (only add if set locally)
+  # Prepare function flags
   [[ -n "${ELEPHANT_PREPARE_USE_BROWSER:-}" ]] && parts+=("ElephantPrepareUseBrowser=\"$ELEPHANT_PREPARE_USE_BROWSER\"")
   [[ -n "${ELEPHANT_PREPARE_NO_FAST:-}" ]] && parts+=("ElephantPrepareNoFast=\"$ELEPHANT_PREPARE_NO_FAST\"")
   [[ -n "${ELEPHANT_PREPARE_NO_CONTINUE:-}" ]] && parts+=("ElephantPrepareNoContinue=\"$ELEPHANT_PREPARE_NO_CONTINUE\"")
-  
-  # Updater schedule rate (only add if set locally)
+
+  # Browser flow template and parameters (use converted simple format)
+  [[ -n "${ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE:-}" ]] && parts+=("ElephantPrepareBrowserFlowTemplate=\"$ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE\"")
+  [[ -n "${ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS_SIMPLE:-}" ]] && parts+=("ElephantPrepareBrowserFlowParameters=\"$ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS_SIMPLE\"")
+
+  # Updater schedule rate
   [[ -n "${UPDATER_SCHEDULE_RATE:-}" ]] && parts+=("UpdaterScheduleRate=\"$UPDATER_SCHEDULE_RATE\"")
 
   PARAM_OVERRIDES="${parts[*]}"
@@ -235,6 +265,26 @@ handle_pending_keystore_upload() {
   fi
 }
 
+apply_county_configs() {
+  # Check if there are any county-specific environment variables
+  local has_county_vars=false
+  for var in $(env | grep -E "^ELEPHANT_PREPARE_(USE_BROWSER|NO_FAST|NO_CONTINUE|BROWSER_FLOW_TEMPLATE|BROWSER_FLOW_PARAMETERS)_[A-Za-z]+" | cut -d= -f1 || true); do
+    if [[ -n "$var" ]]; then
+      has_county_vars=true
+      break
+    fi
+  done
+
+  if [[ "$has_county_vars" == true ]]; then
+    info "Detected county-specific configurations. Applying them..."
+    if ./scripts/set-county-configs.sh; then
+      info "County-specific configurations applied successfully"
+    else
+      warn "Failed to apply some county-specific configurations"
+    fi
+  fi
+}
+
 main() {
   check_prereqs
   ensure_lambda_concurrency_quota
@@ -246,6 +296,9 @@ main() {
   sam_deploy
 
   handle_pending_keystore_upload
+
+  # Apply county-specific configurations if present
+  apply_county_configs
 
   bucket=$(get_bucket)
   echo
