@@ -905,6 +905,9 @@ Outputs:
   ElephantExpressStateMachineName:
     Description: Name of the Elephant Express state machine
     Value: !GetAtt ElephantExpressStateMachine.Name
+  WorkflowPostProcessorLogGroupName:
+    Description: CloudWatch Log Group name for the post processor Lambda function
+    Value: !Sub "/aws/lambda/${WorkflowPostProcessorFunction}"
   WorkflowDeadLetterQueueUrl:
     Description: URL of the Workflow Dead Letter Queue
     Value: !Ref WorkflowDeadLetterQueue
