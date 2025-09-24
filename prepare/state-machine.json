@@ -25,9 +25,7 @@
       ],
       "Catch": [
         {
-          "ErrorEquals": [
-            "States.ALL"
-          ],
+          "ErrorEquals": ["States.ALL"],
           "ResultPath": "$.errorInfo",
           "Next": "HandleError"
         }
@@ -90,9 +88,7 @@
                 "BackoffRate": 2.0
               },
               {
-                "ErrorEquals": [
-                  "States.Timeout"
-                ],
+                "ErrorEquals": ["States.Timeout"],
                 "IntervalSeconds": 3,
                 "MaxAttempts": 2,
                 "BackoffRate": 1.5
@@ -100,9 +96,7 @@
             ],
             "Catch": [
               {
-                "ErrorEquals": [
-                  "States.ALL"
-                ],
+                "ErrorEquals": ["States.ALL"],
                 "ResultPath": "$.errorInfo",
                 "Next": "LogError"
               }
@@ -134,10 +128,7 @@
       "Next": "CheckForMore",
       "Catch": [
         {
-          "ErrorEquals": [
-            "States.TaskFailed",
-            "States.MapRunFailed"
-          ],
+          "ErrorEquals": ["States.TaskFailed", "States.MapRunFailed"],
           "ResultPath": "$.mapError",
           "Next": "LogMapError"
         }
@@ -188,9 +179,7 @@
       ],
       "Catch": [
         {
-          "ErrorEquals": [
-            "States.ALL"
-          ],
+          "ErrorEquals": ["States.ALL"],
           "ResultPath": "$.errorInfo",
           "Next": "HandleError"
         }

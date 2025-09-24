@@ -203,6 +203,6 @@ export const handler = async (event) => {
   } finally {
     try {
       if (tmp) await fs.rm(tmp, { recursive: true, force: true });
-    } catch { }
+    } catch {}
   }
 };

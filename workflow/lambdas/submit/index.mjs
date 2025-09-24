@@ -1,20 +1,77 @@
 import { promises as fs } from "fs";
 import path from "path";
 import os from "os";
-import csvWriter from "csv-writer";
+import { createObjectCsvWriter } from "csv-writer";
 import { parse } from "csv-parse/sync";
 import { submitToContract } from "@elephant-xyz/cli/lib";
 import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
 
-const { createObjectCsvWriter } = csvWriter;
-const s3Client = new S3Client({ region: process.env.AWS_REGION });
+const s3Client = new S3Client({
+  region: process.env.AWS_REGION || "us-east-1",
+});
 
 /**
  * @typedef {Object} SubmitOutput
  * @property {string} status - Status of submit
  */
 
+/**
+ * @typedef {Object} SubmitInput
+ * @property {{ body: string }[]} Records
+ */
+
+/**
+ * @typedef {Object} SubmitResultRow
+ * @property {string} status - Status of the submission
+ * @property {string} [txHash] - Transaction hash
+ * @property {string} [error] - Error message if failed
+ */
+
 const base = { component: "submit", at: new Date().toISOString() };
+
+/**
+ * Download keystore from S3
+ * @param {string} bucket
+ * @param {string} key
+ * @param {string} targetPath
+ * @returns {Promise<string>}
+ */
+async function downloadKeystoreFromS3(bucket, key, targetPath) {
+  try {
+    const command = new GetObjectCommand({
+      Bucket: bucket,
+      Key: key,
+    });
+    const response = await s3Client.send(command);
+    /**
+     * @param {any} stream
+     * @returns {Promise<string>}
+     */
+    const streamToString = (stream) =>
+      new Promise((resolve, reject) => {
+        /** @type {Buffer[]} */
+        const chunks = [];
+        stream.on(
+          "data",
+          /** @param {Buffer} chunk */ (chunk) => chunks.push(chunk),
+        );
+        stream.on("error", reject);
+        stream.on("end", () =>
+          resolve(Buffer.concat(chunks).toString("utf-8")),
+        );
+      });
+    const body = response.Body;
+    if (!body)
+      throw new Error("Failed to download keystore from S3: body not found");
+    const bodyContents = await streamToString(body);
+    await fs.writeFile(targetPath, bodyContents, "utf8");
+    return targetPath;
+  } catch (error) {
+    throw new Error(
+      `Failed to download keystore from S3: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
 
 /**
  * Build paths and derive prepare input from SQS/S3 event message.
@@ -24,28 +81,6 @@ const base = { component: "submit", at: new Date().toISOString() };
  * @param {SubmitInput} event - Original SQS body JSON (already parsed by starter)
  * @returns {Promise<SubmitOutput>}
  */
-async function downloadKeystoreFromS3(bucket, key, targetPath) {
-  try {
-    const command = new GetObjectCommand({
-      Bucket: bucket,
-      Key: key,
-    });
-    const response = await s3Client.send(command);
-    const streamToString = (stream) =>
-      new Promise((resolve, reject) => {
-        const chunks = [];
-        stream.on("data", (chunk) => chunks.push(chunk));
-        stream.on("error", reject);
-        stream.on("end", () => resolve(Buffer.concat(chunks).toString("utf-8")));
-      });
-    const bodyContents = await streamToString(response.Body);
-    await fs.writeFile(targetPath, bodyContents, "utf8");
-    return targetPath;
-  } catch (error) {
-    throw new Error(`Failed to download keystore from S3: ${error.message}`);
-  }
-}
-
 export const handler = async (event) => {
   if (!event.Records) throw new Error("Missing SQS Records");
 
@@ -63,6 +98,8 @@ export const handler = async (event) => {
 
     let submitResult;
 
+    if (!process.env.ELEPHANT_RPC_URL)
+      throw new Error("ELEPHANT_RPC_URL is required");
     // Check if we're using keystore mode
     if (process.env.ELEPHANT_KEYSTORE_S3_KEY) {
       console.log(
@@ -72,6 +109,12 @@ export const handler = async (event) => {
           msg: "Using keystore mode for contract submission",
         }),
       );
+      if (!process.env.ENVIRONMENT_BUCKET)
+        throw new Error("ENVIRONMENT_BUCKET is required");
+      if (!process.env.ELEPHANT_KEYSTORE_S3_KEY)
+        throw new Error("ELEPHANT_KEYSTORE_S3_KEY is required");
+      if (!process.env.ELEPHANT_KEYSTORE_PASSWORD)
+        throw new Error("ELEPHANT_KEYSTORE_PASSWORD is required");
 
       // Download keystore from S3 with unique filename to avoid conflicts
       const keystorePath = path.resolve(
@@ -109,7 +152,10 @@ export const handler = async (event) => {
               ...base,
               level: "warn",
               msg: "Failed to clean up keystore file",
-              error: cleanupError.message,
+              error:
+                cleanupError instanceof Error
+                  ? cleanupError.message
+                  : String(cleanupError),
             }),
           );
         }
@@ -122,6 +168,17 @@ export const handler = async (event) => {
           msg: "Using traditional API credentials for contract submission",
         }),
       );
+
+      if (!process.env.ELEPHANT_DOMAIN)
+        throw new Error("ELEPHANT_DOMAIN is required");
+      if (!process.env.ELEPHANT_API_KEY)
+        throw new Error("ELEPHANT_API_KEY is required");
+      if (!process.env.ELEPHANT_ORACLE_KEY_ID)
+        throw new Error("ELEPHANT_ORACLE_KEY_ID is required");
+      if (!process.env.ELEPHANT_FROM_ADDRESS)
+        throw new Error("ELEPHANT_FROM_ADDRESS is required");
+      if (!process.env.ELEPHANT_RPC_URL)
+        throw new Error("ELEPHANT_RPC_URL is required");
 
       submitResult = await submitToContract({
         csvFile: csvFilePath,
@@ -168,7 +225,9 @@ export const handler = async (event) => {
     console.log(`Submit errors type is : ${typeof submitErrors}`);
     const allErrors = [
       ...submitErrors,
-      ...submitResults.filter((row) => row.status === "failed"),
+      ...submitResults.filter(
+        /** @param {SubmitResultRow} row */ (row) => row.status === "failed",
+      ),
     ];
 
     console.log(

@@ -79,7 +79,6 @@ async function csvToJson(csvPath) {
   }
 }
 
-
 /**
  * @param {PostOutput} event - { prepare: prepare result, seed_output_s3_uri: S3 URI of seed output }
  * @returns {Promise<{status:string, transactionItems: object[]}>}
@@ -108,7 +107,8 @@ export const handler = async (event) => {
     const parseS3Uri = (u) => {
       const m = /^s3:\/\/([^/]+)\/(.*)$/.exec(u);
       if (!m) throw new Error("Bad S3 URI");
-      if (typeof m[1] !== "string" || typeof m[2] !== "string") throw new Error("S3 URI must be a string");
+      if (typeof m[1] !== "string" || typeof m[2] !== "string")
+        throw new Error("S3 URI must be a string");
       return { bucket: m[1], key: m[2] };
     };
     const { bucket: pBucket, key: pKey } = parseS3Uri(prepared);
@@ -135,7 +135,9 @@ export const handler = async (event) => {
     );
     await fs.stat(scriptsZip);
 
-    console.log("Starting transform operation (includes fact sheet generation)...");
+    console.log(
+      "Starting transform operation (includes fact sheet generation)...",
+    );
     const transformStart = Date.now();
     const transformResult = await transform({
       inputZip: countyZipLocal,
@@ -144,27 +146,31 @@ export const handler = async (event) => {
       cwd: tmp,
     });
     const transformDuration = Date.now() - transformStart;
-    console.log(JSON.stringify({
-      ...base,
-      operation: "transform",
-      duration_ms: transformDuration,
-      duration_seconds: (transformDuration / 1000).toFixed(2),
-      includes_fact_sheet_generation: true,
-      msg: "Transform complete (includes fact sheet generation)"
-    }));
+    console.log(
+      JSON.stringify({
+        ...base,
+        operation: "transform",
+        duration_ms: transformDuration,
+        duration_seconds: (transformDuration / 1000).toFixed(2),
+        includes_fact_sheet_generation: true,
+        msg: "Transform complete (includes fact sheet generation)",
+      }),
+    );
     if (!transformResult.success) throw new Error(transformResult.error);
 
     console.log("Starting validation operation...");
     const validationStart = Date.now();
     const validationResult = await validate({ input: countyOut, cwd: tmp });
     const validationDuration = Date.now() - validationStart;
-    console.log(JSON.stringify({
-      ...base,
-      operation: "validation",
-      duration_ms: validationDuration,
-      duration_seconds: (validationDuration / 1000).toFixed(2),
-      msg: "Validation complete"
-    }));
+    console.log(
+      JSON.stringify({
+        ...base,
+        operation: "validation",
+        duration_ms: validationDuration,
+        duration_seconds: (validationDuration / 1000).toFixed(2),
+        msg: "Validation complete",
+      }),
+    );
     if (!validationResult.success) {
       // Try to read submit_errors.csv and log as JSON
       const submitErrorsPath = path.join(tmp, "submit_errors.csv");
@@ -237,13 +243,15 @@ export const handler = async (event) => {
       cwd: tmp,
     });
     const seedHashDuration = Date.now() - seedHashStart;
-    console.log(JSON.stringify({
-      ...base,
-      operation: "seed_hash",
-      duration_ms: seedHashDuration,
-      duration_seconds: (seedHashDuration / 1000).toFixed(2),
-      msg: "Seed hash complete"
-    }));
+    console.log(
+      JSON.stringify({
+        ...base,
+        operation: "seed_hash",
+        duration_ms: seedHashDuration,
+        duration_seconds: (seedHashDuration / 1000).toFixed(2),
+        msg: "Seed hash complete",
+      }),
+    );
     if (!hashResult.success)
       throw new Error(`Seed hash failed: ${hashResult.error}`);
     const csv = await fs.readFile(seedHashCsv, "utf8");
@@ -264,13 +272,15 @@ export const handler = async (event) => {
       cwd: tmp,
     });
     const countyHashDuration = Date.now() - countyHashStart;
-    console.log(JSON.stringify({
-      ...base,
-      operation: "county_hash",
-      duration_ms: countyHashDuration,
-      duration_seconds: (countyHashDuration / 1000).toFixed(2),
-      msg: "County hash complete"
-    }));
+    console.log(
+      JSON.stringify({
+        ...base,
+        operation: "county_hash",
+        duration_ms: countyHashDuration,
+        duration_seconds: (countyHashDuration / 1000).toFixed(2),
+        msg: "County hash complete",
+      }),
+    );
     if (!countyHashResult.success)
       throw new Error(`County hash failed: ${countyHashResult.error}`);
 
@@ -292,26 +302,30 @@ export const handler = async (event) => {
           cwd: tmp,
         });
         const fileUploadDuration = Date.now() - fileUploadStart;
-        console.log(JSON.stringify({
-          ...base,
-          operation: "ipfs_upload_file",
-          file: fileName,
-          duration_ms: fileUploadDuration,
-          duration_seconds: (fileUploadDuration / 1000).toFixed(2),
-          msg: `Upload complete for ${fileName}`
-        }));
+        console.log(
+          JSON.stringify({
+            ...base,
+            operation: "ipfs_upload_file",
+            file: fileName,
+            duration_ms: fileUploadDuration,
+            duration_seconds: (fileUploadDuration / 1000).toFixed(2),
+            msg: `Upload complete for ${fileName}`,
+          }),
+        );
         if (!uploadResult.success)
           throw new Error(`Upload failed: ${uploadResult.error}`);
       }),
     );
     const totalUploadDuration = Date.now() - uploadStart;
-    console.log(JSON.stringify({
-      ...base,
-      operation: "ipfs_upload_total",
-      duration_ms: totalUploadDuration,
-      duration_seconds: (totalUploadDuration / 1000).toFixed(2),
-      msg: "All uploads complete"
-    }));
+    console.log(
+      JSON.stringify({
+        ...base,
+        operation: "ipfs_upload_total",
+        duration_ms: totalUploadDuration,
+        duration_seconds: (totalUploadDuration / 1000).toFixed(2),
+        msg: "All uploads complete",
+      }),
+    );
 
     // Combine CSVs
     const combinedCsv = await combineCsv(seedHashCsv, countyHashCsv, tmp);
@@ -349,14 +363,16 @@ export const handler = async (event) => {
       trim: true,
     });
     const totalOperationDuration = Date.now() - Date.parse(base.at);
-    console.log(JSON.stringify({
-      ...base,
-      operation: "post_lambda_total",
-      duration_ms: totalOperationDuration,
-      duration_seconds: (totalOperationDuration / 1000).toFixed(2),
-      transaction_items_count: transactionItems.length,
-      msg: "Post Lambda execution complete"
-    }));
+    console.log(
+      JSON.stringify({
+        ...base,
+        operation: "post_lambda_total",
+        duration_ms: totalOperationDuration,
+        duration_seconds: (totalOperationDuration / 1000).toFixed(2),
+        transaction_items_count: transactionItems.length,
+        msg: "Post Lambda execution complete",
+      }),
+    );
 
     return { status: "success", transactionItems };
   } catch (err) {
@@ -372,6 +388,6 @@ export const handler = async (event) => {
   } finally {
     try {
       if (tmp) await fs.rm(tmp, { recursive: true, force: true });
-    } catch { }
+    } catch {}
   }
 };
