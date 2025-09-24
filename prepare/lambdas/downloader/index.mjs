@@ -52,7 +52,9 @@ const getIPAddresses = async () => {
       }
     }
   } catch (error) {
-    console.log(`⚠️ Could not get local IPs: ${error instanceof Error ? error.message : String(error)}`);
+    console.log(
+      `⚠️ Could not get local IPs: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
 
   try {
@@ -72,7 +74,9 @@ const getIPAddresses = async () => {
       }
     }
   } catch (error) {
-    console.log(`⚠️ Could not get public IP: ${error instanceof Error ? error.message : String(error)}`);
+    console.log(
+      `⚠️ Could not get public IP: ${error instanceof Error ? error.message : String(error)}`,
+    );
 
     // Fallback: try AWS metadata service for ECS/EC2 (won't work in Lambda but just in case)
     try {
@@ -171,7 +175,9 @@ export const handler = async (event) => {
       );
     }
   } catch (error) {
-    console.log(`⚠️ Could not get IP information: ${error instanceof Error ? error.message : String(error)}`);
+    console.log(
+      `⚠️ Could not get IP information: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
 
   if (!event || !event.input_s3_uri) {
@@ -289,7 +295,10 @@ export const handler = async (event) => {
       } catch (statsError) {
         inputFileInfo = {
           exists: false,
-          error: statsError instanceof Error ? statsError.message : String(statsError),
+          error:
+            statsError instanceof Error
+              ? statsError.message
+              : String(statsError),
           path: inputZip,
         };
       }
@@ -317,9 +326,18 @@ export const handler = async (event) => {
         type: "PREPARE_FUNCTION_ERROR",
         message: "Prepare function execution failed",
         error: {
-          name: prepareError instanceof Error ? prepareError.name : String(prepareError),
-          message: prepareError instanceof Error ? prepareError.message : String(prepareError),
-          stack: prepareError instanceof Error ? prepareError.stack : String(prepareError),
+          name:
+            prepareError instanceof Error
+              ? prepareError.name
+              : String(prepareError),
+          message:
+            prepareError instanceof Error
+              ? prepareError.message
+              : String(prepareError),
+          stack:
+            prepareError instanceof Error
+              ? prepareError.stack
+              : String(prepareError),
         },
         execution: {
           duration: prepareDuration,
@@ -349,7 +367,8 @@ export const handler = async (event) => {
       const enhancedError = new Error(
         `Prepare function failed: ${prepareError instanceof Error ? prepareError.message : String(prepareError)}`,
       );
-      enhancedError.originalError = prepareError instanceof Error ? prepareError : undefined;
+      enhancedError.originalError =
+        prepareError instanceof Error ? prepareError : undefined;
       enhancedError.type = "PREPARE_FUNCTION_ERROR";
       enhancedError.context = prepareErrorLog.context;
       enhancedError.execution = prepareErrorLog.execution;
