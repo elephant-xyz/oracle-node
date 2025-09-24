@@ -5,7 +5,8 @@
   "description": "Lambda function for preprocessing workflow data",
   "main": "index.mjs",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "typecheck": "tsc --pretty false --noEmit -p jsconfig.json"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.879.0",
@@ -14,6 +15,7 @@
     "csv-parse": "^5.6.0"
   },
   "devDependencies": {
-    "@types/adm-zip": "^0.5.7"
+    "@types/adm-zip": "^0.5.7",
+    "@types/node": "^20.16.3"
   }
 }
