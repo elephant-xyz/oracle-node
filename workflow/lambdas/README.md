@@ -26,11 +26,11 @@ lambdas/
 
 ## Dependency Analysis
 
-| Lambda | Dependencies | Purpose |
-|--------|-------------|---------|
-| Starter | @aws-sdk/client-sfn | Start Step Functions workflows |
-| Pre-processor | @aws-sdk/client-s3, @elephant-xyz/cli, adm-zip | S3 operations, data transformation, ZIP handling |
-| Post-processor | @aws-sdk/client-s3, @elephant-xyz/cli | S3 operations, blockchain submission |
+| Lambda         | Dependencies                                   | Purpose                                          |
+| -------------- | ---------------------------------------------- | ------------------------------------------------ |
+| Starter        | @aws-sdk/client-sfn                            | Start Step Functions workflows                   |
+| Pre-processor  | @aws-sdk/client-s3, @elephant-xyz/cli, adm-zip | S3 operations, data transformation, ZIP handling |
+| Post-processor | @aws-sdk/client-s3, @elephant-xyz/cli          | S3 operations, blockchain submission             |
 
 ## Building
 
@@ -47,10 +47,10 @@ The SAM template references these optimized packages:
 ```yaml
 WorkflowStarterFunction:
   CodeUri: ../workflow/lambdas/starter
-  
+
 WorkflowPreProcessorFunction:
   CodeUri: ../workflow/lambdas/pre
-  
+
 WorkflowPostProcessorFunction:
   CodeUri: ../workflow/lambdas/post
 ```

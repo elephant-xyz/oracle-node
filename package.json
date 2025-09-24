@@ -1,0 +1,20 @@
+{
+  "name": "oracle-node",
+  "private": true,
+  "workspaces": [
+    "prepare/lambdas/*",
+    "workflow/lambdas/*"
+  ],
+  "scripts": {
+    "typecheck": "npm run typecheck --workspace=prepare/lambdas/downloader && npm run typecheck --workspace=prepare/lambdas/updater && npm run typecheck --workspace=workflow/lambdas/post && npm run typecheck --workspace=workflow/lambdas/pre && npm run typecheck --workspace=workflow/lambdas/starter && npm run typecheck --workspace=workflow/lambdas/submit",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "install-workspaces": "npm install --workspaces"
+  },
+  "devDependencies": {
+    "@types/node": "^20.16.3",
+    "prettier": "^3.3.3",
+    "typescript": "^5.5.4",
+    "@aws-sdk/client-sfn": "^3.879.0"
+  }
+}

@@ -71,6 +71,7 @@ export ELEPHANT_PREPARE_NO_CONTINUE=false  # Disable continue mode
 ```
 
 **Important Notes for Keystore Mode:**
+
 - The keystore file must exist at the specified path
 - The password must be correct to decrypt the keystore
 - The keystore file will be securely uploaded to S3 during deployment
@@ -91,12 +92,12 @@ This creates the VPC, S3 buckets, SQS queues, Lambdas, and the Express Step Func
 
 The `DownloaderFunction` uses the `prepare` command from `@elephant-xyz/cli` to fetch and process data. You can control its behavior using environment variables that map to CLI flags:
 
-| Environment Variable           | Default | CLI Flag        | Description                     |
-| ------------------------------ | ------- | --------------- | ------------------------------- |
-| `ELEPHANT_PREPARE_USE_BROWSER` | `false` | `--use-browser` | Force browser mode for fetching |
-| `ELEPHANT_PREPARE_NO_FAST`     | `false` | `--no-fast`     | Disable fast mode               |
-| `ELEPHANT_PREPARE_NO_CONTINUE` | `false` | `--no-continue` | Disable continue mode           |
-| `UPDATER_SCHEDULE_RATE`        | `"1 minute"` | N/A        | Updater frequency (e.g., "5 minutes", "cron(*/1 * * * ? *)") |
+| Environment Variable           | Default      | CLI Flag        | Description                                                   |
+| ------------------------------ | ------------ | --------------- | ------------------------------------------------------------- |
+| `ELEPHANT_PREPARE_USE_BROWSER` | `false`      | `--use-browser` | Force browser mode for fetching                               |
+| `ELEPHANT_PREPARE_NO_FAST`     | `false`      | `--no-fast`     | Disable fast mode                                             |
+| `ELEPHANT_PREPARE_NO_CONTINUE` | `false`      | `--no-continue` | Disable continue mode                                         |
+| `UPDATER_SCHEDULE_RATE`        | `"1 minute"` | N/A             | Updater frequency (e.g., "5 minutes", "cron(_/1 _ \* _ ? _)") |
 
 **Deploy with custom prepare flags:**
 
@@ -134,6 +135,7 @@ Calling prepare() with these options...
 The keystore mode provides a secure way to manage private keys for blockchain submissions using the industry-standard [EIP-2335](https://eips.ethereum.org/EIPS/eip-2335) encryption format.
 
 **How it works:**
+
 1. The deployment script validates that the keystore file exists and the password is provided
 2. The keystore file is securely uploaded to S3 in the environment bucket under `keystores/` prefix
 3. Lambda functions are configured with the S3 location and password as encrypted environment variables
@@ -143,6 +145,7 @@ The keystore mode provides a secure way to manage private keys for blockchain su
 You can create a keystore file using the Elephant CLI tool. For detailed instructions, refer to the [Elephant CLI Encrypted JSON Keystore documentation](https://github.com/elephant-xyz/elephant-cli?tab=readme-ov-file#encrypted-json-keystore).
 
 **Security considerations:**
+
 - The keystore uses EIP-2335 standard encryption (PBKDF2 with SHA-256 for key derivation, AES-128-CTR for encryption)
 - The keystore file is stored encrypted in S3 with versioning enabled for audit trails
 - The password is stored as an encrypted environment variable in Lambda
@@ -231,20 +234,24 @@ That's it — set env vars, deploy, start, monitor, and tune concurrency.
 When messages fail processing multiple times, they are moved to Dead Letter Queues. You can reprocess these messages back to the main queue after fixing underlying issues:
 
 **Reprocess Workflow DLQ messages:**
+
 ```bash
 ./scripts/reprocess-dlq.sh --dlq-type workflow --batch-size 10 --max-messages 100
 ```
 
 **Reprocess Transactions DLQ messages:**
+
 ```bash
 ./scripts/reprocess-dlq.sh --dlq-type transactions --max-messages 1000
 ```
 
 **DLQ Types:**
-- `workflow` - Workflow Dead Letter Queue → Workflow SQS Queue  
+
+- `workflow` - Workflow Dead Letter Queue → Workflow SQS Queue
 - `transactions` - Transactions Dead Letter Queue → Transactions SQS Queue
 
 **Parameters:**
+
 - `--dry-run` - Show what would be done without moving messages
 - `--batch-size` - Messages per batch (default: 10)
 - `--max-messages` - Maximum messages to reprocess (default: 100)

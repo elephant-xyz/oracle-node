@@ -1,0 +1,13 @@
+# Generated/transformed files with HTML syntax issues
+generate-transform/**/*.html
+generate-transform/**/*.json
+build/
+dist/
+node_modules/
+*.zip
+*.log
+
+# IDE and config files
+.claude/
+.cursor/
+.mcp.json
