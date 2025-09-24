@@ -9,7 +9,7 @@ lambdas/
 ├── downloader/          # S3 data downloading and preparation
 │   ├── package.json     # Only @aws-sdk/client-s3, @elephant-xyz/cli
 │   └── index.mjs
-└── updater/            # Lambda function configuration updates  
+└── updater/            # Lambda function configuration updates
     ├── package.json    # Only @aws-sdk/client-lambda
     └── index.mjs
 ```
@@ -23,10 +23,10 @@ lambdas/
 
 ## Dependency Analysis
 
-| Lambda | Dependencies | Purpose |
-|--------|-------------|---------|
+| Lambda     | Dependencies                          | Purpose                            |
+| ---------- | ------------------------------------- | ---------------------------------- |
 | Downloader | @aws-sdk/client-s3, @elephant-xyz/cli | S3 operations and data preparation |
-| Updater | @aws-sdk/client-lambda | Function configuration updates |
+| Updater    | @aws-sdk/client-lambda                | Function configuration updates     |
 
 ## Building
 
@@ -42,8 +42,8 @@ The SAM template has been updated to use these optimized packages:
 
 ```yaml
 DownloaderFunction:
-  CodeUri: lambdas/downloader  # Instead of entire prepare/ directory
-  
-UpdaterFunction: 
-  CodeUri: lambdas/updater     # Instead of entire prepare/ directory
+  CodeUri: lambdas/downloader # Instead of entire prepare/ directory
+
+UpdaterFunction:
+  CodeUri: lambdas/updater # Instead of entire prepare/ directory
 ```

@@ -21,7 +21,7 @@ const sfn = new SFNClient({});
 
 /**
  * @param {SqsEvent} event
- * @returns {Promise<{status:string, executionArn?:string}>}
+ * @returns {Promise<{status:string, executionArn?:string, workflowStatus?:string, error?:string}>}
  */
 export const handler = async (event) => {
   const logBase = { component: "starter", at: new Date().toISOString() };
@@ -41,7 +41,11 @@ export const handler = async (event) => {
       throw new Error("Expect exactly one SQS record per invocation");
     }
     console.log(`Event is : ${JSON.stringify(event)}`);
-    const bodyRaw = event.Records[0].body;
+    const record = event.Records[0];
+    if (!record || !record.body) {
+      throw new Error("Missing SQS record body");
+    }
+    const bodyRaw = record.body;
     const parsed = JSON.parse(bodyRaw);
     // Start the Express workflow synchronously
     const cmd = new StartSyncExecutionCommand({
@@ -49,12 +53,13 @@ export const handler = async (event) => {
       input: JSON.stringify({ message: parsed }),
     });
     const resp = await sfn.send(cmd);
+    const executionArn = resp.executionArn || "arn not found";
     console.log(
       JSON.stringify({
         ...logBase,
         level: "info",
         msg: "completed",
-        executionArn: resp.executionArn,
+        executionArn: executionArn,
         status: resp.status,
       }),
     );
@@ -62,8 +67,8 @@ export const handler = async (event) => {
     // The state machine handles requeuing on failures
     return {
       status: "ok",
-      executionArn: resp.executionArn,
-      workflowStatus: resp.status,
+      executionArn: executionArn,
+      workflowStatus: resp.status || "status not found",
     };
   } catch (err) {
     console.error(

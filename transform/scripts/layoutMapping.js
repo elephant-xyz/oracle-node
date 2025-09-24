@@ -39,7 +39,9 @@ function getBedsBaths($) {
 
   // NEW: Handle condominium pages with detailsTableLeft structure
   if (beds === 0 && bathsText === "") {
-    $("#PropertyDetailsCurrent table.detailsTableLeft tr, #PropertyDetails table.detailsTableLeft tr").each((i, el) => {
+    $(
+      "#PropertyDetailsCurrent table.detailsTableLeft tr, #PropertyDetails table.detailsTableLeft tr",
+    ).each((i, el) => {
       const $row = $(el);
       const th = $row.find("th").first().text().trim();
       const td = $row.find("td").first().text().trim();

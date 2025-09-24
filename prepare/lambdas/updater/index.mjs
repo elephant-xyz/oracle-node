@@ -13,7 +13,10 @@ function utcTimestampCompact() {
   return noMs.replace(/[-:]/g, "") + "Z"; // 20250125T123456Z
 }
 
-export const handler = async (event, context) => {
+/**
+ * @returns {Promise<{updated: boolean, function: string, var: string, value: string}>}
+ */
+export const handler = async () => {
   const targetFunction = process.env.TARGET_FUNCTION_NAME || "downloader";
   const varName = process.env.VAR_NAME || "DEPLOY_TS";
 
