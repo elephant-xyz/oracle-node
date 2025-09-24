@@ -150,6 +150,7 @@ export ELEPHANT_PREPARE_USE_BROWSER_Charlotte=true
 ```
 
 When the Lambda processes data:
+
 - Alachua inputs → Uses browser mode with SEARCH_BY_PARCEL_ID template
 - Sarasota inputs → Uses browser mode with CUSTOM_SEARCH template and no-fast mode
 - Charlotte inputs → Uses simple browser mode
@@ -216,6 +217,7 @@ export ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS_Sarasota='{"timeout": 60000, "se
 ```
 
 **Technical details:**
+
 - The JSON parameters must be valid JSON
 - The deployment script validates the JSON structure before proceeding
 - Internally, the JSON is converted to a simple `key:value` format for safe transport through the deployment pipeline
