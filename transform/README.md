@@ -1,4 +1,4 @@
-Place raw transform code here. Create one subdirectory per county (the folder name must match `county_jurisdiction` from the prepare output). For example:
+Place raw transform code here. Create one subdirectory per county (the folder name must match `county_jurisdiction` in lowercase from the prepare output). For example, if the `county_jurisdiction` is `Brevard` and `Lake`:
 
 ```
 transform/
