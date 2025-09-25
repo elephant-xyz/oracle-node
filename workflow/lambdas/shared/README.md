@@ -21,27 +21,30 @@ shared/
 Import the shared module in your Lambda function:
 
 ```javascript
-import { helloWorld, createLogEntry } from '@elephant/shared';
+import { helloWorld, createLogEntry } from "@elephant/shared";
 
 // Use the hello world function
 const greeting = helloWorld();
 console.log(greeting); // "Hello, World from shared module!"
 
 // Use the logging utility
-const logEntry = createLogEntry('component-name', 'info', 'operation_started', {
-  details: 'additional data'
+const logEntry = createLogEntry("component-name", "info", "operation_started", {
+  details: "additional data",
 });
 ```
 
 ## Available Functions
 
 ### `helloWorld()`
+
 Returns a greeting string for testing purposes.
 
 ### `createLogEntry(component, level, msg, details)`
+
 Creates a standardized log entry object with consistent structure.
 
 **Parameters:**
+
 - `component` (string): Component name (e.g., 'post', 'pre', 'starter')
 - `level` (string): Log level ('info', 'error', 'debug')
 - `msg` (string): Short message identifier

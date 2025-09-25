@@ -20,11 +20,6 @@
     "target": "ES2022",
     "module": "ES2022"
   },
-  "include": [
-    "*.mjs"
-  ],
-  "exclude": [
-    "node_modules",
-    "node_modules/**"
-  ]
+  "include": ["*.mjs"],
+  "exclude": ["node_modules", "node_modules/**"]
 }

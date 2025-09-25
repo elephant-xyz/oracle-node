@@ -641,7 +641,7 @@ export const handler = async (event) => {
   await downloadS3Object(
     parseS3Uri(seedZipS3),
     seedZipLocal,
-    () => { }, // No logging yet
+    () => {}, // No logging yet
   );
 
   const countyName = await extractCountyName(seedZipLocal, tmp);
@@ -768,6 +768,6 @@ export const handler = async (event) => {
   } finally {
     try {
       if (tmp) await fs.rm(tmp, { recursive: true, force: true });
-    } catch { }
+    } catch {}
   }
 };
