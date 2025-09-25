@@ -264,6 +264,9 @@ build/Release
 node_modules/
 jspm_packages/
 
+# Exception for Lambda layer shared module
+!workflow/lambdas/shared/nodejs/node_modules/
+
 # Snowpack dependency directory (https://snowpack.dev/)
 web_modules/
 

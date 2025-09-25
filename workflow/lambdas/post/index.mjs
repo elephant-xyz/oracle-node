@@ -10,6 +10,7 @@ import { transform, validate, hash, upload } from "@elephant-xyz/cli/lib";
 import { parse } from "csv-parse/sync";
 import AdmZip from "adm-zip";
 import { createTransformScriptsManager } from "./scripts-manager.mjs";
+import { createLogEntry } from "@elephant/shared";
 
 const s3 = new S3Client({});
 
@@ -640,7 +641,7 @@ export const handler = async (event) => {
   await downloadS3Object(
     parseS3Uri(seedZipS3),
     seedZipLocal,
-    () => {}, // No logging yet
+    () => { }, // No logging yet
   );
 
   const countyName = await extractCountyName(seedZipLocal, tmp);
@@ -659,7 +660,8 @@ export const handler = async (event) => {
    * @param {Record<string, unknown>} [details] - Additional structured data to include.
    */
   const log = (level, msg, details = {}) => {
-    const entry = { ...base, level, msg, ...details };
+    // Use the shared createLogEntry function for consistent logging
+    const entry = createLogEntry(countyName, level, msg, details);
     const serialized = JSON.stringify(entry);
     if (level === "error") {
       console.error(serialized);
@@ -668,7 +670,9 @@ export const handler = async (event) => {
     }
   };
 
-  log("info", "post_lambda_start", { input_s3_key: event?.s3?.object?.key });
+  log("info", "post_lambda_start", {
+    input_s3_key: event?.s3?.object?.key,
+  });
 
   try {
     // Download the prepared county archive
@@ -764,6 +768,6 @@ export const handler = async (event) => {
   } finally {
     try {
       if (tmp) await fs.rm(tmp, { recursive: true, force: true });
-    } catch {}
+    } catch { }
   }
 };
