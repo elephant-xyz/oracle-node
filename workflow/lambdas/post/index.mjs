@@ -358,7 +358,7 @@ async function runTransformAndValidation({
 
         // Silently upsert error type (skip on error)
         try {
-          await upsertErrorType(errorsTableName, `Transform failed: ${errorMessage}`);
+          await upsertErrorType(errorsTableName, `Transform failed: ${errorMessage}`, countyName);
         } catch {
           // Silently skip upsert errors
         }
@@ -401,7 +401,7 @@ async function runTransformAndValidation({
 
         // Silently upsert error type (skip on error)
         try {
-          await upsertErrorType(errorsTableName, `Transform failed: ${transformResult.error}`);
+          await upsertErrorType(errorsTableName, `Transform failed: ${transformResult.error}`, countyName);
         } catch {
           // Silently skip upsert errors
         }

@@ -1,0 +1,14 @@
+{
+    "name": "auto-repair-lambda",
+    "version": "1.0.0",
+    "description": "Auto-repair lambda that processes DynamoDB error entries and fixes transform issues",
+    "type": "module",
+    "dependencies": {
+        "@aws-sdk/client-dynamodb": "^3.879.0",
+        "@aws-sdk/client-s3": "^3.879.0",
+        "@aws-sdk/lib-dynamodb": "^3.879.0",
+        "@elephant-xyz/cli": "file:../../../node_modules/@elephant-xyz/cli",
+        "@elephant/shared": "file:../shared/nodejs/node_modules/@elephant/shared",
+        "adm-zip": "^0.5.10"
+    }
+}

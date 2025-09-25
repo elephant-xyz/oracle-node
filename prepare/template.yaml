@@ -327,6 +327,9 @@ Resources:
         - AttributeName: sk
           KeyType: RANGE
       BillingMode: PAY_PER_REQUEST
+      StreamSpecification:
+        StreamEnabled: true
+        StreamViewType: NEW_AND_OLD_IMAGES
       PointInTimeRecoverySpecification:
         PointInTimeRecoveryEnabled: true
       SSESpecification:
@@ -495,6 +498,69 @@ Resources:
           ELEPHANT_PINATA_JWT: !Ref ElephantPinataJwt
           TRANSFORM_S3_PREFIX: !Ref TransformS3Prefix
           ERRORS_TABLE_NAME: !Ref ErrorsTable
+
+  #####################################################################################################################
+  # Auto-Repair Lambda Function (triggered by DynamoDB streams)
+  #####################################################################################################################
+
+  AutoRepairFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Architectures:
+        - arm64
+      MemorySize: 1024
+      Timeout: 300
+      EphemeralStorage:
+        Size: 2048
+      CodeUri: ../workflow/lambdas/auto-repair
+      Handler: index.handler
+      Description: "Auto-repair lambda that processes error entries and fixes transform issues"
+      Layers:
+        - !Ref SharedLayer
+      Events:
+        DynamoDBStream:
+          Type: DynamoDB
+          Properties:
+            Stream: !GetAtt ErrorsTable.StreamArn
+            StartingPosition: LATEST
+            FilterCriteria:
+              Filters:
+                - Pattern: '{"eventName": ["INSERT"], "dynamodb": {"NewImage": {"pk": {"S": [{"prefix": "ERROR#"}]}, "sk": {"S": [{"prefix": "ERROR#"}]}, "locked": {"BOOL": [false]}, "resolved": {"BOOL": [false]}}}}'
+            BatchSize: 1
+            MaximumBatchingWindowInSeconds: 0
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - S3CrudPolicy:
+            BucketName: !Ref EnvironmentBucket
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetRecords
+                - dynamodb:GetShardIterator
+                - dynamodb:DescribeStream
+                - dynamodb:ListStreams
+                - dynamodb:Query
+                - dynamodb:UpdateItem
+              Resource: !GetAtt ErrorsTable.StreamArn
+            - Effect: Allow
+              Action:
+                - dynamodb:Query
+                - dynamodb:UpdateItem
+              Resource: !GetAtt ErrorsTable.Arn
+            - Effect: Allow
+              Action:
+                - lambda:InvokeFunction
+              Resource:
+                - !GetAtt WorkflowPostProcessorFunction.Arn
+                - !GetAtt SubmitterFunction.Arn
+      Environment:
+        Variables:
+          ERRORS_TABLE_NAME: !Ref ErrorsTable
+          TRANSFORM_S3_PREFIX: !Ref TransformS3Prefix
+          POST_PROCESSOR_FUNCTION_NAME: !Ref WorkflowPostProcessorFunction
+          SUBMIT_FUNCTION_NAME: !Ref SubmitterFunction
 
   #####################################################################################################################
   # Express Step Functions State Machine (separate definition file)
