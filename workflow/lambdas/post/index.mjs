@@ -11,6 +11,7 @@ import { parse } from "csv-parse/sync";
 import AdmZip from "adm-zip";
 import { createTransformScriptsManager } from "./scripts-manager.mjs";
 import { createLogEntry } from "@elephant/shared";
+import { createErrorEntry, upsertErrorType } from "@elephant/shared/dynamoDb";
 
 const s3 = new S3Client({});
 
@@ -310,6 +311,7 @@ async function extractCountyName(seedZipPath, tmpDir) {
  * @param {string} params.tmpDir - Temporary working directory.
  * @param {string} params.scriptsZipPath - Local path to transform scripts zip.
  * @param {StructuredLogger} params.log - Structured logger.
+ * @param {string} params.countyName - Name of the county being processed.
  * @returns {Promise<string>} - Path to the validated county output zip.
  */
 async function runTransformAndValidation({
@@ -317,6 +319,7 @@ async function runTransformAndValidation({
   tmpDir,
   scriptsZipPath,
   log,
+  countyName,
 }) {
   const countyOut = path.join(tmpDir, "county_output.zip");
 
@@ -335,18 +338,82 @@ async function runTransformAndValidation({
     });
   } catch (transformError) {
     const transformDurationError = Date.now() - transformStart;
+    const errorMessage = String(transformError);
+
+    // Save error to DynamoDB
+    try {
+      const errorsTableName = process.env.ERRORS_TABLE_NAME;
+      if (errorsTableName) {
+        await createErrorEntry(
+          errorsTableName,
+          `Transform failed: ${errorMessage}`,
+          countyName,
+          countyZipLocal
+        );
+        log("info", "error_saved_to_dynamodb", {
+          operation: "error_tracking",
+          error_type: "transform_exception",
+          county: countyName,
+        });
+
+        // Silently upsert error type (skip on error)
+        try {
+          await upsertErrorType(errorsTableName, `Transform failed: ${errorMessage}`);
+        } catch {
+          // Silently skip upsert errors
+        }
+      }
+    } catch (dbError) {
+      log("error", "dynamodb_error_save_failed", {
+        operation: "error_tracking",
+        error: String(dbError),
+        original_error: errorMessage,
+      });
+    }
+
     log("error", "transform_failed", {
       operation: "transform",
       step: "transform",
       duration_ms: transformDurationError,
       duration_seconds: (transformDurationError / 1000).toFixed(2),
       includes_fact_sheet_generation: true,
-      error: String(transformError),
+      error: errorMessage,
     });
     throw transformError;
   }
   const transformDuration = Date.now() - transformStart;
   if (!transformResult.success) {
+    // Save error to DynamoDB
+    try {
+      const errorsTableName = process.env.ERRORS_TABLE_NAME;
+      if (errorsTableName) {
+        await createErrorEntry(
+          errorsTableName,
+          `Transform failed: ${transformResult.error}`,
+          countyName,
+          countyZipLocal
+        );
+        log("info", "error_saved_to_dynamodb", {
+          operation: "error_tracking",
+          error_type: "transform_unsuccessful",
+          county: countyName,
+        });
+
+        // Silently upsert error type (skip on error)
+        try {
+          await upsertErrorType(errorsTableName, `Transform failed: ${transformResult.error}`);
+        } catch {
+          // Silently skip upsert errors
+        }
+      }
+    } catch (dbError) {
+      log("error", "dynamodb_error_save_failed", {
+        operation: "error_tracking",
+        error: String(dbError),
+        original_error: transformResult.error,
+      });
+    }
+
     log("error", "transform_failed", {
       operation: "transform",
       step: "transform",
@@ -641,7 +708,7 @@ export const handler = async (event) => {
   await downloadS3Object(
     parseS3Uri(seedZipS3),
     seedZipLocal,
-    () => {}, // No logging yet
+    () => { }, // No logging yet
   );
 
   const countyName = await extractCountyName(seedZipLocal, tmp);
@@ -699,6 +766,7 @@ export const handler = async (event) => {
         tmpDir: tmp,
         scriptsZipPath,
         log,
+        countyName,
       });
     } catch (runError) {
       if (runError instanceof Error && runError.name === "ValidationFailure") {
@@ -768,6 +836,6 @@ export const handler = async (event) => {
   } finally {
     try {
       if (tmp) await fs.rm(tmp, { recursive: true, force: true });
-    } catch {}
+    } catch { }
   }
 };
