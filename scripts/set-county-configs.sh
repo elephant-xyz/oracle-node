@@ -144,7 +144,7 @@ main() {
       # Display the county-specific variables that were set
       echo
       info "County-specific configurations:"
-      echo "$new_env_json" | jq -r 'to_entries[] | select(.key | test("_[A-Za-z_]+$")) | select(.key | test("^ELEPHANT_PREPARE_")) | "  \(.key)=\(.value)"'
+      echo "$new_env_json" | jq -r 'to_entries[] | select(.key | test("_(\\w+(_(\\w+))*)$")) | select(.key | test("^ELEPHANT_PREPARE_")) | "  \(.key)=\(.value)"'
     else
       err "Failed to update Lambda environment variables"
       exit 1
