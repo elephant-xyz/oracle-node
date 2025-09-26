@@ -137,7 +137,6 @@ const splitS3Uri = (s3Uri) => {
  * @param {Object} event - Input event containing order details
  * @param {string} event.input_s3_uri - S3 URI of input file
  * @param {string} event.output_s3_uri_prefix - S3 URI prefix for output files
- * @param {boolean} event.browser - Whether to run in headless browser
  * @returns {Promise<{ output_s3_uri: string }>} Success message
  */
 export const handler = async (event) => {
@@ -251,12 +250,8 @@ export const handler = async (event) => {
     }
 
     const outputZip = path.join(tempDir, "output.zip");
-    const useBrowser = event.browser ?? true;
 
     console.log("Building prepare options...");
-    console.log(
-      `Event browser setting: ${event.browser} (using: ${useBrowser})`,
-    );
 
     // Helper function to get environment variable with county-specific fallback
     /**
@@ -291,11 +286,6 @@ export const handler = async (event) => {
     /** @type {FlagConfig[]} */
     const flagConfig = [
       {
-        envVar: "ELEPHANT_PREPARE_USE_BROWSER",
-        optionKey: "useBrowser",
-        description: "Force browser mode",
-      },
-      {
         envVar: "ELEPHANT_PREPARE_NO_FAST",
         optionKey: "noFast",
         description: "Disable fast mode",
@@ -306,6 +296,16 @@ export const handler = async (event) => {
         description: "Disable continue mode",
       },
     ];
+
+    // Determine useBrowser setting from environment variable with county-specific fallback
+    const useBrowserEnv = getEnvWithCountyFallback("ELEPHANT_PREPARE_USE_BROWSER", countyName);
+    let useBrowser = true; // Default to true if not specified
+    if (useBrowserEnv !== undefined) {
+      useBrowser = useBrowserEnv === "true";
+      console.log(`Setting useBrowser: ${useBrowser} (from environment variable)`);
+    } else {
+      console.log(`Using default useBrowser: ${useBrowser} (no environment variable set)`);
+    }
 
     // Build prepare options based on environment variables
     /** @type {{ useBrowser: boolean, noFast?: boolean, noContinue?: boolean, browserFlowTemplate?: string, browserFlowParameters?: string, [key: string]: any }} */
