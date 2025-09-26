@@ -266,7 +266,10 @@ export const handler = async (event) => {
      */
     const getEnvWithCountyFallback = (baseEnvVar, countyName) => {
       if (countyName) {
-        const countySpecificVar = `${baseEnvVar}_${countyName}`;
+        // Replace spaces with underscores for environment variable names
+        // e.g., "Santa Rosa" becomes "Santa_Rosa"
+        const sanitizedCountyName = countyName.replace(/ /g, "_");
+        const countySpecificVar = `${baseEnvVar}_${sanitizedCountyName}`;
         if (process.env[countySpecificVar] !== undefined) {
           console.log(
             `  Using county-specific: ${countySpecificVar}='${process.env[countySpecificVar]}'`,
