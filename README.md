@@ -142,6 +142,15 @@ export ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS_Sarasota='{"timeout": 60000, "se
 # Charlotte County - simple browser mode, no template needed
 export ELEPHANT_PREPARE_USE_BROWSER_Charlotte=true
 
+# Santa Rosa County - note the underscore for the space
+export ELEPHANT_PREPARE_USE_BROWSER_Santa_Rosa=true
+export ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE_Santa_Rosa="SANTA_ROSA_FLOW"
+export ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS_Santa_Rosa='{"timeout": 45000}'
+
+# Palm Beach County - another example with space in name
+export ELEPHANT_PREPARE_USE_BROWSER_Palm_Beach=true
+export ELEPHANT_PREPARE_NO_FAST_Palm_Beach=true
+
 # Broward County - uses general settings (no browser mode)
 # No county-specific settings needed
 
@@ -154,6 +163,8 @@ When the Lambda processes data:
 - Alachua inputs → Uses browser mode with SEARCH_BY_PARCEL_ID template
 - Sarasota inputs → Uses browser mode with CUSTOM_SEARCH template and no-fast mode
 - Charlotte inputs → Uses simple browser mode
+- Santa Rosa inputs → Uses browser mode with SANTA_ROSA_FLOW template (county with space in name)
+- Palm Beach inputs → Uses browser mode with no-fast flag (county with space in name)
 - Broward inputs → Uses general settings (no browser mode)
 - Any other county → Uses general settings
 
@@ -178,7 +189,15 @@ export ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE_Charlotte="CHARLOTTE_FLOW"
 - `ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE_<CountyName>`
 - `ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS_<CountyName>`
 
-**Note:** County names in environment variables should match exactly as they appear in `county_jurisdiction` field (case-sensitive). For example, if the JSON contains `"county_jurisdiction": "Alachua"`, use `_Alachua` suffix.
+**Important naming convention for counties with spaces:**
+
+For counties with spaces in their names, replace spaces with underscores in the environment variable name:
+
+- `"Santa Rosa"` → `ELEPHANT_PREPARE_USE_BROWSER_Santa_Rosa`
+- `"Palm Beach"` → `ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE_Palm_Beach`
+- `"San Diego"` → `ELEPHANT_PREPARE_NO_FAST_San_Diego`
+
+The Lambda automatically handles this conversion when matching county names from the data.
 
 #### Browser Flow Template Configuration
 
@@ -247,24 +266,22 @@ The Lambda logs will show exactly which configuration is being used for each cou
 
 ```
 📍 Extracting county information from input...
-✅ Detected county: Alachua
+✅ Detected county: Santa Rosa
 Building prepare options...
 Event browser setting: undefined (using: true)
 Checking environment variables for prepare flags:
-🏛️ Looking for county-specific configurations for: Alachua
-  Using county-specific: ELEPHANT_PREPARE_USE_BROWSER_Alachua='true'
+🏛️ Looking for county-specific configurations for: Santa Rosa
+  Using county-specific: ELEPHANT_PREPARE_USE_BROWSER_Santa_Rosa='true'
 ✓ Setting useBrowser: true (Force browser mode)
   Using general: ELEPHANT_PREPARE_NO_FAST='false'
 ✗ Not setting noFast flag (Disable fast mode)
-  Using county-specific: ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE_Alachua='SEARCH_BY_PARCEL_ID'
+  Using county-specific: ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE_Santa_Rosa='SANTA_ROSA_FLOW'
 Browser flow template configuration detected:
-✓ ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE='SEARCH_BY_PARCEL_ID'
-  Using county-specific: ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS_Alachua='continue_button_selector:.btn.btn-primary.button-1,search_form_selector:#ctlBodyPane_ctl03_ctl01_txtParcelID,search_result_selector:#ctlBodyPane_ctl10_ctl01_lstBuildings_ctl00_dynamicBuildingDataRightColumn_divSummary'
+✓ ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE='SANTA_ROSA_FLOW'
+  Using county-specific: ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS_Santa_Rosa='timeout:45000'
 ✓ ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS parsed successfully:
 {
-  "continue_button_selector": ".btn.btn-primary.button-1",
-  "search_form_selector": "#ctlBodyPane_ctl03_ctl01_txtParcelID",
-  "search_result_selector": "#ctlBodyPane_ctl10_ctl01_lstBuildings_ctl00_dynamicBuildingDataRightColumn_divSummary"
+  "timeout": 45000
 }
 Calling prepare() with these options...
 ```
