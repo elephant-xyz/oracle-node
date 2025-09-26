@@ -51,11 +51,21 @@ monitor_message_move_task() {
   info "Monitoring message move task: $task_handle"
 
   while true; do
-    local status
-    status=$(aws sqs list-message-move-tasks \
+    local task_details
+    # Fetch details for our specific task using the task handle
+    task_details=$(aws sqs list-message-move-tasks \
       --source-arn "$source_arn" \
-      --query 'Results[0].Status' \
-      --output text 2>/dev/null || echo "UNKNOWN")
+      --query "Results[?TaskHandle=='$task_handle'] | [0]" \
+      --output json 2>/dev/null)
+
+    if [[ -z "$task_details" || "$task_details" == "null" ]]; then
+      warn "Task not found or API error. Retrying..."
+      sleep 10
+      continue
+    fi
+
+    local status
+    status=$(echo "$task_details" | jq -r '.Status // "UNKNOWN"')
 
     case "$status" in
       "COMPLETED")
@@ -65,23 +75,14 @@ monitor_message_move_task() {
       "FAILED"|"CANCELLED")
         err "Message move task failed with status: $status"
         local failure_reason
-        failure_reason=$(aws sqs list-message-move-tasks \
-          --source-arn "$source_arn" \
-          --query 'Results[0].FailureReason' \
-          --output text 2>/dev/null || echo "Unknown reason")
+        failure_reason=$(echo "$task_details" | jq -r '.FailureReason // "Unknown reason"')
         err "Failure reason: $failure_reason"
         return 1
         ;;
       "RUNNING")
         local moved_count total_count
-        moved_count=$(aws sqs list-message-move-tasks \
-          --source-arn "$source_arn" \
-          --query 'Results[0].ApproximateNumberOfMessagesMoved' \
-          --output text 2>/dev/null || echo "0")
-        total_count=$(aws sqs list-message-move-tasks \
-          --source-arn "$source_arn" \
-          --query 'Results[0].ApproximateNumberOfMessagesToMove' \
-          --output text 2>/dev/null || echo "0")
+        moved_count=$(echo "$task_details" | jq -r '.ApproximateNumberOfMessagesMoved // "0"')
+        total_count=$(echo "$task_details" | jq -r '.ApproximateNumberOfMessagesToMove // "0"')
         info "Task running: $moved_count/$total_count messages moved"
 
         # Check if all messages have been moved (task might still show RUNNING)
