@@ -369,3 +369,5 @@ elephant-cli*.log
 prepare/layers/
 workflow/lambdas/post/transforms.zip
 
+set_alachua_envs.sh
+set_sarasota_envs.sh
