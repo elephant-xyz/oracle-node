@@ -363,6 +363,12 @@ main() {
     add_transform_prefix_override
   else
     info "Delaying transform upload until stack bucket exists."
+    # Add placeholder value for initial deployment
+    if [[ -z "${PARAM_OVERRIDES:-}" ]]; then
+      PARAM_OVERRIDES="TransformS3Prefix=\"pending\""
+    else
+      PARAM_OVERRIDES+=" TransformS3Prefix=\"pending\""
+    fi
   fi
 
   sam_build
@@ -370,6 +376,8 @@ main() {
 
   if (( TRANSFORMS_UPLOAD_PENDING == 1 )); then
     upload_transforms_to_s3
+    # Recompute all parameters with the actual transform prefix
+    compute_param_overrides
     add_transform_prefix_override
     sam_deploy
   fi
