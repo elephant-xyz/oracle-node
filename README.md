@@ -34,6 +34,9 @@ export ELEPHANT_PREPARE_USE_BROWSER=false  # Force browser mode
 export ELEPHANT_PREPARE_NO_FAST=false      # Disable fast mode
 export ELEPHANT_PREPARE_NO_CONTINUE=false  # Disable continue mode
 
+# Optional (Continue button selector)
+export ELEPHANT_PREPARE_CONTINUE_BUTTON=""  # CSS selector for continue button
+
 # Optional (Browser flow template - both must be provided together)
 export ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE=""    # Browser flow template name
 export ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS=""  # Browser flow parameters as JSON string
@@ -73,6 +76,9 @@ export ELEPHANT_PREPARE_USE_BROWSER=false  # Force browser mode
 export ELEPHANT_PREPARE_NO_FAST=false      # Disable fast mode
 export ELEPHANT_PREPARE_NO_CONTINUE=false  # Disable continue mode
 
+# Optional (Continue button selector)
+export ELEPHANT_PREPARE_CONTINUE_BUTTON=""  # CSS selector for continue button
+
 # Optional (Browser flow template - both must be provided together)
 export ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE=""    # Browser flow template name
 export ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS=""  # Browser flow parameters as JSON string
@@ -100,12 +106,13 @@ This creates the VPC, S3 buckets, SQS queues, Lambdas, and the Express Step Func
 
 The `DownloaderFunction` uses the `prepare` command from `@elephant-xyz/cli` to fetch and process data. You can control its behavior using environment variables that map to CLI flags:
 
-| Environment Variable           | Default      | CLI Flag        | Description                                                   |
-| ------------------------------ | ------------ | --------------- | ------------------------------------------------------------- |
-| `ELEPHANT_PREPARE_USE_BROWSER` | `false`      | `--use-browser` | Force browser mode for fetching                               |
-| `ELEPHANT_PREPARE_NO_FAST`     | `false`      | `--no-fast`     | Disable fast mode                                             |
-| `ELEPHANT_PREPARE_NO_CONTINUE` | `false`      | `--no-continue` | Disable continue mode                                         |
-| `UPDATER_SCHEDULE_RATE`        | `"1 minute"` | N/A             | Updater frequency (e.g., "5 minutes", "cron(_/1 _ \* _ ? _)") |
+| Environment Variable                | Default      | CLI Flag        | Description                                                   |
+| ----------------------------------- | ------------ | --------------- | ------------------------------------------------------------- |
+| `ELEPHANT_PREPARE_USE_BROWSER`      | `false`      | `--use-browser` | Force browser mode for fetching                               |
+| `ELEPHANT_PREPARE_NO_FAST`          | `false`      | `--no-fast`     | Disable fast mode                                             |
+| `ELEPHANT_PREPARE_NO_CONTINUE`      | `false`      | `--no-continue` | Disable continue mode                                         |
+| `ELEPHANT_PREPARE_CONTINUE_BUTTON`  | `""`         | N/A             | CSS selector for continue button                              |
+| `UPDATER_SCHEDULE_RATE`             | `"1 minute"` | N/A             | Updater frequency (e.g., "5 minutes", "cron(_/1 _ \* _ ? _)") |
 
 #### County-Specific Configuration
 
@@ -130,8 +137,9 @@ export ELEPHANT_PREPARE_NO_CONTINUE=false
 
 # Alachua County - needs browser mode with specific selectors
 export ELEPHANT_PREPARE_USE_BROWSER_Alachua=true
+export ELEPHANT_PREPARE_CONTINUE_BUTTON_Alachua=".btn.btn-primary.button-1"
 export ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE_Alachua="SEARCH_BY_PARCEL_ID"
-export ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS_Alachua='{"continue_button_selector": ".btn.btn-primary.button-1", "search_form_selector": "#ctlBodyPane_ctl03_ctl01_txtParcelID", "search_result_selector": "#ctlBodyPane_ctl10_ctl01_lstBuildings_ctl00_dynamicBuildingDataRightColumn_divSummary"}'
+export ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS_Alachua='{"search_form_selector": "#ctlBodyPane_ctl03_ctl01_txtParcelID", "search_result_selector": "#ctlBodyPane_ctl10_ctl01_lstBuildings_ctl00_dynamicBuildingDataRightColumn_divSummary"}'
 
 # Sarasota County - different template and slower processing
 export ELEPHANT_PREPARE_USE_BROWSER_Sarasota=true
@@ -186,6 +194,7 @@ export ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE_Charlotte="CHARLOTTE_FLOW"
 - `ELEPHANT_PREPARE_USE_BROWSER_<CountyName>`
 - `ELEPHANT_PREPARE_NO_FAST_<CountyName>`
 - `ELEPHANT_PREPARE_NO_CONTINUE_<CountyName>`
+- `ELEPHANT_PREPARE_CONTINUE_BUTTON_<CountyName>`
 - `ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE_<CountyName>`
 - `ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS_<CountyName>`
 
@@ -213,9 +222,10 @@ For advanced browser automation scenarios, you can provide custom browser flow t
 **General configuration example:**
 
 ```bash
-# Set browser flow template configuration for all counties
+# Set browser flow template configuration and continue button selector for all counties
+export ELEPHANT_PREPARE_CONTINUE_BUTTON=".btn.btn-primary.button-1"
 export ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE="SEARCH_BY_PARCEL_ID"
-export ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS='{"continue_button_selector": ".btn.btn-primary.button-1", "search_form_selector": "#ctlBodyPane_ctl03_ctl01_txtParcelID", "search_result_selector": "#ctlBodyPane_ctl10_ctl01_lstBuildings_ctl00_dynamicBuildingDataRightColumn_divSummary"}'
+export ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS='{"search_form_selector": "#ctlBodyPane_ctl03_ctl01_txtParcelID", "search_result_selector": "#ctlBodyPane_ctl10_ctl01_lstBuildings_ctl00_dynamicBuildingDataRightColumn_divSummary"}'
 
 # Deploy with the configuration
 ./scripts/deploy-infra.sh
@@ -224,12 +234,14 @@ export ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS='{"continue_button_selector": ".
 **County-specific browser flow example:**
 
 ```bash
-# Different counties may need different browser flow templates and selectors
+# Different counties may need different browser flow templates, continue button selectors, and parameters
+export ELEPHANT_PREPARE_CONTINUE_BUTTON_Alachua=".btn.btn-primary.button-1"
 export ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE_Alachua="SEARCH_BY_PARCEL_ID"
-export ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS_Alachua='{"continue_button_selector": ".btn.btn-primary.button-1", "search_form_selector": "#ctlBodyPane_ctl03_ctl01_txtParcelID", "search_result_selector": "#ctlBodyPane_ctl10_ctl01_lstBuildings_ctl00_dynamicBuildingDataRightColumn_divSummary"}'
+export ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS_Alachua='{"search_form_selector": "#ctlBodyPane_ctl03_ctl01_txtParcelID", "search_result_selector": "#ctlBodyPane_ctl10_ctl01_lstBuildings_ctl00_dynamicBuildingDataRightColumn_divSummary"}'
 
+export ELEPHANT_PREPARE_CONTINUE_BUTTON_Sarasota="#submit"
 export ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE_Sarasota="CUSTOM_SEARCH"
-export ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS_Sarasota='{"timeout": 60000, "selector": "#search-box", "submit_button": "#submit"}'
+export ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS_Sarasota='{"timeout": 60000, "selector": "#search-box"}'
 
 # Deploy - each county will use its specific configuration
 ./scripts/deploy-infra.sh
