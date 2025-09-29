@@ -83,6 +83,11 @@ Parameters:
       - "true"
       - "false"
 
+  ElephantPrepareContinueButton:
+    Description: CSS selector for continue button in prepare function
+    Type: String
+    Default: ""
+
   ElephantPrepareBrowserFlowTemplate:
     Description: Browser flow template for prepare function (must be provided with ElephantPrepareBrowserFlowParameters)
     Type: String
@@ -209,6 +214,7 @@ Resources:
           ELEPHANT_PREPARE_USE_BROWSER: !Ref ElephantPrepareUseBrowser
           ELEPHANT_PREPARE_NO_FAST: !Ref ElephantPrepareNoFast
           ELEPHANT_PREPARE_NO_CONTINUE: !Ref ElephantPrepareNoContinue
+          ELEPHANT_PREPARE_CONTINUE_BUTTON: !Ref ElephantPrepareContinueButton
           ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE: !Ref ElephantPrepareBrowserFlowTemplate
           ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS: !Ref ElephantPrepareBrowserFlowParameters
       Policies:

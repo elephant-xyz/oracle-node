@@ -335,6 +335,19 @@ export const handler = async (event) => {
       }
     }
 
+    // Handle continue button selector configuration with county-specific lookup
+    const continueButtonSelector = getEnvWithCountyFallback(
+      "ELEPHANT_PREPARE_CONTINUE_BUTTON",
+      countyName,
+    );
+
+    if (continueButtonSelector && continueButtonSelector.trim() !== "") {
+      prepareOptions.continueButtonSelector = continueButtonSelector;
+      console.log(
+        `✓ Setting continueButtonSelector: ${continueButtonSelector}`,
+      );
+    }
+
     // Handle browser flow template configuration with county-specific lookup
     const browserFlowTemplate = getEnvWithCountyFallback(
       "ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE",
