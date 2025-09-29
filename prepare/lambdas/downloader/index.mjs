@@ -343,7 +343,9 @@ export const handler = async (event) => {
 
     if (continueButtonSelector && continueButtonSelector.trim() !== "") {
       prepareOptions.continueButtonSelector = continueButtonSelector;
-      console.log(`✓ Setting continueButtonSelector: ${continueButtonSelector}`);
+      console.log(
+        `✓ Setting continueButtonSelector: ${continueButtonSelector}`,
+      );
     }
 
     // Handle browser flow template configuration with county-specific lookup
