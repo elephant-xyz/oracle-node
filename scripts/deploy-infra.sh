@@ -45,7 +45,7 @@ get_bucket() {
   aws cloudformation describe-stacks \
     --stack-name "$STACK_NAME" \
     --query 'Stacks[0].Outputs[?OutputKey==`EnvironmentBucketName`].OutputValue' \
-    --output text
+    --output text 2>/dev/null || echo ""
 }
 
 get_output() {
@@ -53,7 +53,7 @@ get_output() {
   aws cloudformation describe-stacks \
     --stack-name "$STACK_NAME" \
     --query "Stacks[0].Outputs[?OutputKey=='${key}'].OutputValue" \
-    --output text
+    --output text 2>/dev/null || echo ""
 }
 
 sam_build() {
@@ -382,7 +382,11 @@ main() {
   bucket=$(get_bucket)
   echo
   info "Done!"
-  info "Environment bucket: $bucket"
+  if [[ -n "$bucket" ]]; then
+    info "Environment bucket: $bucket"
+  else
+    info "Stack deployed successfully"
+  fi
 }
 
 main "$@"
