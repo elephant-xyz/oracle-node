@@ -298,13 +298,20 @@ export const handler = async (event) => {
     ];
 
     // Determine useBrowser setting from environment variable with county-specific fallback
-    const useBrowserEnv = getEnvWithCountyFallback("ELEPHANT_PREPARE_USE_BROWSER", countyName);
+    const useBrowserEnv = getEnvWithCountyFallback(
+      "ELEPHANT_PREPARE_USE_BROWSER",
+      countyName,
+    );
     let useBrowser = true; // Default to true if not specified
     if (useBrowserEnv !== undefined) {
       useBrowser = useBrowserEnv === "true";
-      console.log(`Setting useBrowser: ${useBrowser} (from environment variable)`);
+      console.log(
+        `Setting useBrowser: ${useBrowser} (from environment variable)`,
+      );
     } else {
-      console.log(`Using default useBrowser: ${useBrowser} (no environment variable set)`);
+      console.log(
+        `Using default useBrowser: ${useBrowser} (no environment variable set)`,
+      );
     }
 
     // Build prepare options based on environment variables

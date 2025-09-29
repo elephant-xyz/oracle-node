@@ -45,7 +45,7 @@ get_bucket() {
   aws cloudformation describe-stacks \
     --stack-name "$STACK_NAME" \
     --query 'Stacks[0].Outputs[?OutputKey==`EnvironmentBucketName`].OutputValue' \
-    --output text
+    --output text 2>/dev/null || echo ""
 }
 
 get_output() {
@@ -53,7 +53,7 @@ get_output() {
   aws cloudformation describe-stacks \
     --stack-name "$STACK_NAME" \
     --query "Stacks[0].Outputs[?OutputKey=='${key}'].OutputValue" \
-    --output text
+    --output text 2>/dev/null || echo ""
 }
 
 sam_build() {
@@ -363,6 +363,12 @@ main() {
     add_transform_prefix_override
   else
     info "Delaying transform upload until stack bucket exists."
+    # Add placeholder value for initial deployment
+    if [[ -z "${PARAM_OVERRIDES:-}" ]]; then
+      PARAM_OVERRIDES="TransformS3Prefix=\"pending\""
+    else
+      PARAM_OVERRIDES+=" TransformS3Prefix=\"pending\""
+    fi
   fi
 
   sam_build
@@ -370,6 +376,8 @@ main() {
 
   if (( TRANSFORMS_UPLOAD_PENDING == 1 )); then
     upload_transforms_to_s3
+    # Recompute all parameters with the actual transform prefix
+    compute_param_overrides
     add_transform_prefix_override
     sam_deploy
   fi
@@ -382,7 +390,11 @@ main() {
   bucket=$(get_bucket)
   echo
   info "Done!"
-  info "Environment bucket: $bucket"
+  if [[ -n "$bucket" ]]; then
+    info "Environment bucket: $bucket"
+  else
+    info "Stack deployed successfully"
+  fi
 }
 
 main "$@"
