@@ -270,6 +270,36 @@ add_transform_prefix_override() {
   fi
 }
 
+populate_proxy_rotation_table() {
+  local proxy_file="${PROXY_FILE:-}"
+  
+  if [[ -z "$proxy_file" ]]; then
+    info "No proxy file specified (PROXY_FILE environment variable not set), skipping proxy population"
+    return 0
+  fi
+
+  if [[ ! -f "$proxy_file" ]]; then
+    err "Proxy file not found: $proxy_file"
+    exit 1
+  fi
+
+  local table_name
+  table_name=$(get_output "ProxyRotationTableName")
+  
+  if [[ -z "$table_name" ]]; then
+    err "ProxyRotationTable not found in stack outputs. Deploy the stack first."
+    exit 1
+  fi
+
+  info "Populating proxy rotation table using Node.js script"
+  
+  # Use Node.js script to populate proxies
+  node scripts/populate-proxies.mjs "$table_name" "$proxy_file" || {
+    err "Failed to populate proxies"
+    exit 1
+  }
+}
+
 
 # Check the Lambda "Concurrent executions" service quota and request an increase if it's 10
 ensure_lambda_concurrency_quota() {
@@ -389,6 +419,9 @@ main() {
 
   # Apply county-specific configurations if present
   apply_county_configs
+
+  # Populate proxy rotation table if proxy file is provided
+  populate_proxy_rotation_table
 
   bucket=$(get_bucket)
   echo

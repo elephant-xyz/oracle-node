@@ -46,6 +46,9 @@ export UPDATER_SCHEDULE_RATE="1 minute"    # How often updater runs (default: "1
 # For sub-minute intervals, use cron expressions:
 # export UPDATER_SCHEDULE_RATE="cron(*/1 * * * ? *)"  # Every minute
 # export UPDATER_SCHEDULE_RATE="cron(0/30 * * * ? *)" # Every 30 seconds (at :00 and :30)
+
+# Optional (Proxy rotation - for automatic proxy rotation support)
+export PROXY_FILE=/path/to/proxies.txt  # File containing proxy URLs (one per line: username:password@ip:port)
 ```
 
 #### Option B: Keystore Mode (using encrypted private key)
@@ -474,6 +477,70 @@ Options:
 ```
 
 This query tool uses CloudWatch Logs Insights to efficiently analyze large volumes of log data and provides actionable metrics for monitoring post-processing performance across different counties.
+
+## Proxy Rotation
+
+The system supports automatic proxy rotation for the prepare function. This helps distribute load across multiple proxies and prevents rate limiting or IP blocking.
+
+### Setup Proxies
+
+**1. Create a proxy file:**
+
+Create a text file with one proxy per line in format: `username:password@ip:port`
+
+```bash
+# Create proxies.txt
+cat > proxies.txt <<EOF
+user1:password123@192.168.1.100:8080
+user2:password456@192.168.1.101:8080
+user3:password789@192.168.1.102:8080
+EOF
+```
+
+You can use `proxies.example.txt` as a template.
+
+**2. Deploy with proxies:**
+
+```bash
+# Initial deployment with proxies
+export PROXY_FILE=proxies.txt
+./scripts/deploy-infra.sh
+```
+
+**3. Update proxies later (without full deployment):**
+
+```bash
+# Update or add proxies anytime
+./scripts/update-proxies.sh proxies.txt
+```
+
+### How It Works
+
+- Each Lambda invocation automatically selects the **least recently used** proxy
+- Proxies are rotated automatically based on usage timestamps
+- Failed proxies are tracked but remain available for retry
+- No configuration needed - just provide the proxy file
+
+### Verify Proxies
+
+Check which proxies are configured:
+
+```bash
+./scripts/update-proxies.sh --list
+```
+
+### Remove All Proxies
+
+```bash
+./scripts/update-proxies.sh --clear
+```
+
+### Notes
+
+- Empty lines and lines starting with `#` are ignored (comments)
+- Proxy format must be: `username:password@ip:port`
+- Port must be numeric
+- If no proxies are configured, the system works normally without them
 
 That's it — set env vars, deploy, start, monitor, and tune concurrency.
 
