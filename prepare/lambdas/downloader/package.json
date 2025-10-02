@@ -9,6 +9,7 @@
     "typecheck": "tsc --pretty false --noEmit -p jsconfig.json"
   },
   "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.879.0",
     "@aws-sdk/client-s3": "^3.879.0",
     "@elephant-xyz/cli": "^1.46.0",
     "adm-zip": "^0.5.10"
@@ -17,3 +18,4 @@
     "@types/node": "^20.16.3"
   }
 }
+
