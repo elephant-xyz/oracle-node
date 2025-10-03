@@ -577,38 +577,10 @@ async function uploadHashOutputs({ filesForIpfs, tmpDir, log, pinataJwt }) {
 
     // 3. Zip the entire temp directory
     const combinedZipPath = path.join(tmpDir, "combined_ipfs_upload.zip");
-    log("info", "ipfs_create_combined_zip_start", {});
     const combinedZip = new AdmZip();
-    const dirs = await fs.readdir(extractTempDir, {
-      withFileTypes: true,
-      recursive: true,
-    });
-    log("info", "ipfs_create_combined_zip_start", {
-      dirList: dirs,
-    });
-
     combinedZip.addLocalFolder(extractTempDir);
     await fs.writeFile(combinedZipPath, combinedZip.toBuffer());
 
-    // 5. Upload the combined zip to S3
-    const s3Key = `combined-ipfs-upload/${randomUUID()}.zip`;
-    const outputBaseUri = requireEnv("OUTPUT_BASE_URI");
-    const { bucket: outputBucket } = parseS3Uri(outputBaseUri);
-
-    log("info", "s3_upload_combined_start", {
-      bucket: outputBucket,
-      key: s3Key,
-    });
-    const combinedZipContent = await fs.readFile(combinedZipPath);
-    await s3.send(
-      new PutObjectCommand({
-        Bucket: outputBucket,
-        Key: s3Key,
-        Body: combinedZipContent,
-      }),
-    );
-    const s3Uri = `s3://${outputBucket}/${s3Key}`;
-    log("info", "s3_upload_combined_complete", { s3_uri: s3Uri });
     // 4. Upload the combined zip
     log("info", "ipfs_upload_combined_start", {});
     const uploadResult = await upload({
@@ -633,7 +605,6 @@ async function uploadHashOutputs({ filesForIpfs, tmpDir, log, pinataJwt }) {
       throw new Error(`Upload failed: ${uploadResult.errorMessage}`);
     }
   } finally {
-    // 6. Delete the temp directory
     try {
       await fs.rm(extractTempDir, { recursive: true, force: true });
     } catch (cleanupError) {
