@@ -3,6 +3,11 @@ import {
   S3Client,
   PutObjectCommand,
 } from "@aws-sdk/client-s3";
+import {
+  DynamoDBClient,
+  QueryCommand,
+  UpdateItemCommand,
+} from "@aws-sdk/client-dynamodb";
 import { promises as fs } from "fs";
 import path from "path";
 import { prepare } from "@elephant-xyz/cli/lib";
@@ -27,6 +32,245 @@ const RE_S3PATH = /^s3:\/\/([^/]+)\/(.*)$/i;
  */
 
 /** @typedef {Error & { originalError?: Error, type?: string, context?: Object, execution?: Object, validationErrors?: Object }} EnhancedError */
+
+/**
+ * @typedef {Object} ProxyInfo
+ * @property {string} proxyId - Unique identifier for the proxy
+ * @property {string} proxyUrl - Proxy URL in format username:password@ip:port
+ * @property {number} lastUsedTime - Unix timestamp of last usage
+ * @property {boolean} failed - Whether the last usage failed
+ * @property {boolean} locked - Whether the proxy is currently locked by a lambda
+ * @property {number} lockedAt - Unix timestamp when the proxy was locked
+ */
+
+/**
+ * Cleans up stale proxy locks that have been held for more than the timeout period
+ * @param {DynamoDBClient} dynamoClient - DynamoDB client instance
+ * @param {string} tableName - Name of the DynamoDB table
+ * @param {number} lockTimeoutMs - Maximum time a lock can be held before considered stale (default: 30 minutes)
+ * @returns {Promise<void>}
+ */
+const cleanupStaleLocks = async (
+  dynamoClient,
+  tableName,
+  lockTimeoutMs = 30 * 60 * 1000,
+) => {
+  try {
+    console.log(
+      `🧹 Cleaning up stale proxy locks older than ${lockTimeoutMs / 1000 / 60} minutes...`,
+    );
+
+    const now = Date.now();
+    const staleThreshold = now - lockTimeoutMs;
+    console.log(`Stale threshold: ${staleThreshold}`);
+
+    // Scan for locked proxies that are stale
+    const scanCommand = new QueryCommand({
+      TableName: tableName,
+      IndexName: "LastUsedIndex",
+      KeyConditionExpression: "constantKey = :constantKey",
+      FilterExpression: "locked = :locked AND lockedAt < :staleThreshold",
+      ExpressionAttributeValues: {
+        ":constantKey": { S: "PROXY" },
+        ":locked": { BOOL: true },
+        ":staleThreshold": { N: staleThreshold.toString() },
+      },
+    });
+
+    const response = await dynamoClient.send(scanCommand);
+
+    if (response.Items && response.Items.length > 0) {
+      console.log(`🔓 Found ${response.Items.length} stale locks to clean up`);
+
+      // Release each stale lock
+      for (const item of response.Items) {
+        const proxyId = item.proxyId?.S;
+        if (proxyId) {
+          try {
+            const updateCommand = new UpdateItemCommand({
+              TableName: tableName,
+              Key: {
+                proxyId: { S: proxyId },
+              },
+              UpdateExpression: "SET locked = :unlocked REMOVE lockedAt",
+              ExpressionAttributeValues: {
+                ":unlocked": { BOOL: false },
+              },
+            });
+
+            await dynamoClient.send(updateCommand);
+            console.log(`✅ Released stale lock for proxy: ${proxyId}`);
+          } catch (updateError) {
+            console.error(
+              `⚠️ Failed to release stale lock for proxy ${proxyId}: ${updateError instanceof Error ? updateError.message : String(updateError)}`,
+            );
+          }
+        }
+      }
+    } else {
+      console.log("✅ No stale locks found");
+    }
+  } catch (error) {
+    console.error(
+      `⚠️ Failed to cleanup stale locks: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    // Don't throw - this is a cleanup operation
+  }
+};
+
+/**
+ * Acquires a lock on the least recently used unlocked proxy from DynamoDB
+ * @param {DynamoDBClient} dynamoClient - DynamoDB client instance
+ * @param {string} tableName - Name of the DynamoDB table
+ * @returns {Promise<ProxyInfo | null>} Proxy information or null if no unlocked proxies available
+ */
+const acquireProxyLock = async (dynamoClient, tableName, maxRetries = 10) => {
+  try {
+    // First, cleanup any stale locks
+    await cleanupStaleLocks(dynamoClient, tableName);
+
+    console.log(
+      `🔍 Querying DynamoDB table ${tableName} for least recently used unlocked proxy...`,
+    );
+
+    const queryCommand = new QueryCommand({
+      TableName: tableName,
+      IndexName: "LastUsedIndex",
+      KeyConditionExpression: "constantKey = :constantKey",
+      FilterExpression: "locked = :locked OR attribute_not_exists(locked)",
+      ExpressionAttributeValues: {
+        ":constantKey": { S: "PROXY" },
+        ":locked": { BOOL: false },
+      },
+      Limit: 1,
+      ScanIndexForward: true, // Sort ascending by lastUsedTime (oldest first)
+    });
+
+    const response = await dynamoClient.send(queryCommand);
+
+    if (!response.Items || response.Items.length === 0) {
+      console.log("⚠️ No unlocked proxies found in DynamoDB table");
+      return null;
+    }
+
+    const item = response.Items[0];
+    if (!item) {
+      console.log("⚠️ Unexpected: First item in response is undefined");
+      return null;
+    }
+
+    const proxyId = item.proxyId?.S || "";
+    const now = Date.now();
+
+    // Attempt to acquire the lock with conditional update
+    try {
+      const updateCommand = new UpdateItemCommand({
+        TableName: tableName,
+        Key: {
+          proxyId: { S: proxyId },
+        },
+        UpdateExpression:
+          "SET locked = :locked, lockedAt = :lockedAt, lastUsedTime = :time",
+        ConditionExpression:
+          "locked = :unlocked OR attribute_not_exists(locked)",
+        ExpressionAttributeValues: {
+          ":locked": { BOOL: true },
+          ":unlocked": { BOOL: false },
+          ":lockedAt": { N: now.toString() },
+          ":time": { N: now.toString() },
+        },
+      });
+
+      await dynamoClient.send(updateCommand);
+
+      const proxyInfo = {
+        proxyId: proxyId,
+        proxyUrl: item.proxyUrl?.S || "",
+        lastUsedTime: now,
+        failed: item.failed?.BOOL || false,
+        locked: true,
+        lockedAt: now,
+      };
+
+      console.log(
+        JSON.stringify(
+          {
+            message: "Successfully acquired proxy lock",
+            proxyId: proxyInfo.proxyId,
+            lastUsedTime: proxyInfo.lastUsedTime,
+            failed: proxyInfo.failed,
+            locked: proxyInfo.locked,
+            lockedAt: proxyInfo.lockedAt,
+          },
+          null,
+          2,
+        ),
+      );
+
+      return proxyInfo;
+    } catch (updateError) {
+      // Lock acquisition failed (likely due to condition not met - proxy already locked)
+      console.log(
+        `⚠️ Failed to acquire lock for proxy ${proxyId}: ${updateError instanceof Error ? updateError.message : String(updateError)}`,
+      );
+
+      if (maxRetries > 0) {
+        // Try again recursively (will get the next available proxy)
+        console.log(
+          `🔄 Retrying proxy lock acquisition (${maxRetries} attempts remaining)...`,
+        );
+        return await acquireProxyLock(dynamoClient, tableName, maxRetries - 1);
+      } else {
+        console.log("❌ Maximum retry attempts reached, no proxy available");
+        return null;
+      }
+    }
+  } catch (error) {
+    console.error(
+      `❌ Failed to query DynamoDB for proxy: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    throw error;
+  }
+};
+
+/**
+ * Updates proxy usage information in DynamoDB
+ * @param {DynamoDBClient} dynamoClient - DynamoDB client instance
+ * @param {string} tableName - Name of the DynamoDB table
+ * @param {string} proxyId - Unique identifier for the proxy
+ * @param {boolean} failed - Whether the proxy usage failed
+ * @returns {Promise<void>}
+ */
+const updateProxyUsage = async (dynamoClient, tableName, proxyId, failed) => {
+  try {
+    const now = Date.now();
+    console.log(
+      `📝 Updating proxy ${proxyId} usage (failed: ${failed}, time: ${new Date(now).toISOString()})...`,
+    );
+
+    const updateCommand = new UpdateItemCommand({
+      TableName: tableName,
+      Key: {
+        proxyId: { S: proxyId },
+      },
+      UpdateExpression:
+        "SET lastUsedTime = :time, failed = :failed, locked = :unlocked REMOVE lockedAt",
+      ExpressionAttributeValues: {
+        ":time": { N: now.toString() },
+        ":failed": { BOOL: failed },
+        ":unlocked": { BOOL: false },
+      },
+    });
+
+    await dynamoClient.send(updateCommand);
+    console.log(`✅ Successfully updated proxy ${proxyId} usage`);
+  } catch (error) {
+    console.error(
+      `❌ Failed to update proxy usage in DynamoDB: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    // Don't throw - this is a non-critical operation
+  }
+};
 
 /**
  * Gets IP address information for the Lambda instance
@@ -137,7 +381,6 @@ const splitS3Uri = (s3Uri) => {
  * @param {Object} event - Input event containing order details
  * @param {string} event.input_s3_uri - S3 URI of input file
  * @param {string} event.output_s3_uri_prefix - S3 URI prefix for output files
- * @param {boolean} event.browser - Whether to run in headless browser
  * @returns {Promise<{ output_s3_uri: string }>} Success message
  */
 export const handler = async (event) => {
@@ -188,6 +431,33 @@ export const handler = async (event) => {
   console.log("Bucket:", bucket);
   console.log("Key:", key);
   const s3 = new S3Client({});
+
+  // Initialize DynamoDB client for proxy rotation
+  const dynamoClient = new DynamoDBClient({});
+  const proxyTableName = process.env.PROXY_ROTATION_TABLE_NAME;
+
+  // Get least recently used proxy if table is configured
+  /** @type {ProxyInfo | null} */
+  let selectedProxy = null;
+  if (proxyTableName) {
+    try {
+      selectedProxy = await acquireProxyLock(dynamoClient, proxyTableName);
+      if (selectedProxy) {
+        console.log(`🌐 Using proxy: ${selectedProxy.proxyId}`);
+      } else {
+        console.log("ℹ️ No proxies available, proceeding without proxy");
+      }
+    } catch (proxyError) {
+      console.error(
+        `⚠️ Failed to get proxy from DynamoDB: ${proxyError instanceof Error ? proxyError.message : String(proxyError)}`,
+      );
+      console.log("ℹ️ Proceeding without proxy");
+    }
+  } else {
+    console.log(
+      "ℹ️ Proxy rotation table not configured, proceeding without proxy",
+    );
+  }
 
   const tempDir = await fs.mkdtemp("/tmp/prepare-");
   try {
@@ -251,12 +521,8 @@ export const handler = async (event) => {
     }
 
     const outputZip = path.join(tempDir, "output.zip");
-    const useBrowser = event.browser ?? true;
 
     console.log("Building prepare options...");
-    console.log(
-      `Event browser setting: ${event.browser} (using: ${useBrowser})`,
-    );
 
     // Helper function to get environment variable with county-specific fallback
     /**
@@ -266,7 +532,10 @@ export const handler = async (event) => {
      */
     const getEnvWithCountyFallback = (baseEnvVar, countyName) => {
       if (countyName) {
-        const countySpecificVar = `${baseEnvVar}_${countyName}`;
+        // Replace spaces with underscores for environment variable names
+        // e.g., "Santa Rosa" becomes "Santa_Rosa"
+        const sanitizedCountyName = countyName.replace(/ /g, "_");
+        const countySpecificVar = `${baseEnvVar}_${sanitizedCountyName}`;
         if (process.env[countySpecificVar] !== undefined) {
           console.log(
             `  Using county-specific: ${countySpecificVar}='${process.env[countySpecificVar]}'`,
@@ -288,11 +557,6 @@ export const handler = async (event) => {
     /** @type {FlagConfig[]} */
     const flagConfig = [
       {
-        envVar: "ELEPHANT_PREPARE_USE_BROWSER",
-        optionKey: "useBrowser",
-        description: "Force browser mode",
-      },
-      {
         envVar: "ELEPHANT_PREPARE_NO_FAST",
         optionKey: "noFast",
         description: "Disable fast mode",
@@ -304,9 +568,32 @@ export const handler = async (event) => {
       },
     ];
 
+    // Determine useBrowser setting from environment variable with county-specific fallback
+    const useBrowserEnv = getEnvWithCountyFallback(
+      "ELEPHANT_PREPARE_USE_BROWSER",
+      countyName,
+    );
+    let useBrowser = true; // Default to true if not specified
+    if (useBrowserEnv !== undefined) {
+      useBrowser = useBrowserEnv === "true";
+      console.log(
+        `Setting useBrowser: ${useBrowser} (from environment variable)`,
+      );
+    } else {
+      console.log(
+        `Using default useBrowser: ${useBrowser} (no environment variable set)`,
+      );
+    }
+
     // Build prepare options based on environment variables
-    /** @type {{ useBrowser: boolean, noFast?: boolean, noContinue?: boolean, browserFlowTemplate?: string, browserFlowParameters?: string, [key: string]: any }} */
+    /** @type {{ useBrowser: boolean, noFast?: boolean, noContinue?: boolean, browserFlowTemplate?: string, browserFlowParameters?: string, proxyUrl?: string, [key: string]: any }} */
     const prepareOptions = { useBrowser };
+
+    // Add proxy URL if available
+    if (selectedProxy && selectedProxy.proxyUrl) {
+      prepareOptions.proxyUrl = selectedProxy.proxyUrl;
+      console.log(`✓ Setting proxyUrl for prepare function`);
+    }
 
     console.log("Checking environment variables for prepare flags:");
     if (countyName) {
@@ -323,6 +610,19 @@ export const handler = async (event) => {
       } else {
         console.log(`✗ Not setting ${optionKey} flag (${description})`);
       }
+    }
+
+    // Handle continue button selector configuration with county-specific lookup
+    const continueButtonSelector = getEnvWithCountyFallback(
+      "ELEPHANT_PREPARE_CONTINUE_BUTTON",
+      countyName,
+    );
+
+    if (continueButtonSelector && continueButtonSelector.trim() !== "") {
+      prepareOptions.continueButtonSelector = continueButtonSelector;
+      console.log(
+        `✓ Setting continueButtonSelector: ${continueButtonSelector}`,
+      );
     }
 
     // Handle browser flow template configuration with county-specific lookup
@@ -418,15 +718,27 @@ export const handler = async (event) => {
     );
 
     let prepareDuration;
+    let prepareSucceeded = false;
     try {
       await prepare(inputZip, outputZip, prepareOptions);
       prepareDuration = Date.now() - prepareStart;
+      prepareSucceeded = true;
       console.log(
         `✅ Prepare function completed: ${prepareDuration}ms (${(prepareDuration / 1000).toFixed(2)}s)`,
       );
       console.log(
         `🔍 PERFORMANCE: Local=2s, Lambda=${(prepareDuration / 1000).toFixed(1)}s - ${prepareDuration > 3000 ? "⚠️ SLOW" : "✅ OK"}`,
       );
+
+      // Update proxy usage as successful
+      if (selectedProxy && proxyTableName) {
+        await updateProxyUsage(
+          dynamoClient,
+          proxyTableName,
+          selectedProxy.proxyId,
+          false,
+        );
+      }
     } catch (prepareError) {
       prepareDuration = Date.now() - prepareStart;
 
@@ -510,6 +822,16 @@ export const handler = async (event) => {
 
       console.error("❌ PREPARE FUNCTION FAILED");
       console.error(JSON.stringify(prepareErrorLog, null, 2));
+
+      // Update proxy usage as failed
+      if (selectedProxy && proxyTableName) {
+        await updateProxyUsage(
+          dynamoClient,
+          proxyTableName,
+          selectedProxy.proxyId,
+          true,
+        );
+      }
 
       // Re-throw with enhanced context
       /** @type {EnhancedError} */

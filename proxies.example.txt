@@ -1,0 +1,26 @@
+# Proxy Configuration File
+# 
+# Format: username:password@ip:port
+# 
+# Quick Start:
+# 1. Copy this file: cp proxies.example.txt proxies.txt
+# 2. Edit proxies.txt with your actual proxy credentials
+# 3. Deploy: PROXY_FILE=proxies.txt ./scripts/deploy-infra.sh
+# 4. Update later: ./scripts/update-proxies.sh proxies.txt
+#
+# Commands:
+#   ./scripts/update-proxies.sh proxies.txt  # Update proxies
+#   ./scripts/update-proxies.sh --list       # List configured proxies
+#   ./scripts/update-proxies.sh --clear      # Remove all proxies
+#
+# Notes:
+# - Empty lines and lines starting with # are ignored
+# - Format must be: username:password@ip:port (port must be numeric)
+# - Proxies rotate automatically based on least recent usage
+# - Failed proxies are tracked but remain available for retry
+
+# Primary proxies
+admin:secretpassword123@192.168.1.100:8080
+admin:secretpassword456@192.168.1.101:8080
+admin:secretpassword789@192.168.1.102:8080
+

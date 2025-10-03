@@ -65,6 +65,7 @@ process_county_configs() {
     "ELEPHANT_PREPARE_USE_BROWSER"
     "ELEPHANT_PREPARE_NO_FAST"
     "ELEPHANT_PREPARE_NO_CONTINUE"
+    "ELEPHANT_PREPARE_CONTINUE_BUTTON"
     "ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE"
     "ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS"
   )
@@ -144,7 +145,7 @@ main() {
       # Display the county-specific variables that were set
       echo
       info "County-specific configurations:"
-      echo "$new_env_json" | jq -r 'to_entries[] | select(.key | test("_(Alachua|Sarasota|Broward|Charlotte|Duval|Hillsborough|Lake|Lee|Leon|Manatee|PalmBeach|Pinellas|Polk|Santa|[A-Za-z]+)$")) | "  \(.key)=\(.value)"'
+      echo "$new_env_json" | jq -r 'to_entries[] | select(.key | test("_(\\w+(_(\\w+))*)$")) | select(.key | test("^ELEPHANT_PREPARE_")) | "  \(.key)=\(.value)"'
     else
       err "Failed to update Lambda environment variables"
       exit 1
@@ -153,8 +154,14 @@ main() {
     info "No county-specific environment variables found"
     info "To set county-specific configurations, export variables like:"
     echo "  export ELEPHANT_PREPARE_USE_BROWSER_Alachua=true"
+    echo "  export ELEPHANT_PREPARE_CONTINUE_BUTTON_Alachua='.btn.btn-primary.button-1'"
     echo "  export ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE_Sarasota=SEARCH_BY_PARCEL"
     echo "  export ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS_Sarasota='{\"timeout\": 30000}'"
+    echo ""
+    echo "Note: For counties with spaces in their names, use underscores:"
+    echo "  export ELEPHANT_PREPARE_USE_BROWSER_Santa_Rosa=true"
+    echo "  export ELEPHANT_PREPARE_CONTINUE_BUTTON_Palm_Beach='#continue-btn'"
+    echo "  export ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE_Palm_Beach=CUSTOM_FLOW"
   fi
 }
 

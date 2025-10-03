@@ -34,6 +34,9 @@ export ELEPHANT_PREPARE_USE_BROWSER=false  # Force browser mode
 export ELEPHANT_PREPARE_NO_FAST=false      # Disable fast mode
 export ELEPHANT_PREPARE_NO_CONTINUE=false  # Disable continue mode
 
+# Optional (Continue button selector)
+export ELEPHANT_PREPARE_CONTINUE_BUTTON=""  # CSS selector for continue button
+
 # Optional (Browser flow template - both must be provided together)
 export ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE=""    # Browser flow template name
 export ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS=""  # Browser flow parameters as JSON string
@@ -43,6 +46,9 @@ export UPDATER_SCHEDULE_RATE="1 minute"    # How often updater runs (default: "1
 # For sub-minute intervals, use cron expressions:
 # export UPDATER_SCHEDULE_RATE="cron(*/1 * * * ? *)"  # Every minute
 # export UPDATER_SCHEDULE_RATE="cron(0/30 * * * ? *)" # Every 30 seconds (at :00 and :30)
+
+# Optional (Proxy rotation - for automatic proxy rotation support)
+export PROXY_FILE=/path/to/proxies.txt  # File containing proxy URLs (one per line: username:password@ip:port)
 ```
 
 #### Option B: Keystore Mode (using encrypted private key)
@@ -73,6 +79,9 @@ export ELEPHANT_PREPARE_USE_BROWSER=false  # Force browser mode
 export ELEPHANT_PREPARE_NO_FAST=false      # Disable fast mode
 export ELEPHANT_PREPARE_NO_CONTINUE=false  # Disable continue mode
 
+# Optional (Continue button selector)
+export ELEPHANT_PREPARE_CONTINUE_BUTTON=""  # CSS selector for continue button
+
 # Optional (Browser flow template - both must be provided together)
 export ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE=""    # Browser flow template name
 export ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS=""  # Browser flow parameters as JSON string
@@ -100,12 +109,13 @@ This creates the VPC, S3 buckets, SQS queues, Lambdas, and the Express Step Func
 
 The `DownloaderFunction` uses the `prepare` command from `@elephant-xyz/cli` to fetch and process data. You can control its behavior using environment variables that map to CLI flags:
 
-| Environment Variable           | Default      | CLI Flag        | Description                                                   |
-| ------------------------------ | ------------ | --------------- | ------------------------------------------------------------- |
-| `ELEPHANT_PREPARE_USE_BROWSER` | `false`      | `--use-browser` | Force browser mode for fetching                               |
-| `ELEPHANT_PREPARE_NO_FAST`     | `false`      | `--no-fast`     | Disable fast mode                                             |
-| `ELEPHANT_PREPARE_NO_CONTINUE` | `false`      | `--no-continue` | Disable continue mode                                         |
-| `UPDATER_SCHEDULE_RATE`        | `"1 minute"` | N/A             | Updater frequency (e.g., "5 minutes", "cron(_/1 _ \* _ ? _)") |
+| Environment Variable               | Default      | CLI Flag        | Description                                                   |
+| ---------------------------------- | ------------ | --------------- | ------------------------------------------------------------- |
+| `ELEPHANT_PREPARE_USE_BROWSER`     | `false`      | `--use-browser` | Force browser mode for fetching                               |
+| `ELEPHANT_PREPARE_NO_FAST`         | `false`      | `--no-fast`     | Disable fast mode                                             |
+| `ELEPHANT_PREPARE_NO_CONTINUE`     | `false`      | `--no-continue` | Disable continue mode                                         |
+| `ELEPHANT_PREPARE_CONTINUE_BUTTON` | `""`         | N/A             | CSS selector for continue button                              |
+| `UPDATER_SCHEDULE_RATE`            | `"1 minute"` | N/A             | Updater frequency (e.g., "5 minutes", "cron(_/1 _ \* _ ? _)") |
 
 #### County-Specific Configuration
 
@@ -130,8 +140,9 @@ export ELEPHANT_PREPARE_NO_CONTINUE=false
 
 # Alachua County - needs browser mode with specific selectors
 export ELEPHANT_PREPARE_USE_BROWSER_Alachua=true
+export ELEPHANT_PREPARE_CONTINUE_BUTTON_Alachua=".btn.btn-primary.button-1"
 export ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE_Alachua="SEARCH_BY_PARCEL_ID"
-export ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS_Alachua='{"continue_button_selector": ".btn.btn-primary.button-1", "search_form_selector": "#ctlBodyPane_ctl03_ctl01_txtParcelID", "search_result_selector": "#ctlBodyPane_ctl10_ctl01_lstBuildings_ctl00_dynamicBuildingDataRightColumn_divSummary"}'
+export ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS_Alachua='{"search_form_selector": "#ctlBodyPane_ctl03_ctl01_txtParcelID", "search_result_selector": "#ctlBodyPane_ctl10_ctl01_lstBuildings_ctl00_dynamicBuildingDataRightColumn_divSummary"}'
 
 # Sarasota County - different template and slower processing
 export ELEPHANT_PREPARE_USE_BROWSER_Sarasota=true
@@ -141,6 +152,15 @@ export ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS_Sarasota='{"timeout": 60000, "se
 
 # Charlotte County - simple browser mode, no template needed
 export ELEPHANT_PREPARE_USE_BROWSER_Charlotte=true
+
+# Santa Rosa County - note the underscore for the space
+export ELEPHANT_PREPARE_USE_BROWSER_Santa_Rosa=true
+export ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE_Santa_Rosa="SANTA_ROSA_FLOW"
+export ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS_Santa_Rosa='{"timeout": 45000}'
+
+# Palm Beach County - another example with space in name
+export ELEPHANT_PREPARE_USE_BROWSER_Palm_Beach=true
+export ELEPHANT_PREPARE_NO_FAST_Palm_Beach=true
 
 # Broward County - uses general settings (no browser mode)
 # No county-specific settings needed
@@ -154,6 +174,8 @@ When the Lambda processes data:
 - Alachua inputs → Uses browser mode with SEARCH_BY_PARCEL_ID template
 - Sarasota inputs → Uses browser mode with CUSTOM_SEARCH template and no-fast mode
 - Charlotte inputs → Uses simple browser mode
+- Santa Rosa inputs → Uses browser mode with SANTA_ROSA_FLOW template (county with space in name)
+- Palm Beach inputs → Uses browser mode with no-fast flag (county with space in name)
 - Broward inputs → Uses general settings (no browser mode)
 - Any other county → Uses general settings
 
@@ -175,10 +197,19 @@ export ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE_Charlotte="CHARLOTTE_FLOW"
 - `ELEPHANT_PREPARE_USE_BROWSER_<CountyName>`
 - `ELEPHANT_PREPARE_NO_FAST_<CountyName>`
 - `ELEPHANT_PREPARE_NO_CONTINUE_<CountyName>`
+- `ELEPHANT_PREPARE_CONTINUE_BUTTON_<CountyName>`
 - `ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE_<CountyName>`
 - `ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS_<CountyName>`
 
-**Note:** County names in environment variables should match exactly as they appear in `county_jurisdiction` field (case-sensitive). For example, if the JSON contains `"county_jurisdiction": "Alachua"`, use `_Alachua` suffix.
+**Important naming convention for counties with spaces:**
+
+For counties with spaces in their names, replace spaces with underscores in the environment variable name:
+
+- `"Santa Rosa"` → `ELEPHANT_PREPARE_USE_BROWSER_Santa_Rosa`
+- `"Palm Beach"` → `ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE_Palm_Beach`
+- `"San Diego"` → `ELEPHANT_PREPARE_NO_FAST_San_Diego`
+
+The Lambda automatically handles this conversion when matching county names from the data.
 
 #### Browser Flow Template Configuration
 
@@ -194,9 +225,10 @@ For advanced browser automation scenarios, you can provide custom browser flow t
 **General configuration example:**
 
 ```bash
-# Set browser flow template configuration for all counties
+# Set browser flow template configuration and continue button selector for all counties
+export ELEPHANT_PREPARE_CONTINUE_BUTTON=".btn.btn-primary.button-1"
 export ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE="SEARCH_BY_PARCEL_ID"
-export ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS='{"continue_button_selector": ".btn.btn-primary.button-1", "search_form_selector": "#ctlBodyPane_ctl03_ctl01_txtParcelID", "search_result_selector": "#ctlBodyPane_ctl10_ctl01_lstBuildings_ctl00_dynamicBuildingDataRightColumn_divSummary"}'
+export ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS='{"search_form_selector": "#ctlBodyPane_ctl03_ctl01_txtParcelID", "search_result_selector": "#ctlBodyPane_ctl10_ctl01_lstBuildings_ctl00_dynamicBuildingDataRightColumn_divSummary"}'
 
 # Deploy with the configuration
 ./scripts/deploy-infra.sh
@@ -205,12 +237,14 @@ export ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS='{"continue_button_selector": ".
 **County-specific browser flow example:**
 
 ```bash
-# Different counties may need different browser flow templates and selectors
+# Different counties may need different browser flow templates, continue button selectors, and parameters
+export ELEPHANT_PREPARE_CONTINUE_BUTTON_Alachua=".btn.btn-primary.button-1"
 export ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE_Alachua="SEARCH_BY_PARCEL_ID"
-export ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS_Alachua='{"continue_button_selector": ".btn.btn-primary.button-1", "search_form_selector": "#ctlBodyPane_ctl03_ctl01_txtParcelID", "search_result_selector": "#ctlBodyPane_ctl10_ctl01_lstBuildings_ctl00_dynamicBuildingDataRightColumn_divSummary"}'
+export ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS_Alachua='{"search_form_selector": "#ctlBodyPane_ctl03_ctl01_txtParcelID", "search_result_selector": "#ctlBodyPane_ctl10_ctl01_lstBuildings_ctl00_dynamicBuildingDataRightColumn_divSummary"}'
 
+export ELEPHANT_PREPARE_CONTINUE_BUTTON_Sarasota="#submit"
 export ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE_Sarasota="CUSTOM_SEARCH"
-export ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS_Sarasota='{"timeout": 60000, "selector": "#search-box", "submit_button": "#submit"}'
+export ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS_Sarasota='{"timeout": 60000, "selector": "#search-box"}'
 
 # Deploy - each county will use its specific configuration
 ./scripts/deploy-infra.sh
@@ -247,24 +281,22 @@ The Lambda logs will show exactly which configuration is being used for each cou
 
 ```
 📍 Extracting county information from input...
-✅ Detected county: Alachua
+✅ Detected county: Santa Rosa
 Building prepare options...
 Event browser setting: undefined (using: true)
 Checking environment variables for prepare flags:
-🏛️ Looking for county-specific configurations for: Alachua
-  Using county-specific: ELEPHANT_PREPARE_USE_BROWSER_Alachua='true'
+🏛️ Looking for county-specific configurations for: Santa Rosa
+  Using county-specific: ELEPHANT_PREPARE_USE_BROWSER_Santa_Rosa='true'
 ✓ Setting useBrowser: true (Force browser mode)
   Using general: ELEPHANT_PREPARE_NO_FAST='false'
 ✗ Not setting noFast flag (Disable fast mode)
-  Using county-specific: ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE_Alachua='SEARCH_BY_PARCEL_ID'
+  Using county-specific: ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE_Santa_Rosa='SANTA_ROSA_FLOW'
 Browser flow template configuration detected:
-✓ ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE='SEARCH_BY_PARCEL_ID'
-  Using county-specific: ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS_Alachua='continue_button_selector:.btn.btn-primary.button-1,search_form_selector:#ctlBodyPane_ctl03_ctl01_txtParcelID,search_result_selector:#ctlBodyPane_ctl10_ctl01_lstBuildings_ctl00_dynamicBuildingDataRightColumn_divSummary'
+✓ ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE='SANTA_ROSA_FLOW'
+  Using county-specific: ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS_Santa_Rosa='timeout:45000'
 ✓ ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS parsed successfully:
 {
-  "continue_button_selector": ".btn.btn-primary.button-1",
-  "search_form_selector": "#ctlBodyPane_ctl03_ctl01_txtParcelID",
-  "search_result_selector": "#ctlBodyPane_ctl10_ctl01_lstBuildings_ctl00_dynamicBuildingDataRightColumn_divSummary"
+  "timeout": 45000
 }
 Calling prepare() with these options...
 ```
@@ -445,6 +477,70 @@ Options:
 ```
 
 This query tool uses CloudWatch Logs Insights to efficiently analyze large volumes of log data and provides actionable metrics for monitoring post-processing performance across different counties.
+
+## Proxy Rotation
+
+The system supports automatic proxy rotation for the prepare function. This helps distribute load across multiple proxies and prevents rate limiting or IP blocking.
+
+### Setup Proxies
+
+**1. Create a proxy file:**
+
+Create a text file with one proxy per line in format: `username:password@ip:port`
+
+```bash
+# Create proxies.txt
+cat > proxies.txt <<EOF
+user1:password123@192.168.1.100:8080
+user2:password456@192.168.1.101:8080
+user3:password789@192.168.1.102:8080
+EOF
+```
+
+You can use `proxies.example.txt` as a template.
+
+**2. Deploy with proxies:**
+
+```bash
+# Initial deployment with proxies
+export PROXY_FILE=proxies.txt
+./scripts/deploy-infra.sh
+```
+
+**3. Update proxies later (without full deployment):**
+
+```bash
+# Update or add proxies anytime
+./scripts/update-proxies.sh proxies.txt
+```
+
+### How It Works
+
+- Each Lambda invocation automatically selects the **least recently used** proxy
+- Proxies are rotated automatically based on usage timestamps
+- Failed proxies are tracked but remain available for retry
+- No configuration needed - just provide the proxy file
+
+### Verify Proxies
+
+Check which proxies are configured:
+
+```bash
+./scripts/update-proxies.sh --list
+```
+
+### Remove All Proxies
+
+```bash
+./scripts/update-proxies.sh --clear
+```
+
+### Notes
+
+- Empty lines and lines starting with `#` are ignored (comments)
+- Proxy format must be: `username:password@ip:port`
+- Port must be numeric
+- If no proxies are configured, the system works normally without them
 
 That's it — set env vars, deploy, start, monitor, and tune concurrency.
 

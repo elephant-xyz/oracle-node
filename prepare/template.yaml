@@ -83,6 +83,11 @@ Parameters:
       - "true"
       - "false"
 
+  ElephantPrepareContinueButton:
+    Description: CSS selector for continue button in prepare function
+    Type: String
+    Default: ""
+
   ElephantPrepareBrowserFlowTemplate:
     Description: Browser flow template for prepare function (must be provided with ElephantPrepareBrowserFlowParameters)
     Type: String
@@ -209,11 +214,24 @@ Resources:
           ELEPHANT_PREPARE_USE_BROWSER: !Ref ElephantPrepareUseBrowser
           ELEPHANT_PREPARE_NO_FAST: !Ref ElephantPrepareNoFast
           ELEPHANT_PREPARE_NO_CONTINUE: !Ref ElephantPrepareNoContinue
+          ELEPHANT_PREPARE_CONTINUE_BUTTON: !Ref ElephantPrepareContinueButton
           ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE: !Ref ElephantPrepareBrowserFlowTemplate
           ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS: !Ref ElephantPrepareBrowserFlowParameters
+          PROXY_ROTATION_TABLE_NAME: !Ref ProxyRotationTable
       Policies:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
         - arn:aws:iam::aws:policy/AmazonS3FullAccess
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:Query
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+                - dynamodb:UpdateItem
+              Resource:
+                - !GetAtt ProxyRotationTable.Arn
+                - !Sub "${ProxyRotationTable.Arn}/index/*"
 
   UpdaterFunction:
     Type: AWS::Serverless::Function
@@ -304,6 +322,38 @@ Resources:
       MessageRetentionPeriod: 1209600
       VisibilityTimeout: 331
       SqsManagedSseEnabled: true
+      Tags:
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  #####################################################################################################################
+  # DynamoDB Table for Proxy Rotation
+  #####################################################################################################################
+
+  ProxyRotationTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "${AWS::StackName}-ProxyRotation"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: proxyId
+          AttributeType: S
+        - AttributeName: constantKey
+          AttributeType: S
+        - AttributeName: lastUsedTime
+          AttributeType: N
+      KeySchema:
+        - AttributeName: proxyId
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: LastUsedIndex
+          KeySchema:
+            - AttributeName: constantKey
+              KeyType: HASH
+            - AttributeName: lastUsedTime
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
       Tags:
         - Key: Environment
           Value: !Ref EnvironmentName
@@ -581,76 +631,83 @@ Resources:
               ],
               "Default": "ListPageNoStartAfter"
             },
-            "ListPageWithToken": {
-              "Type": "Task",
-              "Resource": "arn:aws:states:::aws-sdk:s3:listObjectsV2",
-              "Parameters": {
-                "Bucket.$": "$.bucketName",
-                "MaxKeys": 1000,
-                "ContinuationToken.$": "$.continuationToken"
+             "ListPageWithToken": {
+               "Type": "Task",
+               "Resource": "arn:aws:states:::aws-sdk:s3:listObjectsV2",
+               "Parameters": {
+                 "Bucket.$": "$.bucketName",
+                 "MaxKeys": 1000,
+                 "ContinuationToken.$": "$.continuationToken"
+               },
+               "ResultPath": "$.list",
+               "Next": "FilterCsvFiles",
+               "Retry": [
+                 { "ErrorEquals": ["States.TaskFailed", "S3.NoSuchBucket", "S3.AccessDenied"], "IntervalSeconds": 2, "MaxAttempts": 3, "BackoffRate": 2.0 }
+               ],
+               "Catch": [
+                 { "ErrorEquals": ["States.ALL"], "ResultPath": "$.errorInfo", "Next": "ReturnEmpty" }
+               ]
+             },
+             "ListPageNoStartAfter": {
+               "Type": "Task",
+               "Resource": "arn:aws:states:::aws-sdk:s3:listObjectsV2",
+               "Parameters": {
+                 "Bucket.$": "$.bucketName",
+                 "MaxKeys": 1000
+               },
+               "ResultPath": "$.list",
+               "Next": "FilterCsvFiles",
+               "Retry": [
+
+                 {
+                   "ErrorEquals": ["States.TaskFailed", "S3.NoSuchBucket", "S3.AccessDenied"],
+                   "IntervalSeconds": 2,
+                   "MaxAttempts": 3,
+                   "BackoffRate": 2.0
+                 }
+               ],
+               "Catch": [
+                 {
+                   "ErrorEquals": ["States.ALL"],
+                   "ResultPath": "$.errorInfo",
+                   "Next": "ReturnEmpty"
+                 }
+               ]
               },
-              "ResultPath": "$.list",
-              "Next": "ProcessOrDone",
-              "Retry": [
-                { "ErrorEquals": ["States.TaskFailed", "S3.NoSuchBucket", "S3.AccessDenied"], "IntervalSeconds": 2, "MaxAttempts": 3, "BackoffRate": 2.0 }
-              ],
-              "Catch": [
-                { "ErrorEquals": ["States.ALL"], "ResultPath": "$.errorInfo", "Next": "ReturnEmpty" }
-              ]
-            },
-            "ListPageNoStartAfter": {
-              "Type": "Task",
-              "Resource": "arn:aws:states:::aws-sdk:s3:listObjectsV2",
-              "Parameters": {
-                "Bucket.$": "$.bucketName",
-                "MaxKeys": 1000
-              },
-              "ResultPath": "$.list",
-              "Next": "ProcessOrDone",
-              "Retry": [
-                {
-                  "ErrorEquals": ["States.TaskFailed", "S3.NoSuchBucket", "S3.AccessDenied"],
-                  "IntervalSeconds": 2,
-                  "MaxAttempts": 3,
-                  "BackoffRate": 2.0
-                }
-              ],
-              "Catch": [
-                {
-                  "ErrorEquals": ["States.ALL"],
-                  "ResultPath": "$.errorInfo",
-                  "Next": "ReturnEmpty"
-                }
-              ]
-            },
-            "ListPageWithStartAfter": {
-              "Type": "Task",
-              "Resource": "arn:aws:states:::aws-sdk:s3:listObjectsV2",
-              "Parameters": {
-                "Bucket.$": "$.bucketName",
-                "MaxKeys": 1000,
-                "StartAfter.$": "$.startAfter"
-              },
-              "ResultPath": "$.list",
-              "Next": "ProcessOrDone",
-              "Retry": [
-                { "ErrorEquals": ["States.TaskFailed", "S3.NoSuchBucket", "S3.AccessDenied"], "IntervalSeconds": 2, "MaxAttempts": 3, "BackoffRate": 2.0 }
-              ],
-              "Catch": [
-                { "ErrorEquals": ["States.ALL"], "ResultPath": "$.errorInfo", "Next": "ReturnEmpty" }
-              ]
-            },
-            "ProcessOrDone": {
-              "Type": "Choice",
-              "Choices": [
-                {
-                  "Variable": "$.list.Contents",
-                  "IsPresent": true,
-                  "Next": "MapObjects"
-                }
-              ],
-              "Default": "ReturnEmpty"
-            },
+             "ListPageWithStartAfter": {
+               "Type": "Task",
+               "Resource": "arn:aws:states:::aws-sdk:s3:listObjectsV2",
+               "Parameters": {
+                 "Bucket.$": "$.bucketName",
+                 "MaxKeys": 1000,
+                 "StartAfter.$": "$.startAfter"
+               },
+               "ResultPath": "$.list",
+               "Next": "FilterCsvFiles",
+               "Retry": [
+                 { "ErrorEquals": ["States.TaskFailed", "S3.NoSuchBucket", "S3.AccessDenied"], "IntervalSeconds": 2, "MaxAttempts": 3, "BackoffRate": 2.0 }
+               ],
+               "Catch": [
+                 { "ErrorEquals": ["States.ALL"], "ResultPath": "$.errorInfo", "Next": "ReturnEmpty" }
+               ]
+             },
+             "FilterCsvFiles": {
+               "Type": "Pass",
+               "QueryLanguage": "JSONata",
+               "Output": "{% { 'bucketName': $states.input.bucketName, 'continuationToken': $states.input.continuationToken, 'startAfter': $states.input.startAfter, 'sqsQueueUrl': $states.input.sqsQueueUrl, 'list': { 'Contents': $states.input.list.Contents[ $substring(Key, $length(Key) - 4) = '.csv' ], 'IsTruncated': $states.input.list.IsTruncated, 'NextContinuationToken': $states.input.list.NextContinuationToken } } %}",
+               "Next": "ProcessOrDone"
+             },
+             "ProcessOrDone": {
+               "Type": "Choice",
+               "Choices": [
+                 {
+                   "Variable": "$.list.Contents",
+                   "IsPresent": true,
+                   "Next": "MapObjects"
+                 }
+               ],
+               "Default": "ReturnEmpty"
+             },
             "MapObjects": {
               "Type": "Map",
               "MaxConcurrency": 0,
@@ -926,3 +983,9 @@ Outputs:
   TransactionsDeadLetterQueueArn:
     Description: ARN of the Transactions Dead Letter Queue
     Value: !GetAtt TransactionsDeadLetterQueue.Arn
+  ProxyRotationTableName:
+    Description: Name of the Proxy Rotation DynamoDB table
+    Value: !Ref ProxyRotationTable
+  ProxyRotationTableArn:
+    Description: ARN of the Proxy Rotation DynamoDB table
+    Value: !GetAtt ProxyRotationTable.Arn
