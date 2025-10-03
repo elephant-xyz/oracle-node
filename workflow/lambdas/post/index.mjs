@@ -595,7 +595,10 @@ async function uploadHashOutputs({ filesForIpfs, tmpDir, log, pinataJwt }) {
     const outputBaseUri = requireEnv("OUTPUT_BASE_URI");
     const { bucket: outputBucket } = parseS3Uri(outputBaseUri);
 
-    log("info", "s3_upload_combined_start", { bucket: outputBucket, key: s3Key });
+    log("info", "s3_upload_combined_start", {
+      bucket: outputBucket,
+      key: s3Key,
+    });
     const combinedZipContent = await fs.readFile(combinedZipPath);
     await s3.send(
       new PutObjectCommand({
@@ -629,7 +632,6 @@ async function uploadHashOutputs({ filesForIpfs, tmpDir, log, pinataJwt }) {
       });
       throw new Error(`Upload failed: ${uploadResult.errorMessage}`);
     }
-
   } finally {
     // 6. Delete the temp directory
     try {
@@ -688,7 +690,7 @@ export const handler = async (event) => {
   await downloadS3Object(
     parseS3Uri(seedZipS3),
     seedZipLocal,
-    () => { }, // No logging yet
+    () => {}, // No logging yet
   );
 
   const countyName = await extractCountyName(seedZipLocal, tmp);
@@ -803,6 +805,6 @@ export const handler = async (event) => {
   } finally {
     try {
       if (tmp) await fs.rm(tmp, { recursive: true, force: true });
-    } catch { }
+    } catch {}
   }
 };
