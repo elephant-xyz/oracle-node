@@ -631,76 +631,83 @@ Resources:
               ],
               "Default": "ListPageNoStartAfter"
             },
-            "ListPageWithToken": {
-              "Type": "Task",
-              "Resource": "arn:aws:states:::aws-sdk:s3:listObjectsV2",
-              "Parameters": {
-                "Bucket.$": "$.bucketName",
-                "MaxKeys": 1000,
-                "ContinuationToken.$": "$.continuationToken"
+             "ListPageWithToken": {
+               "Type": "Task",
+               "Resource": "arn:aws:states:::aws-sdk:s3:listObjectsV2",
+               "Parameters": {
+                 "Bucket.$": "$.bucketName",
+                 "MaxKeys": 1000,
+                 "ContinuationToken.$": "$.continuationToken"
+               },
+               "ResultPath": "$.list",
+               "Next": "FilterCsvFiles",
+               "Retry": [
+                 { "ErrorEquals": ["States.TaskFailed", "S3.NoSuchBucket", "S3.AccessDenied"], "IntervalSeconds": 2, "MaxAttempts": 3, "BackoffRate": 2.0 }
+               ],
+               "Catch": [
+                 { "ErrorEquals": ["States.ALL"], "ResultPath": "$.errorInfo", "Next": "ReturnEmpty" }
+               ]
+             },
+             "ListPageNoStartAfter": {
+               "Type": "Task",
+               "Resource": "arn:aws:states:::aws-sdk:s3:listObjectsV2",
+               "Parameters": {
+                 "Bucket.$": "$.bucketName",
+                 "MaxKeys": 1000
+               },
+               "ResultPath": "$.list",
+               "Next": "FilterCsvFiles",
+               "Retry": [
+
+                 {
+                   "ErrorEquals": ["States.TaskFailed", "S3.NoSuchBucket", "S3.AccessDenied"],
+                   "IntervalSeconds": 2,
+                   "MaxAttempts": 3,
+                   "BackoffRate": 2.0
+                 }
+               ],
+               "Catch": [
+                 {
+                   "ErrorEquals": ["States.ALL"],
+                   "ResultPath": "$.errorInfo",
+                   "Next": "ReturnEmpty"
+                 }
+               ]
               },
-              "ResultPath": "$.list",
-              "Next": "ProcessOrDone",
-              "Retry": [
-                { "ErrorEquals": ["States.TaskFailed", "S3.NoSuchBucket", "S3.AccessDenied"], "IntervalSeconds": 2, "MaxAttempts": 3, "BackoffRate": 2.0 }
-              ],
-              "Catch": [
-                { "ErrorEquals": ["States.ALL"], "ResultPath": "$.errorInfo", "Next": "ReturnEmpty" }
-              ]
-            },
-            "ListPageNoStartAfter": {
-              "Type": "Task",
-              "Resource": "arn:aws:states:::aws-sdk:s3:listObjectsV2",
-              "Parameters": {
-                "Bucket.$": "$.bucketName",
-                "MaxKeys": 1000
-              },
-              "ResultPath": "$.list",
-              "Next": "ProcessOrDone",
-              "Retry": [
-                {
-                  "ErrorEquals": ["States.TaskFailed", "S3.NoSuchBucket", "S3.AccessDenied"],
-                  "IntervalSeconds": 2,
-                  "MaxAttempts": 3,
-                  "BackoffRate": 2.0
-                }
-              ],
-              "Catch": [
-                {
-                  "ErrorEquals": ["States.ALL"],
-                  "ResultPath": "$.errorInfo",
-                  "Next": "ReturnEmpty"
-                }
-              ]
-            },
-            "ListPageWithStartAfter": {
-              "Type": "Task",
-              "Resource": "arn:aws:states:::aws-sdk:s3:listObjectsV2",
-              "Parameters": {
-                "Bucket.$": "$.bucketName",
-                "MaxKeys": 1000,
-                "StartAfter.$": "$.startAfter"
-              },
-              "ResultPath": "$.list",
-              "Next": "ProcessOrDone",
-              "Retry": [
-                { "ErrorEquals": ["States.TaskFailed", "S3.NoSuchBucket", "S3.AccessDenied"], "IntervalSeconds": 2, "MaxAttempts": 3, "BackoffRate": 2.0 }
-              ],
-              "Catch": [
-                { "ErrorEquals": ["States.ALL"], "ResultPath": "$.errorInfo", "Next": "ReturnEmpty" }
-              ]
-            },
-            "ProcessOrDone": {
-              "Type": "Choice",
-              "Choices": [
-                {
-                  "Variable": "$.list.Contents",
-                  "IsPresent": true,
-                  "Next": "MapObjects"
-                }
-              ],
-              "Default": "ReturnEmpty"
-            },
+             "ListPageWithStartAfter": {
+               "Type": "Task",
+               "Resource": "arn:aws:states:::aws-sdk:s3:listObjectsV2",
+               "Parameters": {
+                 "Bucket.$": "$.bucketName",
+                 "MaxKeys": 1000,
+                 "StartAfter.$": "$.startAfter"
+               },
+               "ResultPath": "$.list",
+               "Next": "FilterCsvFiles",
+               "Retry": [
+                 { "ErrorEquals": ["States.TaskFailed", "S3.NoSuchBucket", "S3.AccessDenied"], "IntervalSeconds": 2, "MaxAttempts": 3, "BackoffRate": 2.0 }
+               ],
+               "Catch": [
+                 { "ErrorEquals": ["States.ALL"], "ResultPath": "$.errorInfo", "Next": "ReturnEmpty" }
+               ]
+             },
+             "FilterCsvFiles": {
+               "Type": "Pass",
+               "QueryLanguage": "JSONata",
+               "Output": "{% { 'bucketName': $states.input.bucketName, 'continuationToken': $states.input.continuationToken, 'startAfter': $states.input.startAfter, 'sqsQueueUrl': $states.input.sqsQueueUrl, 'list': { 'Contents': $states.input.list.Contents[ $substring(Key, $length(Key) - 4) = '.csv' ], 'IsTruncated': $states.input.list.IsTruncated, 'NextContinuationToken': $states.input.list.NextContinuationToken } } %}",
+               "Next": "ProcessOrDone"
+             },
+             "ProcessOrDone": {
+               "Type": "Choice",
+               "Choices": [
+                 {
+                   "Variable": "$.list.Contents",
+                   "IsPresent": true,
+                   "Next": "MapObjects"
+                 }
+               ],
+               "Default": "ReturnEmpty"
+             },
             "MapObjects": {
               "Type": "Map",
               "MaxConcurrency": 0,
