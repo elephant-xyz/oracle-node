@@ -625,6 +625,52 @@ export const handler = async (event) => {
       );
     }
 
+    // Check for browser flow file in S3 (county-specific)
+    const environmentBucket = process.env.ENVIRONMENT_BUCKET;
+    if (environmentBucket && countyName) {
+      const browserFlowS3Key = `browser-flows/${countyName}.json`;
+
+      try {
+        console.log(
+          `Checking for browser flow file: s3://${environmentBucket}/${browserFlowS3Key}`,
+        );
+
+        const browserFlowResp = await s3.send(
+          new GetObjectCommand({
+            Bucket: environmentBucket,
+            Key: browserFlowS3Key,
+          }),
+        );
+
+        const browserFlowBytes =
+          await browserFlowResp.Body?.transformToByteArray();
+        if (!browserFlowBytes) {
+          throw new Error("Failed to download browser flow file body");
+        }
+
+        const browserFlowFilePath = path.join(tempDir, "browser-flow.json");
+        await fs.writeFile(browserFlowFilePath, Buffer.from(browserFlowBytes));
+        prepareOptions.browserFlowFile = browserFlowFilePath;
+        console.log(
+          `✓ Browser flow file downloaded and set for county ${countyName}: ${browserFlowFilePath}`,
+        );
+      } catch (downloadError) {
+        // File not found or other error - this is not critical, just log it
+        if (
+          downloadError instanceof Error &&
+          downloadError.name === "NoSuchKey"
+        ) {
+          console.log(
+            `No browser flow file found for county ${countyName}, continuing without it`,
+          );
+        } else {
+          console.error(
+            `Failed to download browser flow file for county ${countyName}: ${downloadError instanceof Error ? downloadError.message : String(downloadError)}`,
+          );
+        }
+      }
+    }
+
     // Handle browser flow template configuration with county-specific lookup
     const browserFlowTemplate = getEnvWithCountyFallback(
       "ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE",

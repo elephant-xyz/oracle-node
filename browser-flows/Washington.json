@@ -1,0 +1,65 @@
+{
+  "starts_at": "open_page",
+  "states": {
+    "open_page": {
+      "type": "open_page",
+      "input": {
+        "url": "{{=it.url}}",
+        "timeout": 30000,
+        "wait_until": "domcontentloaded"
+      },
+      "next": "wait_for_continue_button"
+    },
+    "wait_for_continue_button": {
+      "type": "wait_for_selector",
+      "input": {
+        "selector": ".btn.btn-primary.button-1",
+        "timeout": 15000,
+        "visible": true
+      },
+      "next": "click_continue_button"
+    },
+    "click_continue_button": {
+      "type": "click",
+      "input": {
+        "selector": ".btn.btn-primary.button-1"
+      },
+      "next": "wait_for_search_form"
+    },
+    "wait_for_search_form": {
+      "type": "wait_for_selector",
+      "input": {
+        "selector": "#ctlBodyPane_ctl02_ctl01_txtParcelID",
+        "timeout": 30000,
+        "visible": true
+      },
+      "next": "enter_parcel_id"
+    },
+    "enter_parcel_id": {
+      "type": "type",
+      "input": {
+        "selector": "#ctlBodyPane_ctl02_ctl01_txtParcelID",
+        "value": "{{=it.request_identifier}}",
+        "clear": true,
+        "delay": 100
+      },
+      "next": "submit_search"
+    },
+    "submit_search": {
+      "type": "keyboard_press",
+      "input": {
+        "key": "Enter"
+      },
+      "next": "wait_for_results"
+    },
+    "wait_for_results": {
+      "type": "wait_for_selector",
+      "input": {
+        "selector": "#ctlBodyPane_ctl00_mSection",
+        "timeout": 60000,
+        "visible": true
+      },
+      "end": true
+    }
+  }
+}

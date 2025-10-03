@@ -95,6 +95,28 @@ export ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS=""  # Browser flow parameters as
 - When using keystore mode, you don't need to provide: `ELEPHANT_DOMAIN`, `ELEPHANT_API_KEY`, `ELEPHANT_ORACLE_KEY_ID`, or `ELEPHANT_FROM_ADDRESS`
 - To create a keystore file, see the [Elephant CLI documentation on encrypted JSON keystores](https://github.com/elephant-xyz/elephant-cli?tab=readme-ov-file#encrypted-json-keystore)
 
+**Browser Flow Files (Optional):**
+
+For complex browser automation scenarios, you can provide county-specific browser flow JSON files:
+
+1. Add JSON files named `<CountyName>.json` (e.g., `Broward.json`, `Miami-Dade.json`) to the `browser-flows/` directory in the repository root
+2. These files are automatically uploaded to S3 during deployment
+3. The Lambda function will automatically download and use the appropriate flow file based on the county being processed
+
+Example structure:
+
+```
+oracle-node/
+├── browser-flows/
+│   ├── Broward.json
+│   ├── Miami-Dade.json
+│   └── Palm-Beach.json
+├── transform/
+└── ...
+```
+
+The browser flow file is passed to the prepare function as the `browserFlowFile` parameter and is automatically cleaned up after use.
+
 Put your transform files under `transform/` (if applicable).
 
 ### 2) Deploy infrastructure
