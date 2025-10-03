@@ -1,0 +1,14 @@
+{
+  "compilerOptions": {
+    "module": "esnext",
+    "target": "es2022",
+    "moduleResolution": "nodenext",
+    "checkJs": true,
+    "strict": true,
+    "types": []
+  },
+  "include": ["*.mjs", "*.d.ts", "transform/**/*.cjs"],
+  "exclude": ["node_modules"]
+}
+
+

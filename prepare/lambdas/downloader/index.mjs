@@ -7,6 +7,7 @@ import { promises as fs } from "fs";
 import path from "path";
 import { prepare } from "@elephant-xyz/cli/lib";
 import { networkInterfaces } from "os";
+// @ts-ignore - optional at runtime
 import AdmZip from "adm-zip";
 
 const RE_S3PATH = /^s3:\/\/([^/]+)\/(.*)$/i;
@@ -194,7 +195,7 @@ export const handler = async (event) => {
     console.log("📥 Starting S3 download...");
     const s3DownloadStart = Date.now();
 
-    const inputZip = path.join(tempDir, path.basename(key));
+    const downloadedPath = path.join(tempDir, path.basename(key));
     const getResp = await s3.send(
       new GetObjectCommand({ Bucket: bucket, Key: key }),
     );
@@ -202,7 +203,19 @@ export const handler = async (event) => {
     if (!inputBytes) {
       throw new Error("Failed to download input object body");
     }
-    await fs.writeFile(inputZip, Buffer.from(inputBytes));
+    await fs.writeFile(downloadedPath, Buffer.from(inputBytes));
+
+    // If the input is a CSV (not a ZIP), wrap it into a ZIP so prepare() can consume it
+    let inputZip = downloadedPath;
+    if (!/\.zip$/i.test(downloadedPath)) {
+      console.log("Input appears to be a CSV or non-zip; wrapping into a ZIP for prepare()");
+      const csvZip = new AdmZip();
+      const csvBuf = await fs.readFile(downloadedPath);
+      const csvBase = path.basename(downloadedPath);
+      csvZip.addFile(csvBase, csvBuf);
+      inputZip = path.join(tempDir, "prepare-input.zip");
+      await fs.writeFile(inputZip, csvZip.toBuffer());
+    }
 
     const s3DownloadDuration = Date.now() - s3DownloadStart;
     console.log(

@@ -51,6 +51,10 @@ Parameters:
     Description: Name for the Step Functions SQS trigger queue
     Type: String
     Default: elephant-workflow-queue
+  LeePermitsWorkflowQueueName:
+    Description: Name for the lee-permits Step Functions SQS trigger queue
+    Type: String
+    Default: elephant-lee-permits-queue
   WorkflowStarterReservedConcurrency:
     Description: Max concurrent SQS messages to process via EventSourceMapping ScalingConfig
     Type: Number
@@ -291,6 +295,56 @@ Resources:
         - Key: Environment
           Value: !Ref EnvironmentName
 
+  LeePermitsWorkflowSqsQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Ref LeePermitsWorkflowQueueName
+      VisibilityTimeout: 331
+      MessageRetentionPeriod: 1209600
+      SqsManagedSseEnabled: true
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt LeePermitsWorkflowDeadLetterQueue.Arn
+        maxReceiveCount: 3
+      Tags:
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  LeePermitsWorkflowDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      MessageRetentionPeriod: 1209600
+      VisibilityTimeout: 331
+      SqsManagedSseEnabled: true
+      Tags:
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  # Split Permits SQS (primary + DLQ)
+  SplitPermitsDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: elephant-split-permits-dead-letter-queue
+      MessageRetentionPeriod: 1209600
+      VisibilityTimeout: 331
+      SqsManagedSseEnabled: true
+      Tags:
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  SplitPermitsSqsQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: elephant-split-permits
+      VisibilityTimeout: 331
+      MessageRetentionPeriod: 1209600
+      SqsManagedSseEnabled: true
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt SplitPermitsDeadLetterQueue.Arn
+        maxReceiveCount: 3
+      Tags:
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
   TransactionsSqsQueue:
     Type: AWS::SQS::Queue
     Properties:
@@ -439,6 +493,36 @@ Resources:
           ELEPHANT_PINATA_JWT: !Ref ElephantPinataJwt
           TRANSFORM_S3_PREFIX: !Ref TransformS3Prefix
 
+  # Post without seed hashing/combination
+  WorkflowPostProcessorNoSeedFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Architectures:
+        - arm64
+      MemorySize: 512
+      Timeout: 180
+      EphemeralStorage:
+        Size: 2048
+      CodeUri: ../workflow/lambdas/post-no-seed
+      Handler: index.handler
+      Description: "Performs county transform and hash only (no seed combine)"
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - S3CrudPolicy:
+            BucketName: !Ref EnvironmentBucket
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+      Environment:
+        Variables:
+          OUTPUT_BASE_URI: !Sub "s3://${EnvironmentBucket}/outputs"
+          ELEPHANT_DOMAIN: !Ref ElephantDomain
+          ELEPHANT_API_KEY: !Ref ElephantApiKey
+          ELEPHANT_ORACLE_KEY_ID: !Ref ElephantOracleKeyId
+          ELEPHANT_FROM_ADDRESS: !Ref ElephantFromAddress
+          ELEPHANT_RPC_URL: !Ref ElephantRpcUrl
+          ELEPHANT_PINATA_JWT: !Ref ElephantPinataJwt
+          TRANSFORM_S3_PREFIX: !Ref TransformS3Prefix
+          ELEPHANT_PROPERTY_IMPROVEMENT: "true"
+
   #####################################################################################################################
   # Express Step Functions State Machine (separate definition file)
   #####################################################################################################################
@@ -465,6 +549,298 @@ Resources:
         Level: ALL
       Tracing:
         Enabled: true
+
+  # Minimal Express workflow: Downloader -> Post -> Queue to Submit (no Pre, no requeue)
+  ElephantExpressDownloaderPostStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Name: ExlphanExpressFlowPermitDetails
+      Type: EXPRESS
+      Definition:
+        Comment: "Minimal workflow: downloader -> post -> submit"
+        StartAt: Prepare
+        States:
+          Prepare:
+            Type: Task
+            Resource: arn:aws:states:::lambda:invoke
+            Parameters:
+              FunctionName: ${DownloaderFunction}
+              Payload:
+                input_s3_uri.$: "States.Format('s3://{}/{}', $.message.s3.bucket.name, $.message.s3.object.key)"
+                browser: true
+            ResultSelector:
+              output_s3_uri.$: $.Payload.output_s3_uri
+            ResultPath: $.prepare
+            Next: Postprocess
+            Retry:
+              - ErrorEquals:
+                  - Lambda.ServiceException
+                  - Lambda.AWSLambdaException
+                  - Lambda.SdkClientException
+                IntervalSeconds: 5
+                MaxAttempts: 3
+                BackoffRate: 2
+            Catch:
+              - ErrorEquals: [ States.ALL ]
+                ResultPath: $.error
+                Next: SendToSplitPermitsDLQ
+          Postprocess:
+            Type: Task
+            Resource: arn:aws:states:::lambda:invoke
+            Parameters:
+              FunctionName: ${WorkflowPostProcessorNoSeedFunction}
+              Payload:
+                s3.$: $.message.s3
+                prepare.$: $.prepare
+                # no seed_output_s3_uri needed
+            ResultSelector:
+              items.$: $.Payload.transactionItems
+            ResultPath: $.post
+            Next: QueueForTheSubmit
+            Retry:
+              - ErrorEquals:
+                  - Lambda.ServiceException
+                  - Lambda.AWSLambdaException
+                  - Lambda.SdkClientException
+                IntervalSeconds: 5
+                MaxAttempts: 2
+                BackoffRate: 2
+            Catch:
+              - ErrorEquals: [ States.ALL ]
+                ResultPath: $.error
+                Next: SendToSplitPermitsDLQ
+          QueueForTheSubmit:
+            Type: Task
+            Resource: arn:aws:states:::sqs:sendMessage
+            Parameters:
+              QueueUrl: ${TransactionsSqsQueueUrl}
+              MessageBody.$: States.JsonToString($.post.items)
+            ResultPath: null
+            End: true
+          SendToSplitPermitsDLQ:
+            Type: Task
+            Resource: arn:aws:states:::sqs:sendMessage
+            Parameters:
+              QueueUrl: ${SplitPermitsDeadLetterQueueUrl}
+              MessageBody.$: States.JsonToString($.message)
+            ResultPath: null
+            Next: FailRuntime
+          FailRuntime:
+            Type: Fail
+            Error: WorkflowFailed
+            Cause: Post or Prepare failed; message sent to split-permits DLQ
+      DefinitionSubstitutions:
+        WorkflowCsvZipperFunction: !GetAtt WorkflowCsvZipperFunction.Arn
+        DownloaderFunction: !GetAtt DownloaderFunction.Arn
+        WorkflowPostProcessorNoSeedFunction: !GetAtt WorkflowPostProcessorNoSeedFunction.Arn
+        TransactionsSqsQueueUrl: !Ref TransactionsSqsQueue
+        SplitPermitsDeadLetterQueueUrl: !Ref SplitPermitsDeadLetterQueue
+      Role: !GetAtt ElephantExpressStateMachineRole.Arn
+      Logging:
+        Destinations:
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !GetAtt ElephantExpressLogGroup.Arn
+        IncludeExecutionData: true
+        Level: ALL
+      Tracing:
+        Enabled: true
+
+  # Starter for Split Permits queue -> Minimal workflow
+  WorkflowStarterSplitPermitsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Architectures:
+        - arm64
+      MemorySize: 128
+      Timeout: 330
+      CodeUri: ../workflow/lambdas/starter
+      Handler: index.handler
+      Description: "SQS-triggered starter for Downloader->Post->Submit workflow (split permits)"
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - states:StartSyncExecution
+              Resource: !Sub "arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:ExlphanExpressFlowPermitDetails"
+      Environment:
+        Variables:
+          STATE_MACHINE_ARN: !Sub "arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:ExlphanExpressFlowPermitDetails"
+      Events:
+        SqsEventSplitPermits:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt SplitPermitsSqsQueue.Arn
+            BatchSize: 1
+            MaximumBatchingWindowInSeconds: 0
+            ScalingConfig:
+              MaximumConcurrency: !Ref WorkflowStarterReservedConcurrency
+
+  # Lee Permits dedicated Post Lambda
+  WorkflowPostProcessorLeePermitsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Architectures:
+        - arm64
+      MemorySize: 512
+      Timeout: 180
+      EphemeralStorage:
+        Size: 2048
+      CodeUri: ../workflow/lambdas/post-lee-permits
+      Handler: index.handler
+      Description: "Performs lee-permits transform, hash, upload, and submit"
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - S3CrudPolicy:
+            BucketName: !Ref EnvironmentBucket
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+      Environment:
+        Variables:
+          OUTPUT_BASE_URI: !Sub "s3://${EnvironmentBucket}/outputs"
+          ELEPHANT_DOMAIN: !Ref ElephantDomain
+          ELEPHANT_API_KEY: !Ref ElephantApiKey
+          ELEPHANT_ORACLE_KEY_ID: !Ref ElephantOracleKeyId
+          ELEPHANT_FROM_ADDRESS: !Ref ElephantFromAddress
+          ELEPHANT_RPC_URL: !Ref ElephantRpcUrl
+          ELEPHANT_PINATA_JWT: !Ref ElephantPinataJwt
+          TRANSFORM_S3_PREFIX: !Ref TransformS3Prefix
+
+  # CSV Zipper (converts CSV at s3:// to prepare-input.zip and sets prefixes)
+  WorkflowCsvZipperFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Architectures:
+        - arm64
+      MemorySize: 256
+      Timeout: 60
+      EphemeralStorage:
+        Size: 1024
+      CodeUri: ../workflow/lambdas/csv-zipper
+      Handler: index.handler
+      Description: "Zips CSV into prepare-input.zip and returns prepare/output prefixes"
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - S3CrudPolicy:
+            BucketName: !Ref EnvironmentBucket
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+      Environment:
+        Variables:
+          OUTPUT_BASE_URI: !Sub "s3://${EnvironmentBucket}/outputs"
+
+  # Lee Permits dedicated Starter (wired to lee-permits queue)
+  WorkflowStarterLeePermitsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Architectures:
+        - arm64
+      MemorySize: 128
+      Timeout: 330
+      CodeUri: ../workflow/lambdas/starter
+      Handler: index.handler
+      Description: "SQS-triggered starter for Lee Permits workflow"
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - states:StartSyncExecution
+              Resource: !Sub "arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:${WorkflowStateMachineName}-LeePermits"
+      Environment:
+        Variables:
+          STATE_MACHINE_ARN: !Sub "arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:${WorkflowStateMachineName}-LeePermits"
+      Events:
+        SqsEventLeePermits:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt LeePermitsWorkflowSqsQueue.Arn
+            BatchSize: 1
+            MaximumBatchingWindowInSeconds: 0
+            ScalingConfig:
+              MaximumConcurrency: !Ref WorkflowStarterReservedConcurrency
+
+  # Lee Permits Express State Machine (reuse definition with different substitutions)
+  ElephantExpressLeePermitsStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Name: !Sub "${WorkflowStateMachineName}-LeePermits"
+      Type: EXPRESS
+      Definition:
+        Comment: Lee Permits post-only workflow
+        StartAt: Postprocess
+        States:
+          Postprocess:
+            Type: Task
+            Resource: arn:aws:states:::lambda:invoke
+            Parameters:
+              FunctionName: ${WorkflowPostProcessorLeePermitsFunction}
+              Payload:
+                s3.$: $.message.s3
+            ResultSelector:
+              items.$: $.Payload.transactionItems
+            ResultPath: $.post
+            Next: QueueForTheSubmit
+            Retry:
+              - ErrorEquals:
+                  - Lambda.ServiceException
+                  - Lambda.AWSLambdaException
+                  - Lambda.SdkClientException
+                IntervalSeconds: 5
+                MaxAttempts: 2
+                BackoffRate: 2
+            Catch:
+              - ErrorEquals: [ States.ALL ]
+                ResultPath: $.error
+                Next: QueueForTheSubmit
+          QueueForTheSubmit:
+            Type: Task
+            Resource: arn:aws:states:::sqs:sendMessage
+            Parameters:
+              QueueUrl: ${TransactionsSqsQueueUrl}
+              MessageBody.$: States.JsonToString($.post.items)
+            ResultPath: null
+            End: true
+      DefinitionSubstitutions:
+        WorkflowPostProcessorLeePermitsFunction: !GetAtt WorkflowPostProcessorLeePermitsFunction.Arn
+        TransactionsSqsQueueUrl: !Ref TransactionsSqsQueue
+      Role: !GetAtt ElephantExpressStateMachineRole.Arn
+      Logging:
+        Destinations:
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !GetAtt ElephantExpressLogGroup.Arn
+        IncludeExecutionData: true
+        Level: ALL
+      Tracing:
+        Enabled: true
+
+  # Wrapper SFN to load S3 outputs to lee-permits queue using existing S3ToSqsStateMachine
+  LeePermitsLoadOutputsStateMachine:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: !Sub "${AWS::StackName}-LeePermits-LoadOutputs"
+      RoleArn: !GetAtt StepFunctionRole.Arn
+      DefinitionString: !Sub |
+        {
+          "Comment": "Load s3://EnvironmentBucket/outputs/*/output.zip to LeePermits queue",
+          "StartAt": "StartLoader",
+          "States": {
+            "StartLoader": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::states:startExecution.sync",
+              "Parameters": {
+                "StateMachineArn": "${S3ToSqsStateMachine}",
+                "Input": {
+                  "bucketName": "${EnvironmentBucket}",
+                  "sqsQueueUrl": "${LeePermitsWorkflowSqsQueue}"
+                }
+              },
+              "End": true
+            }
+          }
+        }
 
   ElephantExpressLogGroup:
     Type: AWS::Logs::LogGroup
@@ -495,13 +871,21 @@ Resources:
                   - !GetAtt WorkflowPreProcessorFunction.Arn
                   - !GetAtt DownloaderFunction.Arn
                   - !GetAtt WorkflowPostProcessorFunction.Arn
+                  - !GetAtt WorkflowPostProcessorLeePermitsFunction.Arn
+                  - !GetAtt WorkflowPostProcessorNoSeedFunction.Arn
+                  - !GetAtt WorkflowCsvZipperFunction.Arn
+                  - !GetAtt SubmitterFunction.Arn
               - Effect: Allow
                 Action:
                   - sqs:SendMessage
                 Resource:
                   - !GetAtt WorkflowSqsQueue.Arn
+                  - !GetAtt LeePermitsWorkflowSqsQueue.Arn
                   - !GetAtt WorkflowDeadLetterQueue.Arn
+                  - !GetAtt LeePermitsWorkflowDeadLetterQueue.Arn
                   - !GetAtt TransactionsSqsQueue.Arn
+                  - !GetAtt SplitPermitsSqsQueue.Arn
+                  - !GetAtt SplitPermitsDeadLetterQueue.Arn
               - Effect: Allow
                 Action:
                   - logs:CreateLogDelivery
@@ -552,6 +936,8 @@ Resources:
                 Resource:
                   - !GetAtt MwaaSqsQueue.Arn
                   - !GetAtt WorkflowSqsQueue.Arn
+                  - !GetAtt LeePermitsWorkflowSqsQueue.Arn
+                  - !GetAtt SplitPermitsSqsQueue.Arn
               - Effect: Allow
                 Action:
                   - states:StartExecution
@@ -593,6 +979,7 @@ Resources:
               "Parameters": {
                 "Bucket.$": "$.bucketName",
                 "MaxKeys": 1000,
+                "Prefix.$": "$.prefix",
                 "ContinuationToken.$": "$.continuationToken"
               },
               "ResultPath": "$.list",
@@ -609,7 +996,8 @@ Resources:
               "Resource": "arn:aws:states:::aws-sdk:s3:listObjectsV2",
               "Parameters": {
                 "Bucket.$": "$.bucketName",
-                "MaxKeys": 1000
+                "MaxKeys": 1000,
+                "Prefix.$": "$.prefix"
               },
               "ResultPath": "$.list",
               "Next": "ProcessOrDone",
@@ -635,6 +1023,7 @@ Resources:
               "Parameters": {
                 "Bucket.$": "$.bucketName",
                 "MaxKeys": 1000,
+                "Prefix.$": "$.prefix",
                 "StartAfter.$": "$.startAfter"
               },
               "ResultPath": "$.list",
@@ -769,6 +1158,7 @@ Resources:
               "Parameters": {
                 "bucketName.$": "$.bucketName",
                 "sqsQueueUrl.$": "$.sqsQueueUrl",
+                "prefix.$": "$.prefix",
                 "continuationToken.$": "$.continuationToken",
                 "loopCount": 0
               },
@@ -780,6 +1170,7 @@ Resources:
               "Parameters": {
                 "bucketName.$": "$.bucketName",
                 "sqsQueueUrl.$": "$.sqsQueueUrl",
+                "prefix.$": "$.prefix",
                 "continuationToken": null,
                 "loopCount": 0
               },
@@ -794,6 +1185,7 @@ Resources:
                 "Input": {
                   "bucketName.$": "$.ctx.bucketName",
                   "sqsQueueUrl.$": "$.ctx.sqsQueueUrl",
+                  "prefix.$": "$.ctx.prefix",
                   "continuationToken.$": "$.ctx.continuationToken"
                 }
               },
@@ -815,6 +1207,7 @@ Resources:
                 "ctx": {
                   "bucketName.$": "$.ctx.bucketName",
                   "sqsQueueUrl.$": "$.ctx.sqsQueueUrl",
+                  "prefix.$": "$.ctx.prefix",
                   "continuationToken.$": "$.child.parsed.nextToken",
                   "loopCount.$": "States.MathAdd($.ctx.loopCount, 1)"
                 },
@@ -852,6 +1245,7 @@ Resources:
                 "Input": {
                   "bucketName.$": "$.loop.ctx.bucketName",
                   "sqsQueueUrl.$": "$.loop.ctx.sqsQueueUrl",
+                  "prefix.$": "$.loop.ctx.prefix",
                   "continuationToken.$": "$.loop.ctx.continuationToken"
                 }
               },
@@ -905,6 +1299,30 @@ Outputs:
   WorkflowQueueArn:
     Description: ARN of the workflow SQS queue
     Value: !GetAtt WorkflowSqsQueue.Arn
+  LeePermitsWorkflowQueueUrl:
+    Description: URL of the lee-permits workflow SQS queue
+    Value: !Ref LeePermitsWorkflowSqsQueue
+  LeePermitsWorkflowQueueArn:
+    Description: ARN of the lee-permits workflow SQS queue
+    Value: !GetAtt LeePermitsWorkflowSqsQueue.Arn
+  LeePermitsWorkflowDeadLetterQueueUrl:
+    Description: URL of the lee-permits workflow Dead Letter Queue
+    Value: !Ref LeePermitsWorkflowDeadLetterQueue
+  LeePermitsWorkflowDeadLetterQueueArn:
+    Description: ARN of the lee-permits workflow Dead Letter Queue
+    Value: !GetAtt LeePermitsWorkflowDeadLetterQueue.Arn
+  SplitPermitsQueueUrl:
+    Description: URL of the split-permits SQS queue
+    Value: !Ref SplitPermitsSqsQueue
+  SplitPermitsQueueArn:
+    Description: ARN of the split-permits SQS queue
+    Value: !GetAtt SplitPermitsSqsQueue.Arn
+  SplitPermitsDeadLetterQueueUrl:
+    Description: URL of the split-permits Dead Letter Queue
+    Value: !Ref SplitPermitsDeadLetterQueue
+  SplitPermitsDeadLetterQueueArn:
+    Description: ARN of the split-permits Dead Letter Queue
+    Value: !GetAtt SplitPermitsDeadLetterQueue.Arn
   ElephantExpressStateMachineArn:
     Description: ARN of the Elephant Express state machine
     Value: !Ref ElephantExpressStateMachine
@@ -914,6 +1332,30 @@ Outputs:
   WorkflowPostProcessorLogGroupName:
     Description: CloudWatch Log Group name for the post processor Lambda function
     Value: !Sub "/aws/lambda/${WorkflowPostProcessorFunction}"
+  ElephantExpressLeePermitsStateMachineArn:
+    Description: ARN of the Lee Permits Express state machine
+    Value: !Ref ElephantExpressLeePermitsStateMachine
+  ElephantExpressLeePermitsStateMachineName:
+    Description: Name of the Lee Permits Express state machine
+    Value: !GetAtt ElephantExpressLeePermitsStateMachine.Name
+  ElephantExpressDownloaderPostStateMachineArn:
+    Description: ARN of the Downloader->Post->Submit Express state machine
+    Value: !Ref ElephantExpressDownloaderPostStateMachine
+  ElephantExpressDownloaderPostStateMachineName:
+    Description: Name of the Downloader->Post->Submit Express state machine
+    Value: !GetAtt ElephantExpressDownloaderPostStateMachine.Name
+  ExlphanExpressFlowPermitDetailsArn:
+    Description: ARN of the ExlphanExpressFlowPermitDetails state machine
+    Value: !Ref ElephantExpressDownloaderPostStateMachine
+  ExlphanExpressFlowPermitDetailsName:
+    Description: Name of the ExlphanExpressFlowPermitDetails state machine
+    Value: !GetAtt ElephantExpressDownloaderPostStateMachine.Name
+  LeePermitsLoadOutputsStateMachineArn:
+    Description: ARN of the Lee Permits loader State Machine
+    Value: !Ref LeePermitsLoadOutputsStateMachine
+  LeePermitsLoadOutputsStateMachineName:
+    Description: Name of the Lee Permits loader State Machine
+    Value: !GetAtt LeePermitsLoadOutputsStateMachine.Name
   WorkflowDeadLetterQueueUrl:
     Description: URL of the Workflow Dead Letter Queue
     Value: !Ref WorkflowDeadLetterQueue
