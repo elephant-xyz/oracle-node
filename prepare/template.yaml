@@ -217,6 +217,7 @@ Resources:
           ELEPHANT_PREPARE_CONTINUE_BUTTON: !Ref ElephantPrepareContinueButton
           ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE: !Ref ElephantPrepareBrowserFlowTemplate
           ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS: !Ref ElephantPrepareBrowserFlowParameters
+          ENVIRONMENT_BUCKET: !Ref EnvironmentBucket
           PROXY_ROTATION_TABLE_NAME: !Ref ProxyRotationTable
       Policies:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
