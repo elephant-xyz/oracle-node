@@ -649,10 +649,7 @@ export const handler = async (event) => {
         }
 
         const browserFlowFilePath = path.join(tempDir, "browser-flow.json");
-        await fs.writeFile(
-          browserFlowFilePath,
-          Buffer.from(browserFlowBytes),
-        );
+        await fs.writeFile(browserFlowFilePath, Buffer.from(browserFlowBytes));
         prepareOptions.browserFlowFile = browserFlowFilePath;
         console.log(
           `✓ Browser flow file downloaded and set for county ${countyName}: ${browserFlowFilePath}`,
