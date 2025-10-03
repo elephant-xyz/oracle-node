@@ -6,6 +6,7 @@ import {
 import { promises as fs } from "fs";
 import path from "path";
 import os from "os";
+import { randomUUID } from "crypto";
 import { transform, validate, hash, upload } from "@elephant-xyz/cli/lib";
 import { parse } from "csv-parse/sync";
 import AdmZip from "adm-zip";
@@ -578,10 +579,33 @@ async function uploadHashOutputs({ filesForIpfs, tmpDir, log, pinataJwt }) {
     const combinedZipPath = path.join(tmpDir, "combined_ipfs_upload.zip");
     log("info", "ipfs_create_combined_zip_start", {});
     const combinedZip = new AdmZip();
+    const dirs = await fs.readdir(extractTempDir, {
+      withFileTypes: true,
+      recursive: true,
+    });
+    log("info", "ipfs_create_combined_zip_start", {
+      dirList: dirs,
+    });
+
     combinedZip.addLocalFolder(extractTempDir);
     await fs.writeFile(combinedZipPath, combinedZip.toBuffer());
-    log("info", "ipfs_create_combined_zip_complete", {});
 
+    // 5. Upload the combined zip to S3
+    const s3Key = `combined-ipfs-upload/${randomUUID()}.zip`;
+    const outputBaseUri = requireEnv("OUTPUT_BASE_URI");
+    const { bucket: outputBucket } = parseS3Uri(outputBaseUri);
+
+    log("info", "s3_upload_combined_start", { bucket: outputBucket, key: s3Key });
+    const combinedZipContent = await fs.readFile(combinedZipPath);
+    await s3.send(
+      new PutObjectCommand({
+        Bucket: outputBucket,
+        Key: s3Key,
+        Body: combinedZipContent,
+      }),
+    );
+    const s3Uri = `s3://${outputBucket}/${s3Key}`;
+    log("info", "s3_upload_combined_complete", { s3_uri: s3Uri });
     // 4. Upload the combined zip
     log("info", "ipfs_upload_combined_start", {});
     const uploadResult = await upload({
@@ -600,12 +624,14 @@ async function uploadHashOutputs({ filesForIpfs, tmpDir, log, pinataJwt }) {
       log("error", "upload_failed", {
         step: "upload",
         operation: "ipfs_upload",
-        error: uploadResult.error,
+        erorrMessage: uploadResult.errorMessage,
+        errors: uploadResult.errors,
       });
-      throw new Error(`Upload failed: ${uploadResult.error}`);
+      throw new Error(`Upload failed: ${uploadResult.errorMessage}`);
     }
+
   } finally {
-    // 5. Delete the temp directory
+    // 6. Delete the temp directory
     try {
       await fs.rm(extractTempDir, { recursive: true, force: true });
     } catch (cleanupError) {
@@ -662,7 +688,7 @@ export const handler = async (event) => {
   await downloadS3Object(
     parseS3Uri(seedZipS3),
     seedZipLocal,
-    () => {}, // No logging yet
+    () => { }, // No logging yet
   );
 
   const countyName = await extractCountyName(seedZipLocal, tmp);
@@ -777,6 +803,6 @@ export const handler = async (event) => {
   } finally {
     try {
       if (tmp) await fs.rm(tmp, { recursive: true, force: true });
-    } catch {}
+    } catch { }
   }
 };
