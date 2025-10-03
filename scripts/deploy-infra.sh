@@ -23,6 +23,7 @@ TRANSFORMS_TARGET_DIR="${WORKFLOW_DIR}/lambdas/post/transforms"
 TRANSFORM_MANIFEST_FILE="${TRANSFORMS_TARGET_DIR}/manifest.json"
 TRANSFORM_PREFIX_KEY="${TRANSFORM_PREFIX_KEY:-transforms}"
 TRANSFORMS_UPLOAD_PENDING=0
+BROWSER_FLOWS_UPLOAD_PENDING=0
 
 mkdir -p "$BUILD_DIR"
 
@@ -258,6 +259,35 @@ upload_transforms_to_s3() {
   info "Transforms uploaded. Prefix: $TRANSFORM_S3_PREFIX_VALUE"
 }
 
+upload_browser_flows_to_s3() {
+  local browser_flows_dir="browser-flows"
+
+  # Check if browser-flows directory exists
+  if [[ ! -d "$browser_flows_dir" ]]; then
+    info "No browser-flows directory found, skipping browser flows upload"
+    return 0
+  fi
+
+  local bucket
+  bucket=$(get_bucket)
+  if [[ -z "$bucket" ]]; then
+    # Bucket doesn't exist yet (first deploy). Will be uploaded after stack creation.
+    BROWSER_FLOWS_UPLOAD_PENDING=1
+    return 0
+  fi
+
+  local s3_prefix="s3://$bucket/browser-flows"
+  info "Syncing browser flows to $s3_prefix"
+
+  # Upload all .json files from browser-flows directory
+  aws s3 sync "$browser_flows_dir" "$s3_prefix" --exclude "*" --include "*.json" --delete || {
+    warn "Failed to sync browser flows to $s3_prefix"
+    return 1
+  }
+
+  info "Browser flows uploaded to: $s3_prefix"
+}
+
 add_transform_prefix_override() {
   if [[ -z "${TRANSFORM_S3_PREFIX_VALUE:-}" ]]; then
     err "Transform S3 prefix value not set; aborting."
@@ -392,6 +422,8 @@ main() {
   compute_param_overrides
   bundle_transforms_for_lambda
   upload_transforms_to_s3
+  upload_browser_flows_to_s3
+
   if (( TRANSFORMS_UPLOAD_PENDING == 0 )); then
     add_transform_prefix_override
   else
@@ -413,6 +445,11 @@ main() {
     compute_param_overrides
     add_transform_prefix_override
     sam_deploy
+  fi
+
+  # Upload browser flows if pending
+  if (( BROWSER_FLOWS_UPLOAD_PENDING == 1 )); then
+    upload_browser_flows_to_s3
   fi
 
   handle_pending_keystore_upload
