@@ -6,6 +6,7 @@ import {
 import { promises as fs } from "fs";
 import path from "path";
 import os from "os";
+import { randomUUID } from "crypto";
 import { transform, validate, hash, upload } from "@elephant-xyz/cli/lib";
 import { parse } from "csv-parse/sync";
 import AdmZip from "adm-zip";
@@ -24,6 +25,10 @@ const transformScriptsManager = createTransformScriptsManager({
 
 /**
  * @typedef {Record<string, string>} CsvRecord
+ */
+
+/**
+ * @typedef {`${string}.zip`} ZipFile
  */
 
 /**
@@ -455,7 +460,7 @@ async function handleValidationFailure({
  * @param {string} params.countyOutZip - Path to the validated county output zip.
  * @param {string} params.tmpDir - Temporary working directory.
  * @param {StructuredLogger} params.log - Structured logger.
- * @returns {Promise<{ propertyCid: string | undefined, seedHashCsv: string, countyHashCsv: string, seedHashZip: string, countyHashZip: string }>}
+ * @returns {Promise<{ propertyCid: string | undefined, seedHashCsv: string, countyHashCsv: string, seedHashZip: ZipFile, countyHashZip: ZipFile }>}
  */
 async function generateHashArtifacts({
   seedZipLocal,
@@ -463,9 +468,13 @@ async function generateHashArtifacts({
   tmpDir,
   log,
 }) {
-  const countyHashZip = path.join(tmpDir, "county_hash.zip");
+  const countyHashZip = /** @type {ZipFile} */ (
+    path.join(tmpDir, "county_hash.zip")
+  );
   const countyHashCsv = path.join(tmpDir, "county_hash.csv");
-  const seedHashZip = path.join(tmpDir, "seed_hash.zip");
+  const seedHashZip = /** @type {ZipFile} */ (
+    path.join(tmpDir, "seed_hash.zip")
+  );
   const seedHashCsv = path.join(tmpDir, "seed_hash.csv");
 
   log("info", "hash_seed_start", { operation: "seed_hash" });
@@ -533,65 +542,77 @@ async function generateHashArtifacts({
 }
 
 /**
- * Upload hash archives to IPFS-compatible endpoint and submission CSV to S3.
+ * Upload hash archives to IPFS-compatible endpoint by combining them into a single archive.
+ * This function extracts each zip file from filesForIpfs into separate subdirectories,
+ * creates a combined zip archive containing all extracted contents, uploads it to IPFS,
+ * and cleans up temporary files.
  *
  * @param {object} params - Upload context.
- * @param {string[]} params.filesForIpfs - Paths to archives uploaded via IPFS helper.
+ * @param {ZipFile[]} params.filesForIpfs - Archive paths that will be extracted and combined for IPFS upload.
  * @param {string} params.tmpDir - Temporary working directory.
  * @param {(level: "info"|"error"|"debug", msg: string, details?: Record<string, unknown>) => void} params.log - Structured logger.
  * @param {string} params.pinataJwt - Pinata authentication token.
- * @param {string} params.combinedCsvPath - Path to the combined CSV file.
- * @param {{ Bucket: string, Key: string }} params.submissionS3Location - Destination S3 details for submission CSV.
  * @returns {Promise<void>}
  */
-async function uploadHashOutputs({
-  filesForIpfs,
-  tmpDir,
-  log,
-  pinataJwt,
-  combinedCsvPath,
-  submissionS3Location,
-}) {
+async function uploadHashOutputs({ filesForIpfs, tmpDir, log, pinataJwt }) {
   log("info", "ipfs_upload_start", { operation: "ipfs_upload" });
   const uploadStart = Date.now();
-  await Promise.all(
-    filesForIpfs.map(async (filePath) => {
-      const fileName = path.basename(filePath);
-      log("info", "ipfs_upload_file_start", { file: fileName });
-      const fileUploadStart = Date.now();
-      const uploadResult = await upload({
-        input: filePath,
-        pinataJwt,
-        cwd: tmpDir,
-      });
-      const fileUploadDuration = Date.now() - fileUploadStart;
-      log("info", "ipfs_upload_file_complete", {
-        file: fileName,
-        duration_ms: fileUploadDuration,
-        duration_seconds: (fileUploadDuration / 1000).toFixed(2),
-      });
-      if (!uploadResult.success) {
-        log("error", "upload_failed", {
-          step: "upload",
-          operation: "ipfs_upload",
-          file: fileName,
-          error: uploadResult.error,
-        });
-        throw new Error(`Upload failed: ${uploadResult.error}`);
-      }
-    }),
-  );
-  const totalUploadDuration = Date.now() - uploadStart;
-  log("info", "ipfs_upload_complete", {
-    operation: "ipfs_upload_total",
-    duration_ms: totalUploadDuration,
-    duration_seconds: (totalUploadDuration / 1000).toFixed(2),
-  });
 
-  const submissionBody = await fs.readFile(combinedCsvPath);
-  await s3.send(
-    new PutObjectCommand({ ...submissionS3Location, Body: submissionBody }),
-  );
+  // 1. Create a temp directory for unzipping
+  const extractTempDir = path.join(tmpDir, "ipfs_upload_temp");
+  await fs.mkdir(extractTempDir, { recursive: true });
+
+  try {
+    // 2. Unzip each file to a separate subdirectory
+    for (const filePath of filesForIpfs) {
+      const fileName = path.basename(filePath, ".zip"); // Remove .zip extension
+      const extractSubDir = path.join(extractTempDir, fileName);
+      await fs.mkdir(extractSubDir, { recursive: true });
+
+      log("info", "ipfs_extract_file_start", { file: fileName });
+      const zip = new AdmZip(await fs.readFile(filePath));
+      zip.extractAllTo(extractSubDir, true);
+      log("info", "ipfs_extract_file_complete", { file: fileName });
+    }
+
+    // 3. Zip the entire temp directory
+    const combinedZipPath = path.join(tmpDir, "combined_ipfs_upload.zip");
+    const combinedZip = new AdmZip();
+    combinedZip.addLocalFolder(extractTempDir);
+    await fs.writeFile(combinedZipPath, combinedZip.toBuffer());
+
+    // 4. Upload the combined zip
+    log("info", "ipfs_upload_combined_start", {});
+    const uploadResult = await upload({
+      input: combinedZipPath,
+      pinataJwt,
+      cwd: tmpDir,
+    });
+    const totalUploadDuration = Date.now() - uploadStart;
+    log("info", "ipfs_upload_complete", {
+      operation: "ipfs_upload_total",
+      duration_ms: totalUploadDuration,
+      duration_seconds: (totalUploadDuration / 1000).toFixed(2),
+    });
+
+    if (!uploadResult.success) {
+      log("error", "upload_failed", {
+        step: "upload",
+        operation: "ipfs_upload",
+        erorrMessage: uploadResult.errorMessage,
+        errors: uploadResult.errors,
+      });
+      throw new Error(`Upload failed: ${uploadResult.errorMessage}`);
+    }
+  } finally {
+    try {
+      await fs.rm(extractTempDir, { recursive: true, force: true });
+    } catch (cleanupError) {
+      log("error", "ipfs_cleanup_failed", {
+        error: String(cleanupError),
+      });
+    }
+  }
 }
 
 /**
@@ -601,7 +622,7 @@ async function uploadHashOutputs({
  * @param {string} params.seedHashCsv - Path to seed hash CSV file.
  * @param {string} params.countyHashCsv - Path to county hash CSV file.
  * @param {string} params.tmpDir - Temporary working directory.
- * @returns {Promise<{ combinedCsvPath: string, transactionItems: CsvRecord[] }>}
+ * @returns {Promise<CsvRecord[]>}
  */
 async function combineAndParseTransactions({
   seedHashCsv,
@@ -615,7 +636,7 @@ async function combineAndParseTransactions({
     skip_empty_lines: true,
     trim: true,
   });
-  return { combinedCsvPath, transactionItems };
+  return transactionItems;
 }
 
 /**
@@ -726,25 +747,16 @@ export const handler = async (event) => {
       log("debug", "property_cid_missing", {});
     }
 
-    const { combinedCsvPath, transactionItems } =
-      await combineAndParseTransactions({
-        seedHashCsv,
-        countyHashCsv,
-        tmpDir: tmp,
-      });
-
-    const submissionS3 = buildSubmissionLocation({
-      outputBaseUri: outputBase,
-      inputS3ObjectKey: event?.s3?.object?.key,
+    const transactionItems = await combineAndParseTransactions({
+      seedHashCsv,
+      countyHashCsv,
+      tmpDir: tmp,
     });
-
     await uploadHashOutputs({
       filesForIpfs: [seedHashZip, countyHashZip],
       tmpDir: tmp,
       log,
       pinataJwt: requireEnv("ELEPHANT_PINATA_JWT"),
-      combinedCsvPath,
-      submissionS3Location: submissionS3,
     });
     const totalOperationDuration = Date.now() - Date.parse(base.at);
     log("info", "post_lambda_complete", {
