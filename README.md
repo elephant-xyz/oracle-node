@@ -133,14 +133,14 @@ This creates the VPC, S3 buckets, SQS queues, Lambdas, and the Express Step Func
 
 The `DownloaderFunction` uses the `prepare` command from `@elephant-xyz/cli` to fetch and process data. You can control its behavior using environment variables that map to CLI flags:
 
-| Environment Variable               | Default      | CLI Flag        | Description                                                   |
-| ---------------------------------- | ------------ | --------------- | ------------------------------------------------------------- |
-| `ELEPHANT_PREPARE_USE_BROWSER`     | `false`      | `--use-browser` | Force browser mode for fetching                               |
-| `ELEPHANT_PREPARE_NO_FAST`         | `false`      | `--no-fast`     | Disable fast mode                                             |
-| `ELEPHANT_PREPARE_NO_CONTINUE`     | `false`      | `--no-continue` | Disable continue mode                                         |
-| `ELEPHANT_PREPARE_IGNORE_CAPTCHA`  | `false`      | `--ignore-captcha` | Ignore captcha challenges                                   |
-| `ELEPHANT_PREPARE_CONTINUE_BUTTON` | `""`         | N/A             | CSS selector for continue button                              |
-| `UPDATER_SCHEDULE_RATE`            | `"1 minute"` | N/A             | Updater frequency (e.g., "5 minutes", "cron(_/1 _ \* _ ? _)") |
+| Environment Variable               | Default      | CLI Flag           | Description                                                   |
+| ---------------------------------- | ------------ | ------------------ | ------------------------------------------------------------- |
+| `ELEPHANT_PREPARE_USE_BROWSER`     | `false`      | `--use-browser`    | Force browser mode for fetching                               |
+| `ELEPHANT_PREPARE_NO_FAST`         | `false`      | `--no-fast`        | Disable fast mode                                             |
+| `ELEPHANT_PREPARE_NO_CONTINUE`     | `false`      | `--no-continue`    | Disable continue mode                                         |
+| `ELEPHANT_PREPARE_IGNORE_CAPTCHA`  | `false`      | `--ignore-captcha` | Ignore captcha challenges                                     |
+| `ELEPHANT_PREPARE_CONTINUE_BUTTON` | `""`         | N/A                | CSS selector for continue button                              |
+| `UPDATER_SCHEDULE_RATE`            | `"1 minute"` | N/A                | Updater frequency (e.g., "5 minutes", "cron(_/1 _ \* _ ? _)") |
 
 #### County-Specific Configuration
 
