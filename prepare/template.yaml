@@ -82,6 +82,13 @@ Parameters:
     AllowedValues:
       - "true"
       - "false"
+  ElephantPrepareIgnoreCaptcha:
+    Description: Ignore captcha challenges for prepare function
+    Type: String
+    Default: "false"
+    AllowedValues:
+      - "true"
+      - "false"
 
   ElephantPrepareContinueButton:
     Description: CSS selector for continue button in prepare function
@@ -214,6 +221,7 @@ Resources:
           ELEPHANT_PREPARE_USE_BROWSER: !Ref ElephantPrepareUseBrowser
           ELEPHANT_PREPARE_NO_FAST: !Ref ElephantPrepareNoFast
           ELEPHANT_PREPARE_NO_CONTINUE: !Ref ElephantPrepareNoContinue
+          ELEPHANT_PREPARE_IGNORE_CAPTCHA: !Ref ElephantPrepareIgnoreCaptcha
           ELEPHANT_PREPARE_CONTINUE_BUTTON: !Ref ElephantPrepareContinueButton
           ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE: !Ref ElephantPrepareBrowserFlowTemplate
           ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS: !Ref ElephantPrepareBrowserFlowParameters
