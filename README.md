@@ -33,6 +33,7 @@ export AWS_REGION=your-region
 export ELEPHANT_PREPARE_USE_BROWSER=false  # Force browser mode
 export ELEPHANT_PREPARE_NO_FAST=false      # Disable fast mode
 export ELEPHANT_PREPARE_NO_CONTINUE=false  # Disable continue mode
+export ELEPHANT_PREPARE_IGNORE_CAPTCHA=false  # Ignore captcha challenges
 
 # Optional (Continue button selector)
 export ELEPHANT_PREPARE_CONTINUE_BUTTON=""  # CSS selector for continue button
@@ -78,6 +79,7 @@ export AWS_REGION=your-region
 export ELEPHANT_PREPARE_USE_BROWSER=false  # Force browser mode
 export ELEPHANT_PREPARE_NO_FAST=false      # Disable fast mode
 export ELEPHANT_PREPARE_NO_CONTINUE=false  # Disable continue mode
+export ELEPHANT_PREPARE_IGNORE_CAPTCHA=false  # Ignore captcha challenges
 
 # Optional (Continue button selector)
 export ELEPHANT_PREPARE_CONTINUE_BUTTON=""  # CSS selector for continue button
@@ -131,13 +133,14 @@ This creates the VPC, S3 buckets, SQS queues, Lambdas, and the Express Step Func
 
 The `DownloaderFunction` uses the `prepare` command from `@elephant-xyz/cli` to fetch and process data. You can control its behavior using environment variables that map to CLI flags:
 
-| Environment Variable               | Default      | CLI Flag        | Description                                                   |
-| ---------------------------------- | ------------ | --------------- | ------------------------------------------------------------- |
-| `ELEPHANT_PREPARE_USE_BROWSER`     | `false`      | `--use-browser` | Force browser mode for fetching                               |
-| `ELEPHANT_PREPARE_NO_FAST`         | `false`      | `--no-fast`     | Disable fast mode                                             |
-| `ELEPHANT_PREPARE_NO_CONTINUE`     | `false`      | `--no-continue` | Disable continue mode                                         |
-| `ELEPHANT_PREPARE_CONTINUE_BUTTON` | `""`         | N/A             | CSS selector for continue button                              |
-| `UPDATER_SCHEDULE_RATE`            | `"1 minute"` | N/A             | Updater frequency (e.g., "5 minutes", "cron(_/1 _ \* _ ? _)") |
+| Environment Variable               | Default      | CLI Flag           | Description                                                   |
+| ---------------------------------- | ------------ | ------------------ | ------------------------------------------------------------- |
+| `ELEPHANT_PREPARE_USE_BROWSER`     | `false`      | `--use-browser`    | Force browser mode for fetching                               |
+| `ELEPHANT_PREPARE_NO_FAST`         | `false`      | `--no-fast`        | Disable fast mode                                             |
+| `ELEPHANT_PREPARE_NO_CONTINUE`     | `false`      | `--no-continue`    | Disable continue mode                                         |
+| `ELEPHANT_PREPARE_IGNORE_CAPTCHA`  | `false`      | `--ignore-captcha` | Ignore captcha challenges                                     |
+| `ELEPHANT_PREPARE_CONTINUE_BUTTON` | `""`         | N/A                | CSS selector for continue button                              |
+| `UPDATER_SCHEDULE_RATE`            | `"1 minute"` | N/A                | Updater frequency (e.g., "5 minutes", "cron(_/1 _ \* _ ? _)") |
 
 #### County-Specific Configuration
 
@@ -159,6 +162,7 @@ When processing inputs from multiple counties in the same node, you can provide 
 export ELEPHANT_PREPARE_USE_BROWSER=false
 export ELEPHANT_PREPARE_NO_FAST=false
 export ELEPHANT_PREPARE_NO_CONTINUE=false
+export ELEPHANT_PREPARE_IGNORE_CAPTCHA=false
 
 # Alachua County - needs browser mode with specific selectors
 export ELEPHANT_PREPARE_USE_BROWSER_Alachua=true
@@ -219,6 +223,7 @@ export ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE_Charlotte="CHARLOTTE_FLOW"
 - `ELEPHANT_PREPARE_USE_BROWSER_<CountyName>`
 - `ELEPHANT_PREPARE_NO_FAST_<CountyName>`
 - `ELEPHANT_PREPARE_NO_CONTINUE_<CountyName>`
+- `ELEPHANT_PREPARE_IGNORE_CAPTCHA_<CountyName>`
 - `ELEPHANT_PREPARE_CONTINUE_BUTTON_<CountyName>`
 - `ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE_<CountyName>`
 - `ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS_<CountyName>`

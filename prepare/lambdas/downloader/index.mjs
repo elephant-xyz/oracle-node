@@ -27,7 +27,7 @@ const RE_S3PATH = /^s3:\/\/([^/]+)\/(.*)$/i;
 /**
  * @typedef {Object} FlagConfig
  * @property {string} envVar
- * @property {"useBrowser" | "noFast" | "noContinue"} optionKey
+ * @property {"useBrowser" | "noFast" | "noContinue" | "ignoreCaptcha"} optionKey
  * @property {string} description
  */
 
@@ -566,6 +566,11 @@ export const handler = async (event) => {
         optionKey: "noContinue",
         description: "Disable continue mode",
       },
+      {
+        envVar: "ELEPHANT_PREPARE_IGNORE_CAPTCHA",
+        optionKey: "ignoreCaptcha",
+        description: "Ignore captcha challenges",
+      },
     ];
 
     // Determine useBrowser setting from environment variable with county-specific fallback
@@ -586,7 +591,7 @@ export const handler = async (event) => {
     }
 
     // Build prepare options based on environment variables
-    /** @type {{ useBrowser: boolean, noFast?: boolean, noContinue?: boolean, browserFlowTemplate?: string, browserFlowParameters?: string, proxyUrl?: string, [key: string]: any }} */
+    /** @type {{ useBrowser: boolean, noFast?: boolean, noContinue?: boolean, browserFlowTemplate?: string, browserFlowParameters?: string, proxyUrl?: string, ignoreCaptcha?: boolean, continueButtonSelector?: string, browserFlowFile?: string }} */
     const prepareOptions = { useBrowser };
 
     // Add proxy URL if available
