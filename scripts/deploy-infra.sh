@@ -170,20 +170,20 @@ compute_param_overrides() {
   [[ -n "${WORKFLOW_STATE_MACHINE_NAME:-}" ]] && parts+=("WorkflowStateMachineName=\"$WORKFLOW_STATE_MACHINE_NAME\"")
 
   # Prepare function flags
-  [[ -n "${ELEPHANT_PREPARE_USE_BROWSER:-}" ]] && parts+=("ElephantPrepareUseBrowser=$ELEPHANT_PREPARE_USE_BROWSER")
-  [[ -n "${ELEPHANT_PREPARE_NO_FAST:-}" ]] && parts+=("ElephantPrepareNoFast=$ELEPHANT_PREPARE_NO_FAST")
-  [[ -n "${ELEPHANT_PREPARE_NO_CONTINUE:-}" ]] && parts+=("ElephantPrepareNoContinue=$ELEPHANT_PREPARE_NO_CONTINUE")
-  [[ -n "${ELEPHANT_PREPARE_IGNORE_CAPTCHA:-}" ]] && parts+=("ElephantPrepareIgnoreCaptcha=$ELEPHANT_PREPARE_IGNORE_CAPTCHA")
+  [[ -n "${ELEPHANT_PREPARE_USE_BROWSER:-}" ]] && parts+=("ElephantPrepareUseBrowser=\"$ELEPHANT_PREPARE_USE_BROWSER\"")
+  [[ -n "${ELEPHANT_PREPARE_NO_FAST:-}" ]] && parts+=("ElephantPrepareNoFast=\"$ELEPHANT_PREPARE_NO_FAST\"")
+  [[ -n "${ELEPHANT_PREPARE_NO_CONTINUE:-}" ]] && parts+=("ElephantPrepareNoContinue=\"$ELEPHANT_PREPARE_NO_CONTINUE\"")
+  [[ -n "${ELEPHANT_PREPARE_IGNORE_CAPTCHA:-}" ]] && parts+=("ElephantPrepareIgnoreCaptcha=\"$ELEPHANT_PREPARE_IGNORE_CAPTCHA\"")
 
   # Continue button selector
-  [[ -n "${ELEPHANT_PREPARE_CONTINUE_BUTTON:-}" ]] && parts+=("ElephantPrepareContinueButton=$ELEPHANT_PREPARE_CONTINUE_BUTTON")
+  [[ -n "${ELEPHANT_PREPARE_CONTINUE_BUTTON:-}" ]] && parts+=("ElephantPrepareContinueButton=\"$ELEPHANT_PREPARE_CONTINUE_BUTTON\"")
 
   # Browser flow template and parameters (use converted simple format)
-  [[ -n "${ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE:-}" ]] && parts+=("ElephantPrepareBrowserFlowTemplate=$ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE")
-  [[ -n "${ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS_SIMPLE:-}" ]] && parts+=("ElephantPrepareBrowserFlowParameters=$ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS_SIMPLE")
+  [[ -n "${ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE:-}" ]] && parts+=("ElephantPrepareBrowserFlowTemplate=\"$ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE\"")
+  [[ -n "${ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS_SIMPLE:-}" ]] && parts+=("ElephantPrepareBrowserFlowParameters=\"$ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS_SIMPLE\"")
 
   # Updater schedule rate
-  [[ -n "${UPDATER_SCHEDULE_RATE:-}" ]] && parts+=("UpdaterScheduleRate=$UPDATER_SCHEDULE_RATE")
+  [[ -n "${UPDATER_SCHEDULE_RATE:-}" ]] && parts+=("UpdaterScheduleRate=\"$UPDATER_SCHEDULE_RATE\"")
 
   PARAM_OVERRIDES="${parts[*]}"
 }
