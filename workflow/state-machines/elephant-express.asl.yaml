@@ -92,16 +92,9 @@ States:
       QueueUrl: ${TransactionsSqsQueueUrl}
       MessageBody.$: "States.JsonToString($.post.items)"
     ResultPath: null
-    Next: RequeueOnSuccess
-
-  RequeueOnSuccess:
-    Type: Task
-    Resource: arn:aws:states:::sqs:sendMessage
-    Parameters:
-      QueueUrl: ${WorkflowSqsQueueUrl}
-      MessageBody.$: "States.JsonToString($.message)"
-    ResultPath: null
     End: true
+
+  # RequeueOnSuccess removed to prevent requeue on successful completion
 
   RequeueOnFailure:
     Type: Task
