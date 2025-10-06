@@ -358,6 +358,7 @@ async function runTransformAndValidation({
       duration_seconds: (transformDuration / 1000).toFixed(2),
       includes_fact_sheet_generation: true,
       error: transformResult.error,
+      scriptFailures: transformResult.scriptFailure,
     });
     throw new Error(transformResult.error);
   }
