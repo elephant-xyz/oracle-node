@@ -55,7 +55,7 @@ export const handler = async (event) => {
     const executionArn = resp.executionArn || "arn not found";
 
     // Check if the step function execution failed
-    if (resp.status === "FAILED" || resp.status === "TIMED_OUT" || resp.status === "ABORTED") {
+    if (resp.status === "FAILED" || resp.status === "TIMED_OUT") {
       console.error(
         JSON.stringify({
           ...logBase,
@@ -69,7 +69,7 @@ export const handler = async (event) => {
       );
       // Throw error to trigger SQS redelivery to DLQ
       throw new Error(
-        `Step function execution failed with status: ${resp.status}. Cause: ${resp.cause || "N/A"}`
+        `Step function execution failed with status: ${resp.status}. Cause: ${resp.cause || "N/A"}`,
       );
     }
 

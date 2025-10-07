@@ -794,6 +794,7 @@ aws sqs start-message-move-task \
 **Error Handling Changes:**
 
 As of the latest update, the system uses SQS-native error handling:
+
 - Messages are automatically retried by SQS (maxReceiveCount: 3)
 - Failed messages move to DLQ automatically after exhausting retries
 - No manual requeuing logic in the state machine
