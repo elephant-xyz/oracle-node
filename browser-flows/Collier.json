@@ -1,0 +1,82 @@
+{
+  "starts_at": "open_page",
+  "states": {
+    "open_page": {
+      "type": "open_page",
+      "input": {
+        "url": "{{=it.url}}",
+        "timeout": 30000,
+        "wait_until": "load"
+      },
+      "next": "wait_for_frame"
+    },
+    "wait_for_frame": {
+      "type": "wait_for_selector",
+      "input": {
+        "selector": "frame#rbottom",
+        "timeout": 20000
+      },
+      "next": "wait_for_parcel_tab"
+    },
+    "wait_for_parcel_tab": {
+      "type": "wait_for_selector",
+      "input": {
+        "selector": "a[href='#TabParcel']",
+        "timeout": 20000,
+        "visible": true,
+        "iframe_selector": "frame#rbottom"
+      },
+      "next": "click_parcel_tab"
+    },
+    "click_parcel_tab": {
+      "type": "click",
+      "input": {
+        "selector": "a[href='#TabParcel']",
+        "iframe_selector": "frame#rbottom"
+      },
+      "next": "wait_for_parcel_input"
+    },
+    "wait_for_parcel_input": {
+      "type": "wait_for_selector",
+      "input": {
+        "selector": "#ParcelID",
+        "timeout": 10000,
+        "visible": true,
+        "iframe_selector": "frame#rbottom"
+      },
+      "next": "enter_parcel_id"
+    },
+    "enter_parcel_id": {
+      "type": "type",
+      "input": {
+        "selector": "#ParcelID",
+        "value": "{{=it.request_identifier}}",
+        "delay": 100,
+        "iframe_selector": "frame#rbottom"
+      },
+      "next": "click_search_button"
+    },
+    "click_search_button": {
+      "type": "click",
+      "input": {
+        "selector": "#SearchParcelID",
+        "iframe_selector": "frame#rbottom"
+      },
+      "next": "wait_for_results"
+    },
+    "wait_for_results": {
+      "type": "wait_for_selector",
+      "input": {
+        "selector": "table.clsWide, #PropSum, div.property-info",
+        "timeout": 10000,
+        "visible": true,
+        "iframe_selector": "frame#rbottom"
+      },
+      "end": true
+    }
+  },
+  "capture": {
+    "type": "iframe",
+    "selector": "frame#rbottom"
+  }
+}
