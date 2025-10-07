@@ -40,7 +40,7 @@ export const handler = async (event) => {
     if (!event || !Array.isArray(event.Records) || event.Records.length !== 1) {
       throw new Error("Expect exactly one SQS record per invocation");
     }
-    console.log(`Event is : ${JSON.stringify(event)}`);
+    console.log("Event is :", event);
     const record = event.Records[0];
     if (!record || !record.body) {
       throw new Error("Missing SQS record body");

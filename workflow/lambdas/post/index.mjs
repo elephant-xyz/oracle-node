@@ -682,11 +682,10 @@ export const handler = async (event) => {
    */
   const log = (level, msg, details = {}) => {
     const entry = { ...base, level, msg, ...details };
-    const serialized = JSON.stringify(entry);
     if (level === "error") {
-      console.error(serialized);
+      console.error(entry);
     } else {
-      console.log(serialized);
+      console.log(entry);
     }
   };
 

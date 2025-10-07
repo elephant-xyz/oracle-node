@@ -243,7 +243,7 @@ export const handler = async (event) => {
         "Submit to the blockchain failed" + JSON.stringify(allErrors),
       );
     }
-    console.log(JSON.stringify({ ...base, level: "info", msg: "completed" }));
+    console.log({ ...base, level: "info", msg: "completed" });
     return { status: "success" };
   } finally {
     await fs.rm(tmp, { recursive: true, force: true });
