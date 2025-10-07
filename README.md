@@ -370,7 +370,11 @@ Tip: during local testing, remove `/tmp/county-transforms` to force a fresh down
 Use your input S3 bucket name:
 
 ```bash
+# Use default workflow queue
 ./scripts/start-step-function.sh <your-bucket-name>
+
+# Use county-specific queue
+./scripts/start-step-function.sh --queue elephant-workflow-queue-escambia <your-bucket-name>
 ```
 
 Available bucket names as of now:
@@ -388,6 +392,176 @@ Available bucket names as of now:
 - elephant-input-pinellas-county
 - elephant-input-polk-county
 - elephant-input-santa-county
+
+### County-Specific Queue Setup
+
+For better isolation and control, you can create separate queues for different counties. This allows you to:
+
+- Set different concurrency limits per county
+- Monitor county-specific processing separately
+- Isolate failures to individual counties
+- Process multiple counties in parallel with independent rate controls
+
+#### Creating a County-Specific Queue
+
+Use the `create-county-queue.sh` script to provision a complete queue setup:
+
+```bash
+./scripts/create-county-queue.sh <county-name>
+```
+
+**Example: Create queue for Escambia County**
+
+```bash
+./scripts/create-county-queue.sh escambia
+```
+
+**With custom concurrency (default: 100):**
+
+```bash
+MAX_CONCURRENCY=50 ./scripts/create-county-queue.sh escambia
+```
+
+**What the script does:**
+
+1. Creates Dead Letter Queue: `elephant-workflow-queue-escambia-dlq`
+   - MessageRetentionPeriod: 1209600 seconds (14 days)
+   - VisibilityTimeout: 331 seconds
+   - SSE encryption enabled
+
+2. Creates Main Queue: `elephant-workflow-queue-escambia`
+   - MessageRetentionPeriod: 1209600 seconds (14 days)
+   - VisibilityTimeout: 331 seconds
+   - SSE encryption enabled
+   - RedrivePolicy configured with maxReceiveCount: 3
+
+3. Configures Lambda Event Source Mapping
+   - Links queue to WorkflowStarterFunction
+   - BatchSize: 1 (one message per invocation)
+   - MaximumBatchingWindowInSeconds: 0 (process immediately)
+   - MaximumConcurrency: 100 (or custom value)
+
+**Script output example:**
+
+```
+[INFO] Creating county-specific workflow queue for: escambia
+[INFO] Stack name: elephant-oracle-node
+[INFO] Region: us-east-1
+[STEP] Creating Dead Letter Queue: elephant-workflow-queue-escambia-dlq
+[INFO] DLQ created: https://sqs.us-east-1.amazonaws.com/123456789012/elephant-workflow-queue-escambia-dlq
+[INFO] DLQ ARN: arn:aws:sqs:us-east-1:123456789012:elephant-workflow-queue-escambia-dlq
+[STEP] Creating workflow queue: elephant-workflow-queue-escambia
+[INFO] Queue created: https://sqs.us-east-1.amazonaws.com/123456789012/elephant-workflow-queue-escambia
+[INFO] Queue ARN: arn:aws:sqs:us-east-1:123456789012:elephant-workflow-queue-escambia
+[STEP] Getting WorkflowStarterFunction ARN from stack: elephant-oracle-node
+[INFO] Lambda Function ARN: arn:aws:lambda:us-east-1:123456789012:function:elephant-oracle-node-WorkflowStarterFunction-ABC123
+[STEP] Creating event source mapping between queue and Lambda function
+[INFO] Event source mapping created: 12345678-1234-1234-1234-123456789012
+
+[STEP] ✓ County queue setup completed successfully!
+
+[INFO] Summary:
+  County Name:              escambia
+  Queue Name:               elephant-workflow-queue-escambia
+  Queue URL:                https://sqs.us-east-1.amazonaws.com/123456789012/elephant-workflow-queue-escambia
+  Queue ARN:                arn:aws:sqs:us-east-1:123456789012:elephant-workflow-queue-escambia
+  DLQ Name:                 elephant-workflow-queue-escambia-dlq
+  DLQ URL:                  https://sqs.us-east-1.amazonaws.com/123456789012/elephant-workflow-queue-escambia-dlq
+  DLQ ARN:                  arn:aws:sqs:us-east-1:123456789012:elephant-workflow-queue-escambia-dlq
+  Lambda Function ARN:      arn:aws:lambda:us-east-1:123456789012:function:elephant-oracle-node-WorkflowStarterFunction-ABC123
+  Event Source Mapping:     12345678-1234-1234-1234-123456789012
+  Max Concurrency:          100
+
+[INFO] You can now send messages to: https://sqs.us-east-1.amazonaws.com/123456789012/elephant-workflow-queue-escambia
+```
+
+#### Using County-Specific Queues
+
+**Process data through county-specific queue:**
+
+```bash
+# Start S3ToSqsStateMachine and populate the county-specific queue
+./scripts/start-step-function.sh --queue elephant-workflow-queue-escambia elephant-input-escambia-county
+```
+
+**Multiple counties example:**
+
+```bash
+# Create queues for multiple counties
+./scripts/create-county-queue.sh escambia
+./scripts/create-county-queue.sh broward
+MAX_CONCURRENCY=200 ./scripts/create-county-queue.sh miami-dade  # Higher volume county
+
+# Process each county with their dedicated queue
+./scripts/start-step-function.sh --queue elephant-workflow-queue-escambia elephant-input-escambia-county
+./scripts/start-step-function.sh --queue elephant-workflow-queue-broward elephant-input-broward-county
+./scripts/start-step-function.sh --queue elephant-workflow-queue-miami-dade elephant-input-miami-dade-county
+```
+
+#### How It Works
+
+1. **S3ToSqsStateMachine** lists S3 objects and sends messages to the specified queue
+2. **WorkflowStarterFunction** is triggered by the county-specific queue via event source mapping
+3. **ElephantExpressWorkflow** executes synchronously
+4. **On failure**, the message is automatically retried by SQS (maxReceiveCount: 3)
+5. **After 3 failures**, the message moves to the county-specific DLQ automatically
+
+#### Error Handling
+
+- The state machine no longer manually requeues to DLQ
+- SQS event source mapping handles all retries and DLQ delivery
+- WorkflowStarterFunction throws errors on failure to trigger redelivery
+- Messages are only moved to DLQ after exhausting all retries
+- Each county's failures are isolated in its own DLQ
+
+#### Monitoring County Queues
+
+**Check queue depth:**
+
+```bash
+aws sqs get-queue-attributes \
+  --queue-url $(aws sqs get-queue-url --queue-name elephant-workflow-queue-escambia --query 'QueueUrl' --output text) \
+  --attribute-names ApproximateNumberOfMessages,ApproximateNumberOfMessagesNotVisible
+```
+
+**Check DLQ depth:**
+
+```bash
+aws sqs get-queue-attributes \
+  --queue-url $(aws sqs get-queue-url --queue-name elephant-workflow-queue-escambia-dlq --query 'QueueUrl' --output text) \
+  --attribute-names ApproximateNumberOfMessages
+```
+
+**View event source mapping status:**
+
+```bash
+aws lambda list-event-source-mappings \
+  --function-name $(aws cloudformation describe-stack-resources \
+    --stack-name elephant-oracle-node \
+    --query "StackResources[?LogicalResourceId=='WorkflowStarterFunction'].PhysicalResourceId" \
+    --output text) \
+  --query "EventSourceMappings[?contains(EventSourceArn, 'elephant-workflow-queue-escambia')]"
+```
+
+#### Adjusting Concurrency
+
+To change the concurrency for an existing queue, update the event source mapping:
+
+```bash
+# Get the event source mapping UUID
+UUID=$(aws lambda list-event-source-mappings \
+  --function-name $(aws cloudformation describe-stack-resources \
+    --stack-name elephant-oracle-node \
+    --query "StackResources[?LogicalResourceId=='WorkflowStarterFunction'].PhysicalResourceId" \
+    --output text) \
+  --query "EventSourceMappings[?contains(EventSourceArn, 'elephant-workflow-queue-escambia')].UUID" \
+  --output text)
+
+# Update the maximum concurrency
+aws lambda update-event-source-mapping \
+  --uuid $UUID \
+  --scaling-config "MaximumConcurrency=50"
+```
 
 ### 4) Pause your Airflow DAG
 
@@ -589,10 +763,26 @@ When messages fail processing multiple times, they are moved to Dead Letter Queu
 ./scripts/reprocess-dlq.sh --dlq-type transactions --max-messages 1000
 ```
 
+**Reprocess County-Specific DLQ messages:**
+
+County-specific queues have their own DLQs. To reprocess failed messages from a county-specific DLQ:
+
+```bash
+# Get the DLQ URL for the county
+DLQ_URL=$(aws sqs get-queue-url --queue-name elephant-workflow-queue-escambia-dlq --query 'QueueUrl' --output text)
+TARGET_URL=$(aws sqs get-queue-url --queue-name elephant-workflow-queue-escambia --query 'QueueUrl' --output text)
+
+# Use AWS SQS redrive to move messages back
+aws sqs start-message-move-task \
+  --source-arn $(aws sqs get-queue-attributes --queue-url $DLQ_URL --attribute-names QueueArn --query 'Attributes.QueueArn' --output text) \
+  --destination-arn $(aws sqs get-queue-attributes --queue-url $TARGET_URL --attribute-names QueueArn --query 'Attributes.QueueArn' --output text)
+```
+
 **DLQ Types:**
 
 - `workflow` - Workflow Dead Letter Queue → Workflow SQS Queue
 - `transactions` - Transactions Dead Letter Queue → Transactions SQS Queue
+- County-specific: `elephant-workflow-queue-<county>-dlq` → `elephant-workflow-queue-<county>`
 
 **Parameters:**
 
@@ -601,6 +791,11 @@ When messages fail processing multiple times, they are moved to Dead Letter Queu
 - `--max-messages` - Maximum messages to reprocess (default: 100)
 - `--verbose` - Detailed output
 
-```
+**Error Handling Changes:**
 
-```
+As of the latest update, the system uses SQS-native error handling:
+
+- Messages are automatically retried by SQS (maxReceiveCount: 3)
+- Failed messages move to DLQ automatically after exhausting retries
+- No manual requeuing logic in the state machine
+- WorkflowStarterFunction throws errors to trigger SQS redelivery

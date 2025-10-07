@@ -23,6 +23,8 @@ Arguments:
 
 Options:
     --express          Directly invoke ElephantExpressWorkflow (bypasses S3ToSqsStateMachine)
+    --queue <name>     Send message to specific queue (default: elephant-workflow-queue)
+                       Can be queue name (e.g., elephant-workflow-queue-escambia) or URL
     --help             Show this help message
 
 Environment Variables:
@@ -31,10 +33,13 @@ Environment Variables:
 Examples:
     # Start S3 to SQS processing (default)
     $0 my-data-bucket
-    
+
+    # Send message to county-specific queue
+    $0 --queue elephant-workflow-queue-escambia my-data-bucket source-data/county-data.csv
+
     # Start ElephantExpressWorkflow directly with specific S3 object
     $0 --express my-data-bucket source-data/county-data.json
-    
+
     # Start ElephantExpressWorkflow with auto-generated S3 object key
     $0 --express my-data-bucket
 EOF
@@ -85,6 +90,23 @@ get_express_workflow_arn() {
         --stack-name "$STACK_NAME" \
         --query "Stacks[0].Outputs[?OutputKey=='ElephantExpressStateMachineArn'].OutputValue" \
         --output text
+}
+
+# Get queue URL from queue name or return if already a URL
+get_queue_url_from_name() {
+    local queue_name_or_url="$1"
+
+    # Check if it's already a URL
+    if [[ "$queue_name_or_url" =~ ^https:// ]]; then
+        echo "$queue_name_or_url"
+        return 0
+    fi
+
+    # Otherwise, get URL from queue name
+    aws sqs get-queue-url \
+        --queue-name "$queue_name_or_url" \
+        --query 'QueueUrl' \
+        --output text 2>/dev/null
 }
 
 # Start Step Function execution
@@ -262,15 +284,27 @@ start_express_workflow() {
 
 main() {
     local express_mode=false
+    local queue_mode=false
+    local queue_name=""
     local bucket_name=""
     local s3_object_key=""
-    
+
     # Parse command line arguments
     while [[ $# -gt 0 ]]; do
         case $1 in
             --express)
                 express_mode=true
                 shift
+                ;;
+            --queue)
+                queue_mode=true
+                if [[ -z "$2" || "$2" =~ ^-- ]]; then
+                    err "--queue requires a queue name or URL"
+                    usage
+                    exit 1
+                fi
+                queue_name="$2"
+                shift 2
                 ;;
             --help)
                 usage
@@ -340,15 +374,30 @@ main() {
         info "Express mode: Directly invoking ElephantExpressWorkflow"
         start_express_workflow "$bucket_name" "$s3_object_key" "$express_workflow_arn"
     else
-        # Default mode: Use MwaaSqsQueue for workflow processing
+        # Determine target queue
         local sqs_queue_url
-        sqs_queue_url=$(get_workflow_sqs_queue_url)
-        if [[ -z "$sqs_queue_url" || "$sqs_queue_url" == "None" ]]; then
-            err "Could not find SQS Queue URL in stack outputs"
-            err "Make sure the stack is deployed and contains MwaaSqsQueueUrl output"
-            exit 1
+        if [[ "$queue_mode" == "true" ]]; then
+            # Use specified queue
+            info "Using specified queue: $queue_name"
+            sqs_queue_url=$(get_queue_url_from_name "$queue_name")
+            if [[ -z "$sqs_queue_url" ]]; then
+                err "Could not find queue: $queue_name"
+                err "Make sure the queue exists"
+                exit 1
+            fi
+            info "Resolved queue URL: $sqs_queue_url"
+        else
+            # Default: Use WorkflowSqsQueue from stack
+            sqs_queue_url=$(get_workflow_sqs_queue_url)
+            if [[ -z "$sqs_queue_url" || "$sqs_queue_url" == "None" ]]; then
+                err "Could not find SQS Queue URL in stack outputs"
+                err "Make sure the stack is deployed and contains WorkflowQueueUrl output"
+                exit 1
+            fi
+            info "Using default workflow queue from stack"
         fi
-        info "Default mode: Using S3ToSqsStateMachine -> MwaaSqsQueue (workflow processing)"
+
+        info "Starting S3ToSqsStateMachine -> $sqs_queue_url"
         start_execution "$bucket_name" "$step_function_arn" "$sqs_queue_url"
     fi
 }
