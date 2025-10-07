@@ -518,8 +518,6 @@ Resources:
         WorkflowPreProcessorFunction: !GetAtt WorkflowPreProcessorFunction.Arn
         DownloaderFunction: !GetAtt DownloaderFunction.Arn
         WorkflowPostProcessorFunction: !GetAtt WorkflowPostProcessorFunction.Arn
-        WorkflowSqsQueueUrl: !Ref WorkflowSqsQueue
-        WorkflowDeadLetterQueueUrl: !Ref WorkflowDeadLetterQueue
         TransactionsSqsQueueUrl: !Ref TransactionsSqsQueue
       Role: !GetAtt ElephantExpressStateMachineRole.Arn
       Logging:
@@ -564,8 +562,6 @@ Resources:
                 Action:
                   - sqs:SendMessage
                 Resource:
-                  - !GetAtt WorkflowSqsQueue.Arn
-                  - !GetAtt WorkflowDeadLetterQueue.Arn
                   - !GetAtt TransactionsSqsQueue.Arn
               - Effect: Allow
                 Action:
@@ -617,6 +613,8 @@ Resources:
                 Resource:
                   - !GetAtt MwaaSqsQueue.Arn
                   - !GetAtt WorkflowSqsQueue.Arn
+                  # Allow sending to county-specific queues (elephant-workflow-queue-*)
+                  - !Sub "arn:aws:sqs:${AWS::Region}:${AWS::AccountId}:elephant-workflow-queue-*"
               - Effect: Allow
                 Action:
                   - states:StartExecution

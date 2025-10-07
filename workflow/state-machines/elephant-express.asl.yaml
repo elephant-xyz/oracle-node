@@ -27,7 +27,7 @@ States:
     Catch:
       - ErrorEquals: [States.ALL]
         ResultPath: $.error
-        Next: RequeueOnFailure
+        Next: FailRuntime
 
   Prepare:
     Type: Task
@@ -55,7 +55,7 @@ States:
     Catch:
       - ErrorEquals: [States.ALL]
         ResultPath: $.error
-        Next: RequeueOnFailure
+        Next: FailRuntime
 
   Postprocess:
     Type: Task
@@ -83,7 +83,7 @@ States:
     Catch:
       - ErrorEquals: [States.ALL]
         ResultPath: $.error
-        Next: RequeueOnFailure
+        Next: FailRuntime
 
   QueueForTheSubmit:
     Type: Task
@@ -93,17 +93,6 @@ States:
       MessageBody.$: "States.JsonToString($.post.items)"
     ResultPath: null
     End: true
-
-  # RequeueOnSuccess removed to prevent requeue on successful completion
-
-  RequeueOnFailure:
-    Type: Task
-    Resource: arn:aws:states:::sqs:sendMessage
-    Parameters:
-      QueueUrl: ${WorkflowDeadLetterQueueUrl}
-      MessageBody.$: "States.JsonToString($.message)"
-    ResultPath: null
-    Next: FailRuntime
 
   FailRuntime:
     Type: Fail
