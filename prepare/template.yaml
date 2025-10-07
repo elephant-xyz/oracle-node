@@ -216,6 +216,8 @@ Resources:
       CodeUri: lambdas/downloader
       Handler: index.handler
       Description: "Downloads data (granted full S3 access as requested)"
+      LoggingConfig:
+        LogFormat: JSON
       Environment:
         Variables:
           ELEPHANT_PREPARE_USE_BROWSER: !Ref ElephantPrepareUseBrowser
@@ -249,6 +251,8 @@ Resources:
       CodeUri: lambdas/updater
       Handler: index.handler
       Description: "Updates env var on DownloaderFunction and runs every minute."
+      LoggingConfig:
+        LogFormat: JSON
       Environment:
         Variables:
           TARGET_FUNCTION_NAME: !Ref DownloaderFunction
@@ -383,6 +387,8 @@ Resources:
       CodeUri: ../workflow/lambdas/submit/
       Handler: index.handler
       Description: "Submits data to the blockchain"
+      LoggingConfig:
+        LogFormat: JSON
       Policies:
         - AWSLambdaBasicExecutionRole
         - Version: "2012-10-17"
@@ -421,6 +427,8 @@ Resources:
       CodeUri: ../workflow/lambdas/starter
       Handler: index.handler
       Description: "SQS-triggered starter that sync-starts the Express state machine"
+      LoggingConfig:
+        LogFormat: JSON
       Policies:
         - AWSLambdaBasicExecutionRole
         - arn:aws:iam::aws:policy/AmazonS3FullAccess
@@ -455,6 +463,8 @@ Resources:
       CodeUri: ../workflow/lambdas/pre
       Handler: index.handler
       Description: "Prepares seed output and input.zip for prepare step"
+      LoggingConfig:
+        LogFormat: JSON
       Policies:
         - AWSLambdaBasicExecutionRole
         - arn:aws:iam::aws:policy/AmazonS3FullAccess
@@ -476,6 +486,8 @@ Resources:
       CodeUri: ../workflow/lambdas/post
       Handler: index.handler
       Description: "Performs county transform, hash, upload, and submit"
+      LoggingConfig:
+        LogFormat: JSON
       Policies:
         - AWSLambdaBasicExecutionRole
         - S3CrudPolicy:

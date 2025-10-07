@@ -46,7 +46,7 @@ async function csvToJson(csvPath) {
  * @returns {Promise<PreOutput>}
  */
 export const handler = async (event) => {
-  console.log(`Event is : ${JSON.stringify(event)}`);
+  console.log("Event is :", event);
   const base = { component: "pre", at: new Date().toISOString() };
   let tmp;
   try {

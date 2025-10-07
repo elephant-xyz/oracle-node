@@ -872,7 +872,7 @@ export const handler = async (event) => {
       };
 
       console.error("❌ PREPARE FUNCTION FAILED");
-      console.error(JSON.stringify(prepareErrorLog, null, 2));
+      console.error(prepareErrorLog);
 
       // Update proxy usage as failed
       if (selectedProxy && proxyTableName) {
@@ -999,7 +999,7 @@ export const handler = async (event) => {
     };
 
     console.error("LAMBDA EXECUTION FAILED");
-    console.error(JSON.stringify(lambdaErrorLog, null, 2));
+    console.error(lambdaErrorLog);
 
     throw lambdaError;
   } finally {
