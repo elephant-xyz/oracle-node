@@ -188,49 +188,6 @@ compute_param_overrides() {
   PARAM_OVERRIDES="${parts[*]}"
 }
 
-bundle_transforms_for_lambda() {
-  if [[ ! -d "$TRANSFORMS_SRC_DIR" ]]; then
-    err "Transforms source dir not found: $TRANSFORMS_SRC_DIR"
-    exit 1
-  fi
-  if [[ -z "$(find "$TRANSFORMS_SRC_DIR" -mindepth 1 -maxdepth 1 -type d)" ]]; then
-    err "No county directories found under $TRANSFORMS_SRC_DIR. Create one directory per county containing raw transform scripts."
-    exit 1
-  fi
-  mkdir -p "$TRANSFORMS_TARGET_DIR"
-  find "$TRANSFORMS_TARGET_DIR" -maxdepth 1 -type f -name '*.zip' -delete
-  rm -f "$TRANSFORM_MANIFEST_FILE"
-  local tmp_dir tmp_zip manifest first_entry=true
-  manifest=$(mktemp)
-  printf '{\n' >"$manifest"
-  shopt -s nullglob
-  for county_dir in "$TRANSFORMS_SRC_DIR"/*; do
-    [[ -d "$county_dir" ]] || continue
-    local county_name
-    county_name=$(basename "$county_dir")
-    tmp_dir=$(mktemp -d -t transforms.XXXXXX)
-    tmp_zip="$tmp_dir/${county_name}.zip"
-    info "Bundling transforms for county $county_name"
-    pushd "$county_dir" >/dev/null
-    zip -rq "$tmp_zip" .
-    popd >/dev/null
-    mv -f "$tmp_zip" "$TRANSFORMS_TARGET_DIR/${county_name}.zip"
-    rm -rf "$tmp_dir"
-    if [[ "$first_entry" == false ]]; then
-      printf ',\n' >>"$manifest"
-    else
-      first_entry=false
-    fi
-    printf '  "%s": "%s"' "$county_name" "${county_name}.zip" >>"$manifest"
-  done
-  shopt -u nullglob
-  if [[ "$first_entry" == true ]]; then
-    err "No transform archives were generated. Ensure each county directory contains script files."
-    exit 1
-  fi
-  printf '\n}\n' >>"$manifest"
-  mv "$manifest" "$TRANSFORM_MANIFEST_FILE"
-}
 
 upload_transforms_to_s3() {
   local bucket prefix
@@ -421,7 +378,6 @@ main() {
   ensure_lambda_concurrency_quota
 
   compute_param_overrides
-  bundle_transforms_for_lambda
   upload_transforms_to_s3
   upload_browser_flows_to_s3
 

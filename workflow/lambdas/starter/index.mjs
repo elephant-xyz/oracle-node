@@ -1,7 +1,6 @@
 /**
  * Starter Lambda: triggered by SQS with BatchSize=1. Starts Express SFN synchronously.
- * Always returns success to SQS to acknowledge message processing.
- * The state machine handles requeuing on failures.
+ * Throws error on step function failure to trigger SQS DLQ redelivery.
  */
 
 import { SFNClient, StartSyncExecutionCommand } from "@aws-sdk/client-sfn";
@@ -54,6 +53,26 @@ export const handler = async (event) => {
     });
     const resp = await sfn.send(cmd);
     const executionArn = resp.executionArn || "arn not found";
+
+    // Check if the step function execution failed
+    if (resp.status === "FAILED" || resp.status === "TIMED_OUT" || resp.status === "ABORTED") {
+      console.error(
+        JSON.stringify({
+          ...logBase,
+          level: "error",
+          msg: "workflow_failed",
+          executionArn: executionArn,
+          status: resp.status,
+          cause: resp.cause,
+          error: resp.error,
+        }),
+      );
+      // Throw error to trigger SQS redelivery to DLQ
+      throw new Error(
+        `Step function execution failed with status: ${resp.status}. Cause: ${resp.cause || "N/A"}`
+      );
+    }
+
     console.log(
       JSON.stringify({
         ...logBase,
@@ -63,8 +82,7 @@ export const handler = async (event) => {
         status: resp.status,
       }),
     );
-    // Always return success to SQS to acknowledge message processing
-    // The state machine handles requeuing on failures
+
     return {
       status: "ok",
       executionArn: executionArn,
@@ -79,8 +97,8 @@ export const handler = async (event) => {
         error: String(err),
       }),
     );
-    // Always return success to SQS even on errors
-    // SQS message should be acknowledged to prevent infinite retries
-    return { status: "error", error: String(err) };
+    // Re-throw error to trigger SQS redelivery
+    // Message will be retried based on maxReceiveCount and sent to DLQ
+    throw err;
   }
 };
