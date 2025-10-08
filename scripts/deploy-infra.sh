@@ -200,13 +200,31 @@ upload_transforms_to_s3() {
 
   prefix="${TRANSFORM_PREFIX_KEY%/}"
   local s3_prefix="s3://$bucket/$prefix"
-  info "Syncing county transforms to $s3_prefix"
+  info "Zipping and syncing county transforms to $s3_prefix"
 
-  aws s3 sync "$TRANSFORMS_TARGET_DIR" "$s3_prefix" --exclude "manifest.json" --delete || {
-    err "Failed to sync transforms to $s3_prefix"
+  # Create temp directory
+  local temp_dir=$(mktemp -d)
+  trap "rm -rf '$temp_dir'" EXIT
+
+  # List directories inside transform directory and zip each one
+  for dir in "$TRANSFORMS_SRC_DIR"/*/; do
+    if [[ -d "$dir" ]]; then
+      local dirname=$(basename "$dir")
+      info "Zipping $dirname"
+      zip -r "$temp_dir/$dirname.zip" "$dir" || {
+        err "Failed to zip $dir"
+        return 1
+      }
+    fi
+  done
+
+  # Sync temp directory to S3
+  aws s3 sync "$temp_dir" "$s3_prefix" --delete || {
+    err "Failed to sync zips to $s3_prefix"
     return 1
   }
 
+  # Upload manifest file
   local manifest_s3_path="$prefix/manifest.json"
   aws s3 cp "$TRANSFORM_MANIFEST_FILE" "s3://$bucket/$manifest_s3_path" || {
     err "Failed to upload manifest to s3://$bucket/$manifest_s3_path"
