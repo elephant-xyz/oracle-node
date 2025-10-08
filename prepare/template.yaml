@@ -311,7 +311,7 @@ Resources:
       SqsManagedSseEnabled: true
       RedrivePolicy:
         deadLetterTargetArn: !GetAtt WorkflowDeadLetterQueue.Arn
-        maxReceiveCount: 3
+        maxReceiveCount: 1
       Tags:
         - Key: Environment
           Value: !Ref EnvironmentName
