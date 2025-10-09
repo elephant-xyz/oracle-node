@@ -25,9 +25,9 @@ const log = {
 const DEFAULT_STACK_NAME = "elephant-oracle-node";
 
 // Get raw JSON messages and parse them in JavaScript
-const SUCCESS_QUERY = `fields @message | filter @message like /"component":"post"/ and @message like /"msg":"post_lambda_complete"/ | sort @timestamp desc`;
+const SUCCESS_QUERY = `fields jsonParse(@message) as parsed | filter parsed.message.component = 'post' and parsed.message.msg = 'post_lambda_complete' | fields jsonStringify(parsed.message) as @message | sort @timestamp desc`;
 
-const FAILURE_QUERY = `fields @message | filter @message like /"component":"post"/ and @message like /"level":"error"/ | sort @timestamp desc`;
+const FAILURE_QUERY = `fields jsonParse(@message) as parsed | filter parsed.message.component = 'post' and parsed.message.level = 'error' | fields jsonStringify(parsed.message) as @message | sort @timestamp desc`;
 
 function showUsage() {
   console.log(`
@@ -228,21 +228,8 @@ async function runInsightsQuery(
             global.loggedSample = true;
           }
 
-          let message = result["@message"].trim();
-
-          // Try to find JSON - CloudWatch logs may have log level prefixes
-          // Look for the first '{' and last '}'
-          const startBrace = message.indexOf("{");
-          const endBrace = message.lastIndexOf("}");
-
-          if (startBrace !== -1 && endBrace !== -1 && endBrace > startBrace) {
-            message = message.substring(startBrace, endBrace + 1);
-            const parsedMessage = JSON.parse(message);
-            return { ...result, ...parsedMessage };
-          } else {
-            log.debug(`No valid JSON found in message`);
-            return result;
-          }
+          const parsedMessage = JSON.parse(result["@message"]);
+          return { ...result, ...parsedMessage };
         } catch (error) {
           log.debug(`Failed to parse JSON message: ${error.message}`);
           return result;
