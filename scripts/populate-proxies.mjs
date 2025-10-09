@@ -150,3 +150,4 @@ populateProxies(tableName, proxyFilePath)
     );
     process.exit(1);
   });
+
