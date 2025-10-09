@@ -34,7 +34,7 @@ States:
   BuildRepairParamName:
     Type: Pass
     Parameters:
-      repairParam.$: $States.Format("/{}/repair/{}", "${StackName}", $.pre.county_key)
+      repairParam.$: 'States.Format("/${StackName}/repair/{}", $.pre.county_key)'
     ResultPath: $.repair
     Next: GetCountyRepairFlag
 
@@ -71,15 +71,17 @@ States:
     Type: Pass
     QueryLanguage: JSONata
     Comment: "Parse pre.output_prefix (s3://bucket/prefix) to derive bucket, key (prefix/output.zip), and expectedOutputUri"
-    Output: >
+    Output: >-
       {%
-        $prefix := states.input.pre.output_prefix;
-        $bucket := ($split($prefix, "s3://")[1] ~> $split(?, "/"))[0];
-        $output_prefix := ["s3:/", $bucket, ""] ~> $join(?, "/") ~> $substringAfter($prefix, ?);
+        $prefix := $states.input.pre.output_prefix;
+        $bucket := $split($split($prefix, "s3://")[1], "/")[0];
+        $output_prefix := $substringAfter($prefix, "s3://" & $bucket & "/");
         {
-          'bucket': $bucket,
-          'key': $output_prefix & '/output.zip',
-          'expectedOutputUri': 's3://' & $bucket & '/' & $output_prefix & '/output.zip'
+          "head": {
+            "bucket": $bucket,
+            "key": $output_prefix & '/output.zip',
+            "expectedOutputUri": 's3://' & $bucket & '/' & $output_prefix & '/output.zip'
+          }
         }
       %}
     Next: HeadOutputZip
