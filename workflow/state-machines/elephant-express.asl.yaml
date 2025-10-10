@@ -34,7 +34,8 @@ States:
   BuildRepairParamName:
     Type: Pass
     Parameters:
-      repairParam.$: 'States.Format("/${StackName}/repair/{}", $.pre.county_key)'
+      stack_name: ${StackName}
+      repairParam.$: 'States.Format("/{}/repair/{}", $.stack_name, $.pre.county_key)'
     ResultPath: $.repair
     Next: GetCountyRepairFlag
 
@@ -73,14 +74,11 @@ States:
     Comment: "Parse pre.output_prefix (s3://bucket/prefix) to derive bucket, key (prefix/output.zip), and expectedOutputUri"
     Output: >-
       {%
-        $prefix := $states.input.pre.output_prefix;
-        $bucket := $split($split($prefix, "s3://")[1], "/")[0];
-        $output_prefix := $substringAfter($prefix, "s3://" & $bucket & "/");
         {
           "head": {
-            "bucket": $bucket,
-            "key": $output_prefix & '/output.zip',
-            "expectedOutputUri": 's3://' & $bucket & '/' & $output_prefix & '/output.zip'
+            "bucket": $split($split($states.input.pre.output_prefix, "s3://")[1], "/")[0],
+            "key": $substringAfter($prefix, "s3://" & $bucket & "/") & '/output.zip',
+            "expectedOutputUri": $states.input.pre.output_prefix & '/output.zip'
           }
         }
       %}
