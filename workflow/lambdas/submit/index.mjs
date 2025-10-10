@@ -53,7 +53,7 @@ async function downloadKeystoreFromS3(bucket, key, targetPath) {
         const chunks = [];
         stream.on(
           "data",
-          /** @param {Buffer} chunk */ (chunk) => chunks.push(chunk),
+          /** @param {Buffer} chunk */(chunk) => chunks.push(chunk),
         );
         stream.on("error", reject);
         stream.on("end", () =>
@@ -103,11 +103,11 @@ export const handler = async (event) => {
     // Check if we're using keystore mode
     if (process.env.ELEPHANT_KEYSTORE_S3_KEY) {
       console.log(
-        JSON.stringify({
+        {
           ...base,
           level: "info",
           msg: "Using keystore mode for contract submission",
-        }),
+        },
       );
       if (!process.env.ENVIRONMENT_BUCKET)
         throw new Error("ENVIRONMENT_BUCKET is required");
@@ -140,15 +140,15 @@ export const handler = async (event) => {
         try {
           await fs.unlink(keystorePath);
           console.log(
-            JSON.stringify({
+            {
               ...base,
               level: "info",
               msg: "Keystore file cleaned up successfully",
-            }),
+            },
           );
         } catch (cleanupError) {
           console.error(
-            JSON.stringify({
+            {
               ...base,
               level: "warn",
               msg: "Failed to clean up keystore file",
@@ -156,17 +156,17 @@ export const handler = async (event) => {
                 cleanupError instanceof Error
                   ? cleanupError.message
                   : String(cleanupError),
-            }),
+            },
           );
         }
       }
     } else {
       console.log(
-        JSON.stringify({
+        {
           ...base,
           level: "info",
           msg: "Using traditional API credentials for contract submission",
-        }),
+        },
       );
 
       if (!process.env.ELEPHANT_DOMAIN)
@@ -205,12 +205,12 @@ export const handler = async (event) => {
     });
 
     console.log(
-      JSON.stringify({
+      {
         ...base,
         level: "info",
         msg: "completed",
         submit_results: submitResults,
-      }),
+      },
     );
 
     const submitErrrorsCsv = await fs.readFile(
@@ -226,17 +226,17 @@ export const handler = async (event) => {
     const allErrors = [
       ...submitErrors,
       ...submitResults.filter(
-        /** @param {SubmitResultRow} row */ (row) => row.status === "failed",
+        /** @param {SubmitResultRow} row */(row) => row.status === "failed",
       ),
     ];
 
     console.log(
-      JSON.stringify({
+      {
         ...base,
         level: "info",
         msg: "completed",
         submit_errors: submitErrors,
-      }),
+      },
     );
     if (allErrors.length > 0) {
       throw new Error(
