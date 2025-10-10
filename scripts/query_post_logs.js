@@ -25,9 +25,11 @@ const log = {
 const DEFAULT_STACK_NAME = "elephant-oracle-node";
 
 // Get raw JSON messages and parse them in JavaScript
-const SUCCESS_QUERY = `fields @message | filter @message like /"component":"post"/ and @message like /"msg":"post_lambda_complete"/ | sort @timestamp desc`;
+const SUCCESS_QUERY = `fields jsonParse(@message) as parsed | filter parsed.message.component = 'post' and parsed.message.msg = 'post_lambda_complete' | fields parsed.requestId as requestId, parsed.message.county as county, parsed.message.transaction_items_count as transaction_items_count | stats count_distinct(requestId) as executions, sum(coalesce(transaction_items_count, 0)) as total_transactions by county | sort executions desc`;
 
-const FAILURE_QUERY = `fields @message | filter @message like /"component":"post"/ and @message like /"level":"error"/ | sort @timestamp desc`;
+const FAILURE_STEP_QUERY = `fields jsonParse(@message) as parsed | filter parsed.message.component = 'post' and parsed.message.level = 'error' | fields parsed.requestId as requestId, parsed.message.county as county, coalesce(parsed.message.step, parsed.message.operation, parsed.message.msg, 'unknown') as failure_step | stats count_distinct(requestId) as executions by county, failure_step | sort executions desc`;
+
+const FAILURE_TOTAL_QUERY = `fields jsonParse(@message) as parsed | filter parsed.message.component = 'post' and parsed.message.level = 'error' | stats count_distinct(parsed.requestId) as failed_executions by parsed.message.county as county | sort failed_executions desc`;
 
 function showUsage() {
   console.log(`
@@ -228,21 +230,8 @@ async function runInsightsQuery(
             global.loggedSample = true;
           }
 
-          let message = result["@message"].trim();
-
-          // Try to find JSON - CloudWatch logs may have log level prefixes
-          // Look for the first '{' and last '}'
-          const startBrace = message.indexOf("{");
-          const endBrace = message.lastIndexOf("}");
-
-          if (startBrace !== -1 && endBrace !== -1 && endBrace > startBrace) {
-            message = message.substring(startBrace, endBrace + 1);
-            const parsedMessage = JSON.parse(message);
-            return { ...result, ...parsedMessage };
-          } else {
-            log.debug(`No valid JSON found in message`);
-            return result;
-          }
+          const parsedMessage = JSON.parse(result["@message"]);
+          return { ...result, ...parsedMessage };
         } catch (error) {
           log.debug(`Failed to parse JSON message: ${error.message}`);
           return result;
@@ -254,67 +243,123 @@ async function runInsightsQuery(
   );
 }
 
-function aggregateResults(successRows, failureRows) {
+/**
+ * @typedef {Object} SuccessQueryRow
+ * @property {string | null | undefined} county - County name returned from the success query.
+ * @property {string | null | undefined} executions - Successful invocation count as a numeric string.
+ * @property {string | null | undefined} total_transactions - Total transactions emitted by successful invocations as a numeric string.
+ */
+
+/**
+ * @typedef {Object} FailureStepQueryRow
+ * @property {string | null | undefined} county - County name returned from the failure step query.
+ * @property {string | null | undefined} failure_step - Step or operation identifier corresponding to the failure.
+ * @property {string | null | undefined} executions - Distinct failed invocation count for the step as a numeric string.
+ */
+
+/**
+ * @typedef {Object} FailureTotalsQueryRow
+ * @property {string | null | undefined} county - County name returned from the failure totals query.
+ * @property {string | null | undefined} failed_executions - Distinct failed invocation count as a numeric string.
+ */
+
+/**
+ * @typedef {Object} AggregatedCountyMetrics
+ * @property {number} total_successful_transactions - Aggregate transaction count produced by successful runs.
+ * @property {number} success_executions - Distinct successful invocation count.
+ * @property {number} failed_executions - Distinct failed invocation count.
+ * @property {Record<string, number>} failure_counts - Mapping of failure steps to invocation counts.
+ * @property {number} success_rate - Percentage of successful runs across all invocations in the time window.
+ */
+
+/**
+ * @typedef {Record<string, AggregatedCountyMetrics>} AggregatedResults
+ */
+
+/**
+ * Merge success and failure query outputs into a county level summary.
+ *
+ * @param {SuccessQueryRow[]} successRows - Rows returned by the success CloudWatch Logs Insights query.
+ * @param {FailureStepQueryRow[]} failureStepRows - Rows returned by the failure-per-step query.
+ * @param {FailureTotalsQueryRow[]} failureTotalRows - Rows returned by the failure totals query.
+ * @returns {AggregatedResults} - Aggregated metrics grouped by county.
+ */
+function aggregateResults(successRows, failureStepRows, failureTotalRows) {
   log.debug("Aggregating results...");
 
-  const toNum = (value) => {
-    if (value == null || value === "") return 0;
-    const num = parseFloat(value);
-    return isNaN(num) ? 0 : num;
-  };
-
-  // Initialize result structure
+  /** @type {AggregatedResults} */
   const result = {};
 
-  // Process success rows - these are individual execution results
+  /**
+   * @param {string} countyName
+   * @returns {AggregatedCountyMetrics}
+   */
+  const ensureCounty = (countyName) => {
+    if (!result[countyName]) {
+      result[countyName] = {
+        total_successful_transactions: 0,
+        success_executions: 0,
+        failed_executions: 0,
+        failure_counts: {},
+        success_rate: 0,
+      };
+    }
+    return result[countyName];
+  };
+
   for (const row of successRows) {
     const county = row.county || "unknown";
-    if (!result[county]) {
-      result[county] = {
-        total_successful_transactions: 0,
-        success_executions: 0,
-        failed_executions: 0,
-        failure_counts: {},
-      };
-    }
-
-    // Count successful executions
-    result[county].success_executions += 1;
-
-    // Add transaction count from successful executions
-    const transactionCount = toNum(row.transaction_items_count);
-    result[county].total_successful_transactions += transactionCount;
+    const metrics = ensureCounty(county);
+    metrics.success_executions = Number.parseInt(row.executions || "0", 10);
+    metrics.total_successful_transactions = Number.parseInt(
+      row.total_transactions || "0",
+      10,
+    );
   }
 
-  // Process failure rows - these are individual failure events
-  for (const row of failureRows) {
+  for (const row of failureTotalRows) {
     const county = row.county || "unknown";
-    if (!result[county]) {
-      result[county] = {
-        total_successful_transactions: 0,
-        success_executions: 0,
-        failed_executions: 0,
-        failure_counts: {},
-      };
-    }
-
-    // Count failed executions
-    result[county].failed_executions += 1;
-
-    // Track failure counts by step/message type
-    const step = row.step || row.msg || row.operation || "unknown";
-    result[county].failure_counts[step] =
-      (result[county].failure_counts[step] || 0) + 1;
+    const metrics = ensureCounty(county);
+    metrics.failed_executions = Number.parseInt(
+      row.failed_executions || "0",
+      10,
+    );
   }
 
-  // Calculate success rates
-  for (const county in result) {
-    const data = result[county];
-    const totalExecutions = data.success_executions + data.failed_executions;
-    data.success_rate =
+  for (const row of failureStepRows) {
+    const county = row.county || "unknown";
+    const metrics = ensureCounty(county);
+
+    const failureStep = row.failure_step || "unknown";
+    const normalizedStep =
+      failureStep === "post_lambda_failed" ? "unknown" : failureStep;
+    if (normalizedStep === "unknown") {
+      continue;
+    }
+
+    metrics.failure_counts[normalizedStep] = Number.parseInt(
+      row.executions || "0",
+      10,
+    );
+  }
+
+  for (const county of Object.keys(result)) {
+    const metrics = result[county];
+    const totalExecutions =
+      metrics.success_executions + metrics.failed_executions;
+    metrics.success_rate =
       totalExecutions > 0
-        ? (data.success_executions / totalExecutions) * 100
+        ? (metrics.success_executions / totalExecutions) * 100
         : 0;
+
+    const knownFailureSum = Object.values(metrics.failure_counts).reduce(
+      (sum, count) => sum + count,
+      0,
+    );
+    const unknownResidual = metrics.failed_executions - knownFailureSum;
+    if (unknownResidual > 0) {
+      metrics.failure_counts.unknown = unknownResidual;
+    }
   }
 
   return result;
@@ -418,8 +463,17 @@ async function main() {
     );
 
     log.info("Querying failure metrics...");
-    const failureRows = await runInsightsQuery(
-      FAILURE_QUERY,
+    const failureStepRows = await runInsightsQuery(
+      FAILURE_STEP_QUERY,
+      logGroup,
+      timeRange.startTime,
+      timeRange.endTime,
+      awsConfig,
+    );
+
+    log.info("Querying failure totals...");
+    const failureTotalRows = await runInsightsQuery(
+      FAILURE_TOTAL_QUERY,
       logGroup,
       timeRange.startTime,
       timeRange.endTime,
@@ -427,7 +481,11 @@ async function main() {
     );
 
     log.info("Aggregating results...");
-    const aggregated = aggregateResults(successRows, failureRows);
+    const aggregated = aggregateResults(
+      successRows,
+      failureStepRows,
+      failureTotalRows,
+    );
 
     log.info("Formatting output...");
     const output = formatOutput(aggregated);
@@ -450,7 +508,8 @@ if (require.main === module) {
 module.exports = {
   log,
   SUCCESS_QUERY,
-  FAILURE_QUERY,
+  FAILURE_STEP_QUERY,
+  FAILURE_TOTAL_QUERY,
   checkDependencies,
   parseIsoToEpoch,
   calculateTimeRange,
