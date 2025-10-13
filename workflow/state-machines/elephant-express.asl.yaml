@@ -34,8 +34,7 @@ States:
   BuildRepairParamName:
     Type: Pass
     Parameters:
-      stack_name: ${StackName}
-      repairParam.$: 'States.Format("/{}/repair/{}", $.stack_name, $.pre.county_key)'
+      repairParam.$: States.Format('/${StackName}/repair/{}', $.pre.county_key)
     ResultPath: $.repair
     Next: GetCountyRepairFlag
 
@@ -77,9 +76,11 @@ States:
         {
           "head": {
             "bucket": $split($split($states.input.pre.output_prefix, "s3://")[1], "/")[0],
-            "key": $substringAfter($prefix, "s3://" & $bucket & "/") & '/output.zip',
+            "key": $substringAfter($states.input.pre.output_prefix, "s3://" & $split($split($states.input.pre.output_prefix, "s3://")[1], "/")[0] & "/") & '/output.zip',
             "expectedOutputUri": $states.input.pre.output_prefix & '/output.zip'
-          }
+          },
+          "message": $states.input.message,
+          "pre": $states.input.pre
         }
       %}
     Next: HeadOutputZip
