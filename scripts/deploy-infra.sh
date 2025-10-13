@@ -224,12 +224,6 @@ upload_transforms_to_s3() {
     return 1
   }
 
-  # Upload manifest file
-  local manifest_s3_path="$prefix/manifest.json"
-  aws s3 cp "$TRANSFORM_MANIFEST_FILE" "s3://$bucket/$manifest_s3_path" || {
-    err "Failed to upload manifest to s3://$bucket/$manifest_s3_path"
-    return 1
-  }
 
   TRANSFORM_S3_PREFIX_VALUE="s3://$bucket/$prefix"
   info "Transforms uploaded. Prefix: $TRANSFORM_S3_PREFIX_VALUE"
