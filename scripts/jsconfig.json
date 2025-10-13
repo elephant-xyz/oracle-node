@@ -20,4 +20,3 @@
   "include": ["*.mjs", "*.js"],
   "exclude": ["node_modules"]
 }
-
