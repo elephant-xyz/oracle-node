@@ -12,8 +12,10 @@ States:
       county_prep_input_s3_uri.$: $.Payload.county_prep_input_s3_uri
       output_prefix.$: $.Payload.output_prefix
       seed_output_s3_uri.$: $.Payload.seed_output_s3_uri
+      county_name.$: $.Payload.county_name
+      county_key.$: $.Payload.county_key
     ResultPath: $.pre
-    Next: Prepare
+    Next: BuildRepairParamName
     Retry:
       - ErrorEquals:
           [
@@ -28,6 +30,80 @@ States:
       - ErrorEquals: [States.ALL]
         ResultPath: $.error
         Next: FailRuntime
+
+  BuildRepairParamName:
+    Type: Pass
+    Parameters:
+      repairParam.$: States.Format('/${StackName}/repair/{}', $.pre.county_key)
+    ResultPath: $.repair
+    Next: GetCountyRepairFlag
+
+  GetCountyRepairFlag:
+    Type: Task
+    Resource: arn:aws:states:::aws-sdk:ssm:getParameter
+    Parameters:
+      Name.$: $.repair.repairParam
+      WithDecryption: false
+    ResultPath: $.countyRepair
+    Next: ShouldAttemptSkip
+    Catch:
+      - ErrorEquals: [States.ALL]
+        ResultPath: $.countyRepair
+        Next: DefaultRepairFalse
+
+  DefaultRepairFalse:
+    Type: Pass
+    Parameters:
+      Parameter:
+        Value: "false"
+    ResultPath: $.countyRepair
+    Next: ShouldAttemptSkip
+
+  ShouldAttemptSkip:
+    Type: Choice
+    Choices:
+      - Variable: $.countyRepair.Parameter.Value
+        StringEquals: "true"
+        Next: BuildHeadParams
+    Default: Prepare
+
+  BuildHeadParams:
+    Type: Pass
+    QueryLanguage: JSONata
+    Comment: "Parse pre.output_prefix (s3://bucket/prefix) to derive bucket, key (prefix/output.zip), and expectedOutputUri"
+    Output: >-
+      {%
+        {
+          "head": {
+            "bucket": $split($split($states.input.pre.output_prefix, "s3://")[1], "/")[0],
+            "key": $substringAfter($states.input.pre.output_prefix, "s3://" & $split($split($states.input.pre.output_prefix, "s3://")[1], "/")[0] & "/") & '/output.zip',
+            "expectedOutputUri": $states.input.pre.output_prefix & '/output.zip'
+          },
+          "message": $states.input.message,
+          "pre": $states.input.pre
+        }
+      %}
+    Next: HeadOutputZip
+
+  HeadOutputZip:
+    Type: Task
+    Resource: arn:aws:states:::aws-sdk:s3:headObject
+    Parameters:
+      Bucket.$: $.head.bucket
+      Key.$: $.head.key
+    ResultPath: $.headResult
+    Next: BypassPrepare
+    Catch:
+      - ErrorEquals: [States.ALL]
+        ResultPath: $.headError
+        Next: Prepare
+
+  BypassPrepare:
+    Type: Pass
+    Parameters:
+      output_s3_uri.$: $.head.expectedOutputUri
+    ResultPath: $.prepare
+    Next: Postprocess
 
   Prepare:
     Type: Task

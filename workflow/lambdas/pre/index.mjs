@@ -11,9 +11,22 @@ import { transform, validate } from "@elephant-xyz/cli/lib";
 import { parse } from "csv-parse/sync";
 
 /**
+ * @typedef {object} S3Object
+ * @property {string} key
+ *
+ * @typedef {object} S3Bucket
+ * @property {string} name
+ *
+ * @typedef {object} S3Event
+ * @property {{ bucket: S3Bucket, object: S3Object }} s3
+ *
  * @typedef {Object} PreOutput
  * @property {string} input_s3_uri - S3 URI of input created for prepare step
  * @property {string} output_prefix - S3 URI prefix where prepare should write
+ * @property {string} seed_output_s3_uri - S3 URI to the seed output archive
+ * @property {string} county_prep_input_s3_uri - S3 URI to county prep input archive
+ * @property {string} county_name - County jurisdiction name extracted from seed metadata
+ * @property {string} county_key - County key derived from `county_name` by replacing spaces with underscores
  */
 
 const s3 = new S3Client({});
@@ -42,7 +55,7 @@ async function csvToJson(csvPath) {
  * - Extracts bucket/key from S3 event in SQS body
  * - Produces output prefix and input path for prepare Lambda
  *
- * @param {any} event - Original SQS body JSON (already parsed by starter)
+ * @param {S3Event} event - Original SQS body JSON (already parsed by starter)
  * @returns {Promise<PreOutput>}
  */
 export const handler = async (event) => {
@@ -180,11 +193,40 @@ export const handler = async (event) => {
       }),
     );
 
+    // Extract county name from seed output (unnormalized_address.json inside seed output)
+    let countyName = "";
+    try {
+      const seedAddressPath = path.join(
+        seedExtractDir,
+        "data",
+        "unnormalized_address.json",
+      );
+      const addrRaw = await fs.readFile(seedAddressPath, "utf8");
+      /** @type {{ county_jurisdiction?: string }} */
+      const addrJson = JSON.parse(addrRaw);
+      if (addrJson && typeof addrJson.county_jurisdiction === "string") {
+        countyName = addrJson.county_jurisdiction;
+      }
+    } catch (countyReadError) {
+      console.error(
+        JSON.stringify({
+          ...base,
+          level: "error",
+          msg: "county_name_extract_failed",
+          error: String(countyReadError),
+        }),
+      );
+    }
+
+    const countyKey = countyName.replace(/ /g, "_");
+
     const out = {
       input_s3_uri: inputS3Uri,
       output_prefix: outputPrefix,
       seed_output_s3_uri: `s3://${outBucket}/${seedKey}`,
       county_prep_input_s3_uri: `s3://${cpBucket}/${cpParts.join("/")}`,
+      county_name: countyName,
+      county_key: countyKey,
     };
     console.log(
       JSON.stringify({ ...base, level: "info", msg: "prepared", out }),
