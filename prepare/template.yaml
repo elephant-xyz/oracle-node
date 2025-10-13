@@ -519,6 +519,7 @@ Resources:
         DownloaderFunction: !GetAtt DownloaderFunction.Arn
         WorkflowPostProcessorFunction: !GetAtt WorkflowPostProcessorFunction.Arn
         TransactionsSqsQueueUrl: !Ref TransactionsSqsQueue
+        StackName: !Ref AWS::StackName
       Role: !GetAtt ElephantExpressStateMachineRole.Arn
       Logging:
         Destinations:
@@ -563,6 +564,17 @@ Resources:
                   - sqs:SendMessage
                 Resource:
                   - !GetAtt TransactionsSqsQueue.Arn
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                Resource:
+                  - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${AWS::StackName}/repair/*"
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:HeadObject
+                Resource:
+                  - !Sub "${EnvironmentBucket.Arn}/*"
               - Effect: Allow
                 Action:
                   - logs:CreateLogDelivery

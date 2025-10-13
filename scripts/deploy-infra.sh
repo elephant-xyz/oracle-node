@@ -307,6 +307,39 @@ populate_proxy_rotation_table() {
 }
 
 
+# Write per-county repair flag(s) to SSM Parameter Store
+write_repair_flags_to_ssm() {
+  # Single county mode via REPAIR_COUNTY + REPAIR_VALUE
+  if [[ -n "${REPAIR_COUNTY:-}" && -n "${REPAIR_VALUE:-}" ]]; then
+    local county_key
+    county_key=$(echo -n "$REPAIR_COUNTY" | sed 's/ /_/g')
+    local name
+    name="/${STACK_NAME}/repair/${county_key}"
+    info "Setting repair flag for county '$REPAIR_COUNTY' (key: ${county_key}) to ${REPAIR_VALUE} at ${name}"
+    aws ssm put-parameter --name "$name" --type String --value "$REPAIR_VALUE" --overwrite >/dev/null
+  fi
+
+  # Batch mode via REPAIR_COUNTIES_JSON: { "Palm Beach": true, "Escambia": false }
+  if [[ -n "${REPAIR_COUNTIES_JSON:-}" ]]; then
+    if ! echo "${REPAIR_COUNTIES_JSON}" | jq . >/dev/null 2>&1; then
+      err "REPAIR_COUNTIES_JSON must be valid JSON object"
+      exit 1
+    fi
+    local keys
+    keys=$(echo "${REPAIR_COUNTIES_JSON}" | jq -r 'to_entries[] | @base64')
+    while IFS= read -r entry; do
+      local kv k v county_key name
+      kv=$(echo "$entry" | base64 --decode)
+      k=$(echo "$kv" | jq -r '.key')
+      v=$(echo "$kv" | jq -r '.value | tostring')
+      county_key=$(echo -n "$k" | sed 's/ /_/g')
+      name="/${STACK_NAME}/repair/${county_key}"
+      info "Setting repair flag for county '$k' (key: ${county_key}) to ${v} at ${name}"
+      aws ssm put-parameter --name "$name" --type String --value "$v" --overwrite >/dev/null
+    done <<< "$keys"
+  fi
+}
+
 # Check the Lambda "Concurrent executions" service quota and request an increase if it's 10
 ensure_lambda_concurrency_quota() {
   info "Checking Lambda 'Concurrent executions' service quota"
@@ -434,6 +467,9 @@ main() {
 
   # Populate proxy rotation table if proxy file is provided
   populate_proxy_rotation_table
+
+  # Write per-county repair flags to SSM if provided
+  write_repair_flags_to_ssm
 
   bucket=$(get_bucket)
   echo

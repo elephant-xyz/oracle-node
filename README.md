@@ -50,6 +50,16 @@ export UPDATER_SCHEDULE_RATE="1 minute"    # How often updater runs (default: "1
 
 # Optional (Proxy rotation - for automatic proxy rotation support)
 export PROXY_FILE=/path/to/proxies.txt  # File containing proxy URLs (one per line: username:password@ip:port)
+
+# Optional (Per-county repair flags written to SSM)
+# Set one county at a time
+#   REPAIR_COUNTY: County name as it appears in county_jurisdiction (spaces are OK)
+#   REPAIR_VALUE:  true|false
+export REPAIR_COUNTY="Palm Beach"
+export REPAIR_VALUE=true
+
+# Or set multiple counties at once using JSON object of name->boolean
+export REPAIR_COUNTIES_JSON='{"Palm Beach": true, "Escambia": false}'
 ```
 
 #### Option B: Keystore Mode (using encrypted private key)
@@ -128,6 +138,34 @@ Put your transform files under `transform/` (if applicable).
 ```
 
 This creates the VPC, S3 buckets, SQS queues, Lambdas, and the Express Step Functions state machine.
+
+### Repair mode (per-county) — Skip Prepare when possible
+
+The workflow can skip the Prepare step for specific counties in a "repair" scenario when a prepared output already exists in S3. Control is via SSM Parameters created by the deploy script:
+
+- SSM parameter path: `/${STACK_NAME}/repair/<County_With_Underscores>`
+- Value: `"true"` or `"false"` (string)
+
+Behavior during execution:
+
+- Pre Lambda emits `county_name` and `county_key` (spaces→underscores).
+- State machine reads `/${STACK_NAME}/repair/${county_key}`.
+- If value is `true`, it constructs the expected output path from `pre.output_prefix` and checks S3 with `HeadObject`:
+  - If the object exists, Prepare is bypassed and the existing `output.zip` is used.
+  - If not, the flow runs Prepare as usual.
+
+Set flags via environment variables before running `./scripts/deploy-infra.sh`:
+
+```bash
+# Single county
+export REPAIR_COUNTY="Palm Beach"
+export REPAIR_VALUE=true
+./scripts/deploy-infra.sh
+
+# Multiple counties
+export REPAIR_COUNTIES_JSON='{"Palm Beach": true, "Escambia": false}'
+./scripts/deploy-infra.sh
+```
 
 ### Configure Prepare Function Behavior
 
@@ -217,6 +255,15 @@ export ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE_Charlotte="CHARLOTTE_FLOW"
 # Apply to existing Lambda
 ./scripts/set-county-configs.sh
 ```
+
+#### County Repair Flag Reference
+
+- Parameter Store naming: `/${STACK_NAME}/repair/<County_With_Underscores>`
+- Example names:
+  - `/elephant-oracle-node/repair/Palm_Beach`
+  - `/elephant-oracle-node/repair/Santa_Rosa`
+- Values are simple strings: `"true"` or `"false"`
+- Missing parameter is treated as `false`.
 
 **Supported county-specific variables:**
 
