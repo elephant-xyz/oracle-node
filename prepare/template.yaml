@@ -128,12 +128,12 @@ Resources:
   EnvironmentBucket:
     Type: AWS::S3::Bucket
     Properties:
-      LifecycleConfiguration:
-        Rules:
-          - Id: DeleteOutputs
-            Status: Enabled
-            ExpirationInDays: 14
-            Prefix: outputs/
+      # LifecycleConfiguration:
+      #   Rules:
+      #     - Id: DeleteOutputs
+      #       Status: Enabled
+      #       ExpirationInDays: 14
+      #       Prefix: outputs/
       VersioningConfiguration:
         Status: Enabled
       PublicAccessBlockConfiguration:
