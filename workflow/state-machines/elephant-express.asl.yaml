@@ -49,13 +49,13 @@ States:
     Catch:
       - ErrorEquals: [States.ALL]
         ResultPath: $.countyRepair
-        Next: DefaultRepairFalse
+        Next: DefaultRepairTrue
 
-  DefaultRepairFalse:
+  DefaultRepairTrue:
     Type: Pass
     Parameters:
       Parameter:
-        Value: "false"
+        Value: "true"
     ResultPath: $.countyRepair
     Next: ShouldAttemptSkip
 
