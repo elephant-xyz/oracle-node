@@ -1,0 +1,102 @@
+{
+  "starts_at": "open_search_page",
+  "states": {
+    "open_search_page": {
+      "type": "open_page",
+      "input": {
+        "url": "{{=it.url}}",
+        "timeout": 30000,
+        "wait_until": "domcontentloaded"
+      },
+      "next": "wait_for_disclaimer"
+    },
+    "wait_for_disclaimer": {
+      "type": "wait_for_selector",
+      "input": {
+        "selector": "#btAgree",
+        "timeout": 15000,
+        "visible": true
+      },
+      "next": "click_disclaimer"
+    },
+    "click_disclaimer": {
+      "type": "click",
+      "input": {
+        "selector": "#btAgree"
+      },
+      "next": "wait_for_search_form"
+    },
+    "wait_for_search_form": {
+      "type": "wait_for_selector",
+      "input": {
+        "selector": "#inpParid",
+        "timeout": 30000,
+        "visible": true
+      },
+      "next": "enter_parcel_id"
+    },
+    "enter_parcel_id": {
+      "type": "type",
+      "input": {
+        "selector": "#inpParid",
+        "value": "{{=it.request_identifier}}",
+        "delay": 100
+      },
+      "next": "press_enter"
+    },
+    "press_enter": {
+      "type": "keyboard_press",
+      "input": {
+        "key": "Enter"
+      },
+      "next": "race_final_page_or_table"
+    },
+    "race_final_page_or_table": {
+      "type": "wait_for_selector_race",
+      "input": {
+        "selectors": [
+          {
+            "selector": "#datalet_div_1",
+            "label": "final_page",
+            "timeout": 60000
+          },
+          {
+            "selector": "#searchResults > tbody > tr:nth-child(1) > td:nth-child(3)",
+            "label": "results_table",
+            "timeout": 60000
+          }
+        ],
+        "visible": true
+      },
+      "next_map": {
+        "final_page": "wait_for_final_page_complete",
+        "results_table": "click_first_result"
+      }
+    },
+    "click_first_result": {
+      "type": "click",
+      "input": {
+        "selector": "#searchResults > tbody > tr:nth-child(1) > td:nth-child(3)"
+      },
+      "next": "wait_for_final_page"
+    },
+    "wait_for_final_page": {
+      "type": "wait_for_selector",
+      "input": {
+        "selector": "#datalet_div_1",
+        "timeout": 60000,
+        "visible": true
+      },
+      "end": true
+    },
+    "wait_for_final_page_complete": {
+      "type": "wait_for_selector",
+      "input": {
+        "selector": "#datalet_div_1",
+        "timeout": 5000,
+        "visible": true
+      },
+      "end": true
+    }
+  }
+}
