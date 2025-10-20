@@ -6,7 +6,6 @@ import {
 import { promises as fs } from "fs";
 import path from "path";
 import os from "os";
-import { randomUUID } from "crypto";
 import { transform, validate, hash, upload } from "@elephant-xyz/cli/lib";
 import { parse } from "csv-parse/sync";
 import AdmZip from "adm-zip";
@@ -63,6 +62,7 @@ const transformScriptsManager = createTransformScriptsManager({
  * @property {PrepareOutput} prepare
  * @property {string} seed_output_s3_uri
  * @property {S3Event} s3
+ * @property {boolean} [prepareSkipped] - Flag indicating if prepare step was skipped
  */
 
 /**
@@ -217,36 +217,6 @@ function requireEnv(name) {
 }
 
 /**
- * Download prepared county and seed archives to local temporary files.
- *
- * @param {DownloadInputsParams} params - Download configuration.
- * @returns {Promise<DownloadInputsResult>} - Paths to downloaded archives.
- */
-async function downloadInputArchives({ prepareUri, seedUri, tmpDir, log }) {
-  const { bucket: prepBucket, key: prepKey } = parseS3Uri(prepareUri);
-  const { bucket: seedBucket, key: seedKey } = parseS3Uri(seedUri);
-
-  const countyZipLocal = path.join(tmpDir, "county_input.zip");
-  const seedZipLocal = path.join(tmpDir, "seed_seed_output.zip");
-
-  log("info", "download_prepared_zip", { bucket: prepBucket, key: prepKey });
-  await downloadS3Object(
-    { bucket: prepBucket, key: prepKey },
-    countyZipLocal,
-    log,
-  );
-
-  log("info", "download_seed_zip", { bucket: seedBucket, key: seedKey });
-  await downloadS3Object(
-    { bucket: seedBucket, key: seedKey },
-    seedZipLocal,
-    log,
-  );
-
-  return { countyZipLocal, seedZipLocal };
-}
-
-/**
  * Resolve the transform bucket/key pair for a given county.
  *
  * @param {{ countyName: string, transformPrefixUri: string | undefined }} params - Transform location configuration.
@@ -275,6 +245,111 @@ function buildSubmissionLocation({ outputBaseUri, inputS3ObjectKey }) {
   const submissionUri = `${normalizedBase}/${inputKey}/submission_ready.csv`;
   const { bucket, key } = parseS3Uri(submissionUri);
   return { Bucket: bucket, Key: key };
+}
+
+/**
+ * Merge two zip archives, with seed files overwriting prepare files on conflict.
+ *
+ * @param {object} params - Merge parameters.
+ * @param {string} params.prepareZipPath - Path to the prepare output zip.
+ * @param {string} params.seedZipPath - Path to the seed output zip.
+ * @param {string} params.tmpDir - Temporary working directory.
+ * @param {StructuredLogger} params.log - Structured logger.
+ * @returns {Promise<string>} - Path to the merged zip file.
+ */
+async function mergeArchives({ prepareZipPath, seedZipPath, tmpDir, log }) {
+  log("info", "merge_archives_start", {
+    operation: "merge_archives",
+  });
+
+  const mergeStart = Date.now();
+
+  // Create temporary directories for extraction and merging
+  const prepareExtractDir = path.join(tmpDir, "prepare_extract");
+  const seedExtractDir = path.join(tmpDir, "seed_extract");
+  const mergedDir = path.join(tmpDir, "merged");
+
+  await fs.mkdir(prepareExtractDir, { recursive: true });
+  await fs.mkdir(seedExtractDir, { recursive: true });
+  await fs.mkdir(mergedDir, { recursive: true });
+
+  try {
+    // Extract prepare output zip
+    log("info", "extract_prepare_zip", { operation: "extract_prepare" });
+    const prepareZip = new AdmZip(await fs.readFile(prepareZipPath));
+    prepareZip.extractAllTo(prepareExtractDir, true);
+
+    // Extract seed output zip
+    log("info", "extract_seed_zip", { operation: "extract_seed" });
+    const seedZip = new AdmZip(await fs.readFile(seedZipPath));
+    seedZip.extractAllTo(seedExtractDir, true);
+
+    // Copy prepare files to merged directory
+    log("info", "copy_prepare_files", { operation: "copy_prepare" });
+    /**
+     * @param {string} src
+     * @param {string} dest
+     */
+    const copyRecursive = async (src, dest) => {
+      const entries = await fs.readdir(src, { withFileTypes: true });
+      for (const entry of entries) {
+        const srcPath = path.join(src, entry.name);
+        const destPath = path.join(dest, entry.name);
+        if (entry.isDirectory()) {
+          await fs.mkdir(destPath, { recursive: true });
+          await copyRecursive(srcPath, destPath);
+        } else {
+          await fs.copyFile(srcPath, destPath);
+        }
+      }
+    };
+
+    await copyRecursive(prepareExtractDir, mergedDir);
+
+    // Copy seed files to merged directory (overwriting conflicts)
+    // Seed files are in data/ subdirectory but should be copied to root
+    log("info", "copy_seed_files_overwrite", {
+      operation: "copy_seed_overwrite",
+    });
+    const seedDataDir = path.join(seedExtractDir, "data");
+    const seedDataExists = await fs
+      .access(seedDataDir)
+      .then(() => true)
+      .catch(() => false);
+
+    if (seedDataExists) {
+      await copyRecursive(seedDataDir, mergedDir);
+    } else {
+      await copyRecursive(seedExtractDir, mergedDir);
+    }
+
+    // Create merged zip
+    const mergedZipPath = path.join(tmpDir, "merged_input.zip");
+    log("info", "create_merged_zip", { operation: "create_merged_zip" });
+    const mergedZip = new AdmZip();
+    mergedZip.addLocalFolder(mergedDir);
+    await fs.writeFile(mergedZipPath, mergedZip.toBuffer());
+
+    const mergeDuration = Date.now() - mergeStart;
+    log("info", "merge_archives_complete", {
+      operation: "merge_archives",
+      duration_ms: mergeDuration,
+      duration_seconds: (mergeDuration / 1000).toFixed(2),
+    });
+
+    return mergedZipPath;
+  } finally {
+    // Clean up extraction directories
+    try {
+      await fs.rm(prepareExtractDir, { recursive: true, force: true });
+      await fs.rm(seedExtractDir, { recursive: true, force: true });
+      await fs.rm(mergedDir, { recursive: true, force: true });
+    } catch (cleanupError) {
+      log("error", "merge_cleanup_failed", {
+        error: String(cleanupError),
+      });
+    }
+  }
 }
 
 /**
@@ -689,12 +764,36 @@ export const handler = async (event) => {
     }
   };
 
-  log("info", "post_lambda_start", { input_s3_key: event?.s3?.object?.key });
+  log("info", "post_lambda_start", {
+    input_s3_key: event?.s3?.object?.key,
+    prepareSkipped: event.prepareSkipped || false,
+  });
 
   try {
-    // Download the prepared county archive
-    const countyZipLocal = path.join(tmp, "county_input.zip");
-    await downloadS3Object(parseS3Uri(prepared), countyZipLocal, log);
+    // Determine the county input zip based on whether prepare was skipped
+    let countyZipLocal;
+
+    if (event.prepareSkipped) {
+      // Prepare was skipped: merge existing prepare output with seed output
+      log("info", "prepare_skipped_merging", {
+        operation: "merge_prepare_seed",
+      });
+
+      const prepareZipLocal = path.join(tmp, "prepare_output.zip");
+      await downloadS3Object(parseS3Uri(prepared), prepareZipLocal, log);
+
+      // Merge the archives with seed files overwriting prepare files
+      countyZipLocal = await mergeArchives({
+        prepareZipPath: prepareZipLocal,
+        seedZipPath: seedZipLocal,
+        tmpDir: tmp,
+        log,
+      });
+    } else {
+      // Normal flow: use prepare output as-is
+      countyZipLocal = path.join(tmp, "county_input.zip");
+      await downloadS3Object(parseS3Uri(prepared), countyZipLocal, log);
+    }
 
     const { transformBucket, transformKey } = resolveTransformLocation({
       countyName,
