@@ -217,36 +217,6 @@ function requireEnv(name) {
 }
 
 /**
- * Download prepared county and seed archives to local temporary files.
- *
- * @param {DownloadInputsParams} params - Download configuration.
- * @returns {Promise<DownloadInputsResult>} - Paths to downloaded archives.
- */
-async function downloadInputArchives({ prepareUri, seedUri, tmpDir, log }) {
-  const { bucket: prepBucket, key: prepKey } = parseS3Uri(prepareUri);
-  const { bucket: seedBucket, key: seedKey } = parseS3Uri(seedUri);
-
-  const countyZipLocal = path.join(tmpDir, "county_input.zip");
-  const seedZipLocal = path.join(tmpDir, "seed_seed_output.zip");
-
-  log("info", "download_prepared_zip", { bucket: prepBucket, key: prepKey });
-  await downloadS3Object(
-    { bucket: prepBucket, key: prepKey },
-    countyZipLocal,
-    log,
-  );
-
-  log("info", "download_seed_zip", { bucket: seedBucket, key: seedKey });
-  await downloadS3Object(
-    { bucket: seedBucket, key: seedKey },
-    seedZipLocal,
-    log,
-  );
-
-  return { countyZipLocal, seedZipLocal };
-}
-
-/**
  * Resolve the transform bucket/key pair for a given county.
  *
  * @param {{ countyName: string, transformPrefixUri: string | undefined }} params - Transform location configuration.
@@ -337,10 +307,21 @@ async function mergeArchives({ prepareZipPath, seedZipPath, tmpDir, log }) {
     await copyRecursive(prepareExtractDir, mergedDir);
 
     // Copy seed files to merged directory (overwriting conflicts)
+    // Seed files are in data/ subdirectory but should be copied to root
     log("info", "copy_seed_files_overwrite", {
       operation: "copy_seed_overwrite",
     });
-    await copyRecursive(seedExtractDir, mergedDir);
+    const seedDataDir = path.join(seedExtractDir, "data");
+    const seedDataExists = await fs
+      .access(seedDataDir)
+      .then(() => true)
+      .catch(() => false);
+
+    if (seedDataExists) {
+      await copyRecursive(seedDataDir, mergedDir);
+    } else {
+      await copyRecursive(seedExtractDir, mergedDir);
+    }
 
     // Create merged zip
     const mergedZipPath = path.join(tmpDir, "merged_input.zip");
