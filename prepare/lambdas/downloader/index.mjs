@@ -591,7 +591,7 @@ export const handler = async (event) => {
     }
 
     // Build prepare options based on environment variables
-    /** @type {{ useBrowser: boolean, noFast?: boolean, noContinue?: boolean, browserFlowTemplate?: string, browserFlowParameters?: string, proxyUrl?: string, ignoreCaptcha?: boolean, continueButtonSelector?: string, browserFlowFile?: string }} */
+    /** @type {{ useBrowser: boolean, noFast?: boolean, noContinue?: boolean, browserFlowTemplate?: string, browserFlowParameters?: string, proxyUrl?: string, ignoreCaptcha?: boolean, continueButtonSelector?: string, browserFlowFile?: string, multiRequestFlowFile?: string }} */
     const prepareOptions = { useBrowser };
 
     // Add proxy URL if available
@@ -671,6 +671,57 @@ export const handler = async (event) => {
         } else {
           console.error(
             `Failed to download browser flow file for county ${countyName}: ${downloadError instanceof Error ? downloadError.message : String(downloadError)}`,
+          );
+        }
+      }
+    }
+
+    // Check for multi-request flow file in S3 (county-specific)
+    if (environmentBucket && countyName) {
+      const multiRequestFlowS3Key = `multi-request-flows/${countyName}.json`;
+
+      try {
+        console.log(
+          `Checking for multi-request flow file: s3://${environmentBucket}/${multiRequestFlowS3Key}`,
+        );
+
+        const multiRequestFlowResp = await s3.send(
+          new GetObjectCommand({
+            Bucket: environmentBucket,
+            Key: multiRequestFlowS3Key,
+          }),
+        );
+
+        const multiRequestFlowBytes =
+          await multiRequestFlowResp.Body?.transformToByteArray();
+        if (!multiRequestFlowBytes) {
+          throw new Error("Failed to download multi-request flow file body");
+        }
+
+        const multiRequestFlowFilePath = path.join(
+          tempDir,
+          "multi-request-flow.json",
+        );
+        await fs.writeFile(
+          multiRequestFlowFilePath,
+          Buffer.from(multiRequestFlowBytes),
+        );
+        prepareOptions.multiRequestFlowFile = multiRequestFlowFilePath;
+        console.log(
+          `✓ Multi-request flow file downloaded and set for county ${countyName}: ${multiRequestFlowFilePath}`,
+        );
+      } catch (downloadError) {
+        // File not found or other error - this is not critical, just log it
+        if (
+          downloadError instanceof Error &&
+          downloadError.name === "NoSuchKey"
+        ) {
+          console.log(
+            `No multi-request flow file found for county ${countyName}, continuing without it`,
+          );
+        } else {
+          console.error(
+            `Failed to download multi-request flow file for county ${countyName}: ${downloadError instanceof Error ? downloadError.message : String(downloadError)}`,
           );
         }
       }
