@@ -552,6 +552,66 @@ export const handler = async (event) => {
       return undefined;
     };
 
+    // Helper function to download flow files from S3
+    /**
+     * Downloads a flow file from S3 for a specific county
+     * @param {string} flowType - Type of flow (e.g., "browser", "multi-request")
+     * @param {string} s3Prefix - S3 prefix path (e.g., "browser-flows")
+     * @param {string} localFileName - Local filename to save as (e.g., "browser-flow.json")
+     * @param {string} optionKey - Key in prepareOptions to set (e.g., "browserFlowFile")
+     * @returns {Promise<void>}
+     */
+    const downloadFlowFile = async (
+      flowType,
+      s3Prefix,
+      localFileName,
+      optionKey,
+    ) => {
+      if (environmentBucket && countyName) {
+        const s3Key = `${s3Prefix}/${countyName}.json`;
+
+        try {
+          console.log(
+            `Checking for ${flowType} flow file: s3://${environmentBucket}/${s3Key}`,
+          );
+
+          const response = await s3.send(
+            new GetObjectCommand({
+              Bucket: environmentBucket,
+              Key: s3Key,
+            }),
+          );
+
+          const fileBytes = await response.Body?.transformToByteArray();
+          if (!fileBytes) {
+            throw new Error(`Failed to download ${flowType} flow file body`);
+          }
+
+          const filePath = path.join(tempDir, localFileName);
+          await fs.writeFile(filePath, Buffer.from(fileBytes));
+          // @ts-ignore - Dynamic key assignment for flow file options
+          prepareOptions[optionKey] = filePath;
+          console.log(
+            `✓ ${flowType} flow file downloaded and set for county ${countyName}: ${filePath}`,
+          );
+        } catch (downloadError) {
+          // File not found or other error - this is not critical, just log it
+          if (
+            downloadError instanceof Error &&
+            downloadError.name === "NoSuchKey"
+          ) {
+            console.log(
+              `No ${flowType} flow file found for county ${countyName}, continuing without it`,
+            );
+          } else {
+            console.error(
+              `Failed to download ${flowType} flow file for county ${countyName}: ${downloadError instanceof Error ? downloadError.message : String(downloadError)}`,
+            );
+          }
+        }
+      }
+    };
+
     // Configuration map for prepare flags
 
     /** @type {FlagConfig[]} */
@@ -591,7 +651,7 @@ export const handler = async (event) => {
     }
 
     // Build prepare options based on environment variables
-    /** @type {{ useBrowser: boolean, noFast?: boolean, noContinue?: boolean, browserFlowTemplate?: string, browserFlowParameters?: string, proxyUrl?: string, ignoreCaptcha?: boolean, continueButtonSelector?: string, browserFlowFile?: string }} */
+    /** @type {{ useBrowser: boolean, noFast?: boolean, noContinue?: boolean, browserFlowTemplate?: string, browserFlowParameters?: string, proxyUrl?: string, ignoreCaptcha?: boolean, continueButtonSelector?: string, browserFlowFile?: string, multiRequestFlowFile?: string }} */
     const prepareOptions = { useBrowser };
 
     // Add proxy URL if available
@@ -632,49 +692,20 @@ export const handler = async (event) => {
 
     // Check for browser flow file in S3 (county-specific)
     const environmentBucket = process.env.ENVIRONMENT_BUCKET;
-    if (environmentBucket && countyName) {
-      const browserFlowS3Key = `browser-flows/${countyName}.json`;
+    await downloadFlowFile(
+      "browser",
+      "browser-flows",
+      "browser-flow.json",
+      "browserFlowFile",
+    );
 
-      try {
-        console.log(
-          `Checking for browser flow file: s3://${environmentBucket}/${browserFlowS3Key}`,
-        );
-
-        const browserFlowResp = await s3.send(
-          new GetObjectCommand({
-            Bucket: environmentBucket,
-            Key: browserFlowS3Key,
-          }),
-        );
-
-        const browserFlowBytes =
-          await browserFlowResp.Body?.transformToByteArray();
-        if (!browserFlowBytes) {
-          throw new Error("Failed to download browser flow file body");
-        }
-
-        const browserFlowFilePath = path.join(tempDir, "browser-flow.json");
-        await fs.writeFile(browserFlowFilePath, Buffer.from(browserFlowBytes));
-        prepareOptions.browserFlowFile = browserFlowFilePath;
-        console.log(
-          `✓ Browser flow file downloaded and set for county ${countyName}: ${browserFlowFilePath}`,
-        );
-      } catch (downloadError) {
-        // File not found or other error - this is not critical, just log it
-        if (
-          downloadError instanceof Error &&
-          downloadError.name === "NoSuchKey"
-        ) {
-          console.log(
-            `No browser flow file found for county ${countyName}, continuing without it`,
-          );
-        } else {
-          console.error(
-            `Failed to download browser flow file for county ${countyName}: ${downloadError instanceof Error ? downloadError.message : String(downloadError)}`,
-          );
-        }
-      }
-    }
+    // Check for multi-request flow file in S3 (county-specific)
+    await downloadFlowFile(
+      "multi-request",
+      "multi-request-flows",
+      "multi-request-flow.json",
+      "multiRequestFlowFile",
+    );
 
     // Handle browser flow template configuration with county-specific lookup
     const browserFlowTemplate = getEnvWithCountyFallback(
