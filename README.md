@@ -129,6 +129,30 @@ oracle-node/
 
 The browser flow file is passed to the prepare function as the `browserFlowFile` parameter and is automatically cleaned up after use.
 
+**Multi-Request Flow Files (Optional):**
+
+For counties that require multiple API requests to fetch complete data, you can provide county-specific multi-request flow JSON files. For detailed documentation on the multi-request flows feature, see the [Elephant CLI Multi-Request Flows documentation](https://github.com/elephant-xyz/elephant-cli?tab=readme-ov-file#multi-request-flows).
+
+1. Add JSON files named `<CountyName>.json` (e.g., `Manatee.json`, `Collier.json`) to the `multi-request-flows/` directory in the repository root
+2. These files are automatically uploaded to S3 during deployment
+3. The Lambda function will automatically download and use the appropriate flow file based on the county being processed
+
+Example structure:
+
+```
+oracle-node/
+├── browser-flows/
+│   ├── Broward.json
+│   └── Palm-Beach.json
+├── multi-request-flows/
+│   ├── Manatee.json
+│   └── Collier.json
+├── transform/
+└── ...
+```
+
+The multi-request flow file is passed to the prepare function as the `multiRequestFlowFile` parameter and is automatically cleaned up after use.
+
 Put your transform files under `transform/` (if applicable).
 
 ### 2) Deploy infrastructure
