@@ -24,6 +24,7 @@ TRANSFORM_MANIFEST_FILE="${TRANSFORMS_TARGET_DIR}/manifest.json"
 TRANSFORM_PREFIX_KEY="${TRANSFORM_PREFIX_KEY:-transforms}"
 TRANSFORMS_UPLOAD_PENDING=0
 BROWSER_FLOWS_UPLOAD_PENDING=0
+MULTI_REQUEST_FLOWS_UPLOAD_PENDING=0
 
 mkdir -p "$BUILD_DIR"
 
@@ -258,6 +259,35 @@ upload_browser_flows_to_s3() {
   info "Browser flows uploaded to: $s3_prefix"
 }
 
+upload_multi_request_flows_to_s3() {
+  local multi_request_flows_dir="multi-request-flows"
+
+  # Check if multi-request-flows directory exists
+  if [[ ! -d "$multi_request_flows_dir" ]]; then
+    info "No multi-request-flows directory found, skipping multi-request flows upload"
+    return 0
+  fi
+
+  local bucket
+  bucket=$(get_bucket)
+  if [[ -z "$bucket" ]]; then
+    # Bucket doesn't exist yet (first deploy). Will be uploaded after stack creation.
+    MULTI_REQUEST_FLOWS_UPLOAD_PENDING=1
+    return 0
+  fi
+
+  local s3_prefix="s3://$bucket/multi-request-flows"
+  info "Syncing multi-request flows to $s3_prefix"
+
+  # Upload all .json files from multi-request-flows directory
+  aws s3 sync "$multi_request_flows_dir" "$s3_prefix" --exclude "*" --include "*.json" --delete || {
+    warn "Failed to sync multi-request flows to $s3_prefix"
+    return 1
+  }
+
+  info "Multi-request flows uploaded to: $s3_prefix"
+}
+
 add_transform_prefix_override() {
   if [[ -z "${TRANSFORM_S3_PREFIX_VALUE:-}" ]]; then
     err "Transform S3 prefix value not set; aborting."
@@ -425,6 +455,7 @@ main() {
   compute_param_overrides
   upload_transforms_to_s3
   upload_browser_flows_to_s3
+  upload_multi_request_flows_to_s3
 
   if (( TRANSFORMS_UPLOAD_PENDING == 0 )); then
     add_transform_prefix_override
@@ -452,6 +483,11 @@ main() {
   # Upload browser flows if pending
   if (( BROWSER_FLOWS_UPLOAD_PENDING == 1 )); then
     upload_browser_flows_to_s3
+  fi
+
+  # Upload multi-request flows if pending
+  if (( MULTI_REQUEST_FLOWS_UPLOAD_PENDING == 1 )); then
+    upload_multi_request_flows_to_s3
   fi
 
   handle_pending_keystore_upload
