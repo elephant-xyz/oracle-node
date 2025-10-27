@@ -376,6 +376,3 @@ set_multi_counties_envs.sh
 unset_envs.sh
 transform/**
 workflow/lambdas/post/transforms/**
-manatee
-martin
-orange
