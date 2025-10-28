@@ -372,6 +372,28 @@ Resources:
           Value: !Ref EnvironmentName
 
   #####################################################################################################################
+  # DynamoDB Table with PK and SK
+  #####################################################################################################################
+
+  ErrorsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: PK
+          AttributeType: S
+        - AttributeName: SK
+          AttributeType: S
+      KeySchema:
+        - AttributeName: PK
+          KeyType: HASH
+        - AttributeName: SK
+          KeyType: RANGE
+      Tags:
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  #####################################################################################################################
   # Workflow Lambdas (starter -> pre -> prepare -> post)
   #####################################################################################################################
 
@@ -493,6 +515,8 @@ Resources:
         - S3CrudPolicy:
             BucketName: !Ref EnvironmentBucket
         - arn:aws:iam::aws:policy/AmazonS3FullAccess
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ErrorsTable
       Environment:
         Variables:
           OUTPUT_BASE_URI: !Sub "s3://${EnvironmentBucket}/outputs"
@@ -503,6 +527,7 @@ Resources:
           ELEPHANT_RPC_URL: !Ref ElephantRpcUrl
           ELEPHANT_PINATA_JWT: !Ref ElephantPinataJwt
           TRANSFORM_S3_PREFIX: !Ref TransformS3Prefix
+          ERRORS_TABLE_NAME: !Ref ErrorsTable
 
   #####################################################################################################################
   # Express Step Functions State Machine (separate definition file)
