@@ -1,36 +1,490 @@
+import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
+import {
+  BatchWriteCommand,
+  DynamoDBDocumentClient,
+  UpdateCommand,
+} from "@aws-sdk/lib-dynamodb";
+import { createHash } from "crypto";
+
 /**
- * @typedef ErrorRecord
- * @type {object}
- * @property {string} PK - Primary key for the DynamoDB table. SHA256 hash of the error message and error path. in the format of "ERROR#{SHA256}"
- * @property {string} SK - Secondary key for the DynamoDB table.in the format of "ERROR#{SHA256}"
+ * @typedef {object} ErrorRecord
+ * @property {string} PK - Primary key in the format `ERROR#{errorHash}`.
+ * @property {string} SK - Sort key mirroring the primary key (`ERROR#{errorHash}`).
+ * @property {string} entityType - Entity discriminator (for example `ErrorAggregate`).
+ * @property {string} errorMessage - Human readable error message.
+ * @property {string} errorPath - JSON path that triggered the error.
+ * @property {number} totalCount - Aggregate occurrence count across executions.
+ * @property {string} createdAt - ISO timestamp when the error aggregate was created.
+ * @property {string} updatedAt - ISO timestamp when the aggregate was last updated.
+ * @property {string} latestExecutionId - Recent execution identifier that observed the error.
+ */
+
+/**
+ * @typedef {"failed" | "maybeSolved" | "solved"} ErrorStatus
+ */
+
+/**
+ * @typedef {object} ExecutionErrorLink
+ * @property {string} PK - Primary key in the format `EXECUTION#{executionId}`.
+ * @property {string} SK - Sort key in the format `ERROR#{errorHash}`.
+ * @property {string} entityType - Entity discriminator (for example `ExecutionError`).
+ * @property {ErrorStatus} status - Resolution status for the execution-specific error.
+ * @property {string} errorHash - Deterministic hash for message+path.
+ * @property {string} errorMessage - Human readable error message.
+ * @property {string} errorPath - JSON path that triggered the error.
+ * @property {number} occurrences - Occurrence count within the execution.
+ * @property {string} executionId - Identifier of the failed execution.
  * @property {string} county - County identifier.
- * @property {string} error - Error message.
- * @property {string} errorPath - Path to the error location in the JSON.
- * @property {string} timestamp - ISO timestamp of the error.
- * @property {number} count - Number of times the error has occurred.
- * @property {string} GS1PK - GS1 PK for the error. in the format of "TYPE#ERORR"
- * @property {string} GS1SK - GS1 SK for the error. Represents count of the error and the hash. in the format of "COUNT#{COUNT}#HASH"
+ * @property {string} createdAt - ISO timestamp when the link item was created.
+ * @property {string} updatedAt - ISO timestamp when the link item was last updated.
+ * @property {string} GS1PK - Global secondary index PK (`ERROR#{errorHash}`) for reverse lookup.
+ * @property {string} GS1SK - Global secondary index SK (`EXECUTION#{executionId}`) for reverse lookup.
  */
 
 /**
- * @typedef {object} FailedExecution
- * @property {string} PK - Primary key for the DynamoDB table. Execution ID. in the format of "EXECUTION#{EXECUTION_ID}"
- * @property {string} SK - Secondary key for the DynamoDB table. Represents the execution error. in the format of "EXECUTION#{EXECUTION_ID}"
- * @property {string} event - Input event used to start the execution.
+ * @typedef {object} FailedExecutionItem
+ * @property {string} PK - Primary key in the format `EXECUTION#{executionId}`.
+ * @property {string} SK - Sort key mirroring the PK (`EXECUTION#{executionId}`).
+ * @property {string} executionId - Identifier of the failed execution.
+ * @property {string} entityType - Entity discriminator (for example `FailedExecution`).
+ * @property {string} status - Execution status bucket (`failed` | `maybeSolved` | `solved`).
  * @property {string} county - County identifier.
- * @property {string} errorsS3Uri - S3 URI for the errors csv file.
- * @property {number} count - Count of the errors in this execution.
+ * @property {number} totalOccurrences - Total error occurrences observed.
+ * @property {number} openErrorCount - Count of unique unresolved errors.
+ * @property {number} uniqueErrorCount - Count of unique errors in the execution.
+ * @property {string | undefined} errorsS3Uri - Optional S3 URI pointing to submit_errors.csv.
+ * @property {string | undefined} failureMessage - Primary failure message for diagnostics.
+ * @property {Record<string, string | undefined>} source - Minimal source details (for example S3 bucket/key).
+ * @property {string} createdAt - ISO timestamp when the execution record was created.
+ * @property {string} updatedAt - ISO timestamp when the execution record was updated.
+ * @property {string} GS3PK - Global secondary index partition key (`METRIC#ERRORCOUNT`).
+ * @property {string} GS3SK - Global secondary index sort key (for example `COUNT#000010#EXECUTION#uuid`).
  */
 
 /**
- * @typedef {('failed' | 'maybeSolved' | 'solved')} ErrorStatus
+ * @typedef {Record<string, string>} RawSubmitErrorRow
  */
 
 /**
- * @typedef {object} ExetuionError
- * @property {string} PK - Primary key for the DynamoDB table. Same as the PK of the ErrorRecord. In the format of "ERROR#{SHA256}"
- * @property {string} SK - Secondary key for the DynamoDB table. Represent link to the execution error. int the format of "EXECUTION#{EXECUTION_ID}"
- * @property {ErrorStatus} status - Status of the error.
- * @property {string} error - Error identifier.
- * @property {string} executionID - Execution ID.
+ * @typedef {object} NormalizedError
+ * @property {string} hash - SHA256 hash of error message and path.
+ * @property {string} message - Error message.
+ * @property {string} path - Error path within payload.
+ * @property {number} occurrences - Number of times this error appears for the execution.
  */
+
+/**
+ * @typedef {object} ExecutionSource
+ * @property {string | undefined} s3Bucket - Source S3 bucket if available.
+ * @property {string | undefined} s3Key - Source S3 object key if available.
+ */
+
+/**
+ * @typedef {object} SaveFailedExecutionParams
+ * @property {string} executionId - Identifier generated for the failed workflow execution.
+ * @property {string} county - County identifier associated with the execution.
+ * @property {RawSubmitErrorRow[]} errors - Raw error rows parsed from submit_errors.csv.
+ * @property {ExecutionSource} source - Minimal source event description.
+ * @property {string | undefined} errorsS3Uri - Optional S3 location storing submit_errors.csv.
+ * @property {string | undefined} failureMessage - Descriptive failure message.
+ * @property {string} occurredAt - ISO timestamp representing when the failure happened.
+ */
+
+/**
+ * @typedef {object} ErrorsRepository
+ * @property {(params: SaveFailedExecutionParams) => Promise<void>} saveFailedExecution - Persist the failed execution and related errors.
+ */
+
+const DEFAULT_CLIENT = DynamoDBDocumentClient.from(new DynamoDBClient({}), {
+  marshallOptions: { removeUndefinedValues: true },
+});
+
+const BATCH_WRITE_MAX_ITEMS = 25;
+const BATCH_WRITE_MAX_RETRIES = 5;
+
+/**
+ * Create the DynamoDB errors repository abstraction.
+ *
+ * @param {{ tableName: string, documentClient?: DynamoDBDocumentClient }} params - Repository configuration.
+ * @returns {ErrorsRepository} - Repository with high-level persistence helpers.
+ */
+export function createErrorsRepository({ tableName, documentClient }) {
+  const client = documentClient ?? DEFAULT_CLIENT;
+
+  /**
+   * Persist the execution failure and its unique error links.
+   *
+   * @param {SaveFailedExecutionParams} params - Execution persistence payload.
+   * @returns {Promise<void>} - Resolves when all writes complete.
+   */
+  async function saveFailedExecution({
+    executionId,
+    county,
+    errors,
+    source,
+    errorsS3Uri,
+    failureMessage,
+    occurredAt,
+  }) {
+    if (!Array.isArray(errors) || errors.length === 0) {
+      throw new Error("errors array must contain at least one entry");
+    }
+
+    const normalizedErrors = normalizeErrors(errors);
+    const totalOccurrences = normalizedErrors.reduce(
+      (sum, error) => sum + error.occurrences,
+      0,
+    );
+    const uniqueErrorCount = normalizedErrors.length;
+
+    const executionItem = buildExecutionItem({
+      executionId,
+      county,
+      totalOccurrences,
+      uniqueErrorCount,
+      errorsS3Uri,
+      failureMessage,
+      occurredAt,
+      source,
+    });
+    const linkItems = normalizedErrors.map((error) =>
+      buildExecutionErrorLink({
+        executionId,
+        county,
+        error,
+        occurredAt,
+      }),
+    );
+
+    await writeItems(client, tableName, [executionItem, ...linkItems]);
+
+    for (const error of normalizedErrors) {
+      await incrementErrorAggregate({
+        client,
+        tableName,
+        error,
+        executionId,
+        occurredAt,
+      });
+    }
+  }
+
+  return { saveFailedExecution };
+}
+
+/**
+ * Normalize raw submit error rows into deterministic error hashes and counts.
+ *
+ * @param {RawSubmitErrorRow[]} rawRows - Raw error rows parsed from the CSV.
+ * @returns {NormalizedError[]} - Deduplicated normalized errors with occurrences.
+ */
+function normalizeErrors(rawRows) {
+  /** @type {Map<string, NormalizedError>} */
+  const map = new Map();
+
+  for (const row of rawRows) {
+    const message = resolveErrorMessage(row);
+    const path = resolveErrorPath(row);
+    const hash = createErrorHash(message, path);
+    const existing = map.get(hash);
+    if (existing) {
+      existing.occurrences += 1;
+    } else {
+      map.set(hash, {
+        hash,
+        message,
+        path,
+        occurrences: 1,
+      });
+    }
+  }
+
+  return Array.from(map.values());
+}
+
+/**
+ * Resolve the preferred error message column from the submit error row.
+ *
+ * @param {RawSubmitErrorRow} row - Raw CSV row to inspect.
+ * @returns {string} - Error message extracted from the row.
+ */
+function resolveErrorMessage(row) {
+  const candidates = [row.error, row.error_message, row.message, row.reason];
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && candidate.trim().length > 0) {
+      return candidate.trim();
+    }
+  }
+  throw new Error("Unable to resolve error message from submit error row");
+}
+
+/**
+ * Resolve the preferred error path column from the submit error row.
+ *
+ * @param {RawSubmitErrorRow} row - Raw CSV row to inspect.
+ * @returns {string} - Error path extracted from the row.
+ */
+function resolveErrorPath(row) {
+  const candidates = [row.errorPath, row.error_path, row.path, row.location];
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && candidate.trim().length > 0) {
+      return candidate.trim();
+    }
+  }
+  return "unknown";
+}
+
+/**
+ * Compute the deterministic error hash from message and path.
+ *
+ * @param {string} message - Error message.
+ * @param {string} path - Error path.
+ * @returns {string} - SHA256 hash string.
+ */
+function createErrorHash(message, path) {
+  return createHash("sha256")
+    .update(`${message}#${path}`, "utf8")
+    .digest("hex");
+}
+
+/**
+ * Build the execution root item for DynamoDB.
+ *
+ * @param {object} params - Execution item attributes.
+ * @param {string} params.executionId - Execution identifier.
+ * @param {string} params.county - County identifier.
+ * @param {number} params.totalOccurrences - Total error occurrences.
+ * @param {number} params.uniqueErrorCount - Number of unique errors.
+ * @param {string | undefined} params.errorsS3Uri - Optional S3 URI storing submit_errors.csv.
+ * @param {string | undefined} params.failureMessage - Failure message for diagnostics.
+ * @param {string} params.occurredAt - ISO timestamp of failure.
+ * @param {ExecutionSource} params.source - Minimal source description.
+ * @returns {FailedExecutionItem} - DynamoDB item for the execution.
+ */
+function buildExecutionItem({
+  executionId,
+  county,
+  totalOccurrences,
+  uniqueErrorCount,
+  errorsS3Uri,
+  failureMessage,
+  occurredAt,
+  source,
+}) {
+  const paddedCount = String(uniqueErrorCount).padStart(12, "0");
+  const sanitizedSource = Object.fromEntries(
+    Object.entries(source).filter(
+      ([_key, value]) => typeof value === "string" && value.length > 0,
+    ),
+  );
+  return {
+    PK: buildExecutionPk(executionId),
+    SK: buildExecutionSk(executionId),
+    entityType: "FailedExecution",
+    executionId,
+    status: "failed",
+    county,
+    totalOccurrences,
+    openErrorCount: uniqueErrorCount,
+    uniqueErrorCount,
+    errorsS3Uri,
+    failureMessage,
+    source:
+      Object.keys(sanitizedSource).length > 0 ? sanitizedSource : undefined,
+    createdAt: occurredAt,
+    updatedAt: occurredAt,
+    GS3PK: "METRIC#ERRORCOUNT",
+    GS3SK: `COUNT#${paddedCount}#EXECUTION#${executionId}`,
+  };
+}
+
+/**
+ * Build an execution-error link item joining execution and error hash.
+ *
+ * @param {object} params - Link item attributes.
+ * @param {string} params.executionId - Execution identifier.
+ * @param {string} params.county - County identifier.
+ * @param {NormalizedError} params.error - Normalized error details.
+ * @param {string} params.occurredAt - ISO timestamp of failure.
+ * @returns {ExecutionErrorLink} - DynamoDB item linking execution and error hash.
+ */
+function buildExecutionErrorLink({ executionId, county, error, occurredAt }) {
+  return {
+    PK: buildExecutionPk(executionId),
+    SK: buildErrorSk(error.hash),
+    entityType: "ExecutionError",
+    status: "failed",
+    errorHash: error.hash,
+    errorMessage: error.message,
+    errorPath: error.path,
+    occurrences: error.occurrences,
+    executionId,
+    county,
+    createdAt: occurredAt,
+    updatedAt: occurredAt,
+    GS1PK: buildErrorPk(error.hash),
+    GS1SK: buildExecutionSk(executionId),
+  };
+}
+
+/**
+ * Increment the aggregate error counter shared across executions.
+ *
+ * @param {object} params - Aggregate update parameters.
+ * @param {DynamoDBDocumentClient} params.client - DynamoDB document client.
+ * @param {string} params.tableName - DynamoDB table name.
+ * @param {NormalizedError} params.error - Normalized error details.
+ * @param {string} params.executionId - Identifier of the current execution.
+ * @param {string} params.occurredAt - ISO timestamp when the error was observed.
+ * @returns {Promise<void>} - Resolves when the update completes.
+ */
+async function incrementErrorAggregate({
+  client,
+  tableName,
+  error,
+  executionId,
+  occurredAt,
+}) {
+  await client.send(
+    new UpdateCommand({
+      TableName: tableName,
+      Key: {
+        PK: buildErrorPk(error.hash),
+        SK: buildErrorSk(error.hash),
+      },
+      UpdateExpression:
+        "SET #type = if_not_exists(#type, :aggregateType), #errorMessage = if_not_exists(#errorMessage, :errorMessage), #errorPath = if_not_exists(#errorPath, :errorPath), #createdAt = if_not_exists(#createdAt, :occurredAt), #updatedAt = :occurredAt, #latestExecutionId = :executionId ADD #totalCount :occurrences",
+      ExpressionAttributeNames: {
+        "#type": "entityType",
+        "#errorMessage": "errorMessage",
+        "#errorPath": "errorPath",
+        "#createdAt": "createdAt",
+        "#updatedAt": "updatedAt",
+        "#latestExecutionId": "latestExecutionId",
+        "#totalCount": "totalCount",
+      },
+      ExpressionAttributeValues: {
+        ":aggregateType": "ErrorAggregate",
+        ":errorMessage": error.message,
+        ":errorPath": error.path,
+        ":occurredAt": occurredAt,
+        ":executionId": executionId,
+        ":occurrences": error.occurrences,
+      },
+    }),
+  );
+}
+
+/**
+ * Write items to DynamoDB using BatchWrite with retry semantics.
+ *
+ * @param {DynamoDBDocumentClient} client - DynamoDB document client.
+ * @param {string} tableName - DynamoDB table name.
+ * @param {Array<FailedExecutionItem | ExecutionErrorLink>} items - Items to persist.
+ * @returns {Promise<void>} - Resolves when all batches persist successfully.
+ */
+async function writeItems(client, tableName, items) {
+  const batches = chunkArray(items, BATCH_WRITE_MAX_ITEMS);
+  for (const batch of batches) {
+    let remaining = batch;
+    let attempts = 0;
+    while (remaining.length > 0) {
+      const response = await client.send(
+        new BatchWriteCommand({
+          RequestItems: {
+            [tableName]: remaining.map((item) => ({
+              PutRequest: { Item: item },
+            })),
+          },
+        }),
+      );
+
+      const unprocessed =
+        response.UnprocessedItems?.[tableName]?.map(
+          (request) => request.PutRequest?.Item,
+        ) ?? [];
+      if (unprocessed.length === 0) {
+        break;
+      }
+
+      attempts += 1;
+      if (attempts > BATCH_WRITE_MAX_RETRIES) {
+        throw new Error("Exceeded BatchWrite retry attempts");
+      }
+      const delayMs = Math.min(1000, 2 ** attempts * 50);
+      await delay(delayMs);
+      remaining =
+        /** @type {Array<FailedExecutionItem | ExecutionErrorLink>} */ (
+          unprocessed
+        );
+    }
+  }
+}
+
+/**
+ * Split an array into evenly sized chunks.
+ *
+ * @template T
+ * @param {T[]} input - Input array.
+ * @param {number} size - Desired chunk size.
+ * @returns {T[][]} - Chunked arrays.
+ */
+function chunkArray(input, size) {
+  const result = [];
+  for (let index = 0; index < input.length; index += size) {
+    result.push(input.slice(index, index + size));
+  }
+  return result;
+}
+
+/**
+ * Pause execution for the specified duration.
+ *
+ * @param {number} ms - Duration to wait in milliseconds.
+ * @returns {Promise<void>} - Promise that resolves after the delay.
+ */
+function delay(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+/**
+ * Build the execution partition key.
+ *
+ * @param {string} executionId - Execution identifier.
+ * @returns {`EXECUTION#${string}`} - Partition key.
+ */
+function buildExecutionPk(executionId) {
+  return /** @type {`EXECUTION#${string}`} */ (`EXECUTION#${executionId}`);
+}
+
+/**
+ * Build the execution sort key.
+ *
+ * @param {string} executionId - Execution identifier.
+ * @returns {`EXECUTION#${string}`} - Sort key mirroring the PK.
+ */
+function buildExecutionSk(executionId) {
+  return /** @type {`EXECUTION#${string}`} */ (`EXECUTION#${executionId}`);
+}
+
+/**
+ * Build the error partition key.
+ *
+ * @param {string} errorHash - Error hash.
+ * @returns {`ERROR#${string}`} - Error partition key.
+ */
+function buildErrorPk(errorHash) {
+  return /** @type {`ERROR#${string}`} */ (`ERROR#${errorHash}`);
+}
+
+/**
+ * Build the error sort key.
+ *
+ * @param {string} errorHash - Error hash.
+ * @returns {`ERROR#${string}`} - Error sort key mirroring the PK.
+ */
+function buildErrorSk(errorHash) {
+  return /** @type {`ERROR#${string}`} */ (`ERROR#${errorHash}`);
+}

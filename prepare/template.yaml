@@ -384,11 +384,50 @@ Resources:
           AttributeType: S
         - AttributeName: SK
           AttributeType: S
+        - AttributeName: GS1PK
+          AttributeType: S
+        - AttributeName: GS1SK
+          AttributeType: S
+        - AttributeName: GS2PK
+          AttributeType: S
+        - AttributeName: GS2SK
+          AttributeType: S
+        - AttributeName: GS3PK
+          AttributeType: S
+        - AttributeName: GS3SK
+          AttributeType: S
       KeySchema:
         - AttributeName: PK
           KeyType: HASH
         - AttributeName: SK
           KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: ErrorHashExecutionIndex
+          KeySchema:
+            - AttributeName: GS1PK
+              KeyType: HASH
+            - AttributeName: GS1SK
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+        - IndexName: ExecutionStatusIndex
+          KeySchema:
+            - AttributeName: GS2PK
+              KeyType: HASH
+            - AttributeName: GS2SK
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+        - IndexName: ExecutionErrorCountIndex
+          KeySchema:
+            - AttributeName: GS3PK
+              KeyType: HASH
+            - AttributeName: GS3SK
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
       Tags:
         - Key: Environment
           Value: !Ref EnvironmentName
