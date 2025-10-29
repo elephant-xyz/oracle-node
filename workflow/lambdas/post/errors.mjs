@@ -54,6 +54,7 @@ import { createHash } from "crypto";
  * @property {number} uniqueErrorCount - Count of unique errors in the execution.
  * @property {string | undefined} errorsS3Uri - Optional S3 URI pointing to submit_errors.csv.
  * @property {string | undefined} failureMessage - Primary failure message for diagnostics.
+ * @property {string} preparedS3Uri - S3 location of the output of the prepare step.
  * @property {Record<string, string | undefined> | undefined} source - Minimal source details (for example S3 bucket/key).
  * @property {string} createdAt - ISO timestamp when the execution record was created.
  * @property {string} updatedAt - ISO timestamp when the execution record was updated.
@@ -89,6 +90,7 @@ import { createHash } from "crypto";
  * @property {ExecutionSource} source - Minimal source event description.
  * @property {string | undefined} errorsS3Uri - Optional S3 location storing submit_errors.csv.
  * @property {string | undefined} failureMessage - Descriptive failure message.
+ * @property {string} preparedS3Uri - S3 location of the output of the prepare step.
  * @property {string} occurredAt - ISO timestamp representing when the failure happened.
  */
 
@@ -127,6 +129,7 @@ export function createErrorsRepository({ tableName, documentClient }) {
     errorsS3Uri,
     failureMessage,
     occurredAt,
+    preparedS3Uri,
   }) {
     if (!Array.isArray(errors) || errors.length === 0) {
       throw new Error("errors array must contain at least one entry");
@@ -148,6 +151,7 @@ export function createErrorsRepository({ tableName, documentClient }) {
       failureMessage,
       occurredAt,
       source,
+      preparedS3Uri,
     });
     const linkItems = normalizedErrors.map((error) =>
       buildExecutionErrorLink({
@@ -260,6 +264,7 @@ function createErrorHash(message, path, county) {
  * @param {string | undefined} params.failureMessage - Failure message for diagnostics.
  * @param {string} params.occurredAt - ISO timestamp of failure.
  * @param {ExecutionSource} params.source - Minimal source description.
+ * @param {string} params.preparedS3Uri - S3 location of the output of the prepare step.
  * @returns {FailedExecutionItem} - DynamoDB item for the execution.
  */
 function buildExecutionItem({
@@ -271,6 +276,7 @@ function buildExecutionItem({
   failureMessage,
   occurredAt,
   source,
+  preparedS3Uri,
 }) {
   const paddedCount = String(uniqueErrorCount).padStart(12, "0");
   const sanitizedSource = Object.fromEntries(
@@ -294,6 +300,7 @@ function buildExecutionItem({
       Object.keys(sanitizedSource).length > 0 ? sanitizedSource : undefined,
     createdAt: occurredAt,
     updatedAt: occurredAt,
+    preparedS3Uri,
     GS3PK: "METRIC#ERRORCOUNT",
     GS3SK: `COUNT#${paddedCount}#EXECUTION#${executionId}`,
   };
@@ -492,4 +499,3 @@ function buildErrorPk(errorHash) {
 function buildErrorSk(errorHash) {
   return /** @type {`ERROR#${string}`} */ (`ERROR#${errorHash}`);
 }
-
