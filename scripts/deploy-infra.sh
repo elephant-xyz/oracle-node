@@ -26,6 +26,11 @@ TRANSFORMS_UPLOAD_PENDING=0
 BROWSER_FLOWS_UPLOAD_PENDING=0
 MULTI_REQUEST_FLOWS_UPLOAD_PENDING=0
 
+CODEBUILD_RUNTIME_MODULE_DIR="codebuild/runtime-module"
+CODEBUILD_RUNTIME_ARCHIVE_NAME="${CODEBUILD_RUNTIME_ARCHIVE_NAME:-runtime-module.zip}"
+CODEBUILD_RUNTIME_PREFIX="${CODEBUILD_RUNTIME_PREFIX:-codebuild/runtime}"
+CODEBUILD_RUNTIME_UPLOAD_PENDING=0
+
 mkdir -p "$BUILD_DIR"
 
 check_prereqs() {
@@ -288,6 +293,54 @@ upload_multi_request_flows_to_s3() {
   info "Multi-request flows uploaded to: $s3_prefix"
 }
 
+package_and_upload_codebuild_runtime() {
+  if [[ ! -d "$CODEBUILD_RUNTIME_MODULE_DIR" ]]; then
+    warn "CodeBuild runtime module directory ($CODEBUILD_RUNTIME_MODULE_DIR) not found, skipping upload."
+    return 0
+  fi
+
+  local bucket="${CODEBUILD_RUNTIME_BUCKET:-}"
+  if [[ -z "$bucket" ]]; then
+    bucket=$(get_bucket)
+  fi
+
+  if [[ -z "$bucket" ]]; then
+    CODEBUILD_RUNTIME_UPLOAD_PENDING=1
+    info "Delaying CodeBuild runtime module upload until environment bucket exists."
+    return 0
+  fi
+
+  local prefix="${CODEBUILD_RUNTIME_PREFIX%/}"
+  local dist_dir="codebuild/dist"
+  mkdir -p "$dist_dir"
+
+  local archive_path="${dist_dir}/${CODEBUILD_RUNTIME_ARCHIVE_NAME}"
+  rm -f "$archive_path"
+
+  (
+    cd "$CODEBUILD_RUNTIME_MODULE_DIR"
+    zip -r "../dist/${CODEBUILD_RUNTIME_ARCHIVE_NAME}" . >/dev/null
+  ) || {
+    err "Failed to package CodeBuild runtime module."
+    exit 1
+  }
+
+  local s3_key
+  if [[ -n "$prefix" ]]; then
+    s3_key="${prefix}/${CODEBUILD_RUNTIME_ARCHIVE_NAME}"
+  else
+    s3_key="${CODEBUILD_RUNTIME_ARCHIVE_NAME}"
+  fi
+
+  aws s3 cp "$archive_path" "s3://${bucket}/${s3_key}" >/dev/null || {
+    err "Failed to upload CodeBuild runtime module to s3://${bucket}/${s3_key}"
+    exit 1
+  }
+
+  CODEBUILD_RUNTIME_UPLOAD_PENDING=0
+  info "Uploaded CodeBuild runtime module to s3://${bucket}/${s3_key}"
+}
+
 add_transform_prefix_override() {
   if [[ -z "${TRANSFORM_S3_PREFIX_VALUE:-}" ]]; then
     err "Transform S3 prefix value not set; aborting."
@@ -456,6 +509,7 @@ main() {
   upload_transforms_to_s3
   upload_browser_flows_to_s3
   upload_multi_request_flows_to_s3
+  package_and_upload_codebuild_runtime
 
   if (( TRANSFORMS_UPLOAD_PENDING == 0 )); then
     add_transform_prefix_override
@@ -478,6 +532,10 @@ main() {
     compute_param_overrides
     add_transform_prefix_override
     sam_deploy
+  fi
+
+  if (( CODEBUILD_RUNTIME_UPLOAD_PENDING == 1 )); then
+    package_and_upload_codebuild_runtime
   fi
 
   # Upload browser flows if pending
