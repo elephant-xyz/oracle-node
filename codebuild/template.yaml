@@ -1,0 +1,114 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: CodeBuild project that prepares runtime bundles and executes the Node.js entry point.
+
+Parameters:
+  EnvironmentName:
+    Description: An environment name that is prefixed to resource names
+    Type: String
+    Default: MWAAEnvironment
+
+  RuntimeArtifactsBucket:
+    Description: Name of the S3 bucket containing runtime ZIP archives consumed by the prepare CodeBuild job
+    Type: String
+
+  RuntimeArtifactsPrefix:
+    Description: Optional prefix within the runtime artifacts bucket that filters the ZIP archives (omit leading slash)
+    Type: String
+    Default: ""
+
+  RuntimeEntryPoint:
+    Description: Relative path to the Node.js entry point that the CodeBuild job executes after extraction
+    Type: String
+    Default: index.js
+
+Conditions:
+  HasRuntimeArtifactsPrefix:
+    !Not [!Equals [!Ref RuntimeArtifactsPrefix, ""]]
+
+Resources:
+  PrepareRuntimeBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: PrepareRuntimeCodeBuildLogs
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${EnvironmentName}-prepare-runtime"
+                  - !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${EnvironmentName}-prepare-runtime:*"
+        - PolicyName: PrepareRuntimeCodeBuildS3
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                Resource: !If
+                  - HasRuntimeArtifactsPrefix
+                  - !Sub "arn:${AWS::Partition}:s3:::${RuntimeArtifactsBucket}/${RuntimeArtifactsPrefix}*"
+                  - !Sub "arn:${AWS::Partition}:s3:::${RuntimeArtifactsBucket}/*"
+              - Effect: Allow
+                Action:
+                  - s3:ListBucket
+                Resource: !Sub "arn:${AWS::Partition}:s3:::${RuntimeArtifactsBucket}"
+      Tags:
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  PrepareRuntimeCodeBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub "${EnvironmentName}-prepare-runtime"
+      Description: Downloads runtime ZIP archives, extracts them, and executes the Node.js entry point.
+      ServiceRole: !GetAtt PrepareRuntimeBuildRole.Arn
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        ComputeType: BUILD_LAMBDA_4GB
+        Image: aws/codebuild/amazonlinux-aarch64-lambda-standard:nodejs22
+        Type: ARM_LAMBDA_CONTAINER
+        EnvironmentVariables:
+          - Name: RUNTIME_ARTIFACTS_BUCKET
+            Type: PLAINTEXT
+            Value: !Ref RuntimeArtifactsBucket
+          - Name: RUNTIME_ARTIFACTS_PREFIX
+            Type: PLAINTEXT
+            Value: !Ref RuntimeArtifactsPrefix
+          - Name: RUNTIME_ENTRYPOINT
+            Type: PLAINTEXT
+            Value: !Ref RuntimeEntryPoint
+      LogsConfig:
+        CloudWatchLogs:
+          GroupName: !Sub "/aws/codebuild/${EnvironmentName}-prepare-runtime"
+          Status: ENABLED
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: codebuild/buildspecs/runtime-runner-buildspec.yml
+      TimeoutInMinutes: 30
+      QueuedTimeoutInMinutes: 60
+      Tags:
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+Outputs:
+  PrepareRuntimeCodeBuildProjectName:
+    Description: Name of the CodeBuild project that prepares runtime assets
+    Value: !Ref PrepareRuntimeCodeBuildProject
+  PrepareRuntimeCodeBuildProjectArn:
+    Description: ARN of the CodeBuild project that prepares runtime assets
+    Value: !GetAtt PrepareRuntimeCodeBuildProject.Arn

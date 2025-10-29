@@ -6,10 +6,12 @@ import {
 import { promises as fs } from "fs";
 import path from "path";
 import os from "os";
+import { randomUUID } from "crypto";
 import { transform, validate, hash, upload } from "@elephant-xyz/cli/lib";
 import { parse } from "csv-parse/sync";
 import AdmZip from "adm-zip";
 import { createTransformScriptsManager } from "./scripts-manager.mjs";
+import { createErrorsRepository } from "./errors.mjs";
 
 const s3 = new S3Client({});
 
@@ -140,10 +142,11 @@ async function combineCsv(seedHashCsv, countyHashCsv, tmp) {
   return combinedCsv;
 }
 
+/** @typedef {string | null | undefined} MaybeString */
 /**
  * Convert CSV file to JSON array
  * @param {string} csvPath - Path to CSV file
- * @returns {Promise<Object[]>} - Array of objects representing CSV rows
+ * @returns {Promise<{property_cid: MaybeString,data_group_cid: MaybeString,file_path: MaybeString,error_path: MaybeString,error_message: MaybeString,currentValue: MaybeString,timestamp: MaybeString}[]>} - Array of objects representing CSV rows
  */
 async function csvToJson(csvPath) {
   try {
@@ -214,6 +217,23 @@ function requireEnv(name) {
     throw new Error(`${name} is required`);
   }
   return value;
+}
+
+/** @type {import("./errors.mjs").ErrorsRepository | null} */
+let cachedErrorsRepository = null;
+
+/**
+ * Lazy-initialize the DynamoDB errors repository.
+ *
+ * @returns {import("./errors.mjs").ErrorsRepository} - Repository instance.
+ */
+function getErrorsRepository() {
+  if (!cachedErrorsRepository) {
+    cachedErrorsRepository = createErrorsRepository({
+      tableName: requireEnv("ERRORS_TABLE_NAME"),
+    });
+  }
+  return cachedErrorsRepository;
 }
 
 /**
@@ -471,6 +491,11 @@ async function runTransformAndValidation({
  * @param {string} params.error - Validation error message.
  * @param {string} params.outputBaseUri - Base S3 URI for generated outputs.
  * @param {string | undefined} params.inputKey - Original input S3 key.
+ * @param {string} params.executionId - Identifier for the failed execution.
+ * @param {string} params.county - County identifier.
+ * @param {import("./errors.mjs").ExecutionSource} params.source - Minimal source description.
+ * @param {string} params.occurredAt - ISO timestamp of the failure.
+ * @param {string} params.preparedS3Uri - S3 location of the output of the prepare step.
  * @returns {Promise<never>} - Throws after handling.
  */
 async function handleValidationFailure({
@@ -479,12 +504,18 @@ async function handleValidationFailure({
   error,
   outputBaseUri,
   inputKey,
+  executionId,
+  county,
+  source,
+  occurredAt,
+  preparedS3Uri,
 }) {
   const submitErrorsPath = path.join(tmpDir, "submit_errors.csv");
   let submitErrorsS3Uri = null;
+  let submitErrors = [];
 
   try {
-    const submitErrors = await csvToJson(submitErrorsPath);
+    submitErrors = await csvToJson(submitErrorsPath);
 
     try {
       const submitErrorsCsv = await fs.readFile(submitErrorsPath);
@@ -512,6 +543,29 @@ async function handleValidationFailure({
       submit_errors: submitErrors,
       submit_errors_s3_uri: submitErrorsS3Uri,
     });
+
+    if (submitErrors.length > 0) {
+      try {
+        await getErrorsRepository().saveFailedExecution({
+          executionId,
+          county,
+          errors: submitErrors.map((row) => ({
+            errorPath: row.error_path || undefined,
+            errorMessage: row.error_message || undefined,
+          })),
+          source,
+          errorsS3Uri: submitErrorsS3Uri ?? undefined,
+          failureMessage: error,
+          occurredAt,
+          preparedS3Uri,
+        });
+      } catch (repoError) {
+        log("error", "errors_repository_save_failed", {
+          error: String(repoError),
+          execution_id: executionId,
+        });
+      }
+    }
   } catch (csvError) {
     log("error", "validation_failed", {
       step: "validate",
@@ -525,6 +579,7 @@ async function handleValidationFailure({
     : "Validation failed";
   const errorToThrow = new Error(errorMessage);
   errorToThrow.name = "ValidationFailure";
+
   throw errorToThrow;
 }
 
@@ -742,10 +797,19 @@ export const handler = async (event) => {
 
   const countyName = await extractCountyName(seedZipLocal, tmp);
 
+  /** @type {string} */
+  const executionId = randomUUID();
+  /** @type {import("./errors.mjs").ExecutionSource} */
+  const sourceEvent = {
+    s3Bucket: event?.s3?.bucket?.name,
+    s3Key: event?.s3?.object?.key,
+  };
+
   const base = {
     component: "post",
     at: new Date().toISOString(),
     county: countyName,
+    execution_id: executionId,
   };
 
   /**
@@ -824,6 +888,11 @@ export const handler = async (event) => {
           error: runError.message,
           outputBaseUri: outputBase,
           inputKey: event?.s3?.object?.key,
+          executionId,
+          county: countyName,
+          source: sourceEvent,
+          occurredAt: base.at,
+          preparedS3Uri: event?.prepare?.output_s3_uri,
         });
       }
       throw runError;
