@@ -142,10 +142,11 @@ async function combineCsv(seedHashCsv, countyHashCsv, tmp) {
   return combinedCsv;
 }
 
+/** @typedef {string | null | undefined} MaybeString */
 /**
  * Convert CSV file to JSON array
  * @param {string} csvPath - Path to CSV file
- * @returns {Promise<Record<string, string>[]>} - Array of objects representing CSV rows
+ * @returns {Promise<{property_cid: MaybeString,data_group_cid: MaybeString,file_path: MaybeString,error_path: MaybeString,error_message: MaybeString,currentValue: MaybeString,timestamp: MaybeString}[]>} - Array of objects representing CSV rows
  */
 async function csvToJson(csvPath) {
   try {
@@ -155,7 +156,7 @@ async function csvToJson(csvPath) {
       skip_empty_lines: true,
       trim: true,
     });
-    return /** @type {Record<string, string>[]} */ (records);
+    return records;
   } catch (error) {
     return [];
   }
@@ -509,7 +510,6 @@ async function handleValidationFailure({
 }) {
   const submitErrorsPath = path.join(tmpDir, "submit_errors.csv");
   let submitErrorsS3Uri = null;
-  /** @type {Record<string, string>[]} */
   let submitErrors = [];
 
   try {
@@ -547,7 +547,10 @@ async function handleValidationFailure({
         await getErrorsRepository().saveFailedExecution({
           executionId,
           county,
-          errors: submitErrors,
+          errors: submitErrors.map((row) => ({
+            errorPath: row.error_path || undefined,
+            errorMessage: row.error_message || undefined,
+          })),
           source,
           errorsS3Uri: submitErrorsS3Uri ?? undefined,
           failureMessage: error,

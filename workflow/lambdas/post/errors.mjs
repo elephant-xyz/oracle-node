@@ -54,7 +54,7 @@ import { createHash } from "crypto";
  * @property {number} uniqueErrorCount - Count of unique errors in the execution.
  * @property {string | undefined} errorsS3Uri - Optional S3 URI pointing to submit_errors.csv.
  * @property {string | undefined} failureMessage - Primary failure message for diagnostics.
- * @property {Record<string, string | undefined>} source - Minimal source details (for example S3 bucket/key).
+ * @property {Record<string, string | undefined> | undefined} source - Minimal source details (for example S3 bucket/key).
  * @property {string} createdAt - ISO timestamp when the execution record was created.
  * @property {string} updatedAt - ISO timestamp when the execution record was updated.
  * @property {string} GS3PK - Global secondary index partition key (`METRIC#ERRORCOUNT`).
@@ -62,7 +62,9 @@ import { createHash } from "crypto";
  */
 
 /**
- * @typedef {Record<string, string>} RawSubmitErrorRow
+ * @typedef {object} RawSubmitErrorRow
+ * @property {string | undefined} errorMessage - Error message field.
+ * @property {string | undefined} errorPath - Error path field.
  */
 
 /**
@@ -130,7 +132,7 @@ export function createErrorsRepository({ tableName, documentClient }) {
       throw new Error("errors array must contain at least one entry");
     }
 
-    const normalizedErrors = normalizeErrors(errors);
+    const normalizedErrors = normalizeErrors(errors, county);
     const totalOccurrences = normalizedErrors.reduce(
       (sum, error) => sum + error.occurrences,
       0,
@@ -176,16 +178,17 @@ export function createErrorsRepository({ tableName, documentClient }) {
  * Normalize raw submit error rows into deterministic error hashes and counts.
  *
  * @param {RawSubmitErrorRow[]} rawRows - Raw error rows parsed from the CSV.
+ * @param {string} county - County identifier to include in hash.
  * @returns {NormalizedError[]} - Deduplicated normalized errors with occurrences.
  */
-function normalizeErrors(rawRows) {
+function normalizeErrors(rawRows, county) {
   /** @type {Map<string, NormalizedError>} */
   const map = new Map();
 
   for (const row of rawRows) {
     const message = resolveErrorMessage(row);
     const path = resolveErrorPath(row);
-    const hash = createErrorHash(message, path);
+    const hash = createErrorHash(message, path, county);
     const existing = map.get(hash);
     if (existing) {
       existing.occurrences += 1;
@@ -203,47 +206,45 @@ function normalizeErrors(rawRows) {
 }
 
 /**
- * Resolve the preferred error message column from the submit error row.
+ * Resolve the error message from the submit error row.
  *
  * @param {RawSubmitErrorRow} row - Raw CSV row to inspect.
  * @returns {string} - Error message extracted from the row.
  */
 function resolveErrorMessage(row) {
-  const candidates = [row.error, row.error_message, row.message, row.reason];
-  for (const candidate of candidates) {
-    if (typeof candidate === "string" && candidate.trim().length > 0) {
-      return candidate.trim();
-    }
+  if (
+    typeof row.errorMessage === "string" &&
+    row.errorMessage.trim().length > 0
+  ) {
+    return row.errorMessage.trim();
   }
   throw new Error("Unable to resolve error message from submit error row");
 }
 
 /**
- * Resolve the preferred error path column from the submit error row.
+ * Resolve the error path from the submit error row.
  *
  * @param {RawSubmitErrorRow} row - Raw CSV row to inspect.
  * @returns {string} - Error path extracted from the row.
  */
 function resolveErrorPath(row) {
-  const candidates = [row.errorPath, row.error_path, row.path, row.location];
-  for (const candidate of candidates) {
-    if (typeof candidate === "string" && candidate.trim().length > 0) {
-      return candidate.trim();
-    }
+  if (typeof row.errorPath === "string" && row.errorPath.trim().length > 0) {
+    return row.errorPath.trim();
   }
   return "unknown";
 }
 
 /**
- * Compute the deterministic error hash from message and path.
+ * Compute the deterministic error hash from message, path, and county.
  *
  * @param {string} message - Error message.
  * @param {string} path - Error path.
+ * @param {string} county - County identifier.
  * @returns {string} - SHA256 hash string.
  */
-function createErrorHash(message, path) {
+function createErrorHash(message, path, county) {
   return createHash("sha256")
-    .update(`${message}#${path}`, "utf8")
+    .update(`${message}#${path}#${county}`, "utf8")
     .digest("hex");
 }
 
@@ -401,6 +402,7 @@ async function writeItems(client, tableName, items) {
 
       const unprocessed =
         response.UnprocessedItems?.[tableName]?.map(
+          /** @param {import("@aws-sdk/client-dynamodb").WriteRequest} request */
           (request) => request.PutRequest?.Item,
         ) ?? [];
       if (unprocessed.length === 0) {
@@ -415,7 +417,9 @@ async function writeItems(client, tableName, items) {
       await delay(delayMs);
       remaining =
         /** @type {Array<FailedExecutionItem | ExecutionErrorLink>} */ (
-          unprocessed
+          /** @type {unknown} */ (
+            unprocessed.filter((item) => item !== undefined)
+          )
         );
     }
   }
@@ -488,3 +492,4 @@ function buildErrorPk(errorHash) {
 function buildErrorSk(errorHash) {
   return /** @type {`ERROR#${string}`} */ (`ERROR#${errorHash}`);
 }
+
