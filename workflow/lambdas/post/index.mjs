@@ -495,6 +495,7 @@ async function runTransformAndValidation({
  * @param {string} params.county - County identifier.
  * @param {import("./errors.mjs").ExecutionSource} params.source - Minimal source description.
  * @param {string} params.occurredAt - ISO timestamp of the failure.
+ * @param {string} params.preparedS3Uri - S3 location of the output of the prepare step.
  * @returns {Promise<never>} - Throws after handling.
  */
 async function handleValidationFailure({
@@ -507,6 +508,7 @@ async function handleValidationFailure({
   county,
   source,
   occurredAt,
+  preparedS3Uri,
 }) {
   const submitErrorsPath = path.join(tmpDir, "submit_errors.csv");
   let submitErrorsS3Uri = null;
@@ -555,6 +557,7 @@ async function handleValidationFailure({
           errorsS3Uri: submitErrorsS3Uri ?? undefined,
           failureMessage: error,
           occurredAt,
+          preparedS3Uri,
         });
       } catch (repoError) {
         log("error", "errors_repository_save_failed", {
@@ -889,6 +892,7 @@ export const handler = async (event) => {
           county: countyName,
           source: sourceEvent,
           occurredAt: base.at,
+          preparedS3Uri: event?.prepare?.output_s3_uri,
         });
       }
       throw runError;
