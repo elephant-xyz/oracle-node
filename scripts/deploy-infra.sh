@@ -10,6 +10,7 @@ err()  { echo -e "${RED}[ERROR]${NC} $*"; }
 
 # Config with sane defaults
 STACK_NAME="${STACK_NAME:-elephant-oracle-node}"
+CODEBUILD_STACK_NAME="${CODEBUILD_STACK_NAME:-elephant-oracle-codebuild}"
 SAM_TEMPLATE="prepare/template.yaml"
 BUILT_TEMPLATE=".aws-sam/build/template.yaml"
 STARTUP_SCRIPT="infra/startup.sh"
@@ -25,11 +26,15 @@ TRANSFORM_PREFIX_KEY="${TRANSFORM_PREFIX_KEY:-transforms}"
 TRANSFORMS_UPLOAD_PENDING=0
 BROWSER_FLOWS_UPLOAD_PENDING=0
 MULTI_REQUEST_FLOWS_UPLOAD_PENDING=0
+ENVIRONMENT_NAME="${ENVIRONMENT_NAME:-MWAAEnvironment}"
 
 CODEBUILD_RUNTIME_MODULE_DIR="codebuild/runtime-module"
 CODEBUILD_RUNTIME_ARCHIVE_NAME="${CODEBUILD_RUNTIME_ARCHIVE_NAME:-runtime-module.zip}"
 CODEBUILD_RUNTIME_PREFIX="${CODEBUILD_RUNTIME_PREFIX:-codebuild/runtime}"
 CODEBUILD_RUNTIME_UPLOAD_PENDING=0
+CODEBUILD_RUNTIME_ENTRYPOINT="${CODEBUILD_RUNTIME_ENTRYPOINT:-index.js}"
+CODEBUILD_TEMPLATE="codebuild/template.yaml"
+CODEBUILD_DEPLOY_PENDING=0
 
 mkdir -p "$BUILD_DIR"
 
@@ -45,6 +50,7 @@ check_prereqs() {
   command -v git >/dev/null || { err "git not found"; exit 1; }
   command -v npm >/dev/null || { err "npm not found"; exit 1; }
   [[ -f "$SAM_TEMPLATE" && -f "$STARTUP_SCRIPT" && -f "$PYPROJECT_FILE" ]] || { err "Missing required files"; exit 1; }
+  [[ -f "$CODEBUILD_TEMPLATE" ]] || { err "Missing CodeBuild template: $CODEBUILD_TEMPLATE"; exit 1; }
 }
 
 
@@ -311,6 +317,7 @@ package_and_upload_codebuild_runtime() {
   fi
 
   local prefix="${CODEBUILD_RUNTIME_PREFIX%/}"
+  prefix="${prefix#/}"
   local dist_dir="codebuild/dist"
   mkdir -p "$dist_dir"
 
@@ -339,6 +346,42 @@ package_and_upload_codebuild_runtime() {
 
   CODEBUILD_RUNTIME_UPLOAD_PENDING=0
   info "Uploaded CodeBuild runtime module to s3://${bucket}/${s3_key}"
+}
+
+deploy_codebuild_stack() {
+  if [[ ! -f "$CODEBUILD_TEMPLATE" ]]; then
+    warn "CodeBuild template not found at $CODEBUILD_TEMPLATE, skipping deployment."
+    return 0
+  fi
+
+  local bucket="${CODEBUILD_RUNTIME_BUCKET:-}"
+  if [[ -z "$bucket" ]]; then
+    bucket=$(get_bucket)
+  fi
+
+  if [[ -z "$bucket" ]]; then
+    CODEBUILD_DEPLOY_PENDING=1
+    info "Delaying CodeBuild stack deployment until environment bucket exists."
+    return 0
+  fi
+
+  local prefix="${CODEBUILD_RUNTIME_PREFIX%/}"
+  prefix="${prefix#/}"
+  local entrypoint="$CODEBUILD_RUNTIME_ENTRYPOINT"
+
+  info "Deploying CodeBuild stack ($CODEBUILD_STACK_NAME) using artifacts bucket ${bucket}/${prefix}"
+  aws cloudformation deploy \
+    --template-file "$CODEBUILD_TEMPLATE" \
+    --stack-name "$CODEBUILD_STACK_NAME" \
+    --capabilities CAPABILITY_IAM \
+    --no-fail-on-empty-changeset \
+    --parameter-overrides \
+      EnvironmentName="$ENVIRONMENT_NAME" \
+      RuntimeArtifactsBucket="$bucket" \
+      RuntimeArtifactsPrefix="$prefix" \
+      RuntimeEntryPoint="$entrypoint"
+
+  CODEBUILD_DEPLOY_PENDING=0
 }
 
 add_transform_prefix_override() {
@@ -510,6 +553,7 @@ main() {
   upload_browser_flows_to_s3
   upload_multi_request_flows_to_s3
   package_and_upload_codebuild_runtime
+  deploy_codebuild_stack
 
   if (( TRANSFORMS_UPLOAD_PENDING == 0 )); then
     add_transform_prefix_override
@@ -536,6 +580,7 @@ main() {
 
   if (( CODEBUILD_RUNTIME_UPLOAD_PENDING == 1 )); then
     package_and_upload_codebuild_runtime
+    deploy_codebuild_stack
   fi
 
   # Upload browser flows if pending
@@ -558,6 +603,10 @@ main() {
 
   # Write per-county repair flags to SSM if provided
   write_repair_flags_to_ssm
+
+  if (( CODEBUILD_DEPLOY_PENDING == 1 )); then
+    deploy_codebuild_stack
+  fi
 
   bucket=$(get_bucket)
   echo

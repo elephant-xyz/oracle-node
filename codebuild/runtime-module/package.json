@@ -1,0 +1,9 @@
+{
+  "name": "@elephant-xyz/runtime-module",
+  "version": "0.1.0",
+  "description": "Runtime bundle executed by CodeBuild to bootstrap the Elephant Oracle environment.",
+  "type": "module",
+  "main": "index.js",
+  "license": "UNLICENSED",
+  "private": true
+}
