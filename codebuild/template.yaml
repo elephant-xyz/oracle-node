@@ -31,6 +31,9 @@ Parameters:
   PostProcessorFunctionName:
     Description: Name or ARN of the post-processing Lambda function
     Type: String
+  TransactionsSqsQueueUrl:
+    Description: URL of the Transactions SQS Queue
+    Type: String
 
 Conditions:
   HasRuntimeArtifactsPrefix: !Not [!Equals [!Ref RuntimeArtifactsPrefix, ""]]
@@ -116,6 +119,16 @@ Resources:
                 Resource:
                   - !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${PostProcessorFunctionName}"
                   - !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${PostProcessorFunctionName}:*"
+        - PolicyName: PrepareRuntimeCodeBuildSQS
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sqs:SendMessage
+                  - sqs:GetQueueUrl
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:sqs:${AWS::Region}:${AWS::AccountId}:*"
       Tags:
         - Key: Environment
           Value: !Ref EnvironmentName
@@ -151,6 +164,9 @@ Resources:
           - Name: POST_PROCESSOR_FUNCTION_NAME
             Type: PLAINTEXT
             Value: !Ref PostProcessorFunctionName
+          - Name: TRANSACTIONS_SQS_QUEUE_URL
+            Type: PLAINTEXT
+            Value: !Ref TransactionsSqsQueueUrl
       LogsConfig:
         CloudWatchLogs:
           GroupName: !Sub "/aws/codebuild/${EnvironmentName}-prepare-runtime"

@@ -595,10 +595,18 @@ Resources:
                 - lambda:InvokeFunction
               Resource:
                 - !GetAtt WorkflowPostProcessorFunction.Arn
+            - Effect: Allow
+              Action:
+                - sqs:SendMessage
+                - sqs:GetQueueUrl
+              Resource:
+                - !GetAtt TransactionsSqsQueue.Arn
+                - !Sub "arn:${AWS::Partition}:sqs:${AWS::Region}:${AWS::AccountId}:*"
       Environment:
         Variables:
           ERRORS_TABLE_NAME: !Ref ErrorsTable
           POST_PROCESSOR_FUNCTION_NAME: !Ref WorkflowPostProcessorFunction
+          TRANSACTIONS_SQS_QUEUE_URL: !Ref TransactionsSqsQueue
       Events:
         ErrorsTableStream:
           Type: DynamoDB
