@@ -2,6 +2,7 @@ import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import {
   BatchWriteCommand,
   DynamoDBDocumentClient,
+  QueryCommand,
   UpdateCommand,
 } from "@aws-sdk/lib-dynamodb";
 import { createHash } from "crypto";
@@ -425,7 +426,10 @@ async function writeItems(client, tableName, items) {
       remaining =
         /** @type {Array<FailedExecutionItem | ExecutionErrorLink>} */ (
           /** @type {unknown} */ (
-            unprocessed.filter((item) => item !== undefined)
+            unprocessed.filter(
+              /** @param {import("@aws-sdk/lib-dynamodb").DocumentClient.Item} item */
+              (item) => item !== undefined,
+            )
           )
         );
     }
@@ -498,4 +502,120 @@ function buildErrorPk(errorHash) {
  */
 function buildErrorSk(errorHash) {
   return /** @type {`ERROR#${string}`} */ (`ERROR#${errorHash}`);
+}
+
+/**
+ * Query DynamoDB for the execution with the most errors using the ExecutionErrorCountIndex.
+ *
+ * @param {object} params - Query parameters.
+ * @param {string} params.tableName - DynamoDB table name.
+ * @param {DynamoDBDocumentClient} [params.documentClient] - Optional document client (uses default if not provided).
+ * @returns {Promise<FailedExecutionItem | null>} - The execution with most errors, or null if none found.
+ */
+export async function queryExecutionWithMostErrors({
+  tableName,
+  documentClient,
+}) {
+  const client = documentClient ?? DEFAULT_CLIENT;
+
+  const response = await client.send(
+    new QueryCommand({
+      TableName: tableName,
+      IndexName: "ExecutionErrorCountIndex",
+      KeyConditionExpression: "GS3PK = :pk",
+      FilterExpression: "#status = :status AND #entityType = :entityType",
+      ExpressionAttributeNames: {
+        "#status": "status",
+        "#entityType": "entityType",
+      },
+      ExpressionAttributeValues: {
+        ":pk": "METRIC#ERRORCOUNT",
+        ":status": "failed",
+        ":entityType": "FailedExecution",
+      },
+      ScanIndexForward: false,
+      Limit: 1,
+    }),
+  );
+
+  if (!response.Items || response.Items.length === 0) {
+    return null;
+  }
+
+  return /** @type {FailedExecutionItem} */ (response.Items[0]);
+}
+
+/**
+ * Mark all ExecutionErrorLink items with matching error hashes as "maybeSolved".
+ * Queries all ExecutionErrorLink items across all executions for each error hash.
+ *
+ * @param {object} params - Update parameters.
+ * @param {string[]} params.errorHashes - Array of error hashes to mark as maybeSolved.
+ * @param {string} params.tableName - DynamoDB table name.
+ * @param {DynamoDBDocumentClient} [params.documentClient] - Optional document client (uses default if not provided).
+ * @returns {Promise<void>} - Resolves when all updates complete.
+ */
+export async function markErrorsAsMaybeSolved({
+  errorHashes,
+  tableName,
+  documentClient,
+}) {
+  const client = documentClient ?? DEFAULT_CLIENT;
+  const now = new Date().toISOString();
+
+  for (const errorHash of errorHashes) {
+    const errorPk = buildErrorPk(errorHash);
+    /** @type {Record<string, unknown> | undefined} */
+    let lastEvaluatedKey = undefined;
+
+    do {
+      /** @type {import("@aws-sdk/lib-dynamodb").QueryCommandInput} */
+      const queryParams = {
+        TableName: tableName,
+        IndexName: "ErrorHashExecutionIndex",
+        KeyConditionExpression: "GS1PK = :errorPk",
+        ExpressionAttributeValues: {
+          ":errorPk": errorPk,
+          ":status": "failed",
+        },
+        FilterExpression: "#status = :status",
+        ExpressionAttributeNames: {
+          "#status": "status",
+        },
+        ExclusiveStartKey: lastEvaluatedKey,
+      };
+
+      /** @type {import("@aws-sdk/lib-dynamodb").QueryCommandOutput} */
+      const response = await client.send(new QueryCommand(queryParams));
+
+      if (response.Items && response.Items.length > 0) {
+        for (const item of response.Items) {
+          const executionErrorLink =
+            /** @type {ExecutionErrorLink} */ (item);
+
+          await client.send(
+            new UpdateCommand({
+              TableName: tableName,
+              Key: {
+                PK: executionErrorLink.PK,
+                SK: executionErrorLink.SK,
+              },
+              UpdateExpression:
+                "SET #status = :maybeSolved, #updatedAt = :updatedAt",
+              ExpressionAttributeNames: {
+                "#status": "status",
+                "#updatedAt": "updatedAt",
+              },
+              ExpressionAttributeValues: {
+                ":maybeSolved": "maybeSolved",
+                ":updatedAt": now,
+              },
+            }),
+          );
+        }
+      }
+
+      lastEvaluatedKey = response.LastEvaluatedKey;
+    } while (lastEvaluatedKey);
+  }
 }
