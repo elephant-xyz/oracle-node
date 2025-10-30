@@ -213,6 +213,8 @@ Resources:
       EphemeralStorage:
         Size: 1024
       MemorySize: 768
+      Architectures:
+        - arm64
       CodeUri: lambdas/downloader
       Handler: index.handler
       Description: "Downloads data (granted full S3 access as requested)"
@@ -250,6 +252,8 @@ Resources:
       MemorySize: 128
       CodeUri: lambdas/updater
       Handler: index.handler
+      Architectures:
+        - arm64
       Description: "Updates env var on DownloaderFunction and runs every minute."
       LoggingConfig:
         LogFormat: JSON
@@ -567,6 +571,45 @@ Resources:
           ELEPHANT_PINATA_JWT: !Ref ElephantPinataJwt
           TRANSFORM_S3_PREFIX: !Ref TransformS3Prefix
           ERRORS_TABLE_NAME: !Ref ErrorsTable
+
+  ErrorResolverFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Architectures:
+        - arm64
+      MemorySize: 256
+      Timeout: 60
+      CodeUri: ../workflow/lambdas/error-resolver
+      Handler: index.handler
+      Description: "Processes DynamoDB stream events to resolve execution errors and restart executions"
+      LoggingConfig:
+        LogFormat: JSON
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ErrorsTable
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - lambda:InvokeFunction
+              Resource:
+                - !GetAtt WorkflowPostProcessorFunction.Arn
+      Environment:
+        Variables:
+          ERRORS_TABLE_NAME: !Ref ErrorsTable
+          POST_PROCESSOR_FUNCTION_NAME: !Ref WorkflowPostProcessorFunction
+      Events:
+        ErrorsTableStream:
+          Type: DynamoDB
+          Properties:
+            Stream: !GetAtt ErrorsTable.StreamArn
+            StartingPosition: LATEST
+            FilterCriteria:
+              Filters:
+                - Pattern: '{ "dynamodb" : { "NewImage" : { "entityType" : { "S" : [ "ExecutionError" ] } } } , "dynamodb" : { "NewImage" : { "status" : { "S" : [ "maybeSolved" ] } } } , "dynamodb" : { "OldImage" : { "status" : { "S" : [ "failed" ] } } } }'
+            MaximumBatchingWindowInSeconds: 5
+            BatchSize: 100
 
   #####################################################################################################################
   # Express Step Functions State Machine (separate definition file)
