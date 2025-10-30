@@ -2,6 +2,11 @@ import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import { S3Client, GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
 import { LambdaClient, InvokeCommand } from "@aws-sdk/client-lambda";
+import {
+  SQSClient,
+  SendMessageCommand,
+  GetQueueUrlCommand,
+} from "@aws-sdk/client-sqs";
 import { promises as fs } from "fs";
 import path from "path";
 import os from "os";
@@ -27,6 +32,7 @@ const dynamoClient = DynamoDBDocumentClient.from(new DynamoDBClient({}), {
   marshallOptions: { removeUndefinedValues: true },
 });
 const lambdaClient = new LambdaClient({});
+const sqsClient = new SQSClient({});
 
 /**
  * Ensure required environment variables are present.
@@ -311,6 +317,80 @@ function constructSeedOutputS3Uri(preparedS3Uri) {
 }
 
 /**
+ * Get the county-specific DLQ URL by queue name.
+ *
+ * @param {string} county - County identifier (will be lowercased).
+ * @returns {Promise<string>} - DLQ queue URL.
+ */
+async function getCountyDlqUrl(county) {
+  const queueName = `elephant-workflow-queue-${county.toLowerCase()}-dlq`;
+  try {
+    const response = await sqsClient.send(
+      new GetQueueUrlCommand({ QueueName: queueName }),
+    );
+    if (!response.QueueUrl) {
+      throw new Error(`DLQ queue ${queueName} not found`);
+    }
+    return response.QueueUrl;
+  } catch (error) {
+    throw new Error(
+      `Failed to get DLQ URL for county ${county}: ${error.message}`,
+    );
+  }
+}
+
+/**
+ * Send transaction items to the Transactions SQS queue.
+ *
+ * @param {string} queueUrl - Transactions SQS queue URL.
+ * @param {unknown[]} transactionItems - Array of transaction items to send.
+ * @returns {Promise<void>}
+ */
+async function sendToTransactionsQueue(queueUrl, transactionItems) {
+  console.log(
+    `Sending ${transactionItems.length} transaction items to Transactions queue`,
+  );
+  await sqsClient.send(
+    new SendMessageCommand({
+      QueueUrl: queueUrl,
+      MessageBody: JSON.stringify(transactionItems),
+    }),
+  );
+  console.log("Successfully sent transaction items to Transactions queue");
+}
+
+/**
+ * Send original message to county-specific DLQ.
+ *
+ * @param {string} dlqUrl - County-specific DLQ URL.
+ * @param {Record<string, string | undefined>} source - Source information with s3Bucket and s3Key.
+ * @returns {Promise<void>}
+ */
+async function sendToDlq(dlqUrl, source) {
+  if (!source.s3Bucket || !source.s3Key) {
+    throw new Error(
+      "Cannot send to DLQ: source missing s3Bucket or s3Key",
+    );
+  }
+
+  const message = {
+    s3: {
+      bucket: { name: source.s3Bucket },
+      object: { key: source.s3Key },
+    },
+  };
+
+  console.log(`Sending original message to DLQ: ${dlqUrl}`);
+  await sqsClient.send(
+    new SendMessageCommand({
+      QueueUrl: dlqUrl,
+      MessageBody: JSON.stringify(message),
+    }),
+  );
+  console.log("Successfully sent message to DLQ");
+}
+
+/**
  * Invoke the post-processing Lambda function to verify the fixes work.
  *
  * @param {object} params - Invocation parameters.
@@ -318,7 +398,7 @@ function constructSeedOutputS3Uri(preparedS3Uri) {
  * @param {string} params.preparedS3Uri - S3 URI of the prepared output.
  * @param {string} params.seedOutputS3Uri - S3 URI of the seed output.
  * @param {{ bucket?: { name?: string }, object?: { key?: string } } | undefined} params.s3Event - Optional S3 event information.
- * @returns {Promise<void>}
+ * @returns {Promise<{ status: string, transactionItems?: unknown[] }>} - Result payload from post-processing Lambda.
  */
 async function invokePostProcessingLambda({
   functionName,
@@ -350,41 +430,32 @@ async function invokePostProcessingLambda({
     };
   }
 
-  try {
-    const response = await lambdaClient.send(
-      new InvokeCommand({
-        FunctionName: functionName,
-        InvocationType: "RequestResponse",
-        Payload: JSON.stringify(payload),
-      }),
-    );
+  const response = await lambdaClient.send(
+    new InvokeCommand({
+      FunctionName: functionName,
+      InvocationType: "RequestResponse",
+      Payload: JSON.stringify(payload),
+    }),
+  );
 
-    if (response.FunctionError) {
-      const errorPayload = JSON.parse(
-        new TextDecoder().decode(response.Payload ?? new Uint8Array()),
-      );
-      throw new Error(
-        `Post-processing Lambda failed: ${errorPayload.errorMessage || errorPayload.errorType || JSON.stringify(errorPayload)}`,
-      );
-    }
-
-    const resultPayload = JSON.parse(
+  if (response.FunctionError) {
+    const errorPayload = JSON.parse(
       new TextDecoder().decode(response.Payload ?? new Uint8Array()),
     );
-
-    if (resultPayload.status !== "success") {
-      throw new Error(
-        `Post-processing Lambda returned non-success status: ${resultPayload.status}`,
-      );
-    }
-
-    console.log(
-      `Post-processing Lambda succeeded with ${resultPayload.transactionItems?.length || 0} transaction items`,
+    throw new Error(
+      `Post-processing Lambda failed: ${errorPayload.errorMessage || errorPayload.errorType || JSON.stringify(errorPayload)}`,
     );
-  } catch (error) {
-    console.error("Post-processing Lambda invocation failed:", error);
-    throw error;
   }
+
+  const resultPayload = JSON.parse(
+    new TextDecoder().decode(response.Payload ?? new Uint8Array()),
+  );
+
+  console.log(
+    `Post-processing Lambda returned status: ${resultPayload.status} with ${resultPayload.transactionItems?.length || 0} transaction items`,
+  );
+
+  return resultPayload;
 }
 
 /**
@@ -460,10 +531,11 @@ async function main() {
 
       // Step 6: Invoke post-processing Lambda to verify fixes work
       const postProcessorFunctionName = requireEnv("POST_PROCESSOR_FUNCTION_NAME");
+      const transactionsQueueUrl = requireEnv("TRANSACTIONS_SQS_QUEUE_URL");
       const seedOutputS3Uri = constructSeedOutputS3Uri(execution.preparedS3Uri);
 
       try {
-        await invokePostProcessingLambda({
+        const resultPayload = await invokePostProcessingLambda({
           functionName: postProcessorFunctionName,
           preparedS3Uri: execution.preparedS3Uri,
           seedOutputS3Uri,
@@ -475,21 +547,68 @@ async function main() {
             : undefined,
         });
 
-        // Step 7: Mark errors as maybeSolved only if Lambda invocation succeeded
-        const errorHashes = errors.map((e) => e.hash);
-        console.log(`Marking ${errorHashes.length} error hash(es) as maybeSolved...`);
-        await markErrorsAsMaybeSolved({
-          errorHashes,
-          tableName,
-          documentClient: dynamoClient,
-        });
+        // Check if execution was successful
+        if (
+          resultPayload.status === "success" &&
+          Array.isArray(resultPayload.transactionItems) &&
+          resultPayload.transactionItems.length > 0
+        ) {
+          // Send successful results to Transactions queue
+          await sendToTransactionsQueue(
+            transactionsQueueUrl,
+            resultPayload.transactionItems,
+          );
 
-        console.log("Auto-repair workflow completed successfully!");
+          console.log(
+            `Successfully sent ${resultPayload.transactionItems.length} transaction items to Transactions queue`,
+          );
+
+          // Step 7: Mark errors as maybeSolved only if Lambda invocation succeeded
+          const errorHashes = errors.map((e) => e.hash);
+          console.log(`Marking ${errorHashes.length} error hash(es) as maybeSolved...`);
+          await markErrorsAsMaybeSolved({
+            errorHashes,
+            tableName,
+            documentClient: dynamoClient,
+          });
+
+          console.log("Auto-repair workflow completed successfully!");
+        } else {
+          // Execution failed, send original message to DLQ
+          if (!execution.source) {
+            throw new Error(
+              `Execution ${execution.executionId} failed but source information is missing, cannot send to DLQ`,
+            );
+          }
+
+          const dlqUrl = await getCountyDlqUrl(execution.county);
+          await sendToDlq(dlqUrl, execution.source);
+
+          console.log(
+            `Execution failed, sent original message to DLQ: ${dlqUrl}`,
+          );
+
+          throw new Error(
+            `Post-processing Lambda returned non-success status: ${resultPayload.status}`,
+          );
+        }
       } catch (lambdaError) {
-        console.error(
-          "Post-processing Lambda invocation failed. Errors will not be marked as maybeSolved.",
-          lambdaError,
-        );
+        // If Lambda invocation failed, try to send original message to DLQ
+        if (execution.source) {
+          try {
+            const dlqUrl = await getCountyDlqUrl(execution.county);
+            await sendToDlq(dlqUrl, execution.source);
+
+            console.error(
+              `Post-processing Lambda invocation failed. Sent original message to DLQ: ${dlqUrl}`,
+            );
+          } catch (dlqError) {
+            console.error(
+              `Failed to send to DLQ: ${dlqError.message}`,
+            );
+          }
+        }
+
         throw new Error(
           `Failed to verify fixes with post-processing Lambda: ${lambdaError.message}`,
         );

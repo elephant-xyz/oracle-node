@@ -4,6 +4,11 @@ import {
   UpdateCommand,
 } from "@aws-sdk/lib-dynamodb";
 import { LambdaClient, InvokeCommand } from "@aws-sdk/client-lambda";
+import {
+  SQSClient,
+  SendMessageCommand,
+  GetQueueUrlCommand,
+} from "@aws-sdk/client-sqs";
 
 /**
  * @typedef {object} ExecutionErrorLink
@@ -45,6 +50,7 @@ const DEFAULT_CLIENT = DynamoDBDocumentClient.from(new DynamoDBClient({}), {
 });
 
 const lambdaClient = new LambdaClient({});
+const sqsClient = new SQSClient({});
 
 /**
  * Ensure required environment variables are present.
@@ -97,6 +103,29 @@ function constructSeedOutputS3Uri(preparedS3Uri) {
   // Replace /output.zip with /seed_output.zip
   const seedKey = key.replace(/\/output\.zip$/, "/seed_output.zip");
   return `s3://${bucket}/${seedKey}`;
+}
+
+/**
+ * Get the county-specific DLQ URL by queue name.
+ *
+ * @param {string} county - County identifier (will be lowercased).
+ * @returns {Promise<string>} - DLQ queue URL.
+ */
+async function getCountyDlqUrl(county) {
+  const queueName = `elephant-workflow-queue-${county.toLowerCase()}-dlq`;
+  try {
+    const response = await sqsClient.send(
+      new GetQueueUrlCommand({ QueueName: queueName }),
+    );
+    if (!response.QueueUrl) {
+      throw new Error(`DLQ queue ${queueName} not found`);
+    }
+    return response.QueueUrl;
+  } catch (error) {
+    throw new Error(
+      `Failed to get DLQ URL for county ${county}: ${error.message}`,
+    );
+  }
 }
 
 /**
@@ -199,7 +228,7 @@ async function updateExecutionStatusToMaybeSolved({
  * @param {string} params.preparedS3Uri - S3 URI of the prepared output.
  * @param {string} params.seedOutputS3Uri - S3 URI of the seed output.
  * @param {{ bucket?: { name?: string }, object?: { key?: string } } | undefined} params.s3Event - Optional S3 event information.
- * @returns {Promise<void>}
+ * @returns {Promise<{ status: string, transactionItems?: unknown[] }>} - Result payload from post-processing Lambda.
  */
 async function invokePostProcessingLambda({
   functionName,
@@ -231,41 +260,83 @@ async function invokePostProcessingLambda({
     };
   }
 
-  try {
-    const response = await lambdaClient.send(
-      new InvokeCommand({
-        FunctionName: functionName,
-        InvocationType: "RequestResponse",
-        Payload: JSON.stringify(payload),
-      }),
-    );
+  const response = await lambdaClient.send(
+    new InvokeCommand({
+      FunctionName: functionName,
+      InvocationType: "RequestResponse",
+      Payload: JSON.stringify(payload),
+    }),
+  );
 
-    if (response.FunctionError) {
-      const errorPayload = JSON.parse(
-        new TextDecoder().decode(response.Payload ?? new Uint8Array()),
-      );
-      throw new Error(
-        `Post-processing Lambda failed: ${errorPayload.errorMessage || errorPayload.errorType || JSON.stringify(errorPayload)}`,
-      );
-    }
-
-    const resultPayload = JSON.parse(
+  if (response.FunctionError) {
+    const errorPayload = JSON.parse(
       new TextDecoder().decode(response.Payload ?? new Uint8Array()),
     );
-
-    if (resultPayload.status !== "success") {
-      throw new Error(
-        `Post-processing Lambda returned non-success status: ${resultPayload.status}`,
-      );
-    }
-
-    console.log(
-      `Post-processing Lambda succeeded with ${resultPayload.transactionItems?.length || 0} transaction items`,
+    throw new Error(
+      `Post-processing Lambda failed: ${errorPayload.errorMessage || errorPayload.errorType || JSON.stringify(errorPayload)}`,
     );
-  } catch (error) {
-    console.error("Post-processing Lambda invocation failed:", error);
-    throw error;
   }
+
+  const resultPayload = JSON.parse(
+    new TextDecoder().decode(response.Payload ?? new Uint8Array()),
+  );
+
+  console.log(
+    `Post-processing Lambda returned status: ${resultPayload.status} with ${resultPayload.transactionItems?.length || 0} transaction items`,
+  );
+
+  return resultPayload;
+}
+
+/**
+ * Send transaction items to the Transactions SQS queue.
+ *
+ * @param {string} queueUrl - Transactions SQS queue URL.
+ * @param {unknown[]} transactionItems - Array of transaction items to send.
+ * @returns {Promise<void>}
+ */
+async function sendToTransactionsQueue(queueUrl, transactionItems) {
+  console.log(
+    `Sending ${transactionItems.length} transaction items to Transactions queue`,
+  );
+  await sqsClient.send(
+    new SendMessageCommand({
+      QueueUrl: queueUrl,
+      MessageBody: JSON.stringify(transactionItems),
+    }),
+  );
+  console.log("Successfully sent transaction items to Transactions queue");
+}
+
+/**
+ * Send original message to county-specific DLQ.
+ *
+ * @param {string} dlqUrl - County-specific DLQ URL.
+ * @param {Record<string, string | undefined>} source - Source information with s3Bucket and s3Key.
+ * @returns {Promise<void>}
+ */
+async function sendToDlq(dlqUrl, source) {
+  if (!source.s3Bucket || !source.s3Key) {
+    throw new Error(
+      "Cannot send to DLQ: source missing s3Bucket or s3Key",
+    );
+  }
+
+  const message = {
+    s3: {
+      bucket: { name: source.s3Bucket },
+      object: { key: source.s3Key },
+    },
+  };
+
+  console.log(`Sending original message to DLQ: ${dlqUrl}`);
+  await sqsClient.send(
+    new SendMessageCommand({
+      QueueUrl: dlqUrl,
+      MessageBody: JSON.stringify(message),
+    }),
+  );
+  console.log("Successfully sent message to DLQ");
 }
 
 /**
@@ -309,6 +380,7 @@ export const handler = async (event) => {
 
     const tableName = requireEnv("ERRORS_TABLE_NAME");
     const postProcessorFunctionName = requireEnv("POST_PROCESSOR_FUNCTION_NAME");
+    const transactionsQueueUrl = requireEnv("TRANSACTIONS_SQS_QUEUE_URL");
     const client = DEFAULT_CLIENT;
 
     // Group ExecutionErrorLink records by executionId
@@ -456,12 +528,94 @@ export const handler = async (event) => {
               : undefined;
 
             // Invoke post-processing Lambda to restart execution
-            await invokePostProcessingLambda({
-              functionName: postProcessorFunctionName,
-              preparedS3Uri: execution.preparedS3Uri,
-              seedOutputS3Uri,
-              s3Event,
-            });
+            let resultPayload;
+            try {
+              resultPayload = await invokePostProcessingLambda({
+                functionName: postProcessorFunctionName,
+                preparedS3Uri: execution.preparedS3Uri,
+                seedOutputS3Uri,
+                s3Event,
+              });
+
+              // Check if execution was successful
+              if (
+                resultPayload.status === "success" &&
+                Array.isArray(resultPayload.transactionItems) &&
+                resultPayload.transactionItems.length > 0
+              ) {
+                // Send successful results to Transactions queue
+                await sendToTransactionsQueue(
+                  transactionsQueueUrl,
+                  resultPayload.transactionItems,
+                );
+
+                console.log(
+                  JSON.stringify({
+                    ...logBase,
+                    level: "info",
+                    msg: "execution_succeeded_and_sent_to_transactions_queue",
+                    executionId,
+                    transactionItemsCount: resultPayload.transactionItems.length,
+                  }),
+                );
+              } else {
+                // Execution failed, send original message to DLQ
+                if (!execution.source) {
+                  throw new Error(
+                    `Execution ${executionId} failed but source information is missing, cannot send to DLQ`,
+                  );
+                }
+
+                const dlqUrl = await getCountyDlqUrl(execution.county);
+                await sendToDlq(dlqUrl, execution.source);
+
+                console.log(
+                  JSON.stringify({
+                    ...logBase,
+                    level: "info",
+                    msg: "execution_failed_and_sent_to_dlq",
+                    executionId,
+                    county: execution.county,
+                    dlqUrl,
+                  }),
+                );
+              }
+            } catch (lambdaError) {
+              // If Lambda invocation failed, send original message to DLQ
+              if (execution.source) {
+                try {
+                  const dlqUrl = await getCountyDlqUrl(execution.county);
+                  await sendToDlq(dlqUrl, execution.source);
+
+                  console.log(
+                    JSON.stringify({
+                      ...logBase,
+                      level: "warn",
+                      msg: "execution_invocation_failed_and_sent_to_dlq",
+                      executionId,
+                      county: execution.county,
+                      dlqUrl,
+                      error: String(lambdaError),
+                    }),
+                  );
+                } catch (dlqError) {
+                  console.error(
+                    JSON.stringify({
+                      ...logBase,
+                      level: "error",
+                      msg: "failed_to_send_to_dlq",
+                      executionId,
+                      county: execution.county,
+                      dlqError: String(dlqError),
+                      originalError: String(lambdaError),
+                    }),
+                  );
+                  throw lambdaError;
+                }
+              } else {
+                throw lambdaError;
+              }
+            }
 
             console.log(
               JSON.stringify({
