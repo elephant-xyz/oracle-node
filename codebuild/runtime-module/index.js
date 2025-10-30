@@ -1,6 +1,7 @@
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import { S3Client, GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
+import { LambdaClient, InvokeCommand } from "@aws-sdk/client-lambda";
 import { promises as fs } from "fs";
 import path from "path";
 import os from "os";
@@ -25,6 +26,7 @@ const s3Client = new S3Client({});
 const dynamoClient = DynamoDBDocumentClient.from(new DynamoDBClient({}), {
   marshallOptions: { removeUndefinedValues: true },
 });
+const lambdaClient = new LambdaClient({});
 
 /**
  * Ensure required environment variables are present.
@@ -295,6 +297,97 @@ async function uploadFixedScripts(county, scriptsDir, transformPrefix) {
 }
 
 /**
+ * Construct seed_output_s3_uri from preparedS3Uri.
+ * The seed output is stored at the same prefix as the prepared output, but with seed_output.zip filename.
+ *
+ * @param {string} preparedS3Uri - S3 URI of the prepared output (e.g., s3://bucket/outputs/fileBase/output.zip).
+ * @returns {string} - S3 URI of the seed output (e.g., s3://bucket/outputs/fileBase/seed_output.zip).
+ */
+function constructSeedOutputS3Uri(preparedS3Uri) {
+  const { bucket, key } = parseS3Uri(preparedS3Uri);
+  // Replace /output.zip with /seed_output.zip
+  const seedKey = key.replace(/\/output\.zip$/, "/seed_output.zip");
+  return `s3://${bucket}/${seedKey}`;
+}
+
+/**
+ * Invoke the post-processing Lambda function to verify the fixes work.
+ *
+ * @param {object} params - Invocation parameters.
+ * @param {string} params.functionName - Lambda function name or ARN.
+ * @param {string} params.preparedS3Uri - S3 URI of the prepared output.
+ * @param {string} params.seedOutputS3Uri - S3 URI of the seed output.
+ * @param {{ bucket?: { name?: string }, object?: { key?: string } } | undefined} params.s3Event - Optional S3 event information.
+ * @returns {Promise<void>}
+ */
+async function invokePostProcessingLambda({
+  functionName,
+  preparedS3Uri,
+  seedOutputS3Uri,
+  s3Event,
+}) {
+  console.log(`Invoking post-processing Lambda ${functionName}...`);
+  console.log(`Prepared S3 URI: ${preparedS3Uri}`);
+  console.log(`Seed output S3 URI: ${seedOutputS3Uri}`);
+
+  const payload = {
+    prepare: {
+      output_s3_uri: preparedS3Uri,
+    },
+    seed_output_s3_uri: seedOutputS3Uri,
+    prepareSkipped: false,
+  };
+
+  // Add S3 event if available
+  if (s3Event?.bucket?.name && s3Event?.object?.key) {
+    payload.s3 = {
+      bucket: {
+        name: s3Event.bucket.name,
+      },
+      object: {
+        key: s3Event.object.key,
+      },
+    };
+  }
+
+  try {
+    const response = await lambdaClient.send(
+      new InvokeCommand({
+        FunctionName: functionName,
+        InvocationType: "RequestResponse",
+        Payload: JSON.stringify(payload),
+      }),
+    );
+
+    if (response.FunctionError) {
+      const errorPayload = JSON.parse(
+        new TextDecoder().decode(response.Payload ?? new Uint8Array()),
+      );
+      throw new Error(
+        `Post-processing Lambda failed: ${errorPayload.errorMessage || errorPayload.errorType || JSON.stringify(errorPayload)}`,
+      );
+    }
+
+    const resultPayload = JSON.parse(
+      new TextDecoder().decode(response.Payload ?? new Uint8Array()),
+    );
+
+    if (resultPayload.status !== "success") {
+      throw new Error(
+        `Post-processing Lambda returned non-success status: ${resultPayload.status}`,
+      );
+    }
+
+    console.log(
+      `Post-processing Lambda succeeded with ${resultPayload.transactionItems?.length || 0} transaction items`,
+    );
+  } catch (error) {
+    console.error("Post-processing Lambda invocation failed:", error);
+    throw error;
+  }
+}
+
+/**
  * Main auto-repair workflow.
  *
  * @returns {Promise<void>}
@@ -365,16 +458,42 @@ async function main() {
       // Step 5: Upload fixed scripts
       await uploadFixedScripts(execution.county, scriptsDir, transformPrefix);
 
-      // Step 6: Mark errors as maybeSolved
-      const errorHashes = errors.map((e) => e.hash);
-      console.log(`Marking ${errorHashes.length} error hash(es) as maybeSolved...`);
-      await markErrorsAsMaybeSolved({
-        errorHashes,
-        tableName,
-        documentClient: dynamoClient,
-      });
+      // Step 6: Invoke post-processing Lambda to verify fixes work
+      const postProcessorFunctionName = requireEnv("POST_PROCESSOR_FUNCTION_NAME");
+      const seedOutputS3Uri = constructSeedOutputS3Uri(execution.preparedS3Uri);
 
-      console.log("Auto-repair workflow completed successfully!");
+      try {
+        await invokePostProcessingLambda({
+          functionName: postProcessorFunctionName,
+          preparedS3Uri: execution.preparedS3Uri,
+          seedOutputS3Uri,
+          s3Event: execution.source
+            ? {
+                bucket: { name: execution.source.s3Bucket },
+                object: { key: execution.source.s3Key },
+              }
+            : undefined,
+        });
+
+        // Step 7: Mark errors as maybeSolved only if Lambda invocation succeeded
+        const errorHashes = errors.map((e) => e.hash);
+        console.log(`Marking ${errorHashes.length} error hash(es) as maybeSolved...`);
+        await markErrorsAsMaybeSolved({
+          errorHashes,
+          tableName,
+          documentClient: dynamoClient,
+        });
+
+        console.log("Auto-repair workflow completed successfully!");
+      } catch (lambdaError) {
+        console.error(
+          "Post-processing Lambda invocation failed. Errors will not be marked as maybeSolved.",
+          lambdaError,
+        );
+        throw new Error(
+          `Failed to verify fixes with post-processing Lambda: ${lambdaError.message}`,
+        );
+      }
     } finally {
       // Cleanup
       await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {
