@@ -21,6 +21,14 @@ Parameters:
     Type: String
     Default: index.js
 
+  ErrorsTableName:
+    Description: Name of the DynamoDB table storing execution errors
+    Type: String
+
+  TransformS3Prefix:
+    Description: S3 URI prefix containing county transform archives
+    Type: String
+
 Conditions:
   HasRuntimeArtifactsPrefix: !Not [!Equals [!Ref RuntimeArtifactsPrefix, ""]]
 
@@ -65,6 +73,36 @@ Resources:
                 Action:
                   - s3:ListBucket
                 Resource: !Sub "arn:${AWS::Partition}:s3:::${RuntimeArtifactsBucket}"
+        - PolicyName: PrepareRuntimeCodeBuildDynamoDB
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:Query
+                  - dynamodb:UpdateItem
+                  - dynamodb:Scan
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${ErrorsTableName}"
+                  - !Sub "arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${ErrorsTableName}/index/*"
+        - PolicyName: PrepareRuntimeCodeBuildS3ReadWrite
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:GetObjectVersion
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:s3:::${RuntimeArtifactsBucket}/*"
+                  - "arn:aws:s3:::*/*"
+              - Effect: Allow
+                Action:
+                  - s3:ListBucket
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:s3:::${RuntimeArtifactsBucket}"
+                  - "arn:aws:s3:::*"
       Tags:
         - Key: Environment
           Value: !Ref EnvironmentName
@@ -91,6 +129,12 @@ Resources:
           - Name: RUNTIME_ENTRYPOINT
             Type: PLAINTEXT
             Value: !Ref RuntimeEntryPoint
+          - Name: ERRORS_TABLE_NAME
+            Type: PLAINTEXT
+            Value: !Ref ErrorsTableName
+          - Name: TRANSFORM_S3_PREFIX
+            Type: PLAINTEXT
+            Value: !Ref TransformS3Prefix
       LogsConfig:
         CloudWatchLogs:
           GroupName: !Sub "/aws/codebuild/${EnvironmentName}-prepare-runtime"
