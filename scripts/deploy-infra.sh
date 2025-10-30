@@ -365,6 +365,37 @@ deploy_codebuild_stack() {
     return 0
   fi
 
+  # Get required stack outputs
+  local errors_table_name
+  errors_table_name=$(get_output "ErrorsTableName")
+  if [[ -z "$errors_table_name" ]]; then
+    CODEBUILD_DEPLOY_PENDING=1
+    info "Delaying CodeBuild stack deployment until ErrorsTableName output is available."
+    return 0
+  fi
+
+  local post_processor_function_name
+  post_processor_function_name=$(get_output "WorkflowPostProcessorFunctionName")
+  if [[ -z "$post_processor_function_name" ]]; then
+    CODEBUILD_DEPLOY_PENDING=1
+    info "Delaying CodeBuild stack deployment until WorkflowPostProcessorFunctionName output is available."
+    return 0
+  fi
+
+  local transform_s3_prefix="${TRANSFORM_S3_PREFIX_VALUE:-}"
+  if [[ -z "$transform_s3_prefix" ]]; then
+    # Try to construct it from bucket and prefix if TRANSFORM_S3_PREFIX_VALUE isn't set
+    local transform_prefix_key="${TRANSFORM_PREFIX_KEY%/}"
+    transform_prefix_key="${transform_prefix_key#/}"
+    if [[ -n "$bucket" && -n "$transform_prefix_key" ]]; then
+      transform_s3_prefix="s3://$bucket/$transform_prefix_key"
+    else
+      CODEBUILD_DEPLOY_PENDING=1
+      info "Delaying CodeBuild stack deployment until TransformS3Prefix value is available."
+      return 0
+    fi
+  fi
+
   local prefix="${CODEBUILD_RUNTIME_PREFIX%/}"
   prefix="${prefix#/}"
   local entrypoint="$CODEBUILD_RUNTIME_ENTRYPOINT"
@@ -379,7 +410,10 @@ deploy_codebuild_stack() {
       EnvironmentName="$ENVIRONMENT_NAME" \
       RuntimeArtifactsBucket="$bucket" \
       RuntimeArtifactsPrefix="$prefix" \
-      RuntimeEntryPoint="$entrypoint"
+      RuntimeEntryPoint="$entrypoint" \
+      ErrorsTableName="$errors_table_name" \
+      TransformS3Prefix="$transform_s3_prefix" \
+      PostProcessorFunctionName="$post_processor_function_name"
 
   CODEBUILD_DEPLOY_PENDING=0
 }
