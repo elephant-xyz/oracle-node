@@ -1084,3 +1084,9 @@ Outputs:
   ProxyRotationTableArn:
     Description: ARN of the Proxy Rotation DynamoDB table
     Value: !GetAtt ProxyRotationTable.Arn
+  ErrorsTableName:
+    Description: Name of the Errors DynamoDB table
+    Value: !Ref ErrorsTable
+  WorkflowPostProcessorFunctionName:
+    Description: Name of the Workflow Post Processor Lambda function
+    Value: !Ref WorkflowPostProcessorFunction
