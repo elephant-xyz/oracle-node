@@ -1,6 +1,10 @@
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
-import { S3Client, GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
+import {
+  S3Client,
+  GetObjectCommand,
+  PutObjectCommand,
+} from "@aws-sdk/client-s3";
 import { LambdaClient, InvokeCommand } from "@aws-sdk/client-lambda";
 import {
   SQSClient,
@@ -186,11 +190,13 @@ async function parseErrorsFromS3(errorsS3Uri, county) {
   const errors = [];
   for (const record of records) {
     const errorMessage =
-      typeof record.errorMessage === "string"
-        ? record.errorMessage.trim()
+      typeof record.error_message === "string"
+        ? record.error_message.trim()
         : "";
     const errorPath =
-      typeof record.errorPath === "string" ? record.errorPath.trim() : "unknown";
+      typeof record.error_path === "string"
+        ? record.error_path.trim()
+        : "unknown";
 
     if (errorMessage.length > 0) {
       const hash = createErrorHash(errorMessage, errorPath, county);
@@ -235,7 +241,8 @@ async function invokeCodexForFix(errors, scriptsDir, inputsDir) {
   // Build prompt with file locations instead of content
   const errorsText = errors
     .map(
-      (e) => `- Error: ${e.errorMessage}\n  Path: ${e.errorPath}\n  Hash: ${e.hash}`,
+      (e) =>
+        `- Error: ${e.errorMessage}\n  Path: ${e.errorPath}\n  Hash: ${e.hash}`,
     )
     .join("\n");
 
@@ -299,7 +306,9 @@ async function uploadFixedScripts(county, scriptsDir, transformPrefix) {
     }),
   );
 
-  console.log(`Uploaded fixed scripts to s3://${transformBucket}/${transformKey}`);
+  console.log(
+    `Uploaded fixed scripts to s3://${transformBucket}/${transformKey}`,
+  );
 }
 
 /**
@@ -368,9 +377,7 @@ async function sendToTransactionsQueue(queueUrl, transactionItems) {
  */
 async function sendToDlq(dlqUrl, source) {
   if (!source.s3Bucket || !source.s3Key) {
-    throw new Error(
-      "Cannot send to DLQ: source missing s3Bucket or s3Key",
-    );
+    throw new Error("Cannot send to DLQ: source missing s3Bucket or s3Key");
   }
 
   const message = {
@@ -479,7 +486,9 @@ async function main() {
         return;
       }
 
-      console.log(`Found execution ${execution.executionId} with ${execution.uniqueErrorCount} unique errors`);
+      console.log(
+        `Found execution ${execution.executionId} with ${execution.uniqueErrorCount} unique errors`,
+      );
       console.log(`County: ${execution.county}`);
       console.log(`Prepared S3 URI: ${execution.preparedS3Uri}`);
       console.log(`Errors S3 URI: ${execution.errorsS3Uri}`);
@@ -530,7 +539,9 @@ async function main() {
       await uploadFixedScripts(execution.county, scriptsDir, transformPrefix);
 
       // Step 6: Invoke post-processing Lambda to verify fixes work
-      const postProcessorFunctionName = requireEnv("POST_PROCESSOR_FUNCTION_NAME");
+      const postProcessorFunctionName = requireEnv(
+        "POST_PROCESSOR_FUNCTION_NAME",
+      );
       const transactionsQueueUrl = requireEnv("TRANSACTIONS_SQS_QUEUE_URL");
       const seedOutputS3Uri = constructSeedOutputS3Uri(execution.preparedS3Uri);
 
@@ -565,7 +576,9 @@ async function main() {
 
           // Step 7: Mark errors as maybeSolved only if Lambda invocation succeeded
           const errorHashes = errors.map((e) => e.hash);
-          console.log(`Marking ${errorHashes.length} error hash(es) as maybeSolved...`);
+          console.log(
+            `Marking ${errorHashes.length} error hash(es) as maybeSolved...`,
+          );
           await markErrorsAsMaybeSolved({
             errorHashes,
             tableName,
@@ -603,9 +616,7 @@ async function main() {
               `Post-processing Lambda invocation failed. Sent original message to DLQ: ${dlqUrl}`,
             );
           } catch (dlqError) {
-            console.error(
-              `Failed to send to DLQ: ${dlqError.message}`,
-            );
+            console.error(`Failed to send to DLQ: ${dlqError.message}`);
           }
         }
 
@@ -627,3 +638,4 @@ async function main() {
 
 // Run main workflow
 main();
+

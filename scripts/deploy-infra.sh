@@ -324,6 +324,15 @@ package_and_upload_codebuild_runtime() {
   local archive_path="${dist_dir}/${CODEBUILD_RUNTIME_ARCHIVE_NAME}"
   rm -f "$archive_path"
 
+  info "Installing CodeBuild runtime module production dependencies"
+  (
+    cd "$CODEBUILD_RUNTIME_MODULE_DIR"
+    npm ci --omit=dev >/dev/null
+  ) || {
+    err "Failed to install CodeBuild runtime module dependencies."
+    exit 1
+  }
+
   (
     cd "$CODEBUILD_RUNTIME_MODULE_DIR"
     zip -r "../dist/${CODEBUILD_RUNTIME_ARCHIVE_NAME}" . >/dev/null
