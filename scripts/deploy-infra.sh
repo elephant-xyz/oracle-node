@@ -343,6 +343,7 @@ package_and_upload_codebuild_runtime() {
     err "Failed to upload CodeBuild runtime module to s3://${bucket}/${s3_key}"
     exit 1
   }
+  rm -rf "$dist_dir"
 
   CODEBUILD_RUNTIME_UPLOAD_PENDING=0
   info "Uploaded CodeBuild runtime module to s3://${bucket}/${s3_key}"
@@ -377,6 +378,14 @@ deploy_codebuild_stack() {
   if [[ -z "$errors_table_name" ]]; then
     CODEBUILD_DEPLOY_PENDING=1
     info "Delaying CodeBuild stack deployment until ErrorsTableName output is available."
+    return 0
+  fi
+
+  local transactions_sqs_queue_url
+  transactions_sqs_queue_url=$(get_output "TransactionsSqsQueueUrl")
+  if [[ -z "$transactions_sqs_queue_url" ]]; then
+    CODEBUILD_DEPLOY_PENDING=1
+    info "Delaying CodeBuild stack deployment until TransactionsSqsQueueUrl output is available."
     return 0
   fi
 
@@ -420,7 +429,8 @@ deploy_codebuild_stack() {
       ErrorsTableName="$errors_table_name" \
       TransformS3Prefix="$transform_s3_prefix" \
       PostProcessorFunctionName="$post_processor_function_name" \
-      OpenAiApiKey="$openai_api_key"
+      OpenAiApiKey="$openai_api_key" \
+      TransactionsSqsQueueUrl="$transactions_sqs_queue_url"
 
   CODEBUILD_DEPLOY_PENDING=0
 }
