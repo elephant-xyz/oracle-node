@@ -34,6 +34,10 @@ Parameters:
   TransactionsSqsQueueUrl:
     Description: URL of the Transactions SQS Queue
     Type: String
+  OpenAiApiKey:
+    Description: OpenAI API Key
+    Type: String
+    NoEcho: true
 
 Conditions:
   HasRuntimeArtifactsPrefix: !Not [!Equals [!Ref RuntimeArtifactsPrefix, ""]]
@@ -167,6 +171,9 @@ Resources:
           - Name: TRANSACTIONS_SQS_QUEUE_URL
             Type: PLAINTEXT
             Value: !Ref TransactionsSqsQueueUrl
+          - Name: OPENAI_API_KEY
+            Type: PLAINTEXT
+            Value: !Ref OpenAiApiKey
       LogsConfig:
         CloudWatchLogs:
           GroupName: !Sub "/aws/codebuild/${EnvironmentName}-prepare-runtime"
