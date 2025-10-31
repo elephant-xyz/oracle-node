@@ -349,6 +349,12 @@ package_and_upload_codebuild_runtime() {
 }
 
 deploy_codebuild_stack() {
+
+  local openai_api_key="${OPENAI_API_KEY:-}"
+  if [[ -z "$openai_api_key" ]]; then
+    err "OPENAI_API_KEY is required"
+    exit 1
+  fi
   if [[ ! -f "$CODEBUILD_TEMPLATE" ]]; then
     warn "CodeBuild template not found at $CODEBUILD_TEMPLATE, skipping deployment."
     return 0
@@ -413,7 +419,8 @@ deploy_codebuild_stack() {
       RuntimeEntryPoint="$entrypoint" \
       ErrorsTableName="$errors_table_name" \
       TransformS3Prefix="$transform_s3_prefix" \
-      PostProcessorFunctionName="$post_processor_function_name"
+      PostProcessorFunctionName="$post_processor_function_name" \
+      OpenAiApiKey="$openai_api_key"
 
   CODEBUILD_DEPLOY_PENDING=0
 }
