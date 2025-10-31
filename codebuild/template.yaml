@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: CodeBuild project that prepares runtime bundles and executes the Node.js entry point.
+Description: CodeBuild project that prepares runtime bundles and executes the Node.js entry point (with enhanced error handling).
 
 Parameters:
   EnvironmentName:
@@ -192,6 +192,18 @@ Resources:
                 nodejs: 22
               commands:
                 - npm install -g @openai/codex
+                - printenv OPENAI_API_KEY | codex login --with-api-key
+                - mkdir -p ~/.codex
+                - |
+                  cat >> ~/.codex/config.toml << 'EOF'
+                  [mcp_servers.elephant]
+                  command = "npx"
+                  args = ["-y", "@elephant-xyz/mcp"]
+                  startup_timeout_sec = 900
+
+                  [mcp_servers.elephant.env]
+                  OPENAI_API_KEY = "$OPENAI_API_KEY"
+                  EOF
                 - npm install -g @elephant-xyz/mcp
                 - echo "Node.js runtime set to version 22."
             pre_build:
@@ -222,6 +234,9 @@ Resources:
                     echo "Unpacking ${archive}..."
                     unzip -qo "${archive}" -d "${RUNTIME_WORK_DIR}"
                   done
+                - |
+                  echo $(ls -1 "${RUNTIME_WORK_DIR}")
+                  cd "${RUNTIME_WORK_DIR}" && npm install
             build:
               commands:
                 - cd "${RUNTIME_WORK_DIR}"
@@ -247,3 +262,4 @@ Outputs:
   PrepareRuntimeCodeBuildProjectArn:
     Description: ARN of the CodeBuild project that prepares runtime assets
     Value: !GetAtt PrepareRuntimeCodeBuildProject.Arn
+

@@ -550,6 +550,7 @@ export async function queryExecutionWithMostErrors({
 /**
  * Mark all ExecutionErrorLink items with matching error hashes as "maybeSolved".
  * Queries all ExecutionErrorLink items across all executions for each error hash.
+ * Uses TransactWriteCommand to batch update operations for better performance.
  *
  * @param {object} params - Update parameters.
  * @param {string[]} params.errorHashes - Array of error hashes to mark as maybeSolved.
@@ -564,6 +565,9 @@ export async function markErrorsAsMaybeSolved({
 }) {
   const client = documentClient ?? DEFAULT_CLIENT;
   const now = new Date().toISOString();
+
+  /** @type {ExecutionErrorLink[]} */
+  const allItemsToUpdate = [];
 
   for (const errorHash of errorHashes) {
     const errorPk = buildErrorPk(errorHash);
@@ -591,33 +595,42 @@ export async function markErrorsAsMaybeSolved({
       const response = await client.send(new QueryCommand(queryParams));
 
       if (response.Items && response.Items.length > 0) {
-        for (const item of response.Items) {
-          const executionErrorLink =
-            /** @type {ExecutionErrorLink} */ (item);
-
-          await client.send(
-            new UpdateCommand({
-              TableName: tableName,
-              Key: {
-                PK: executionErrorLink.PK,
-                SK: executionErrorLink.SK,
-              },
-              UpdateExpression:
-                "SET #status = :maybeSolved, #updatedAt = :updatedAt",
-              ExpressionAttributeNames: {
-                "#status": "status",
-                "#updatedAt": "updatedAt",
-              },
-              ExpressionAttributeValues: {
-                ":maybeSolved": "maybeSolved",
-                ":updatedAt": now,
-              },
-            }),
-          );
-        }
+        allItemsToUpdate.push(
+          ...response.Items.map(
+            (item) => /** @type {ExecutionErrorLink} */ (item),
+          ),
+        );
       }
 
       lastEvaluatedKey = response.LastEvaluatedKey;
     } while (lastEvaluatedKey);
+  }
+
+  const batches = chunkArray(allItemsToUpdate, TRANSACT_WRITE_MAX_ITEMS);
+  for (const batch of batches) {
+    const transactItems = batch.map((item) => ({
+      Update: {
+        TableName: tableName,
+        Key: {
+          PK: item.PK,
+          SK: item.SK,
+        },
+        UpdateExpression: "SET #status = :maybeSolved, #updatedAt = :updatedAt",
+        ExpressionAttributeNames: {
+          "#status": "status",
+          "#updatedAt": "updatedAt",
+        },
+        ExpressionAttributeValues: {
+          ":maybeSolved": "maybeSolved",
+          ":updatedAt": now,
+        },
+      },
+    }));
+
+    await client.send(
+      new TransactWriteCommand({
+        TransactItems: transactItems,
+      }),
+    );
   }
 }
