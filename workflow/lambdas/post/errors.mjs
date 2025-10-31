@@ -4,6 +4,7 @@ import {
   DynamoDBDocumentClient,
   QueryCommand,
   UpdateCommand,
+  TransactWriteCommand,
 } from "@aws-sdk/lib-dynamodb";
 import { createHash } from "crypto";
 
@@ -106,6 +107,7 @@ const DEFAULT_CLIENT = DynamoDBDocumentClient.from(new DynamoDBClient({}), {
 
 const BATCH_WRITE_MAX_ITEMS = 25;
 const BATCH_WRITE_MAX_RETRIES = 5;
+const TRANSACT_WRITE_MAX_ITEMS = 100;
 
 /**
  * Create the DynamoDB errors repository abstraction.
