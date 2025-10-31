@@ -172,43 +172,14 @@ async function downloadTransformScripts(county, transformPrefix, tmpDir) {
  * Parse errors from S3 CSV file.
  *
  * @param {string} errorsS3Uri - S3 URI pointing to submit_errors.csv.
- * @returns {Promise<Array<{ errorMessage: string, errorPath: string, hash: string }>>} - Parsed errors with computed hashes.
+ * @returns {Promise<string>} - Path to the parsed errors CSV file.
  */
-async function parseErrorsFromS3(errorsS3Uri, county) {
+async function parseErrorsFromS3(errorsS3Uri) {
   console.log(`Parsing errors from ${errorsS3Uri}...`);
   const { bucket, key } = parseS3Uri(errorsS3Uri);
   const tmpFile = path.join(os.tmpdir(), `errors_${Date.now()}.csv`);
   await downloadS3Object({ bucket, key }, tmpFile);
-
-  const csvContent = await fs.readFile(tmpFile, "utf8");
-  const records = parse(csvContent, {
-    columns: true,
-    skip_empty_lines: true,
-    trim: true,
-  });
-
-  const errors = [];
-  for (const record of records) {
-    const errorMessage =
-      typeof record.error_message === "string"
-        ? record.error_message.trim()
-        : "";
-    const errorPath =
-      typeof record.error_path === "string"
-        ? record.error_path.trim()
-        : "unknown";
-
-    if (errorMessage.length > 0) {
-      const hash = createErrorHash(errorMessage, errorPath, county);
-      errors.push({ errorMessage, errorPath, hash });
-    }
-  }
-
-  await fs.unlink(tmpFile).catch(() => {
-    // Ignore cleanup errors
-  });
-
-  return errors;
+  return tmpFile;
 }
 
 /**
@@ -228,33 +199,22 @@ async function extractZip(zipPath, extractDir) {
 /**
  * Invoke OpenAI Codex to fix errors in scripts.
  *
- * @param {Array<{ errorMessage: string, errorPath: string, hash: string }>} errors - Array of errors to fix.
+ * @param {string} errorsPath - Array of errors to fix.
  * @param {string} scriptsDir - Directory containing transform scripts.
  * @param {string} inputsDir - Directory containing prepared inputs.
  * @returns {Promise<void>}
  */
-async function invokeCodexForFix(errors, scriptsDir, inputsDir) {
-  console.log(`Invoking OpenAI Codex to fix ${errors.length} error(s)...`);
+async function invokeCodexForFix(errorsPath, scriptsDir, inputsDir) {
+  console.log(`Invoking OpenAI Codex to fix ${errorsPath.length} error(s)...`);
 
   const scriptsPath = path.join(scriptsDir, "scripts");
 
-  // Build prompt with file locations instead of content
-  const errorsText = errors
-    .map(
-      (e) =>
-        `- Error: ${e.errorMessage}\n  Path: ${e.errorPath}\n  Hash: ${e.hash}`,
-    )
-    .join("\n");
-
   const prompt = `You are fixing transformation script errors in an Elephant Oracle data processing pipeline.
-
-The following errors occurred during execution:
-${errorsText}
-
+        You can find an errors in the following CSV file: ${errorsPath}
 The transform scripts are located at: ${scriptsPath}
 Sample input data is available at: ${inputsDir}
 
-Please analyze the errors and provide fixed versions of the scripts. Focus on fixing the error paths and messages mentioned above. Consider the input data structure when making fixes. Return the complete fixed scripts with the same file names.`;
+Please analyze the errors and provide fixed versions of the scripts. Focus on fixing the error paths and messages mentioned above. Consider the input data structure when making fixes. Return the complete fixed scripts with the same file names. Use elephant MCP to analyze the schema. Make sure to analyze verified scripts with it's examples as well`;
 
   // Invoke codex CLI
   console.log("Invoking codex CLI...");
@@ -515,19 +475,10 @@ async function main() {
       await extractZip(transformScriptsZip, scriptsDir);
 
       // Step 3: Parse errors
-      const errors = await parseErrorsFromS3(
-        execution.errorsS3Uri,
-        execution.county,
-      );
-      console.log(`Parsed ${errors.length} unique errors`);
-
-      if (errors.length === 0) {
-        console.log("No errors to fix. Exiting.");
-        return;
-      }
+      const errorsPath = await parseErrorsFromS3(execution.errorsS3Uri);
 
       // Step 4: Invoke Codex to fix errors
-      await invokeCodexForFix(errors, scriptsDir, inputsDir);
+      await invokeCodexForFix(errorsPath, scriptsDir, inputsDir);
 
       // Step 5: Upload fixed scripts
       await uploadFixedScripts(execution.county, scriptsDir, transformPrefix);
@@ -569,7 +520,7 @@ async function main() {
           );
 
           // Step 7: Mark errors as maybeSolved only if Lambda invocation succeeded
-          const errorHashes = errors.map((e) => e.hash);
+          const errorHashes = errorsPath.map((e) => e.hash);
           console.log(
             `Marking ${errorHashes.length} error hash(es) as maybeSolved...`,
           );
