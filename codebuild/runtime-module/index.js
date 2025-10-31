@@ -16,13 +16,12 @@ import path from "path";
 import os from "os";
 import AdmZip from "adm-zip";
 import { exec } from "child_process";
-import { promisify } from "util";
 import {
   queryExecutionWithMostErrors,
   markErrorsAsMaybeSolved,
 } from "./errors.mjs";
 
-const execAsync = promisify(exec);
+const DEFAULT_DLQ_URL = process.env.DEFAULT_DLQ_URL;
 
 /**
  * @typedef {Pick<Console, "log">} ConsoleLike
@@ -300,9 +299,10 @@ async function getCountyDlqUrl(county) {
     }
     return response.QueueUrl;
   } catch (error) {
-    throw new Error(
-      `Failed to get DLQ URL for county ${county}: ${error.message}`,
-    );
+    if (error.name === "ResourceNotFoundException") {
+      console.log(`DLQ queue ${queueName} not found`);
+      return DEFAULT_DLQ_URL;
+    }
   }
 }
 
@@ -424,6 +424,161 @@ async function invokePostProcessingLambda({
 }
 
 /**
+ * Extract S3 URI from error message.
+ *
+ * @param {string} errorMessage - Error message to parse.
+ * @returns {string | null} - Extracted S3 URI or null if not found.
+ */
+function extractErrorsS3Uri(errorMessage) {
+  const match = /Submit errors CSV:\s*(s3:\/\/[^\s]+)/.exec(errorMessage);
+  return match ? match[1] : null;
+}
+
+/**
+ * Run a single auto-repair iteration.
+ *
+ * @param {object} params - Iteration parameters.
+ * @param {string} params.county - County identifier.
+ * @param {string} params.preparedS3Uri - S3 URI of the prepared output.
+ * @param {string} params.errorsS3Uri - S3 URI of the errors CSV.
+ * @param {string} params.transformPrefix - S3 prefix URI for transforms.
+ * @param {string} params.tableName - DynamoDB table name.
+ * @param {{ s3Bucket?: string, s3Key?: string } | undefined} params.source - Optional source information.
+ * @returns {Promise<{ success: boolean, newErrorsS3Uri?: string }>} - Result of the iteration.
+ */
+async function runAutoRepairIteration({
+  county,
+  preparedS3Uri,
+  errorsS3Uri,
+  transformPrefix,
+  tableName,
+  source,
+}) {
+  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "auto-repair-"));
+
+  try {
+    // Step 1: Download inputs and transform scripts
+    const preparedInputsZip = await downloadExecutionInputs(
+      preparedS3Uri,
+      tmpDir,
+    );
+    const transformScriptsZip = await downloadTransformScripts(
+      county,
+      transformPrefix,
+      tmpDir,
+    );
+
+    // Extract archives
+    const inputsDir = path.join(tmpDir, "inputs");
+    const scriptsDir = path.join(tmpDir, "scripts");
+    await extractZip(preparedInputsZip, inputsDir);
+    await extractZip(transformScriptsZip, scriptsDir);
+
+    // Step 2: Parse errors
+    const errorsPath = await parseErrorsFromS3(errorsS3Uri);
+
+    // Step 3: Invoke Codex to fix errors
+    await invokeCodexForFix(errorsPath, scriptsDir, inputsDir);
+
+    // Step 4: Upload fixed scripts
+    await uploadFixedScripts(county, scriptsDir, transformPrefix);
+
+    // Step 5: Invoke post-processing Lambda to verify fixes work
+    const postProcessorFunctionName = requireEnv(
+      "POST_PROCESSOR_FUNCTION_NAME",
+    );
+    const transactionsQueueUrl = requireEnv("TRANSACTIONS_SQS_QUEUE_URL");
+    const seedOutputS3Uri = constructSeedOutputS3Uri(preparedS3Uri);
+
+    try {
+      const resultPayload = await invokePostProcessingLambda({
+        functionName: postProcessorFunctionName,
+        preparedS3Uri,
+        seedOutputS3Uri,
+        s3Event: source
+          ? {
+              bucket: { name: source.s3Bucket },
+              object: { key: source.s3Key },
+            }
+          : undefined,
+      });
+
+      // Check if execution was successful
+      if (
+        resultPayload.status === "success" &&
+        Array.isArray(resultPayload.transactionItems) &&
+        resultPayload.transactionItems.length > 0
+      ) {
+        // Send successful results to Transactions queue
+        await sendToTransactionsQueue(
+          transactionsQueueUrl,
+          resultPayload.transactionItems,
+        );
+
+        console.log(
+          `Successfully sent ${resultPayload.transactionItems.length} transaction items to Transactions queue`,
+        );
+
+        // Step 6: Mark errors as maybeSolved only if Lambda invocation succeeded
+        const errorHashes = errorsPath.map((e) => e.hash);
+        console.log(
+          `Marking ${errorHashes.length} error hash(es) as maybeSolved...`,
+        );
+        await markErrorsAsMaybeSolved({
+          errorHashes,
+          tableName,
+          documentClient: dynamoClient,
+        });
+
+        return { success: true };
+      } else {
+        // Execution failed, send original message to DLQ
+        if (!source) {
+          throw new Error(
+            `Execution failed but source information is missing, cannot send to DLQ`,
+          );
+        }
+
+        const dlqUrl = await getCountyDlqUrl(county);
+        await sendToDlq(dlqUrl, source);
+
+        console.log(`Execution failed, sent original message to DLQ: ${dlqUrl}`);
+
+        throw new Error(
+          `Post-processing Lambda returned non-success status: ${resultPayload.status}`,
+        );
+      }
+    } catch (lambdaError) {
+      // Try to extract new errors S3 URI from error message
+      const newErrorsS3Uri = extractErrorsS3Uri(lambdaError.message);
+
+      // If Lambda invocation failed and we can't retry, send to DLQ
+      if (!newErrorsS3Uri && source) {
+        try {
+          const dlqUrl = await getCountyDlqUrl(county);
+          await sendToDlq(dlqUrl, source);
+
+          console.error(
+            `Post-processing Lambda invocation failed. Sent original message to DLQ: ${dlqUrl}`,
+          );
+        } catch (dlqError) {
+          console.error(`Failed to send to DLQ: ${dlqError.message}`);
+        }
+      }
+
+      throw new Error(
+        `Failed to verify fixes with post-processing Lambda: ${lambdaError.message}`,
+      );
+    }
+  } finally {
+    // Cleanup
+    await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {
+      // Ignore cleanup errors
+    });
+  }
+}
+
+/**
  * Main auto-repair workflow.
  *
  * @returns {Promise<void>}
@@ -434,150 +589,73 @@ async function main() {
 
     const tableName = requireEnv("ERRORS_TABLE_NAME");
     const transformPrefix = requireEnv("TRANSFORM_S3_PREFIX");
-    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "auto-repair-"));
+    const maxRetries = 3;
 
-    try {
-      // Step 1: Get execution with most errors
-      const execution = await getExecutionWithMostErrors(tableName);
-      if (!execution) {
-        console.log("No failed executions found. Exiting.");
-        return;
-      }
+    // Step 1: Get execution with most errors
+    const execution = await getExecutionWithMostErrors(tableName);
+    if (!execution) {
+      console.log("No failed executions found. Exiting.");
+      return;
+    }
 
+    console.log(
+      `Found execution ${execution.executionId} with ${execution.uniqueErrorCount} unique errors`,
+    );
+    console.log(`County: ${execution.county}`);
+    console.log(`Prepared S3 URI: ${execution.preparedS3Uri}`);
+    console.log(`Errors S3 URI: ${execution.errorsS3Uri}`);
+
+    if (!execution.errorsS3Uri) {
+      console.log("No errors S3 URI found. Skipping.");
+      return;
+    }
+
+    if (!execution.preparedS3Uri) {
+      console.log("No prepared S3 URI found. Skipping.");
+      return;
+    }
+
+    let currentErrorsS3Uri = execution.errorsS3Uri;
+    let attempt = 0;
+
+    while (attempt < maxRetries) {
+      attempt++;
       console.log(
-        `Found execution ${execution.executionId} with ${execution.uniqueErrorCount} unique errors`,
+        `\n=== Auto-repair attempt ${attempt}/${maxRetries} ===`,
       );
-      console.log(`County: ${execution.county}`);
-      console.log(`Prepared S3 URI: ${execution.preparedS3Uri}`);
-      console.log(`Errors S3 URI: ${execution.errorsS3Uri}`);
-
-      if (!execution.errorsS3Uri) {
-        console.log("No errors S3 URI found. Skipping.");
-        return;
-      }
-
-      if (!execution.preparedS3Uri) {
-        console.log("No prepared S3 URI found. Skipping.");
-        return;
-      }
-
-      // Step 2: Download inputs and transform scripts
-      const preparedInputsZip = await downloadExecutionInputs(
-        execution.preparedS3Uri,
-        tmpDir,
-      );
-      const transformScriptsZip = await downloadTransformScripts(
-        execution.county,
-        transformPrefix,
-        tmpDir,
-      );
-
-      // Extract archives
-      const inputsDir = path.join(tmpDir, "inputs");
-      const scriptsDir = path.join(tmpDir, "scripts");
-      await extractZip(preparedInputsZip, inputsDir);
-      await extractZip(transformScriptsZip, scriptsDir);
-
-      // Step 3: Parse errors
-      const errorsPath = await parseErrorsFromS3(execution.errorsS3Uri);
-
-      // Step 4: Invoke Codex to fix errors
-      await invokeCodexForFix(errorsPath, scriptsDir, inputsDir);
-
-      // Step 5: Upload fixed scripts
-      await uploadFixedScripts(execution.county, scriptsDir, transformPrefix);
-
-      // Step 6: Invoke post-processing Lambda to verify fixes work
-      const postProcessorFunctionName = requireEnv(
-        "POST_PROCESSOR_FUNCTION_NAME",
-      );
-      const transactionsQueueUrl = requireEnv("TRANSACTIONS_SQS_QUEUE_URL");
-      const seedOutputS3Uri = constructSeedOutputS3Uri(execution.preparedS3Uri);
+      console.log(`Using errors from: ${currentErrorsS3Uri}`);
 
       try {
-        const resultPayload = await invokePostProcessingLambda({
-          functionName: postProcessorFunctionName,
+        await runAutoRepairIteration({
+          county: execution.county,
           preparedS3Uri: execution.preparedS3Uri,
-          seedOutputS3Uri,
-          s3Event: execution.source
-            ? {
-                bucket: { name: execution.source.s3Bucket },
-                object: { key: execution.source.s3Key },
-              }
-            : undefined,
+          errorsS3Uri: currentErrorsS3Uri,
+          transformPrefix,
+          tableName,
+          source: execution.source,
         });
 
-        // Check if execution was successful
-        if (
-          resultPayload.status === "success" &&
-          Array.isArray(resultPayload.transactionItems) &&
-          resultPayload.transactionItems.length > 0
-        ) {
-          // Send successful results to Transactions queue
-          await sendToTransactionsQueue(
-            transactionsQueueUrl,
-            resultPayload.transactionItems,
-          );
+        console.log("Auto-repair workflow completed successfully!");
+        return;
+      } catch (error) {
+        console.error(`Attempt ${attempt} failed:`, error.message);
 
-          console.log(
-            `Successfully sent ${resultPayload.transactionItems.length} transaction items to Transactions queue`,
-          );
+        // Try to extract new errors S3 URI from error message
+        const newErrorsS3Uri = extractErrorsS3Uri(error.message);
 
-          // Step 7: Mark errors as maybeSolved only if Lambda invocation succeeded
-          const errorHashes = errorsPath.map((e) => e.hash);
-          console.log(
-            `Marking ${errorHashes.length} error hash(es) as maybeSolved...`,
-          );
-          await markErrorsAsMaybeSolved({
-            errorHashes,
-            tableName,
-            documentClient: dynamoClient,
-          });
-
-          console.log("Auto-repair workflow completed successfully!");
+        if (newErrorsS3Uri && attempt < maxRetries) {
+          console.log(`Found new errors CSV: ${newErrorsS3Uri}`);
+          console.log(`Will retry with new errors...`);
+          currentErrorsS3Uri = newErrorsS3Uri;
         } else {
-          // Execution failed, send original message to DLQ
-          if (!execution.source) {
-            throw new Error(
-              `Execution ${execution.executionId} failed but source information is missing, cannot send to DLQ`,
-            );
-          }
-
-          const dlqUrl = await getCountyDlqUrl(execution.county);
-          await sendToDlq(dlqUrl, execution.source);
-
-          console.log(
-            `Execution failed, sent original message to DLQ: ${dlqUrl}`,
-          );
-
-          throw new Error(
-            `Post-processing Lambda returned non-success status: ${resultPayload.status}`,
-          );
-        }
-      } catch (lambdaError) {
-        // If Lambda invocation failed, try to send original message to DLQ
-        if (execution.source) {
-          try {
-            const dlqUrl = await getCountyDlqUrl(execution.county);
-            await sendToDlq(dlqUrl, execution.source);
-
+          if (attempt >= maxRetries) {
             console.error(
-              `Post-processing Lambda invocation failed. Sent original message to DLQ: ${dlqUrl}`,
+              `Max retries (${maxRetries}) reached. Giving up.`,
             );
-          } catch (dlqError) {
-            console.error(`Failed to send to DLQ: ${dlqError.message}`);
           }
+          throw error;
         }
-
-        throw new Error(
-          `Failed to verify fixes with post-processing Lambda: ${lambdaError.message}`,
-        );
       }
-    } finally {
-      // Cleanup
-      await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {
-        // Ignore cleanup errors
-      });
     }
   } catch (error) {
     console.error("Auto-repair workflow failed:", error);
@@ -587,4 +665,3 @@ async function main() {
 
 // Run main workflow
 main();
-
