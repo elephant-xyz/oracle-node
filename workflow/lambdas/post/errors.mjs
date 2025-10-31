@@ -188,7 +188,7 @@ export function createErrorsRepository({ tableName, documentClient }) {
  * @param {string} county - County identifier to include in hash.
  * @returns {NormalizedError[]} - Deduplicated normalized errors with occurrences.
  */
-function normalizeErrors(rawRows, county) {
+export function normalizeErrors(rawRows, county) {
   /** @type {Map<string, NormalizedError>} */
   const map = new Map();
 
@@ -634,3 +634,4 @@ export async function markErrorsAsMaybeSolved({
     );
   }
 }
+

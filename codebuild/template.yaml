@@ -145,6 +145,7 @@ Resources:
       ServiceRole: !GetAtt PrepareRuntimeBuildRole.Arn
       Artifacts:
         Type: NO_ARTIFACTS
+      TimeoutInMinutes: 60
       Environment:
         ComputeType: BUILD_GENERAL1_SMALL
         Image: aws/codebuild/amazonlinux2-aarch64-standard:3.0-25.03.03
@@ -195,7 +196,7 @@ Resources:
                 - printenv OPENAI_API_KEY | codex login --with-api-key
                 - mkdir -p ~/.codex
                 - |
-                  cat >> ~/.codex/config.toml << 'EOF'
+                  cat >> ~/.codex/config.toml << EOF
                   [mcp_servers.elephant]
                   command = "npx"
                   args = ["-y", "@elephant-xyz/mcp"]
@@ -262,4 +263,3 @@ Outputs:
   PrepareRuntimeCodeBuildProjectArn:
     Description: ARN of the CodeBuild project that prepares runtime assets
     Value: !GetAtt PrepareRuntimeCodeBuildProject.Arn
-
