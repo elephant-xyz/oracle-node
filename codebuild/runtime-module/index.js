@@ -15,10 +15,12 @@ import { promises as fs } from "fs";
 import path from "path";
 import os from "os";
 import AdmZip from "adm-zip";
+import { parse } from "csv-parse/sync";
 import { exec } from "child_process";
 import {
   queryExecutionWithMostErrors,
   markErrorsAsMaybeSolved,
+  normalizeErrors,
 } from "./errors.mjs";
 
 const DEFAULT_DLQ_URL = process.env.DEFAULT_DLQ_URL;
@@ -152,17 +154,49 @@ async function downloadTransformScripts(county, transformPrefix, tmpDir) {
 }
 
 /**
+ * Convert CSV file to JSON array
+ * @param {string} csvPath - Path to CSV file
+ * @returns {Promise<Object[]>} - Array of objects representing CSV rows
+ */
+async function csvToJson(csvPath) {
+  try {
+    const csvContent = await fs.readFile(csvPath, "utf8");
+    const records = parse(csvContent, {
+      columns: true,
+      skip_empty_lines: true,
+      trim: true,
+    });
+    return records;
+  } catch (error) {
+    return [];
+  }
+}
+
+/**
+ * Fetch content from IPFS
+ * @param {string} cid - CID of the content to fetch
+ * @returns {Promise<object | array | null>} - Content as a buffer
+ */
+async function fetchFromIpfs(cid) {
+  const result = await fetch(`https://ipfs.io/ipfs/${cid}`);
+  return await result.json();
+}
+
+/**
  * Parse errors from S3 CSV file.
  *
  * @param {string} errorsS3Uri - S3 URI pointing to submit_errors.csv.
- * @returns {Promise<string>} - Path to the parsed errors CSV file.
+ * @returns {Promise<{errorPath: string, dataGroupName: string}>} - Path to the parsed errors CSV file.
  */
 async function parseErrorsFromS3(errorsS3Uri) {
   console.log(`Parsing errors from ${errorsS3Uri}...`);
   const { bucket, key } = parseS3Uri(errorsS3Uri);
   const tmpFile = path.join(os.tmpdir(), `errors_${Date.now()}.csv`);
   await downloadS3Object({ bucket, key }, tmpFile);
-  return tmpFile;
+  const content = await csvToJson(tmpFile);
+  const dataGroupCid = content[0]?.data_group_cid;
+  const dataGroupContent = await fetchFromIpfs(dataGroupCid);
+  return { errorPath: tmpFile, dataGroupName: dataGroupContent.title };
 }
 
 /**
@@ -185,17 +219,24 @@ async function extractZip(zipPath, extractDir) {
  * @param {string} errorsPath - Array of errors to fix.
  * @param {string} scriptsDir - Directory containing transform scripts.
  * @param {string} inputsDir - Directory containing prepared inputs.
+ * @param {string} dataGroupName - Name of the data group.
  * @returns {Promise<void>}
  */
-async function invokeCodexForFix(errorsPath, scriptsDir, inputsDir) {
+async function invokeCodexForFix(
+  errorsPath,
+  scriptsDir,
+  inputsDir,
+  dataGroupName,
+) {
   const scriptsPath = path.join(scriptsDir, "scripts");
 
   const prompt = `You are fixing transformation script errors in an Elephant Oracle data processing pipeline.
         You can find an errors in the following CSV file: ${errorsPath}
 The transform scripts are located at: ${scriptsPath}
 Sample input data is available at: ${inputsDir}
+You are working on the ${dataGroupName} data group.
 
-Please analyze the errors and provide fixed versions of the scripts. Focus on fixing the error paths and messages mentioned above. Consider the input data structure when making fixes. Return the complete fixed scripts with the same file names. Use elephant MCP to analyze the schema. Make sure to analyze verified scripts with it's examples as well`;
+Please analyze the errors and provide fixed versions of the scripts. Focus on fixing the error paths and messages mentioned above. Consider the input data structure when making fixes. To solve invalid URs issues remove it's generation from the scripts, it will be populated by the process. Return the complete fixed scripts with the same file names. Use elephant MCP to analyze the schema. Make sure to analyze verified scripts with it's examples as well`;
 
   const escapedPrompt = prompt
     .replace(/\\/g, "\\\\")
@@ -250,7 +291,10 @@ async function uploadFixedScripts(county, scriptsDir, transformPrefix) {
 
   // Create zip archive
   const zip = new AdmZip();
-  zip.addLocalFolder(scriptsDir);
+  // Filter only the js files
+  zip.addLocalFolder(scriptsDir, undefined, undefined, (filename) => {
+    return filename.endsWith(".js") && !filename.startsWith("node_modules");
+  });
   const zipBuffer = zip.toBuffer();
 
   // Upload to S3
@@ -434,6 +478,10 @@ function extractErrorsS3Uri(errorMessage) {
   return match ? match[1] : null;
 }
 
+async function installCherio(scriptsDir) {
+  exec(`npm install cheerio`, { cwd: scriptsDir });
+}
+
 /**
  * Run a single auto-repair iteration.
  *
@@ -471,14 +519,17 @@ async function runAutoRepairIteration({
     // Extract archives
     const inputsDir = path.join(tmpDir, "inputs");
     const scriptsDir = path.join(tmpDir, "scripts");
+
+    // Install cherio to the scripts directory
+    await installCherio(scriptsDir);
     await extractZip(preparedInputsZip, inputsDir);
     await extractZip(transformScriptsZip, scriptsDir);
 
     // Step 2: Parse errors
-    const errorsPath = await parseErrorsFromS3(errorsS3Uri);
+    const { errorPath, dataGroupName } = await parseErrorsFromS3(errorsS3Uri);
 
     // Step 3: Invoke Codex to fix errors
-    await invokeCodexForFix(errorsPath, scriptsDir, inputsDir);
+    await invokeCodexForFix(errorPath, scriptsDir, inputsDir, dataGroupName);
 
     // Step 4: Upload fixed scripts
     await uploadFixedScripts(county, scriptsDir, transformPrefix);
@@ -520,7 +571,9 @@ async function runAutoRepairIteration({
         );
 
         // Step 6: Mark errors as maybeSolved only if Lambda invocation succeeded
-        const errorHashes = errorsPath.map((e) => e.hash);
+        const errorsArray = await csvToJson(errorPath);
+        const normalizedErrors = normalizeErrors(errorsArray, county);
+        const errorHashes = normalizedErrors.map((e) => e.hash);
         console.log(
           `Marking ${errorHashes.length} error hash(es) as maybeSolved...`,
         );
@@ -542,7 +595,9 @@ async function runAutoRepairIteration({
         const dlqUrl = await getCountyDlqUrl(county);
         await sendToDlq(dlqUrl, source);
 
-        console.log(`Execution failed, sent original message to DLQ: ${dlqUrl}`);
+        console.log(
+          `Execution failed, sent original message to DLQ: ${dlqUrl}`,
+        );
 
         throw new Error(
           `Post-processing Lambda returned non-success status: ${resultPayload.status}`,
@@ -620,9 +675,7 @@ async function main() {
 
     while (attempt < maxRetries) {
       attempt++;
-      console.log(
-        `\n=== Auto-repair attempt ${attempt}/${maxRetries} ===`,
-      );
+      console.log(`\n=== Auto-repair attempt ${attempt}/${maxRetries} ===`);
       console.log(`Using errors from: ${currentErrorsS3Uri}`);
 
       try {
@@ -649,9 +702,7 @@ async function main() {
           currentErrorsS3Uri = newErrorsS3Uri;
         } else {
           if (attempt >= maxRetries) {
-            console.error(
-              `Max retries (${maxRetries}) reached. Giving up.`,
-            );
+            console.error(`Max retries (${maxRetries}) reached. Giving up.`);
           }
           throw error;
         }
