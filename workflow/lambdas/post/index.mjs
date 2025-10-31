@@ -254,20 +254,6 @@ function resolveTransformLocation({ countyName, transformPrefixUri }) {
 }
 
 /**
- * Build the submission S3 destination for the combined hash CSV.
- *
- * @param {{ outputBaseUri: string, inputS3ObjectKey: string | undefined }} params - Submission location context.
- * @returns {{ Bucket: string, Key: string }} - Destination bucket/key pair.
- */
-function buildSubmissionLocation({ outputBaseUri, inputS3ObjectKey }) {
-  const normalizedBase = outputBaseUri.replace(/\/$/, "");
-  const inputKey = path.posix.basename(inputS3ObjectKey || "input.csv");
-  const submissionUri = `${normalizedBase}/${inputKey}/submission_ready.csv`;
-  const { bucket, key } = parseS3Uri(submissionUri);
-  return { Bucket: bucket, Key: key };
-}
-
-/**
  * Merge two zip archives, with seed files overwriting prepare files on conflict.
  *
  * @param {object} params - Merge parameters.
