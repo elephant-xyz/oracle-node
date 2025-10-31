@@ -256,16 +256,10 @@ Sample input data is available at: ${inputsDir}
 
 Please analyze the errors and provide fixed versions of the scripts. Focus on fixing the error paths and messages mentioned above. Consider the input data structure when making fixes. Return the complete fixed scripts with the same file names.`;
 
-  // Write prompt to file
-  const promptFile = path.join(scriptsDir, "codex_prompt.txt");
-  await fs.writeFile(promptFile, prompt, "utf8");
-
   // Invoke codex CLI
   console.log("Invoking codex CLI...");
   try {
-    const { stdout, stderr } = await execAsync(
-      `codex --prompt-file "${promptFile}" --output-dir "${scriptsPath}"`,
-    );
+    const { stdout, stderr } = await execAsync(`codex "${prompt}"`);
     console.log("Codex stdout:", stdout);
     if (stderr) {
       console.error("Codex stderr:", stderr);

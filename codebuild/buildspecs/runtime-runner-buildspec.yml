@@ -9,6 +9,7 @@ phases:
       nodejs: 22
     commands:
       - npm install -g @openai/codex
+      - printenv OPENAI_API_KEY | codex login --with-api-key
       - npm install -g @elephant-xyz/mcp
       - echo "Node.js runtime set to version 22."
   pre_build:
