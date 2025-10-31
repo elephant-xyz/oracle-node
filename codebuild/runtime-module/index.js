@@ -15,14 +15,12 @@ import { promises as fs } from "fs";
 import path from "path";
 import os from "os";
 import AdmZip from "adm-zip";
-import { parse } from "csv-parse/sync";
 import { exec } from "child_process";
 import { promisify } from "util";
 import {
   queryExecutionWithMostErrors,
   markErrorsAsMaybeSolved,
 } from "./errors.mjs";
-import { createHash } from "crypto";
 
 const execAsync = promisify(exec);
 
@@ -101,20 +99,6 @@ function resolveTransformLocation({ countyName, transformPrefixUri }) {
   const normalizedPrefix = key.replace(/\/$/, "");
   const transformKey = `${normalizedPrefix}/${countyName.toLowerCase()}.zip`;
   return { transformBucket: bucket, transformKey };
-}
-
-/**
- * Compute the deterministic error hash from message, path, and county.
- *
- * @param {string} message - Error message.
- * @param {string} path - Error path.
- * @param {string} county - County identifier.
- * @returns {string} - SHA256 hash string.
- */
-function createErrorHash(message, path, county) {
-  return createHash("sha256")
-    .update(`${message}#${path}#${county}`, "utf8")
-    .digest("hex");
 }
 
 /**
@@ -205,8 +189,6 @@ async function extractZip(zipPath, extractDir) {
  * @returns {Promise<void>}
  */
 async function invokeCodexForFix(errorsPath, scriptsDir, inputsDir) {
-  console.log(`Invoking OpenAI Codex to fix ${errorsPath.length} error(s)...`);
-
   const scriptsPath = path.join(scriptsDir, "scripts");
 
   const prompt = `You are fixing transformation script errors in an Elephant Oracle data processing pipeline.
@@ -221,18 +203,35 @@ Please analyze the errors and provide fixed versions of the scripts. Focus on fi
     .replace(/"/g, '\\"')
     .replace(/`/g, "\\`")
     .replace(/\$/g, "\\$");
-  // Invoke codex CLI
+
   console.log("Invoking codex CLI...");
-  try {
-    const { stdout, stderr } = await execAsync(`codex "${escapedPrompt}"`);
-    console.log("Codex stdout:", stdout);
-    if (stderr) {
-      console.error("Codex stderr:", stderr);
-    }
-  } catch (error) {
-    console.error("Codex execution failed:", error);
-    throw new Error(`Codex invocation failed: ${error.message}`);
-  }
+
+  return new Promise((resolve, reject) => {
+    const child = exec(
+      `codex exec "${escapedPrompt}" --sandbox danger-full-access --skip-git-repo-check`,
+    );
+
+    child.stdout?.on("data", (data) => {
+      process.stdout.write(data);
+    });
+
+    child.stderr?.on("data", (data) => {
+      process.stderr.write(data);
+    });
+
+    child.on("error", (error) => {
+      console.error("Codex execution failed:", error);
+      reject(new Error(`Codex invocation failed: ${error.message}`));
+    });
+
+    child.on("close", (code) => {
+      if (code === 0) {
+        resolve();
+      } else {
+        reject(new Error(`Codex exited with code ${code}`));
+      }
+    });
+  });
 }
 
 /**
