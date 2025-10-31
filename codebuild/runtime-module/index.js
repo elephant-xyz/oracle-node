@@ -216,10 +216,15 @@ Sample input data is available at: ${inputsDir}
 
 Please analyze the errors and provide fixed versions of the scripts. Focus on fixing the error paths and messages mentioned above. Consider the input data structure when making fixes. Return the complete fixed scripts with the same file names. Use elephant MCP to analyze the schema. Make sure to analyze verified scripts with it's examples as well`;
 
+  const escapedPrompt = prompt
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, '\\"')
+    .replace(/`/g, "\\`")
+    .replace(/\$/g, "\\$");
   // Invoke codex CLI
   console.log("Invoking codex CLI...");
   try {
-    const { stdout, stderr } = await execAsync(`codex "${prompt}"`);
+    const { stdout, stderr } = await execAsync(`codex "${escapedPrompt}"`);
     console.log("Codex stdout:", stdout);
     if (stderr) {
       console.error("Codex stderr:", stderr);
