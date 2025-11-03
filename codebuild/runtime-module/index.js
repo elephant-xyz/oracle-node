@@ -388,7 +388,7 @@ async function getCountyDlqUrl(county) {
       new GetQueueUrlCommand({ QueueName: queueName }),
     );
     if (!response.QueueUrl) {
-      throw new Error(`DLQ queue ${queueName} not found`);
+      return DEFAULT_DLQ_URL;
     }
     return response.QueueUrl;
   } catch (error) {

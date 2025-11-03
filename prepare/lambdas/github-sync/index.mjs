@@ -455,23 +455,20 @@ async function syncScriptsToRepo(
       githubPath = `${countyName}/scripts/${cleanedPath}`;
     }
 
-    // Ensure content is a Buffer and encode to base64 for GitHub API
-    // GitHub Git Trees API expects base64-encoded content
-    // Read as Buffer (binary) to avoid encoding issues
-    let contentBuffer;
+    // Convert content to UTF-8 string for GitHub Git Trees API
+    // When using 'content' in tree entries, GitHub expects UTF-8 text (not base64)
+    // GitHub will automatically create the blob from this UTF-8 content
+    let contentText;
     if (Buffer.isBuffer(file.content)) {
-      contentBuffer = file.content;
+      // Buffer: decode as UTF-8 text
+      contentText = file.content.toString("utf8");
     } else if (typeof file.content === "string") {
-      // If it's a string, treat it as UTF-8 text
-      contentBuffer = Buffer.from(file.content, "utf8");
+      // Already a string: use as-is
+      contentText = file.content;
     } else {
-      // Fallback: convert to Buffer
-      contentBuffer = Buffer.from(file.content);
+      // Fallback: convert to string
+      contentText = String(file.content);
     }
-
-    // Encode to base64 for GitHub API
-    // GitHub will decode this when storing the file
-    const content = contentBuffer.toString("base64");
 
     // Check if file exists
     let sha = null;
@@ -497,14 +494,15 @@ async function syncScriptsToRepo(
       // File doesn't exist, will create new
     }
 
-    // GitHub API: For tree creation, always provide content to create/update files
+    // GitHub API: For tree creation, use UTF-8 text content directly
+    // GitHub will automatically create the blob from this content
     // The sha check above is just to detect if file exists, but we always use content
-    // to ensure the file is updated with new content (creates a new blob)
+    // to ensure the file is updated with new content
     operations.push({
       path: githubPath,
       mode: "100644",
       type: "blob",
-      content: content,
+      content: contentText,
     });
   }
 
