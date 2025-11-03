@@ -21,6 +21,7 @@ import {
   queryExecutionWithMostErrors,
   markErrorsAsMaybeSolved,
   normalizeErrors,
+  deleteExecution,
 } from "./errors.mjs";
 
 const DEFAULT_DLQ_URL = process.env.DEFAULT_DLQ_URL;
@@ -486,6 +487,7 @@ async function installCherio(scriptsDir) {
  * Run a single auto-repair iteration.
  *
  * @param {object} params - Iteration parameters.
+ * @param {string} params.executionId - Execution identifier.
  * @param {string} params.county - County identifier.
  * @param {string} params.preparedS3Uri - S3 URI of the prepared output.
  * @param {string} params.errorsS3Uri - S3 URI of the errors CSV.
@@ -495,6 +497,7 @@ async function installCherio(scriptsDir) {
  * @returns {Promise<{ success: boolean, newErrorsS3Uri?: string }>} - Result of the iteration.
  */
 async function runAutoRepairIteration({
+  executionId,
   county,
   preparedS3Uri,
   errorsS3Uri,
@@ -570,15 +573,23 @@ async function runAutoRepairIteration({
           `Successfully sent ${resultPayload.transactionItems.length} transaction items to Transactions queue`,
         );
 
-        // Step 6: Mark errors as maybeSolved only if Lambda invocation succeeded
+        // Step 6: Mark errors as maybeSolved for other executions that share the same errors
         const errorsArray = await csvToJson(errorPath);
         const normalizedErrors = normalizeErrors(errorsArray, county);
         const errorHashes = normalizedErrors.map((e) => e.hash);
         console.log(
-          `Marking ${errorHashes.length} error hash(es) as maybeSolved...`,
+          `Marking ${errorHashes.length} error hash(es) as maybeSolved for other executions...`,
         );
         await markErrorsAsMaybeSolved({
           errorHashes,
+          tableName,
+          documentClient: dynamoClient,
+        });
+
+        // Step 7: Delete the execution and all its error links since repair succeeded
+        console.log(`Deleting execution ${executionId} and all its error links...`);
+        await deleteExecution({
+          executionId,
           tableName,
           documentClient: dynamoClient,
         });
@@ -680,6 +691,7 @@ async function main() {
 
       try {
         await runAutoRepairIteration({
+          executionId: execution.executionId,
           county: execution.county,
           preparedS3Uri: execution.preparedS3Uri,
           errorsS3Uri: currentErrorsS3Uri,

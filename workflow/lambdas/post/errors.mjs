@@ -646,3 +646,126 @@ export async function markErrorsAsMaybeSolved({
     );
   }
 }
+
+/**
+ * Delete an execution and all its related ExecutionErrorLink items from DynamoDB.
+ * Queries all items with PK=EXECUTION#{executionId} (execution root + all error links)
+ * and deletes them using BatchWriteCommand with DeleteRequest items.
+ *
+ * @param {object} params - Deletion parameters.
+ * @param {string} params.executionId - Execution identifier to delete.
+ * @param {string} params.tableName - DynamoDB table name.
+ * @param {DynamoDBDocumentClient} [params.documentClient] - Optional document client (uses default if not provided).
+ * @returns {Promise<void>} - Resolves when all deletions complete.
+ */
+export async function deleteExecution({
+  executionId,
+  tableName,
+  documentClient,
+}) {
+  const client = documentClient ?? DEFAULT_CLIENT;
+  const executionPk = buildExecutionPk(executionId);
+
+  /** @type {Array<{ PK: string, SK: string }>} */
+  const itemsToDelete = [];
+
+  // Query all items with PK=EXECUTION#{executionId} to get execution root + all error links
+  /** @type {Record<string, unknown> | undefined} */
+  let lastEvaluatedKey = undefined;
+
+  do {
+    /** @type {import("@aws-sdk/lib-dynamodb").QueryCommandInput} */
+    const queryParams = {
+      TableName: tableName,
+      KeyConditionExpression: "PK = :pk",
+      ExpressionAttributeValues: {
+        ":pk": executionPk,
+      },
+      ProjectionExpression: "PK, SK",
+      ExclusiveStartKey: lastEvaluatedKey,
+    };
+
+    /** @type {import("@aws-sdk/lib-dynamodb").QueryCommandOutput} */
+    const response = await client.send(new QueryCommand(queryParams));
+
+    if (response.Items && response.Items.length > 0) {
+      itemsToDelete.push(
+        ...response.Items.map((item) => ({
+          PK: /** @type {string} */ (item.PK),
+          SK: /** @type {string} */ (item.SK),
+        })),
+      );
+    }
+
+    lastEvaluatedKey = response.LastEvaluatedKey;
+  } while (lastEvaluatedKey);
+
+  if (itemsToDelete.length === 0) {
+    console.log(`No items found for execution ${executionId}, nothing to delete`);
+    return;
+  }
+
+  console.log(
+    `Deleting ${itemsToDelete.length} item(s) for execution ${executionId}`,
+  );
+
+  // Delete items in batches using BatchWriteCommand
+  const batches = chunkArray(itemsToDelete, BATCH_WRITE_MAX_ITEMS);
+  for (const batch of batches) {
+    let remaining = batch;
+    let attempts = 0;
+
+    while (remaining.length > 0) {
+      const response = await client.send(
+        new BatchWriteCommand({
+          RequestItems: {
+            [tableName]: remaining.map((item) => ({
+              DeleteRequest: {
+                Key: {
+                  PK: item.PK,
+                  SK: item.SK,
+                },
+              },
+            })),
+          },
+        }),
+      );
+
+      const unprocessed =
+        response.UnprocessedItems?.[tableName]?.map(
+          /** @param {import("@aws-sdk/client-dynamodb").WriteRequest} request */
+          (request) => {
+            const deleteRequest = request.DeleteRequest;
+            if (!deleteRequest || !deleteRequest.Key) {
+              return undefined;
+            }
+            return {
+              PK: /** @type {string} */ (deleteRequest.Key.PK),
+              SK: /** @type {string} */ (deleteRequest.Key.SK),
+            };
+          },
+        ) ?? [];
+
+      if (unprocessed.length === 0) {
+        break;
+      }
+
+      attempts += 1;
+      if (attempts > BATCH_WRITE_MAX_RETRIES) {
+        throw new Error(
+          `Exceeded BatchWrite retry attempts while deleting execution ${executionId}`,
+        );
+      }
+
+      const delayMs = Math.min(1000, 2 ** attempts * 50);
+      await delay(delayMs);
+      remaining = unprocessed.filter(
+        (item) => item !== undefined,
+      ) as Array<{ PK: string; SK: string }>;
+    }
+  }
+
+  console.log(
+    `Successfully deleted ${itemsToDelete.length} item(s) for execution ${executionId}`,
+  );
+}
