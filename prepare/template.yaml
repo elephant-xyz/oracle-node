@@ -159,25 +159,6 @@ Resources:
         IgnorePublicAcls: true
         RestrictPublicBuckets: true
 
-  EnvironmentBucketPolicy:
-    Type: AWS::S3::BucketPolicy
-    Properties:
-      Bucket: !Ref EnvironmentBucket
-      PolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          - Sid: AllowDownloaderLambdaAccess
-            Effect: Allow
-            Principal:
-              AWS: !GetAtt DownloaderFunctionRole.Arn
-            Action:
-              - s3:GetObject
-              - s3:PutObject
-              - s3:ListBucket
-            Resource:
-              - !GetAtt EnvironmentBucket.Arn
-              - !Sub "${EnvironmentBucket.Arn}/*"
-
   #####################################################################################################################
   # SQS (DLQ + primary) + QueuePolicy for S3 events
   #####################################################################################################################
@@ -654,12 +635,10 @@ Resources:
         LogFormat: JSON
       Policies:
         - AWSLambdaBasicExecutionRole
+        - S3CrudPolicy:
+            BucketName: !Ref EnvironmentBucket
         - Version: "2012-10-17"
           Statement:
-            - Effect: Allow
-              Action:
-                - s3:GetObject
-              Resource: !Sub "${EnvironmentBucket.Arn}/transforms/*"
             - Effect: Allow
               Action:
                 - secretsmanager:GetSecretValue
