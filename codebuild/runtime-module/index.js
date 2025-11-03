@@ -276,6 +276,45 @@ Please analyze the errors and provide fixed versions of the scripts. Focus on fi
 }
 
 /**
+ * Recursively find all .js files in a directory, excluding node_modules.
+ *
+ * @param {string} dir - Directory to search.
+ * @param {string} baseDir - Base directory for relative path calculation.
+ * @returns {Promise<string[]>} - Array of relative paths to .js files.
+ */
+async function findJsFiles(dir, baseDir) {
+  /** @type {string[]} */
+  const jsFiles = [];
+
+  try {
+    const entries = await fs.readdir(dir, { withFileTypes: true });
+
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+      const relativePath = path.relative(baseDir, fullPath);
+
+      // Skip node_modules directories
+      if (entry.isDirectory() && entry.name === "node_modules") {
+        continue;
+      }
+
+      if (entry.isDirectory()) {
+        // Recursively search subdirectories
+        const subFiles = await findJsFiles(fullPath, baseDir);
+        jsFiles.push(...subFiles);
+      } else if (entry.isFile() && entry.name.endsWith(".js")) {
+        // Add .js files
+        jsFiles.push(relativePath);
+      }
+    }
+  } catch (error) {
+    console.error(`Error reading directory ${dir}:`, error);
+  }
+
+  return jsFiles;
+}
+
+/**
  * Upload fixed scripts to S3.
  *
  * @param {string} county - County identifier.
@@ -292,10 +331,19 @@ async function uploadFixedScripts(county, scriptsDir, transformPrefix) {
 
   // Create zip archive
   const zip = new AdmZip();
-  // Filter only the js files
-  zip.addLocalFolder(scriptsDir, undefined, undefined, (filename) => {
-    return filename.endsWith(".js") && !filename.startsWith("node_modules");
-  });
+
+  // Find all .js files recursively
+  const jsFiles = await findJsFiles(scriptsDir, scriptsDir);
+  console.log(`Found ${jsFiles.length} .js file(s) to add to zip`);
+
+  // Add each .js file to the zip
+  for (const relativePath of jsFiles) {
+    const fullPath = path.join(scriptsDir, relativePath);
+    const fileContent = await fs.readFile(fullPath);
+    // Use relative path as entry name, preserving directory structure
+    zip.addFile(relativePath, fileContent);
+  }
+
   const zipBuffer = zip.toBuffer();
 
   // Upload to S3
@@ -344,10 +392,8 @@ async function getCountyDlqUrl(county) {
     }
     return response.QueueUrl;
   } catch (error) {
-    if (error.name === "ResourceNotFoundException") {
-      console.log(`DLQ queue ${queueName} not found`);
-      return DEFAULT_DLQ_URL;
-    }
+    console.log(`DLQ queue ${queueName} not found`);
+    return DEFAULT_DLQ_URL;
   }
 }
 
@@ -426,6 +472,7 @@ async function invokePostProcessingLambda({
     },
     seed_output_s3_uri: seedOutputS3Uri,
     prepareSkipped: false,
+    saveErrorsOnValidationFailure: false,
   };
 
   // Add S3 event if available
@@ -587,7 +634,9 @@ async function runAutoRepairIteration({
         });
 
         // Step 7: Delete the execution and all its error links since repair succeeded
-        console.log(`Deleting execution ${executionId} and all its error links...`);
+        console.log(
+          `Deleting execution ${executionId} and all its error links...`,
+        );
         await deleteExecution({
           executionId,
           tableName,

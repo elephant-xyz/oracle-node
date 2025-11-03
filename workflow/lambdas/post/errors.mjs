@@ -701,7 +701,9 @@ export async function deleteExecution({
   } while (lastEvaluatedKey);
 
   if (itemsToDelete.length === 0) {
-    console.log(`No items found for execution ${executionId}, nothing to delete`);
+    console.log(
+      `No items found for execution ${executionId}, nothing to delete`,
+    );
     return;
   }
 
@@ -759,9 +761,7 @@ export async function deleteExecution({
 
       const delayMs = Math.min(1000, 2 ** attempts * 50);
       await delay(delayMs);
-      remaining = unprocessed.filter(
-        (item) => item !== undefined,
-      ) as Array<{ PK: string; SK: string }>;
+      remaining = unprocessed.filter((item) => item !== undefined);
     }
   }
 

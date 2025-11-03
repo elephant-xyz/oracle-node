@@ -635,14 +635,14 @@ Resources:
         LogFormat: JSON
       Policies:
         - AWSLambdaBasicExecutionRole
-        - S3CrudPolicy:
-            BucketName: !Ref EnvironmentBucket
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
         - Version: "2012-10-17"
           Statement:
             - Effect: Allow
               Action:
                 - secretsmanager:GetSecretValue
-              Resource: !GetAtt GitHubTokenSecret.Arn
+              Resource:
+                Ref: GitHubTokenSecret
       Environment:
         Variables:
           GITHUB_SECRET_NAME: !Ref GitHubTokenSecret

@@ -53,7 +53,12 @@ async function getGitHubToken(secretName) {
     if (response.SecretString) {
       try {
         const secret = JSON.parse(response.SecretString);
-        return secret.token || secret.GITHUB_TOKEN || secret.github_token || response.SecretString;
+        return (
+          secret.token ||
+          secret.GITHUB_TOKEN ||
+          secret.github_token ||
+          response.SecretString
+        );
       } catch {
         // Not JSON, return as-is
         return response.SecretString;
@@ -248,6 +253,39 @@ async function normalizeCountyName(
 }
 
 /**
+ * Sanitize county name for use as a Git branch name.
+ * Converts invalid characters to valid ones and ensures compliance with Git ref naming rules.
+ *
+ * @param {string} countyName - County name to sanitize.
+ * @returns {string} - Sanitized branch name safe for Git refs.
+ */
+function sanitizeBranchName(countyName) {
+  // Replace spaces with hyphens
+  let sanitized = countyName.replace(/\s+/g, "-");
+
+  // Remove or replace invalid Git ref characters
+  // Invalid characters: ~, ^, :, ?, *, [, \, .., @{, space (already handled)
+  sanitized = sanitized
+    .replace(/[~^:?*[\\]/g, "-") // Replace invalid chars with hyphens
+    .replace(/\.\./g, "-") // Replace consecutive dots
+    .replace(/@{/g, "-") // Replace @{ sequences
+    .replace(/\.$/g, "") // Remove trailing dots
+    .replace(/\.lock$/g, "") // Remove .lock suffix
+    .replace(/^-+|-+$/g, "") // Remove leading/trailing hyphens
+    .replace(/-+/g, "-"); // Replace multiple consecutive hyphens with single hyphen
+
+  // Convert to lowercase for consistency
+  sanitized = sanitized.toLowerCase();
+
+  // Ensure it's not empty
+  if (!sanitized || sanitized.length === 0) {
+    sanitized = "unnamed";
+  }
+
+  return sanitized;
+}
+
+/**
  * Download and extract zip file from S3.
  *
  * @param {string} bucket - S3 bucket name.
@@ -290,6 +328,7 @@ async function getScriptFiles(dir, baseDir = dir) {
       files.push(...subFiles);
     } else if (entry.isFile() && entry.name.endsWith(".js")) {
       const relativePath = path.relative(baseDir, fullPath);
+      // Read file as binary buffer (not base64) - GitHub API will handle encoding
       const content = await fs.readFile(fullPath);
       files.push({
         path: relativePath,
@@ -374,8 +413,65 @@ async function syncScriptsToRepo(
   const operations = [];
 
   for (const file of files) {
-    const githubPath = `${countyName}/scripts/${file.path}`;
-    const content = file.content.toString("base64");
+    // Handle zip files that may already contain nested directory structures
+    // Extract content after the last "scripts/" directory to avoid duplicate nesting
+    let githubPath;
+    const normalizedPath = file.path.replace(/\\/g, "/"); // Normalize path separators
+
+    // Find the last occurrence of "scripts/" in the path
+    const lastScriptsIndex = normalizedPath.lastIndexOf("scripts/");
+
+    if (lastScriptsIndex !== -1) {
+      // Extract everything after the last "scripts/" directory
+      const filePathAfterScripts = normalizedPath.substring(
+        lastScriptsIndex + "scripts/".length,
+      );
+      // Prepend county name and scripts directory
+      githubPath = `${countyName}/scripts/${filePathAfterScripts}`;
+    } else {
+      // No "scripts/" found, check if path already starts with county name
+      // Strip out any transform/<countyName> or <countyName> prefixes
+      let cleanedPath = normalizedPath;
+
+      // Remove "transform/" prefix if present
+      if (cleanedPath.startsWith("transform/")) {
+        cleanedPath = cleanedPath.substring("transform/".length);
+      }
+
+      // Remove county name prefix if present (case-insensitive)
+      const countyPrefix = cleanedPath
+        .toLowerCase()
+        .startsWith(countyName.toLowerCase() + "/");
+      if (countyPrefix) {
+        cleanedPath = cleanedPath.substring(countyName.length + 1);
+      }
+
+      // Remove any leading "scripts/" if present
+      if (cleanedPath.startsWith("scripts/")) {
+        cleanedPath = cleanedPath.substring("scripts/".length);
+      }
+
+      // Prepend county name and scripts directory
+      githubPath = `${countyName}/scripts/${cleanedPath}`;
+    }
+
+    // Ensure content is a Buffer and encode to base64 for GitHub API
+    // GitHub Git Trees API expects base64-encoded content
+    // Read as Buffer (binary) to avoid encoding issues
+    let contentBuffer;
+    if (Buffer.isBuffer(file.content)) {
+      contentBuffer = file.content;
+    } else if (typeof file.content === "string") {
+      // If it's a string, treat it as UTF-8 text
+      contentBuffer = Buffer.from(file.content, "utf8");
+    } else {
+      // Fallback: convert to Buffer
+      contentBuffer = Buffer.from(file.content);
+    }
+
+    // Encode to base64 for GitHub API
+    // GitHub will decode this when storing the file
+    const content = contentBuffer.toString("base64");
 
     // Check if file exists
     let sha = null;
@@ -401,12 +497,14 @@ async function syncScriptsToRepo(
       // File doesn't exist, will create new
     }
 
+    // GitHub API: For tree creation, always provide content to create/update files
+    // The sha check above is just to detect if file exists, but we always use content
+    // to ensure the file is updated with new content (creates a new blob)
     operations.push({
       path: githubPath,
       mode: "100644",
       type: "blob",
       content: content,
-      sha: sha,
     });
   }
 
@@ -574,9 +672,7 @@ export const handler = async (event) => {
 
     // Resolve authenticated user details from the token
     const authenticatedUser = await getAuthenticatedUser(octokit);
-    console.log(
-      `Authenticated as GitHub user: ${authenticatedUser.login}`,
-    );
+    console.log(`Authenticated as GitHub user: ${authenticatedUser.login}`);
 
     // Process each S3 record
     for (const record of event.Records) {
@@ -621,8 +717,11 @@ export const handler = async (event) => {
           continue;
         }
 
+        // Sanitize county name for branch name (Git refs don't allow spaces)
+        const sanitizedCounty = sanitizeBranchName(normalizedCounty);
+        const branchName = `auto-update/${sanitizedCounty}`;
+
         // Ensure branch exists
-        const branchName = `auto-update/${normalizedCounty}`;
         await ensureBranchExists(
           octokit,
           fork.owner,

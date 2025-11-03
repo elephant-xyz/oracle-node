@@ -65,6 +65,7 @@ const transformScriptsManager = createTransformScriptsManager({
  * @property {string} seed_output_s3_uri
  * @property {S3Event} s3
  * @property {boolean} [prepareSkipped] - Flag indicating if prepare step was skipped
+ * @property {boolean} [saveErrorsOnValidationFailure] - If true (default), save errors to DynamoDB and return success. If false, throw error on validation failure.
  */
 
 /**
@@ -469,6 +470,11 @@ async function runTransformAndValidation({
 }
 
 /**
+ * @typedef {object} ValidationFailureResult
+ * @property {boolean} saved - Whether errors were successfully saved to DynamoDB.
+ */
+
+/**
  * Handle transform validation errors by logging and uploading submit_errors.csv.
  *
  * @param {object} params - Failure handling context.
@@ -482,7 +488,7 @@ async function runTransformAndValidation({
  * @param {import("./errors.mjs").ExecutionSource} params.source - Minimal source description.
  * @param {string} params.occurredAt - ISO timestamp of the failure.
  * @param {string} params.preparedS3Uri - S3 location of the output of the prepare step.
- * @returns {Promise<never>} - Throws after handling.
+ * @returns {Promise<ValidationFailureResult>} - Returns { saved: true } if DynamoDB save succeeds, throws if save fails or no errors to save.
  */
 async function handleValidationFailure({
   tmpDir,
@@ -536,8 +542,10 @@ async function handleValidationFailure({
           executionId,
           county,
           errors: submitErrors.map((row) => ({
-            errorPath: row.error_path || undefined,
-            errorMessage: row.error_message || undefined,
+            errorMessage: row.error_message ?? undefined,
+            error_message: row.error_message ?? undefined,
+            errorPath: row.error_path ?? undefined,
+            error_path: row.error_path ?? undefined,
           })),
           source,
           errorsS3Uri: submitErrorsS3Uri ?? undefined,
@@ -545,11 +553,20 @@ async function handleValidationFailure({
           occurredAt,
           preparedS3Uri,
         });
+        // DynamoDB save succeeded, return success indicator
+        return { saved: true };
       } catch (repoError) {
         log("error", "errors_repository_save_failed", {
           error: String(repoError),
           execution_id: executionId,
         });
+        // DynamoDB save failed, throw the error
+        const errorMessage = submitErrorsS3Uri
+          ? `Validation failed. Submit errors CSV: ${submitErrorsS3Uri}. DynamoDB save failed: ${String(repoError)}`
+          : `Validation failed. DynamoDB save failed: ${String(repoError)}`;
+        const errorToThrow = new Error(errorMessage);
+        errorToThrow.name = "ValidationFailure";
+        throw errorToThrow;
       }
     }
   } catch (csvError) {
@@ -560,6 +577,7 @@ async function handleValidationFailure({
     });
   }
 
+  // No submitErrors to save, throw error
   const errorMessage = submitErrorsS3Uri
     ? `Validation failed. Submit errors CSV: ${submitErrorsS3Uri}`
     : "Validation failed";
@@ -868,19 +886,50 @@ export const handler = async (event) => {
       });
     } catch (runError) {
       if (runError instanceof Error && runError.name === "ValidationFailure") {
-        await handleValidationFailure({
-          tmpDir: tmp,
-          log,
-          error: runError.message,
-          outputBaseUri: outputBase,
-          inputKey: event?.s3?.object?.key,
-          executionId,
-          county: countyName,
-          source: sourceEvent,
-          occurredAt: base.at,
-          preparedS3Uri: event?.prepare?.output_s3_uri,
-        });
+        // Check if we should save errors or throw immediately
+        const saveErrorsOnValidationFailure =
+          event.saveErrorsOnValidationFailure !== false;
+
+        if (!saveErrorsOnValidationFailure) {
+          // Flag is false: throw error immediately without saving
+          throw runError;
+        }
+
+        // Flag is true (default): save errors to DynamoDB
+        try {
+          const result = await handleValidationFailure({
+            tmpDir: tmp,
+            log,
+            error: runError.message,
+            outputBaseUri: outputBase,
+            inputKey: event?.s3?.object?.key,
+            executionId,
+            county: countyName,
+            source: sourceEvent,
+            occurredAt: base.at,
+            preparedS3Uri: event?.prepare?.output_s3_uri,
+          });
+          // Errors were successfully saved to DynamoDB, return success with empty transactionItems
+          if (result.saved) {
+            log("info", "validation_failed_but_saved", {
+              execution_id: executionId,
+              county: countyName,
+            });
+            const totalOperationDuration = Date.now() - Date.parse(base.at);
+            log("info", "post_lambda_complete", {
+              operation: "post_lambda_total",
+              duration_ms: totalOperationDuration,
+              duration_seconds: (totalOperationDuration / 1000).toFixed(2),
+              transaction_items_count: 0,
+            });
+            return { status: "success", transactionItems: [] };
+          }
+        } catch (saveError) {
+          // DynamoDB save failed, re-throw the error
+          throw saveError;
+        }
       }
+      // Re-throw if not a ValidationFailure or if handleValidationFailure didn't return saved: true
       throw runError;
     }
 

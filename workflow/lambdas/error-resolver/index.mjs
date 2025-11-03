@@ -241,6 +241,7 @@ async function invokePostProcessingLambda({
     },
     seed_output_s3_uri: seedOutputS3Uri,
     prepareSkipped: false,
+    saveErrorsOnValidationFailure: false,
   };
 
   // Add S3 event if available

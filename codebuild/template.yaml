@@ -194,6 +194,7 @@ Resources:
                 nodejs: 22
               commands:
                 - npm install -g @openai/codex
+                - npm install -g cheerio
                 - printenv OPENAI_API_KEY | codex login --with-api-key
                 - mkdir -p ~/.codex
                 - |

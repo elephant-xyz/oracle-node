@@ -497,6 +497,7 @@ export GITHUB_TOKEN=ghp_xxxxxxxxxxxx  # Your GitHub personal access token
 **County Name Normalization:**
 
 The system automatically queries the GitHub repository to match county names with actual directory structures. This handles variations like:
+
 - Spaces in county names (e.g., "Palm Beach", "Santa Rosa")
 - Case differences
 - Directory naming conventions
