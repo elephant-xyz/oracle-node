@@ -1,0 +1,22 @@
+{
+  "name": "github-sync-lambda",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Lambda function for syncing transform scripts to GitHub repository",
+  "main": "index.mjs",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "typecheck": "tsc --pretty false --noEmit -p jsconfig.json"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.879.0",
+    "@aws-sdk/client-secrets-manager": "^3.879.0",
+    "@octokit/rest": "^21.0.0",
+    "@octokit/plugin-throttling": "^10.0.0",
+    "adm-zip": "^0.5.10"
+  },
+  "devDependencies": {
+    "@types/node": "^20.16.3"
+  }
+}
+

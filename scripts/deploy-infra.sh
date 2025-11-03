@@ -197,6 +197,15 @@ compute_param_overrides() {
   # Updater schedule rate
   [[ -n "${UPDATER_SCHEDULE_RATE:-}" ]] && parts+=("UpdaterScheduleRate=\"$UPDATER_SCHEDULE_RATE\"")
 
+  # GitHub integration parameters (optional)
+  if [[ -n "${GITHUB_SECRET_NAME:-}" || -n "${GITHUB_USERNAME:-}" ]]; then
+    : "${GITHUB_SECRET_NAME?Set GITHUB_SECRET_NAME when using GitHub integration}"
+    : "${GITHUB_USERNAME?Set GITHUB_USERNAME when using GitHub integration}"
+    : "${GITHUB_TOKEN?Set GITHUB_TOKEN when using GitHub integration}"
+    parts+=("GitHubSecretName=\"$GITHUB_SECRET_NAME\"")
+    parts+=("GitHubUsername=\"$GITHUB_USERNAME\"")
+  fi
+
   PARAM_OVERRIDES="${parts[*]}"
 }
 
@@ -486,6 +495,36 @@ populate_proxy_rotation_table() {
   }
 }
 
+# Create or update GitHub token in AWS Secrets Manager
+setup_github_secret() {
+  if [[ -z "${GITHUB_SECRET_NAME:-}" || -z "${GITHUB_TOKEN:-}" ]]; then
+    return 0
+  fi
+
+  info "Setting up GitHub token in Secrets Manager..."
+  
+  # Check if secret exists
+  if aws secretsmanager describe-secret --secret-id "$GITHUB_SECRET_NAME" >/dev/null 2>&1; then
+    info "Updating existing secret: $GITHUB_SECRET_NAME"
+    aws secretsmanager update-secret \
+      --secret-id "$GITHUB_SECRET_NAME" \
+      --secret-string "{\"token\":\"$GITHUB_TOKEN\"}" >/dev/null || {
+      err "Failed to update GitHub secret"
+      exit 1
+    }
+  else
+    info "Creating new secret: $GITHUB_SECRET_NAME"
+    aws secretsmanager create-secret \
+      --name "$GITHUB_SECRET_NAME" \
+      --secret-string "{\"token\":\"$GITHUB_TOKEN\"}" \
+      --description "GitHub personal access token for repository sync" >/dev/null || {
+      err "Failed to create GitHub secret"
+      exit 1
+    }
+  fi
+  
+  info "GitHub secret configured successfully"
+}
 
 # Write per-county repair flag(s) to SSM Parameter Store
 write_repair_flags_to_ssm() {
@@ -607,6 +646,9 @@ apply_county_configs() {
 main() {
   check_prereqs
   ensure_lambda_concurrency_quota
+
+  # Setup GitHub secret if GitHub integration is enabled
+  setup_github_secret
 
   compute_param_overrides
   upload_transforms_to_s3

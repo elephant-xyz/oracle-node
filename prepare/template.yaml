@@ -110,9 +110,22 @@ Parameters:
     Default: "1 minute"
     AllowedPattern: "^([0-9]+ (minute|minutes|hour|hours|day|days)|cron\\(.+\\))$"
 
+  GitHubSecretName:
+    Description: Name of the Secrets Manager secret containing GitHub token
+    Type: String
+    Default: ""
+  GitHubUsername:
+    Description: GitHub username for repository fork
+    Type: String
+    Default: ""
+
 Conditions:
   IsRateExpression:
     !Not [!Equals [!Select [0, !Split ["(", !Ref UpdaterScheduleRate]], "cron"]]
+  HasGitHubConfig:
+    !And
+      - !Not [!Equals [!Ref GitHubSecretName, ""]]
+      - !Not [!Equals [!Ref GitHubUsername, ""]]
 
 Globals:
   Function:
@@ -616,6 +629,60 @@ Resources:
                 - Pattern: '{ "dynamodb" : { "NewImage" : { "entityType" : { "S" : [ "ExecutionError" ] } } } , "dynamodb" : { "NewImage" : { "status" : { "S" : [ "maybeSolved" ] } } } , "dynamodb" : { "OldImage" : { "status" : { "S" : [ "failed" ] } } } }'
             MaximumBatchingWindowInSeconds: 5
             BatchSize: 100
+
+  #####################################################################################################################
+  # GitHub Sync Lambda Function
+  #####################################################################################################################
+
+  GitHubSyncFunction:
+    Type: AWS::Serverless::Function
+    Condition: HasGitHubConfig
+    Properties:
+      Architectures:
+        - arm64
+      MemorySize: 512
+      Timeout: 300
+      EphemeralStorage:
+        Size: 1024
+      CodeUri: lambdas/github-sync
+      Handler: index.handler
+      Description: "Syncs transform scripts from S3 to GitHub repository and creates PRs"
+      LoggingConfig:
+        LogFormat: JSON
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+              Resource: !Sub "${EnvironmentBucket.Arn}/transforms/*"
+            - Effect: Allow
+              Action:
+                - secretsmanager:GetSecretValue
+              Resource: !Sub
+                - "arn:aws:secretsmanager:${Region}:${AccountId}:secret:${SecretName}*"
+                - Region: !Ref AWS::Region
+                  AccountId: !Ref AWS::AccountId
+                  SecretName: !Ref GitHubSecretName
+      Environment:
+        Variables:
+          GITHUB_SECRET_NAME: !Ref GitHubSecretName
+          UPSTREAM_REPO: elephant-xyz/Counties-trasform-scripts
+          GITHUB_USERNAME: !Ref GitHubUsername
+      Events:
+        S3TransformUpload:
+          Type: S3
+          Properties:
+            Bucket: !Ref EnvironmentBucket
+            Events: s3:ObjectCreated:*
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: prefix
+                    Value: transforms/
+                  - Name: suffix
+                    Value: .zip
 
   #####################################################################################################################
   # Express Step Functions State Machine (separate definition file)
@@ -1139,3 +1206,11 @@ Outputs:
   WorkflowPostProcessorFunctionName:
     Description: Name of the Workflow Post Processor Lambda function
     Value: !Ref WorkflowPostProcessorFunction
+  GitHubSyncFunctionName:
+    Condition: HasGitHubConfig
+    Description: Name of the GitHub Sync Lambda function
+    Value: !Ref GitHubSyncFunction
+  GitHubSyncFunctionArn:
+    Condition: HasGitHubConfig
+    Description: ARN of the GitHub Sync Lambda function
+    Value: !GetAtt GitHubSyncFunction.Arn
