@@ -225,7 +225,9 @@ function resolveErrorMessage(row) {
   ) {
     return row.errorMessage.trim();
   }
-  throw new Error("Unable to resolve error message from submit error row");
+  throw new Error(
+    `Unable to resolve error message from submit error row. Row: ${JSON.stringify(row)}`,
+  );
 }
 
 /**
@@ -428,10 +430,7 @@ async function writeItems(client, tableName, items) {
       remaining =
         /** @type {Array<FailedExecutionItem | ExecutionErrorLink>} */ (
           /** @type {unknown} */ (
-            unprocessed.filter(
-              /** @param {import("@aws-sdk/lib-dynamodb").DocumentClient.Item} item */
-              (item) => item !== undefined,
-            )
+            unprocessed.filter((item) => item !== undefined)
           )
         );
     }
@@ -634,4 +633,3 @@ export async function markErrorsAsMaybeSolved({
     );
   }
 }
-

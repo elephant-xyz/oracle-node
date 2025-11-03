@@ -1,8 +1,5 @@
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import {
-  DynamoDBDocumentClient,
-  UpdateCommand,
-} from "@aws-sdk/lib-dynamodb";
+import { DynamoDBDocumentClient, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { LambdaClient, InvokeCommand } from "@aws-sdk/client-lambda";
 import {
   SQSClient,
@@ -166,8 +163,7 @@ async function decrementOpenErrorCount({ client, tableName, executionId }) {
     );
   }
 
-  const execution =
-    /** @type {FailedExecutionItem} */ (response.Attributes);
+  const execution = /** @type {FailedExecutionItem} */ (response.Attributes);
 
   return {
     openErrorCount: execution.openErrorCount ?? 0,
@@ -197,8 +193,7 @@ async function updateExecutionStatusToMaybeSolved({
         PK: buildExecutionPk(executionId),
         SK: buildExecutionSk(executionId),
       },
-      UpdateExpression:
-        "SET #status = :maybeSolved, #updatedAt = :updatedAt",
+      UpdateExpression: "SET #status = :maybeSolved, #updatedAt = :updatedAt",
       ExpressionAttributeNames: {
         "#status": "status",
         "#updatedAt": "updatedAt",
@@ -317,9 +312,7 @@ async function sendToTransactionsQueue(queueUrl, transactionItems) {
  */
 async function sendToDlq(dlqUrl, source) {
   if (!source.s3Bucket || !source.s3Key) {
-    throw new Error(
-      "Cannot send to DLQ: source missing s3Bucket or s3Key",
-    );
+    throw new Error("Cannot send to DLQ: source missing s3Bucket or s3Key");
   }
 
   const message = {
@@ -379,7 +372,9 @@ export const handler = async (event) => {
     );
 
     const tableName = requireEnv("ERRORS_TABLE_NAME");
-    const postProcessorFunctionName = requireEnv("POST_PROCESSOR_FUNCTION_NAME");
+    const postProcessorFunctionName = requireEnv(
+      "POST_PROCESSOR_FUNCTION_NAME",
+    );
     const transactionsQueueUrl = requireEnv("TRANSACTIONS_SQS_QUEUE_URL");
     const client = DEFAULT_CLIENT;
 
@@ -407,10 +402,7 @@ export const handler = async (event) => {
       const oldStatus = oldImage?.status;
 
       // Only process items that changed from "failed" to "maybeSolved"
-      if (
-        newStatus !== "maybeSolved" ||
-        oldStatus !== "failed"
-      ) {
+      if (newStatus !== "maybeSolved" || oldStatus !== "failed") {
         continue;
       }
 
@@ -555,7 +547,8 @@ export const handler = async (event) => {
                     level: "info",
                     msg: "execution_succeeded_and_sent_to_transactions_queue",
                     executionId,
-                    transactionItemsCount: resultPayload.transactionItems.length,
+                    transactionItemsCount:
+                      resultPayload.transactionItems.length,
                   }),
                 );
               } else {
@@ -664,4 +657,3 @@ export const handler = async (event) => {
     throw error;
   }
 };
-

@@ -1,19 +1,19 @@
 {
-    "name": "workflow-error-resolver-lambda",
-    "version": "1.0.0",
-    "type": "module",
-    "description": "Lambda function for resolving execution errors and restarting executions",
-    "main": "index.mjs",
-    "scripts": {
-        "test": "echo \"Error: no test specified\" && exit 1",
-        "typecheck": "tsc --pretty false --noEmit -p jsconfig.json"
-    },
-    "dependencies": {
-        "@aws-sdk/client-dynamodb": "^3.879.0",
-        "@aws-sdk/client-lambda": "^3.879.0",
-        "@aws-sdk/lib-dynamodb": "^3.879.0"
-    },
-    "devDependencies": {
-        "@types/node": "^20.16.3"
-    }
+  "name": "workflow-error-resolver-lambda",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Lambda function for resolving execution errors and restarting executions",
+  "main": "index.mjs",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "typecheck": "tsc --pretty false --noEmit -p jsconfig.json"
+  },
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.879.0",
+    "@aws-sdk/client-lambda": "^3.879.0",
+    "@aws-sdk/lib-dynamodb": "^3.879.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.16.3"
+  }
 }

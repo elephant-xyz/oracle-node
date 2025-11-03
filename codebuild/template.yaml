@@ -1,4 +1,5 @@
 AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
 Description: CodeBuild project that prepares runtime bundles and executes the Node.js entry point (with enhanced error handling).
 
 Parameters:
@@ -256,6 +257,41 @@ Resources:
         - Key: Environment
           Value: !Ref EnvironmentName
 
+  CodeBuildSchedulerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${EnvironmentName}-codebuild-scheduler"
+      Runtime: nodejs22.x
+      Architectures:
+        - arm64
+      Handler: index.handler
+      CodeUri: lambdas/codebuild-scheduler
+      Timeout: 60
+      MemorySize: 128
+      Environment:
+        Variables:
+          CODEBUILD_PROJECT_NAME: !Ref PrepareRuntimeCodeBuildProject
+      LoggingConfig:
+        LogFormat: JSON
+      Policies:
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - codebuild:StartBuild
+                - codebuild:ListBuildsForProject
+                - codebuild:BatchGetBuilds
+              Resource:
+                - !GetAtt PrepareRuntimeCodeBuildProject.Arn
+      Events:
+        ScheduledExecution:
+          Type: Schedule
+          Properties:
+            Schedule: rate(30 minutes)
+            Enabled: true
+      Tags:
+        Environment: !Ref EnvironmentName
+
 Outputs:
   PrepareRuntimeCodeBuildProjectName:
     Description: Name of the CodeBuild project that prepares runtime assets
@@ -263,3 +299,9 @@ Outputs:
   PrepareRuntimeCodeBuildProjectArn:
     Description: ARN of the CodeBuild project that prepares runtime assets
     Value: !GetAtt PrepareRuntimeCodeBuildProject.Arn
+  CodeBuildSchedulerFunctionName:
+    Description: Name of the Lambda function that schedules CodeBuild executions
+    Value: !Ref CodeBuildSchedulerFunction
+  CodeBuildSchedulerFunctionArn:
+    Description: ARN of the Lambda function that schedules CodeBuild executions
+    Value: !GetAtt CodeBuildSchedulerFunction.Arn
