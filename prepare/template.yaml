@@ -110,22 +110,14 @@ Parameters:
     Default: "1 minute"
     AllowedPattern: "^([0-9]+ (minute|minutes|hour|hours|day|days)|cron\\(.+\\))$"
 
-  GitHubSecretName:
-    Description: Name of the Secrets Manager secret containing GitHub token
+  GitHubToken:
+    Description: GitHub personal access token for repository sync (required)
     Type: String
-    Default: ""
-  GitHubUsername:
-    Description: GitHub username for repository fork
-    Type: String
-    Default: ""
+    NoEcho: true
 
 Conditions:
   IsRateExpression:
     !Not [!Equals [!Select [0, !Split ["(", !Ref UpdaterScheduleRate]], "cron"]]
-  HasGitHubConfig:
-    !And
-      - !Not [!Equals [!Ref GitHubSecretName, ""]]
-      - !Not [!Equals [!Ref GitHubUsername, ""]]
 
 Globals:
   Function:
@@ -134,6 +126,18 @@ Globals:
     Tracing: Active
 
 Resources:
+  #####################################################################################################################
+  # GitHub Token Secret
+  #####################################################################################################################
+
+  GitHubTokenSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub "${AWS::StackName}-github-token"
+      Description: GitHub personal access token for repository sync
+      SecretString: !Sub |
+        {"token":"${GitHubToken}"}
+
   #####################################################################################################################
   # EnvironmentBucket
   #####################################################################################################################
@@ -636,7 +640,6 @@ Resources:
 
   GitHubSyncFunction:
     Type: AWS::Serverless::Function
-    Condition: HasGitHubConfig
     Properties:
       Architectures:
         - arm64
@@ -660,16 +663,11 @@ Resources:
             - Effect: Allow
               Action:
                 - secretsmanager:GetSecretValue
-              Resource: !Sub
-                - "arn:aws:secretsmanager:${Region}:${AccountId}:secret:${SecretName}*"
-                - Region: !Ref AWS::Region
-                  AccountId: !Ref AWS::AccountId
-                  SecretName: !Ref GitHubSecretName
+              Resource: !GetAtt GitHubTokenSecret.Arn
       Environment:
         Variables:
-          GITHUB_SECRET_NAME: !Ref GitHubSecretName
+          GITHUB_SECRET_NAME: !Ref GitHubTokenSecret
           UPSTREAM_REPO: elephant-xyz/Counties-trasform-scripts
-          GITHUB_USERNAME: !Ref GitHubUsername
       Events:
         S3TransformUpload:
           Type: S3
@@ -1207,10 +1205,8 @@ Outputs:
     Description: Name of the Workflow Post Processor Lambda function
     Value: !Ref WorkflowPostProcessorFunction
   GitHubSyncFunctionName:
-    Condition: HasGitHubConfig
     Description: Name of the GitHub Sync Lambda function
     Value: !Ref GitHubSyncFunction
   GitHubSyncFunctionArn:
-    Condition: HasGitHubConfig
     Description: ARN of the GitHub Sync Lambda function
     Value: !GetAtt GitHubSyncFunction.Arn

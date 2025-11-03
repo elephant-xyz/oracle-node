@@ -16,6 +16,13 @@ const secretsClient = new SecretsManagerClient({});
 const MyOctokit = Octokit.plugin(throttling);
 
 /**
+ * @typedef {InstanceType<typeof MyOctokit>} OctokitClient
+ * @typedef {Awaited<ReturnType<OctokitClient["rest"]["users"]["getAuthenticated"]>>["data"]} GitHubAuthenticatedUser
+ * @typedef {{ owner: string, repo: string }} ForkRepositoryReference
+ * @typedef {{ path: string, content: Buffer }} ScriptFile
+ */
+
+/**
  * @typedef {object} S3EventRecord
  * @property {object} s3
  * @property {object} s3.bucket
@@ -68,7 +75,7 @@ async function getGitHubToken(secretName) {
  * Initialize GitHub client with throttling plugin.
  *
  * @param {string} token - GitHub personal access token.
- * @returns {import("@octokit/rest").Octokit} - Configured Octokit instance.
+ * @returns {OctokitClient} - Configured Octokit instance.
  */
 function createGitHubClient(token) {
   return new MyOctokit({
@@ -97,18 +104,19 @@ function createGitHubClient(token) {
 /**
  * Ensure the repository fork exists, creating it if necessary.
  *
- * @param {import("@octokit/rest").Octokit} octokit - GitHub client.
+ * @param {OctokitClient} octokit - GitHub client.
  * @param {string} upstreamOwner - Owner of the upstream repository.
  * @param {string} upstreamRepo - Name of the upstream repository.
- * @param {string} githubUsername - GitHub username for the fork.
- * @returns {Promise<{owner: string, repo: string}>} - Fork repository details.
+ * @param {GitHubAuthenticatedUser} authenticatedUser - Authenticated GitHub user derived from the token.
+ * @returns {Promise<ForkRepositoryReference>} - Fork repository details.
  */
 async function ensureForkExists(
   octokit,
   upstreamOwner,
   upstreamRepo,
-  githubUsername,
+  authenticatedUser,
 ) {
+  const githubUsername = authenticatedUser.login;
   try {
     // Check if fork already exists
     try {
@@ -175,7 +183,7 @@ function getCountyNameFromS3Key(s3Key) {
 /**
  * Normalize county name to match GitHub repository directory structure.
  *
- * @param {import("@octokit/rest").Octokit} octokit - GitHub client.
+ * @param {OctokitClient} octokit - GitHub client.
  * @param {string} upstreamOwner - Owner of the upstream repository.
  * @param {string} upstreamRepo - Name of the upstream repository.
  * @param {string} countyName - County name from S3 key.
@@ -269,7 +277,7 @@ async function downloadAndExtractZip(bucket, key, extractDir) {
  *
  * @param {string} dir - Directory to search.
  * @param {string} baseDir - Base directory for relative paths.
- * @returns {Promise<Array<{path: string, content: Buffer}>>} - Array of file paths and contents.
+ * @returns {Promise<ScriptFile[]>} - Array of file paths and contents.
  */
 async function getScriptFiles(dir, baseDir = dir) {
   const files = [];
@@ -296,7 +304,7 @@ async function getScriptFiles(dir, baseDir = dir) {
 /**
  * Ensure branch exists, creating it if necessary.
  *
- * @param {import("@octokit/rest").Octokit} octokit - GitHub client.
+ * @param {OctokitClient} octokit - GitHub client.
  * @param {string} owner - Repository owner.
  * @param {string} repo - Repository name.
  * @param {string} branchName - Branch name.
@@ -347,12 +355,12 @@ async function ensureBranchExists(
 /**
  * Sync scripts to GitHub repository.
  *
- * @param {import("@octokit/rest").Octokit} octokit - GitHub client.
+ * @param {OctokitClient} octokit - GitHub client.
  * @param {string} owner - Repository owner.
  * @param {string} repo - Repository name.
  * @param {string} branch - Branch name.
  * @param {string} countyName - County name.
- * @param {Array<{path: string, content: Buffer}>} files - Files to upload.
+ * @param {ScriptFile[]} files - Files to upload.
  * @returns {Promise<string>} - Commit SHA.
  */
 async function syncScriptsToRepo(
@@ -528,6 +536,17 @@ Automatically created by GitHub sync Lambda function.`;
 }
 
 /**
+ * Get authenticated user info from GitHub.
+ *
+ * @param {OctokitClient} octokit - GitHub client.
+ * @returns {Promise<GitHubAuthenticatedUser>} - Authenticated user info returned by the GitHub API.
+ */
+async function getAuthenticatedUser(octokit) {
+  const { data: user } = await octokit.rest.users.getAuthenticated();
+  return user;
+}
+
+/**
  * Main Lambda handler.
  *
  * @param {S3Event} event - S3 event containing object creation records.
@@ -536,17 +555,12 @@ Automatically created by GitHub sync Lambda function.`;
 export const handler = async (event) => {
   console.log("Received event:", JSON.stringify(event, null, 2));
 
-  const githubSecretName =
-    process.env.GITHUB_SECRET_NAME ||
-    process.env.GITHUB_SECRET_NAME ||
-    `/github-token`;
+  const githubSecretName = process.env.GITHUB_SECRET_NAME;
+  if (!githubSecretName) {
+    throw new Error("GITHUB_SECRET_NAME environment variable is required");
+  }
   const upstreamRepo =
     process.env.UPSTREAM_REPO || "elephant-xyz/Counties-trasform-scripts";
-  const githubUsername = process.env.GITHUB_USERNAME;
-
-  if (!githubUsername) {
-    throw new Error("GITHUB_USERNAME environment variable is required");
-  }
 
   const [upstreamOwner, upstreamRepoName] = upstreamRepo.split("/");
   if (!upstreamOwner || !upstreamRepoName) {
@@ -554,9 +568,15 @@ export const handler = async (event) => {
   }
 
   try {
-    // Get GitHub token
+    // Get GitHub token and create client
     const token = await getGitHubToken(githubSecretName);
     const octokit = createGitHubClient(token);
+
+    // Resolve authenticated user details from the token
+    const authenticatedUser = await getAuthenticatedUser(octokit);
+    console.log(
+      `Authenticated as GitHub user: ${authenticatedUser.login}`,
+    );
 
     // Process each S3 record
     for (const record of event.Records) {
@@ -577,7 +597,7 @@ export const handler = async (event) => {
         octokit,
         upstreamOwner,
         upstreamRepoName,
-        githubUsername,
+        authenticatedUser,
       );
 
       // Normalize county name
@@ -656,4 +676,3 @@ export const handler = async (event) => {
     };
   }
 };
-

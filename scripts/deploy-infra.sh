@@ -197,14 +197,9 @@ compute_param_overrides() {
   # Updater schedule rate
   [[ -n "${UPDATER_SCHEDULE_RATE:-}" ]] && parts+=("UpdaterScheduleRate=\"$UPDATER_SCHEDULE_RATE\"")
 
-  # GitHub integration parameters (optional)
-  if [[ -n "${GITHUB_SECRET_NAME:-}" || -n "${GITHUB_USERNAME:-}" ]]; then
-    : "${GITHUB_SECRET_NAME?Set GITHUB_SECRET_NAME when using GitHub integration}"
-    : "${GITHUB_USERNAME?Set GITHUB_USERNAME when using GitHub integration}"
-    : "${GITHUB_TOKEN?Set GITHUB_TOKEN when using GitHub integration}"
-    parts+=("GitHubSecretName=\"$GITHUB_SECRET_NAME\"")
-    parts+=("GitHubUsername=\"$GITHUB_USERNAME\"")
-  fi
+  # GitHub integration parameter (required)
+  : "${GITHUB_TOKEN?Set GITHUB_TOKEN to enable GitHub integration}"
+  parts+=("GitHubToken=\"${GITHUB_TOKEN}\"")
 
   PARAM_OVERRIDES="${parts[*]}"
 }
@@ -434,10 +429,12 @@ deploy_codebuild_stack() {
   local entrypoint="$CODEBUILD_RUNTIME_ENTRYPOINT"
 
   info "Deploying CodeBuild stack ($CODEBUILD_STACK_NAME) using artifacts bucket ${bucket}/${prefix}"
-  aws cloudformation deploy \
+  sam deploy \
     --template-file "$CODEBUILD_TEMPLATE" \
     --stack-name "$CODEBUILD_STACK_NAME" \
     --capabilities CAPABILITY_IAM \
+    --resolve-s3 \
+    --no-confirm-changeset \
     --no-fail-on-empty-changeset \
     --parameter-overrides \
       EnvironmentName="$ENVIRONMENT_NAME" \
