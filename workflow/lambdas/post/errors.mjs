@@ -67,7 +67,9 @@ import { createHash } from "crypto";
 /**
  * @typedef {object} RawSubmitErrorRow
  * @property {string | undefined} errorMessage - Error message field.
+ * @property {string | undefined} error_message - Error message field.
  * @property {string | undefined} errorPath - Error path field.
+ * @property {string | undefined} error_path - Error path field.
  */
 
 /**
@@ -224,6 +226,11 @@ function resolveErrorMessage(row) {
     row.errorMessage.trim().length > 0
   ) {
     return row.errorMessage.trim();
+  } else if (
+    typeof row.error_message === "string" &&
+    row.error_message.trim().length > 0
+  ) {
+    return row.error_message.trim();
   }
   throw new Error(
     `Unable to resolve error message from submit error row. Row: ${JSON.stringify(row)}`,
@@ -239,7 +246,13 @@ function resolveErrorMessage(row) {
 function resolveErrorPath(row) {
   if (typeof row.errorPath === "string" && row.errorPath.trim().length > 0) {
     return row.errorPath.trim();
+  } else if (
+    typeof row.error_path === "string" &&
+    row.error_path.trim().length > 0
+  ) {
+    return row.error_path.trim();
   }
+
   return "unknown";
 }
 
