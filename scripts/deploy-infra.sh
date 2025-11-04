@@ -23,6 +23,7 @@ TRANSFORMS_SRC_DIR="transform"
 TRANSFORMS_TARGET_DIR="${WORKFLOW_DIR}/lambdas/post/transforms"
 TRANSFORM_MANIFEST_FILE="${TRANSFORMS_TARGET_DIR}/manifest.json"
 TRANSFORM_PREFIX_KEY="${TRANSFORM_PREFIX_KEY:-transforms}"
+UPLOAD_TRANSFORMS="${UPLOAD_TRANSFORMS:-false}"
 TRANSFORMS_UPLOAD_PENDING=0
 BROWSER_FLOWS_UPLOAD_PENDING=0
 MULTI_REQUEST_FLOWS_UPLOAD_PENDING=0
@@ -207,8 +208,8 @@ compute_param_overrides() {
 
 upload_transforms_to_s3() {
   # Check if upload flag is set
-  if [[ "${UPLOAD_TRANSFORMS:-}" != "true" ]]; then
-    info "UPLOAD_TRANSFORMS flag not set, skipping transform scripts upload"
+  if [[ "$UPLOAD_TRANSFORMS" != "true" ]]; then
+    info "UPLOAD_TRANSFORMS flag not set (default: false), skipping transform scripts upload"
     return 0
   fi
 
@@ -656,7 +657,7 @@ main() {
   compute_param_overrides
   
   # Upload transforms only if flag is set
-  if [[ "${UPLOAD_TRANSFORMS:-}" == "true" ]]; then
+  if [[ "$UPLOAD_TRANSFORMS" == "true" ]]; then
     upload_transforms_to_s3
   fi
   
@@ -666,7 +667,7 @@ main() {
   deploy_codebuild_stack
 
   # Handle TransformS3Prefix parameter
-  if [[ "${UPLOAD_TRANSFORMS:-}" == "true" ]]; then
+  if [[ "$UPLOAD_TRANSFORMS" == "true" ]]; then
     # Upload was attempted - handle pending or completed state
     if (( TRANSFORMS_UPLOAD_PENDING == 0 )); then
       add_transform_prefix_override
@@ -696,7 +697,7 @@ main() {
   sam_deploy
 
   # Handle pending upload after stack creation (only if flag is set)
-  if [[ "${UPLOAD_TRANSFORMS:-}" == "true" ]] && (( TRANSFORMS_UPLOAD_PENDING == 1 )); then
+  if [[ "$UPLOAD_TRANSFORMS" == "true" ]] && (( TRANSFORMS_UPLOAD_PENDING == 1 )); then
     upload_transforms_to_s3
     # Recompute all parameters with the actual transform prefix
     compute_param_overrides

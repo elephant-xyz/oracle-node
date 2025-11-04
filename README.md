@@ -25,9 +25,9 @@ export WORKFLOW_QUEUE_NAME=elephant-workflow-queue
 export WORKFLOW_STARTER_RESERVED_CONCURRENCY=100
 export WORKFLOW_STATE_MACHINE_NAME=ElephantExpressWorkflow
 
-# Optional (Transform scripts upload - by default scripts are NOT uploaded)
+# Optional (Transform scripts upload)
+# Default: false (transform scripts are NOT uploaded unless explicitly enabled)
 export UPLOAD_TRANSFORMS=true  # Set to 'true' to upload transform scripts from transform/ directory to S3
-# If UPLOAD_TRANSFORMS is not set, scripts will not be uploaded during deployment.
 # You can set TRANSFORM_S3_PREFIX_VALUE manually if scripts already exist in S3 and you want to skip upload.
 
 # Optional (AWS CLI)
@@ -91,9 +91,9 @@ export WORKFLOW_QUEUE_NAME=elephant-workflow-queue
 export WORKFLOW_STARTER_RESERVED_CONCURRENCY=100
 export WORKFLOW_STATE_MACHINE_NAME=ElephantExpressWorkflow
 
-# Optional (Transform scripts upload - by default scripts are NOT uploaded)
+# Optional (Transform scripts upload)
+# Default: false (transform scripts are NOT uploaded unless explicitly enabled)
 export UPLOAD_TRANSFORMS=true  # Set to 'true' to upload transform scripts from transform/ directory to S3
-# If UPLOAD_TRANSFORMS is not set, scripts will not be uploaded during deployment.
 # You can set TRANSFORM_S3_PREFIX_VALUE manually if scripts already exist in S3 and you want to skip upload.
 
 # Optional (AWS CLI)
@@ -443,9 +443,9 @@ You can create a keystore file using the Elephant CLI tool. For detailed instruc
 
 ### Update transform scripts
 
-Transforms are stored as raw files under `transform/<county>/`. Each county folder can contain any structure you need (for example `transform/brevard/scripts/*.js`). 
+Transforms are stored as raw files under `transform/<county>/`. Each county folder can contain any structure you need (for example `transform/brevard/scripts/*.js`).
 
-**Important:** By default, transform scripts are **NOT** uploaded during deployment. You must set `UPLOAD_TRANSFORMS=true` to enable automatic uploads.
+**Important:** By default, transform scripts are **NOT** uploaded during deployment (`UPLOAD_TRANSFORMS` defaults to `false`). You must explicitly set `export UPLOAD_TRANSFORMS=true` to enable automatic uploads.
 
 To ship new or updated transform code:
 
