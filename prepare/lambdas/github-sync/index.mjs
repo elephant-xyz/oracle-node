@@ -328,7 +328,6 @@ async function getScriptFiles(dir, baseDir = dir) {
       files.push(...subFiles);
     } else if (entry.isFile() && entry.name.endsWith(".js")) {
       const relativePath = path.relative(baseDir, fullPath);
-      // Read file as binary buffer (not base64) - GitHub API will handle encoding
       const content = await fs.readFile(fullPath);
       files.push({
         path: relativePath,
