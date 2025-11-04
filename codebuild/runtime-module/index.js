@@ -486,6 +486,8 @@ async function invokePostProcessingLambda({
       },
     };
   }
+  console.log(`Invoking post-processing Lambda ${functionName}...`);
+  console.log(JSON.stringify(payload, null, 2));
 
   const response = await lambdaClient.send(
     new InvokeCommand({

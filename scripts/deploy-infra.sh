@@ -682,35 +682,54 @@ main() {
       add_transform_prefix_override
     else
       info "Delaying transform upload until stack bucket exists."
-      # Add placeholder value for initial deployment
-      if [[ -z "${PARAM_OVERRIDES:-}" ]]; then
-        PARAM_OVERRIDES="TransformS3Prefix=\"pending\""
-      else
-        PARAM_OVERRIDES+=" TransformS3Prefix=\"pending\""
-      fi
+      # Will be set after stack creation in pending upload handler
+      TRANSFORMS_UPLOAD_PENDING=1
     fi
   elif [[ -n "${TRANSFORM_S3_PREFIX_VALUE:-}" ]]; then
     # Upload flag not set, but manual prefix value provided
     add_transform_prefix_override
   else
-    # No upload and no manual prefix - use placeholder
-    info "Transform scripts upload skipped and no manual prefix provided, using placeholder"
-    if [[ -z "${PARAM_OVERRIDES:-}" ]]; then
-      PARAM_OVERRIDES="TransformS3Prefix=\"pending\""
+    # No upload and no manual prefix - construct valid S3 URI to default location
+    local bucket=$(get_bucket)
+    if [[ -n "$bucket" ]]; then
+      local prefix="${TRANSFORM_PREFIX_KEY%/}"
+      TRANSFORM_S3_PREFIX_VALUE="s3://$bucket/$prefix"
+      info "Using existing transforms location: $TRANSFORM_S3_PREFIX_VALUE"
+      add_transform_prefix_override
     else
-      PARAM_OVERRIDES+=" TransformS3Prefix=\"pending\""
+      # First deployment - will be set after stack is created
+      info "Transform scripts upload skipped, will use default location after stack creation"
     fi
   fi
 
   sam_build
   sam_deploy
 
-  # Handle pending upload after stack creation (only if flag is set)
+  # Handle pending scenarios after stack creation
+  local need_redeploy=false
+  
+  # Handle transform upload/configuration if pending
   if [[ "$UPLOAD_TRANSFORMS" == "true" ]] && (( TRANSFORMS_UPLOAD_PENDING == 1 )); then
     upload_transforms_to_s3
     # Recompute all parameters with the actual transform prefix
     compute_param_overrides
     add_transform_prefix_override
+    need_redeploy=true
+  elif [[ -z "${TRANSFORM_S3_PREFIX_VALUE:-}" ]]; then
+    # No upload flag and no manual prefix - set default location now that bucket exists
+    local bucket=$(get_bucket)
+    if [[ -n "$bucket" ]]; then
+      local prefix="${TRANSFORM_PREFIX_KEY%/}"
+      TRANSFORM_S3_PREFIX_VALUE="s3://$bucket/$prefix"
+      info "Setting default transforms location: $TRANSFORM_S3_PREFIX_VALUE"
+      compute_param_overrides
+      add_transform_prefix_override
+      need_redeploy=true
+    fi
+  fi
+  
+  # Redeploy if any pending items were resolved
+  if [[ "$need_redeploy" == true ]]; then
     sam_deploy
   fi
 

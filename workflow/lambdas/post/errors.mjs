@@ -617,6 +617,7 @@ export async function markErrorsAsMaybeSolved({
       lastEvaluatedKey = response.LastEvaluatedKey;
     } while (lastEvaluatedKey);
   }
+  console.log(`Found ${allItemsToUpdate.length} items to update`);
 
   const batches = chunkArray(allItemsToUpdate, TRANSACT_WRITE_MAX_ITEMS);
   for (const batch of batches) {
