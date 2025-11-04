@@ -25,6 +25,11 @@ export WORKFLOW_QUEUE_NAME=elephant-workflow-queue
 export WORKFLOW_STARTER_RESERVED_CONCURRENCY=100
 export WORKFLOW_STATE_MACHINE_NAME=ElephantExpressWorkflow
 
+# Optional (Transform scripts upload - by default scripts are NOT uploaded)
+export UPLOAD_TRANSFORMS=true  # Set to 'true' to upload transform scripts from transform/ directory to S3
+# If UPLOAD_TRANSFORMS is not set, scripts will not be uploaded during deployment.
+# You can set TRANSFORM_S3_PREFIX_VALUE manually if scripts already exist in S3 and you want to skip upload.
+
 # Optional (AWS CLI)
 export AWS_PROFILE=your-profile
 export AWS_REGION=your-region
@@ -85,6 +90,11 @@ export STACK_NAME=elephant-oracle-node
 export WORKFLOW_QUEUE_NAME=elephant-workflow-queue
 export WORKFLOW_STARTER_RESERVED_CONCURRENCY=100
 export WORKFLOW_STATE_MACHINE_NAME=ElephantExpressWorkflow
+
+# Optional (Transform scripts upload - by default scripts are NOT uploaded)
+export UPLOAD_TRANSFORMS=true  # Set to 'true' to upload transform scripts from transform/ directory to S3
+# If UPLOAD_TRANSFORMS is not set, scripts will not be uploaded during deployment.
+# You can set TRANSFORM_S3_PREFIX_VALUE manually if scripts already exist in S3 and you want to skip upload.
 
 # Optional (AWS CLI)
 export AWS_PROFILE=your-profile
@@ -433,16 +443,21 @@ You can create a keystore file using the Elephant CLI tool. For detailed instruc
 
 ### Update transform scripts
 
-Transforms are stored as raw files under `transform/<county>/`. Each county folder can contain any structure you need (for example `transform/brevard/scripts/*.js`). During deployment the scripts are zipped and uploaded automatically; you no longer manage zip files by hand.
+Transforms are stored as raw files under `transform/<county>/`. Each county folder can contain any structure you need (for example `transform/brevard/scripts/*.js`). 
+
+**Important:** By default, transform scripts are **NOT** uploaded during deployment. You must set `UPLOAD_TRANSFORMS=true` to enable automatic uploads.
 
 To ship new or updated transform code:
 
 1. Edit the files in the appropriate county directory under `transform/`.
-2. Run `./scripts/deploy-infra.sh`.
+2. Set `export UPLOAD_TRANSFORMS=true` before running the deploy script.
+3. Run `./scripts/deploy-infra.sh`.
    - The script rebuilds `workflow/lambdas/post/transforms/<county>.zip` for each county.
    - It synchronizes those archives (plus a manifest) to the environment bucket under `transforms/` and updates the `TransformS3Prefix` parameter used by the post Lambda.
-3. On first invocation per county, the post Lambda downloads `s3://<prefix>/<county>.zip`, caches it in `/tmp/county-transforms/<county>.zip`, verifies the MD5/ETag, and reuses the cache until the remote ETag changes.
-4. Subsequent deployments automatically refresh S3 and the Lambda detects updated archives by comparing ETags.
+4. On first invocation per county, the post Lambda downloads `s3://<prefix>/<county>.zip`, caches it in `/tmp/county-transforms/<county>.zip`, verifies the MD5/ETag, and reuses the cache until the remote ETag changes.
+5. Subsequent deployments automatically refresh S3 and the Lambda detects updated archives by comparing ETags.
+
+**Alternative:** If you don't want to upload scripts during deployment (or scripts already exist in S3), you can skip setting `UPLOAD_TRANSFORMS` and manually set `TRANSFORM_S3_PREFIX_VALUE` to point to the existing S3 location.
 
 Tip: during local testing, remove `/tmp/county-transforms` to force a fresh download.
 

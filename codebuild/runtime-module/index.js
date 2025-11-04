@@ -527,7 +527,13 @@ function extractErrorsS3Uri(errorMessage) {
 }
 
 async function installCherio(scriptsDir) {
-  exec(`npm install cheerio`, { cwd: scriptsDir });
+  await new Promise((resolve, reject) => {
+    exec("npm install cheerio", { cwd: scriptsDir }, (error) =>
+      error
+        ? reject(new Error(`cheerio install failed: ${error.message}`))
+        : resolve(),
+    );
+  });
 }
 
 /**
@@ -571,9 +577,9 @@ async function runAutoRepairIteration({
     const scriptsDir = path.join(tmpDir, "scripts");
 
     // Install cherio to the scripts directory
-    await installCherio(scriptsDir);
     await extractZip(preparedInputsZip, inputsDir);
     await extractZip(transformScriptsZip, scriptsDir);
+    await installCherio(scriptsDir);
 
     // Step 2: Parse errors
     const { errorPath, dataGroupName } = await parseErrorsFromS3(errorsS3Uri);

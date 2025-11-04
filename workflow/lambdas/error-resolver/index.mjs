@@ -1,5 +1,6 @@
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import { unmarshall } from "@aws-sdk/util-dynamodb";
 import { LambdaClient, InvokeCommand } from "@aws-sdk/client-lambda";
 import {
   SQSClient,
@@ -388,26 +389,28 @@ export const handler = async (event) => {
         continue;
       }
 
-      const newImage = record.dynamodb.NewImage;
-      const oldImage = record.dynamodb.OldImage;
+      const decodedNew = unmarshall(record.dynamodb.NewImage);
+      const decodedOld = record.dynamodb.OldImage
+        ? unmarshall(record.dynamodb.OldImage)
+        : undefined;
 
       // Skip if not an ExecutionErrorLink with status transition to "maybeSolved"
       if (
-        typeof newImage.entityType !== "string" ||
-        newImage.entityType !== "ExecutionError"
+        typeof decodedNew.entityType !== "string" ||
+        decodedNew.entityType !== "ExecutionError"
       ) {
         continue;
       }
 
-      const newStatus = newImage.status;
-      const oldStatus = oldImage?.status;
+      const newStatus = decodedNew.status;
+      const oldStatus = decodedOld?.status;
 
       // Only process items that changed from "failed" to "maybeSolved"
       if (newStatus !== "maybeSolved" || oldStatus !== "failed") {
         continue;
       }
 
-      const executionId = extractExecutionId(newImage);
+      const executionId = extractExecutionId(decodedNew);
       if (!executionId) {
         console.warn(
           JSON.stringify({
@@ -420,7 +423,7 @@ export const handler = async (event) => {
         continue;
       }
 
-      const errorLink = /** @type {ExecutionErrorLink} */ (newImage);
+      const errorLink = /** @type {ExecutionErrorLink} */ (decodedNew);
       const group = executionGroups.get(executionId) ?? [];
       group.push(errorLink);
       executionGroups.set(executionId, group);

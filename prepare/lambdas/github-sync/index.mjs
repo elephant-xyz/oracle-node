@@ -410,6 +410,7 @@ async function syncScriptsToRepo(
   files,
 ) {
   const operations = [];
+  const targetPaths = new Set();
 
   for (const file of files) {
     // Handle zip files that may already contain nested directory structures
@@ -497,6 +498,7 @@ async function syncScriptsToRepo(
     // GitHub will automatically create the blob from this content
     // The sha check above is just to detect if file exists, but we always use content
     // to ensure the file is updated with new content
+    targetPaths.add(githubPath);
     operations.push({
       path: githubPath,
       mode: "100644",
@@ -515,6 +517,28 @@ async function syncScriptsToRepo(
     repo,
     branch: branch,
   });
+
+  const { data: existingTree } = await octokit.rest.git.getTree({
+    owner,
+    repo,
+    tree_sha: branchData.commit.sha,
+    recursive: "true",
+  });
+  for (const entry of existingTree.tree ?? []) {
+    if (
+      entry.type === "blob" &&
+      typeof entry.path === "string" &&
+      entry.path.startsWith(`${countyName}/scripts/`) &&
+      !targetPaths.has(entry.path)
+    ) {
+      operations.push({
+        path: entry.path,
+        mode: "100644",
+        type: "blob",
+        sha: null,
+      });
+    }
+  }
 
   // Create tree
   const { data: tree } = await octokit.rest.git.createTree({

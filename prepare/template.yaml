@@ -611,7 +611,7 @@ Resources:
             StartingPosition: LATEST
             FilterCriteria:
               Filters:
-                - Pattern: '{ "dynamodb" : { "NewImage" : { "entityType" : { "S" : [ "ExecutionError" ] } } } , "dynamodb" : { "NewImage" : { "status" : { "S" : [ "maybeSolved" ] } } } , "dynamodb" : { "OldImage" : { "status" : { "S" : [ "failed" ] } } } }'
+                - Pattern: '{ "dynamodb": { "NewImage": { "entityType": { "S": [ "ExecutionError" ] }, "status": { "S": [ "maybeSolved" ] } }, "OldImage": { "status": { "S": [ "failed" ] } } } }'
             MaximumBatchingWindowInSeconds: 5
             BatchSize: 100
 

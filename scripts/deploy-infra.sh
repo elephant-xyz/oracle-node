@@ -206,6 +206,12 @@ compute_param_overrides() {
 
 
 upload_transforms_to_s3() {
+  # Check if upload flag is set
+  if [[ "${UPLOAD_TRANSFORMS:-}" != "true" ]]; then
+    info "UPLOAD_TRANSFORMS flag not set, skipping transform scripts upload"
+    return 0
+  fi
+
   local bucket prefix
   bucket=$(get_bucket)
   if [[ -z "$bucket" ]]; then
@@ -648,17 +654,37 @@ main() {
   setup_github_secret
 
   compute_param_overrides
-  upload_transforms_to_s3
+  
+  # Upload transforms only if flag is set
+  if [[ "${UPLOAD_TRANSFORMS:-}" == "true" ]]; then
+    upload_transforms_to_s3
+  fi
+  
   upload_browser_flows_to_s3
   upload_multi_request_flows_to_s3
   package_and_upload_codebuild_runtime
   deploy_codebuild_stack
 
-  if (( TRANSFORMS_UPLOAD_PENDING == 0 )); then
+  # Handle TransformS3Prefix parameter
+  if [[ "${UPLOAD_TRANSFORMS:-}" == "true" ]]; then
+    # Upload was attempted - handle pending or completed state
+    if (( TRANSFORMS_UPLOAD_PENDING == 0 )); then
+      add_transform_prefix_override
+    else
+      info "Delaying transform upload until stack bucket exists."
+      # Add placeholder value for initial deployment
+      if [[ -z "${PARAM_OVERRIDES:-}" ]]; then
+        PARAM_OVERRIDES="TransformS3Prefix=\"pending\""
+      else
+        PARAM_OVERRIDES+=" TransformS3Prefix=\"pending\""
+      fi
+    fi
+  elif [[ -n "${TRANSFORM_S3_PREFIX_VALUE:-}" ]]; then
+    # Upload flag not set, but manual prefix value provided
     add_transform_prefix_override
   else
-    info "Delaying transform upload until stack bucket exists."
-    # Add placeholder value for initial deployment
+    # No upload and no manual prefix - use placeholder
+    info "Transform scripts upload skipped and no manual prefix provided, using placeholder"
     if [[ -z "${PARAM_OVERRIDES:-}" ]]; then
       PARAM_OVERRIDES="TransformS3Prefix=\"pending\""
     else
@@ -669,7 +695,8 @@ main() {
   sam_build
   sam_deploy
 
-  if (( TRANSFORMS_UPLOAD_PENDING == 1 )); then
+  # Handle pending upload after stack creation (only if flag is set)
+  if [[ "${UPLOAD_TRANSFORMS:-}" == "true" ]] && (( TRANSFORMS_UPLOAD_PENDING == 1 )); then
     upload_transforms_to_s3
     # Recompute all parameters with the actual transform prefix
     compute_param_overrides
