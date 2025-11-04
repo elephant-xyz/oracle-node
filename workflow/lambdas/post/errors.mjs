@@ -742,8 +742,8 @@ export async function deleteExecution({
               return undefined;
             }
             return {
-              PK: /** @type {string} */ (deleteRequest.Key.PK),
-              SK: /** @type {string} */ (deleteRequest.Key.SK),
+              PK: deleteRequest.Key.PK,
+              SK: deleteRequest.Key.SK,
             };
           },
         ) ?? [];
@@ -761,6 +761,7 @@ export async function deleteExecution({
 
       const delayMs = Math.min(1000, 2 ** attempts * 50);
       await delay(delayMs);
+      // @ts-ignore
       remaining = unprocessed.filter((item) => item !== undefined);
     }
   }
