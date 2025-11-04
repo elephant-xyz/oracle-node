@@ -1,0 +1,19 @@
+{
+  "name": "@elephant-xyz/runtime-module",
+  "version": "0.1.0",
+  "description": "Runtime bundle executed by CodeBuild to bootstrap the Elephant Oracle environment.",
+  "type": "module",
+  "main": "index.js",
+  "license": "UNLICENSED",
+  "private": true,
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.0.0",
+    "@aws-sdk/client-lambda": "^3.0.0",
+    "@aws-sdk/client-s3": "^3.0.0",
+    "@aws-sdk/client-sqs": "^3.921.0",
+    "@aws-sdk/lib-dynamodb": "^3.0.0",
+    "adm-zip": "^0.5.0",
+    "cheerio": "^1.1.2",
+    "csv-parse": "^5.5.0"
+  }
+}

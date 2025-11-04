@@ -15,7 +15,7 @@
     "noImplicitOverride": true,
     "skipLibCheck": true,
     "types": ["node"],
-    "maxNodeModuleJsDepth": 1,
+    "maxNodeModuleJsDepth": 0,
     // Quality-of-life
     "moduleResolution": "bundler",
     "target": "ES2022",

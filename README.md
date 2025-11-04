@@ -25,6 +25,11 @@ export WORKFLOW_QUEUE_NAME=elephant-workflow-queue
 export WORKFLOW_STARTER_RESERVED_CONCURRENCY=100
 export WORKFLOW_STATE_MACHINE_NAME=ElephantExpressWorkflow
 
+# Optional (Transform scripts upload)
+# Default: false (transform scripts are NOT uploaded unless explicitly enabled)
+export UPLOAD_TRANSFORMS=true  # Set to 'true' to upload transform scripts from transform/ directory to S3
+# You can set TRANSFORM_S3_PREFIX_VALUE manually if scripts already exist in S3 and you want to skip upload.
+
 # Optional (AWS CLI)
 export AWS_PROFILE=your-profile
 export AWS_REGION=your-region
@@ -60,6 +65,11 @@ export REPAIR_VALUE=true
 
 # Or set multiple counties at once using JSON object of name->boolean
 export REPAIR_COUNTIES_JSON='{"Palm Beach": true, "Escambia": false}'
+
+# Optional (GitHub integration for transform scripts sync)
+export GITHUB_SECRET_NAME=github-token  # Name for the secret in AWS Secrets Manager
+export GITHUB_USERNAME=your-github-username  # Your GitHub username
+export GITHUB_TOKEN=ghp_xxxxxxxxxxxx  # Your GitHub personal access token (requires 'repo' scope)
 ```
 
 #### Option B: Keystore Mode (using encrypted private key)
@@ -81,6 +91,11 @@ export WORKFLOW_QUEUE_NAME=elephant-workflow-queue
 export WORKFLOW_STARTER_RESERVED_CONCURRENCY=100
 export WORKFLOW_STATE_MACHINE_NAME=ElephantExpressWorkflow
 
+# Optional (Transform scripts upload)
+# Default: false (transform scripts are NOT uploaded unless explicitly enabled)
+export UPLOAD_TRANSFORMS=true  # Set to 'true' to upload transform scripts from transform/ directory to S3
+# You can set TRANSFORM_S3_PREFIX_VALUE manually if scripts already exist in S3 and you want to skip upload.
+
 # Optional (AWS CLI)
 export AWS_PROFILE=your-profile
 export AWS_REGION=your-region
@@ -97,6 +112,11 @@ export ELEPHANT_PREPARE_CONTINUE_BUTTON=""  # CSS selector for continue button
 # Optional (Browser flow template - both must be provided together)
 export ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE=""    # Browser flow template name
 export ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS=""  # Browser flow parameters as JSON string
+
+# Optional (GitHub integration for transform scripts sync)
+export GITHUB_SECRET_NAME=github-token  # Name for the secret in AWS Secrets Manager
+export GITHUB_USERNAME=your-github-username  # Your GitHub username
+export GITHUB_TOKEN=ghp_xxxxxxxxxxxx  # Your GitHub personal access token (requires 'repo' scope)
 ```
 
 **Important Notes for Keystore Mode:**
@@ -423,18 +443,89 @@ You can create a keystore file using the Elephant CLI tool. For detailed instruc
 
 ### Update transform scripts
 
-Transforms are stored as raw files under `transform/<county>/`. Each county folder can contain any structure you need (for example `transform/brevard/scripts/*.js`). During deployment the scripts are zipped and uploaded automatically; you no longer manage zip files by hand.
+Transforms are stored as raw files under `transform/<county>/`. Each county folder can contain any structure you need (for example `transform/brevard/scripts/*.js`).
+
+**Important:** By default, transform scripts are **NOT** uploaded during deployment (`UPLOAD_TRANSFORMS` defaults to `false`). You must explicitly set `export UPLOAD_TRANSFORMS=true` to enable automatic uploads.
 
 To ship new or updated transform code:
 
 1. Edit the files in the appropriate county directory under `transform/`.
-2. Run `./scripts/deploy-infra.sh`.
+2. Set `export UPLOAD_TRANSFORMS=true` before running the deploy script.
+3. Run `./scripts/deploy-infra.sh`.
    - The script rebuilds `workflow/lambdas/post/transforms/<county>.zip` for each county.
    - It synchronizes those archives (plus a manifest) to the environment bucket under `transforms/` and updates the `TransformS3Prefix` parameter used by the post Lambda.
-3. On first invocation per county, the post Lambda downloads `s3://<prefix>/<county>.zip`, caches it in `/tmp/county-transforms/<county>.zip`, verifies the MD5/ETag, and reuses the cache until the remote ETag changes.
-4. Subsequent deployments automatically refresh S3 and the Lambda detects updated archives by comparing ETags.
+4. On first invocation per county, the post Lambda downloads `s3://<prefix>/<county>.zip`, caches it in `/tmp/county-transforms/<county>.zip`, verifies the MD5/ETag, and reuses the cache until the remote ETag changes.
+5. Subsequent deployments automatically refresh S3 and the Lambda detects updated archives by comparing ETags.
+
+**Alternative:** If you don't want to upload scripts during deployment (or scripts already exist in S3), you can skip setting `UPLOAD_TRANSFORMS` and manually set `TRANSFORM_S3_PREFIX_VALUE` to point to the existing S3 location.
 
 Tip: during local testing, remove `/tmp/county-transforms` to force a fresh download.
+
+### GitHub Integration for Transform Scripts
+
+The system includes automatic GitHub integration that syncs transform scripts to the upstream repository `https://github.com/elephant-xyz/Counties-trasform-scripts` and creates pull requests.
+
+**How it works:**
+
+1. When transform scripts are uploaded to S3 (via `./scripts/deploy-infra.sh`), they are automatically synced to GitHub
+2. The Lambda function forks the repository if needed (on first run)
+3. Scripts are committed to a branch named `auto-update/<county>` (e.g., `auto-update/brevard`)
+4. A pull request is created (or updated if one already exists) for each county
+
+**Setup:**
+
+1. **Create a GitHub Personal Access Token:**
+   - Go to GitHub Settings → Developer settings → Personal access tokens → Tokens (classic)
+   - Create a new token with `repo` scope (full control of private repositories)
+   - Copy the token
+
+2. **Set environment variables:**
+
+```bash
+# Required for GitHub integration
+export GITHUB_SECRET_NAME=github-token  # Name for the secret in AWS Secrets Manager
+export GITHUB_USERNAME=your-github-username  # Your GitHub username
+export GITHUB_TOKEN=ghp_xxxxxxxxxxxx  # Your GitHub personal access token
+
+# Deploy
+./scripts/deploy-infra.sh
+```
+
+**What happens:**
+
+- The deploy script creates/updates the GitHub token in AWS Secrets Manager
+- The Lambda function is configured with S3 event notifications for `transforms/*.zip` files
+- When a transform zip is uploaded, the Lambda:
+  - Downloads and extracts the zip file
+  - Normalizes the county name to match the GitHub repository structure
+  - Creates or updates the branch `auto-update/<county>`
+  - Commits scripts to `<county>/scripts/` directory
+  - Creates or updates a pull request to the upstream repository
+
+**Branch and PR Strategy:**
+
+- **One PR per county**: Each county gets its own branch and PR
+- **Branch naming**: `auto-update/<county>` (e.g., `auto-update/brevard`, `auto-update/palm-beach`)
+- **PR title**: `Update <county> transform scripts`
+- **Automatic updates**: If a PR already exists for a county, subsequent uploads update the same PR
+
+**County Name Normalization:**
+
+The system automatically queries the GitHub repository to match county names with actual directory structures. This handles variations like:
+
+- Spaces in county names (e.g., "Palm Beach", "Santa Rosa")
+- Case differences
+- Directory naming conventions
+
+**Security:**
+
+- GitHub token is stored securely in AWS Secrets Manager
+- Lambda function has minimal permissions (S3 read-only for transforms, Secrets Manager read-only)
+- Token requires `repo` scope for full repository access
+
+**Disabling GitHub Integration:**
+
+If you don't want to use GitHub integration, simply don't set the `GITHUB_SECRET_NAME`, `GITHUB_USERNAME`, or `GITHUB_TOKEN` environment variables. The Lambda function will not be created and S3 uploads will proceed normally.
 
 ### 3) Start the workflow
 
