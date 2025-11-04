@@ -66,9 +66,6 @@ export REPAIR_VALUE=true
 # Or set multiple counties at once using JSON object of name->boolean
 export REPAIR_COUNTIES_JSON='{"Palm Beach": true, "Escambia": false}'
 
-# Optional (GitHub integration for transform scripts sync)
-export GITHUB_SECRET_NAME=github-token  # Name for the secret in AWS Secrets Manager
-export GITHUB_USERNAME=your-github-username  # Your GitHub username
 export GITHUB_TOKEN=ghp_xxxxxxxxxxxx  # Your GitHub personal access token (requires 'repo' scope)
 ```
 
@@ -113,9 +110,6 @@ export ELEPHANT_PREPARE_CONTINUE_BUTTON=""  # CSS selector for continue button
 export ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE=""    # Browser flow template name
 export ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS=""  # Browser flow parameters as JSON string
 
-# Optional (GitHub integration for transform scripts sync)
-export GITHUB_SECRET_NAME=github-token  # Name for the secret in AWS Secrets Manager
-export GITHUB_USERNAME=your-github-username  # Your GitHub username
 export GITHUB_TOKEN=ghp_xxxxxxxxxxxx  # Your GitHub personal access token (requires 'repo' scope)
 ```
 
