@@ -490,7 +490,7 @@ export GITHUB_TOKEN=ghp_xxxxxxxxxxxx  # Your GitHub personal access token
 **Branch and PR Strategy:**
 
 - **One PR per county**: Each county gets its own branch and PR
-- **Branch naming**: `auto-update/<county>` (e.g., `auto-update/brevard`, `auto-update/palm beach`)
+- **Branch naming**: `auto-update/<county>` (e.g., `auto-update/brevard`, `auto-update/palm-beach`)
 - **PR title**: `Update <county> transform scripts`
 - **Automatic updates**: If a PR already exists for a county, subsequent uploads update the same PR
 
