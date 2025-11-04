@@ -236,6 +236,9 @@ async function invokeCodexForFix(
 The transform scripts are located at: ${scriptsPath}
 Sample input data is available at: ${inputsDir}
 You are working on the ${dataGroupName} data group.
+For the address object use unnormalized_address if that is what the source provides.
+If source has adress normalized, then use it.
+Make sure to understand corectlly how oneOf works in the JSON schema.
 
 Please analyze the errors and provide fixed versions of the scripts. Focus on fixing the error paths and messages mentioned above. Consider the input data structure when making fixes. To solve invalid URs issues remove it's generation from the scripts, it will be populated by the process. Return the complete fixed scripts with the same file names. Use elephant MCP to analyze the schema. Make sure to analyze verified scripts with it's examples as well`;
 
