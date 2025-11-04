@@ -172,7 +172,7 @@ async function csvToJson(csvPath) {
 function parseS3Uri(uri) {
   const match = /^s3:\/\/([^/]+)\/(.*)$/.exec(uri);
   if (!match) {
-    throw new Error("Bad S3 URI");
+    throw new Error(`Bad S3 URI: ${uri}`);
   }
   const bucket = match[1];
   const key = match[2];

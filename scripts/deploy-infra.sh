@@ -417,6 +417,14 @@ deploy_codebuild_stack() {
     return 0
   fi
 
+  local default_dlq_url
+  default_dlq_url=$(get_output "MwaaDeadLetterQueueUrl")
+  if [[ -z "$default_dlq_url" ]]; then
+    CODEBUILD_DEPLOY_PENDING=1
+    info "Delaying CodeBuild stack deployment until MwaaDeadLetterQueueUrl output is available."
+    return 0
+  fi
+
   local transform_s3_prefix="${TRANSFORM_S3_PREFIX_VALUE:-}"
   if [[ -z "$transform_s3_prefix" ]]; then
     # Try to construct it from bucket and prefix if TRANSFORM_S3_PREFIX_VALUE isn't set
@@ -452,7 +460,8 @@ deploy_codebuild_stack() {
       TransformS3Prefix="$transform_s3_prefix" \
       PostProcessorFunctionName="$post_processor_function_name" \
       OpenAiApiKey="$openai_api_key" \
-      TransactionsSqsQueueUrl="$transactions_sqs_queue_url"
+      TransactionsSqsQueueUrl="$transactions_sqs_queue_url" \
+      DefaultDlqUrl="$default_dlq_url"
 
   CODEBUILD_DEPLOY_PENDING=0
 }
