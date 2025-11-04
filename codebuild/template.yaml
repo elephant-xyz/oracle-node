@@ -1,0 +1,312 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: CodeBuild project that prepares runtime bundles and executes the Node.js entry point (with enhanced error handling).
+
+Parameters:
+  EnvironmentName:
+    Description: An environment name that is prefixed to resource names
+    Type: String
+    Default: MWAAEnvironment
+
+  RuntimeArtifactsBucket:
+    Description: Name of the S3 bucket containing runtime ZIP archives consumed by the prepare CodeBuild job
+    Type: String
+
+  RuntimeArtifactsPrefix:
+    Description: Optional prefix within the runtime artifacts bucket that filters the ZIP archives (omit leading slash)
+    Type: String
+    Default: ""
+
+  RuntimeEntryPoint:
+    Description: Relative path to the Node.js entry point that the CodeBuild job executes after extraction
+    Type: String
+    Default: index.js
+
+  ErrorsTableName:
+    Description: Name of the DynamoDB table storing execution errors
+    Type: String
+
+  TransformS3Prefix:
+    Description: S3 URI prefix containing county transform archives
+    Type: String
+  PostProcessorFunctionName:
+    Description: Name or ARN of the post-processing Lambda function
+    Type: String
+  TransactionsSqsQueueUrl:
+    Description: URL of the Transactions SQS Queue
+    Type: String
+  OpenAiApiKey:
+    Description: OpenAI API Key
+    Type: String
+    NoEcho: true
+  DefaultDlqUrl:
+    Description: Default Dead Letter Queue URL
+    Type: String
+
+Conditions:
+  HasRuntimeArtifactsPrefix: !Not [!Equals [!Ref RuntimeArtifactsPrefix, ""]]
+
+Resources:
+  PrepareRuntimeBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: PrepareRuntimeCodeBuildLogs
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${EnvironmentName}-prepare-runtime"
+                  - !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${EnvironmentName}-prepare-runtime:*"
+        - PolicyName: PrepareRuntimeCodeBuildS3
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                Resource: !If
+                  - HasRuntimeArtifactsPrefix
+                  - !Sub "arn:${AWS::Partition}:s3:::${RuntimeArtifactsBucket}/${RuntimeArtifactsPrefix}*"
+                  - !Sub "arn:${AWS::Partition}:s3:::${RuntimeArtifactsBucket}/*"
+              - Effect: Allow
+                Action:
+                  - s3:ListBucket
+                Resource: !Sub "arn:${AWS::Partition}:s3:::${RuntimeArtifactsBucket}"
+        - PolicyName: PrepareRuntimeCodeBuildDynamoDB
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:*
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${ErrorsTableName}"
+                  - !Sub "arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${ErrorsTableName}/index/*"
+        - PolicyName: PrepareRuntimeCodeBuildS3ReadWrite
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:GetObjectVersion
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:s3:::${RuntimeArtifactsBucket}/*"
+                  - "arn:aws:s3:::*/*"
+              - Effect: Allow
+                Action:
+                  - s3:ListBucket
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:s3:::${RuntimeArtifactsBucket}"
+                  - "arn:aws:s3:::*"
+        - PolicyName: PrepareRuntimeCodeBuildLambdaInvoke
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${PostProcessorFunctionName}"
+                  - !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${PostProcessorFunctionName}:*"
+        - PolicyName: PrepareRuntimeCodeBuildSQS
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sqs:SendMessage
+                  - sqs:GetQueueUrl
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:sqs:${AWS::Region}:${AWS::AccountId}:*"
+      Tags:
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  PrepareRuntimeCodeBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub "${EnvironmentName}-prepare-runtime"
+      Description: Downloads runtime ZIP archives, extracts them, and executes the Node.js entry point.
+      ServiceRole: !GetAtt PrepareRuntimeBuildRole.Arn
+      Artifacts:
+        Type: NO_ARTIFACTS
+      TimeoutInMinutes: 60
+      Environment:
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/amazonlinux2-aarch64-standard:3.0-25.03.03
+        Type: ARM_CONTAINER
+        EnvironmentVariables:
+          - Name: RUNTIME_ARTIFACTS_BUCKET
+            Type: PLAINTEXT
+            Value: !Ref RuntimeArtifactsBucket
+          - Name: RUNTIME_ARTIFACTS_PREFIX
+            Type: PLAINTEXT
+            Value: !Ref RuntimeArtifactsPrefix
+          - Name: RUNTIME_ENTRYPOINT
+            Type: PLAINTEXT
+            Value: !Ref RuntimeEntryPoint
+          - Name: ERRORS_TABLE_NAME
+            Type: PLAINTEXT
+            Value: !Ref ErrorsTableName
+          - Name: TRANSFORM_S3_PREFIX
+            Type: PLAINTEXT
+            Value: !Ref TransformS3Prefix
+          - Name: POST_PROCESSOR_FUNCTION_NAME
+            Type: PLAINTEXT
+            Value: !Ref PostProcessorFunctionName
+          - Name: TRANSACTIONS_SQS_QUEUE_URL
+            Type: PLAINTEXT
+            Value: !Ref TransactionsSqsQueueUrl
+          - Name: OPENAI_API_KEY
+            Type: PLAINTEXT
+            Value: !Ref OpenAiApiKey
+          - Name: DEFAULT_DLQ_URL
+            Type: PLAINTEXT
+            Value: !Ref DefaultDlqUrl
+      LogsConfig:
+        CloudWatchLogs:
+          GroupName: !Sub "/aws/codebuild/${EnvironmentName}-prepare-runtime"
+          Status: ENABLED
+      Source:
+        Type: NO_SOURCE
+        BuildSpec: |
+          version: 0.2
+
+          env:
+            shell: bash
+
+          phases:
+            install:
+              runtime-versions:
+                nodejs: 22
+              commands:
+                - npm install -g @openai/codex
+                - npm install -g cheerio
+                - printenv OPENAI_API_KEY | codex login --with-api-key
+                - mkdir -p ~/.codex
+                - |
+                  cat >> ~/.codex/config.toml << EOF
+                  [mcp_servers.elephant]
+                  command = "npx"
+                  args = ["-y", "@elephant-xyz/mcp"]
+                  startup_timeout_sec = 900
+
+                  [mcp_servers.elephant.env]
+                  OPENAI_API_KEY = "$OPENAI_API_KEY"
+                  EOF
+                - npm install -g @elephant-xyz/mcp
+                - echo "Node.js runtime set to version 22."
+            pre_build:
+              commands:
+                - set -euo pipefail
+                - export RUNTIME_DOWNLOAD_DIR="/tmp/runtime-archives"
+                - export RUNTIME_WORK_DIR="/tmp/runtime-workdir"
+                - mkdir -p "${RUNTIME_DOWNLOAD_DIR}" "${RUNTIME_WORK_DIR}"
+                - >
+                  if [[ -z "${RUNTIME_ARTIFACTS_BUCKET:-}" ]]; then
+                    echo "RUNTIME_ARTIFACTS_BUCKET environment variable is required." >&2
+                    exit 1
+                  fi
+                - >
+                  S3_SOURCE="s3://${RUNTIME_ARTIFACTS_BUCKET}"
+                - >
+                  if [[ -n "${RUNTIME_ARTIFACTS_PREFIX:-}" ]]; then
+                    S3_SOURCE="${S3_SOURCE%/}/${RUNTIME_ARTIFACTS_PREFIX}"
+                  fi
+                - aws s3 cp "${S3_SOURCE}" "${RUNTIME_DOWNLOAD_DIR}" --recursive --exclude "*" --include "*.zip"
+                - >
+                  if ! compgen -G "${RUNTIME_DOWNLOAD_DIR}/*.zip" > /dev/null; then
+                    echo "No runtime zip archives found at ${S3_SOURCE}" >&2
+                    exit 1
+                  fi
+                - |
+                  for archive in "${RUNTIME_DOWNLOAD_DIR}"/*.zip; do
+                    echo "Unpacking ${archive}..."
+                    unzip -qo "${archive}" -d "${RUNTIME_WORK_DIR}"
+                  done
+                - |
+                  echo $(ls -1 "${RUNTIME_WORK_DIR}")
+                  cd "${RUNTIME_WORK_DIR}" && npm install
+            build:
+              commands:
+                - cd "${RUNTIME_WORK_DIR}"
+                - >
+                  if [[ -z "${RUNTIME_ENTRYPOINT:-}" ]]; then
+                    echo "RUNTIME_ENTRYPOINT environment variable is required." >&2
+                    exit 1
+                  fi
+                - >
+                  if [[ ! -f "${RUNTIME_ENTRYPOINT}" ]]; then
+                    echo "Entry point ${RUNTIME_ENTRYPOINT} not found after extraction." >&2
+                    exit 1
+                  fi
+                - node "${RUNTIME_ENTRYPOINT}"
+      Tags:
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  CodeBuildSchedulerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${EnvironmentName}-codebuild-scheduler"
+      Runtime: nodejs22.x
+      Architectures:
+        - arm64
+      Handler: index.handler
+      CodeUri: lambdas/codebuild-scheduler
+      Timeout: 60
+      MemorySize: 128
+      Environment:
+        Variables:
+          CODEBUILD_PROJECT_NAME: !Ref PrepareRuntimeCodeBuildProject
+      LoggingConfig:
+        LogFormat: JSON
+      Policies:
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - codebuild:StartBuild
+                - codebuild:ListBuildsForProject
+                - codebuild:BatchGetBuilds
+              Resource:
+                - !GetAtt PrepareRuntimeCodeBuildProject.Arn
+      Events:
+        ScheduledExecution:
+          Type: Schedule
+          Properties:
+            Schedule: rate(30 minutes)
+            Enabled: true
+      Tags:
+        Environment: !Ref EnvironmentName
+
+Outputs:
+  PrepareRuntimeCodeBuildProjectName:
+    Description: Name of the CodeBuild project that prepares runtime assets
+    Value: !Ref PrepareRuntimeCodeBuildProject
+  PrepareRuntimeCodeBuildProjectArn:
+    Description: ARN of the CodeBuild project that prepares runtime assets
+    Value: !GetAtt PrepareRuntimeCodeBuildProject.Arn
+  CodeBuildSchedulerFunctionName:
+    Description: Name of the Lambda function that schedules CodeBuild executions
+    Value: !Ref CodeBuildSchedulerFunction
+  CodeBuildSchedulerFunctionArn:
+    Description: ARN of the Lambda function that schedules CodeBuild executions
+    Value: !GetAtt CodeBuildSchedulerFunction.Arn

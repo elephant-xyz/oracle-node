@@ -1,8 +1,8 @@
 {
-  "name": "workflow-post-lambda",
+  "name": "workflow-error-resolver-lambda",
   "version": "1.0.0",
   "type": "module",
-  "description": "Lambda function for post-processing and submission",
+  "description": "Lambda function for resolving execution errors and restarting executions",
   "main": "index.mjs",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
@@ -10,10 +10,8 @@
   },
   "dependencies": {
     "@aws-sdk/client-dynamodb": "^3.879.0",
-    "@aws-sdk/client-s3": "^3.879.0",
-    "@elephant-xyz/cli": "^1.54.1",
-    "@aws-sdk/lib-dynamodb": "^3.879.0",
-    "csv-parse": "^5.6.0"
+    "@aws-sdk/client-lambda": "^3.879.0",
+    "@aws-sdk/lib-dynamodb": "^3.879.0"
   },
   "devDependencies": {
     "@types/node": "^20.16.3"

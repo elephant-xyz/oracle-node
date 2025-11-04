@@ -10,6 +10,7 @@ err()  { echo -e "${RED}[ERROR]${NC} $*"; }
 
 # Config with sane defaults
 STACK_NAME="${STACK_NAME:-elephant-oracle-node}"
+CODEBUILD_STACK_NAME="${CODEBUILD_STACK_NAME:-elephant-oracle-codebuild}"
 SAM_TEMPLATE="prepare/template.yaml"
 BUILT_TEMPLATE=".aws-sam/build/template.yaml"
 STARTUP_SCRIPT="infra/startup.sh"
@@ -22,9 +23,19 @@ TRANSFORMS_SRC_DIR="transform"
 TRANSFORMS_TARGET_DIR="${WORKFLOW_DIR}/lambdas/post/transforms"
 TRANSFORM_MANIFEST_FILE="${TRANSFORMS_TARGET_DIR}/manifest.json"
 TRANSFORM_PREFIX_KEY="${TRANSFORM_PREFIX_KEY:-transforms}"
+UPLOAD_TRANSFORMS="${UPLOAD_TRANSFORMS:-false}"
 TRANSFORMS_UPLOAD_PENDING=0
 BROWSER_FLOWS_UPLOAD_PENDING=0
 MULTI_REQUEST_FLOWS_UPLOAD_PENDING=0
+ENVIRONMENT_NAME="${ENVIRONMENT_NAME:-MWAAEnvironment}"
+
+CODEBUILD_RUNTIME_MODULE_DIR="codebuild/runtime-module"
+CODEBUILD_RUNTIME_ARCHIVE_NAME="${CODEBUILD_RUNTIME_ARCHIVE_NAME:-runtime-module.zip}"
+CODEBUILD_RUNTIME_PREFIX="${CODEBUILD_RUNTIME_PREFIX:-codebuild/runtime}"
+CODEBUILD_RUNTIME_UPLOAD_PENDING=0
+CODEBUILD_RUNTIME_ENTRYPOINT="${CODEBUILD_RUNTIME_ENTRYPOINT:-index.js}"
+CODEBUILD_TEMPLATE="codebuild/template.yaml"
+CODEBUILD_DEPLOY_PENDING=0
 
 mkdir -p "$BUILD_DIR"
 
@@ -40,6 +51,7 @@ check_prereqs() {
   command -v git >/dev/null || { err "git not found"; exit 1; }
   command -v npm >/dev/null || { err "npm not found"; exit 1; }
   [[ -f "$SAM_TEMPLATE" && -f "$STARTUP_SCRIPT" && -f "$PYPROJECT_FILE" ]] || { err "Missing required files"; exit 1; }
+  [[ -f "$CODEBUILD_TEMPLATE" ]] || { err "Missing CodeBuild template: $CODEBUILD_TEMPLATE"; exit 1; }
 }
 
 
@@ -186,11 +198,21 @@ compute_param_overrides() {
   # Updater schedule rate
   [[ -n "${UPDATER_SCHEDULE_RATE:-}" ]] && parts+=("UpdaterScheduleRate=\"$UPDATER_SCHEDULE_RATE\"")
 
+  # GitHub integration parameter (required)
+  : "${GITHUB_TOKEN?Set GITHUB_TOKEN to enable GitHub integration}"
+  parts+=("GitHubToken=\"${GITHUB_TOKEN}\"")
+
   PARAM_OVERRIDES="${parts[*]}"
 }
 
 
 upload_transforms_to_s3() {
+  # Check if upload flag is set
+  if [[ "$UPLOAD_TRANSFORMS" != "true" ]]; then
+    info "UPLOAD_TRANSFORMS flag not set (default: false), skipping transform scripts upload"
+    return 0
+  fi
+
   local bucket prefix
   bucket=$(get_bucket)
   if [[ -z "$bucket" ]]; then
@@ -288,6 +310,162 @@ upload_multi_request_flows_to_s3() {
   info "Multi-request flows uploaded to: $s3_prefix"
 }
 
+package_and_upload_codebuild_runtime() {
+  if [[ ! -d "$CODEBUILD_RUNTIME_MODULE_DIR" ]]; then
+    warn "CodeBuild runtime module directory ($CODEBUILD_RUNTIME_MODULE_DIR) not found, skipping upload."
+    return 0
+  fi
+
+  local bucket="${CODEBUILD_RUNTIME_BUCKET:-}"
+  if [[ -z "$bucket" ]]; then
+    bucket=$(get_bucket)
+  fi
+
+  if [[ -z "$bucket" ]]; then
+    CODEBUILD_RUNTIME_UPLOAD_PENDING=1
+    info "Delaying CodeBuild runtime module upload until environment bucket exists."
+    return 0
+  fi
+
+  local prefix="${CODEBUILD_RUNTIME_PREFIX%/}"
+  prefix="${prefix#/}"
+  local dist_dir="codebuild/dist"
+  mkdir -p "$dist_dir"
+
+  local archive_path="${dist_dir}/${CODEBUILD_RUNTIME_ARCHIVE_NAME}"
+  rm -f "$archive_path"
+
+  info "Installing CodeBuild runtime module production dependencies"
+  (
+    cd "$CODEBUILD_RUNTIME_MODULE_DIR"
+    npm ci --omit=dev >/dev/null
+  ) || {
+    err "Failed to install CodeBuild runtime module dependencies."
+    exit 1
+  }
+
+  (
+    cd "$CODEBUILD_RUNTIME_MODULE_DIR"
+    zip -r "../dist/${CODEBUILD_RUNTIME_ARCHIVE_NAME}" . >/dev/null
+  ) || {
+    err "Failed to package CodeBuild runtime module."
+    exit 1
+  }
+
+  local s3_key
+  if [[ -n "$prefix" ]]; then
+    s3_key="${prefix}/${CODEBUILD_RUNTIME_ARCHIVE_NAME}"
+  else
+    s3_key="${CODEBUILD_RUNTIME_ARCHIVE_NAME}"
+  fi
+
+  aws s3 cp "$archive_path" "s3://${bucket}/${s3_key}" >/dev/null || {
+    err "Failed to upload CodeBuild runtime module to s3://${bucket}/${s3_key}"
+    exit 1
+  }
+  rm -rf "$dist_dir"
+
+  CODEBUILD_RUNTIME_UPLOAD_PENDING=0
+  info "Uploaded CodeBuild runtime module to s3://${bucket}/${s3_key}"
+}
+
+deploy_codebuild_stack() {
+
+  local openai_api_key="${OPENAI_API_KEY:-}"
+  if [[ -z "$openai_api_key" ]]; then
+    err "OPENAI_API_KEY is required"
+    exit 1
+  fi
+  if [[ ! -f "$CODEBUILD_TEMPLATE" ]]; then
+    warn "CodeBuild template not found at $CODEBUILD_TEMPLATE, skipping deployment."
+    return 0
+  fi
+
+  local bucket="${CODEBUILD_RUNTIME_BUCKET:-}"
+  if [[ -z "$bucket" ]]; then
+    bucket=$(get_bucket)
+  fi
+
+  if [[ -z "$bucket" ]]; then
+    CODEBUILD_DEPLOY_PENDING=1
+    info "Delaying CodeBuild stack deployment until environment bucket exists."
+    return 0
+  fi
+
+  # Get required stack outputs
+  local errors_table_name
+  errors_table_name=$(get_output "ErrorsTableName")
+  if [[ -z "$errors_table_name" ]]; then
+    CODEBUILD_DEPLOY_PENDING=1
+    info "Delaying CodeBuild stack deployment until ErrorsTableName output is available."
+    return 0
+  fi
+
+  local transactions_sqs_queue_url
+  transactions_sqs_queue_url=$(get_output "TransactionsSqsQueueUrl")
+  if [[ -z "$transactions_sqs_queue_url" ]]; then
+    CODEBUILD_DEPLOY_PENDING=1
+    info "Delaying CodeBuild stack deployment until TransactionsSqsQueueUrl output is available."
+    return 0
+  fi
+
+  local post_processor_function_name
+  post_processor_function_name=$(get_output "WorkflowPostProcessorFunctionName")
+  if [[ -z "$post_processor_function_name" ]]; then
+    CODEBUILD_DEPLOY_PENDING=1
+    info "Delaying CodeBuild stack deployment until WorkflowPostProcessorFunctionName output is available."
+    return 0
+  fi
+
+  local default_dlq_url
+  default_dlq_url=$(get_output "MwaaDeadLetterQueueUrl")
+  if [[ -z "$default_dlq_url" ]]; then
+    CODEBUILD_DEPLOY_PENDING=1
+    info "Delaying CodeBuild stack deployment until MwaaDeadLetterQueueUrl output is available."
+    return 0
+  fi
+
+  local transform_s3_prefix="${TRANSFORM_S3_PREFIX_VALUE:-}"
+  if [[ -z "$transform_s3_prefix" ]]; then
+    # Try to construct it from bucket and prefix if TRANSFORM_S3_PREFIX_VALUE isn't set
+    local transform_prefix_key="${TRANSFORM_PREFIX_KEY%/}"
+    transform_prefix_key="${transform_prefix_key#/}"
+    if [[ -n "$bucket" && -n "$transform_prefix_key" ]]; then
+      transform_s3_prefix="s3://$bucket/$transform_prefix_key"
+    else
+      CODEBUILD_DEPLOY_PENDING=1
+      info "Delaying CodeBuild stack deployment until TransformS3Prefix value is available."
+      return 0
+    fi
+  fi
+
+  local prefix="${CODEBUILD_RUNTIME_PREFIX%/}"
+  prefix="${prefix#/}"
+  local entrypoint="$CODEBUILD_RUNTIME_ENTRYPOINT"
+
+  info "Deploying CodeBuild stack ($CODEBUILD_STACK_NAME) using artifacts bucket ${bucket}/${prefix}"
+  sam deploy \
+    --template-file "$CODEBUILD_TEMPLATE" \
+    --stack-name "$CODEBUILD_STACK_NAME" \
+    --capabilities CAPABILITY_IAM \
+    --resolve-s3 \
+    --no-confirm-changeset \
+    --no-fail-on-empty-changeset \
+    --parameter-overrides \
+      EnvironmentName="$ENVIRONMENT_NAME" \
+      RuntimeArtifactsBucket="$bucket" \
+      RuntimeArtifactsPrefix="$prefix" \
+      RuntimeEntryPoint="$entrypoint" \
+      ErrorsTableName="$errors_table_name" \
+      TransformS3Prefix="$transform_s3_prefix" \
+      PostProcessorFunctionName="$post_processor_function_name" \
+      OpenAiApiKey="$openai_api_key" \
+      TransactionsSqsQueueUrl="$transactions_sqs_queue_url" \
+      DefaultDlqUrl="$default_dlq_url"
+
+  CODEBUILD_DEPLOY_PENDING=0
+}
+
 add_transform_prefix_override() {
   if [[ -z "${TRANSFORM_S3_PREFIX_VALUE:-}" ]]; then
     err "Transform S3 prefix value not set; aborting."
@@ -330,6 +508,36 @@ populate_proxy_rotation_table() {
   }
 }
 
+# Create or update GitHub token in AWS Secrets Manager
+setup_github_secret() {
+  if [[ -z "${GITHUB_SECRET_NAME:-}" || -z "${GITHUB_TOKEN:-}" ]]; then
+    return 0
+  fi
+
+  info "Setting up GitHub token in Secrets Manager..."
+  
+  # Check if secret exists
+  if aws secretsmanager describe-secret --secret-id "$GITHUB_SECRET_NAME" >/dev/null 2>&1; then
+    info "Updating existing secret: $GITHUB_SECRET_NAME"
+    aws secretsmanager update-secret \
+      --secret-id "$GITHUB_SECRET_NAME" \
+      --secret-string "{\"token\":\"$GITHUB_TOKEN\"}" >/dev/null || {
+      err "Failed to update GitHub secret"
+      exit 1
+    }
+  else
+    info "Creating new secret: $GITHUB_SECRET_NAME"
+    aws secretsmanager create-secret \
+      --name "$GITHUB_SECRET_NAME" \
+      --secret-string "{\"token\":\"$GITHUB_TOKEN\"}" \
+      --description "GitHub personal access token for repository sync" >/dev/null || {
+      err "Failed to create GitHub secret"
+      exit 1
+    }
+  fi
+  
+  info "GitHub secret configured successfully"
+}
 
 # Write per-county repair flag(s) to SSM Parameter Store
 write_repair_flags_to_ssm() {
@@ -452,32 +660,82 @@ main() {
   check_prereqs
   ensure_lambda_concurrency_quota
 
+  # Setup GitHub secret if GitHub integration is enabled
+  setup_github_secret
+
   compute_param_overrides
-  upload_transforms_to_s3
+  
+  # Upload transforms only if flag is set
+  if [[ "$UPLOAD_TRANSFORMS" == "true" ]]; then
+    upload_transforms_to_s3
+  fi
+  
   upload_browser_flows_to_s3
   upload_multi_request_flows_to_s3
+  package_and_upload_codebuild_runtime
+  deploy_codebuild_stack
 
-  if (( TRANSFORMS_UPLOAD_PENDING == 0 )); then
+  # Handle TransformS3Prefix parameter
+  if [[ "$UPLOAD_TRANSFORMS" == "true" ]]; then
+    # Upload was attempted - handle pending or completed state
+    if (( TRANSFORMS_UPLOAD_PENDING == 0 )); then
+      add_transform_prefix_override
+    else
+      info "Delaying transform upload until stack bucket exists."
+      # Will be set after stack creation in pending upload handler
+      TRANSFORMS_UPLOAD_PENDING=1
+    fi
+  elif [[ -n "${TRANSFORM_S3_PREFIX_VALUE:-}" ]]; then
+    # Upload flag not set, but manual prefix value provided
     add_transform_prefix_override
   else
-    info "Delaying transform upload until stack bucket exists."
-    # Add placeholder value for initial deployment
-    if [[ -z "${PARAM_OVERRIDES:-}" ]]; then
-      PARAM_OVERRIDES="TransformS3Prefix=\"pending\""
+    # No upload and no manual prefix - construct valid S3 URI to default location
+    local bucket=$(get_bucket)
+    if [[ -n "$bucket" ]]; then
+      local prefix="${TRANSFORM_PREFIX_KEY%/}"
+      TRANSFORM_S3_PREFIX_VALUE="s3://$bucket/$prefix"
+      info "Using existing transforms location: $TRANSFORM_S3_PREFIX_VALUE"
+      add_transform_prefix_override
     else
-      PARAM_OVERRIDES+=" TransformS3Prefix=\"pending\""
+      # First deployment - will be set after stack is created
+      info "Transform scripts upload skipped, will use default location after stack creation"
     fi
   fi
 
   sam_build
   sam_deploy
 
-  if (( TRANSFORMS_UPLOAD_PENDING == 1 )); then
+  # Handle pending scenarios after stack creation
+  local need_redeploy=false
+  
+  # Handle transform upload/configuration if pending
+  if [[ "$UPLOAD_TRANSFORMS" == "true" ]] && (( TRANSFORMS_UPLOAD_PENDING == 1 )); then
     upload_transforms_to_s3
     # Recompute all parameters with the actual transform prefix
     compute_param_overrides
     add_transform_prefix_override
+    need_redeploy=true
+  elif [[ -z "${TRANSFORM_S3_PREFIX_VALUE:-}" ]]; then
+    # No upload flag and no manual prefix - set default location now that bucket exists
+    local bucket=$(get_bucket)
+    if [[ -n "$bucket" ]]; then
+      local prefix="${TRANSFORM_PREFIX_KEY%/}"
+      TRANSFORM_S3_PREFIX_VALUE="s3://$bucket/$prefix"
+      info "Setting default transforms location: $TRANSFORM_S3_PREFIX_VALUE"
+      compute_param_overrides
+      add_transform_prefix_override
+      need_redeploy=true
+    fi
+  fi
+  
+  # Redeploy if any pending items were resolved
+  if [[ "$need_redeploy" == true ]]; then
     sam_deploy
+  fi
+
+  if (( CODEBUILD_RUNTIME_UPLOAD_PENDING == 1 )); then
+    package_and_upload_codebuild_runtime
+    deploy_codebuild_stack
   fi
 
   # Upload browser flows if pending
@@ -500,6 +758,10 @@ main() {
 
   # Write per-county repair flags to SSM if provided
   write_repair_flags_to_ssm
+
+  if (( CODEBUILD_DEPLOY_PENDING == 1 )); then
+    deploy_codebuild_stack
+  fi
 
   bucket=$(get_bucket)
   echo

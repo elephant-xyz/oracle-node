@@ -1,0 +1,13 @@
+{
+  "name": "codebuild-scheduler",
+  "version": "1.0.0",
+  "description": "Lambda function to schedule CodeBuild executions",
+  "type": "module",
+  "main": "index.mjs",
+  "dependencies": {
+    "@aws-sdk/client-codebuild": "^3.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
