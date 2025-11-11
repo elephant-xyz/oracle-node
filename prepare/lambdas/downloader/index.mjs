@@ -934,7 +934,7 @@ export const handler = async (event) => {
     try {
       const inputZipReader = new AdmZip(inputZip);
       const inputCsvEntry = inputZipReader.getEntry("input.csv");
-      
+
       if (inputCsvEntry) {
         const outputZipWriter = new AdmZip(outputZip);
         outputZipWriter.addFile("input.csv", inputCsvEntry.getData());
@@ -944,7 +944,9 @@ export const handler = async (event) => {
         console.log("ℹ️ No input.csv found in input zip, skipping");
       }
     } catch (csvError) {
-      console.warn(`⚠️ Failed to add input.csv to output: ${csvError instanceof Error ? csvError.message : String(csvError)}`);
+      console.warn(
+        `⚠️ Failed to add input.csv to output: ${csvError instanceof Error ? csvError.message : String(csvError)}`,
+      );
       // Don't fail the entire process if CSV addition fails
     }
 
