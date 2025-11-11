@@ -181,6 +181,8 @@ export const handler = async (event) => {
     const outZip = new AdmZip();
     outZip.addLocalFile(addr, "", "unnormalized_address.json");
     outZip.addLocalFile(seed, "", "property_seed.json");
+    // Add original CSV to county prep input so it's available downstream
+    outZip.addLocalFile(csvPath, "", "input.csv");
     outZip.writeZip(countyPrepZip);
     const countyPrepKeyFull = `${runPrefix.replace(/^s3:\/\//, "")}/county_prep/input.zip`;
     const countyBody = await fs.readFile(countyPrepZip);
