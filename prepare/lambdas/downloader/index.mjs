@@ -928,6 +928,28 @@ export const handler = async (event) => {
       throw enhancedError;
     }
 
+    // Add input.csv to the output zip if it exists in the input zip
+    // This ensures input.csv is available downstream in the post step
+    console.log("📝 Adding input.csv to output zip...");
+    try {
+      const inputZipReader = new AdmZip(inputZip);
+      const inputCsvEntry = inputZipReader.getEntry("input.csv");
+
+      if (inputCsvEntry) {
+        const outputZipWriter = new AdmZip(outputZip);
+        outputZipWriter.addFile("input.csv", inputCsvEntry.getData());
+        await fs.writeFile(outputZip, outputZipWriter.toBuffer());
+        console.log("✅ Added input.csv to output zip");
+      } else {
+        console.log("ℹ️ No input.csv found in input zip, skipping");
+      }
+    } catch (csvError) {
+      console.warn(
+        `⚠️ Failed to add input.csv to output: ${csvError instanceof Error ? csvError.message : String(csvError)}`,
+      );
+      // Don't fail the entire process if CSV addition fails
+    }
+
     // Check output file size
     const outputStats = await fs.stat(outputZip);
     console.log(`📊 Output file size: ${outputStats.size} bytes`);
