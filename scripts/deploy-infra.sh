@@ -25,6 +25,7 @@ TRANSFORM_PREFIX_KEY="${TRANSFORM_PREFIX_KEY:-transforms}"
 TRANSFORMS_UPLOAD_PENDING=0
 BROWSER_FLOWS_UPLOAD_PENDING=0
 MULTI_REQUEST_FLOWS_UPLOAD_PENDING=0
+PROPERTY_IMPROVEMENT_UPLOAD_PENDING=0
 
 mkdir -p "$BUILD_DIR"
 
@@ -259,6 +260,62 @@ upload_browser_flows_to_s3() {
   info "Browser flows uploaded to: $s3_prefix"
 }
 
+upload_property_improvement_transforms_to_s3() {
+  local property_improvement_dir="property-improvement"
+
+  # Check if property-improvement directory exists
+  if [[ ! -d "$property_improvement_dir" ]]; then
+    info "No property-improvement directory found, skipping property improvement transforms upload"
+    return 0
+  fi
+
+  local bucket
+  bucket=$(get_bucket)
+  if [[ -z "$bucket" ]]; then
+    # Bucket doesn't exist yet (first deploy). Will be uploaded after stack creation.
+    PROPERTY_IMPROVEMENT_UPLOAD_PENDING=1
+    return 0
+  fi
+
+  local s3_prefix="s3://$bucket/property-improvement"
+  info "Zipping and syncing property improvement transforms to $s3_prefix"
+
+  # Create temp directory
+  local temp_dir=$(mktemp -d)
+  trap "rm -rf '$temp_dir'" EXIT
+
+  # List directories inside property-improvement directory and zip each one's scripts folder
+  for county_dir in "$property_improvement_dir"/*/; do
+    if [[ -d "$county_dir" ]]; then
+      local county_name=$(basename "$county_dir")
+      local scripts_dir="${county_dir}scripts"
+      
+      if [[ -d "$scripts_dir" ]]; then
+        info "Zipping property improvement scripts for $county_name"
+        
+        # Create county directory in temp
+        mkdir -p "$temp_dir/$county_name"
+        
+        # Zip the scripts directory contents (NOT the scripts/ folder itself)
+        (cd "$scripts_dir" && zip -r "$temp_dir/$county_name/scripts.zip" .) || {
+          err "Failed to zip scripts for $county_name"
+          return 1
+        }
+      else
+        warn "No scripts directory found for $county_name, skipping"
+      fi
+    fi
+  done
+
+  # Sync temp directory to S3
+  aws s3 sync "$temp_dir" "$s3_prefix" --delete || {
+    err "Failed to sync property improvement transforms to $s3_prefix"
+    return 1
+  }
+
+  info "Property improvement transforms uploaded to: $s3_prefix"
+}
+
 upload_multi_request_flows_to_s3() {
   local multi_request_flows_dir="multi-request-flows"
 
@@ -456,6 +513,7 @@ main() {
   upload_transforms_to_s3
   upload_browser_flows_to_s3
   upload_multi_request_flows_to_s3
+  upload_property_improvement_transforms_to_s3
 
   if (( TRANSFORMS_UPLOAD_PENDING == 0 )); then
     add_transform_prefix_override
@@ -488,6 +546,11 @@ main() {
   # Upload multi-request flows if pending
   if (( MULTI_REQUEST_FLOWS_UPLOAD_PENDING == 1 )); then
     upload_multi_request_flows_to_s3
+  fi
+
+  # Upload property improvement transforms if pending
+  if (( PROPERTY_IMPROVEMENT_UPLOAD_PENDING == 1 )); then
+    upload_property_improvement_transforms_to_s3
   fi
 
   handle_pending_keystore_upload

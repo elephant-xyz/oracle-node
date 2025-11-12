@@ -1,0 +1,41 @@
+{
+  "starts_at": "navigate_to_permit",
+  "states": {
+    "navigate_to_permit": {
+      "type": "open_page",
+      "input": {
+        "url": "https://egweb1.cityofbonitasprings.org/energov/selfservice#/permit/{{=it.request_identifier}}",
+        "timeout": 120000,
+        "wait_until": "networkidle0"
+      },
+      "next": "extra_delay"
+    },
+    "extra_delay": {
+      "type": "wait_for_selector",
+      "input": {
+        "selector": "#permit-data-loaded-unique-element-that-wont-exist",
+        "timeout": 20000,
+        "visible": false
+      },
+      "continue_on_timeout": true,
+      "next_on_timeout": "final_wait"
+    },
+    "final_wait": {
+      "type": "wait_for_selector",
+      "input": {
+        "selector": "#permit-data-loaded-unique-element-that-wont-exist",
+        "timeout": 5000,
+        "visible": false
+      },
+      "continue_on_timeout": true,
+      "next_on_timeout": "final_wait",
+      "result": "page",
+      "end": true
+    }
+  },
+  "capture": {
+    "type": "page"
+  }
+}
+
+

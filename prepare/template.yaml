@@ -625,6 +625,7 @@ Resources:
                 Resource:
                   - !GetAtt MwaaSqsQueue.Arn
                   - !GetAtt WorkflowSqsQueue.Arn
+                  - !GetAtt PropertyImprovementSqsQueue.Arn
                   # Allow sending to county-specific queues (elephant-workflow-queue-*)
                   - !Sub "arn:aws:sqs:${AWS::Region}:${AWS::AccountId}:elephant-workflow-queue-*"
               - Effect: Allow
@@ -944,6 +945,201 @@ Resources:
           }
         }
 
+  #####################################################################################################################
+  # Property Improvement Workflow Resources
+  #####################################################################################################################
+
+  PropertyImprovementPreProcessorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Architectures:
+        - arm64
+      MemorySize: 512
+      Timeout: 60
+      CodeUri: ../workflow/lambdas/property-improvement-pre
+      Handler: index.handler
+      Description: "Property improvement preprocessor - extracts county and builds paths"
+      LoggingConfig:
+        LogFormat: JSON
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - S3ReadPolicy:
+            BucketName: !Ref EnvironmentBucket
+      Environment:
+        Variables:
+          OUTPUT_BASE_URI: !Sub "s3://${EnvironmentBucket}/outputs"
+
+  PropertyImprovementPrepareFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Architectures:
+        - x86_64
+      MemorySize: 2048
+      Timeout: 600
+      EphemeralStorage:
+        Size: 2048
+      CodeUri: ../workflow/lambdas/property-improvement-prepare
+      Handler: index.handler
+      Description: "Property improvement prepare - runs prepare with browser and flow file"
+      LoggingConfig:
+        LogFormat: JSON
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+        - S3CrudPolicy:
+            BucketName: !Ref EnvironmentBucket
+      Environment:
+        Variables:
+          ENVIRONMENT_BUCKET: !Ref EnvironmentBucket
+
+  PropertyImprovementPostProcessorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Architectures:
+        - arm64
+      MemorySize: 2048
+      Timeout: 300
+      EphemeralStorage:
+        Size: 4096
+      CodeUri: ../workflow/lambdas/property-improvement-post
+      Handler: index.handler
+      Description: "Property improvement post-processor - merges, transforms, hashes, and uploads"
+      LoggingConfig:
+        LogFormat: JSON
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - S3CrudPolicy:
+            BucketName: !Ref EnvironmentBucket
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+      Environment:
+        Variables:
+          OUTPUT_BASE_URI: !Sub "s3://${EnvironmentBucket}/outputs"
+          ELEPHANT_PINATA_JWT: !Ref ElephantPinataJwt
+          TRANSFORM_S3_BUCKET: !Ref EnvironmentBucket
+
+  PropertyImprovementStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Name: PropertyImprovementWorkflow
+      Type: EXPRESS
+      DefinitionUri: ../workflow/state-machines/property-improvement.asl.yaml
+      DefinitionSubstitutions:
+        PropertyImprovementPreProcessorFunction: !GetAtt PropertyImprovementPreProcessorFunction.Arn
+        PropertyImprovementPrepareFunction: !GetAtt PropertyImprovementPrepareFunction.Arn
+        PropertyImprovementPostProcessorFunction: !GetAtt PropertyImprovementPostProcessorFunction.Arn
+        TransactionsSqsQueueUrl: !Ref TransactionsSqsQueue
+      Role: !GetAtt PropertyImprovementStateMachineRole.Arn
+      Logging:
+        Destinations:
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !GetAtt PropertyImprovementLogGroup.Arn
+        IncludeExecutionData: true
+        Level: ALL
+      Tracing:
+        Enabled: true
+
+  PropertyImprovementLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: "/aws/vendedlogs/states/PropertyImprovementWorkflow"
+      RetentionInDays: 14
+
+  PropertyImprovementStateMachineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: states.amazonaws.com
+            Action: sts:AssumeRole
+      Path: "/service-role/"
+      Policies:
+        - PolicyName: PropertyImprovementStatesExecutionPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource:
+                  - !GetAtt PropertyImprovementPreProcessorFunction.Arn
+                  - !GetAtt PropertyImprovementPrepareFunction.Arn
+                  - !GetAtt PropertyImprovementPostProcessorFunction.Arn
+              - Effect: Allow
+                Action:
+                  - sqs:SendMessage
+                Resource: !GetAtt TransactionsSqsQueue.Arn
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogDelivery
+                  - logs:GetLogDelivery
+                  - logs:UpdateLogDelivery
+                  - logs:DeleteLogDelivery
+                  - logs:ListLogDeliveries
+                  - logs:PutResourcePolicy
+                  - logs:DescribeResourcePolicies
+                  - logs:DescribeLogGroups
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - xray:PutTraceSegments
+                  - xray:PutTelemetryRecords
+                  - xray:GetSamplingRules
+                  - xray:GetSamplingTargets
+                Resource: "*"
+
+  PropertyImprovementSqsQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "${AWS::StackName}-property-improvement-queue"
+      VisibilityTimeout: 900
+      MessageRetentionPeriod: 1209600
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt PropertyImprovementDeadLetterQueue.Arn
+        maxReceiveCount: 3
+
+  PropertyImprovementDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "${AWS::StackName}-property-improvement-dlq"
+      MessageRetentionPeriod: 1209600
+
+  PropertyImprovementStarterFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Architectures:
+        - arm64
+      MemorySize: 256
+      Timeout: 900
+      CodeUri: ../workflow/lambdas/property-improvement-starter
+      Handler: index.handler
+      Description: "Property improvement starter - picks up SQS messages and starts workflow"
+      LoggingConfig:
+        LogFormat: JSON
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - SQSPollerPolicy:
+            QueueName: !GetAtt PropertyImprovementSqsQueue.QueueName
+        - Statement:
+            - Effect: Allow
+              Action:
+                - states:StartSyncExecution
+              Resource: !Ref PropertyImprovementStateMachine
+      Environment:
+        Variables:
+          STATE_MACHINE_ARN: !Ref PropertyImprovementStateMachine
+      Events:
+        SqsTrigger:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt PropertyImprovementSqsQueue.Arn
+            BatchSize: 1
+            MaximumBatchingWindowInSeconds: 0
+            ScalingConfig:
+              MaximumConcurrency: 100
+
 Outputs:
   DownloaderFunctionName:
     Description: Name of the downloader Lambda function
@@ -1020,3 +1216,21 @@ Outputs:
   ProxyRotationTableArn:
     Description: ARN of the Proxy Rotation DynamoDB table
     Value: !GetAtt ProxyRotationTable.Arn
+  PropertyImprovementStateMachineArn:
+    Description: ARN of the Property Improvement state machine
+    Value: !Ref PropertyImprovementStateMachine
+  PropertyImprovementStateMachineName:
+    Description: Name of the Property Improvement state machine
+    Value: !GetAtt PropertyImprovementStateMachine.Name
+  PropertyImprovementQueueUrl:
+    Description: URL of the Property Improvement SQS Queue
+    Value: !Ref PropertyImprovementSqsQueue
+  PropertyImprovementQueueArn:
+    Description: ARN of the Property Improvement SQS Queue
+    Value: !GetAtt PropertyImprovementSqsQueue.Arn
+  PropertyImprovementDeadLetterQueueUrl:
+    Description: URL of the Property Improvement Dead Letter Queue
+    Value: !Ref PropertyImprovementDeadLetterQueue
+  PropertyImprovementDeadLetterQueueArn:
+    Description: ARN of the Property Improvement Dead Letter Queue
+    Value: !GetAtt PropertyImprovementDeadLetterQueue.Arn
