@@ -7,7 +7,13 @@ import { promises as fs } from "fs";
 import path from "path";
 import os from "os";
 import { randomUUID } from "crypto";
-import { transform, validate, hash, upload } from "@elephant-xyz/cli/lib";
+import {
+  transform,
+  validate,
+  hash,
+  upload,
+  mirrorValidate,
+} from "@elephant-xyz/cli/lib";
 import { parse } from "csv-parse/sync";
 import AdmZip from "adm-zip";
 import { createTransformScriptsManager } from "./scripts-manager.mjs";
@@ -36,6 +42,7 @@ const transformScriptsManager = createTransformScriptsManager({
  * @typedef {object} PostOutput
  * @property {string} status
  * @property {CsvRecord[]} transactionItems
+ * @property {number} [mvlMetric] - Global completeness metric from mirrorValidate
  */
 
 /**
@@ -775,6 +782,106 @@ async function combineAndParseTransactions({
 }
 
 /**
+ * Run mirror validation to measure completeness of transformed data.
+ *
+ * @param {object} params - Validation context.
+ * @param {string} params.countyZipLocal - Path to input zip (before transform).
+ * @param {string} params.countyOutZip - Path to output zip (after transform).
+ * @param {string} params.tmpDir - Temporary working directory.
+ * @param {StructuredLogger} params.log - Structured logger.
+ * @param {string} params.outputS3Uri - Output S3 URI to derive report location.
+ * @returns {Promise<number>} - Global completeness metric (0-100).
+ */
+async function runMirrorValidation({
+  countyZipLocal,
+  countyOutZip,
+  tmpDir,
+  log,
+  outputS3Uri,
+}) {
+  // Hardcoded static CSV S3 URI
+  const staticCsvS3Uri =
+    "s3://elephant-oracle-node-environmentbucket-lw51azqpha64/htmls-static-parts/collier-static-parts.csv";
+
+  log("info", "mvl_download_static_csv_start", {
+    operation: "mvl_download_static_csv",
+  });
+
+  // Download static CSV file
+  const staticCsvLocal = path.join(tmpDir, "static-parts.csv");
+  await downloadS3Object(parseS3Uri(staticCsvS3Uri), staticCsvLocal, log);
+
+  log("info", "mvl_validation_start", { operation: "mirror_validation" });
+  const mvlStart = Date.now();
+
+  // Run mirrorValidate
+  const mvlResult = await mirrorValidate({
+    prepareZip: countyZipLocal,
+    transformZip: countyOutZip,
+    staticParts: staticCsvLocal,
+    cwd: tmpDir,
+  });
+
+  const mvlDuration = Date.now() - mvlStart;
+  log("info", "mvl_validation_complete", {
+    operation: "mirror_validation",
+    duration_ms: mvlDuration,
+    duration_seconds: (mvlDuration / 1000).toFixed(2),
+  });
+
+  if (!mvlResult.success) {
+    log("error", "mvl_validation_failed", {
+      step: "mirror_validate",
+      error: mvlResult.error,
+    });
+    throw new Error(`Mirror validation failed: ${mvlResult.error}`);
+  }
+
+  // Save report to S3
+  log("info", "mvl_upload_report_start", { operation: "mvl_upload_report" });
+  const reportJson = JSON.stringify(mvlResult, null, 2);
+
+  // Derive report S3 location from output_s3_uri
+  // e.g., s3://bucket/outputs/2029035U0000000000320U/output.zip -> s3://bucket/outputs/2029035U0000000000320U/mvl-report.json
+  const outputDir = outputS3Uri.substring(0, outputS3Uri.lastIndexOf("/"));
+  const reportS3Uri = `${outputDir}/mvl-report.json`;
+  const { bucket: reportBucket, key: reportKey } = parseS3Uri(reportS3Uri);
+
+  await s3.send(
+    new PutObjectCommand({
+      Bucket: reportBucket,
+      Key: reportKey,
+      Body: reportJson,
+      ContentType: "application/json",
+    }),
+  );
+
+  log("info", "mvl_upload_report_complete", {
+    operation: "mvl_upload_report",
+    report_s3_uri: reportS3Uri,
+  });
+
+  // Extract globalCompleteness from result
+  const globalCompleteness = mvlResult.globalCompleteness ?? 0;
+
+  log("info", "mvl_completeness_metric", {
+    global_completeness: globalCompleteness,
+  });
+
+  // Check if completeness is below threshold
+  if (globalCompleteness < 80.0) {
+    const errorMsg = `Mirror validation failed: global completeness ${globalCompleteness.toFixed(2)}% is below threshold of 80.0%`;
+    log("error", "mvl_completeness_below_threshold", {
+      global_completeness: globalCompleteness,
+      threshold: 80.0,
+    });
+    throw new Error(errorMsg);
+  }
+
+  return globalCompleteness;
+}
+
+/**
  * @param {PostInput} event - { prepare: prepare result, seed_output_s3_uri: S3 URI of seed output }
  * @returns {Promise<PostOutput>}
  */
@@ -961,15 +1068,26 @@ export const handler = async (event) => {
       log,
       pinataJwt: requireEnv("ELEPHANT_PINATA_JWT"),
     });
+
+    // Run mirror validation
+    const mvlMetric = await runMirrorValidation({
+      countyZipLocal,
+      countyOutZip: countyOut,
+      tmpDir: tmp,
+      log,
+      outputS3Uri: event.prepare.output_s3_uri,
+    });
+
     const totalOperationDuration = Date.now() - Date.parse(base.at);
     log("info", "post_lambda_complete", {
       operation: "post_lambda_total",
       duration_ms: totalOperationDuration,
       duration_seconds: (totalOperationDuration / 1000).toFixed(2),
       transaction_items_count: transactionItems.length,
+      mvl_metric: mvlMetric,
     });
 
-    return { status: "success", transactionItems };
+    return { status: "success", transactionItems, mvlMetric };
   } catch (err) {
     log("error", "post_lambda_failed", {
       step: "unknown",
