@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1
 # Use AWS Lambda Node.js 22 base image
 FROM public.ecr.aws/lambda/nodejs:22
 
@@ -13,13 +12,10 @@ WORKDIR ${LAMBDA_TASK_ROOT}
 # This layer is only invalidated when package files change
 COPY package.json .npmrc ./
 
-# Install production dependencies with cache mount for faster rebuilds
-# Cache mount persists npm cache across builds, avoiding re-downloads
+# Install production dependencies
 # Note: The postinstall script in @elephant-xyz/cli will download ML models
 # Use --force to override peer dependency conflicts with parse5
-RUN --mount=type=cache,target=/root/.npm \
-    --mount=type=cache,target=/tmp \
-    npm install --omit=dev --force
+RUN npm install --omit=dev --force
 
 # Copy application source code
 # This layer is invalidated whenever source code changes
