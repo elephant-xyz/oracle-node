@@ -74,7 +74,11 @@ get_output() {
 sam_build() {
   info "Building SAM application"
   info "Note: Docker image build may take 30-60 minutes on first run (downloads ML models)"
-  sam build --template-file "$SAM_TEMPLATE"
+  info "Building without cache to ensure latest git dependencies are fetched"
+
+  # Use --no-cached to force a fresh build without using cached artifacts
+  # This ensures git dependencies like @elephant-xyz/cli always fetch latest commits
+  sam build --template-file "$SAM_TEMPLATE" --no-cached
 }
 
 sam_deploy() {
