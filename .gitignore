@@ -373,6 +373,8 @@ set_alachua_envs.sh
 set_sarasota_envs.sh
 set_dixie_envs.sh
 set_multi_counties_envs.sh
+set_multi_county_envs.sh
+set_washington_envs.sh
 unset_envs.sh
 transform/**
 workflow/lambdas/post/transforms/**
