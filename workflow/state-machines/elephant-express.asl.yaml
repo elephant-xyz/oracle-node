@@ -147,6 +147,7 @@ States:
         prepareSkipped.$: $.prepare.prepareSkipped
     ResultSelector:
       items.$: $.Payload.transactionItems
+      mvlMetric.$: $.Payload.mvlMetric
     ResultPath: $.post
     Next: QueueForTheSubmit
     Retry:
