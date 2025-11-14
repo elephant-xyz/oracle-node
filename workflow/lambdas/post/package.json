@@ -1,6 +1,6 @@
 {
   "name": "workflow-post-lambda",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "type": "module",
   "description": "Lambda function for post-processing and submission",
   "main": "index.mjs",
