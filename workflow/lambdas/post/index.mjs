@@ -1040,6 +1040,15 @@ export const handler = async (event) => {
       throw runError;
     }
 
+    // Run mirror validation
+    const mvlMetric = await runMirrorValidation({
+      countyZipLocal,
+      countyOutZip: countyOut,
+      tmpDir: tmp,
+      log,
+      outputS3Uri: event.prepare.output_s3_uri,
+    });
+
     const {
       propertyCid,
       seedHashCsv,
@@ -1067,15 +1076,6 @@ export const handler = async (event) => {
       tmpDir: tmp,
       log,
       pinataJwt: requireEnv("ELEPHANT_PINATA_JWT"),
-    });
-
-    // Run mirror validation
-    const mvlMetric = await runMirrorValidation({
-      countyZipLocal,
-      countyOutZip: countyOut,
-      tmpDir: tmp,
-      log,
-      outputS3Uri: event.prepare.output_s3_uri,
     });
 
     const totalOperationDuration = Date.now() - Date.parse(base.at);
