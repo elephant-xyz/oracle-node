@@ -79,11 +79,6 @@ sam_build() {
   # Clean SAM build directory to ensure fresh build
   rm -rf .aws-sam/build 2>/dev/null || true
 
-  # CRITICAL: Prune Docker build cache to ensure npm fetches fresh git dependencies
-  # Without this, Docker reuses cached layers with old @elephant-xyz/cli commits
-  info "Pruning Docker build cache..."
-  docker builder prune -f >/dev/null 2>&1 || true
-
   # Use --no-cached to force a fresh build without using cached artifacts
   # This ensures git dependencies like @elephant-xyz/cli always fetch latest commits
   sam build --template-file "$SAM_TEMPLATE" --no-cached
