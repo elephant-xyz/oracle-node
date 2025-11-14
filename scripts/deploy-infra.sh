@@ -76,6 +76,14 @@ sam_build() {
   info "Note: Docker image build may take 30-60 minutes on first run (downloads ML models)"
   info "Building without cache to ensure latest git dependencies are fetched"
 
+  # Clean SAM build directory to ensure fresh build
+  rm -rf .aws-sam/build 2>/dev/null || true
+
+  # CRITICAL: Prune Docker build cache to ensure npm fetches fresh git dependencies
+  # Without this, Docker reuses cached layers with old @elephant-xyz/cli commits
+  info "Pruning Docker build cache..."
+  docker builder prune -f >/dev/null 2>&1 || true
+
   # Use --no-cached to force a fresh build without using cached artifacts
   # This ensures git dependencies like @elephant-xyz/cli always fetch latest commits
   sam build --template-file "$SAM_TEMPLATE" --no-cached
@@ -99,6 +107,49 @@ sam_deploy() {
     --no-confirm-changeset \
     --no-fail-on-empty-changeset \
     --parameter-overrides ${PARAM_OVERRIDES:-} >/dev/null
+
+  # CRITICAL: Force Lambda to pull the latest Docker image from ECR
+  # Lambda caches container images by digest, so even if we push a new 'latest' tag,
+  # Lambda might use the old cached image unless we explicitly update it
+  info "Forcing Lambda to pull latest Docker image from ECR"
+
+  FUNCTION_NAME=$(aws cloudformation describe-stacks \
+    --stack-name "$STACK_NAME" \
+    --query "Stacks[0].Outputs[?OutputKey=='WorkflowPostProcessorFunctionName'].OutputValue" \
+    --output text 2>/dev/null)
+
+  if [ -n "$FUNCTION_NAME" ]; then
+    # Get the current image URI (which should point to the newly pushed image)
+    IMAGE_URI=$(aws lambda get-function \
+      --function-name "$FUNCTION_NAME" \
+      --query 'Code.ImageUri' \
+      --output text)
+
+    # Extract ECR repository URI without the tag
+    ECR_REPO=$(echo "$IMAGE_URI" | cut -d':' -f1)
+
+    # Get the latest image digest from ECR
+    LATEST_DIGEST=$(aws ecr describe-images \
+      --repository-name $(echo "$ECR_REPO" | awk -F'/' '{print $NF}') \
+      --image-ids imageTag=latest \
+      --query 'imageDetails[0].imageDigest' \
+      --output text 2>/dev/null)
+
+    if [ -n "$LATEST_DIGEST" ]; then
+      # Update Lambda to use the image by digest (not tag) to force pull
+      info "Updating Lambda to use image digest: $LATEST_DIGEST"
+      aws lambda update-function-code \
+        --function-name "$FUNCTION_NAME" \
+        --image-uri "${ECR_REPO}@${LATEST_DIGEST}" \
+        >/dev/null 2>&1 || true
+
+      # Wait for the update to complete
+      aws lambda wait function-updated --function-name "$FUNCTION_NAME" 2>/dev/null || true
+      info "Lambda function updated with latest Docker image"
+    else
+      warn "Could not retrieve latest image digest from ECR"
+    fi
+  fi
 }
 
 sam_deploy_with_versions() {
