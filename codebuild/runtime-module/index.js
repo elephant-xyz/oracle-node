@@ -1,27 +1,28 @@
+import { query } from "@anthropic-ai/claude-agent-sdk";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
+import { InvokeCommand, LambdaClient } from "@aws-sdk/client-lambda";
 import {
-  S3Client,
   GetObjectCommand,
   PutObjectCommand,
+  S3Client,
 } from "@aws-sdk/client-s3";
-import { LambdaClient, InvokeCommand } from "@aws-sdk/client-lambda";
 import {
+  GetQueueUrlCommand,
   SQSClient,
   SendMessageCommand,
-  GetQueueUrlCommand,
 } from "@aws-sdk/client-sqs";
-import { promises as fs } from "fs";
-import path from "path";
-import os from "os";
+import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import AdmZip from "adm-zip";
-import { parse } from "csv-parse/sync";
 import { exec } from "child_process";
+import { parse } from "csv-parse/sync";
+import { promises as fs } from "fs";
+import os from "os";
+import path from "path";
 import {
-  queryExecutionWithMostErrors,
+  deleteExecution,
   markErrorsAsMaybeSolved,
   normalizeErrors,
-  deleteExecution,
+  queryExecutionWithMostErrors,
 } from "./errors.mjs";
 
 const DEFAULT_DLQ_URL = process.env.DEFAULT_DLQ_URL;
@@ -223,7 +224,7 @@ async function extractZip(zipPath, extractDir) {
  * @param {string} dataGroupName - Name of the data group.
  * @returns {Promise<void>}
  */
-async function invokeCodexForFix(
+async function invokeAiForFix(
   errorsPath,
   scriptsDir,
   inputsDir,
@@ -254,34 +255,77 @@ NEVER try to assume property name and find it with getPropertySchema tool.`;
     .replace(/`/g, "\\`")
     .replace(/\$/g, "\\$");
 
-  console.log("Invoking codex CLI...");
+  console.log("Invoking Claude Code to fix errors...");
 
-  return new Promise((resolve, reject) => {
-    const child = exec(
-      `codex exec "${escapedPrompt}" --sandbox danger-full-access --skip-git-repo-check`,
-    );
+  let toolCallCount = 0;
+  let thinkingBuffer = "";
 
-    child.stdout?.on("data", (data) => {
-      process.stdout.write(data);
-    });
+  for await (const message of query({
+    prompt: escapedPrompt,
+    options: {
+      mcpServers: {
+        elephant: {
+          command: "npx",
+          args: ["-y", "@elephant-xyz/mcp"],
+          env: {
+            OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+          },
+        },
+      },
+      permissionMode: "acceptEdits",
+      allowDangerouslySkipPermissions: true,
+      model: "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+      includePartialMessages: true,
+    },
+  })) {
+    // Handle different message types
+    if (message.type === "stream_event") {
+      const event = message.event;
 
-    child.stderr?.on("data", (data) => {
-      process.stderr.write(data);
-    });
-
-    child.on("error", (error) => {
-      console.error("Codex execution failed:", error);
-      reject(new Error(`Codex invocation failed: ${error.message}`));
-    });
-
-    child.on("close", (code) => {
-      if (code === 0) {
-        resolve();
-      } else {
-        reject(new Error(`Codex exited with code ${code}`));
+      // Log tool use start
+      if (event.type === "content_block_start" && event.content_block?.type === "tool_use") {
+        toolCallCount++;
+        console.log(`[Tool ${toolCallCount}] ${event.content_block.name}`);
       }
-    });
-  });
+
+      // Log thinking progress (show thinking deltas without being too verbose)
+      if (event.type === "content_block_delta" && event.delta?.type === "thinking_delta") {
+        thinkingBuffer += event.delta.thinking || "";
+        // Log thinking in chunks to avoid too much output
+        if (thinkingBuffer.length > 200) {
+          console.log(`[Thinking] ${thinkingBuffer.substring(0, 150)}...`);
+          thinkingBuffer = "";
+        }
+      }
+
+      // Log thinking completion
+      if (event.type === "content_block_stop" && thinkingBuffer.length > 0) {
+        console.log(`[Thinking] ${thinkingBuffer}`);
+        thinkingBuffer = "";
+      }
+    }
+
+    // Log assistant messages (non-streaming)
+    if (message.type === "assistant") {
+      const content = message.message.content;
+      for (const block of content) {
+        if (block.type === "tool_use") {
+          console.log(`[Tool] ${block.name} - ${JSON.stringify(block.input).substring(0, 100)}...`);
+        }
+      }
+    }
+
+    // Log final result
+    if (message.type === "result") {
+      if (message.subtype === "success") {
+        console.log(`[Success] Repair completed`);
+        console.log(`[Usage] Input: ${message.usage?.input_tokens || 0}, Output: ${message.usage?.output_tokens || 0}`);
+        console.log(message.result);
+      } else if (message.subtype === "error") {
+        console.error(`[Error] ${message.error}`);
+      }
+    }
+  }
 }
 
 /**
@@ -533,7 +577,7 @@ async function invokePostProcessingLambda({
  * @returns {string | null} - Extracted S3 URI or null if not found.
  */
 function extractErrorsS3Uri(errorMessage) {
-  const match = /Submit errors CSV:\s*(s3:\/\/[^\s]+)/.exec(errorMessage);
+  const match = /Submit errors csv:\s*(s3:\/\/[^\s]+)/.exec(errorMessage);
   return match ? match[1] : null;
 }
 
@@ -596,7 +640,7 @@ async function runAutoRepairIteration({
     const { errorPath, dataGroupName } = await parseErrorsFromS3(errorsS3Uri);
 
     // Step 3: Invoke Codex to fix errors
-    await invokeCodexForFix(errorPath, scriptsDir, inputsDir, dataGroupName);
+    await invokeAiForFix(errorPath, scriptsDir, inputsDir, dataGroupName);
 
     // Step 4: Upload fixed scripts
     await uploadFixedScripts(county, scriptsDir, transformPrefix);
@@ -615,9 +659,9 @@ async function runAutoRepairIteration({
         seedOutputS3Uri,
         s3Event: source
           ? {
-              bucket: { name: source.s3Bucket },
-              object: { key: source.s3Key },
-            }
+            bucket: { name: source.s3Bucket },
+            object: { key: source.s3Key },
+          }
           : undefined,
       });
 

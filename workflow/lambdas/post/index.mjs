@@ -922,8 +922,18 @@ export const handler = async (event) => {
         const saveErrorsOnValidationFailure =
           event.saveErrorsOnValidationFailure !== false;
 
+        // @ts-ignore
+        const errorPath = runError.errorPath;
+
+        const errorsS3Uri = await saveValidationErrorToS3({
+          submitErrorsPath: errorPath,
+          log,
+          inputKey: event?.s3?.object?.key,
+          outputBaseUri: outputBase,
+        });
         if (!saveErrorsOnValidationFailure) {
           // Flag is false: throw error immediately without saving
+          runError.message = `${runError.message} Submit errors csv: ${errorsS3Uri}`;
           throw runError;
         }
 
