@@ -167,6 +167,36 @@ oracle-node/
 
 The multi-request flow file is passed to the prepare function as the `multiRequestFlowFile` parameter and is automatically cleaned up after use.
 
+**Static Parts Files (Optional):**
+
+For counties where certain HTML elements remain static (unchanging) across multiple requests, you can provide county-specific static parts CSV files. These files help the mirror validation Lambda identify which content to exclude from completeness checks, improving validation accuracy.
+
+Static parts files can be generated using the `identify-static-parts` command from the Elephant CLI. For detailed documentation on generating and using static parts files, see the [Elephant CLI Static Parts documentation](https://github.com/elephant-xyz/elephant-cli/blob/feat/completeness-validation/docs/identify-static-parts-command.md).
+
+1. Add CSV files named `<county>.csv` (e.g., `collier.csv`, `palm-beach.csv`) to the `source-html-static-parts/` directory in the repository root
+2. These files are automatically uploaded to S3 during deployment
+3. The Mirror Validation Lambda will automatically download and use the appropriate file based on the county being processed
+4. If no static parts file exists for a county, mirror validation runs normally without static parts filtering
+
+Example structure:
+
+```
+oracle-node/
+├── browser-flows/
+│   ├── Broward.json
+│   └── Palm-Beach.json
+├── multi-request-flows/
+│   ├── Manatee.json
+│   └── Collier.json
+├── source-html-static-parts/
+│   ├── collier.csv
+│   └── palm-beach.csv
+├── transform/
+└── ...
+```
+
+**CSV Format:** The static parts CSV should contain selectors or patterns identifying static HTML elements. Refer to the [Elephant CLI documentation](https://github.com/elephant-xyz/elephant-cli/blob/feat/completeness-validation/docs/identify-static-parts-command.md) for the exact format and usage.
+
 Put your transform files under `transform/` (if applicable).
 
 ### 2) Deploy infrastructure

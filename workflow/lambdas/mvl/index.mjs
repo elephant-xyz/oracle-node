@@ -1,12 +1,12 @@
 import {
   GetObjectCommand,
+  HeadObjectCommand,
   PutObjectCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
 import { promises as fs } from "fs";
 import path from "path";
 import os from "os";
-import { randomUUID } from "crypto";
 import { mirrorValidate } from "@elephant-xyz/cli/lib";
 import { parse } from "csv-parse/sync";
 import { createErrorsRepository } from "./errors.mjs";
@@ -320,6 +320,76 @@ async function handleMirrorValidationFailure({
 }
 
 /**
+ * Try to download static parts CSV file for a county from S3.
+ * Returns the local file path if found, or undefined if not found.
+ *
+ * @param {string} county - County name (e.g., "Collier", "Palm Beach").
+ * @param {string} tmpDir - Temporary directory to download to.
+ * @param {StructuredLogger} log - Structured logger.
+ * @returns {Promise<string | undefined>} - Local file path if found, undefined otherwise.
+ */
+async function tryDownloadStaticParts(county, tmpDir, log) {
+  const outputBaseUri = process.env.OUTPUT_BASE_URI;
+  if (!outputBaseUri) {
+    log("error", "mvl_static_parts_skipped", {
+      reason: "OUTPUT_BASE_URI not set",
+    });
+    return undefined;
+  }
+
+  // Extract bucket from OUTPUT_BASE_URI (e.g., s3://bucket-name/outputs -> bucket-name)
+  const { bucket } = parseS3Uri(outputBaseUri);
+
+  // Normalize county name to match file naming convention (lowercase, replace spaces with hyphens)
+  const normalizedCounty = county.toLowerCase().replace(/\s+/g, "-");
+  const staticPartsKey = `source-html-static-parts/${normalizedCounty}.csv`;
+
+  log("info", "mvl_static_parts_check", {
+    county,
+    normalized_county: normalizedCounty,
+    s3_key: staticPartsKey,
+  });
+
+  try {
+    // Check if file exists
+    await s3.send(
+      new HeadObjectCommand({
+        Bucket: bucket,
+        Key: staticPartsKey,
+      }),
+    );
+
+    // File exists, download it
+    const staticCsvLocal = path.join(tmpDir, "static-parts.csv");
+    await downloadS3Object({ bucket, key: staticPartsKey }, staticCsvLocal, log);
+
+    log("info", "mvl_static_parts_downloaded", {
+      county,
+      s3_uri: `s3://${bucket}/${staticPartsKey}`,
+    });
+
+    return staticCsvLocal;
+  } catch (error) {
+    // File doesn't exist or error occurred
+    const err = /** @type {Error & {$metadata?: {httpStatusCode?: number}}} */ (error);
+    if (err.name === "NotFound" || err.$metadata?.httpStatusCode === 404) {
+      log("info", "mvl_static_parts_not_found", {
+        county,
+        normalized_county: normalizedCounty,
+        message: "Static parts file not found, running MVL without static parts",
+      });
+    } else {
+      log("error", "mvl_static_parts_error", {
+        county,
+        error: String(err),
+        message: "Error checking static parts file, running MVL without static parts",
+      });
+    }
+    return undefined;
+  }
+}
+
+/**
  * Run mirror validation to measure completeness of transformed data.
  *
  * @param {object} params - Validation context.
@@ -328,6 +398,7 @@ async function handleMirrorValidationFailure({
  * @param {string} params.tmpDir - Temporary working directory.
  * @param {StructuredLogger} params.log - Structured logger.
  * @param {string} params.preparedOutputS3Uri - Prepare step output S3 URI to derive report location.
+ * @param {string} params.county - County name for looking up static parts file.
  * @returns {Promise<number>} - Global completeness metric (0-100).
  */
 async function runMirrorValidation({
@@ -336,29 +407,31 @@ async function runMirrorValidation({
   tmpDir,
   log,
   preparedOutputS3Uri,
+  county,
 }) {
-  // Hardcoded static CSV S3 URI
-  const staticCsvS3Uri =
-    "s3://elephant-oracle-node-environmentbucket-lw51azqpha64/htmls-static-parts/collier-static-parts.csv";
+  // Try to download county-specific static parts file
+  const staticCsvLocal = await tryDownloadStaticParts(county, tmpDir, log);
 
-  log("info", "mvl_download_static_csv_start", {
-    operation: "mvl_download_static_csv",
+  log("info", "mvl_validation_start", {
+    operation: "mirror_validation",
+    has_static_parts: !!staticCsvLocal,
   });
-
-  // Download static CSV file
-  const staticCsvLocal = path.join(tmpDir, "static-parts.csv");
-  await downloadS3Object(parseS3Uri(staticCsvS3Uri), staticCsvLocal, log);
-
-  log("info", "mvl_validation_start", { operation: "mirror_validation" });
   const mvlStart = Date.now();
 
-  // Run mirrorValidate
-  const mvlResult = await mirrorValidate({
+  // Run mirrorValidate with or without static parts
+  /** @type {{prepareZip: string, transformZip: string, cwd: string, staticParts?: string}} */
+  const mvlOptions = {
     prepareZip: preparedInputZipLocal,
     transformZip: transformedOutputZipLocal,
-    staticParts: staticCsvLocal,
     cwd: tmpDir,
-  });
+  };
+
+  // Only add staticParts if we have the file
+  if (staticCsvLocal) {
+    mvlOptions.staticParts = staticCsvLocal;
+  }
+
+  const mvlResult = await mirrorValidate(mvlOptions);
 
   const mvlDuration = Date.now() - mvlStart;
   log("info", "mvl_validation_complete", {
@@ -509,6 +582,7 @@ export const handler = async (event) => {
         tmpDir: tmp,
         log,
         preparedOutputS3Uri: event.preparedOutputS3Uri,
+        county: event.county,
       });
     } catch (mvlError) {
       if (

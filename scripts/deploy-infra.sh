@@ -31,6 +31,7 @@ UPLOAD_TRANSFORMS="${UPLOAD_TRANSFORMS:-false}"
 TRANSFORMS_UPLOAD_PENDING=0
 BROWSER_FLOWS_UPLOAD_PENDING=0
 MULTI_REQUEST_FLOWS_UPLOAD_PENDING=0
+STATIC_PARTS_UPLOAD_PENDING=0
 ENVIRONMENT_NAME="${ENVIRONMENT_NAME:-MWAAEnvironment}"
 
 CODEBUILD_RUNTIME_MODULE_DIR="codebuild/runtime-module"
@@ -335,6 +336,35 @@ upload_multi_request_flows_to_s3() {
   }
 
   info "Multi-request flows uploaded to: $s3_prefix"
+}
+
+upload_static_parts_to_s3() {
+  local static_parts_dir="source-html-static-parts"
+
+  # Check if source-html-static-parts directory exists
+  if [[ ! -d "$static_parts_dir" ]]; then
+    info "No source-html-static-parts directory found, skipping static parts upload"
+    return 0
+  fi
+
+  local bucket
+  bucket=$(get_bucket)
+  if [[ -z "$bucket" ]]; then
+    # Bucket doesn't exist yet (first deploy). Will be uploaded after stack creation.
+    STATIC_PARTS_UPLOAD_PENDING=1
+    return 0
+  fi
+
+  local s3_prefix="s3://$bucket/source-html-static-parts"
+  info "Syncing static parts to $s3_prefix"
+
+  # Upload all .csv files from source-html-static-parts directory
+  aws s3 sync "$static_parts_dir" "$s3_prefix" --exclude "*" --include "*.csv" --delete || {
+    warn "Failed to sync static parts to $s3_prefix"
+    return 1
+  }
+
+  info "Static parts uploaded to: $s3_prefix"
 }
 
 package_and_upload_codebuild_runtime() {
@@ -703,6 +733,7 @@ main() {
 
   upload_browser_flows_to_s3
   upload_multi_request_flows_to_s3
+  upload_static_parts_to_s3
   package_and_upload_codebuild_runtime
   deploy_codebuild_stack
 
@@ -777,6 +808,11 @@ main() {
   # Upload multi-request flows if pending
   if (( MULTI_REQUEST_FLOWS_UPLOAD_PENDING == 1 )); then
     upload_multi_request_flows_to_s3
+  fi
+
+  # Upload static parts if pending
+  if (( STATIC_PARTS_UPLOAD_PENDING == 1 )); then
+    upload_static_parts_to_s3
   fi
 
   handle_pending_keystore_upload
