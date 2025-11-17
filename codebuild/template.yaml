@@ -135,6 +135,31 @@ Resources:
                   - sqs:GetQueueUrl
                 Resource:
                   - !Sub "arn:${AWS::Partition}:sqs:${AWS::Region}:${AWS::AccountId}:*"
+        - PolicyName: UseBedrockToInvokeLLM
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: AllowModelAndInferenceProfileAccess
+                Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                  - bedrock:InvokeModelWithResponseStream
+                  - bedrock:ListInferenceProfiles
+                Resource:
+                  - arn:aws:bedrock:*:*:inference-profile/*
+                  - arn:aws:bedrock:*:*:application-inference-profile/*
+                  - arn:aws:bedrock:*:*:foundation-model/*
+              - Sid: AllowMarketplaceSubscription
+                Effect: Allow
+                Action:
+                  - aws-marketplace:ViewSubscriptions
+                  - aws-marketplace:Subscribe
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    aws:CalledViaLast: bedrock.amazonaws.com
+                  Resource: "*"
+
       Tags:
         - Key: Environment
           Value: !Ref EnvironmentName
@@ -257,6 +282,13 @@ Resources:
                     echo "Entry point ${RUNTIME_ENTRYPOINT} not found after extraction." >&2
                     exit 1
                   fi
+                - export CLAUDE_CODE_USE_BEDROCK=1
+                # Recommended output token settings for Bedrock
+                - export CLAUDE_CODE_MAX_OUTPUT_TOKENS=4096
+                - export MAX_THINKING_TOKENS=1024
+                - export ANTHROPIC_DEFAULT_HAIKU_MODEL=us.anthropic.claude-haiku-4-5-20251001-v1:0
+                - export ANTHROPIC_MODEL='global.anthropic.claude-sonnet-4-5-20250929-v1:0'
+                - export ANTHROPIC_SMALL_FAST_MODEL='us.anthropic.claude-haiku-4-5-20251001-v1:0'
                 - node "${RUNTIME_ENTRYPOINT}"
       Tags:
         - Key: Environment
