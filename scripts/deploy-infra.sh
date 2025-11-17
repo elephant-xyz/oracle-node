@@ -106,11 +106,11 @@ sam_deploy() {
   # CRITICAL: Force Lambda to pull the latest Docker image from ECR
   # Lambda caches container images by digest, so even if we push a new 'latest' tag,
   # Lambda might use the old cached image unless we explicitly update it
-  info "Forcing Lambda to pull latest Docker image from ECR"
+  info "Forcing MVL Lambda to pull latest Docker image from ECR"
 
   FUNCTION_NAME=$(aws cloudformation describe-stacks \
     --stack-name "$STACK_NAME" \
-    --query "Stacks[0].Outputs[?OutputKey=='WorkflowPostProcessorFunctionName'].OutputValue" \
+    --query "Stacks[0].Outputs[?OutputKey=='WorkflowMirrorValidatorFunctionName'].OutputValue" \
     --output text 2>/dev/null)
 
   if [ -n "$FUNCTION_NAME" ]; then
@@ -132,7 +132,7 @@ sam_deploy() {
 
     if [ -n "$LATEST_DIGEST" ]; then
       # Update Lambda to use the image by digest (not tag) to force pull
-      info "Updating Lambda to use image digest: $LATEST_DIGEST"
+      info "Updating MVL Lambda to use image digest: $LATEST_DIGEST"
       aws lambda update-function-code \
         --function-name "$FUNCTION_NAME" \
         --image-uri "${ECR_REPO}@${LATEST_DIGEST}" \
@@ -140,7 +140,7 @@ sam_deploy() {
 
       # Wait for the update to complete
       aws lambda wait function-updated --function-name "$FUNCTION_NAME" 2>/dev/null || true
-      info "Lambda function updated with latest Docker image"
+      info "MVL Lambda function updated with latest Docker image"
     else
       warn "Could not retrieve latest image digest from ECR"
     fi
@@ -526,58 +526,9 @@ deploy_codebuild_stack() {
   CODEBUILD_DEPLOY_PENDING=0
 }
 
-push_post_lambda_image_to_ecr() {
-  local post_lambda_dir="workflow/lambdas/post"
-
-  if [[ ! -f "$post_lambda_dir/Dockerfile" ]]; then
-    return 0
-  fi
-
-  # Get AWS account ID and region
-  local aws_account_id
-  aws_account_id=$(aws sts get-caller-identity --query Account --output text)
-  local aws_region
-  aws_region=$(aws configure get region || echo "us-east-1")
-
-  # Try to get ECR repository name from stack outputs
-  local repo_name
-  repo_name=$(get_output "PostLambdaEcrRepositoryName" 2>/dev/null || echo "")
-
-  if [[ -z "$repo_name" ]]; then
-    info "ECR repository not yet created, will push image after stack deployment"
-    POST_LAMBDA_IMAGE_PUSH_PENDING=1
-    return 0
-  fi
-
-  local repo_uri="${aws_account_id}.dkr.ecr.${aws_region}.amazonaws.com/${repo_name}"
-
-  info "Pushing Post Lambda Docker image to $repo_uri"
-
-  # Login to ECR
-  info "Logging in to ECR..."
-  aws ecr get-login-password --region "$aws_region" \
-    | docker login --username AWS --password-stdin "$repo_uri" >/dev/null || {
-    err "Failed to login to ECR"
-    exit 1
-  }
-
-  # Tag the image
-  info "Tagging image..."
-  docker tag post-lambda:latest "$repo_uri:latest" || {
-    err "Failed to tag Docker image"
-    exit 1
-  }
-
-  # Push to ECR
-  info "Pushing image to ECR..."
-  docker push "$repo_uri:latest" >/dev/null || {
-    err "Failed to push Docker image to ECR"
-    exit 1
-  }
-
-  info "Successfully pushed Docker image to $repo_uri:latest"
-  POST_LAMBDA_IMAGE_PUSH_PENDING=0
-}
+# Note: MVL Lambda Docker image is now built and pushed automatically by SAM
+# during sam_build and sam_deploy using --resolve-image-repos
+# No manual push needed anymore
 
 add_transform_prefix_override() {
   if [[ -z "${TRANSFORM_S3_PREFIX_VALUE:-}" ]]; then
