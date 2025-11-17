@@ -158,7 +158,6 @@ Resources:
                 Condition:
                   StringEquals:
                     aws:CalledViaLast: bedrock.amazonaws.com
-                  Resource: "*"
 
       Tags:
         - Key: Environment
@@ -222,20 +221,7 @@ Resources:
               runtime-versions:
                 nodejs: 22
               commands:
-                - npm install -g @openai/codex
                 - npm install -g cheerio
-                - printenv OPENAI_API_KEY | codex login --with-api-key
-                - mkdir -p ~/.codex
-                - |
-                  cat >> ~/.codex/config.toml << EOF
-                  [mcp_servers.elephant]
-                  command = "npx"
-                  args = ["-y", "@elephant-xyz/mcp"]
-                  startup_timeout_sec = 900
-
-                  [mcp_servers.elephant.env]
-                  OPENAI_API_KEY = "$OPENAI_API_KEY"
-                  EOF
                 - npm install -g @elephant-xyz/mcp
                 - echo "Node.js runtime set to version 22."
             pre_build:

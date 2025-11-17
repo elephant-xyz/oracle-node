@@ -255,7 +255,11 @@ NEVER try to assume property name and find it with getPropertySchema tool.`;
     .replace(/`/g, "\\`")
     .replace(/\$/g, "\\$");
 
-  console.log("Invoking claude code");
+  console.log("Invoking Claude Code to fix errors...");
+
+  let toolCallCount = 0;
+  let thinkingBuffer = "";
+
   for await (const message of query({
     prompt: escapedPrompt,
     options: {
@@ -268,11 +272,57 @@ NEVER try to assume property name and find it with getPropertySchema tool.`;
           },
         },
       },
-      // model: "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+      permissionMode: "acceptEdits",
+      model: "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+      includePartialMessages: true,
     },
   })) {
-    if (message.type === "result" && message.subtype === "success") {
-      console.log(message.result);
+    // Handle different message types
+    if (message.type === "stream_event") {
+      const event = message.event;
+
+      // Log tool use start
+      if (event.type === "content_block_start" && event.content_block?.type === "tool_use") {
+        toolCallCount++;
+        console.log(`[Tool ${toolCallCount}] ${event.content_block.name}`);
+      }
+
+      // Log thinking progress (show thinking deltas without being too verbose)
+      if (event.type === "content_block_delta" && event.delta?.type === "thinking_delta") {
+        thinkingBuffer += event.delta.thinking || "";
+        // Log thinking in chunks to avoid too much output
+        if (thinkingBuffer.length > 200) {
+          console.log(`[Thinking] ${thinkingBuffer.substring(0, 150)}...`);
+          thinkingBuffer = "";
+        }
+      }
+
+      // Log thinking completion
+      if (event.type === "content_block_stop" && thinkingBuffer.length > 0) {
+        console.log(`[Thinking] ${thinkingBuffer}`);
+        thinkingBuffer = "";
+      }
+    }
+
+    // Log assistant messages (non-streaming)
+    if (message.type === "assistant") {
+      const content = message.message.content;
+      for (const block of content) {
+        if (block.type === "tool_use") {
+          console.log(`[Tool] ${block.name} - ${JSON.stringify(block.input).substring(0, 100)}...`);
+        }
+      }
+    }
+
+    // Log final result
+    if (message.type === "result") {
+      if (message.subtype === "success") {
+        console.log(`[Success] Repair completed`);
+        console.log(`[Usage] Input: ${message.usage?.input_tokens || 0}, Output: ${message.usage?.output_tokens || 0}`);
+        console.log(message.result);
+      } else if (message.subtype === "error") {
+        console.error(`[Error] ${message.error}`);
+      }
     }
   }
 }
