@@ -611,6 +611,7 @@ async function handleValidationFailure({
  * @param {string} params.occurredAt - ISO timestamp of the failure.
  * @param {string} params.preparedS3Uri - S3 location of the output of the prepare step.
  * @param {string} params.errorsCsvPath - Optional path to pre-generated errors CSV.
+ * @param {string} params.errorsS3Uri - S3 URI of saved errors CSV.
  * @returns {Promise<ValidationFailureResult>} - Returns { saved: true } if DynamoDB save succeeds, throws if save fails or no errors to save.
  */
 async function handleMirrorValidationFailure({
@@ -622,9 +623,10 @@ async function handleMirrorValidationFailure({
   occurredAt,
   preparedS3Uri,
   errorsCsvPath,
+  errorsS3Uri
 }) {
   let mvlErrorsCsvPath = errorsCsvPath;
-  let mvlErrorsS3Uri = null;
+  let mvlErrorsS3Uri = errorsS3Uri;
   let mvlErrors = [];
 
   try {
@@ -1093,7 +1095,7 @@ export const handler = async (event) => {
   await downloadS3Object(
     parseS3Uri(seedZipS3),
     seedZipLocal,
-    () => {}, // No logging yet
+    () => { }, // No logging yet
   );
 
   const countyName = await extractCountyName(seedZipLocal, tmp);
@@ -1254,7 +1256,7 @@ export const handler = async (event) => {
         let errorsCsvPath;
         try {
           const unmatchedSources = extractUnmatchedSources(
-            /** @type {Record<string, { unmatchedFromA?: unknown[] }>} */ (
+            /** @type {Record<string, { unmatchedFromA?: unknown[] }>} */(
               /** @type {unknown} */ (mvlResult.comparison)
             ),
           );
@@ -1330,6 +1332,7 @@ export const handler = async (event) => {
             occurredAt: base.at,
             preparedS3Uri: event?.prepare?.output_s3_uri,
             errorsCsvPath,
+            errorsS3Uri
           });
           // Errors were successfully saved to DynamoDB, return success with empty transactionItems
           if (result.saved) {
@@ -1403,6 +1406,6 @@ export const handler = async (event) => {
   } finally {
     try {
       if (tmp) await fs.rm(tmp, { recursive: true, force: true });
-    } catch {}
+    } catch { }
   }
 };
