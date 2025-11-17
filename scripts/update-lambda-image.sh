@@ -13,6 +13,8 @@ err()  { echo -e "${RED}[ERROR]${NC} $*" >&2; }
 STACK_NAME="${STACK_NAME:-elephant-oracle-node}"
 LAMBDA_DIR="${LAMBDA_DIR:-workflow/lambdas/post}"
 IMAGE_NAME="${IMAGE_NAME:-post-lambda}"
+# Default to amd64 builds to match Lambda's architecture unless overridden.
+DOCKER_PLATFORM="${DOCKER_PLATFORM:-linux/amd64}"
 
 # Get stack output helper
 get_output() {
@@ -25,7 +27,7 @@ get_output() {
 
 # Build Docker image locally
 build_docker_image() {
-  info "Building Docker image for Lambda function"
+  info "Building Docker image for Lambda function (platform: ${DOCKER_PLATFORM})"
   info "Note: Docker image build may take 30-60 minutes on first run (downloads ML models)"
 
   if [[ ! -f "$LAMBDA_DIR/Dockerfile" ]]; then
@@ -44,7 +46,7 @@ build_docker_image() {
   }
 
   # Build the Docker image
-  docker build -t "$IMAGE_NAME:latest" "$LAMBDA_DIR" || {
+  docker build --platform "$DOCKER_PLATFORM" -t "$IMAGE_NAME:latest" "$LAMBDA_DIR" || {
     err "Failed to build Docker image"
     exit 1
   }
