@@ -21,7 +21,6 @@ RUN npm install --omit=dev --force
 # This layer is invalidated whenever source code changes
 # Using COPY with multiple sources in one command is more efficient
 COPY index.mjs errors.mjs scripts-manager.mjs ./
-COPY transforms/ ./transforms/
 
 # Set the Lambda handler
 CMD ["index.handler"]
