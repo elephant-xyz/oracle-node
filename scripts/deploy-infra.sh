@@ -111,25 +111,27 @@ sam_deploy() {
   FUNCTION_NAME=$(aws cloudformation describe-stacks \
     --stack-name "$STACK_NAME" \
     --query "Stacks[0].Outputs[?OutputKey=='WorkflowPostProcessorFunctionName'].OutputValue" \
-    --output text 2>/dev/null)
+    --output text)
 
   if [ -n "$FUNCTION_NAME" ]; then
     # Get the current image URI (which should point to the newly pushed image)
     IMAGE_URI=$(aws lambda get-function \
       --function-name "$FUNCTION_NAME" \
       --query 'Code.ImageUri' \
-      --output text)
+      --output text 2>&1)
+    info "IMAGE_URI: ${IMAGE_URI}"
 
     # Extract ECR repository URI without the tag
     ECR_REPO=$(echo "$IMAGE_URI" | cut -d':' -f1)
 
+    info "ECR_REPO: ${ECR_REPO}"
     # Get the latest image digest from ECR
     LATEST_DIGEST=$(aws ecr describe-images \
-      --repository-name $(echo "$ECR_REPO" | awk -F'/' '{print $NF}') \
-      --image-ids imageTag=latest \
-      --query 'imageDetails[0].imageDigest' \
-      --output text 2>/dev/null)
+      --repository-name $(echo "$ECR_REPO" | awk -F'/' '{print $2 "/" $3}') \
+      --query 'sort_by(imageDetails, &imagePushedAt)[-1].imageDigest' \
+      --output text 2>&1)
 
+    info "LATEST_DIGEST: ${LATEST_DIGEST}"
     if [ -n "$LATEST_DIGEST" ]; then
       # Update Lambda to use the image by digest (not tag) to force pull
       info "Updating Lambda to use image digest: $LATEST_DIGEST"

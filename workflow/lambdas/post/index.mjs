@@ -1265,6 +1265,7 @@ export const handler = async (event) => {
             tmp,
             "bafkreigsipwhkwrboi73b3xvn4tjwd26pqyzz5zmyxvbnrgeb2qbq2bz34", // TODO: Dynamically fetch depending on the currently processed data group
           );
+          console.log(`Errors csv path: ${errorsCsvPath}`)
 
           try {
             const errorsCsv = await fs.readFile(errorsCsvPath);
