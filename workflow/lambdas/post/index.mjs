@@ -953,7 +953,7 @@ async function generateMirrorValidationErrorsCsv(
   const csvPath = path.join(tmpDir, "mvl_errors.csv");
 
   // CSV header
-  const header = "error_path,error_message\n";
+  const header = "error_path,error_message,data_group_cid\n";
   const rows = sources.map(
     (source) =>
       `${escapeCsvField(source)},${escapeCsvField("Value from this selector is not mapped to the output")},${escapeCsvField(dataGroupCid)}`,
