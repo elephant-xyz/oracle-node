@@ -533,7 +533,7 @@ async function invokePostProcessingLambda({
  * @returns {string | null} - Extracted S3 URI or null if not found.
  */
 function extractErrorsS3Uri(errorMessage) {
-  const match = /Submit errors CSV:\s*(s3:\/\/[^\s]+)/.exec(errorMessage);
+  const match = /Submit errors csv:\s*(s3:\/\/[^\s]+)/.exec(errorMessage);
   return match ? match[1] : null;
 }
 
