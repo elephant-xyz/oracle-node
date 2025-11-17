@@ -273,6 +273,7 @@ NEVER try to assume property name and find it with getPropertySchema tool.`;
         },
       },
       permissionMode: "acceptEdits",
+      allowDangerouslySkipPermissions: true,
       model: "us.anthropic.claude-haiku-4-5-20251001-v1:0",
       includePartialMessages: true,
     },
@@ -658,9 +659,9 @@ async function runAutoRepairIteration({
         seedOutputS3Uri,
         s3Event: source
           ? {
-              bucket: { name: source.s3Bucket },
-              object: { key: source.s3Key },
-            }
+            bucket: { name: source.s3Bucket },
+            object: { key: source.s3Key },
+          }
           : undefined,
       });
 
