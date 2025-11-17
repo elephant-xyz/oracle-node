@@ -460,7 +460,10 @@ async function runTransformAndValidation({
 
   log("info", "validation_start", { operation: "validation" });
   const validationStart = Date.now();
-  const validationResult = await validate({ input: countyOut, cwd: tmpDir });
+  const validationResult = await validate({
+    input: countyOut,
+    cwd: tmpDir,
+  });
   const validationDuration = Date.now() - validationStart;
   log("info", "validation_complete", {
     operation: "validation",
@@ -470,6 +473,8 @@ async function runTransformAndValidation({
   if (!validationResult.success) {
     const validationError = new Error(validationResult.error);
     validationError.name = "ValidationFailure";
+    //@ts-ignore
+    validationError.errorPath = path.join(tmpDir, "submit_errors.csv");
     throw validationError;
   }
 
@@ -488,53 +493,30 @@ async function runTransformAndValidation({
  * @param {string} params.tmpDir - Temporary working directory.
  * @param {StructuredLogger} params.log - Structured logger.
  * @param {string} params.error - Validation error message.
- * @param {string} params.outputBaseUri - Base S3 URI for generated outputs.
- * @param {string | undefined} params.inputKey - Original input S3 key.
  * @param {string} params.executionId - Identifier for the failed execution.
  * @param {string} params.county - County identifier.
  * @param {import("./errors.mjs").ExecutionSource} params.source - Minimal source description.
  * @param {string} params.occurredAt - ISO timestamp of the failure.
  * @param {string} params.preparedS3Uri - S3 location of the output of the prepare step.
+ * @param {string} params.submitErrorsS3Uri - S3 location of the output of the submit step.
  * @returns {Promise<ValidationFailureResult>} - Returns { saved: true } if DynamoDB save succeeds, throws if save fails or no errors to save.
  */
 async function handleValidationFailure({
   tmpDir,
   log,
   error,
-  outputBaseUri,
-  inputKey,
   executionId,
   county,
   source,
   occurredAt,
   preparedS3Uri,
+  submitErrorsS3Uri,
 }) {
   const submitErrorsPath = path.join(tmpDir, "submit_errors.csv");
-  let submitErrorsS3Uri = null;
   let submitErrors = [];
 
   try {
     submitErrors = await csvToJson(submitErrorsPath);
-
-    try {
-      const submitErrorsCsv = await fs.readFile(submitErrorsPath);
-      const resolvedInputKey = path.posix.basename(inputKey || "input.csv");
-      const runPrefix = `${outputBaseUri.replace(/\/$/, "")}/${resolvedInputKey}`;
-      const errorFileKey = `${runPrefix.replace(/^s3:\/\//, "")}/submit_errors.csv`;
-      const [errorBucket, ...errorParts] = errorFileKey.split("/");
-      await s3.send(
-        new PutObjectCommand({
-          Bucket: errorBucket,
-          Key: errorParts.join("/"),
-          Body: submitErrorsCsv,
-        }),
-      );
-      submitErrorsS3Uri = `s3://${errorBucket}/${errorParts.join("/")}`;
-    } catch (uploadError) {
-      log("error", "submit_errors_upload_failed", {
-        error: String(uploadError),
-      });
-    }
 
     log("error", "validation_failed", {
       step: "validate",
@@ -555,7 +537,7 @@ async function handleValidationFailure({
             error_path: row.error_path ?? undefined,
           })),
           source,
-          errorsS3Uri: submitErrorsS3Uri ?? undefined,
+          errorsS3Uri: submitErrorsS3Uri,
           failureMessage: error,
           occurredAt,
           preparedS3Uri,
@@ -595,6 +577,44 @@ async function handleValidationFailure({
 }
 
 /**
+ * Saves validation errors to S3.
+ * @param {Object} options - Options object.
+ * @param {string} options.submitErrorsPath - Path to the submit errors CSV file.
+ * @param {string} options.inputKey - Input key.
+ * @param {string} options.outputBaseUri - Output base URI.
+ * @param {StructuredLogger} options.log - Structured logger used for diagnostics.
+ * @returns {Promise<string>} - Submit errors S3 URI.
+ */
+async function saveValidationErrorToS3({
+  submitErrorsPath,
+  inputKey,
+  outputBaseUri,
+  log,
+}) {
+  try {
+    const submitErrorsCsv = await fs.readFile(submitErrorsPath);
+    const resolvedInputKey = path.posix.basename(inputKey || "input.csv");
+    const runPrefix = `${outputBaseUri.replace(/\/$/, "")}/${resolvedInputKey}`;
+    const errorFileKey = `${runPrefix.replace(/^s3:\/\//, "")}/submit_errors.csv`;
+    const [errorBucket, ...errorParts] = errorFileKey.split("/");
+    await s3.send(
+      new PutObjectCommand({
+        Bucket: errorBucket,
+        Key: errorParts.join("/"),
+        Body: submitErrorsCsv,
+      }),
+    );
+    const submitErrorsS3Uri = `s3://${errorBucket}/${errorParts.join("/")}`;
+    return submitErrorsS3Uri;
+  } catch (uploadError) {
+    log("error", "submit_errors_upload_failed", {
+      error: String(uploadError),
+    });
+    throw uploadError;
+  }
+}
+
+/**
  * @typedef {object} MirrorValidationResult
  * @property {object} [comparison] - Comparison result containing entity type comparisons.
  */
@@ -623,7 +643,7 @@ async function handleMirrorValidationFailure({
   occurredAt,
   preparedS3Uri,
   errorsCsvPath,
-  errorsS3Uri
+  errorsS3Uri,
 }) {
   let mvlErrorsCsvPath = errorsCsvPath;
   let mvlErrorsS3Uri = errorsS3Uri;
@@ -1095,7 +1115,7 @@ export const handler = async (event) => {
   await downloadS3Object(
     parseS3Uri(seedZipS3),
     seedZipLocal,
-    () => { }, // No logging yet
+    () => {}, // No logging yet
   );
 
   const countyName = await extractCountyName(seedZipLocal, tmp);
@@ -1193,6 +1213,15 @@ export const handler = async (event) => {
           // Flag is false: throw error immediately without saving
           throw runError;
         }
+        // @ts-ignore
+        const errorPath = runError.errorPath;
+
+        const errorsS3Uri = await saveValidationErrorToS3({
+          submitErrorsPath: errorPath,
+          log,
+          inputKey: event?.s3?.object?.key,
+          outputBaseUri: outputBase,
+        });
 
         // Flag is true (default): save errors to DynamoDB
         try {
@@ -1200,13 +1229,12 @@ export const handler = async (event) => {
             tmpDir: tmp,
             log,
             error: runError.message,
-            outputBaseUri: outputBase,
-            inputKey: event?.s3?.object?.key,
             executionId,
             county: countyName,
             source: sourceEvent,
             occurredAt: base.at,
             preparedS3Uri: event?.prepare?.output_s3_uri,
+            submitErrorsS3Uri: errorsS3Uri,
           });
           // Errors were successfully saved to DynamoDB, return success with empty transactionItems
           if (result.saved) {
@@ -1256,7 +1284,7 @@ export const handler = async (event) => {
         let errorsCsvPath;
         try {
           const unmatchedSources = extractUnmatchedSources(
-            /** @type {Record<string, { unmatchedFromA?: unknown[] }>} */(
+            /** @type {Record<string, { unmatchedFromA?: unknown[] }>} */ (
               /** @type {unknown} */ (mvlResult.comparison)
             ),
           );
@@ -1265,7 +1293,7 @@ export const handler = async (event) => {
             tmp,
             "bafkreigsipwhkwrboi73b3xvn4tjwd26pqyzz5zmyxvbnrgeb2qbq2bz34", // TODO: Dynamically fetch depending on the currently processed data group
           );
-          console.log(`Errors csv path: ${errorsCsvPath}`)
+          console.log(`Errors csv path: ${errorsCsvPath}`);
 
           try {
             const errorsCsv = await fs.readFile(errorsCsvPath);
@@ -1333,7 +1361,7 @@ export const handler = async (event) => {
             occurredAt: base.at,
             preparedS3Uri: event?.prepare?.output_s3_uri,
             errorsCsvPath,
-            errorsS3Uri
+            errorsS3Uri,
           });
           // Errors were successfully saved to DynamoDB, return success with empty transactionItems
           if (result.saved) {
@@ -1407,6 +1435,6 @@ export const handler = async (event) => {
   } finally {
     try {
       if (tmp) await fs.rm(tmp, { recursive: true, force: true });
-    } catch { }
+    } catch {}
   }
 };
