@@ -467,6 +467,8 @@ async function runTransformAndValidation({
   if (!validationResult.success) {
     const validationError = new Error(validationResult.error);
     validationError.name = "ValidationFailure";
+    //@ts-ignore
+    validationError.errorPath = path.join(tmpDir, "submit_errors.csv");
     throw validationError;
   }
 
@@ -477,6 +479,44 @@ async function runTransformAndValidation({
  * @typedef {object} ValidationFailureResult
  * @property {boolean} saved - Whether errors were successfully saved to DynamoDB.
  */
+
+/**
+ * Saves validation errors to S3.
+ * @param {Object} options - Options object.
+ * @param {string} options.submitErrorsPath - Path to the submit errors CSV file.
+ * @param {string} options.inputKey - Input key.
+ * @param {string} options.outputBaseUri - Output base URI.
+ * @param {StructuredLogger} options.log - Structured logger used for diagnostics.
+ * @returns {Promise<string>} - Submit errors S3 URI.
+ */
+async function saveValidationErrorToS3({
+  submitErrorsPath,
+  inputKey,
+  outputBaseUri,
+  log,
+}) {
+  try {
+    const submitErrorsCsv = await fs.readFile(submitErrorsPath);
+    const resolvedInputKey = path.posix.basename(inputKey || "input.csv");
+    const runPrefix = `${outputBaseUri.replace(/\/$/, "")}/${resolvedInputKey}`;
+    const errorFileKey = `${runPrefix.replace(/^s3:\/\//, "")}/submit_errors.csv`;
+    const [errorBucket, ...errorParts] = errorFileKey.split("/");
+    await s3.send(
+      new PutObjectCommand({
+        Bucket: errorBucket,
+        Key: errorParts.join("/"),
+        Body: submitErrorsCsv,
+      }),
+    );
+    const submitErrorsS3Uri = `s3://${errorBucket}/${errorParts.join("/")}`;
+    return submitErrorsS3Uri;
+  } catch (uploadError) {
+    log("error", "submit_errors_upload_failed", {
+      error: String(uploadError),
+    });
+    throw uploadError;
+  }
+}
 
 /**
  * Handle transform validation errors by logging and uploading submit_errors.csv.
@@ -507,31 +547,19 @@ async function handleValidationFailure({
   preparedS3Uri,
 }) {
   const submitErrorsPath = path.join(tmpDir, "submit_errors.csv");
-  let submitErrorsS3Uri = null;
+  let submitErrorsS3Uri;
   let submitErrors = [];
 
   try {
     submitErrors = await csvToJson(submitErrorsPath);
 
-    try {
-      const submitErrorsCsv = await fs.readFile(submitErrorsPath);
-      const resolvedInputKey = path.posix.basename(inputKey || "input.csv");
-      const runPrefix = `${outputBaseUri.replace(/\/$/, "")}/${resolvedInputKey}`;
-      const errorFileKey = `${runPrefix.replace(/^s3:\/\//, "")}/submit_errors.csv`;
-      const [errorBucket, ...errorParts] = errorFileKey.split("/");
-      await s3.send(
-        new PutObjectCommand({
-          Bucket: errorBucket,
-          Key: errorParts.join("/"),
-          Body: submitErrorsCsv,
-        }),
-      );
-      submitErrorsS3Uri = `s3://${errorBucket}/${errorParts.join("/")}`;
-    } catch (uploadError) {
-      log("error", "submit_errors_upload_failed", {
-        error: String(uploadError),
-      });
-    }
+    // Save errors to S3 using the extracted function
+    submitErrorsS3Uri = await saveValidationErrorToS3({
+      submitErrorsPath,
+      inputKey,
+      outputBaseUri,
+      log,
+    });
 
     log("error", "validation_failed", {
       step: "validate",
