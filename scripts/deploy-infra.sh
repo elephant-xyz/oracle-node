@@ -8,6 +8,10 @@ info() { echo -e "${GREEN}[INFO]${NC} $*"; }
 warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
 err()  { echo -e "${RED}[ERROR]${NC} $*"; }
 
+# Source the reusable Lambda image update script
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/update-lambda-image.sh"
+
 # Config with sane defaults
 STACK_NAME="${STACK_NAME:-elephant-oracle-node}"
 CODEBUILD_STACK_NAME="${CODEBUILD_STACK_NAME:-elephant-oracle-codebuild}"
@@ -106,47 +110,8 @@ sam_deploy() {
   # CRITICAL: Force Lambda to pull the latest Docker image from ECR
   # Lambda caches container images by digest, so even if we push a new 'latest' tag,
   # Lambda might use the old cached image unless we explicitly update it
-  info "Forcing Lambda to pull latest Docker image from ECR"
-
-  FUNCTION_NAME=$(aws cloudformation describe-stacks \
-    --stack-name "$STACK_NAME" \
-    --query "Stacks[0].Outputs[?OutputKey=='WorkflowPostProcessorFunctionName'].OutputValue" \
-    --output text)
-
-  if [ -n "$FUNCTION_NAME" ]; then
-    # Get the current image URI (which should point to the newly pushed image)
-    IMAGE_URI=$(aws lambda get-function \
-      --function-name "$FUNCTION_NAME" \
-      --query 'Code.ImageUri' \
-      --output text 2>&1)
-    info "IMAGE_URI: ${IMAGE_URI}"
-
-    # Extract ECR repository URI without the tag
-    ECR_REPO=$(echo "$IMAGE_URI" | cut -d':' -f1)
-
-    info "ECR_REPO: ${ECR_REPO}"
-    # Get the latest image digest from ECR
-    LATEST_DIGEST=$(aws ecr describe-images \
-      --repository-name $(echo "$ECR_REPO" | awk -F'/' '{print $2 "/" $3}') \
-      --query 'sort_by(imageDetails, &imagePushedAt)[-1].imageDigest' \
-      --output text 2>&1)
-
-    info "LATEST_DIGEST: ${LATEST_DIGEST}"
-    if [ -n "$LATEST_DIGEST" ]; then
-      # Update Lambda to use the image by digest (not tag) to force pull
-      info "Updating Lambda to use image digest: $LATEST_DIGEST"
-      aws lambda update-function-code \
-        --function-name "$FUNCTION_NAME" \
-        --image-uri "${ECR_REPO}@${LATEST_DIGEST}" \
-        >/dev/null 2>&1 || true
-
-      # Wait for the update to complete
-      aws lambda wait function-updated --function-name "$FUNCTION_NAME" 2>/dev/null || true
-      info "Lambda function updated with latest Docker image"
-    else
-      warn "Could not retrieve latest image digest from ECR"
-    fi
-  fi
+  # Use the reusable function from update-lambda-image.sh
+  update_lambda_with_latest_image ""
 }
 
 sam_deploy_with_versions() {
@@ -595,7 +560,7 @@ add_transform_prefix_override() {
 
 populate_proxy_rotation_table() {
   local proxy_file="${PROXY_FILE:-}"
-  
+
   if [[ -z "$proxy_file" ]]; then
     info "No proxy file specified (PROXY_FILE environment variable not set), skipping proxy population"
     return 0
@@ -608,14 +573,14 @@ populate_proxy_rotation_table() {
 
   local table_name
   table_name=$(get_output "ProxyRotationTableName")
-  
+
   if [[ -z "$table_name" ]]; then
     err "ProxyRotationTable not found in stack outputs. Deploy the stack first."
     exit 1
   fi
 
   info "Populating proxy rotation table using Node.js script"
-  
+
   # Use Node.js script to populate proxies
   node scripts/populate-proxies.mjs "$table_name" "$proxy_file" || {
     err "Failed to populate proxies"
@@ -630,7 +595,7 @@ setup_github_secret() {
   fi
 
   info "Setting up GitHub token in Secrets Manager..."
-  
+
   # Check if secret exists
   if aws secretsmanager describe-secret --secret-id "$GITHUB_SECRET_NAME" >/dev/null 2>&1; then
     info "Updating existing secret: $GITHUB_SECRET_NAME"
@@ -650,7 +615,7 @@ setup_github_secret() {
       exit 1
     }
   fi
-  
+
   info "GitHub secret configured successfully"
 }
 
@@ -779,12 +744,12 @@ main() {
   setup_github_secret
 
   compute_param_overrides
-  
+
   # Upload transforms only if flag is set
   if [[ "$UPLOAD_TRANSFORMS" == "true" ]]; then
     upload_transforms_to_s3
   fi
-  
+
   upload_browser_flows_to_s3
   upload_multi_request_flows_to_s3
   package_and_upload_codebuild_runtime
@@ -822,7 +787,7 @@ main() {
 
   # Handle pending scenarios after stack creation
   local need_redeploy=false
-  
+
   # Handle transform upload/configuration if pending
   if [[ "$UPLOAD_TRANSFORMS" == "true" ]] && (( TRANSFORMS_UPLOAD_PENDING == 1 )); then
     upload_transforms_to_s3
@@ -842,7 +807,7 @@ main() {
       need_redeploy=true
     fi
   fi
-  
+
   # Redeploy if any pending items were resolved
   if [[ "$need_redeploy" == true ]]; then
     sam_deploy
