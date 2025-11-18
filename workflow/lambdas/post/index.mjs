@@ -7,7 +7,7 @@ import { promises as fs } from "fs";
 import path from "path";
 import os from "os";
 import { randomUUID } from "crypto";
-import { transform, validate, hash, upload } from "@elephant-xyz/cli/lib";
+import { transform, validate } from "@elephant-xyz/cli/lib";
 import { parse } from "csv-parse/sync";
 import AdmZip from "adm-zip";
 import { createTransformScriptsManager } from "./scripts-manager.mjs";
@@ -1008,46 +1008,16 @@ export const handler = async (event) => {
       transformed_output_s3_uri: transformedOutputS3Uri,
     });
 
-    const {
-      propertyCid,
-      seedHashCsv,
-      countyHashCsv,
-      seedHashZip,
-      countyHashZip,
-    } = await generateHashArtifacts({
-      seedZipLocal,
-      countyOutZip: countyOut,
-      tmpDir: tmp,
-      log,
-    });
-
-    if (!propertyCid) {
-      log("debug", "property_cid_missing", {});
-    }
-
-    const transactionItems = await combineAndParseTransactions({
-      seedHashCsv,
-      countyHashCsv,
-      tmpDir: tmp,
-    });
-    await uploadHashOutputs({
-      filesForIpfs: [seedHashZip, countyHashZip],
-      tmpDir: tmp,
-      log,
-      pinataJwt: requireEnv("ELEPHANT_PINATA_JWT"),
-    });
     const totalOperationDuration = Date.now() - Date.parse(base.at);
     log("info", "post_lambda_complete", {
       operation: "post_lambda_total",
       duration_ms: totalOperationDuration,
       duration_seconds: (totalOperationDuration / 1000).toFixed(2),
-      transaction_items_count: transactionItems.length,
       transformed_output_s3_uri: transformedOutputS3Uri,
     });
 
     return {
       status: "success",
-      transactionItems,
       transformedOutputS3Uri,
       preparedInputS3Uri: prepared,
       executionId,

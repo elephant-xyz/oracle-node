@@ -551,7 +551,7 @@ Resources:
         Size: 2048
       CodeUri: ../workflow/lambdas/post
       Handler: index.handler
-      Description: "Performs county transform, hash, and upload"
+      Description: "Performs county transform and validation"
       LoggingConfig:
         LogFormat: JSON
       Policies:
@@ -569,9 +569,32 @@ Resources:
           ELEPHANT_ORACLE_KEY_ID: !Ref ElephantOracleKeyId
           ELEPHANT_FROM_ADDRESS: !Ref ElephantFromAddress
           ELEPHANT_RPC_URL: !Ref ElephantRpcUrl
-          ELEPHANT_PINATA_JWT: !Ref ElephantPinataJwt
           TRANSFORM_S3_PREFIX: !Ref TransformS3Prefix
           ERRORS_TABLE_NAME: !Ref ErrorsTable
+
+  WorkflowHashAndUploadFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Runtime: nodejs22.x
+      Architectures:
+        - arm64
+      MemorySize: 512
+      Timeout: 300
+      EphemeralStorage:
+        Size: 2048
+      CodeUri: ../workflow/lambdas/hash-upload
+      Handler: index.handler
+      Description: "Performs hashing and IPFS upload"
+      LoggingConfig:
+        LogFormat: JSON
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - S3CrudPolicy:
+            BucketName: !Ref EnvironmentBucket
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+      Environment:
+        Variables:
+          ELEPHANT_PINATA_JWT: !Ref ElephantPinataJwt
 
   WorkflowMirrorValidatorFunction:
     Type: AWS::Serverless::Function
@@ -709,6 +732,7 @@ Resources:
         WorkflowPreProcessorFunction: !GetAtt WorkflowPreProcessorFunction.Arn
         DownloaderFunction: !GetAtt DownloaderFunction.Arn
         WorkflowPostProcessorFunction: !GetAtt WorkflowPostProcessorFunction.Arn
+        WorkflowHashAndUploadFunction: !GetAtt WorkflowHashAndUploadFunction.Arn
         WorkflowMirrorValidatorFunction: !GetAtt WorkflowMirrorValidatorFunction.Arn
         TransactionsSqsQueueUrl: !Ref TransactionsSqsQueue
         StackName: !Ref AWS::StackName
@@ -1192,6 +1216,15 @@ Outputs:
   WorkflowPostProcessorFunctionName:
     Description: Name of the Workflow Post Processor Lambda function
     Value: !Ref WorkflowPostProcessorFunction
+  WorkflowHashAndUploadFunctionName:
+    Description: Name of the Workflow Hash and Upload Lambda function
+    Value: !Ref WorkflowHashAndUploadFunction
+  WorkflowHashAndUploadFunctionArn:
+    Description: ARN of the Workflow Hash and Upload Lambda function
+    Value: !GetAtt WorkflowHashAndUploadFunction.Arn
+  WorkflowHashAndUploadLogGroupName:
+    Description: CloudWatch Log Group name for the hash and upload Lambda function
+    Value: !Sub "/aws/lambda/${WorkflowHashAndUploadFunction}"
   WorkflowMirrorValidatorFunctionName:
     Description: Name of the Workflow Mirror Validator Lambda function
     Value: !Ref WorkflowMirrorValidatorFunction
