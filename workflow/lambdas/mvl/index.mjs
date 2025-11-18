@@ -360,7 +360,11 @@ async function tryDownloadStaticParts(county, tmpDir, log) {
 
     // File exists, download it
     const staticCsvLocal = path.join(tmpDir, "static-parts.csv");
-    await downloadS3Object({ bucket, key: staticPartsKey }, staticCsvLocal, log);
+    await downloadS3Object(
+      { bucket, key: staticPartsKey },
+      staticCsvLocal,
+      log,
+    );
 
     log("info", "mvl_static_parts_downloaded", {
       county,
@@ -370,18 +374,22 @@ async function tryDownloadStaticParts(county, tmpDir, log) {
     return staticCsvLocal;
   } catch (error) {
     // File doesn't exist or error occurred
-    const err = /** @type {Error & {$metadata?: {httpStatusCode?: number}}} */ (error);
+    const err = /** @type {Error & {$metadata?: {httpStatusCode?: number}}} */ (
+      error
+    );
     if (err.name === "NotFound" || err.$metadata?.httpStatusCode === 404) {
       log("info", "mvl_static_parts_not_found", {
         county,
         normalized_county: normalizedCounty,
-        message: "Static parts file not found, running MVL without static parts",
+        message:
+          "Static parts file not found, running MVL without static parts",
       });
     } else {
       log("error", "mvl_static_parts_error", {
         county,
         error: String(err),
-        message: "Error checking static parts file, running MVL without static parts",
+        message:
+          "Error checking static parts file, running MVL without static parts",
       });
     }
     return undefined;
@@ -679,7 +687,8 @@ export const handler = async (event) => {
             log("info", "mirror_validation_failed_no_errors", {
               execution_id: event.executionId,
               county: event.county,
-              message: "Mirror validation failed but no specific errors to save",
+              message:
+                "Mirror validation failed but no specific errors to save",
               errors_s3_uri: errorsS3Uri,
               global_completeness: actualMvlMetric,
             });
