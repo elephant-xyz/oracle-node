@@ -651,25 +651,98 @@ async function runAutoRepairIteration({
     // Step 4: Upload fixed scripts
     await uploadFixedScripts(county, scriptsDir, transformPrefix);
 
-    // Step 5: Invoke post-processing Lambda to verify fixes work
-    const postProcessorFunctionName = requireEnv(
-      "POST_PROCESSOR_FUNCTION_NAME",
-    );
+    // Step 5: Determine which Lambda to invoke based on error type
+    // MVL errors are in mvl_errors.csv, Post errors are in submit_errors.csv
+    const isMvlError = errorsS3Uri.includes("mvl_errors.csv");
     const transactionsQueueUrl = requireEnv("TRANSACTIONS_SQS_QUEUE_URL");
     const seedOutputS3Uri = constructSeedOutputS3Uri(preparedS3Uri);
 
+    let resultPayload;
     try {
-      const resultPayload = await invokePostProcessingLambda({
-        functionName: postProcessorFunctionName,
-        preparedS3Uri,
-        seedOutputS3Uri,
-        s3Event: source
-          ? {
+      if (isMvlError) {
+        // Invoke MVL Lambda for mirror validation errors
+        const mvlFunctionName = requireEnv("MVL_FUNCTION_NAME");
+        console.log(`Invoking MVL Lambda ${mvlFunctionName} to verify fixes...`);
+
+        const payload = {
+          preparedInputS3Uri: preparedS3Uri,
+          transformedOutputS3Uri: seedOutputS3Uri,
+          preparedOutputS3Uri: preparedS3Uri,
+          county,
+          executionId,
+        };
+
+        // Add S3 event if available
+        if (source?.s3Bucket && source?.s3Key) {
+          payload.s3 = {
             bucket: { name: source.s3Bucket },
             object: { key: source.s3Key },
-          }
-          : undefined,
-      });
+          };
+        }
+
+        const response = await lambdaClient.send(
+          new InvokeCommand({
+            FunctionName: mvlFunctionName,
+            InvocationType: "RequestResponse",
+            Payload: JSON.stringify(payload),
+          }),
+        );
+
+        if (response.FunctionError) {
+          const errorPayload = JSON.parse(
+            new TextDecoder().decode(response.Payload ?? new Uint8Array()),
+          );
+          throw new Error(
+            `MVL Lambda failed: ${errorPayload.errorMessage || errorPayload.errorType || JSON.stringify(errorPayload)}`,
+          );
+        }
+
+        resultPayload = JSON.parse(
+          new TextDecoder().decode(response.Payload ?? new Uint8Array()),
+        );
+
+        console.log(`MVL Lambda returned status: ${resultPayload.status} with mvlMetric: ${resultPayload.mvlMetric || 0}`);
+
+        // For MVL, we consider it successful if status is success and mvlMetric > 0
+        // If mvlMetric is 0, validation failed and we should not proceed
+        if (resultPayload.status === "success" && (resultPayload.mvlMetric || 0) > 0) {
+          // MVL passed, now invoke post-processing to get transaction items
+          const postProcessorFunctionName = requireEnv("POST_PROCESSOR_FUNCTION_NAME");
+          resultPayload = await invokePostProcessingLambda({
+            functionName: postProcessorFunctionName,
+            preparedS3Uri,
+            seedOutputS3Uri,
+            s3Event: source
+              ? {
+                bucket: { name: source.s3Bucket },
+                object: { key: source.s3Key },
+              }
+              : undefined,
+          });
+        } else {
+          // MVL failed, treat as failure
+          resultPayload = {
+            status: "failed",
+            transactionItems: [],
+          };
+        }
+      } else {
+        // Invoke Post Lambda for transformation/validation errors
+        const postProcessorFunctionName = requireEnv("POST_PROCESSOR_FUNCTION_NAME");
+        console.log(`Invoking Post Lambda ${postProcessorFunctionName} to verify fixes...`);
+
+        resultPayload = await invokePostProcessingLambda({
+          functionName: postProcessorFunctionName,
+          preparedS3Uri,
+          seedOutputS3Uri,
+          s3Event: source
+            ? {
+              bucket: { name: source.s3Bucket },
+              object: { key: source.s3Key },
+            }
+            : undefined,
+        });
+      }
 
       // Check if execution was successful
       if (

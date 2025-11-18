@@ -31,6 +31,7 @@ UPLOAD_TRANSFORMS="${UPLOAD_TRANSFORMS:-false}"
 TRANSFORMS_UPLOAD_PENDING=0
 BROWSER_FLOWS_UPLOAD_PENDING=0
 MULTI_REQUEST_FLOWS_UPLOAD_PENDING=0
+STATIC_PARTS_UPLOAD_PENDING=0
 ENVIRONMENT_NAME="${ENVIRONMENT_NAME:-MWAAEnvironment}"
 
 CODEBUILD_RUNTIME_MODULE_DIR="codebuild/runtime-module"
@@ -110,8 +111,8 @@ sam_deploy() {
   # CRITICAL: Force Lambda to pull the latest Docker image from ECR
   # Lambda caches container images by digest, so even if we push a new 'latest' tag,
   # Lambda might use the old cached image unless we explicitly update it
-  # Use the reusable function from update-lambda-image.sh
-  update_lambda_with_latest_image ""
+  # Use the reusable function from update-lambda-image.sh for MVL Lambda
+  update_lambda_with_latest_image "" "WorkflowMirrorValidatorFunctionName"
 }
 
 sam_deploy_with_versions() {
@@ -337,6 +338,35 @@ upload_multi_request_flows_to_s3() {
   info "Multi-request flows uploaded to: $s3_prefix"
 }
 
+upload_static_parts_to_s3() {
+  local static_parts_dir="source-html-static-parts"
+
+  # Check if source-html-static-parts directory exists
+  if [[ ! -d "$static_parts_dir" ]]; then
+    info "No source-html-static-parts directory found, skipping static parts upload"
+    return 0
+  fi
+
+  local bucket
+  bucket=$(get_bucket)
+  if [[ -z "$bucket" ]]; then
+    # Bucket doesn't exist yet (first deploy). Will be uploaded after stack creation.
+    STATIC_PARTS_UPLOAD_PENDING=1
+    return 0
+  fi
+
+  local s3_prefix="s3://$bucket/source-html-static-parts"
+  info "Syncing static parts to $s3_prefix"
+
+  # Upload all .csv files from source-html-static-parts directory
+  aws s3 sync "$static_parts_dir" "$s3_prefix" --exclude "*" --include "*.csv" --delete || {
+    warn "Failed to sync static parts to $s3_prefix"
+    return 1
+  }
+
+  info "Static parts uploaded to: $s3_prefix"
+}
+
 package_and_upload_codebuild_runtime() {
   if [[ ! -d "$CODEBUILD_RUNTIME_MODULE_DIR" ]]; then
     warn "CodeBuild runtime module directory ($CODEBUILD_RUNTIME_MODULE_DIR) not found, skipping upload."
@@ -493,58 +523,9 @@ deploy_codebuild_stack() {
   CODEBUILD_DEPLOY_PENDING=0
 }
 
-push_post_lambda_image_to_ecr() {
-  local post_lambda_dir="workflow/lambdas/post"
-
-  if [[ ! -f "$post_lambda_dir/Dockerfile" ]]; then
-    return 0
-  fi
-
-  # Get AWS account ID and region
-  local aws_account_id
-  aws_account_id=$(aws sts get-caller-identity --query Account --output text)
-  local aws_region
-  aws_region=$(aws configure get region || echo "us-east-1")
-
-  # Try to get ECR repository name from stack outputs
-  local repo_name
-  repo_name=$(get_output "PostLambdaEcrRepositoryName" 2>/dev/null || echo "")
-
-  if [[ -z "$repo_name" ]]; then
-    info "ECR repository not yet created, will push image after stack deployment"
-    POST_LAMBDA_IMAGE_PUSH_PENDING=1
-    return 0
-  fi
-
-  local repo_uri="${aws_account_id}.dkr.ecr.${aws_region}.amazonaws.com/${repo_name}"
-
-  info "Pushing Post Lambda Docker image to $repo_uri"
-
-  # Login to ECR
-  info "Logging in to ECR..."
-  aws ecr get-login-password --region "$aws_region" \
-    | docker login --username AWS --password-stdin "$repo_uri" >/dev/null || {
-    err "Failed to login to ECR"
-    exit 1
-  }
-
-  # Tag the image
-  info "Tagging image..."
-  docker tag post-lambda:latest "$repo_uri:latest" || {
-    err "Failed to tag Docker image"
-    exit 1
-  }
-
-  # Push to ECR
-  info "Pushing image to ECR..."
-  docker push "$repo_uri:latest" >/dev/null || {
-    err "Failed to push Docker image to ECR"
-    exit 1
-  }
-
-  info "Successfully pushed Docker image to $repo_uri:latest"
-  POST_LAMBDA_IMAGE_PUSH_PENDING=0
-}
+# Note: MVL Lambda Docker image is now built and pushed automatically by SAM
+# during sam_build and sam_deploy using --resolve-image-repos
+# No manual push needed anymore
 
 add_transform_prefix_override() {
   if [[ -z "${TRANSFORM_S3_PREFIX_VALUE:-}" ]]; then
@@ -752,6 +733,7 @@ main() {
 
   upload_browser_flows_to_s3
   upload_multi_request_flows_to_s3
+  upload_static_parts_to_s3
   package_and_upload_codebuild_runtime
   deploy_codebuild_stack
 
@@ -826,6 +808,11 @@ main() {
   # Upload multi-request flows if pending
   if (( MULTI_REQUEST_FLOWS_UPLOAD_PENDING == 1 )); then
     upload_multi_request_flows_to_s3
+  fi
+
+  # Upload static parts if pending
+  if (( STATIC_PARTS_UPLOAD_PENDING == 1 )); then
+    upload_static_parts_to_s3
   fi
 
   handle_pending_keystore_upload

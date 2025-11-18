@@ -128,15 +128,16 @@ push_image_to_ecr() {
 # Update Lambda function to use the latest image from ECR
 update_lambda_with_latest_image() {
   local repo_uri="${1:-}"
+  local output_key="${2:-WorkflowPostProcessorFunctionName}"
 
   info "Updating Lambda function to use latest Docker image"
 
   # Get Lambda function name from stack outputs
   local function_name
-  function_name=$(get_output "WorkflowPostProcessorFunctionName")
+  function_name=$(get_output "$output_key")
 
   if [[ -z "$function_name" ]]; then
-    err "Lambda function name not found in stack outputs"
+    err "Lambda function name not found in stack outputs (looking for: $output_key)"
     exit 1
   fi
 
