@@ -273,7 +273,7 @@ NEVER try to assume property name and find it with getPropertySchema tool.`;
         },
       },
       permissionMode: "acceptEdits",
-      allowDangerouslySkipPermissions: true,
+      // allowDangerouslySkipPermissions: true,
       model: "us.anthropic.claude-haiku-4-5-20251001-v1:0",
       includePartialMessages: true,
     },
