@@ -478,6 +478,14 @@ deploy_codebuild_stack() {
     return 0
   fi
 
+  local mvl_function_name
+  mvl_function_name=$(get_output "WorkflowMirrorValidatorFunctionName")
+  if [[ -z "$mvl_function_name" ]]; then
+    CODEBUILD_DEPLOY_PENDING=1
+    info "Delaying CodeBuild stack deployment until WorkflowMirrorValidatorFunctionName output is available."
+    return 0
+  fi
+
   local default_dlq_url
   default_dlq_url=$(get_output "MwaaDeadLetterQueueUrl")
   if [[ -z "$default_dlq_url" ]]; then
@@ -520,6 +528,7 @@ deploy_codebuild_stack() {
       ErrorsTableName="$errors_table_name" \
       TransformS3Prefix="$transform_s3_prefix" \
       PostProcessorFunctionName="$post_processor_function_name" \
+      MvlFunctionName="$mvl_function_name" \
       OpenAiApiKey="$openai_api_key" \
       TransactionsSqsQueueUrl="$transactions_sqs_queue_url" \
       DefaultDlqUrl="$default_dlq_url"
