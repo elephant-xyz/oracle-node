@@ -35,6 +35,7 @@ const s3 = new S3Client({});
  * @typedef {object} MirrorValidateOutput
  * @property {string} status
  * @property {number} mvlMetric - Global completeness metric (0-100)
+ * @property {boolean} mvlPassed - Whether the validation passed the threshold (>= 0.8)
  */
 
 /**
@@ -679,7 +680,11 @@ export const handler = async (event) => {
                 duration_seconds: (totalOperationDuration / 1000).toFixed(2),
                 mvl_metric: actualMvlMetric,
               });
-              return { status: "success", mvlMetric: actualMvlMetric };
+              return {
+                status: "success",
+                mvlMetric: actualMvlMetric,
+                mvlPassed: false,
+              };
             }
           } else {
             // No specific errors to save, but validation failed (likely low completeness)
@@ -699,7 +704,11 @@ export const handler = async (event) => {
               duration_seconds: (totalOperationDuration / 1000).toFixed(2),
               mvl_metric: actualMvlMetric,
             });
-            return { status: "success", mvlMetric: actualMvlMetric };
+            return {
+              status: "success",
+              mvlMetric: actualMvlMetric,
+              mvlPassed: false,
+            };
           }
         } catch (saveError) {
           // DynamoDB save failed, re-throw the error
@@ -718,7 +727,7 @@ export const handler = async (event) => {
       mvl_metric: mvlMetric,
     });
 
-    return { status: "success", mvlMetric };
+    return { status: "success", mvlMetric, mvlPassed: true };
   } catch (err) {
     log("error", "mvl_lambda_failed", {
       step: "unknown",
