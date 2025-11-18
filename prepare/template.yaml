@@ -542,12 +542,16 @@ Resources:
   WorkflowPostProcessorFunction:
     Type: AWS::Serverless::Function
     Properties:
-      PackageType: Image
-      MemorySize: 2048
+      Runtime: nodejs22.x
+      Architectures:
+        - arm64
+      MemorySize: 512
       Timeout: 300
       EphemeralStorage:
-        Size: 3072
-      Description: "Performs county transform, hash, upload, and mirrorValidate"
+        Size: 2048
+      CodeUri: ../workflow/lambdas/post
+      Handler: index.handler
+      Description: "Performs county transform, hash, and upload"
       LoggingConfig:
         LogFormat: JSON
       Policies:
@@ -568,9 +572,32 @@ Resources:
           ELEPHANT_PINATA_JWT: !Ref ElephantPinataJwt
           TRANSFORM_S3_PREFIX: !Ref TransformS3Prefix
           ERRORS_TABLE_NAME: !Ref ErrorsTable
+
+  WorkflowMirrorValidatorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      PackageType: Image
+      MemorySize: 2048
+      Timeout: 300
+      EphemeralStorage:
+        Size: 3072
+      Description: "Performs mirror validation to measure data completeness"
+      LoggingConfig:
+        LogFormat: JSON
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - S3CrudPolicy:
+            BucketName: !Ref EnvironmentBucket
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ErrorsTable
+      Environment:
+        Variables:
+          OUTPUT_BASE_URI: !Sub "s3://${EnvironmentBucket}/outputs"
+          ERRORS_TABLE_NAME: !Ref ErrorsTable
     Metadata:
       DockerTag: latest
-      DockerContext: ../workflow/lambdas/post
+      DockerContext: ../workflow/lambdas/mvl
       Dockerfile: Dockerfile
 
   ErrorResolverFunction:
@@ -682,6 +709,7 @@ Resources:
         WorkflowPreProcessorFunction: !GetAtt WorkflowPreProcessorFunction.Arn
         DownloaderFunction: !GetAtt DownloaderFunction.Arn
         WorkflowPostProcessorFunction: !GetAtt WorkflowPostProcessorFunction.Arn
+        WorkflowMirrorValidatorFunction: !GetAtt WorkflowMirrorValidatorFunction.Arn
         TransactionsSqsQueueUrl: !Ref TransactionsSqsQueue
         StackName: !Ref AWS::StackName
       Role: !GetAtt ElephantExpressStateMachineRole.Arn
@@ -723,6 +751,7 @@ Resources:
                   - !GetAtt WorkflowPreProcessorFunction.Arn
                   - !GetAtt DownloaderFunction.Arn
                   - !GetAtt WorkflowPostProcessorFunction.Arn
+                  - !GetAtt WorkflowMirrorValidatorFunction.Arn
               - Effect: Allow
                 Action:
                   - sqs:SendMessage
@@ -1160,6 +1189,18 @@ Outputs:
   WorkflowPostProcessorLogGroupName:
     Description: CloudWatch Log Group name for the post processor Lambda function
     Value: !Sub "/aws/lambda/${WorkflowPostProcessorFunction}"
+  WorkflowPostProcessorFunctionName:
+    Description: Name of the Workflow Post Processor Lambda function
+    Value: !Ref WorkflowPostProcessorFunction
+  WorkflowMirrorValidatorFunctionName:
+    Description: Name of the Workflow Mirror Validator Lambda function
+    Value: !Ref WorkflowMirrorValidatorFunction
+  WorkflowMirrorValidatorFunctionArn:
+    Description: ARN of the Workflow Mirror Validator Lambda function
+    Value: !GetAtt WorkflowMirrorValidatorFunction.Arn
+  WorkflowMirrorValidatorLogGroupName:
+    Description: CloudWatch Log Group name for the mirror validator Lambda function
+    Value: !Sub "/aws/lambda/${WorkflowMirrorValidatorFunction}"
   WorkflowDeadLetterQueueUrl:
     Description: URL of the Workflow Dead Letter Queue
     Value: !Ref WorkflowDeadLetterQueue
@@ -1187,9 +1228,6 @@ Outputs:
   ErrorsTableName:
     Description: Name of the Errors DynamoDB table
     Value: !Ref ErrorsTable
-  WorkflowPostProcessorFunctionName:
-    Description: Name of the Workflow Post Processor Lambda function
-    Value: !Ref WorkflowPostProcessorFunction
   GitHubSyncFunctionName:
     Description: Name of the GitHub Sync Lambda function
     Value: !Ref GitHubSyncFunction

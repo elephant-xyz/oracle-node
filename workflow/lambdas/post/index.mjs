@@ -7,13 +7,7 @@ import { promises as fs } from "fs";
 import path from "path";
 import os from "os";
 import { randomUUID } from "crypto";
-import {
-  transform,
-  validate,
-  hash,
-  upload,
-  mirrorValidate,
-} from "@elephant-xyz/cli/lib";
+import { transform, validate, hash, upload } from "@elephant-xyz/cli/lib";
 import { parse } from "csv-parse/sync";
 import AdmZip from "adm-zip";
 import { createTransformScriptsManager } from "./scripts-manager.mjs";
@@ -42,7 +36,10 @@ const transformScriptsManager = createTransformScriptsManager({
  * @typedef {object} PostOutput
  * @property {string} status
  * @property {CsvRecord[]} transactionItems
- * @property {number} [mvlMetric] - Global completeness metric from mirrorValidate
+ * @property {string} transformedOutputS3Uri - S3 URI of the transformed output zip
+ * @property {string} preparedInputS3Uri - S3 URI of the prepared input zip (for MVL)
+ * @property {string} executionId - Execution identifier
+ * @property {string} county - County name
  */
 
 /**
@@ -460,10 +457,7 @@ async function runTransformAndValidation({
 
   log("info", "validation_start", { operation: "validation" });
   const validationStart = Date.now();
-  const validationResult = await validate({
-    input: countyOut,
-    cwd: tmpDir,
-  });
+  const validationResult = await validate({ input: countyOut, cwd: tmpDir });
   const validationDuration = Date.now() - validationStart;
   log("info", "validation_complete", {
     operation: "validation",
@@ -485,96 +479,6 @@ async function runTransformAndValidation({
  * @typedef {object} ValidationFailureResult
  * @property {boolean} saved - Whether errors were successfully saved to DynamoDB.
  */
-
-/**
- * Handle transform validation errors by logging and uploading submit_errors.csv.
- *
- * @param {object} params - Failure handling context.
- * @param {string} params.tmpDir - Temporary working directory.
- * @param {StructuredLogger} params.log - Structured logger.
- * @param {string} params.error - Validation error message.
- * @param {string} params.executionId - Identifier for the failed execution.
- * @param {string} params.county - County identifier.
- * @param {import("./errors.mjs").ExecutionSource} params.source - Minimal source description.
- * @param {string} params.occurredAt - ISO timestamp of the failure.
- * @param {string} params.preparedS3Uri - S3 location of the output of the prepare step.
- * @param {string} params.submitErrorsS3Uri - S3 location of the output of the submit step.
- * @returns {Promise<ValidationFailureResult>} - Returns { saved: true } if DynamoDB save succeeds, throws if save fails or no errors to save.
- */
-async function handleValidationFailure({
-  tmpDir,
-  log,
-  error,
-  executionId,
-  county,
-  source,
-  occurredAt,
-  preparedS3Uri,
-  submitErrorsS3Uri,
-}) {
-  const submitErrorsPath = path.join(tmpDir, "submit_errors.csv");
-  let submitErrors = [];
-
-  try {
-    submitErrors = await csvToJson(submitErrorsPath);
-
-    log("error", "validation_failed", {
-      step: "validate",
-      error,
-      submit_errors: submitErrors,
-      submit_errors_s3_uri: submitErrorsS3Uri,
-    });
-
-    if (submitErrors.length > 0) {
-      try {
-        await getErrorsRepository().saveFailedExecution({
-          executionId,
-          county,
-          errors: submitErrors.map((row) => ({
-            errorMessage: row.error_message ?? undefined,
-            error_message: row.error_message ?? undefined,
-            errorPath: row.error_path ?? undefined,
-            error_path: row.error_path ?? undefined,
-          })),
-          source,
-          errorsS3Uri: submitErrorsS3Uri,
-          failureMessage: error,
-          occurredAt,
-          preparedS3Uri,
-        });
-        // DynamoDB save succeeded, return success indicator
-        return { saved: true };
-      } catch (repoError) {
-        log("error", "errors_repository_save_failed", {
-          error: String(repoError),
-          execution_id: executionId,
-        });
-        // DynamoDB save failed, throw the error
-        const errorMessage = submitErrorsS3Uri
-          ? `Validation failed. Submit errors CSV: ${submitErrorsS3Uri}. DynamoDB save failed: ${String(repoError)}`
-          : `Validation failed. DynamoDB save failed: ${String(repoError)}`;
-        const errorToThrow = new Error(errorMessage);
-        errorToThrow.name = "ValidationFailure";
-        throw errorToThrow;
-      }
-    }
-  } catch (csvError) {
-    log("error", "validation_failed", {
-      step: "validate",
-      error,
-      submit_errors_read_error: String(csvError),
-    });
-  }
-
-  // No submitErrors to save, throw error
-  const errorMessage = submitErrorsS3Uri
-    ? `Validation failed. Submit errors CSV: ${submitErrorsS3Uri}`
-    : "Validation failed";
-  const errorToThrow = new Error(errorMessage);
-  errorToThrow.name = "ValidationFailure";
-
-  throw errorToThrow;
-}
 
 /**
  * Saves validation errors to S3.
@@ -615,107 +519,102 @@ async function saveValidationErrorToS3({
 }
 
 /**
- * @typedef {object} MirrorValidationResult
- * @property {object} [comparison] - Comparison result containing entity type comparisons.
- */
-
-/**
- * Handle mirror validation errors by extracting unmatched sources, generating CSV, and saving to DynamoDB.
+ * Handle transform validation errors by logging and uploading submit_errors.csv.
  *
  * @param {object} params - Failure handling context.
+ * @param {string} params.tmpDir - Temporary working directory.
  * @param {StructuredLogger} params.log - Structured logger.
  * @param {string} params.error - Validation error message.
+ * @param {string} params.outputBaseUri - Base S3 URI for generated outputs.
+ * @param {string | undefined} params.inputKey - Original input S3 key.
  * @param {string} params.executionId - Identifier for the failed execution.
  * @param {string} params.county - County identifier.
  * @param {import("./errors.mjs").ExecutionSource} params.source - Minimal source description.
  * @param {string} params.occurredAt - ISO timestamp of the failure.
  * @param {string} params.preparedS3Uri - S3 location of the output of the prepare step.
- * @param {string} params.errorsCsvPath - Optional path to pre-generated errors CSV.
- * @param {string} params.errorsS3Uri - S3 URI of saved errors CSV.
  * @returns {Promise<ValidationFailureResult>} - Returns { saved: true } if DynamoDB save succeeds, throws if save fails or no errors to save.
  */
-async function handleMirrorValidationFailure({
+async function handleValidationFailure({
+  tmpDir,
   log,
   error,
+  outputBaseUri,
+  inputKey,
   executionId,
   county,
   source,
   occurredAt,
   preparedS3Uri,
-  errorsCsvPath,
-  errorsS3Uri,
 }) {
-  let mvlErrorsCsvPath = errorsCsvPath;
-  let mvlErrorsS3Uri = errorsS3Uri;
-  let mvlErrors = [];
+  const submitErrorsPath = path.join(tmpDir, "submit_errors.csv");
+  let submitErrorsS3Uri;
+  let submitErrors = [];
 
   try {
-    if (mvlErrorsCsvPath) {
+    submitErrors = await csvToJson(submitErrorsPath);
+
+    // Save errors to S3 using the extracted function
+    submitErrorsS3Uri = await saveValidationErrorToS3({
+      submitErrorsPath,
+      inputKey,
+      outputBaseUri,
+      log,
+    });
+
+    log("error", "validation_failed", {
+      step: "validate",
+      error,
+      submit_errors: submitErrors,
+      submit_errors_s3_uri: submitErrorsS3Uri,
+    });
+
+    if (submitErrors.length > 0) {
       try {
-        mvlErrors = await csvToJson(mvlErrorsCsvPath);
-
-        log("error", "mirror_validation_failed", {
-          step: "mirror_validate",
-          error,
-          mvl_errors: mvlErrors,
-          mvl_errors_s3_uri: mvlErrorsS3Uri,
+        await getErrorsRepository().saveFailedExecution({
+          executionId,
+          county,
+          errors: submitErrors.map((row) => ({
+            errorMessage: row.error_message ?? undefined,
+            error_message: row.error_message ?? undefined,
+            errorPath: row.error_path ?? undefined,
+            error_path: row.error_path ?? undefined,
+          })),
+          source,
+          errorsS3Uri: submitErrorsS3Uri ?? undefined,
+          failureMessage: error,
+          occurredAt,
+          preparedS3Uri,
         });
-
-        if (mvlErrors.length > 0) {
-          try {
-            await getErrorsRepository().saveFailedExecution({
-              executionId,
-              county,
-              errors: mvlErrors.map((row) => ({
-                errorMessage: row.error_message ?? undefined,
-                error_message: row.error_message ?? undefined,
-                errorPath: row.error_path ?? undefined,
-                error_path: row.error_path ?? undefined,
-              })),
-              source,
-              errorsS3Uri: mvlErrorsS3Uri ?? undefined,
-              failureMessage: error,
-              occurredAt,
-              preparedS3Uri,
-            });
-            // DynamoDB save succeeded, return success indicator
-            return { saved: true };
-          } catch (repoError) {
-            log("error", "errors_repository_save_failed", {
-              error: String(repoError),
-              execution_id: executionId,
-            });
-            // DynamoDB save failed, throw the error
-            const errorMessage = mvlErrorsS3Uri
-              ? `Mirror validation failed. Submit errors CSV: ${mvlErrorsS3Uri}. DynamoDB save failed: ${String(repoError)}`
-              : `Mirror validation failed. DynamoDB save failed: ${String(repoError)}`;
-            const errorToThrow = new Error(errorMessage);
-            errorToThrow.name = "MirrorValidationFailure";
-            throw errorToThrow;
-          }
-        }
-      } catch (csvError) {
-        log("error", "mirror_validation_failed", {
-          step: "mirror_validate",
-          error,
-          mvl_errors_read_error: String(csvError),
+        // DynamoDB save succeeded, return success indicator
+        return { saved: true };
+      } catch (repoError) {
+        log("error", "errors_repository_save_failed", {
+          error: String(repoError),
+          execution_id: executionId,
         });
+        // DynamoDB save failed, throw the error
+        const errorMessage = submitErrorsS3Uri
+          ? `Validation failed. Submit errors CSV: ${submitErrorsS3Uri}. DynamoDB save failed: ${String(repoError)}`
+          : `Validation failed. DynamoDB save failed: ${String(repoError)}`;
+        const errorToThrow = new Error(errorMessage);
+        errorToThrow.name = "ValidationFailure";
+        throw errorToThrow;
       }
     }
-  } catch (extractError) {
-    log("error", "mirror_validation_failed", {
-      step: "mirror_validate",
+  } catch (csvError) {
+    log("error", "validation_failed", {
+      step: "validate",
       error,
-      extraction_error: String(extractError),
+      submit_errors_read_error: String(csvError),
     });
   }
 
-  // No mvlErrors to save, throw error
-  const errorMessage = mvlErrorsS3Uri
-    ? `Mirror validation failed. Submit errors CSV: ${mvlErrorsS3Uri}`
-    : "Mirror validation failed";
+  // No submitErrors to save, throw error
+  const errorMessage = submitErrorsS3Uri
+    ? `Validation failed. Submit errors CSV: ${submitErrorsS3Uri}`
+    : "Validation failed";
   const errorToThrow = new Error(errorMessage);
-  errorToThrow.name = "MirrorValidationFailure";
+  errorToThrow.name = "ValidationFailure";
 
   throw errorToThrow;
 }
@@ -908,192 +807,6 @@ async function combineAndParseTransactions({
 }
 
 /**
- * Extract all unmatched source values from mirror validation comparison result.
- *
- * @param {Record<string, { unmatchedFromA?: unknown[] }>} comparison - Comparison result from mirrorValidate containing entity type comparisons.
- * @returns {string[]} - Array of unique source strings extracted from unmatchedFromA arrays.
- */
-function extractUnmatchedSources(comparison) {
-  /** @type {Set<string>} */
-  const sources = new Set();
-
-  const entityTypes = ["QUANTITY", "DATE", "ORGANIZATION", "LOCATION"];
-
-  for (const entityType of entityTypes) {
-    const entityComparison = comparison[entityType];
-    if (!entityComparison || !entityComparison.unmatchedFromA) {
-      continue;
-    }
-
-    const unmatched = entityComparison.unmatchedFromA;
-    if (Array.isArray(unmatched)) {
-      for (const item of unmatched) {
-        // Check if item is EntityWithSource (has source property)
-        if (typeof item === "object" && item !== null && "source" in item) {
-          const source = item.source;
-          if (typeof source === "string" && source.trim().length > 0) {
-            sources.add(source.trim());
-          }
-        }
-        // If it's a string[], skip it (no source available)
-      }
-    }
-  }
-
-  return Array.from(sources);
-}
-
-/**
- * Escape CSV field value by wrapping in quotes and escaping internal quotes.
- *
- * @param {string} value - Value to escape.
- * @returns {string} - Escaped CSV field value.
- */
-function escapeCsvField(value) {
-  // If value contains comma, quote, or newline, wrap in quotes and escape internal quotes
-  if (value.includes(",") || value.includes('"') || value.includes("\n")) {
-    return `"${value.replace(/"/g, '""')}"`;
-  }
-  return value;
-}
-
-/**
- * Generate CSV file with mirror validation errors from unmatched sources.
- *
- * @param {string[]} sources - Array of source strings to create error entries for.
- * @param {string} tmpDir - Temporary directory where CSV will be created.
- * @param {string} dataGroupCid - CID of the datagroup, that caused the issue
- * @returns {Promise<string>} - Path to the generated CSV file.
- */
-async function generateMirrorValidationErrorsCsv(
-  sources,
-  tmpDir,
-  dataGroupCid,
-) {
-  const csvPath = path.join(tmpDir, "mvl_errors.csv");
-
-  // CSV header
-  const header = "error_path,error_message,data_group_cid\n";
-  const rows = sources.map(
-    (source) =>
-      `${escapeCsvField(source)},${escapeCsvField("Value from this selector is not mapped to the output")},${escapeCsvField(dataGroupCid)}`,
-  );
-
-  const csvContent = header + rows.join("\n");
-  await fs.writeFile(csvPath, csvContent, "utf8");
-
-  return csvPath;
-}
-
-/**
- * Run mirror validation to measure completeness of transformed data.
- *
- * @param {object} params - Validation context.
- * @param {string} params.countyZipLocal - Path to input zip (before transform).
- * @param {string} params.countyOutZip - Path to output zip (after transform).
- * @param {string} params.tmpDir - Temporary working directory.
- * @param {StructuredLogger} params.log - Structured logger.
- * @param {string} params.outputS3Uri - Output S3 URI to derive report location.
- * @returns {Promise<number>} - Global completeness metric (0-100).
- */
-async function runMirrorValidation({
-  countyZipLocal,
-  countyOutZip,
-  tmpDir,
-  log,
-  outputS3Uri,
-}) {
-  // Hardcoded static CSV S3 URI
-  const staticCsvS3Uri =
-    "s3://elephant-oracle-node-environmentbucket-lw51azqpha64/htmls-static-parts/collier-static-parts.csv";
-
-  log("info", "mvl_download_static_csv_start", {
-    operation: "mvl_download_static_csv",
-  });
-
-  // Download static CSV file
-  const staticCsvLocal = path.join(tmpDir, "static-parts.csv");
-  await downloadS3Object(parseS3Uri(staticCsvS3Uri), staticCsvLocal, log);
-
-  log("info", "mvl_validation_start", { operation: "mirror_validation" });
-  const mvlStart = Date.now();
-
-  // Run mirrorValidate
-  const mvlResult = await mirrorValidate({
-    prepareZip: countyZipLocal,
-    transformZip: countyOutZip,
-    staticParts: staticCsvLocal,
-    cwd: tmpDir,
-  });
-
-  const mvlDuration = Date.now() - mvlStart;
-  log("info", "mvl_validation_complete", {
-    operation: "mirror_validation",
-    duration_ms: mvlDuration,
-    duration_seconds: (mvlDuration / 1000).toFixed(2),
-  });
-
-  if (!mvlResult.success) {
-    log("error", "mvl_validation_failed", {
-      step: "mirror_validate",
-      error: mvlResult.error,
-    });
-    const error = new Error(`Mirror validation failed: ${mvlResult.error}`);
-    error.name = "MirrorValidationFailure";
-    // @ts-ignore - Attach mvlResult to error for error handling
-    error.mvlResult = mvlResult;
-    throw error;
-  }
-
-  // Save report to S3
-  log("info", "mvl_upload_report_start", { operation: "mvl_upload_report" });
-  const reportJson = JSON.stringify(mvlResult, null, 2);
-
-  // Derive report S3 location from output_s3_uri
-  // e.g., s3://bucket/outputs/2029035U0000000000320U/output.zip -> s3://bucket/outputs/2029035U0000000000320U/mvl-report.json
-  const outputDir = outputS3Uri.substring(0, outputS3Uri.lastIndexOf("/"));
-  const reportS3Uri = `${outputDir}/mvl-report.json`;
-  const { bucket: reportBucket, key: reportKey } = parseS3Uri(reportS3Uri);
-
-  await s3.send(
-    new PutObjectCommand({
-      Bucket: reportBucket,
-      Key: reportKey,
-      Body: reportJson,
-      ContentType: "application/json",
-    }),
-  );
-
-  log("info", "mvl_upload_report_complete", {
-    operation: "mvl_upload_report",
-    report_s3_uri: reportS3Uri,
-  });
-
-  // Extract globalCompleteness from result
-  const globalCompleteness = mvlResult.globalCompleteness ?? 0;
-
-  log("info", "mvl_completeness_metric", {
-    global_completeness: globalCompleteness,
-  });
-
-  // Check if completeness is below threshold
-  if (globalCompleteness < 80.0) {
-    const errorMsg = `Mirror validation failed: global completeness ${globalCompleteness.toFixed(2)}% is below threshold of 80.0%`;
-    log("error", "mvl_completeness_below_threshold", {
-      global_completeness: globalCompleteness,
-      threshold: 80.0,
-    });
-    const error = new Error(errorMsg);
-    error.name = "MirrorValidationFailure";
-    // @ts-ignore - Attach mvlResult and errorsCsvPath to error for error handling
-    error.mvlResult = mvlResult;
-    throw error;
-  }
-
-  return globalCompleteness;
-}
-
-/**
  * @param {PostInput} event - { prepare: prepare result, seed_output_s3_uri: S3 URI of seed output }
  * @returns {Promise<PostOutput>}
  */
@@ -1230,12 +943,13 @@ export const handler = async (event) => {
             tmpDir: tmp,
             log,
             error: runError.message,
+            outputBaseUri: outputBase,
+            inputKey: event?.s3?.object?.key,
             executionId,
             county: countyName,
             source: sourceEvent,
             occurredAt: base.at,
             preparedS3Uri: event?.prepare?.output_s3_uri,
-            submitErrorsS3Uri: errorsS3Uri,
           });
           // Errors were successfully saved to DynamoDB, return success with empty transactionItems
           if (result.saved) {
@@ -1250,7 +964,15 @@ export const handler = async (event) => {
               duration_seconds: (totalOperationDuration / 1000).toFixed(2),
               transaction_items_count: 0,
             });
-            return { status: "success", transactionItems: [] };
+            // Return with empty items and null S3 URIs to signal validation failure
+            return {
+              status: "success",
+              transactionItems: [],
+              transformedOutputS3Uri: null,
+              preparedInputS3Uri: prepared,
+              executionId,
+              county: countyName,
+            };
           }
         } catch (saveError) {
           // DynamoDB save failed, re-throw the error
@@ -1261,132 +983,30 @@ export const handler = async (event) => {
       throw runError;
     }
 
-    // Run mirror validation
-    let mvlMetric;
-    try {
-      mvlMetric = await runMirrorValidation({
-        countyZipLocal,
-        countyOutZip: countyOut,
-        tmpDir: tmp,
-        log,
-        outputS3Uri: event.prepare.output_s3_uri,
-      });
-    } catch (mvlError) {
-      if (
-        mvlError instanceof Error &&
-        mvlError.name === "MirrorValidationFailure"
-      ) {
-        // @ts-ignore - Access mvlResult and errorsCsvPath from error object
-        const mvlResult = mvlError.mvlResult;
-        // @ts-ignore
-
-        // Always generate and upload errors CSV if available, so S3 URI can be extracted from error message
-        let errorsS3Uri = null;
-        let errorsCsvPath;
-        try {
-          const unmatchedSources = extractUnmatchedSources(
-            /** @type {Record<string, { unmatchedFromA?: unknown[] }>} */ (
-              /** @type {unknown} */ (mvlResult.comparison)
-            ),
-          );
-          errorsCsvPath = await generateMirrorValidationErrorsCsv(
-            unmatchedSources,
-            tmp,
-            "bafkreigsipwhkwrboi73b3xvn4tjwd26pqyzz5zmyxvbnrgeb2qbq2bz34", // TODO: Dynamically fetch depending on the currently processed data group
-          );
-          console.log(`Errors csv path: ${errorsCsvPath}`);
-
-          try {
-            const errorsCsv = await fs.readFile(errorsCsvPath);
-            const resolvedInputKey = path.posix.basename(
-              event?.s3?.object?.key || "input.csv",
-            );
-            const runPrefix = `${outputBase.replace(/\/$/, "")}/${resolvedInputKey}`;
-            const errorFileKey = `${runPrefix.replace(/^s3:\/\//, "")}/mvl_errors.csv`;
-            const [errorBucket, ...errorParts] = errorFileKey.split("/");
-            await s3.send(
-              new PutObjectCommand({
-                Bucket: errorBucket,
-                Key: errorParts.join("/"),
-                Body: errorsCsv,
-              }),
-            );
-            errorsS3Uri = `s3://${errorBucket}/${errorParts.join("/")}`;
-          } catch (uploadError) {
-            log("error", "mvl_errors_upload_failed", {
-              error: String(uploadError),
-            });
-            throw uploadError;
-          }
-        } catch (csvGenError) {
-          log("error", "mvl_errors_csv_generation_failed", {
-            error: String(csvGenError),
-          });
-          throw csvGenError;
-        }
-
-        // Check if we should save errors or throw immediately
-        const saveErrorsOnValidationFailure =
-          event.saveErrorsOnValidationFailure !== false;
-
-        if (!saveErrorsOnValidationFailure) {
-          // Flag is false: throw error immediately with S3 URI in message if available
-          let errorMessage = mvlError.message;
-          if (errorsS3Uri) {
-            // Check if message already contains "Submit errors CSV:" pattern
-            const existingPattern = /Submit errors CSV:\s*(s3:\/\/[^\s]+)/;
-            if (existingPattern.test(errorMessage)) {
-              // Replace existing S3 URI with the new one
-              errorMessage = errorMessage.replace(
-                existingPattern,
-                `Submit errors CSV: ${errorsS3Uri}`,
-              );
-            } else {
-              // Append S3 URI if not already present
-              errorMessage = `${errorMessage}. Submit errors CSV: ${errorsS3Uri}`;
-            }
-          }
-          const errorToThrow = new Error(errorMessage);
-          errorToThrow.name = "MirrorValidationFailure";
-          throw errorToThrow;
-        }
-
-        // Flag is true (default): save errors to DynamoDB
-        try {
-          const result = await handleMirrorValidationFailure({
-            log,
-            error: mvlError.message,
-            executionId,
-            county: countyName,
-            source: sourceEvent,
-            occurredAt: base.at,
-            preparedS3Uri: event?.prepare?.output_s3_uri,
-            errorsCsvPath,
-            errorsS3Uri,
-          });
-          // Errors were successfully saved to DynamoDB, return success with empty transactionItems
-          if (result.saved) {
-            log("info", "mirror_validation_failed_but_saved", {
-              execution_id: executionId,
-              county: countyName,
-            });
-            const totalOperationDuration = Date.now() - Date.parse(base.at);
-            log("info", "post_lambda_complete", {
-              operation: "post_lambda_total",
-              duration_ms: totalOperationDuration,
-              duration_seconds: (totalOperationDuration / 1000).toFixed(2),
-              transaction_items_count: 0,
-            });
-            return { status: "success", transactionItems: [] };
-          }
-        } catch (saveError) {
-          // DynamoDB save failed, re-throw the error
-          throw saveError;
-        }
-      }
-      // Re-throw if not a MirrorValidationFailure or if handleMirrorValidationFailure didn't return saved: true
-      throw mvlError;
-    }
+    // Upload transformed output to S3 for mirror validation
+    log("info", "upload_transformed_output_start", {
+      operation: "upload_transformed_output",
+    });
+    const resolvedInputKey = path.posix.basename(
+      event?.s3?.object?.key || "input.csv",
+    );
+    const runPrefix = `${outputBase.replace(/\/$/, "")}/${resolvedInputKey}`;
+    const transformedOutputKey = `${runPrefix.replace(/^s3:\/\//, "")}/transformed_output.zip`;
+    const [transformedBucket, ...transformedParts] =
+      transformedOutputKey.split("/");
+    const transformedOutputZipContent = await fs.readFile(countyOut);
+    await s3.send(
+      new PutObjectCommand({
+        Bucket: transformedBucket,
+        Key: transformedParts.join("/"),
+        Body: transformedOutputZipContent,
+      }),
+    );
+    const transformedOutputS3Uri = `s3://${transformedBucket}/${transformedParts.join("/")}`;
+    log("info", "upload_transformed_output_complete", {
+      operation: "upload_transformed_output",
+      transformed_output_s3_uri: transformedOutputS3Uri,
+    });
 
     const {
       propertyCid,
@@ -1416,17 +1036,23 @@ export const handler = async (event) => {
       log,
       pinataJwt: requireEnv("ELEPHANT_PINATA_JWT"),
     });
-
     const totalOperationDuration = Date.now() - Date.parse(base.at);
     log("info", "post_lambda_complete", {
       operation: "post_lambda_total",
       duration_ms: totalOperationDuration,
       duration_seconds: (totalOperationDuration / 1000).toFixed(2),
       transaction_items_count: transactionItems.length,
-      mvl_metric: mvlMetric,
+      transformed_output_s3_uri: transformedOutputS3Uri,
     });
 
-    return { status: "success", transactionItems, mvlMetric };
+    return {
+      status: "success",
+      transactionItems,
+      transformedOutputS3Uri,
+      preparedInputS3Uri: prepared,
+      executionId,
+      county: countyName,
+    };
   } catch (err) {
     log("error", "post_lambda_failed", {
       step: "unknown",

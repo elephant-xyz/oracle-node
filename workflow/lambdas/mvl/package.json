@@ -1,0 +1,21 @@
+{
+  "name": "workflow-mvl-lambda",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Lambda function for mirror validation",
+  "main": "index.mjs",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "typecheck": "tsc --pretty false --noEmit -p jsconfig.json"
+  },
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.879.0",
+    "@aws-sdk/client-s3": "^3.879.0",
+    "@elephant-xyz/cli": "git+https://github.com/elephant-xyz/elephant-cli.git#8e72cc1796a702cd7c2d40588b3635d37cc08129",
+    "@aws-sdk/lib-dynamodb": "^3.879.0",
+    "csv-parse": "^5.6.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.16.3"
+  }
+}
