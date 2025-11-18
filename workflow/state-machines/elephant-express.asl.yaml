@@ -194,8 +194,9 @@ States:
         s3.$: $.message.s3
     ResultSelector:
       mvlMetric.$: $.Payload.mvlMetric
+      mvlPassed.$: $.Payload.mvlPassed
     ResultPath: $.mvl
-    Next: QueueForTheSubmit
+    Next: CheckMvlResult
     Retry:
       - ErrorEquals:
           [
@@ -210,6 +211,18 @@ States:
       - ErrorEquals: [States.ALL]
         ResultPath: $.error
         Next: FailRuntime
+
+  CheckMvlResult:
+    Type: Choice
+    Choices:
+      - Variable: $.mvl.mvlPassed
+        BooleanEquals: true
+        Next: QueueForTheSubmit
+    Default: MvlValidationFailed
+
+  MvlValidationFailed:
+    Type: Succeed
+    Comment: "MVL validation failed - execution ends without submitting to queue"
 
   QueueForTheSubmit:
     Type: Task
