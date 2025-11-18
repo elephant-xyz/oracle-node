@@ -256,6 +256,7 @@ For address object you need to provide either unnormalized_address property or d
 NEVER try to assume property name and find it with getPropertySchema tool.
 Make sure to activly explore elephant schema and it's avaiable properties using elephant MCP to be sure, that the data, that will be produced by scripts is valid.
 Make sure, that scripts not only exctract the data, but also map it to the resulting JSON in the Elephant Schema, that you retreived from MCP
+Make sure, that if the error has html selector as error_path this data HAS to be mapped.
 Do not read whole input file, as it is big. Intelegentlly search for the parts, that you need
 `;
 
