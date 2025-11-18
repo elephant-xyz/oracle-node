@@ -230,13 +230,13 @@ async function invokeAiForFix(
   inputsDir,
   dataGroupName,
 ) {
-  const scriptPathAI = "./scripts"
-  const inputDataAI = "./input"
-  const errorsPathAI = "./errors.csv"
+  const scriptPathAI = "./scripts";
+  const inputDataAI = "./input";
+  const errorsPathAI = "./errors.csv";
 
   await fs.copyFile(errorsPath, errorsPathAI);
-  await fs.cp(inputsDir, inputDataAI, {recursive: true});
-  await fs.cp(scriptsDir, scriptPathAI, {recursive: true})
+  await fs.cp(inputsDir, inputDataAI, { recursive: true });
+  await fs.cp(scriptsDir, scriptPathAI, { recursive: true });
 
   const prompt = `You are fixing transformation script errors in an Elephant Oracle data processing pipeline.
         You can find an errors in the following CSV file: ${errorsPathAI}
@@ -261,7 +261,9 @@ NEVER try to assume property name and find it with getPropertySchema tool.`;
     .replace(/`/g, "\\`")
     .replace(/\$/g, "\\$");
 
-  console.log(`Invoking Claude Code to fix errors... \n Propmt: ${escapedPrompt}`);
+  console.log(
+    `Invoking Claude Code to fix errors... \n Propmt: ${escapedPrompt}`,
+  );
 
   let toolCallCount = 0;
   let thinkingBuffer = "";
@@ -289,13 +291,19 @@ NEVER try to assume property name and find it with getPropertySchema tool.`;
       const event = message.event;
 
       // Log tool use start
-      if (event.type === "content_block_start" && event.content_block?.type === "tool_use") {
+      if (
+        event.type === "content_block_start" &&
+        event.content_block?.type === "tool_use"
+      ) {
         toolCallCount++;
         console.log(`[Tool ${toolCallCount}] ${event.content_block.name}`);
       }
 
       // Log thinking progress (show thinking deltas without being too verbose)
-      if (event.type === "content_block_delta" && event.delta?.type === "thinking_delta") {
+      if (
+        event.type === "content_block_delta" &&
+        event.delta?.type === "thinking_delta"
+      ) {
         thinkingBuffer += event.delta.thinking || "";
         // Log thinking in chunks to avoid too much output
         if (thinkingBuffer.length > 200) {
@@ -316,7 +324,9 @@ NEVER try to assume property name and find it with getPropertySchema tool.`;
       const content = message.message.content;
       for (const block of content) {
         if (block.type === "tool_use") {
-          console.log(`[Tool] ${block.name} - ${JSON.stringify(block.input).substring(0, 100)}...`);
+          console.log(
+            `[Tool] ${block.name} - ${JSON.stringify(block.input).substring(0, 100)}...`,
+          );
         }
       }
     }
@@ -325,7 +335,9 @@ NEVER try to assume property name and find it with getPropertySchema tool.`;
     if (message.type === "result") {
       if (message.subtype === "success") {
         console.log(`[Success] Repair completed`);
-        console.log(`[Usage] Input: ${message.usage?.input_tokens || 0}, Output: ${message.usage?.output_tokens || 0}`);
+        console.log(
+          `[Usage] Input: ${message.usage?.input_tokens || 0}, Output: ${message.usage?.output_tokens || 0}`,
+        );
         console.log(message.result);
       } else if (message.subtype === "error") {
         console.error(`[Error] ${message.error}`);
@@ -662,7 +674,9 @@ async function runAutoRepairIteration({
       if (isMvlError) {
         // Invoke MVL Lambda for mirror validation errors
         const mvlFunctionName = requireEnv("MVL_FUNCTION_NAME");
-        console.log(`Invoking MVL Lambda ${mvlFunctionName} to verify fixes...`);
+        console.log(
+          `Invoking MVL Lambda ${mvlFunctionName} to verify fixes...`,
+        );
 
         const payload = {
           preparedInputS3Uri: preparedS3Uri,
@@ -701,22 +715,29 @@ async function runAutoRepairIteration({
           new TextDecoder().decode(response.Payload ?? new Uint8Array()),
         );
 
-        console.log(`MVL Lambda returned status: ${resultPayload.status} with mvlMetric: ${resultPayload.mvlMetric || 0}`);
+        console.log(
+          `MVL Lambda returned status: ${resultPayload.status} with mvlMetric: ${resultPayload.mvlMetric || 0}`,
+        );
 
         // For MVL, we consider it successful if status is success and mvlMetric > 0
         // If mvlMetric is 0, validation failed and we should not proceed
-        if (resultPayload.status === "success" && (resultPayload.mvlMetric || 0) > 0) {
+        if (
+          resultPayload.status === "success" &&
+          (resultPayload.mvlMetric || 0) > 0
+        ) {
           // MVL passed, now invoke post-processing to get transaction items
-          const postProcessorFunctionName = requireEnv("POST_PROCESSOR_FUNCTION_NAME");
+          const postProcessorFunctionName = requireEnv(
+            "POST_PROCESSOR_FUNCTION_NAME",
+          );
           resultPayload = await invokePostProcessingLambda({
             functionName: postProcessorFunctionName,
             preparedS3Uri,
             seedOutputS3Uri,
             s3Event: source
               ? {
-                bucket: { name: source.s3Bucket },
-                object: { key: source.s3Key },
-              }
+                  bucket: { name: source.s3Bucket },
+                  object: { key: source.s3Key },
+                }
               : undefined,
           });
         } else {
@@ -728,8 +749,12 @@ async function runAutoRepairIteration({
         }
       } else {
         // Invoke Post Lambda for transformation/validation errors
-        const postProcessorFunctionName = requireEnv("POST_PROCESSOR_FUNCTION_NAME");
-        console.log(`Invoking Post Lambda ${postProcessorFunctionName} to verify fixes...`);
+        const postProcessorFunctionName = requireEnv(
+          "POST_PROCESSOR_FUNCTION_NAME",
+        );
+        console.log(
+          `Invoking Post Lambda ${postProcessorFunctionName} to verify fixes...`,
+        );
 
         resultPayload = await invokePostProcessingLambda({
           functionName: postProcessorFunctionName,
@@ -737,9 +762,9 @@ async function runAutoRepairIteration({
           seedOutputS3Uri,
           s3Event: source
             ? {
-              bucket: { name: source.s3Bucket },
-              object: { key: source.s3Key },
-            }
+                bucket: { name: source.s3Bucket },
+                object: { key: source.s3Key },
+              }
             : undefined,
         });
       }
