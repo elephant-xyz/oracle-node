@@ -230,9 +230,9 @@ async function invokeAiForFix(
   inputsDir,
   dataGroupName,
 ) {
-  const scriptPathAI = "scripts"
-  const inputDataAI = "input"
-  const errorsPathAI = "errors.csv"
+  const scriptPathAI = "./scripts"
+  const inputDataAI = "./input"
+  const errorsPathAI = "./errors.csv"
 
   await fs.copyFile(errorsPath, errorsPathAI);
   await fs.cp(inputsDir, inputDataAI, {recursive: true});
@@ -261,7 +261,7 @@ NEVER try to assume property name and find it with getPropertySchema tool.`;
     .replace(/`/g, "\\`")
     .replace(/\$/g, "\\$");
 
-  console.log("Invoking Claude Code to fix errors...");
+  console.log(`Invoking Claude Code to fix errors... \n Propmt: ${prompt}`);
 
   let toolCallCount = 0;
   let thinkingBuffer = "";
