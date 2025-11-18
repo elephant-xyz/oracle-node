@@ -613,7 +613,7 @@ async function runAutoRepairIteration({
   tableName,
   source,
 }) {
-  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "auto-repair-"));
+  const tmpDir = procces.cwd;
 
   try {
     // Step 1: Download inputs and transform scripts
