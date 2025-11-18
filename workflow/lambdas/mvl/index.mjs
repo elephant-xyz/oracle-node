@@ -486,11 +486,12 @@ async function runMirrorValidation({
   });
 
   // Check if completeness is below threshold
-  if (globalCompleteness < 80.0) {
-    const errorMsg = `Mirror validation failed: global completeness ${globalCompleteness.toFixed(2)}% is below threshold of 80.0%`;
+  // globalCompleteness is in range [0, 1], so 0.8 = 80%
+  if (globalCompleteness < 0.8) {
+    const errorMsg = `Mirror validation failed: global completeness ${(globalCompleteness * 100).toFixed(2)}% is below threshold of 80.0%`;
     log("error", "mvl_completeness_below_threshold", {
       global_completeness: globalCompleteness,
-      threshold: 80.0,
+      threshold: 0.8,
     });
     const error = new Error(errorMsg);
     error.name = "MirrorValidationFailure";
@@ -635,6 +636,9 @@ export const handler = async (event) => {
           throw csvGenError;
         }
 
+        // Extract the actual globalCompleteness metric from the result
+        const actualMvlMetric = mvlResult?.globalCompleteness ?? 0;
+
         // Save errors to DynamoDB if we have errors
         try {
           // Read the CSV to check if we have actual errors
@@ -653,38 +657,40 @@ export const handler = async (event) => {
               errorsCsvPath,
               errorsS3Uri,
             });
-            // Errors were successfully saved to DynamoDB, return success with metric 0
+            // Errors were successfully saved to DynamoDB, return success with actual metric
             if (result.saved) {
               log("info", "mirror_validation_failed_but_saved", {
                 execution_id: event.executionId,
                 county: event.county,
+                global_completeness: actualMvlMetric,
               });
               const totalOperationDuration = Date.now() - Date.parse(base.at);
               log("info", "mvl_lambda_complete", {
                 operation: "mvl_lambda_total",
                 duration_ms: totalOperationDuration,
                 duration_seconds: (totalOperationDuration / 1000).toFixed(2),
-                mvl_metric: 0,
+                mvl_metric: actualMvlMetric,
               });
-              return { status: "success", mvlMetric: 0 };
+              return { status: "success", mvlMetric: actualMvlMetric };
             }
           } else {
             // No specific errors to save, but validation failed (likely low completeness)
-            // Log the failure and return success with metric 0
+            // Log the failure and return success with actual metric
             log("info", "mirror_validation_failed_no_errors", {
               execution_id: event.executionId,
               county: event.county,
               message: "Mirror validation failed but no specific errors to save",
               errors_s3_uri: errorsS3Uri,
+              global_completeness: actualMvlMetric,
             });
             const totalOperationDuration = Date.now() - Date.parse(base.at);
             log("info", "mvl_lambda_complete", {
               operation: "mvl_lambda_total",
               duration_ms: totalOperationDuration,
               duration_seconds: (totalOperationDuration / 1000).toFixed(2),
-              mvl_metric: 0,
+              mvl_metric: actualMvlMetric,
             });
-            return { status: "success", mvlMetric: 0 };
+            return { status: "success", mvlMetric: actualMvlMetric };
           }
         } catch (saveError) {
           // DynamoDB save failed, re-throw the error
