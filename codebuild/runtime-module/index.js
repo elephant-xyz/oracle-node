@@ -230,13 +230,13 @@ async function invokeAiForFix(
   inputsDir,
   dataGroupName,
 ) {
-  const scriptPathAI = "./scripts";
-  const inputDataAI = "./input";
-  const errorsPathAI = "./errors.csv";
+  const scriptPathAI = "./scripts"
+  const inputDataAI = "./input"
+  const errorsPathAI = "./errors.csv"
 
   await fs.copyFile(errorsPath, errorsPathAI);
   await fs.cp(inputsDir, inputDataAI, { recursive: true });
-  await fs.cp(scriptsDir, scriptPathAI, { recursive: true });
+  await fs.cp(scriptsDir, scriptPathAI, { recursive: true })
 
   const prompt = `You are fixing transformation script errors in an Elephant Oracle data processing pipeline.
         You can find an errors in the following CSV file: ${errorsPathAI}
@@ -255,6 +255,7 @@ Use listPropertiesByClassName to get available properties for the class. Output 
 For address object you need to provide either unnormalized_address property or divided by different properties. NEVER provide both. Choose based on how address is presented in the input HTML/JSON. Do no try to normalize address on your own.
 NEVER try to assume property name and find it with getPropertySchema tool.
 Make sure to activly explore elephant schema and it's avaiable properties using elephant MCP to be sure, that the data, that will be produced by scripts is valid.
+Make sure, that scripts not only exctract the data, but also map it to the resulting JSON in the Elephant Schema, that you retreived from MCP
 Do not read whole input file, as it is big. Intelegentlly search for the parts, that you need
 `;
 
@@ -264,12 +265,23 @@ Do not read whole input file, as it is big. Intelegentlly search for the parts, 
     .replace(/`/g, "\\`")
     .replace(/\$/g, "\\$");
 
-  console.log(
-    `Invoking Claude Code to fix errors... \n Propmt: ${escapedPrompt}`,
-  );
+  console.log(`Invoking Claude Code to fix errors... \n Propmt: ${escapedPrompt}`);
 
+  // Cost tracking setup
+  const PRICING = {
+    // Sonnet 4.5 pricing (default model)
+    INPUT_PER_1K: 0.003,
+    OUTPUT_PER_1K: 0.015,
+    CACHE_WRITE_PER_1K: 0.00375,
+    CACHE_READ_PER_1K: 0.0003,
+  };
+
+  // State for intermediate logging
   let toolCallCount = 0;
   let thinkingBuffer = "";
+
+  // State for cost tracking
+  let finalResult = null;
 
   for await (const message of query({
     prompt: escapedPrompt,
@@ -284,70 +296,103 @@ Do not read whole input file, as it is big. Intelegentlly search for the parts, 
         },
       },
       permissionMode: "acceptEdits",
-      // allowDangerouslySkipPermissions: true,
-      // model: "us.anthropic.claude-haiku-4-5-20251001-v1:0",
       includePartialMessages: true,
-      allowedTools: ["mcp__elephant"]
+      onMessage: (message) => {
+        // Handle different message types
+        if (message.type === "stream_event") {
+          const event = message.event;
+
+          // Log tool use start
+          if (event.type === "content_block_start" && event.content_block?.type === "tool_use") {
+            toolCallCount++;
+            console.log(`[Tool ${toolCallCount}] ${event.content_block.name}`);
+          }
+
+          // Log thinking progress (show thinking deltas without being too verbose)
+          if (event.type === "content_block_delta" && event.delta?.type === "thinking_delta") {
+            thinkingBuffer += event.delta.thinking || "";
+            // Log thinking in chunks to avoid too much output
+            if (thinkingBuffer.length > 200) {
+              console.log(`[Thinking] ${thinkingBuffer.substring(0, 150)}...`);
+              thinkingBuffer = "";
+            }
+          }
+
+          // Log thinking completion
+          if (event.type === "content_block_stop" && thinkingBuffer.length > 0) {
+            console.log(`[Thinking] ${thinkingBuffer}`);
+            thinkingBuffer = "";
+          }
+        }
+
+        // Log assistant messages (non-streaming)
+        if (message.type === "assistant") {
+          const content = message.message.content;
+          for (const block of content) {
+            if (block.type === "tool_use") {
+              console.log(`[Tool] ${block.name} - ${JSON.stringify(block.input).substring(0, 100)}...`);
+            }
+          }
+        }
+      },
     },
   })) {
-    // Handle different message types
-    if (message.type === "stream_event") {
-      const event = message.event;
-
-      // Log tool use start
-      if (
-        event.type === "content_block_start" &&
-        event.content_block?.type === "tool_use"
-      ) {
-        toolCallCount++;
-        console.log(`[Tool ${toolCallCount}] ${event.content_block.name}`);
-      }
-
-      // Log thinking progress (show thinking deltas without being too verbose)
-      if (
-        event.type === "content_block_delta" &&
-        event.delta?.type === "thinking_delta"
-      ) {
-        thinkingBuffer += event.delta.thinking || "";
-        // Log thinking in chunks to avoid too much output
-        if (thinkingBuffer.length > 200) {
-          console.log(`[Thinking] ${thinkingBuffer.substring(0, 150)}...`);
-          thinkingBuffer = "";
-        }
-      }
-
-      // Log thinking completion
-      if (event.type === "content_block_stop" && thinkingBuffer.length > 0) {
-        console.log(`[Thinking] ${thinkingBuffer}`);
-        thinkingBuffer = "";
-      }
-    }
-
-    // Log assistant messages (non-streaming)
-    if (message.type === "assistant") {
-      const content = message.message.content;
-      for (const block of content) {
-        if (block.type === "tool_use") {
-          console.log(
-            `[Tool] ${block.name} - ${JSON.stringify(block.input).substring(0, 100)}...`,
-          );
-        }
-      }
-    }
-
-    // Log final result
+    // Capture the final result message for cost tracking
     if (message.type === "result") {
+      finalResult = message;
+
       if (message.subtype === "success") {
         console.log(`[Success] Repair completed`);
-        console.log(
-          `[Usage] Input: ${message.usage?.input_tokens || 0}, Output: ${message.usage?.output_tokens || 0}`,
-        );
+        console.log(`[Usage] Input: ${message.usage?.input_tokens || 0}, Output: ${message.usage?.output_tokens || 0}`);
         console.log(message.result);
       } else if (message.subtype === "error") {
         console.error(`[Error] ${message.error}`);
       }
     }
   }
+
+  // Calculate and log total costs
+  console.log("\n=== Cost Summary ===");
+
+  if (finalResult && finalResult.usage) {
+    // Extract token usage
+    const inputTokens = finalResult.usage.input_tokens || 0;
+    const outputTokens = finalResult.usage.output_tokens || 0;
+    const cacheCreationTokens = finalResult.usage.cache_creation_input_tokens || 0;
+    const cacheReadTokens = finalResult.usage.cache_read_input_tokens || 0;
+
+    // Calculate costs by token type
+    const inputCost = inputTokens / 1000 * PRICING.INPUT_PER_1K;
+    const outputCost = outputTokens / 1000 * PRICING.OUTPUT_PER_1K;
+    const cacheWriteCost = cacheCreationTokens / 1000 * PRICING.CACHE_WRITE_PER_1K;
+    const cacheReadCost = cacheReadTokens / 1000 * PRICING.CACHE_READ_PER_1K;
+    const calculatedTotalCost = inputCost + outputCost + cacheWriteCost + cacheReadCost;
+
+    console.log("\nToken Usage:");
+    console.log(`  Input tokens: ${inputTokens.toLocaleString()}`);
+    console.log(`  Output tokens: ${outputTokens.toLocaleString()}`);
+    console.log(`  Cache write tokens: ${cacheCreationTokens.toLocaleString()}`);
+    console.log(`  Cache read tokens: ${cacheReadTokens.toLocaleString()}`);
+
+    console.log("\nCost Breakdown:");
+    console.log(`  Input cost: $${inputCost.toFixed(4)}`);
+    console.log(`  Output cost: $${outputCost.toFixed(4)}`);
+    console.log(`  Cache write cost: $${cacheWriteCost.toFixed(4)}`);
+    console.log(`  Cache read cost: $${cacheReadCost.toFixed(4)}`);
+
+    // Use SDK-provided total cost if available, otherwise use calculated
+    const sdkTotalCost = finalResult.total_cost_usd;
+    const finalTotalCost = sdkTotalCost !== undefined ? sdkTotalCost : calculatedTotalCost;
+    console.log(`\n  TOTAL COST: $${finalTotalCost.toFixed(4)}`);
+    if (sdkTotalCost !== undefined && Math.abs(sdkTotalCost - calculatedTotalCost) > 0.0001) {
+      console.log(`  (SDK reported: $${sdkTotalCost.toFixed(4)}, Calculated: $${calculatedTotalCost.toFixed(4)})`);
+    }
+    console.log("==================\n");
+  } else {
+    console.log("No usage data collected");
+    console.log("==================\n");
+  }
+
   return { scriptsDir: scriptPathAI }
 }
 
@@ -663,116 +708,30 @@ async function runAutoRepairIteration({
     const { errorPath, dataGroupName } = await parseErrorsFromS3(errorsS3Uri);
 
     // Step 3: Invoke Codex to fix errors
-    const { scriptsDir: updatedScripts } = await invokeAiForFix(errorPath, scriptsDir, inputsDir, dataGroupName);
+    const {scriptsDir: updatedScripts} = await invokeAiForFix(errorPath, scriptsDir, inputsDir, dataGroupName);
 
     // Step 4: Upload fixed scripts
     await uploadFixedScripts(county, updatedScripts, transformPrefix);
 
-    // Step 5: Determine which Lambda to invoke based on error type
-    // MVL errors are in mvl_errors.csv, Post errors are in submit_errors.csv
-    const isMvlError = errorsS3Uri.includes("mvl_errors.csv");
+    // Step 5: Invoke post-processing Lambda to verify fixes work
+    const postProcessorFunctionName = requireEnv(
+      "POST_PROCESSOR_FUNCTION_NAME",
+    );
     const transactionsQueueUrl = requireEnv("TRANSACTIONS_SQS_QUEUE_URL");
     const seedOutputS3Uri = constructSeedOutputS3Uri(preparedS3Uri);
 
-    let resultPayload;
     try {
-      if (isMvlError) {
-        // Invoke MVL Lambda for mirror validation errors
-        const mvlFunctionName = requireEnv("MVL_FUNCTION_NAME");
-        console.log(
-          `Invoking MVL Lambda ${mvlFunctionName} to verify fixes...`,
-        );
-
-        const payload = {
-          preparedInputS3Uri: preparedS3Uri,
-          transformedOutputS3Uri: seedOutputS3Uri,
-          preparedOutputS3Uri: preparedS3Uri,
-          county,
-          executionId,
-        };
-
-        // Add S3 event if available
-        if (source?.s3Bucket && source?.s3Key) {
-          payload.s3 = {
+      const resultPayload = await invokePostProcessingLambda({
+        functionName: postProcessorFunctionName,
+        preparedS3Uri,
+        seedOutputS3Uri,
+        s3Event: source
+          ? {
             bucket: { name: source.s3Bucket },
             object: { key: source.s3Key },
-          };
-        }
-
-        const response = await lambdaClient.send(
-          new InvokeCommand({
-            FunctionName: mvlFunctionName,
-            InvocationType: "RequestResponse",
-            Payload: JSON.stringify(payload),
-          }),
-        );
-
-        if (response.FunctionError) {
-          const errorPayload = JSON.parse(
-            new TextDecoder().decode(response.Payload ?? new Uint8Array()),
-          );
-          throw new Error(
-            `MVL Lambda failed: ${errorPayload.errorMessage || errorPayload.errorType || JSON.stringify(errorPayload)}`,
-          );
-        }
-
-        resultPayload = JSON.parse(
-          new TextDecoder().decode(response.Payload ?? new Uint8Array()),
-        );
-
-        console.log(
-          `MVL Lambda returned status: ${resultPayload.status} with mvlMetric: ${resultPayload.mvlMetric || 0}`,
-        );
-
-        // For MVL, we consider it successful if status is success and mvlMetric > 0
-        // If mvlMetric is 0, validation failed and we should not proceed
-        if (
-          resultPayload.status === "success" &&
-          (resultPayload.mvlMetric || 0) > 0
-        ) {
-          // MVL passed, now invoke post-processing to get transaction items
-          const postProcessorFunctionName = requireEnv(
-            "POST_PROCESSOR_FUNCTION_NAME",
-          );
-          resultPayload = await invokePostProcessingLambda({
-            functionName: postProcessorFunctionName,
-            preparedS3Uri,
-            seedOutputS3Uri,
-            s3Event: source
-              ? {
-                bucket: { name: source.s3Bucket },
-                object: { key: source.s3Key },
-              }
-              : undefined,
-          });
-        } else {
-          // MVL failed, treat as failure
-          resultPayload = {
-            status: "failed",
-            transactionItems: [],
-          };
-        }
-      } else {
-        // Invoke Post Lambda for transformation/validation errors
-        const postProcessorFunctionName = requireEnv(
-          "POST_PROCESSOR_FUNCTION_NAME",
-        );
-        console.log(
-          `Invoking Post Lambda ${postProcessorFunctionName} to verify fixes...`,
-        );
-
-        resultPayload = await invokePostProcessingLambda({
-          functionName: postProcessorFunctionName,
-          preparedS3Uri,
-          seedOutputS3Uri,
-          s3Event: source
-            ? {
-              bucket: { name: source.s3Bucket },
-              object: { key: source.s3Key },
-            }
-            : undefined,
-        });
-      }
+          }
+          : undefined,
+      });
 
       // Check if execution was successful
       if (
