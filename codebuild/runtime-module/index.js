@@ -230,12 +230,18 @@ async function invokeAiForFix(
   inputsDir,
   dataGroupName,
 ) {
-  const scriptsPath = path.join(scriptsDir, "scripts");
+  const scriptPathAI = "./scripts"
+  const inputDataAI = "./input"
+  const errorsPathAI = "./errors.csv"
+
+  await fs.copyFile(errorsPath, errorsPathAI);
+  await fs.cp(inputsDir, inputDataAI, {recursive: true});
+  await fs.cp(scriptsDir, scriptPathAI, {recursive: true})
 
   const prompt = `You are fixing transformation script errors in an Elephant Oracle data processing pipeline.
-        You can find an errors in the following CSV file: ${errorsPath}
-The transform scripts are located at: ${scriptsPath}
-Sample input data is available at: ${inputsDir}
+        You can find an errors in the following CSV file: ${errorsPathAI}
+The transform scripts are located at: ${scriptPathAI}
+Sample input data is available at: ${inputDataAI}
 You are working on the ${dataGroupName} data group.
 For the address object use unnormalized_address if that is what the source provides.
 If source has adress normalized, then use it.
@@ -255,7 +261,7 @@ NEVER try to assume property name and find it with getPropertySchema tool.`;
     .replace(/`/g, "\\`")
     .replace(/\$/g, "\\$");
 
-  console.log("Invoking Claude Code to fix errors...");
+  console.log(`Invoking Claude Code to fix errors... \n Propmt: ${prompt}`);
 
   let toolCallCount = 0;
   let thinkingBuffer = "";
