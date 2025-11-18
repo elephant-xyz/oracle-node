@@ -222,7 +222,7 @@ async function extractZip(zipPath, extractDir) {
  * @param {string} scriptsDir - Directory containing transform scripts.
  * @param {string} inputsDir - Directory containing prepared inputs.
  * @param {string} dataGroupName - Name of the data group.
- * @returns {Promise<void>}
+ * @returns {Promise<{scriptsDir: string}>}
  */
 async function invokeAiForFix(
   errorsPath,
@@ -253,7 +253,10 @@ Please analyze the errors and provide fixed versions of the scripts. Focus on fi
 Use elephant MCP to analyze the schema. Make sure to analyze verified scripts with it's examples as well
 Use listPropertiesByClassName to get available properties for the class. Output of that tool always has all properties.
 For address object you need to provide either unnormalized_address property or divided by different properties. NEVER provide both. Choose based on how address is presented in the input HTML/JSON. Do no try to normalize address on your own.
-NEVER try to assume property name and find it with getPropertySchema tool.`;
+NEVER try to assume property name and find it with getPropertySchema tool.
+Make sure to activly explore elephant schema and it's avaiable properties using elephant MCP to be sure, that the data, that will be produced by scripts is valid.
+Do not read whole input file, as it is big. Intelegentlly search for the parts, that you need
+`;
 
   const escapedPrompt = prompt
     .replace(/\\/g, "\\\\")
@@ -284,6 +287,7 @@ NEVER try to assume property name and find it with getPropertySchema tool.`;
       // allowDangerouslySkipPermissions: true,
       // model: "us.anthropic.claude-haiku-4-5-20251001-v1:0",
       includePartialMessages: true,
+      allowedTools: ["mcp__elephant"]
     },
   })) {
     // Handle different message types
@@ -344,6 +348,7 @@ NEVER try to assume property name and find it with getPropertySchema tool.`;
       }
     }
   }
+  return { scriptsDir: scriptPathAI }
 }
 
 /**
@@ -658,10 +663,10 @@ async function runAutoRepairIteration({
     const { errorPath, dataGroupName } = await parseErrorsFromS3(errorsS3Uri);
 
     // Step 3: Invoke Codex to fix errors
-    await invokeAiForFix(errorPath, scriptsDir, inputsDir, dataGroupName);
+    const { scriptsDir: updatedScripts } = await invokeAiForFix(errorPath, scriptsDir, inputsDir, dataGroupName);
 
     // Step 4: Upload fixed scripts
-    await uploadFixedScripts(county, scriptsDir, transformPrefix);
+    await uploadFixedScripts(county, updatedScripts, transformPrefix);
 
     // Step 5: Determine which Lambda to invoke based on error type
     // MVL errors are in mvl_errors.csv, Post errors are in submit_errors.csv
@@ -735,9 +740,9 @@ async function runAutoRepairIteration({
             seedOutputS3Uri,
             s3Event: source
               ? {
-                  bucket: { name: source.s3Bucket },
-                  object: { key: source.s3Key },
-                }
+                bucket: { name: source.s3Bucket },
+                object: { key: source.s3Key },
+              }
               : undefined,
           });
         } else {
@@ -762,9 +767,9 @@ async function runAutoRepairIteration({
           seedOutputS3Uri,
           s3Event: source
             ? {
-                bucket: { name: source.s3Bucket },
-                object: { key: source.s3Key },
-              }
+              bucket: { name: source.s3Bucket },
+              object: { key: source.s3Key },
+            }
             : undefined,
         });
       }
