@@ -84,6 +84,10 @@ sam_build() {
   # Clean SAM build directory to ensure fresh build
   rm -rf .aws-sam/build 2>/dev/null || true
 
+  # Enable Docker BuildKit for better performance and caching
+  export DOCKER_BUILDKIT=1
+  export BUILDKIT_PROGRESS=plain
+
   # Use --no-cached to force a fresh build without using cached artifacts
   # This ensures git dependencies like @elephant-xyz/cli always fetch latest commits
   sam build --template-file "$SAM_TEMPLATE" --no-cached
@@ -91,12 +95,12 @@ sam_build() {
 
 sam_deploy() {
   info "Deploying SAM stack (initial)"
-  info "Note: Image push may take 10-20 minutes for large ML models"
+  info "Note: Image push may take 20-60 minutes for large ML models (be patient!)"
 
   # For image-based functions, use --resolve-image-repos to let SAM handle ECR
-  # Set Docker client timeout to 20 minutes
-  export DOCKER_CLIENT_TIMEOUT=1200
-  export COMPOSE_HTTP_TIMEOUT=1200
+  # Set Docker client timeout to 60 minutes for large ML model images
+  export DOCKER_CLIENT_TIMEOUT=3600
+  export COMPOSE_HTTP_TIMEOUT=3600
 
   sam deploy \
     --template-file "$BUILT_TEMPLATE" \
