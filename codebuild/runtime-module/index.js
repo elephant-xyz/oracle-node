@@ -261,7 +261,7 @@ NEVER try to assume property name and find it with getPropertySchema tool.`;
     .replace(/`/g, "\\`")
     .replace(/\$/g, "\\$");
 
-  console.log(`Invoking Claude Code to fix errors... \n Propmt: ${prompt}`);
+  console.log(`Invoking Claude Code to fix errors... \n Propmt: ${escapedPrompt}`);
 
   let toolCallCount = 0;
   let thinkingBuffer = "";
@@ -280,7 +280,7 @@ NEVER try to assume property name and find it with getPropertySchema tool.`;
       },
       permissionMode: "acceptEdits",
       // allowDangerouslySkipPermissions: true,
-      model: "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+      // model: "us.anthropic.claude-haiku-4-5-20251001-v1:0",
       includePartialMessages: true,
     },
   })) {
