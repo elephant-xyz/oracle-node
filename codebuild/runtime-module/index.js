@@ -230,13 +230,13 @@ async function invokeAiForFix(
   inputsDir,
   dataGroupName,
 ) {
-  const scriptPathAI = "./scripts"
-  const inputDataAI = "./input"
-  const errorsPathAI = "./errors.csv"
+  const scriptPathAI = "./scripts";
+  const inputDataAI = "./input";
+  const errorsPathAI = "./errors.csv";
 
   await fs.copyFile(errorsPath, errorsPathAI);
   await fs.cp(inputsDir, inputDataAI, { recursive: true });
-  await fs.cp(scriptsDir, scriptPathAI, { recursive: true })
+  await fs.cp(scriptsDir, scriptPathAI, { recursive: true });
 
   const prompt = `You are fixing transformation script errors in an Elephant Oracle data processing pipeline.
         You can find an errors in the following CSV file: ${errorsPathAI}
@@ -265,7 +265,9 @@ Do not read whole input file, as it is big. Intelegentlly search for the parts, 
     .replace(/`/g, "\\`")
     .replace(/\$/g, "\\$");
 
-  console.log(`Invoking Claude Code to fix errors... \n Propmt: ${escapedPrompt}`);
+  console.log(
+    `Invoking Claude Code to fix errors... \n Propmt: ${escapedPrompt}`,
+  );
 
   // Cost tracking setup
   const PRICING = {
@@ -303,13 +305,19 @@ Do not read whole input file, as it is big. Intelegentlly search for the parts, 
           const event = message.event;
 
           // Log tool use start
-          if (event.type === "content_block_start" && event.content_block?.type === "tool_use") {
+          if (
+            event.type === "content_block_start" &&
+            event.content_block?.type === "tool_use"
+          ) {
             toolCallCount++;
             console.log(`[Tool ${toolCallCount}] ${event.content_block.name}`);
           }
 
           // Log thinking progress (show thinking deltas without being too verbose)
-          if (event.type === "content_block_delta" && event.delta?.type === "thinking_delta") {
+          if (
+            event.type === "content_block_delta" &&
+            event.delta?.type === "thinking_delta"
+          ) {
             thinkingBuffer += event.delta.thinking || "";
             // Log thinking in chunks to avoid too much output
             if (thinkingBuffer.length > 200) {
@@ -319,7 +327,10 @@ Do not read whole input file, as it is big. Intelegentlly search for the parts, 
           }
 
           // Log thinking completion
-          if (event.type === "content_block_stop" && thinkingBuffer.length > 0) {
+          if (
+            event.type === "content_block_stop" &&
+            thinkingBuffer.length > 0
+          ) {
             console.log(`[Thinking] ${thinkingBuffer}`);
             thinkingBuffer = "";
           }
@@ -330,7 +341,9 @@ Do not read whole input file, as it is big. Intelegentlly search for the parts, 
           const content = message.message.content;
           for (const block of content) {
             if (block.type === "tool_use") {
-              console.log(`[Tool] ${block.name} - ${JSON.stringify(block.input).substring(0, 100)}...`);
+              console.log(
+                `[Tool] ${block.name} - ${JSON.stringify(block.input).substring(0, 100)}...`,
+              );
             }
           }
         }
@@ -343,7 +356,9 @@ Do not read whole input file, as it is big. Intelegentlly search for the parts, 
 
       if (message.subtype === "success") {
         console.log(`[Success] Repair completed`);
-        console.log(`[Usage] Input: ${message.usage?.input_tokens || 0}, Output: ${message.usage?.output_tokens || 0}`);
+        console.log(
+          `[Usage] Input: ${message.usage?.input_tokens || 0}, Output: ${message.usage?.output_tokens || 0}`,
+        );
         console.log(message.result);
       } else if (message.subtype === "error") {
         console.error(`[Error] ${message.error}`);
@@ -358,20 +373,25 @@ Do not read whole input file, as it is big. Intelegentlly search for the parts, 
     // Extract token usage
     const inputTokens = finalResult.usage.input_tokens || 0;
     const outputTokens = finalResult.usage.output_tokens || 0;
-    const cacheCreationTokens = finalResult.usage.cache_creation_input_tokens || 0;
+    const cacheCreationTokens =
+      finalResult.usage.cache_creation_input_tokens || 0;
     const cacheReadTokens = finalResult.usage.cache_read_input_tokens || 0;
 
     // Calculate costs by token type
-    const inputCost = inputTokens / 1000 * PRICING.INPUT_PER_1K;
-    const outputCost = outputTokens / 1000 * PRICING.OUTPUT_PER_1K;
-    const cacheWriteCost = cacheCreationTokens / 1000 * PRICING.CACHE_WRITE_PER_1K;
-    const cacheReadCost = cacheReadTokens / 1000 * PRICING.CACHE_READ_PER_1K;
-    const calculatedTotalCost = inputCost + outputCost + cacheWriteCost + cacheReadCost;
+    const inputCost = (inputTokens / 1000) * PRICING.INPUT_PER_1K;
+    const outputCost = (outputTokens / 1000) * PRICING.OUTPUT_PER_1K;
+    const cacheWriteCost =
+      (cacheCreationTokens / 1000) * PRICING.CACHE_WRITE_PER_1K;
+    const cacheReadCost = (cacheReadTokens / 1000) * PRICING.CACHE_READ_PER_1K;
+    const calculatedTotalCost =
+      inputCost + outputCost + cacheWriteCost + cacheReadCost;
 
     console.log("\nToken Usage:");
     console.log(`  Input tokens: ${inputTokens.toLocaleString()}`);
     console.log(`  Output tokens: ${outputTokens.toLocaleString()}`);
-    console.log(`  Cache write tokens: ${cacheCreationTokens.toLocaleString()}`);
+    console.log(
+      `  Cache write tokens: ${cacheCreationTokens.toLocaleString()}`,
+    );
     console.log(`  Cache read tokens: ${cacheReadTokens.toLocaleString()}`);
 
     console.log("\nCost Breakdown:");
@@ -382,10 +402,16 @@ Do not read whole input file, as it is big. Intelegentlly search for the parts, 
 
     // Use SDK-provided total cost if available, otherwise use calculated
     const sdkTotalCost = finalResult.total_cost_usd;
-    const finalTotalCost = sdkTotalCost !== undefined ? sdkTotalCost : calculatedTotalCost;
+    const finalTotalCost =
+      sdkTotalCost !== undefined ? sdkTotalCost : calculatedTotalCost;
     console.log(`\n  TOTAL COST: $${finalTotalCost.toFixed(4)}`);
-    if (sdkTotalCost !== undefined && Math.abs(sdkTotalCost - calculatedTotalCost) > 0.0001) {
-      console.log(`  (SDK reported: $${sdkTotalCost.toFixed(4)}, Calculated: $${calculatedTotalCost.toFixed(4)})`);
+    if (
+      sdkTotalCost !== undefined &&
+      Math.abs(sdkTotalCost - calculatedTotalCost) > 0.0001
+    ) {
+      console.log(
+        `  (SDK reported: $${sdkTotalCost.toFixed(4)}, Calculated: $${calculatedTotalCost.toFixed(4)})`,
+      );
     }
     console.log("==================\n");
   } else {
@@ -393,7 +419,7 @@ Do not read whole input file, as it is big. Intelegentlly search for the parts, 
     console.log("==================\n");
   }
 
-  return { scriptsDir: scriptPathAI }
+  return { scriptsDir: scriptPathAI };
 }
 
 /**
@@ -708,7 +734,12 @@ async function runAutoRepairIteration({
     const { errorPath, dataGroupName } = await parseErrorsFromS3(errorsS3Uri);
 
     // Step 3: Invoke Codex to fix errors
-    const {scriptsDir: updatedScripts} = await invokeAiForFix(errorPath, scriptsDir, inputsDir, dataGroupName);
+    const { scriptsDir: updatedScripts } = await invokeAiForFix(
+      errorPath,
+      scriptsDir,
+      inputsDir,
+      dataGroupName,
+    );
 
     // Step 4: Upload fixed scripts
     await uploadFixedScripts(county, updatedScripts, transformPrefix);
@@ -727,9 +758,9 @@ async function runAutoRepairIteration({
         seedOutputS3Uri,
         s3Event: source
           ? {
-            bucket: { name: source.s3Bucket },
-            object: { key: source.s3Key },
-          }
+              bucket: { name: source.s3Bucket },
+              object: { key: source.s3Key },
+            }
           : undefined,
       });
 
