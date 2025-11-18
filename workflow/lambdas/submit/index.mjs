@@ -299,6 +299,7 @@ export const handler = async (event) => {
       "utf8",
     );
 
+    /** @type {SubmitResultRow[]} */
     const submitResults = parse(submitResultsCsv, {
       columns: true,
       skip_empty_lines: true,

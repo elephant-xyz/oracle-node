@@ -36,7 +36,7 @@ const transformScriptsManager = createTransformScriptsManager({
  * @typedef {object} PostOutput
  * @property {string} status
  * @property {CsvRecord[]} transactionItems
- * @property {string} transformedOutputS3Uri - S3 URI of the transformed output zip
+ * @property {string | null} transformedOutputS3Uri - S3 URI of the transformed output zip
  * @property {string} preparedInputS3Uri - S3 URI of the prepared input zip (for MVL)
  * @property {string} executionId - Execution identifier
  * @property {string} county - County name
@@ -484,7 +484,7 @@ async function runTransformAndValidation({
  * Saves validation errors to S3.
  * @param {Object} options - Options object.
  * @param {string} options.submitErrorsPath - Path to the submit errors CSV file.
- * @param {string} options.inputKey - Input key.
+ * @param {string | undefined} options.inputKey - Input key.
  * @param {string} options.outputBaseUri - Output base URI.
  * @param {StructuredLogger} options.log - Structured logger used for diagnostics.
  * @returns {Promise<string>} - Submit errors S3 URI.
