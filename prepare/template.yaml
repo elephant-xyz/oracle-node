@@ -121,7 +121,6 @@ Conditions:
 
 Globals:
   Function:
-    Runtime: nodejs22.x
     Timeout: 300
     Tracing: Active
 
@@ -208,6 +207,7 @@ Resources:
   DownloaderFunction:
     Type: AWS::Serverless::Function
     Properties:
+      Runtime: nodejs22.x
       EphemeralStorage:
         Size: 1024
       MemorySize: 768
@@ -245,6 +245,7 @@ Resources:
   UpdaterFunction:
     Type: AWS::Serverless::Function
     Properties:
+      Runtime: nodejs22.x
       MemorySize: 128
       CodeUri: lambdas/updater
       Handler: index.handler
@@ -439,6 +440,7 @@ Resources:
   SubmitterFunction:
     Type: AWS::Serverless::Function
     Properties:
+      Runtime: nodejs22.x
       Architectures:
         - arm64
       MemorySize: 256
@@ -481,6 +483,7 @@ Resources:
   WorkflowStarterFunction:
     Type: AWS::Serverless::Function
     Properties:
+      Runtime: nodejs22.x
       Architectures:
         - arm64
       MemorySize: 128
@@ -515,6 +518,7 @@ Resources:
   WorkflowPreProcessorFunction:
     Type: AWS::Serverless::Function
     Properties:
+      Runtime: nodejs22.x
       Architectures:
         - arm64
       MemorySize: 512
@@ -538,15 +542,12 @@ Resources:
   WorkflowPostProcessorFunction:
     Type: AWS::Serverless::Function
     Properties:
-      Architectures:
-        - arm64
-      MemorySize: 512
-      Timeout: 120
+      PackageType: Image
+      MemorySize: 2048
+      Timeout: 300
       EphemeralStorage:
-        Size: 2048
-      CodeUri: ../workflow/lambdas/post
-      Handler: index.handler
-      Description: "Performs county transform, hash, upload, and submit"
+        Size: 3072
+      Description: "Performs county transform, hash, upload, and mirrorValidate"
       LoggingConfig:
         LogFormat: JSON
       Policies:
@@ -567,10 +568,15 @@ Resources:
           ELEPHANT_PINATA_JWT: !Ref ElephantPinataJwt
           TRANSFORM_S3_PREFIX: !Ref TransformS3Prefix
           ERRORS_TABLE_NAME: !Ref ErrorsTable
+    Metadata:
+      DockerTag: latest
+      DockerContext: ../workflow/lambdas/post
+      Dockerfile: Dockerfile
 
   ErrorResolverFunction:
     Type: AWS::Serverless::Function
     Properties:
+      Runtime: nodejs22.x
       Architectures:
         - arm64
       MemorySize: 256
@@ -622,6 +628,7 @@ Resources:
   GitHubSyncFunction:
     Type: AWS::Serverless::Function
     Properties:
+      Runtime: nodejs22.x
       Architectures:
         - arm64
       MemorySize: 512

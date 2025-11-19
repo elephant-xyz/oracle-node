@@ -50,6 +50,7 @@ check_prereqs() {
   command -v sam >/dev/null || { err "sam CLI not found. Install: https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/install-sam-cli.html"; exit 1; }
   command -v git >/dev/null || { err "git not found"; exit 1; }
   command -v npm >/dev/null || { err "npm not found"; exit 1; }
+  command -v docker >/dev/null || { err "docker not found. Install: https://docs.docker.com/get-docker/"; exit 1; }
   [[ -f "$SAM_TEMPLATE" && -f "$STARTUP_SCRIPT" && -f "$PYPROJECT_FILE" ]] || { err "Missing required files"; exit 1; }
   [[ -f "$CODEBUILD_TEMPLATE" ]] || { err "Missing CodeBuild template: $CODEBUILD_TEMPLATE"; exit 1; }
 }
@@ -72,16 +73,25 @@ get_output() {
 
 sam_build() {
   info "Building SAM application"
-  sam build --template-file "$SAM_TEMPLATE" >/dev/null
+  info "Note: Docker image build may take 30-60 minutes on first run (downloads ML models)"
+  sam build --template-file "$SAM_TEMPLATE"
 }
 
 sam_deploy() {
   info "Deploying SAM stack (initial)"
+  info "Note: Image push may take 10-20 minutes for large ML models"
+
+  # For image-based functions, use --resolve-image-repos to let SAM handle ECR
+  # Set Docker client timeout to 20 minutes
+  export DOCKER_CLIENT_TIMEOUT=1200
+  export COMPOSE_HTTP_TIMEOUT=1200
+
   sam deploy \
     --template-file "$BUILT_TEMPLATE" \
     --stack-name "$STACK_NAME" \
     --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \
     --resolve-s3 \
+    --resolve-image-repos \
     --no-confirm-changeset \
     --no-fail-on-empty-changeset \
     --parameter-overrides ${PARAM_OVERRIDES:-} >/dev/null
@@ -464,6 +474,59 @@ deploy_codebuild_stack() {
       DefaultDlqUrl="$default_dlq_url"
 
   CODEBUILD_DEPLOY_PENDING=0
+}
+
+push_post_lambda_image_to_ecr() {
+  local post_lambda_dir="workflow/lambdas/post"
+
+  if [[ ! -f "$post_lambda_dir/Dockerfile" ]]; then
+    return 0
+  fi
+
+  # Get AWS account ID and region
+  local aws_account_id
+  aws_account_id=$(aws sts get-caller-identity --query Account --output text)
+  local aws_region
+  aws_region=$(aws configure get region || echo "us-east-1")
+
+  # Try to get ECR repository name from stack outputs
+  local repo_name
+  repo_name=$(get_output "PostLambdaEcrRepositoryName" 2>/dev/null || echo "")
+
+  if [[ -z "$repo_name" ]]; then
+    info "ECR repository not yet created, will push image after stack deployment"
+    POST_LAMBDA_IMAGE_PUSH_PENDING=1
+    return 0
+  fi
+
+  local repo_uri="${aws_account_id}.dkr.ecr.${aws_region}.amazonaws.com/${repo_name}"
+
+  info "Pushing Post Lambda Docker image to $repo_uri"
+
+  # Login to ECR
+  info "Logging in to ECR..."
+  aws ecr get-login-password --region "$aws_region" \
+    | docker login --username AWS --password-stdin "$repo_uri" >/dev/null || {
+    err "Failed to login to ECR"
+    exit 1
+  }
+
+  # Tag the image
+  info "Tagging image..."
+  docker tag post-lambda:latest "$repo_uri:latest" || {
+    err "Failed to tag Docker image"
+    exit 1
+  }
+
+  # Push to ECR
+  info "Pushing image to ECR..."
+  docker push "$repo_uri:latest" >/dev/null || {
+    err "Failed to push Docker image to ECR"
+    exit 1
+  }
+
+  info "Successfully pushed Docker image to $repo_uri:latest"
+  POST_LAMBDA_IMAGE_PUSH_PENDING=0
 }
 
 add_transform_prefix_override() {
