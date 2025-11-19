@@ -754,80 +754,82 @@ async function runAutoRepairIteration({
     let resultPayload;
     try {
       if (isMvlError) {
-        // Invoke MVL Lambda for mirror validation errors
-        const mvlFunctionName = requireEnv("MVL_FUNCTION_NAME");
+        // For MVL errors: First run post-processing to ensure schema validation passes,
+        // then run MVL to check mirror validation metric
+        const postProcessorFunctionName = requireEnv(
+          "POST_PROCESSOR_FUNCTION_NAME",
+        );
         console.log(
-          `Invoking MVL Lambda ${mvlFunctionName} to verify fixes...`,
+          `Invoking Post Lambda ${postProcessorFunctionName} to verify schema validation...`,
         );
 
-        const payload = {
-          preparedInputS3Uri: preparedS3Uri,
-          transformedOutputS3Uri: seedOutputS3Uri,
-          preparedOutputS3Uri: preparedS3Uri,
-          county,
-          executionId,
-        };
+        // Step 1: Invoke post-processing to validate schema and get transaction items
+        resultPayload = await invokePostProcessingLambda({
+          functionName: postProcessorFunctionName,
+          preparedS3Uri,
+          seedOutputS3Uri,
+          s3Event: source
+            ? {
+                bucket: { name: source.s3Bucket },
+                object: { key: source.s3Key },
+              }
+            : undefined,
+        });
 
-        // Add S3 event if available
-        if (source?.s3Bucket && source?.s3Key) {
-          payload.s3 = {
-            bucket: { name: source.s3Bucket },
-            object: { key: source.s3Key },
-          };
-        }
-
-        const response = await lambdaClient.send(
-          new InvokeCommand({
-            FunctionName: mvlFunctionName,
-            InvocationType: "RequestResponse",
-            Payload: JSON.stringify(payload),
-          }),
-        );
-
-        if (response.FunctionError) {
-          const errorPayload = JSON.parse(
-            new TextDecoder().decode(response.Payload ?? new Uint8Array()),
-          );
-          throw new Error(
-            `MVL Lambda failed: ${errorPayload.errorMessage || errorPayload.errorType || JSON.stringify(errorPayload)}`,
-          );
-        }
-
-        resultPayload = JSON.parse(
-          new TextDecoder().decode(response.Payload ?? new Uint8Array()),
-        );
-
-        console.log(
-          `MVL Lambda returned status: ${resultPayload.status} with mvlMetric: ${resultPayload.mvlMetric || 0}`,
-        );
-
-        // For MVL, we consider it successful if status is success and mvlMetric > 0
-        // If mvlMetric is 0, validation failed and we should not proceed
+        // Step 2: Only if post-processing succeeded, run MVL to check mirror validation
         if (
           resultPayload.status === "success" &&
-          (resultPayload.mvlMetric || 0) > 0
+          Array.isArray(resultPayload.transactionItems) &&
+          resultPayload.transactionItems.length > 0
         ) {
-          // MVL passed, now invoke post-processing to get transaction items
-          const postProcessorFunctionName = requireEnv(
-            "POST_PROCESSOR_FUNCTION_NAME",
-          );
-          resultPayload = await invokePostProcessingLambda({
-            functionName: postProcessorFunctionName,
-            preparedS3Uri,
-            seedOutputS3Uri,
-            s3Event: source
-              ? {
-                  bucket: { name: source.s3Bucket },
-                  object: { key: source.s3Key },
-                }
-              : undefined,
-          });
-        } else {
-          // MVL failed, treat as failure
-          resultPayload = {
-            status: "failed",
-            transactionItems: [],
+          console.log(`Post-processing succeeded. Now checking MVL metric...`);
+
+          const mvlFunctionName = requireEnv("MVL_FUNCTION_NAME");
+          const mvlPayload = {
+            preparedInputS3Uri: preparedS3Uri,
+            transformedOutputS3Uri: seedOutputS3Uri,
+            preparedOutputS3Uri: preparedS3Uri,
+            county,
+            executionId,
           };
+
+          // Add S3 event if available
+          if (source?.s3Bucket && source?.s3Key) {
+            mvlPayload.s3 = {
+              bucket: { name: source.s3Bucket },
+              object: { key: source.s3Key },
+            };
+          }
+
+          const mvlResponse = await lambdaClient.send(
+            new InvokeCommand({
+              FunctionName: mvlFunctionName,
+              InvocationType: "RequestResponse",
+              Payload: JSON.stringify(mvlPayload),
+            }),
+          );
+
+          if (mvlResponse.FunctionError) {
+            const errorPayload = JSON.parse(
+              new TextDecoder().decode(mvlResponse.Payload ?? new Uint8Array()),
+            );
+            console.log(
+              `MVL Lambda failed: ${errorPayload.errorMessage || errorPayload.errorType || JSON.stringify(errorPayload)}`,
+            );
+            // MVL failure doesn't fail the whole process if post-processing succeeded
+            // We log it but continue with the successful transaction items
+          } else {
+            const mvlResult = JSON.parse(
+              new TextDecoder().decode(mvlResponse.Payload ?? new Uint8Array()),
+            );
+            console.log(
+              `MVL Lambda returned status: ${mvlResult.status} with mvlMetric: ${mvlResult.mvlMetric || 0}`,
+            );
+          }
+        } else {
+          console.log(
+            `Post-processing failed or returned no transaction items, skipping MVL check`,
+          );
         }
       } else {
         // Invoke Post Lambda for transformation/validation errors
