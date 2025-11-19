@@ -282,6 +282,7 @@ Do not read whole input file, as it is big. Intelegentlly search for the parts, 
   // State for intermediate logging
   let toolCallCount = 0;
   let thinkingBuffer = "";
+  let currentToolName = "";
 
   // State for cost tracking
   let finalResult = null;
@@ -291,6 +292,7 @@ Do not read whole input file, as it is big. Intelegentlly search for the parts, 
     options: {
       mcpServers: {
         elephant: {
+          type: "stdio",
           command: "npx",
           args: ["-y", "@elephant-xyz/mcp"],
           env: {
@@ -298,59 +300,130 @@ Do not read whole input file, as it is big. Intelegentlly search for the parts, 
           },
         },
       },
+      canUseTool: (toolName, input, options) => {
+        return { behavior: "allow", updatedInput: input };
+      },
       permissionMode: "acceptEdits",
       includePartialMessages: true,
-      onMessage: (message) => {
-        // Handle different message types
-        if (message.type === "stream_event") {
-          const event = message.event;
-
-          // Log tool use start
-          if (
-            event.type === "content_block_start" &&
-            event.content_block?.type === "tool_use"
-          ) {
-            toolCallCount++;
-            console.log(`[Tool ${toolCallCount}] ${event.content_block.name}`);
-          }
-
-          // Log thinking progress (show thinking deltas without being too verbose)
-          if (
-            event.type === "content_block_delta" &&
-            event.delta?.type === "thinking_delta"
-          ) {
-            thinkingBuffer += event.delta.thinking || "";
-            // Log thinking in chunks to avoid too much output
-            if (thinkingBuffer.length > 200) {
-              console.log(`[Thinking] ${thinkingBuffer.substring(0, 150)}...`);
-              thinkingBuffer = "";
-            }
-          }
-
-          // Log thinking completion
-          if (
-            event.type === "content_block_stop" &&
-            thinkingBuffer.length > 0
-          ) {
-            console.log(`[Thinking] ${thinkingBuffer}`);
-            thinkingBuffer = "";
-          }
-        }
-
-        // Log assistant messages (non-streaming)
-        if (message.type === "assistant") {
-          const content = message.message.content;
-          for (const block of content) {
-            if (block.type === "tool_use") {
-              console.log(
-                `[Tool] ${block.name} - ${JSON.stringify(block.input).substring(0, 100)}...`,
-              );
-            }
-          }
-        }
-      },
     },
   })) {
+    // Handle different message types
+    if (message.type === "stream_event") {
+      const event = message.event;
+
+      // Log tool use start with input preview
+      if (
+        event.type === "content_block_start" &&
+        event.content_block?.type === "tool_use"
+      ) {
+        toolCallCount++;
+        currentToolName = event.content_block.name;
+        const toolId = event.content_block.id || "";
+        console.log(
+          `\n[Tool ${toolCallCount}] Starting: ${currentToolName} (${toolId})`,
+        );
+      }
+
+      // Log tool input details
+      if (
+        event.type === "content_block_delta" &&
+        event.delta?.type === "input_json_delta"
+      ) {
+        const input = event.delta.partial_json || "";
+        if (input.length > 0 && input.length < 500) {
+          console.log(`  Input: ${input}`);
+        }
+      }
+
+      // Log thinking progress
+      if (
+        event.type === "content_block_delta" &&
+        event.delta?.type === "thinking_delta"
+      ) {
+        thinkingBuffer += event.delta.thinking || "";
+        // Log thinking in chunks
+        if (thinkingBuffer.length > 300) {
+          console.log(`[Thinking] ${thinkingBuffer.substring(0, 200)}...`);
+          thinkingBuffer = "";
+        }
+      }
+
+      // Log text deltas (agent responses)
+      if (
+        event.type === "content_block_delta" &&
+        event.delta?.type === "text_delta"
+      ) {
+        const text = event.delta.text || "";
+        if (text.length > 0) {
+          process.stdout.write(text);
+        }
+      }
+
+      // Log thinking completion
+      if (event.type === "content_block_stop") {
+        if (thinkingBuffer.length > 0) {
+          console.log(`[Thinking] ${thinkingBuffer}`);
+          thinkingBuffer = "";
+        }
+        if (currentToolName) {
+          console.log(`[Tool] Completed: ${currentToolName}\n`);
+          currentToolName = "";
+        }
+      }
+    }
+
+    // Log tool results
+    if (message.type === "tool_result") {
+      const toolName = message.tool_name || "unknown";
+      const isError = message.is_error || false;
+      const resultPreview =
+        typeof message.result === "string"
+          ? message.result.substring(0, 200)
+          : JSON.stringify(message.result).substring(0, 200);
+
+      console.log(
+        `\n[Tool Result] ${toolName} ${isError ? "❌ ERROR" : "✓ SUCCESS"}`,
+      );
+      console.log(
+        `  ${resultPreview}${resultPreview.length >= 200 ? "..." : ""}\n`,
+      );
+    }
+
+    // Log assistant messages (non-streaming)
+    if (message.type === "assistant") {
+      const content = message.message.content;
+      console.log("\n[Assistant Message]");
+      for (const block of content) {
+        if (block.type === "text") {
+          console.log(`  Text: ${block.text.substring(0, 150)}...`);
+        } else if (block.type === "tool_use") {
+          const inputPreview = JSON.stringify(block.input).substring(0, 150);
+          console.log(`  Tool: ${block.name}\n  Input: ${inputPreview}...`);
+        }
+      }
+    }
+
+    // Log user messages
+    if (message.type === "user") {
+      console.log("\n[User Message]");
+      const content = message.message.content;
+      if (typeof content === "string") {
+        console.log(`  ${content.substring(0, 150)}...`);
+      }
+    }
+
+    // Log system messages
+    if (message.type === "system") {
+      console.log("\n[System] Agent initialized");
+      if (message.tools) {
+        console.log(`  Available tools: ${message.tools.length}`);
+      }
+      if (message.mcpServers) {
+        console.log(
+          `  MCP servers: ${Object.keys(message.mcpServers).join(", ")}`,
+        );
+      }
+    }
     // Capture the final result message for cost tracking
     if (message.type === "result") {
       finalResult = message;
@@ -842,9 +915,7 @@ async function runAutoRepairIteration({
                   `Mirror validation failed. Submit errors csv: ${mvlResult.errorsS3Uri}`,
                 );
               } else {
-                throw new Error(
-                  `Mirror validation failed without errors URI`,
-                );
+                throw new Error(`Mirror validation failed without errors URI`);
               }
             }
           }
