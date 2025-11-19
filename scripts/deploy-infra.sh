@@ -84,10 +84,6 @@ sam_build() {
   # Clean SAM build directory to ensure fresh build
   rm -rf .aws-sam/build 2>/dev/null || true
 
-  # Enable Docker BuildKit for better performance and caching
-  export DOCKER_BUILDKIT=1
-  export BUILDKIT_PROGRESS=plain
-
   # Use --no-cached to force a fresh build without using cached artifacts
   # This ensures git dependencies like @elephant-xyz/cli always fetch latest commits
   sam build --template-file "$SAM_TEMPLATE" --no-cached
