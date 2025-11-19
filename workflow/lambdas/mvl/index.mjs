@@ -36,6 +36,7 @@ const s3 = new S3Client({});
  * @property {string} status
  * @property {number} mvlMetric - Global completeness metric (0-100)
  * @property {boolean} mvlPassed - Whether the validation passed the threshold (>= 0.8)
+ * @property {string} [errorsS3Uri] - S3 URI of the errors CSV file (when validation fails)
  */
 
 /**
@@ -684,6 +685,7 @@ export const handler = async (event) => {
                 status: "success",
                 mvlMetric: actualMvlMetric,
                 mvlPassed: false,
+                errorsS3Uri,
               };
             }
           } else {
@@ -708,6 +710,7 @@ export const handler = async (event) => {
               status: "success",
               mvlMetric: actualMvlMetric,
               mvlPassed: false,
+              errorsS3Uri,
             };
           }
         } catch (saveError) {

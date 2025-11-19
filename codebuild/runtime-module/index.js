@@ -823,18 +823,30 @@ async function runAutoRepairIteration({
             const errorPayload = JSON.parse(
               new TextDecoder().decode(mvlResponse.Payload ?? new Uint8Array()),
             );
-            console.log(
+            throw new Error(
               `MVL Lambda failed: ${errorPayload.errorMessage || errorPayload.errorType || JSON.stringify(errorPayload)}`,
             );
-            // MVL failure doesn't fail the whole process if post-processing succeeded
-            // We log it but continue with the successful transaction items
           } else {
             const mvlResult = JSON.parse(
               new TextDecoder().decode(mvlResponse.Payload ?? new Uint8Array()),
             );
             console.log(
-              `MVL Lambda returned status: ${mvlResult.status} with mvlMetric: ${mvlResult.mvlMetric || 0}`,
+              `MVL Lambda returned status: ${mvlResult.status} with mvlMetric: ${mvlResult.mvlMetric || 0}, mvlPassed: ${mvlResult.mvlPassed}`,
             );
+
+            // Check if MVL validation passed
+            if (mvlResult.mvlPassed === false) {
+              // Validation failed - trigger retry mechanism with errors CSV
+              if (mvlResult.errorsS3Uri) {
+                throw new Error(
+                  `Mirror validation failed. Submit errors csv: ${mvlResult.errorsS3Uri}`,
+                );
+              } else {
+                throw new Error(
+                  `Mirror validation failed without errors URI`,
+                );
+              }
+            }
           }
         } else {
           console.log(
