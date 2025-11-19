@@ -785,9 +785,19 @@ async function runAutoRepairIteration({
           console.log(`Post-processing succeeded. Now checking MVL metric...`);
 
           const mvlFunctionName = requireEnv("MVL_FUNCTION_NAME");
+
+          // Construct transformedOutputS3Uri from the original source file
+          // Pattern: s3://bucket/outputs/{original_file_name}/transformed_output.zip
+          let transformedOutputS3Uri = seedOutputS3Uri;
+          if (source?.s3Key) {
+            const { bucket } = parseS3Uri(preparedS3Uri);
+            const originalFileName = path.basename(source.s3Key);
+            transformedOutputS3Uri = `s3://${bucket}/outputs/${originalFileName}/transformed_output.zip`;
+          }
+
           const mvlPayload = {
             preparedInputS3Uri: preparedS3Uri,
-            transformedOutputS3Uri: seedOutputS3Uri,
+            transformedOutputS3Uri: transformedOutputS3Uri,
             preparedOutputS3Uri: preparedS3Uri,
             county,
             executionId,
