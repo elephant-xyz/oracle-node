@@ -1,5 +1,0 @@
-parcel_id,address,method,url,multiValueQueryString,source_identifier,county,json,body,headers,latitude,longitude
-01-38-39-001-000-00010-3,"10232 SW ROOKERY WAY, PALM CITY, FL 34990",GET,https://www.pa.martin.fl.us/app/search/view/11535,,11535,Martin,,,,27.180143683138095,-80.39284484784002
-01-38-39-001-000-00020-1,"10256 SW ROOKERY WAY, PALM CITY, FL 34990",GET,https://www.pa.martin.fl.us/app/search/view/11536,,11536,Martin,,,,27.179769128930438,-80.39294078051991
-01-38-39-001-000-00040-7,"10304 SW ROOKERY WAY, PALM CITY, FL 34990",GET,https://www.pa.martin.fl.us/app/search/view/11538,,11538,Martin,,,,27.179100698621436,-80.39296170032652
-01-38-39-001-000-00050-4,"10328 SW ROOKERY WAY, PALM CITY, FL 34990",GET,https://www.pa.martin.fl.us/app/search/view/11539,,11539,Martin,,,,27.178775626500506,-80.39297655122527
