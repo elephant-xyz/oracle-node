@@ -485,6 +485,7 @@ Let the RPC provider determine optimal gas fees:
 ```
 
 You can also view via AWS Console:
+
 1. Go to AWS Systems Manager → Parameter Store
 2. Look for `/elephant-oracle-node/gas-price`
 
