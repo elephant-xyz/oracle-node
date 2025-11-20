@@ -489,6 +489,7 @@ aws ssm put-parameter \
 #### Viewing Gas Price Configuration
 
 **Via AWS Console:**
+
 1. Go to AWS Systems Manager → Parameter Store
 2. Look for `/elephant-oracle-node/gas-price`
 3. View the current value and version history
@@ -543,6 +544,7 @@ aws logs tail /aws/lambda/elephant-oracle-node-SubmitterFunction --follow
 ```
 
 You should see log entries like:
+
 - `Using EIP-1559 maxFeePerGas: 50 Gwei` (for EIP-1559 format)
 - `Using EIP-1559 maxPriorityFeePerGas: 2 Gwei`
 - OR `Using legacy gas price: 50 Gwei` (for legacy format)
