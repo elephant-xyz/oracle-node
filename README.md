@@ -443,33 +443,25 @@ When using keystore mode (self-custodial oracles), you can dynamically configure
 
 #### Setting Up Gas Price Configuration
 
-Gas prices are stored in SSM Parameter Store at `/elephant-oracle-node/gas-price`. The system supports three formats:
+Use the `set-gas-price.sh` script to configure gas prices in SSM Parameter Store at `/elephant-oracle-node/gas-price`. The system supports three formats:
 
 **Option 1: EIP-1559 Format (Recommended)**
 
 Provides full control over base fee and priority fee:
 
 ```bash
-aws ssm put-parameter \
-  --name "/elephant-oracle-node/gas-price" \
-  --type "String" \
-  --value '{"maxFeePerGas":"50","maxPriorityFeePerGas":"2"}' \
-  --overwrite
+./scripts/set-gas-price.sh --max-fee 50 --priority-fee 2
 ```
 
-- `maxFeePerGas`: Maximum total fee per gas unit (in Gwei)
-- `maxPriorityFeePerGas`: Tip to miners/validators (in Gwei)
+- `--max-fee`: Maximum total fee per gas unit (in Gwei)
+- `--priority-fee`: Tip to miners/validators (in Gwei)
 
 **Option 2: Legacy Format**
 
 Simple gas price value:
 
 ```bash
-aws ssm put-parameter \
-  --name "/elephant-oracle-node/gas-price" \
-  --type "String" \
-  --value "50" \
-  --overwrite
+./scripts/set-gas-price.sh --gas-price 50
 ```
 
 This sets a gas price of 50 Gwei using the legacy transaction format.
@@ -479,30 +471,22 @@ This sets a gas price of 50 Gwei using the legacy transaction format.
 Let the RPC provider determine optimal gas fees:
 
 ```bash
-aws ssm put-parameter \
-  --name "/elephant-oracle-node/gas-price" \
-  --type "String" \
-  --value "auto" \
-  --overwrite
+./scripts/set-gas-price.sh --auto
 ```
 
 #### Viewing Gas Price Configuration
 
-**Via AWS Console:**
-
-1. Go to AWS Systems Manager → Parameter Store
-2. Look for `/elephant-oracle-node/gas-price`
-3. View the current value and version history
-
-**Via AWS CLI:**
-
 ```bash
 # View current gas price configuration
-aws ssm get-parameter --name "/elephant-oracle-node/gas-price"
+./scripts/set-gas-price.sh --view
 
 # View parameter history
-aws ssm get-parameter-history --name "/elephant-oracle-node/gas-price"
+./scripts/set-gas-price.sh --history
 ```
+
+You can also view via AWS Console:
+1. Go to AWS Systems Manager → Parameter Store
+2. Look for `/elephant-oracle-node/gas-price`
 
 #### Updating Gas Prices
 
@@ -510,18 +494,10 @@ One of the main benefits of using SSM Parameter Store is the ability to update g
 
 ```bash
 # Increase gas price during high network congestion
-aws ssm put-parameter \
-  --name "/elephant-oracle-node/gas-price" \
-  --type "String" \
-  --value '{"maxFeePerGas":"100","maxPriorityFeePerGas":"5"}' \
-  --overwrite
+./scripts/set-gas-price.sh --max-fee 100 --priority-fee 5
 
 # Lower it when network is quiet
-aws ssm put-parameter \
-  --name "/elephant-oracle-node/gas-price" \
-  --type "String" \
-  --value '{"maxFeePerGas":"30","maxPriorityFeePerGas":"1.5"}' \
-  --overwrite
+./scripts/set-gas-price.sh --max-fee 30 --priority-fee 1.5
 ```
 
 **Note:** Gas price changes take effect on the next Lambda execution. No redeployment is required.
