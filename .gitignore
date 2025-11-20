@@ -377,3 +377,7 @@ unset_envs.sh
 transform/**
 workflow/lambdas/post/transforms/**
 transform/**
+src/**
+manatee
+martin
+orange

@@ -435,6 +435,122 @@ You can create a keystore file using the Elephant CLI tool. For detailed instruc
 - Lambda functions have minimal S3 permissions (read-only access to keystores only)
 - The keystore is only downloaded to Lambda's temporary storage during execution and is immediately cleaned up after use
 
+### Gas Price Configuration (Keystore Mode Only)
+
+When using keystore mode (self-custodial oracles), you can dynamically configure gas prices via AWS Systems Manager Parameter Store. This allows you to adjust gas fees without redeploying your infrastructure, which is especially useful during periods of network congestion.
+
+**Important:** This feature is **only available for keystore mode**. API mode (institutional oracles) gas prices are managed by Elephant.
+
+#### Setting Up Gas Price Configuration
+
+Gas prices are stored in SSM Parameter Store at `/elephant-oracle-node/gas-price`. The system supports three formats:
+
+**Option 1: EIP-1559 Format (Recommended)**
+
+Provides full control over base fee and priority fee:
+
+```bash
+aws ssm put-parameter \
+  --name "/elephant-oracle-node/gas-price" \
+  --type "String" \
+  --value '{"maxFeePerGas":"50","maxPriorityFeePerGas":"2"}' \
+  --overwrite
+```
+
+- `maxFeePerGas`: Maximum total fee per gas unit (in Gwei)
+- `maxPriorityFeePerGas`: Tip to miners/validators (in Gwei)
+
+**Option 2: Legacy Format**
+
+Simple gas price value:
+
+```bash
+aws ssm put-parameter \
+  --name "/elephant-oracle-node/gas-price" \
+  --type "String" \
+  --value "50" \
+  --overwrite
+```
+
+This sets a gas price of 50 Gwei using the legacy transaction format.
+
+**Option 3: Automatic Gas Price**
+
+Let the RPC provider determine optimal gas fees:
+
+```bash
+aws ssm put-parameter \
+  --name "/elephant-oracle-node/gas-price" \
+  --type "String" \
+  --value "auto" \
+  --overwrite
+```
+
+#### Viewing Gas Price Configuration
+
+**Via AWS Console:**
+1. Go to AWS Systems Manager → Parameter Store
+2. Look for `/elephant-oracle-node/gas-price`
+3. View the current value and version history
+
+**Via AWS CLI:**
+
+```bash
+# View current gas price configuration
+aws ssm get-parameter --name "/elephant-oracle-node/gas-price"
+
+# View parameter history
+aws ssm get-parameter-history --name "/elephant-oracle-node/gas-price"
+```
+
+#### Updating Gas Prices
+
+One of the main benefits of using SSM Parameter Store is the ability to update gas prices without redeploying:
+
+```bash
+# Increase gas price during high network congestion
+aws ssm put-parameter \
+  --name "/elephant-oracle-node/gas-price" \
+  --type "String" \
+  --value '{"maxFeePerGas":"100","maxPriorityFeePerGas":"5"}' \
+  --overwrite
+
+# Lower it when network is quiet
+aws ssm put-parameter \
+  --name "/elephant-oracle-node/gas-price" \
+  --type "String" \
+  --value '{"maxFeePerGas":"30","maxPriorityFeePerGas":"1.5"}' \
+  --overwrite
+```
+
+**Note:** Gas price changes take effect on the next Lambda execution. No redeployment is required.
+
+#### Typical Gas Price Values
+
+For reference, typical Ethereum mainnet values:
+
+- **Normal conditions**: maxFeePerGas: 20-50 Gwei, maxPriorityFeePerGas: 1-3 Gwei
+- **High congestion**: maxFeePerGas: 100-200 Gwei, maxPriorityFeePerGas: 5-10 Gwei
+- **Low activity**: maxFeePerGas: 10-20 Gwei, maxPriorityFeePerGas: 1 Gwei
+
+#### Monitoring Gas Price Usage
+
+Check your Lambda CloudWatch logs to verify gas price configuration:
+
+```bash
+# View submit Lambda logs
+aws logs tail /aws/lambda/elephant-oracle-node-SubmitterFunction --follow
+```
+
+You should see log entries like:
+- `Using EIP-1559 maxFeePerGas: 50 Gwei` (for EIP-1559 format)
+- `Using EIP-1559 maxPriorityFeePerGas: 2 Gwei`
+- OR `Using legacy gas price: 50 Gwei` (for legacy format)
+
+#### Custom SSM Parameter Name
+
+By default, the system reads from `/elephant-oracle-node/gas-price`. To use a different parameter name, set the `GAS_PRICE_PARAMETER_NAME` environment variable in the Lambda function and update the IAM permissions in `prepare/template.yaml` accordingly.
+
 ### Update transform scripts
 
 Transforms are stored as raw files under `transform/<county>/`. Each county folder can contain any structure you need (for example `transform/brevard/scripts/*.js`).
