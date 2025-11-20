@@ -667,27 +667,32 @@ export const handler = async (event) => {
               errorsCsvPath,
               errorsS3Uri,
             });
-            // Errors were successfully saved to DynamoDB, return success with actual metric
-            if (result.saved) {
-              log("info", "mirror_validation_failed_but_saved", {
-                execution_id: event.executionId,
-                county: event.county,
-                global_completeness: actualMvlMetric,
-              });
-              const totalOperationDuration = Date.now() - Date.parse(base.at);
-              log("info", "mvl_lambda_complete", {
-                operation: "mvl_lambda_total",
-                duration_ms: totalOperationDuration,
-                duration_seconds: (totalOperationDuration / 1000).toFixed(2),
-                mvl_metric: actualMvlMetric,
-              });
-              return {
-                status: "success",
-                mvlMetric: actualMvlMetric,
-                mvlPassed: false,
-                errorsS3Uri,
-              };
-            }
+
+            // Always return success response with errorsS3Uri, regardless of DynamoDB save result
+            // The errors CSV is already uploaded to S3, which is what matters for auto-repair
+            const dynamoSaveStatus = result.saved ? "saved" : "not_saved";
+            log("info", "mirror_validation_failed_with_errors", {
+              execution_id: event.executionId,
+              county: event.county,
+              global_completeness: actualMvlMetric,
+              dynamodb_save_status: dynamoSaveStatus,
+              errors_count: mvlErrors.length,
+            });
+
+            const totalOperationDuration = Date.now() - Date.parse(base.at);
+            log("info", "mvl_lambda_complete", {
+              operation: "mvl_lambda_total",
+              duration_ms: totalOperationDuration,
+              duration_seconds: (totalOperationDuration / 1000).toFixed(2),
+              mvl_metric: actualMvlMetric,
+            });
+
+            return {
+              status: "success",
+              mvlMetric: actualMvlMetric,
+              mvlPassed: false,
+              errorsS3Uri,
+            };
           } else {
             // No specific errors to save, but validation failed (likely low completeness)
             // Log the failure and return success with actual metric
