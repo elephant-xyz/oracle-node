@@ -125,6 +125,7 @@ async function getGasPriceFromSSM() {
 
       // Validate it's an object with expected fields
       if (typeof parsed === 'object' && parsed !== null) {
+        /** @type {{maxFeePerGas?: string, maxPriorityFeePerGas?: string}} */
         const result = {};
 
         if (parsed.maxFeePerGas) {
