@@ -964,45 +964,14 @@ async function runAutoRepairIteration({
 
         return { success: true };
       } else {
-        // Execution failed, send original message to DLQ
-        if (!source) {
-          throw new Error(
-            `Execution failed but source information is missing, cannot send to DLQ`,
-          );
-        }
-
-        const dlqUrl = await getCountyDlqUrl(county);
-        await sendToDlq(dlqUrl, source);
-
-        console.log(
-          `Execution failed, sent original message to DLQ: ${dlqUrl}`,
-        );
-
+        // Execution failed - throw error to trigger retry in main loop
         throw new Error(
           `Post-processing Lambda returned non-success status: ${resultPayload.status}`,
         );
       }
     } catch (lambdaError) {
-      // Try to extract new errors S3 URI from error message
-      const newErrorsS3Uri = extractErrorsS3Uri(lambdaError.message);
-
-      // If Lambda invocation failed and we can't retry, send to DLQ
-      if (!newErrorsS3Uri && source) {
-        try {
-          const dlqUrl = await getCountyDlqUrl(county);
-          await sendToDlq(dlqUrl, source);
-
-          console.error(
-            `Post-processing Lambda invocation failed. Sent original message to DLQ: ${dlqUrl}`,
-          );
-        } catch (dlqError) {
-          console.error(`Failed to send to DLQ: ${dlqError.message}`);
-        }
-      }
-
-      throw new Error(
-        `Failed to verify fixes with post-processing Lambda: ${lambdaError.message}`,
-      );
+      // Re-throw to let the main loop handle retries and DLQ
+      throw new Error(`Failed to verify fixes: ${lambdaError.message}`);
     }
   } finally {
     // Cleanup
@@ -1010,6 +979,26 @@ async function runAutoRepairIteration({
       // Ignore cleanup errors
     });
   }
+}
+
+// Error type constants for tracking separate retry limits
+const ERROR_TYPE_SCHEMA_VALIDATION = "schema_validation";
+const ERROR_TYPE_MVL = "mvl";
+
+/**
+ * Extract error type from error message.
+ *
+ * @param {string} errorMessage - Error message to parse.
+ * @returns {string} - Error type: 'schema_validation' or 'mvl'.
+ */
+function getErrorType(errorMessage) {
+  if (
+    errorMessage.includes("Mirror validation failed") ||
+    errorMessage.includes("mvl_errors.csv")
+  ) {
+    return ERROR_TYPE_MVL;
+  }
+  return ERROR_TYPE_SCHEMA_VALIDATION;
 }
 
 /**
@@ -1023,7 +1012,10 @@ async function main() {
 
     const tableName = requireEnv("ERRORS_TABLE_NAME");
     const transformPrefix = requireEnv("TRANSFORM_S3_PREFIX");
-    const maxRetries = 3;
+
+    // Separate retry limits for each error type
+    const maxSchemaValidationAttempts = 3;
+    const maxMvlAttempts = 3;
 
     // Step 1: Get execution with most errors
     const execution = await getExecutionWithMostErrors(tableName);
@@ -1050,11 +1042,30 @@ async function main() {
     }
 
     let currentErrorsS3Uri = execution.errorsS3Uri;
-    let attempt = 0;
 
-    while (attempt < maxRetries) {
-      attempt++;
-      console.log(`\n=== Auto-repair attempt ${attempt}/${maxRetries} ===`);
+    // Track attempts separately for each error type
+    let schemaValidationAttempts = 0;
+    let mvlAttempts = 0;
+
+    // Determine initial error type from the errors S3 URI
+    const initialErrorType = currentErrorsS3Uri.includes("mvl_errors.csv")
+      ? ERROR_TYPE_MVL
+      : ERROR_TYPE_SCHEMA_VALIDATION;
+
+    // Increment the appropriate counter for the initial attempt
+    if (initialErrorType === ERROR_TYPE_MVL) {
+      mvlAttempts++;
+    } else {
+      schemaValidationAttempts++;
+    }
+
+    while (
+      schemaValidationAttempts <= maxSchemaValidationAttempts &&
+      mvlAttempts <= maxMvlAttempts
+    ) {
+      console.log(
+        `\n=== Auto-repair attempt (Schema: ${schemaValidationAttempts}/${maxSchemaValidationAttempts}, MVL: ${mvlAttempts}/${maxMvlAttempts}) ===`,
+      );
       console.log(`Using errors from: ${currentErrorsS3Uri}`);
 
       try {
@@ -1071,23 +1082,67 @@ async function main() {
         console.log("Auto-repair workflow completed successfully!");
         return;
       } catch (error) {
-        console.error(`Attempt ${attempt} failed:`, error.message);
+        console.error(`Attempt failed:`, error.message);
 
-        // Try to extract new errors S3 URI from error message
+        // Determine error type and extract new errors S3 URI
+        const errorType = getErrorType(error.message);
         const newErrorsS3Uri = extractErrorsS3Uri(error.message);
 
-        if (newErrorsS3Uri && attempt < maxRetries) {
+        console.log(`Error type: ${errorType}`);
+
+        if (newErrorsS3Uri) {
+          // Increment the appropriate counter for the next attempt
+          if (errorType === ERROR_TYPE_MVL) {
+            mvlAttempts++;
+            console.log(`MVL attempts: ${mvlAttempts}/${maxMvlAttempts}`);
+
+            if (mvlAttempts > maxMvlAttempts) {
+              console.error(
+                `Max MVL retries (${maxMvlAttempts}) reached. Sending to DLQ.`,
+              );
+              break;
+            }
+          } else {
+            schemaValidationAttempts++;
+            console.log(
+              `Schema validation attempts: ${schemaValidationAttempts}/${maxSchemaValidationAttempts}`,
+            );
+
+            if (schemaValidationAttempts > maxSchemaValidationAttempts) {
+              console.error(
+                `Max schema validation retries (${maxSchemaValidationAttempts}) reached. Sending to DLQ.`,
+              );
+              break;
+            }
+          }
+
           console.log(`Found new errors CSV: ${newErrorsS3Uri}`);
           console.log(`Will retry with new errors...`);
           currentErrorsS3Uri = newErrorsS3Uri;
         } else {
-          if (attempt >= maxRetries) {
-            console.error(`Max retries (${maxRetries}) reached. Giving up.`);
-          }
-          throw error;
+          // No new errors URI - cannot retry, send to DLQ
+          console.error(
+            `No errors URI found in error message. Sending to DLQ.`,
+          );
+          break;
         }
       }
     }
+
+    // If we exit the loop without success, send to DLQ
+    console.log(`Auto-repair exhausted all retries. Sending to DLQ...`);
+
+    if (execution.source) {
+      const dlqUrl = await getCountyDlqUrl(execution.county);
+      await sendToDlq(dlqUrl, execution.source);
+      console.log(`Sent original message to DLQ: ${dlqUrl}`);
+    } else {
+      console.error(`Cannot send to DLQ: source information is missing`);
+    }
+
+    throw new Error(
+      `Auto-repair failed after ${schemaValidationAttempts} schema validation attempts and ${mvlAttempts} MVL attempts`,
+    );
   } catch (error) {
     console.error("Auto-repair workflow failed:", error);
     process.exit(1);
