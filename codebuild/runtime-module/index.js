@@ -1129,7 +1129,7 @@ async function main() {
       }
     }
 
-    // If we exit the loop without success, send to DLQ
+    // If we exit the loop without success, send to DLQ and delete execution
     console.log(`Auto-repair exhausted all retries. Sending to DLQ...`);
 
     if (execution.source) {
@@ -1139,6 +1139,17 @@ async function main() {
     } else {
       console.error(`Cannot send to DLQ: source information is missing`);
     }
+
+    // Delete the execution to prevent re-processing the same unfixable execution
+    console.log(
+      `Deleting execution ${execution.executionId} after exhausting retries...`,
+    );
+    await deleteExecution({
+      executionId: execution.executionId,
+      tableName,
+      documentClient: dynamoClient,
+    });
+    console.log(`Execution ${execution.executionId} deleted.`);
 
     throw new Error(
       `Auto-repair failed after ${schemaValidationAttempts} schema validation attempts and ${mvlAttempts} MVL attempts`,
