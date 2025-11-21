@@ -11,7 +11,7 @@
   "dependencies": {
     "@aws-sdk/client-dynamodb": "^3.879.0",
     "@aws-sdk/client-s3": "^3.879.0",
-    "@elephant-xyz/cli": "git+https://github.com/elephant-xyz/elephant-cli.git#0763de0794fdc90ef9354c9404ac5d9c48d4ff4f",
+    "@elephant-xyz/cli": "git+https://github.com/elephant-xyz/elephant-cli.git#35cb38cd77aa553a59a38661d634262d0dfa5126",
     "@aws-sdk/lib-dynamodb": "^3.879.0",
     "csv-parse": "^5.6.0"
   },
