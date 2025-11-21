@@ -51,7 +51,6 @@ check_prereqs() {
   command -v jq >/dev/null || { err "jq not found"; exit 1; }
   command -v zip >/dev/null || { err "zip not found"; exit 1; }
   command -v curl >/dev/null || { err "curl not found"; exit 1; }
-  command -v uv >/dev/null || { err "uv not found. Install: https://docs.astral.sh/uv/getting-started/installation/"; exit 1; }
   command -v sam >/dev/null || { err "sam CLI not found. Install: https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/install-sam-cli.html"; exit 1; }
   command -v git >/dev/null || { err "git not found"; exit 1; }
   command -v npm >/dev/null || { err "npm not found"; exit 1; }
