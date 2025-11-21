@@ -1146,9 +1146,13 @@ async function main() {
           currentErrorsS3Uri = newErrorsS3Uri;
         } else {
           if (attempt >= maxAttempts) {
-            console.error(`Max retries (${maxAttempts}) reached. Sending to DLQ.`);
+            console.error(
+              `Max retries (${maxAttempts}) reached. Sending to DLQ.`,
+            );
           } else {
-            console.error(`No errors URI found in error message. Sending to DLQ.`);
+            console.error(
+              `No errors URI found in error message. Sending to DLQ.`,
+            );
           }
           break;
         }
