@@ -1,0 +1,10 @@
+cssSelector
+"body > header.hidden"
+"#logo"
+"#logo-text"
+"#property-appraiser-text"
+"#property-appraiser-logo"
+"div.mt-4 > div.flex"
+"body > div.container > div.w-full:nth-of-type(11)"
+"#print-footer-disclaimer"
+"body > div:nth-of-type(1) > div:nth-of-type(11) > div:nth-of-type(1) > div:nth-of-type(1)"
