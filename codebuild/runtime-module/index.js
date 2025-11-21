@@ -284,6 +284,10 @@ Do not read whole input file, as it is big. Intelegentlly search for the parts, 
   let thinkingBuffer = "";
   let currentToolName = "";
 
+  // Track tool use IDs to their names for better result logging
+  /** @type {Map<string, string>} */
+  const toolUseIdToName = new Map();
+
   // State for cost tracking
   let finalResult = null;
 
@@ -307,11 +311,13 @@ Do not read whole input file, as it is big. Intelegentlly search for the parts, 
       includePartialMessages: true,
     },
   })) {
-    // Handle different message types
+    // Handle different message types based on the SDK documentation
+
+    // Handle streaming events (when includePartialMessages is true)
     if (message.type === "stream_event") {
       const event = message.event;
 
-      // Log tool use start with input preview
+      // Log tool use start
       if (
         event.type === "content_block_start" &&
         event.content_block?.type === "tool_use"
@@ -359,7 +365,7 @@ Do not read whole input file, as it is big. Intelegentlly search for the parts, 
         }
       }
 
-      // Log thinking completion
+      // Log content block completion
       if (event.type === "content_block_stop") {
         if (thinkingBuffer.length > 0) {
           console.log(`[Thinking] ${thinkingBuffer}`);
@@ -372,70 +378,159 @@ Do not read whole input file, as it is big. Intelegentlly search for the parts, 
       }
     }
 
-    // Log tool results
-    if (message.type === "tool_result") {
-      const toolName = message.tool_name || "unknown";
-      const isError = message.is_error || false;
-      const resultPreview =
-        typeof message.result === "string"
-          ? message.result.substring(0, 200)
-          : JSON.stringify(message.result).substring(0, 200);
-
-      console.log(
-        `\n[Tool Result] ${toolName} ${isError ? "❌ ERROR" : "✓ SUCCESS"}`,
-      );
-      console.log(
-        `  ${resultPreview}${resultPreview.length >= 200 ? "..." : ""}\n`,
-      );
-    }
-
-    // Log assistant messages (non-streaming)
+    // Handle assistant messages (complete messages, not streaming)
     if (message.type === "assistant") {
       const content = message.message.content;
       console.log("\n[Assistant Message]");
       for (const block of content) {
         if (block.type === "text") {
-          console.log(`  Text: ${block.text.substring(0, 150)}...`);
+          const textPreview = block.text.substring(0, 300);
+          const hasMore = block.text.length > 300;
+          console.log(`  Text: ${textPreview}${hasMore ? "..." : ""}`);
         } else if (block.type === "tool_use") {
-          const inputPreview = JSON.stringify(block.input).substring(0, 150);
-          console.log(`  Tool: ${block.name}\n  Input: ${inputPreview}...`);
+          // Track the tool use ID to its name
+          toolUseIdToName.set(block.id, block.name);
+
+          console.log(`\n  ${"─".repeat(70)}`);
+          console.log(`  🔧 Tool: ${block.name} (${block.id})`);
+          console.log(`  ${"─".repeat(70)}`);
+          const inputStr = JSON.stringify(block.input, null, 2);
+          const inputPreview = inputStr.substring(0, 500);
+          const hasMore = inputStr.length > 500;
+          console.log(`  Input:`);
+          // Indent the JSON for better readability
+          console.log(
+            inputPreview
+              .split("\n")
+              .map((line) => `    ${line}`)
+              .join("\n"),
+          );
+          if (hasMore) {
+            console.log(
+              `    ... [${inputStr.length - 500} more characters] ...`,
+            );
+          }
+          console.log(`  ${"─".repeat(70)}\n`);
         }
       }
     }
 
-    // Log user messages
+    // Handle user messages
     if (message.type === "user") {
-      console.log("\n[User Message]");
       const content = message.message.content;
       if (typeof content === "string") {
+        console.log("\n[User Message]");
         console.log(`  ${content.substring(0, 150)}...`);
+      } else if (Array.isArray(content)) {
+        for (const block of content) {
+          if (block.type === "text") {
+            console.log("\n[User Message]");
+            console.log(`  ${block.text.substring(0, 150)}...`);
+          } else if (block.type === "tool_result") {
+            const isError = block.is_error || false;
+            const toolName =
+              toolUseIdToName.get(block.tool_use_id) || "Unknown";
+
+            // Enhanced tool output logging
+            console.log(`\n${"=".repeat(80)}`);
+            console.log(
+              `[Tool Result] ${toolName} (${block.tool_use_id}) ${isError ? "❌ ERROR" : "✅ SUCCESS"}`,
+            );
+            console.log(`${"=".repeat(80)}`);
+
+            // Handle different content types
+            if (typeof block.content === "string") {
+              // String content - show first 1000 characters with line breaks
+              const contentPreview = block.content.substring(0, 1000);
+              const hasMore = block.content.length > 1000;
+              console.log(contentPreview);
+              if (hasMore) {
+                console.log(
+                  `\n... [${block.content.length - 1000} more characters] ...\n`,
+                );
+              }
+            } else if (Array.isArray(block.content)) {
+              // Array content - log each item
+              for (let i = 0; i < block.content.length; i++) {
+                const item = block.content[i];
+                if (item.type === "text") {
+                  const textPreview = item.text.substring(0, 1000);
+                  const hasMore = item.text.length > 1000;
+                  console.log(`[Content Block ${i + 1}] Text:`);
+                  console.log(textPreview);
+                  if (hasMore) {
+                    console.log(
+                      `... [${item.text.length - 1000} more characters] ...\n`,
+                    );
+                  }
+                } else if (item.type === "image") {
+                  console.log(
+                    `[Content Block ${i + 1}] Image (${item.source?.media_type || "unknown type"})`,
+                  );
+                } else {
+                  console.log(
+                    `[Content Block ${i + 1}] ${item.type}:`,
+                    JSON.stringify(item).substring(0, 500),
+                  );
+                }
+              }
+            } else {
+              // Object or other type - stringify
+              const jsonStr = JSON.stringify(block.content, null, 2);
+              const preview = jsonStr.substring(0, 1000);
+              const hasMore = jsonStr.length > 1000;
+              console.log(preview);
+              if (hasMore) {
+                console.log(
+                  `\n... [${jsonStr.length - 1000} more characters] ...\n`,
+                );
+              }
+            }
+
+            console.log(`${"=".repeat(80)}\n`);
+          }
+        }
       }
     }
 
-    // Log system messages
-    if (message.type === "system") {
+    // Handle system messages (initialization)
+    if (message.type === "system" && message.subtype === "init") {
       console.log("\n[System] Agent initialized");
       if (message.tools) {
         console.log(`  Available tools: ${message.tools.length}`);
       }
-      if (message.mcpServers) {
+      if (message.mcp_servers) {
         console.log(
-          `  MCP servers: ${Object.keys(message.mcpServers).join(", ")}`,
+          `  MCP servers: ${message.mcp_servers.map((s) => s.name).join(", ")}`,
         );
       }
+      console.log(`  Model: ${message.model}`);
+      console.log(`  Permission mode: ${message.permissionMode}`);
     }
-    // Capture the final result message for cost tracking
+
+    // Handle result messages (final outcome)
     if (message.type === "result") {
       finalResult = message;
 
       if (message.subtype === "success") {
-        console.log(`[Success] Repair completed`);
+        console.log(`\n[Success] Repair completed`);
         console.log(
-          `[Usage] Input: ${message.usage?.input_tokens || 0}, Output: ${message.usage?.output_tokens || 0}`,
+          `[Usage] Input: ${message.usage.input_tokens || 0}, Output: ${message.usage.output_tokens || 0}`,
         );
-        console.log(message.result);
-      } else if (message.subtype === "error") {
-        console.error(`[Error] ${message.error}`);
+        console.log(
+          `  Cache creation: ${message.usage.cache_creation_input_tokens || 0}, Cache read: ${message.usage.cache_read_input_tokens || 0}`,
+        );
+        console.log(`\n[Result]\n${message.result}`);
+      } else if (message.subtype === "error_max_turns") {
+        console.error(`\n[Error] Maximum turns reached`);
+        console.log(
+          `[Usage] Input: ${message.usage.input_tokens || 0}, Output: ${message.usage.output_tokens || 0}`,
+        );
+      } else if (message.subtype === "error_during_execution") {
+        console.error(`\n[Error] Error during execution`);
+        console.log(
+          `[Usage] Input: ${message.usage.input_tokens || 0}, Output: ${message.usage.output_tokens || 0}`,
+        );
       }
     }
   }
