@@ -36,6 +36,10 @@ const transformScriptsManager = createTransformScriptsManager({
  * @typedef {object} PostOutput
  * @property {string} status
  * @property {CsvRecord[]} transactionItems
+ * @property {string | null} transformedOutputS3Uri - S3 URI of the transformed output zip
+ * @property {string} preparedInputS3Uri - S3 URI of the prepared input zip (for MVL)
+ * @property {string} executionId - Execution identifier
+ * @property {string} county - County name
  */
 
 /**
@@ -463,6 +467,8 @@ async function runTransformAndValidation({
   if (!validationResult.success) {
     const validationError = new Error(validationResult.error);
     validationError.name = "ValidationFailure";
+    //@ts-ignore
+    validationError.errorPath = path.join(tmpDir, "submit_errors.csv");
     throw validationError;
   }
 
@@ -473,6 +479,44 @@ async function runTransformAndValidation({
  * @typedef {object} ValidationFailureResult
  * @property {boolean} saved - Whether errors were successfully saved to DynamoDB.
  */
+
+/**
+ * Saves validation errors to S3.
+ * @param {Object} options - Options object.
+ * @param {string} options.submitErrorsPath - Path to the submit errors CSV file.
+ * @param {string | undefined} options.inputKey - Input key.
+ * @param {string} options.outputBaseUri - Output base URI.
+ * @param {StructuredLogger} options.log - Structured logger used for diagnostics.
+ * @returns {Promise<string>} - Submit errors S3 URI.
+ */
+async function saveValidationErrorToS3({
+  submitErrorsPath,
+  inputKey,
+  outputBaseUri,
+  log,
+}) {
+  try {
+    const submitErrorsCsv = await fs.readFile(submitErrorsPath);
+    const resolvedInputKey = path.posix.basename(inputKey || "input.csv");
+    const runPrefix = `${outputBaseUri.replace(/\/$/, "")}/${resolvedInputKey}`;
+    const errorFileKey = `${runPrefix.replace(/^s3:\/\//, "")}/submit_errors.csv`;
+    const [errorBucket, ...errorParts] = errorFileKey.split("/");
+    await s3.send(
+      new PutObjectCommand({
+        Bucket: errorBucket,
+        Key: errorParts.join("/"),
+        Body: submitErrorsCsv,
+      }),
+    );
+    const submitErrorsS3Uri = `s3://${errorBucket}/${errorParts.join("/")}`;
+    return submitErrorsS3Uri;
+  } catch (uploadError) {
+    log("error", "submit_errors_upload_failed", {
+      error: String(uploadError),
+    });
+    throw uploadError;
+  }
+}
 
 /**
  * Handle transform validation errors by logging and uploading submit_errors.csv.
@@ -503,31 +547,19 @@ async function handleValidationFailure({
   preparedS3Uri,
 }) {
   const submitErrorsPath = path.join(tmpDir, "submit_errors.csv");
-  let submitErrorsS3Uri = null;
+  let submitErrorsS3Uri;
   let submitErrors = [];
 
   try {
     submitErrors = await csvToJson(submitErrorsPath);
 
-    try {
-      const submitErrorsCsv = await fs.readFile(submitErrorsPath);
-      const resolvedInputKey = path.posix.basename(inputKey || "input.csv");
-      const runPrefix = `${outputBaseUri.replace(/\/$/, "")}/${resolvedInputKey}`;
-      const errorFileKey = `${runPrefix.replace(/^s3:\/\//, "")}/submit_errors.csv`;
-      const [errorBucket, ...errorParts] = errorFileKey.split("/");
-      await s3.send(
-        new PutObjectCommand({
-          Bucket: errorBucket,
-          Key: errorParts.join("/"),
-          Body: submitErrorsCsv,
-        }),
-      );
-      submitErrorsS3Uri = `s3://${errorBucket}/${errorParts.join("/")}`;
-    } catch (uploadError) {
-      log("error", "submit_errors_upload_failed", {
-        error: String(uploadError),
-      });
-    }
+    // Save errors to S3 using the extracted function
+    submitErrorsS3Uri = await saveValidationErrorToS3({
+      submitErrorsPath,
+      inputKey,
+      outputBaseUri,
+      log,
+    });
 
     log("error", "validation_failed", {
       step: "validate",
@@ -890,8 +922,18 @@ export const handler = async (event) => {
         const saveErrorsOnValidationFailure =
           event.saveErrorsOnValidationFailure !== false;
 
+        // @ts-ignore
+        const errorPath = runError.errorPath;
+
+        const errorsS3Uri = await saveValidationErrorToS3({
+          submitErrorsPath: errorPath,
+          log,
+          inputKey: event?.s3?.object?.key,
+          outputBaseUri: outputBase,
+        });
         if (!saveErrorsOnValidationFailure) {
           // Flag is false: throw error immediately without saving
+          runError.message = `${runError.message} Submit errors csv: ${errorsS3Uri}`;
           throw runError;
         }
 
@@ -922,7 +964,15 @@ export const handler = async (event) => {
               duration_seconds: (totalOperationDuration / 1000).toFixed(2),
               transaction_items_count: 0,
             });
-            return { status: "success", transactionItems: [] };
+            // Return with empty items and null S3 URIs to signal validation failure
+            return {
+              status: "success",
+              transactionItems: [],
+              transformedOutputS3Uri: null,
+              preparedInputS3Uri: prepared,
+              executionId,
+              county: countyName,
+            };
           }
         } catch (saveError) {
           // DynamoDB save failed, re-throw the error
@@ -932,6 +982,31 @@ export const handler = async (event) => {
       // Re-throw if not a ValidationFailure or if handleValidationFailure didn't return saved: true
       throw runError;
     }
+
+    // Upload transformed output to S3 for mirror validation
+    log("info", "upload_transformed_output_start", {
+      operation: "upload_transformed_output",
+    });
+    const resolvedInputKey = path.posix.basename(
+      event?.s3?.object?.key || "input.csv",
+    );
+    const runPrefix = `${outputBase.replace(/\/$/, "")}/${resolvedInputKey}`;
+    const transformedOutputKey = `${runPrefix.replace(/^s3:\/\//, "")}/transformed_output.zip`;
+    const [transformedBucket, ...transformedParts] =
+      transformedOutputKey.split("/");
+    const transformedOutputZipContent = await fs.readFile(countyOut);
+    await s3.send(
+      new PutObjectCommand({
+        Bucket: transformedBucket,
+        Key: transformedParts.join("/"),
+        Body: transformedOutputZipContent,
+      }),
+    );
+    const transformedOutputS3Uri = `s3://${transformedBucket}/${transformedParts.join("/")}`;
+    log("info", "upload_transformed_output_complete", {
+      operation: "upload_transformed_output",
+      transformed_output_s3_uri: transformedOutputS3Uri,
+    });
 
     const {
       propertyCid,
@@ -967,9 +1042,17 @@ export const handler = async (event) => {
       duration_ms: totalOperationDuration,
       duration_seconds: (totalOperationDuration / 1000).toFixed(2),
       transaction_items_count: transactionItems.length,
+      transformed_output_s3_uri: transformedOutputS3Uri,
     });
 
-    return { status: "success", transactionItems };
+    return {
+      status: "success",
+      transactionItems,
+      transformedOutputS3Uri,
+      preparedInputS3Uri: prepared,
+      executionId,
+      county: countyName,
+    };
   } catch (err) {
     log("error", "post_lambda_failed", {
       step: "unknown",
