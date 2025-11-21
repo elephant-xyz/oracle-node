@@ -5,8 +5,13 @@ import { createObjectCsvWriter } from "csv-writer";
 import { parse } from "csv-parse/sync";
 import { submitToContract } from "@elephant-xyz/cli/lib";
 import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
+import { SSMClient, GetParameterCommand } from "@aws-sdk/client-ssm";
 
 const s3Client = new S3Client({
+  region: process.env.AWS_REGION || "us-east-1",
+});
+
+const ssmClient = new SSMClient({
   region: process.env.AWS_REGION || "us-east-1",
 });
 
@@ -74,6 +79,103 @@ async function downloadKeystoreFromS3(bucket, key, targetPath) {
 }
 
 /**
+ * Get gas price configuration from AWS SSM Parameter Store
+ * Used only for self-custodial oracles (keystore mode) to allow dynamic gas price configuration
+ *
+ * Supports two formats for backward compatibility:
+ * 1. Simple string: "25" (legacy - sets gasPrice=25 Gwei, elephant-cli calculates priority fee)
+ * 2. JSON object: {"maxFeePerGas":"30","maxPriorityFeePerGas":"5"} (EIP-1559 - full control)
+ *
+ * @returns {Promise<{gasPrice?: string, maxFeePerGas?: string, maxPriorityFeePerGas?: string} | undefined>}
+ */
+async function getGasPriceFromSSM() {
+  try {
+    const parameterName =
+      process.env.GAS_PRICE_PARAMETER_NAME || "/elephant-oracle-node/gas-price";
+
+    console.log({
+      component: "submit",
+      level: "info",
+      msg: "Fetching gas price configuration from SSM Parameter Store",
+      parameterName,
+      at: new Date().toISOString(),
+    });
+
+    const command = new GetParameterCommand({
+      Name: parameterName,
+      WithDecryption: true,
+    });
+
+    const response = await ssmClient.send(command);
+    const paramValue = response.Parameter?.Value;
+
+    if (!paramValue) {
+      console.log({
+        component: "submit",
+        level: "warn",
+        msg: "Gas price parameter exists but has no value",
+        at: new Date().toISOString(),
+      });
+      return undefined;
+    }
+
+    // Try to parse as JSON first (EIP-1559 format)
+    try {
+      const parsed = JSON.parse(paramValue);
+
+      // Validate it's an object with expected fields
+      if (typeof parsed === "object" && parsed !== null) {
+        /** @type {{maxFeePerGas?: string, maxPriorityFeePerGas?: string}} */
+        const result = {};
+
+        if (parsed.maxFeePerGas) {
+          result.maxFeePerGas = String(parsed.maxFeePerGas);
+        }
+
+        if (parsed.maxPriorityFeePerGas) {
+          result.maxPriorityFeePerGas = String(parsed.maxPriorityFeePerGas);
+        }
+
+        // If we found EIP-1559 params, return them
+        if (result.maxFeePerGas || result.maxPriorityFeePerGas) {
+          console.log({
+            component: "submit",
+            level: "info",
+            msg: "Successfully retrieved EIP-1559 gas configuration from SSM",
+            config: result,
+            at: new Date().toISOString(),
+          });
+          return result;
+        }
+      }
+    } catch (jsonError) {
+      // Not JSON, treat as simple string (legacy format)
+    }
+
+    // Legacy format: simple string value
+    console.log({
+      component: "submit",
+      level: "info",
+      msg: "Successfully retrieved legacy gas price from SSM",
+      gasPrice: paramValue,
+      at: new Date().toISOString(),
+    });
+
+    return { gasPrice: paramValue };
+  } catch (error) {
+    // If parameter doesn't exist or there's an access issue, log and continue without gas price
+    console.log({
+      component: "submit",
+      level: "warn",
+      msg: "Failed to retrieve gas price from SSM, continuing without explicit gas price",
+      error: error instanceof Error ? error.message : String(error),
+      at: new Date().toISOString(),
+    });
+    return undefined;
+  }
+}
+
+/**
  * Build paths and derive prepare input from SQS/S3 event message.
  * - Extracts bucket/key from S3 event in SQS body
  * - Produces output prefix and input path for prepare Lambda
@@ -100,12 +202,13 @@ export const handler = async (event) => {
 
     if (!process.env.ELEPHANT_RPC_URL)
       throw new Error("ELEPHANT_RPC_URL is required");
+
     // Check if we're using keystore mode
     if (process.env.ELEPHANT_KEYSTORE_S3_KEY) {
       console.log({
         ...base,
         level: "info",
-        msg: "Using keystore mode for contract submission",
+        msg: "Using keystore mode for contract submission (self-custodial)",
       });
       if (!process.env.ENVIRONMENT_BUCKET)
         throw new Error("ENVIRONMENT_BUCKET is required");
@@ -113,6 +216,9 @@ export const handler = async (event) => {
         throw new Error("ELEPHANT_KEYSTORE_S3_KEY is required");
       if (!process.env.ELEPHANT_KEYSTORE_PASSWORD)
         throw new Error("ELEPHANT_KEYSTORE_PASSWORD is required");
+
+      // Fetch gas price configuration from SSM Parameter Store for self-custodial oracles
+      const gasPriceConfig = await getGasPriceFromSSM();
 
       // Download keystore from S3 with unique filename to avoid conflicts
       const keystorePath = path.resolve(
@@ -132,6 +238,8 @@ export const handler = async (event) => {
           keystorePassword: process.env.ELEPHANT_KEYSTORE_PASSWORD,
           rpcUrl: process.env.ELEPHANT_RPC_URL,
           cwd: tmp,
+          // Spread gas price configuration (supports both legacy and EIP-1559 formats)
+          ...(gasPriceConfig || {}),
         });
       } finally {
         // Clean up keystore file immediately after use for security
@@ -180,6 +288,7 @@ export const handler = async (event) => {
         fromAddress: process.env.ELEPHANT_FROM_ADDRESS,
         rpcUrl: process.env.ELEPHANT_RPC_URL,
         cwd: tmp,
+        // Note: Gas price is not passed in API mode - Elephant manages it
       });
     }
 
