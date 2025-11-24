@@ -1,5 +1,9 @@
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import {
+  DynamoDBDocumentClient,
+  UpdateCommand,
+  QueryCommand,
+} from "@aws-sdk/lib-dynamodb";
 import { unmarshall } from "@aws-sdk/util-dynamodb";
 import { LambdaClient, InvokeCommand } from "@aws-sdk/client-lambda";
 import {
@@ -13,7 +17,7 @@ import {
  * @property {string} PK - Primary key in the format `EXECUTION#{executionId}`.
  * @property {string} SK - Sort key in the format `ERROR#{errorHash}`.
  * @property {string} entityType - Entity discriminator (for example `ExecutionError`).
- * @property {"failed" | "maybeSolved" | "solved"} status - Resolution status for the execution-specific error.
+ * @property {"failed" | "maybeSolved" | "maybeUnrecoverable" | "solved"} status - Resolution status for the execution-specific error.
  * @property {string} executionId - Identifier of the failed execution.
  */
 
@@ -170,6 +174,39 @@ async function decrementOpenErrorCount({ client, tableName, executionId }) {
     openErrorCount: execution.openErrorCount ?? 0,
     status: execution.status ?? "failed",
   };
+}
+
+/**
+ * Get execution item without updating it.
+ *
+ * @param {object} params - Query parameters.
+ * @param {DynamoDBDocumentClient} params.client - DynamoDB document client.
+ * @param {string} params.tableName - DynamoDB table name.
+ * @param {string} params.executionId - Execution identifier.
+ * @returns {Promise<FailedExecutionItem>} - Execution item.
+ */
+async function getExecution({
+  client,
+  tableName,
+  executionId,
+}) {
+  const response = await client.send(
+    new QueryCommand({
+      TableName: tableName,
+      KeyConditionExpression: "PK = :pk AND SK = :sk",
+      ExpressionAttributeValues: {
+        ":pk": buildExecutionPk(executionId),
+        ":sk": buildExecutionSk(executionId),
+      },
+      Limit: 1,
+    }),
+  );
+
+  if (!response.Items || response.Items.length === 0) {
+    throw new Error(`Execution ${executionId} not found`);
+  }
+
+  return /** @type {FailedExecutionItem} */ (response.Items[0]);
 }
 
 /**
@@ -352,6 +389,74 @@ function extractExecutionId(item) {
 }
 
 /**
+ * Query all ExecutionErrorLink items for a specific execution.
+ *
+ * @param {object} params - Query parameters.
+ * @param {DynamoDBDocumentClient} params.client - DynamoDB document client.
+ * @param {string} params.tableName - DynamoDB table name.
+ * @param {string} params.executionId - Execution identifier.
+ * @returns {Promise<ExecutionErrorLink[]>} - Array of all error links for the execution.
+ */
+async function queryExecutionErrorLinks({ client, tableName, executionId }) {
+  const executionPk = buildExecutionPk(executionId);
+  /** @type {ExecutionErrorLink[]} */
+  const errorLinks = [];
+  /** @type {Record<string, unknown> | undefined} */
+  let lastEvaluatedKey = undefined;
+
+  do {
+    const response = await client.send(
+      new QueryCommand({
+        TableName: tableName,
+        KeyConditionExpression: "PK = :pk AND begins_with(SK, :skPrefix)",
+        ExpressionAttributeValues: {
+          ":pk": executionPk,
+          ":skPrefix": "ERROR#",
+        },
+        FilterExpression: "#entityType = :entityType",
+        ExpressionAttributeNames: {
+          "#entityType": "entityType",
+        },
+        ExclusiveStartKey: lastEvaluatedKey,
+      }),
+    );
+
+    if (response.Items && response.Items.length > 0) {
+      errorLinks.push(
+        ...response.Items.map(
+          (item) => /** @type {ExecutionErrorLink} */(item),
+        ),
+      );
+    }
+
+    lastEvaluatedKey = response.LastEvaluatedKey;
+  } while (lastEvaluatedKey);
+
+  return errorLinks;
+}
+
+/**
+ * Check if all error links for an execution are maybeSolved or if any are maybeUnrecoverable.
+ *
+ * @param {ExecutionErrorLink[]} errorLinks - Array of error links for the execution.
+ * @returns {{ allSolved: boolean, hasUnrecoverable: boolean }} - Status assessment result.
+ */
+function assessExecutionErrorStatus(errorLinks) {
+  if (errorLinks.length === 0) {
+    return { allSolved: true, hasUnrecoverable: false };
+  }
+
+  const hasUnrecoverable = errorLinks.some(
+    (link) => link.status === "maybeUnrecoverable",
+  );
+  const allSolved = errorLinks.every(
+    (link) => link.status === "maybeSolved" || link.status === "solved",
+  );
+
+  return { allSolved, hasUnrecoverable };
+}
+
+/**
  * Process DynamoDB stream event.
  *
  * @param {DynamoDBStreamEvent} event - DynamoDB stream event.
@@ -394,7 +499,7 @@ export const handler = async (event) => {
         ? unmarshall(record.dynamodb.OldImage)
         : undefined;
 
-      // Skip if not an ExecutionErrorLink with status transition to "maybeSolved"
+      // Skip if not an ExecutionErrorLink with status transition to "maybeSolved" or "maybeUnrecoverable"
       if (
         typeof decodedNew.entityType !== "string" ||
         decodedNew.entityType !== "ExecutionError"
@@ -405,8 +510,11 @@ export const handler = async (event) => {
       const newStatus = decodedNew.status;
       const oldStatus = decodedOld?.status;
 
-      // Only process items that changed from "failed" to "maybeSolved"
-      if (newStatus !== "maybeSolved" || oldStatus !== "failed") {
+      // Process items that changed from "failed" to "maybeSolved" or "maybeUnrecoverable"
+      if (
+        oldStatus !== "failed" ||
+        (newStatus !== "maybeSolved" && newStatus !== "maybeUnrecoverable")
+      ) {
         continue;
       }
 
@@ -443,19 +551,19 @@ export const handler = async (event) => {
     /** @type {Set<string>} */
     const restartedExecutions = new Set();
 
-    for (const [executionId, errorLinks] of executionGroups) {
+    for (const [executionId, streamErrorLinks] of executionGroups) {
       console.log(
         JSON.stringify({
           ...logBase,
           level: "info",
           msg: "processing_execution",
           executionId,
-          errorLinkCount: errorLinks.length,
+          errorLinkCount: streamErrorLinks.length,
         }),
       );
 
       // Process each error link (each one decrements the count)
-      for (const _errorLink of errorLinks) {
+      for (const _errorLink of streamErrorLinks) {
         // Skip if already restarted in this batch
         if (restartedExecutions.has(executionId)) {
           console.log(
@@ -487,40 +595,129 @@ export const handler = async (event) => {
             }),
           );
 
-          // If count reached 0 and status is still "failed", update status and restart
+          // If count reached 0 and status is still "failed", check error statuses and decide next action
           if (openErrorCount === 0 && status === "failed") {
             console.log(
               JSON.stringify({
                 ...logBase,
                 level: "info",
-                msg: "all_errors_resolved",
+                msg: "all_errors_resolved_checking_statuses",
                 executionId,
               }),
             );
 
-            // Update execution status to "maybeSolved"
-            const execution = await updateExecutionStatusToMaybeSolved({
+            // Query all error links for this execution to check their statuses
+            const errorLinks = await queryExecutionErrorLinks({
               client,
               tableName,
               executionId,
             });
 
-            if (!execution.preparedS3Uri) {
+            const { allSolved, hasUnrecoverable } =
+              assessExecutionErrorStatus(errorLinks);
+
+            console.log(
+              JSON.stringify({
+                ...logBase,
+                level: "info",
+                msg: "error_status_assessment",
+                executionId,
+                errorLinkCount: errorLinks.length,
+                allSolved,
+                hasUnrecoverable,
+              }),
+            );
+
+            // Get execution details without updating status first
+            const execution = await getExecution({
+              client,
+              tableName,
+              executionId,
+            });
+
+            // If any errors are maybeUnrecoverable, send to DLQ instead of restarting
+            if (hasUnrecoverable) {
+              console.log(
+                JSON.stringify({
+                  ...logBase,
+                  level: "info",
+                  msg: "execution_has_unrecoverable_errors_sending_to_dlq",
+                  executionId,
+                }),
+              );
+
+              if (!execution.source) {
+                throw new Error(
+                  `Execution ${executionId} has unrecoverable errors but source information is missing, cannot send to DLQ`,
+                );
+              }
+
+              const dlqUrl = await getCountyDlqUrl(execution.county);
+              await sendToDlq(dlqUrl, execution.source);
+
+              console.log(
+                JSON.stringify({
+                  ...logBase,
+                  level: "info",
+                  msg: "execution_sent_to_dlq_due_to_unrecoverable_errors",
+                  executionId,
+                  county: execution.county,
+                  dlqUrl,
+                }),
+              );
+
+              // Mark as restarted to prevent duplicate processing
+              restartedExecutions.add(executionId);
+              continue;
+            }
+
+            // If not all errors are solved, skip restart (shouldn't happen if count is 0, but defensive check)
+            if (!allSolved) {
+              console.log(
+                JSON.stringify({
+                  ...logBase,
+                  level: "warn",
+                  msg: "execution_has_unsolved_errors_but_count_is_zero",
+                  executionId,
+                }),
+              );
+              restartedExecutions.add(executionId);
+              continue;
+            }
+
+            // All errors are solved, update status and proceed with restart
+            console.log(
+              JSON.stringify({
+                ...logBase,
+                level: "info",
+                msg: "all_errors_solved_proceeding_with_restart",
+                executionId,
+              }),
+            );
+
+            // Update execution status to "maybeSolved" before restarting
+            const updatedExecution = await updateExecutionStatusToMaybeSolved({
+              client,
+              tableName,
+              executionId,
+            });
+
+            if (!updatedExecution.preparedS3Uri) {
               throw new Error(
                 `Execution ${executionId} missing preparedS3Uri, cannot restart`,
               );
             }
 
             const seedOutputS3Uri = constructSeedOutputS3Uri(
-              execution.preparedS3Uri,
+              updatedExecution.preparedS3Uri,
             );
 
             // Build S3 event from source
-            const s3Event = execution.source
+            const s3Event = updatedExecution.source
               ? {
-                  bucket: { name: execution.source.s3Bucket },
-                  object: { key: execution.source.s3Key },
-                }
+                bucket: { name: updatedExecution.source.s3Bucket },
+                object: { key: updatedExecution.source.s3Key },
+              }
               : undefined;
 
             // Invoke post-processing Lambda to restart execution
@@ -557,14 +754,14 @@ export const handler = async (event) => {
                 );
               } else {
                 // Execution failed, send original message to DLQ
-                if (!execution.source) {
+                if (!updatedExecution.source) {
                   throw new Error(
                     `Execution ${executionId} failed but source information is missing, cannot send to DLQ`,
                   );
                 }
 
-                const dlqUrl = await getCountyDlqUrl(execution.county);
-                await sendToDlq(dlqUrl, execution.source);
+                const dlqUrl = await getCountyDlqUrl(updatedExecution.county);
+                await sendToDlq(dlqUrl, updatedExecution.source);
 
                 console.log(
                   JSON.stringify({
@@ -579,10 +776,10 @@ export const handler = async (event) => {
               }
             } catch (lambdaError) {
               // If Lambda invocation failed, send original message to DLQ
-              if (execution.source) {
+              if (updatedExecution.source) {
                 try {
-                  const dlqUrl = await getCountyDlqUrl(execution.county);
-                  await sendToDlq(dlqUrl, execution.source);
+                  const dlqUrl = await getCountyDlqUrl(updatedExecution.county);
+                  await sendToDlq(dlqUrl, updatedExecution.source);
 
                   console.log(
                     JSON.stringify({
@@ -590,7 +787,7 @@ export const handler = async (event) => {
                       level: "warn",
                       msg: "execution_invocation_failed_and_sent_to_dlq",
                       executionId,
-                      county: execution.county,
+                      county: updatedExecution.county,
                       dlqUrl,
                       error: String(lambdaError),
                     }),
@@ -602,7 +799,7 @@ export const handler = async (event) => {
                       level: "error",
                       msg: "failed_to_send_to_dlq",
                       executionId,
-                      county: execution.county,
+                      county: updatedExecution.county,
                       dlqError: String(dlqError),
                       originalError: String(lambdaError),
                     }),
