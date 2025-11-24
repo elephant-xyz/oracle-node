@@ -855,6 +855,16 @@ async function installCherio(scriptsDir) {
 }
 
 /**
+ * Determine if we are processing MVL errors based on errors S3 URI.
+ *
+ * @param {string} errorsS3Uri - S3 URI of the errors CSV.
+ * @returns {boolean} - True if processing MVL errors, false if processing schema validation errors.
+ */
+function isMvlErrorScenario(errorsS3Uri) {
+  return errorsS3Uri.endsWith("mvl_errors.csv");
+}
+
+/**
  * Run a single auto-repair iteration.
  *
  * @param {object} params - Iteration parameters.
@@ -876,6 +886,11 @@ async function runAutoRepairIteration({
   tableName,
   source,
 }) {
+  // Determine error scenario type at the start
+  const isMvlScenario = isMvlErrorScenario(errorsS3Uri);
+  console.log(
+    `Processing ${isMvlScenario ? "MVL (mirror validation)" : "schema validation"} errors`,
+  );
   const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "auto-repair-"));
 
   try {
@@ -1024,15 +1039,22 @@ async function runAutoRepairIteration({
         Array.isArray(resultPayload.transactionItems) &&
         resultPayload.transactionItems.length > 0
       ) {
-        // Send successful results to Transactions queue
-        await sendToTransactionsQueue(
-          transactionsQueueUrl,
-          resultPayload.transactionItems,
-        );
+        // Send successful results to Transactions queue ONLY for schema validation errors
+        // For MVL errors, we never send to SQS queues
+        if (!isMvlScenario) {
+          await sendToTransactionsQueue(
+            transactionsQueueUrl,
+            resultPayload.transactionItems,
+          );
 
-        console.log(
-          `Successfully sent ${resultPayload.transactionItems.length} transaction items to Transactions queue`,
-        );
+          console.log(
+            `Successfully sent ${resultPayload.transactionItems.length} transaction items to Transactions queue`,
+          );
+        } else {
+          console.log(
+            `MVL scenario: Skipping transaction items send to Transactions queue (${resultPayload.transactionItems.length} items)`,
+          );
+        }
 
         // Step 6: Mark errors as maybeSolved for other executions that share the same errors
         const errorsArray = await csvToJson(errorPath);
@@ -1159,15 +1181,25 @@ async function main() {
       }
     }
 
-    // If we exit the loop without success, send to DLQ and delete execution
-    console.log(`Auto-repair exhausted all retries. Sending to DLQ...`);
+    // If we exit the loop without success, handle based on error scenario type
+    const isMvlScenario = isMvlErrorScenario(currentErrorsS3Uri);
 
-    if (execution.source) {
-      const dlqUrl = await getCountyDlqUrl(execution.county);
-      await sendToDlq(dlqUrl, execution.source);
-      console.log(`Sent original message to DLQ: ${dlqUrl}`);
+    if (isMvlScenario) {
+      // For MVL errors: Never send to DLQ, just delete execution
+      console.log(
+        `Auto-repair exhausted all retries for MVL errors. MVL scenario: Skipping DLQ send.`,
+      );
     } else {
-      console.error(`Cannot send to DLQ: source information is missing`);
+      // For schema validation errors: Send to DLQ as before
+      console.log(`Auto-repair exhausted all retries. Sending to DLQ...`);
+
+      if (execution.source) {
+        const dlqUrl = await getCountyDlqUrl(execution.county);
+        await sendToDlq(dlqUrl, execution.source);
+        console.log(`Sent original message to DLQ: ${dlqUrl}`);
+      } else {
+        console.error(`Cannot send to DLQ: source information is missing`);
+      }
     }
 
     // Delete the execution to prevent re-processing the same unfixable execution
