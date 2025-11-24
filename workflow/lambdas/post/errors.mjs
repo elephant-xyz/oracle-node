@@ -22,7 +22,7 @@ import { createHash } from "crypto";
  */
 
 /**
- * @typedef {"failed" | "maybeSolved" | "solved"} ErrorStatus
+ * @typedef {"failed" | "maybeSolved" | "maybeUnrecoverable" | "solved"} ErrorStatus
  */
 
 /**
@@ -560,18 +560,20 @@ export async function queryExecutionWithMostErrors({
 }
 
 /**
- * Mark all ExecutionErrorLink items with matching error hashes as "maybeSolved".
+ * Internal helper to mark all ExecutionErrorLink items with matching error hashes with a specific status.
  * Queries all ExecutionErrorLink items across all executions for each error hash.
  * Uses TransactWriteCommand to batch update operations for better performance.
  *
  * @param {object} params - Update parameters.
- * @param {string[]} params.errorHashes - Array of error hashes to mark as maybeSolved.
+ * @param {string[]} params.errorHashes - Array of error hashes to mark with the target status.
+ * @param {ErrorStatus} params.targetStatus - Target status to set ("maybeSolved" or "maybeUnrecoverable").
  * @param {string} params.tableName - DynamoDB table name.
  * @param {DynamoDBDocumentClient} [params.documentClient] - Optional document client (uses default if not provided).
  * @returns {Promise<void>} - Resolves when all updates complete.
  */
-export async function markErrorsAsMaybeSolved({
+async function markErrorsWithStatus({
   errorHashes,
+  targetStatus,
   tableName,
   documentClient,
 }) {
@@ -628,13 +630,13 @@ export async function markErrorsAsMaybeSolved({
           PK: item.PK,
           SK: item.SK,
         },
-        UpdateExpression: "SET #status = :maybeSolved, #updatedAt = :updatedAt",
+        UpdateExpression: "SET #status = :targetStatus, #updatedAt = :updatedAt",
         ExpressionAttributeNames: {
           "#status": "status",
           "#updatedAt": "updatedAt",
         },
         ExpressionAttributeValues: {
-          ":maybeSolved": "maybeSolved",
+          ":targetStatus": targetStatus,
           ":updatedAt": now,
         },
       },
@@ -646,6 +648,54 @@ export async function markErrorsAsMaybeSolved({
       }),
     );
   }
+}
+
+/**
+ * Mark all ExecutionErrorLink items with matching error hashes as "maybeSolved".
+ * Queries all ExecutionErrorLink items across all executions for each error hash.
+ * Uses TransactWriteCommand to batch update operations for better performance.
+ *
+ * @param {object} params - Update parameters.
+ * @param {string[]} params.errorHashes - Array of error hashes to mark as maybeSolved.
+ * @param {string} params.tableName - DynamoDB table name.
+ * @param {DynamoDBDocumentClient} [params.documentClient] - Optional document client (uses default if not provided).
+ * @returns {Promise<void>} - Resolves when all updates complete.
+ */
+export async function markErrorsAsMaybeSolved({
+  errorHashes,
+  tableName,
+  documentClient,
+}) {
+  return await markErrorsWithStatus({
+    errorHashes,
+    targetStatus: "maybeSolved",
+    tableName,
+    documentClient,
+  });
+}
+
+/**
+ * Mark all ExecutionErrorLink items with matching error hashes as "maybeUnrecoverable".
+ * Queries all ExecutionErrorLink items across all executions for each error hash.
+ * Uses TransactWriteCommand to batch update operations for better performance.
+ *
+ * @param {object} params - Update parameters.
+ * @param {string[]} params.errorHashes - Array of error hashes to mark as maybeUnrecoverable.
+ * @param {string} params.tableName - DynamoDB table name.
+ * @param {DynamoDBDocumentClient} [params.documentClient] - Optional document client (uses default if not provided).
+ * @returns {Promise<void>} - Resolves when all updates complete.
+ */
+export async function markErrorsAsMaybeUnrecoverable({
+  errorHashes,
+  tableName,
+  documentClient,
+}) {
+  return await markErrorsWithStatus({
+    errorHashes,
+    targetStatus: "maybeUnrecoverable",
+    tableName,
+    documentClient,
+  });
 }
 
 /**
