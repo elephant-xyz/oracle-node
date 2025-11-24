@@ -238,17 +238,6 @@ async function invokeAiForFix(
   await fs.cp(inputsDir, inputDataAI, { recursive: true });
   await fs.cp(scriptsDir, scriptPathAI, { recursive: true });
 
-  // Read errors to count unique errors
-  const errorsArray = await csvToJson(errorsPath);
-  const uniqueErrors = new Set();
-  for (const error of errorsArray) {
-    const errorKey = `${error.file_path || ""}#${error.error_path || ""}#${error.error_message || ""}`;
-    if (errorKey !== "##") {
-      uniqueErrors.add(errorKey);
-    }
-  }
-  const errorCount = uniqueErrors.size;
-
   const prompt = `You are fixing transformation script errors in an Elephant Oracle data processing pipeline.
 
 IMPORTANT:
@@ -267,7 +256,7 @@ WORKSPACE:
 - Errors CSV file: ${errorsPathAI}
 
 ERROR ANALYSIS REQUIREMENTS:
-1. Analyze ALL ${errorCount} unique errors listed in the CSV file
+1. Analyze ALL unique errors listed in the CSV file
 2. For each error, identify which script file generates the problematic output (use file_path to determine this)
 3. Fix EVERY unique error path and message listed above
 4. Ensure your fixes address all unique error paths and all affected files
