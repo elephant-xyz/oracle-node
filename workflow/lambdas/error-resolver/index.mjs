@@ -412,6 +412,7 @@ async function queryExecutionErrorLinks({ client, tableName, executionId }) {
         ExpressionAttributeValues: {
           ":pk": executionPk,
           ":skPrefix": "ERROR#",
+          ":entityType": "ExecutionError",
         },
         FilterExpression: "#entityType = :entityType",
         ExpressionAttributeNames: {
@@ -725,7 +726,7 @@ export const handler = async (event) => {
             try {
               resultPayload = await invokePostProcessingLambda({
                 functionName: postProcessorFunctionName,
-                preparedS3Uri: execution.preparedS3Uri,
+                preparedS3Uri: updatedExecution.preparedS3Uri,
                 seedOutputS3Uri,
                 s3Event,
               });
@@ -769,7 +770,7 @@ export const handler = async (event) => {
                     level: "info",
                     msg: "execution_failed_and_sent_to_dlq",
                     executionId,
-                    county: execution.county,
+                    county: updatedExecution.county,
                     dlqUrl,
                   }),
                 );
