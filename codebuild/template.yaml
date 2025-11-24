@@ -32,6 +32,9 @@ Parameters:
   PostProcessorFunctionName:
     Description: Name or ARN of the post-processing Lambda function
     Type: String
+  MvlFunctionName:
+    Description: Name or ARN of the Mirror Validation Lambda function
+    Type: String
   TransactionsSqsQueueUrl:
     Description: URL of the Transactions SQS Queue
     Type: String
@@ -152,6 +155,8 @@ Resources:
                 Resource:
                   - !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${PostProcessorFunctionName}"
                   - !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${PostProcessorFunctionName}:*"
+                  - !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${MvlFunctionName}"
+                  - !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${MvlFunctionName}:*"
         - PolicyName: PrepareRuntimeCodeBuildSQS
           PolicyDocument:
             Version: "2012-10-17"
@@ -162,6 +167,30 @@ Resources:
                   - sqs:GetQueueUrl
                 Resource:
                   - !Sub "arn:${AWS::Partition}:sqs:${AWS::Region}:${AWS::AccountId}:*"
+        - PolicyName: UseBedrockToInvokeLLM
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: AllowModelAndInferenceProfileAccess
+                Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                  - bedrock:InvokeModelWithResponseStream
+                  - bedrock:ListInferenceProfiles
+                Resource:
+                  - arn:aws:bedrock:*:*:inference-profile/*
+                  - arn:aws:bedrock:*:*:application-inference-profile/*
+                  - arn:aws:bedrock:*:*:foundation-model/*
+              - Sid: AllowMarketplaceSubscription
+                Effect: Allow
+                Action:
+                  - aws-marketplace:ViewSubscriptions
+                  - aws-marketplace:Subscribe
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    aws:CalledViaLast: bedrock.amazonaws.com
+
       Tags:
         - Key: Environment
           Value: !Ref EnvironmentName
@@ -198,6 +227,9 @@ Resources:
           - Name: POST_PROCESSOR_FUNCTION_NAME
             Type: PLAINTEXT
             Value: !Ref PostProcessorFunctionName
+          - Name: MVL_FUNCTION_NAME
+            Type: PLAINTEXT
+            Value: !Ref MvlFunctionName
           - Name: TRANSACTIONS_SQS_QUEUE_URL
             Type: PLAINTEXT
             Value: !Ref TransactionsSqsQueueUrl
@@ -230,20 +262,7 @@ Resources:
               runtime-versions:
                 nodejs: 22
               commands:
-                - npm install -g @openai/codex
                 - npm install -g cheerio
-                - printenv OPENAI_API_KEY | codex login --with-api-key
-                - mkdir -p ~/.codex
-                - |
-                  cat >> ~/.codex/config.toml << EOF
-                  [mcp_servers.elephant]
-                  command = "npx"
-                  args = ["-y", "@elephant-xyz/mcp"]
-                  startup_timeout_sec = 900
-
-                  [mcp_servers.elephant.env]
-                  OPENAI_API_KEY = "$OPENAI_API_KEY"
-                  EOF
                 - npm install -g @elephant-xyz/mcp
                 - echo "Node.js runtime set to version 22."
             pre_build:
@@ -290,6 +309,13 @@ Resources:
                     echo "Entry point ${RUNTIME_ENTRYPOINT} not found after extraction." >&2
                     exit 1
                   fi
+                - export CLAUDE_CODE_USE_BEDROCK=1
+                # Recommended output token settings for Bedrock
+                - export CLAUDE_CODE_MAX_OUTPUT_TOKENS=4096
+                - export MAX_THINKING_TOKENS=1024
+                - export ANTHROPIC_DEFAULT_HAIKU_MODEL=us.anthropic.claude-haiku-4-5-20251001-v1:0
+                - export ANTHROPIC_MODEL='global.anthropic.claude-sonnet-4-5-20250929-v1:0'
+                - export ANTHROPIC_SMALL_FAST_MODEL='us.anthropic.claude-haiku-4-5-20251001-v1:0'
                 - node "${RUNTIME_ENTRYPOINT}"
       Tags:
         - Key: Environment

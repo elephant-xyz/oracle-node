@@ -1,27 +1,28 @@
+import { query } from "@anthropic-ai/claude-agent-sdk";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
+import { InvokeCommand, LambdaClient } from "@aws-sdk/client-lambda";
 import {
-  S3Client,
   GetObjectCommand,
   PutObjectCommand,
+  S3Client,
 } from "@aws-sdk/client-s3";
-import { LambdaClient, InvokeCommand } from "@aws-sdk/client-lambda";
 import {
+  GetQueueUrlCommand,
   SQSClient,
   SendMessageCommand,
-  GetQueueUrlCommand,
 } from "@aws-sdk/client-sqs";
-import { promises as fs } from "fs";
-import path from "path";
-import os from "os";
+import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import AdmZip from "adm-zip";
-import { parse } from "csv-parse/sync";
 import { exec } from "child_process";
+import { parse } from "csv-parse/sync";
+import { promises as fs } from "fs";
+import os from "os";
+import path from "path";
 import {
-  queryExecutionWithMostErrors,
+  deleteExecution,
   markErrorsAsMaybeSolved,
   normalizeErrors,
-  deleteExecution,
+  queryExecutionWithMostErrors,
 } from "./errors.mjs";
 
 const DEFAULT_DLQ_URL = process.env.DEFAULT_DLQ_URL;
@@ -221,15 +222,21 @@ async function extractZip(zipPath, extractDir) {
  * @param {string} scriptsDir - Directory containing transform scripts.
  * @param {string} inputsDir - Directory containing prepared inputs.
  * @param {string} dataGroupName - Name of the data group.
- * @returns {Promise<void>}
+ * @returns {Promise<{scriptsDir: string}>}
  */
-async function invokeCodexForFix(
+async function invokeAiForFix(
   errorsPath,
   scriptsDir,
   inputsDir,
   dataGroupName,
 ) {
-  const scriptsPath = path.join(scriptsDir, "scripts");
+  const scriptPathAI = "./scripts";
+  const inputDataAI = "./input";
+  const errorsPathAI = "./errors.csv";
+
+  await fs.copyFile(errorsPath, errorsPathAI);
+  await fs.cp(inputsDir, inputDataAI, { recursive: true });
+  await fs.cp(scriptsDir, scriptPathAI, { recursive: true });
 
   // Read errors to count unique errors
   const errorsArray = await csvToJson(errorsPath);
@@ -246,15 +253,18 @@ async function invokeCodexForFix(
 
 IMPORTANT:
 - The scripts must be written back to disk using file operations (fs.writeFileSync or similar)
-- Do not return code in your response - write it directly to the files in ${scriptsPath}
+- Do not return code in your response - write it directly to the files in ${scriptPathAI}
 - You can use Node.js to run and test scripts: node <script-file>.js
-- Test with the sample input data available in: ${inputsDir}
+- Test with the sample input data available in: ${inputDataAI}
+- You are allowed only to modify existing Javascript files
+- Javascript files has to be CommonJs
+- Only library that is available for you to use is cheerio
 
 WORKSPACE:
-- Transform scripts location: ${scriptsPath}
-- Sample input data location: ${inputsDir}
+- Transform scripts location: ${scriptPathAI}
+- Sample input data location: ${inputDataAI}
 - Data group: ${dataGroupName}
-- Errors CSV file: ${errorsPath}
+- Errors CSV file: ${errorsPathAI}
 
 ERROR ANALYSIS REQUIREMENTS:
 1. Analyze ALL ${errorCount} unique errors listed in the CSV file
@@ -267,13 +277,14 @@ ERROR ANALYSIS REQUIREMENTS:
 
 ERROR FIELD DESCRIPTIONS:
 - file_path: The JSON file that contains the error (e.g., "data/deed_1.json") - use this to identify which script generates the output
-- error_path: The JSON path within that file where the error occurs (e.g., "deed_1.json/deed_type") - this is the exact property that has the problem
+- error_path: The JSON path within that file where the error occurs (e.g., "deed_1.json/deed_type") - this is the exact property that has the problem. If error_path is an HTML selector, this data HAS to be mapped.
 - error_message: The validation error message - describes what's wrong (e.g., "unexpected property", "missing required property", "invalid type")
 - currentValue: The actual value that caused the error (if available) - use this to understand what incorrect value was provided
 
 ADDRESS HANDLING:
 - For the address object use unnormalized_address if that is what the source provides
 - If source has address normalized, then use it
+- For address object you need to provide either unnormalized_address property or divided by different properties. NEVER provide both. Choose based on how address is presented in the input HTML/JSON. Do not try to normalize address on your own.
 - Make sure to understand correctly how oneOf works in the JSON schema
 
 CRITICAL: Relationship Directions - VERIFY CORRECT DIRECTION:
@@ -303,6 +314,8 @@ CRITICAL: Script Error Handling - NEVER THROW ERRORS:
 
 CRITICAL: When data is not found or invalid:
 - Use Elephant MCP to check the schema for each field to determine if it's required, optional, and whether null is allowed
+- Use listPropertiesByClassName to get available properties for the class. Output of that tool always has all properties.
+- NEVER try to assume property name and find it with getPropertySchema tool.
 - For REQUIRED fields that DO NOT allow null (type: "number" or "string" without null): You MUST extract valid data from the source. If data is missing, investigate the source HTML/CSV to find where it should come from. Do not set to null or omit required fields.
 - For REQUIRED fields that DO allow null (type: ["number", "null"] or ["string", "null"]): If data is not found, you CAN set it to null as null is a valid value for these fields.
 - For OPTIONAL fields (not required, type: ["number", "null"] or ["string", "null"]): ONLY include in the output object if they have valid values. If invalid or missing, OMIT the field entirely (do not set to null).
@@ -311,6 +324,7 @@ CRITICAL: When data is not found or invalid:
 - For date fields: only include if the value is a valid date/string
 - Use helper functions like assignIfNumber() to conditionally add optional fields only when they have valid values
 - DO NOT assume or hardcode values like tax years - each property can have different tax years. Always extract tax_year and other time-based values from the source data.
+- Do not read whole input file, as it is big. Intelligently search for the parts, that you need
 
 CRITICAL: Error Resolution Process:
 1. IDENTIFY THE PROBLEM:
@@ -320,6 +334,7 @@ CRITICAL: Error Resolution Process:
 
 2. CONSULT THE SCHEMA:
    - Use Elephant MCP to find the schema for the class corresponding to the output file
+   - Make sure to actively explore elephant schema and it's available properties using elephant MCP to be sure, that the data, that will be produced by scripts is valid
    - Determine the class name from the file name pattern
    - Check what properties are allowed, required, and their types/constraints
    - Never invent properties - only use what exists in the Elephant MCP schema
@@ -330,6 +345,7 @@ CRITICAL: Error Resolution Process:
    - If a required property is missing: Find the data in the input file (JSON/HTML) and extract it. If not found, check if null is allowed by the schema
    - If a value is invalid: Convert to the correct type or find valid data from the source
    - Modify the script that creates the problematic output
+   - Make sure, that scripts not only extract the data, but also map it to the resulting JSON in the Elephant Schema, that you retrieved from MCP
    - To solve invalid URs issues remove its generation from the scripts, it will be populated by the process
 
 4. VERIFY COMPLIANCE:
@@ -387,34 +403,329 @@ For EACH error in the list above, follow these steps:
     .replace(/`/g, "\\`")
     .replace(/\$/g, "\\$");
 
-  console.log("Invoking codex CLI...");
+  console.log(
+    `Invoking Claude Code to fix errors... \n Propmt: ${escapedPrompt}`,
+  );
 
-  return new Promise((resolve, reject) => {
-    const child = exec(
-      `codex exec "${escapedPrompt}" --sandbox danger-full-access --skip-git-repo-check`,
-    );
+  // Cost tracking setup
+  const PRICING = {
+    // Sonnet 4.5 pricing (default model)
+    INPUT_PER_1K: 0.003,
+    OUTPUT_PER_1K: 0.015,
+    CACHE_WRITE_PER_1K: 0.00375,
+    CACHE_READ_PER_1K: 0.0003,
+  };
 
-    child.stdout?.on("data", (data) => {
-      process.stdout.write(data);
-    });
+  // State for intermediate logging
+  let toolCallCount = 0;
+  let thinkingBuffer = "";
+  let currentToolName = "";
 
-    child.stderr?.on("data", (data) => {
-      process.stderr.write(data);
-    });
+  // Track tool use IDs to their names for better result logging
+  /** @type {Map<string, string>} */
+  const toolUseIdToName = new Map();
 
-    child.on("error", (error) => {
-      console.error("Codex execution failed:", error);
-      reject(new Error(`Codex invocation failed: ${error.message}`));
-    });
+  // State for cost tracking
+  let finalResult = null;
 
-    child.on("close", (code) => {
-      if (code === 0) {
-        resolve();
-      } else {
-        reject(new Error(`Codex exited with code ${code}`));
+  for await (const message of query({
+    prompt: escapedPrompt,
+    options: {
+      mcpServers: {
+        elephant: {
+          type: "stdio",
+          command: "npx",
+          args: ["-y", "@elephant-xyz/mcp"],
+          env: {
+            OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+          },
+        },
+      },
+      canUseTool: (toolName, input, options) => {
+        return { behavior: "allow", updatedInput: input };
+      },
+      permissionMode: "acceptEdits",
+      includePartialMessages: true,
+    },
+  })) {
+    // Handle different message types based on the SDK documentation
+
+    // Handle streaming events (when includePartialMessages is true)
+    if (message.type === "stream_event") {
+      const event = message.event;
+
+      // Log tool use start
+      if (
+        event.type === "content_block_start" &&
+        event.content_block?.type === "tool_use"
+      ) {
+        toolCallCount++;
+        currentToolName = event.content_block.name;
+        const toolId = event.content_block.id || "";
+        console.log(
+          `\n[Tool ${toolCallCount}] Starting: ${currentToolName} (${toolId})`,
+        );
       }
-    });
-  });
+
+      // Log tool input details
+      if (
+        event.type === "content_block_delta" &&
+        event.delta?.type === "input_json_delta"
+      ) {
+        const input = event.delta.partial_json || "";
+        if (input.length > 0 && input.length < 500) {
+          console.log(`  Input: ${input}`);
+        }
+      }
+
+      // Log thinking progress
+      if (
+        event.type === "content_block_delta" &&
+        event.delta?.type === "thinking_delta"
+      ) {
+        thinkingBuffer += event.delta.thinking || "";
+        // Log thinking in chunks
+        if (thinkingBuffer.length > 300) {
+          console.log(`[Thinking] ${thinkingBuffer.substring(0, 200)}...`);
+          thinkingBuffer = "";
+        }
+      }
+
+      // Log text deltas (agent responses)
+      if (
+        event.type === "content_block_delta" &&
+        event.delta?.type === "text_delta"
+      ) {
+        const text = event.delta.text || "";
+        if (text.length > 0) {
+          process.stdout.write(text);
+        }
+      }
+
+      // Log content block completion
+      if (event.type === "content_block_stop") {
+        if (thinkingBuffer.length > 0) {
+          console.log(`[Thinking] ${thinkingBuffer}`);
+          thinkingBuffer = "";
+        }
+        if (currentToolName) {
+          console.log(`[Tool] Completed: ${currentToolName}\n`);
+          currentToolName = "";
+        }
+      }
+    }
+
+    // Handle assistant messages (complete messages, not streaming)
+    if (message.type === "assistant") {
+      const content = message.message.content;
+      console.log("\n[Assistant Message]");
+      for (const block of content) {
+        if (block.type === "text") {
+          const textPreview = block.text.substring(0, 300);
+          const hasMore = block.text.length > 300;
+          console.log(`  Text: ${textPreview}${hasMore ? "..." : ""}`);
+        } else if (block.type === "tool_use") {
+          // Track the tool use ID to its name
+          toolUseIdToName.set(block.id, block.name);
+
+          console.log(`\n  ${"─".repeat(70)}`);
+          console.log(`  🔧 Tool: ${block.name} (${block.id})`);
+          console.log(`  ${"─".repeat(70)}`);
+          const inputStr = JSON.stringify(block.input, null, 2);
+          const inputPreview = inputStr.substring(0, 500);
+          const hasMore = inputStr.length > 500;
+          console.log(`  Input:`);
+          // Indent the JSON for better readability
+          console.log(
+            inputPreview
+              .split("\n")
+              .map((line) => `    ${line}`)
+              .join("\n"),
+          );
+          if (hasMore) {
+            console.log(
+              `    ... [${inputStr.length - 500} more characters] ...`,
+            );
+          }
+          console.log(`  ${"─".repeat(70)}\n`);
+        }
+      }
+    }
+
+    // Handle user messages
+    if (message.type === "user") {
+      const content = message.message.content;
+      if (typeof content === "string") {
+        console.log("\n[User Message]");
+        console.log(`  ${content.substring(0, 150)}...`);
+      } else if (Array.isArray(content)) {
+        for (const block of content) {
+          if (block.type === "text") {
+            console.log("\n[User Message]");
+            console.log(`  ${block.text.substring(0, 150)}...`);
+          } else if (block.type === "tool_result") {
+            const isError = block.is_error || false;
+            const toolName =
+              toolUseIdToName.get(block.tool_use_id) || "Unknown";
+
+            // Enhanced tool output logging
+            console.log(`\n${"=".repeat(80)}`);
+            console.log(
+              `[Tool Result] ${toolName} (${block.tool_use_id}) ${isError ? "❌ ERROR" : "✅ SUCCESS"}`,
+            );
+            console.log(`${"=".repeat(80)}`);
+
+            // Handle different content types
+            if (typeof block.content === "string") {
+              // String content - show first 1000 characters with line breaks
+              const contentPreview = block.content.substring(0, 1000);
+              const hasMore = block.content.length > 1000;
+              console.log(contentPreview);
+              if (hasMore) {
+                console.log(
+                  `\n... [${block.content.length - 1000} more characters] ...\n`,
+                );
+              }
+            } else if (Array.isArray(block.content)) {
+              // Array content - log each item
+              for (let i = 0; i < block.content.length; i++) {
+                const item = block.content[i];
+                if (item.type === "text") {
+                  const textPreview = item.text.substring(0, 1000);
+                  const hasMore = item.text.length > 1000;
+                  console.log(`[Content Block ${i + 1}] Text:`);
+                  console.log(textPreview);
+                  if (hasMore) {
+                    console.log(
+                      `... [${item.text.length - 1000} more characters] ...\n`,
+                    );
+                  }
+                } else if (item.type === "image") {
+                  console.log(
+                    `[Content Block ${i + 1}] Image (${item.source?.media_type || "unknown type"})`,
+                  );
+                } else {
+                  console.log(
+                    `[Content Block ${i + 1}] ${item.type}:`,
+                    JSON.stringify(item).substring(0, 500),
+                  );
+                }
+              }
+            } else {
+              // Object or other type - stringify
+              const jsonStr = JSON.stringify(block.content, null, 2);
+              const preview = jsonStr.substring(0, 1000);
+              const hasMore = jsonStr.length > 1000;
+              console.log(preview);
+              if (hasMore) {
+                console.log(
+                  `\n... [${jsonStr.length - 1000} more characters] ...\n`,
+                );
+              }
+            }
+
+            console.log(`${"=".repeat(80)}\n`);
+          }
+        }
+      }
+    }
+
+    // Handle system messages (initialization)
+    if (message.type === "system" && message.subtype === "init") {
+      console.log("\n[System] Agent initialized");
+      if (message.tools) {
+        console.log(`  Available tools: ${message.tools.length}`);
+      }
+      if (message.mcp_servers) {
+        console.log(
+          `  MCP servers: ${message.mcp_servers.map((s) => s.name).join(", ")}`,
+        );
+      }
+      console.log(`  Model: ${message.model}`);
+      console.log(`  Permission mode: ${message.permissionMode}`);
+    }
+
+    // Handle result messages (final outcome)
+    if (message.type === "result") {
+      finalResult = message;
+
+      if (message.subtype === "success") {
+        console.log(`\n[Success] Repair completed`);
+        console.log(
+          `[Usage] Input: ${message.usage.input_tokens || 0}, Output: ${message.usage.output_tokens || 0}`,
+        );
+        console.log(
+          `  Cache creation: ${message.usage.cache_creation_input_tokens || 0}, Cache read: ${message.usage.cache_read_input_tokens || 0}`,
+        );
+        console.log(`\n[Result]\n${message.result}`);
+      } else if (message.subtype === "error_max_turns") {
+        console.error(`\n[Error] Maximum turns reached`);
+        console.log(
+          `[Usage] Input: ${message.usage.input_tokens || 0}, Output: ${message.usage.output_tokens || 0}`,
+        );
+      } else if (message.subtype === "error_during_execution") {
+        console.error(`\n[Error] Error during execution`);
+        console.log(
+          `[Usage] Input: ${message.usage.input_tokens || 0}, Output: ${message.usage.output_tokens || 0}`,
+        );
+      }
+    }
+  }
+
+  // Calculate and log total costs
+  console.log("\n=== Cost Summary ===");
+
+  if (finalResult && finalResult.usage) {
+    // Extract token usage
+    const inputTokens = finalResult.usage.input_tokens || 0;
+    const outputTokens = finalResult.usage.output_tokens || 0;
+    const cacheCreationTokens =
+      finalResult.usage.cache_creation_input_tokens || 0;
+    const cacheReadTokens = finalResult.usage.cache_read_input_tokens || 0;
+
+    // Calculate costs by token type
+    const inputCost = (inputTokens / 1000) * PRICING.INPUT_PER_1K;
+    const outputCost = (outputTokens / 1000) * PRICING.OUTPUT_PER_1K;
+    const cacheWriteCost =
+      (cacheCreationTokens / 1000) * PRICING.CACHE_WRITE_PER_1K;
+    const cacheReadCost = (cacheReadTokens / 1000) * PRICING.CACHE_READ_PER_1K;
+    const calculatedTotalCost =
+      inputCost + outputCost + cacheWriteCost + cacheReadCost;
+
+    console.log("\nToken Usage:");
+    console.log(`  Input tokens: ${inputTokens.toLocaleString()}`);
+    console.log(`  Output tokens: ${outputTokens.toLocaleString()}`);
+    console.log(
+      `  Cache write tokens: ${cacheCreationTokens.toLocaleString()}`,
+    );
+    console.log(`  Cache read tokens: ${cacheReadTokens.toLocaleString()}`);
+
+    console.log("\nCost Breakdown:");
+    console.log(`  Input cost: $${inputCost.toFixed(4)}`);
+    console.log(`  Output cost: $${outputCost.toFixed(4)}`);
+    console.log(`  Cache write cost: $${cacheWriteCost.toFixed(4)}`);
+    console.log(`  Cache read cost: $${cacheReadCost.toFixed(4)}`);
+
+    // Use SDK-provided total cost if available, otherwise use calculated
+    const sdkTotalCost = finalResult.total_cost_usd;
+    const finalTotalCost =
+      sdkTotalCost !== undefined ? sdkTotalCost : calculatedTotalCost;
+    console.log(`\n  TOTAL COST: $${finalTotalCost.toFixed(4)}`);
+    if (
+      sdkTotalCost !== undefined &&
+      Math.abs(sdkTotalCost - calculatedTotalCost) > 0.0001
+    ) {
+      console.log(
+        `  (SDK reported: $${sdkTotalCost.toFixed(4)}, Calculated: $${calculatedTotalCost.toFixed(4)})`,
+      );
+    }
+    console.log("==================\n");
+  } else {
+    console.log("No usage data collected");
+    console.log("==================\n");
+  }
+
+  return { scriptsDir: scriptPathAI };
 }
 
 /**
@@ -703,7 +1014,7 @@ async function invokePostProcessingLambda({
  * @returns {string | null} - Extracted S3 URI or null if not found.
  */
 function extractErrorsS3Uri(errorMessage) {
-  const match = /Submit errors CSV:\s*(s3:\/\/[^\s]+)/.exec(errorMessage);
+  const match = /Submit errors csv:\s*(s3:\/\/[^\s]+)/.exec(errorMessage);
   return match ? match[1] : null;
 }
 
@@ -766,20 +1077,33 @@ async function runAutoRepairIteration({
     const { errorPath, dataGroupName } = await parseErrorsFromS3(errorsS3Uri);
 
     // Step 3: Invoke Codex to fix errors
-    await invokeCodexForFix(errorPath, scriptsDir, inputsDir, dataGroupName);
+    const { scriptsDir: updatedScripts } = await invokeAiForFix(
+      errorPath,
+      scriptsDir,
+      inputsDir,
+      dataGroupName,
+    );
 
     // Step 4: Upload fixed scripts (keep reference to original zip for potential rollback)
-    await uploadFixedScripts(county, scriptsDir, transformPrefix);
+    await uploadFixedScripts(county, updatedScripts, transformPrefix);
 
-    // Step 5: Invoke post-processing Lambda to verify fixes work
+    // Step 5: Always verify fixes by running BOTH post-processing and MVL validation
+    // This ensures that fixes for any error type don't introduce the other type of error
+    const transactionsQueueUrl = requireEnv("TRANSACTIONS_SQS_QUEUE_URL");
+    const seedOutputS3Uri = constructSeedOutputS3Uri(preparedS3Uri);
     const postProcessorFunctionName = requireEnv(
       "POST_PROCESSOR_FUNCTION_NAME",
     );
-    const transactionsQueueUrl = requireEnv("TRANSACTIONS_SQS_QUEUE_URL");
-    const seedOutputS3Uri = constructSeedOutputS3Uri(preparedS3Uri);
+    const mvlFunctionName = requireEnv("MVL_FUNCTION_NAME");
 
+    let resultPayload;
     try {
-      const resultPayload = await invokePostProcessingLambda({
+      // Step 5.1: Always invoke post-processing Lambda first to validate schema
+      console.log(
+        `Invoking Post Lambda ${postProcessorFunctionName} to verify schema validation...`,
+      );
+
+      resultPayload = await invokePostProcessingLambda({
         functionName: postProcessorFunctionName,
         preparedS3Uri,
         seedOutputS3Uri,
@@ -790,6 +1114,83 @@ async function runAutoRepairIteration({
             }
           : undefined,
       });
+
+      // Step 5.2: If post-processing succeeded, ALWAYS run MVL to check mirror validation
+      // This ensures we catch any MVL errors that might have been introduced by the fixes
+      if (
+        resultPayload.status === "success" &&
+        Array.isArray(resultPayload.transactionItems) &&
+        resultPayload.transactionItems.length > 0
+      ) {
+        console.log(
+          `Post-processing succeeded. Now checking MVL metric to ensure no mirror validation errors...`,
+        );
+
+        // Construct transformedOutputS3Uri from the original source file
+        // Pattern: s3://bucket/outputs/{original_file_name}/transformed_output.zip
+        let transformedOutputS3Uri = seedOutputS3Uri;
+        if (source?.s3Key) {
+          const { bucket } = parseS3Uri(preparedS3Uri);
+          const originalFileName = path.basename(source.s3Key);
+          transformedOutputS3Uri = `s3://${bucket}/outputs/${originalFileName}/transformed_output.zip`;
+        }
+
+        const mvlPayload = {
+          preparedInputS3Uri: preparedS3Uri,
+          transformedOutputS3Uri: transformedOutputS3Uri,
+          preparedOutputS3Uri: preparedS3Uri,
+          county,
+          executionId,
+        };
+
+        // Add S3 event if available
+        if (source?.s3Bucket && source?.s3Key) {
+          mvlPayload.s3 = {
+            bucket: { name: source.s3Bucket },
+            object: { key: source.s3Key },
+          };
+        }
+
+        const mvlResponse = await lambdaClient.send(
+          new InvokeCommand({
+            FunctionName: mvlFunctionName,
+            InvocationType: "RequestResponse",
+            Payload: JSON.stringify(mvlPayload),
+          }),
+        );
+
+        if (mvlResponse.FunctionError) {
+          const errorPayload = JSON.parse(
+            new TextDecoder().decode(mvlResponse.Payload ?? new Uint8Array()),
+          );
+          throw new Error(
+            `MVL Lambda failed: ${errorPayload.errorMessage || errorPayload.errorType || JSON.stringify(errorPayload)}`,
+          );
+        } else {
+          const mvlResult = JSON.parse(
+            new TextDecoder().decode(mvlResponse.Payload ?? new Uint8Array()),
+          );
+          console.log(
+            `MVL Lambda returned status: ${mvlResult.status} with mvlMetric: ${mvlResult.mvlMetric || 0}, mvlPassed: ${mvlResult.mvlPassed}`,
+          );
+
+          // Check if MVL validation passed
+          if (mvlResult.mvlPassed === false) {
+            // Validation failed - trigger retry mechanism with errors CSV
+            if (mvlResult.errorsS3Uri) {
+              throw new Error(
+                `Mirror validation failed. Submit errors csv: ${mvlResult.errorsS3Uri}`,
+              );
+            } else {
+              throw new Error(`Mirror validation failed without errors URI`);
+            }
+          }
+        }
+      } else {
+        console.log(
+          `Post-processing failed or returned no transaction items, skipping MVL check`,
+        );
+      }
 
       // Check if execution was successful
       if (
@@ -832,7 +1233,7 @@ async function runAutoRepairIteration({
 
         return { success: true };
       } else {
-        // Execution failed, restore original scripts before sending to DLQ
+        // Execution failed, restore original scripts before throwing error
         console.log(
           `Post-processing failed with status: ${resultPayload.status}. Restoring original scripts...`,
         );
@@ -847,23 +1248,10 @@ async function runAutoRepairIteration({
           console.error(
             `Failed to restore original scripts: ${restoreError.message}`,
           );
-          // Continue with DLQ logic even if restore fails
+          // Continue with error handling even if restore fails
         }
 
-        // Execution failed, send original message to DLQ
-        if (!source) {
-          throw new Error(
-            `Execution failed but source information is missing, cannot send to DLQ`,
-          );
-        }
-
-        const dlqUrl = await getCountyDlqUrl(county);
-        await sendToDlq(dlqUrl, source);
-
-        console.log(
-          `Execution failed, sent original message to DLQ: ${dlqUrl}`,
-        );
-
+        // Throw error to trigger retry in main loop
         throw new Error(
           `Post-processing Lambda returned non-success status: ${resultPayload.status}`,
         );
@@ -904,9 +1292,8 @@ async function runAutoRepairIteration({
         }
       }
 
-      throw new Error(
-        `Failed to verify fixes with post-processing Lambda: ${lambdaError.message}`,
-      );
+      // Re-throw to let the main loop handle retries
+      throw new Error(`Failed to verify fixes: ${lambdaError.message}`);
     }
   } finally {
     // Cleanup
@@ -927,7 +1314,7 @@ async function main() {
 
     const tableName = requireEnv("ERRORS_TABLE_NAME");
     const transformPrefix = requireEnv("TRANSFORM_S3_PREFIX");
-    const maxRetries = 3;
+    const maxAttempts = 3;
 
     // Step 1: Get execution with most errors
     const execution = await getExecutionWithMostErrors(tableName);
@@ -956,9 +1343,9 @@ async function main() {
     let currentErrorsS3Uri = execution.errorsS3Uri;
     let attempt = 0;
 
-    while (attempt < maxRetries) {
+    while (attempt < maxAttempts) {
       attempt++;
-      console.log(`\n=== Auto-repair attempt ${attempt}/${maxRetries} ===`);
+      console.log(`\n=== Auto-repair attempt ${attempt}/${maxAttempts} ===`);
       console.log(`Using errors from: ${currentErrorsS3Uri}`);
 
       try {
@@ -980,18 +1367,48 @@ async function main() {
         // Try to extract new errors S3 URI from error message
         const newErrorsS3Uri = extractErrorsS3Uri(error.message);
 
-        if (newErrorsS3Uri && attempt < maxRetries) {
+        if (newErrorsS3Uri && attempt < maxAttempts) {
           console.log(`Found new errors CSV: ${newErrorsS3Uri}`);
           console.log(`Will retry with new errors...`);
           currentErrorsS3Uri = newErrorsS3Uri;
         } else {
-          if (attempt >= maxRetries) {
-            console.error(`Max retries (${maxRetries}) reached. Giving up.`);
+          if (attempt >= maxAttempts) {
+            console.error(
+              `Max retries (${maxAttempts}) reached. Sending to DLQ.`,
+            );
+          } else {
+            console.error(
+              `No errors URI found in error message. Sending to DLQ.`,
+            );
           }
-          throw error;
+          break;
         }
       }
     }
+
+    // If we exit the loop without success, send to DLQ and delete execution
+    console.log(`Auto-repair exhausted all retries. Sending to DLQ...`);
+
+    if (execution.source) {
+      const dlqUrl = await getCountyDlqUrl(execution.county);
+      await sendToDlq(dlqUrl, execution.source);
+      console.log(`Sent original message to DLQ: ${dlqUrl}`);
+    } else {
+      console.error(`Cannot send to DLQ: source information is missing`);
+    }
+
+    // Delete the execution to prevent re-processing the same unfixable execution
+    console.log(
+      `Deleting execution ${execution.executionId} after exhausting retries...`,
+    );
+    await deleteExecution({
+      executionId: execution.executionId,
+      tableName,
+      documentClient: dynamoClient,
+    });
+    console.log(`Execution ${execution.executionId} deleted.`);
+
+    throw new Error(`Auto-repair failed after ${attempt} attempts`);
   } catch (error) {
     console.error("Auto-repair workflow failed:", error);
     process.exit(1);

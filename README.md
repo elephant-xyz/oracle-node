@@ -167,6 +167,36 @@ oracle-node/
 
 The multi-request flow file is passed to the prepare function as the `multiRequestFlowFile` parameter and is automatically cleaned up after use.
 
+**Static Parts Files (Optional):**
+
+For counties where certain HTML elements remain static (unchanging) across multiple requests, you can provide county-specific static parts CSV files. These files help the mirror validation Lambda identify which content to exclude from completeness checks, improving validation accuracy.
+
+Static parts files can be generated using the `identify-static-parts` command from the Elephant CLI. For detailed documentation on generating and using static parts files, see the [Elephant CLI Static Parts documentation](https://github.com/elephant-xyz/elephant-cli/blob/feat/completeness-validation/docs/identify-static-parts-command.md).
+
+1. Add CSV files named `<county>.csv` (e.g., `collier.csv`, `palm-beach.csv`) to the `source-html-static-parts/` directory in the repository root
+2. These files are automatically uploaded to S3 during deployment
+3. The Mirror Validation Lambda will automatically download and use the appropriate file based on the county being processed
+4. If no static parts file exists for a county, mirror validation runs normally without static parts filtering
+
+Example structure:
+
+```
+oracle-node/
+├── browser-flows/
+│   ├── Broward.json
+│   └── Palm-Beach.json
+├── multi-request-flows/
+│   ├── Manatee.json
+│   └── Collier.json
+├── source-html-static-parts/
+│   ├── collier.csv
+│   └── palm-beach.csv
+├── transform/
+└── ...
+```
+
+**CSV Format:** The static parts CSV should contain selectors or patterns identifying static HTML elements. Refer to the [Elephant CLI documentation](https://github.com/elephant-xyz/elephant-cli/blob/feat/completeness-validation/docs/identify-static-parts-command.md) for the exact format and usage.
+
 Put your transform files under `transform/` (if applicable).
 
 ### 2) Deploy infrastructure
@@ -434,6 +464,101 @@ You can create a keystore file using the Elephant CLI tool. For detailed instruc
 - The password is stored as an encrypted environment variable in Lambda
 - Lambda functions have minimal S3 permissions (read-only access to keystores only)
 - The keystore is only downloaded to Lambda's temporary storage during execution and is immediately cleaned up after use
+
+### Gas Price Configuration (Keystore Mode Only)
+
+When using keystore mode (self-custodial oracles), you can dynamically configure gas prices via AWS Systems Manager Parameter Store. This allows you to adjust gas fees without redeploying your infrastructure, which is especially useful during periods of network congestion.
+
+**Important:** This feature is **only available for keystore mode**. API mode (institutional oracles) gas prices are managed by Elephant.
+
+#### Setting Up Gas Price Configuration
+
+Use the `set-gas-price.sh` script to configure gas prices in SSM Parameter Store at `/elephant-oracle-node/gas-price`. The system supports three formats:
+
+**Option 1: EIP-1559 Format (Recommended)**
+
+Provides full control over base fee and priority fee:
+
+```bash
+./scripts/set-gas-price.sh --max-fee 50 --priority-fee 2
+```
+
+- `--max-fee`: Maximum total fee per gas unit (in Gwei)
+- `--priority-fee`: Tip to miners/validators (in Gwei)
+
+**Option 2: Legacy Format**
+
+Simple gas price value:
+
+```bash
+./scripts/set-gas-price.sh --gas-price 50
+```
+
+This sets a gas price of 50 Gwei using the legacy transaction format.
+
+**Option 3: Automatic Gas Price**
+
+Let the RPC provider determine optimal gas fees:
+
+```bash
+./scripts/set-gas-price.sh --auto
+```
+
+#### Viewing Gas Price Configuration
+
+```bash
+# View current gas price configuration
+./scripts/set-gas-price.sh --view
+
+# View parameter history
+./scripts/set-gas-price.sh --history
+```
+
+You can also view via AWS Console:
+
+1. Go to AWS Systems Manager → Parameter Store
+2. Look for `/elephant-oracle-node/gas-price`
+
+#### Updating Gas Prices
+
+One of the main benefits of using SSM Parameter Store is the ability to update gas prices without redeploying:
+
+```bash
+# Increase gas price during high network congestion
+./scripts/set-gas-price.sh --max-fee 100 --priority-fee 5
+
+# Lower it when network is quiet
+./scripts/set-gas-price.sh --max-fee 30 --priority-fee 1.5
+```
+
+**Note:** Gas price changes take effect on the next Lambda execution. No redeployment is required.
+
+#### Typical Gas Price Values
+
+For reference, typical Ethereum mainnet values:
+
+- **Normal conditions**: maxFeePerGas: 20-50 Gwei, maxPriorityFeePerGas: 1-3 Gwei
+- **High congestion**: maxFeePerGas: 100-200 Gwei, maxPriorityFeePerGas: 5-10 Gwei
+- **Low activity**: maxFeePerGas: 10-20 Gwei, maxPriorityFeePerGas: 1 Gwei
+
+#### Monitoring Gas Price Usage
+
+Check your Lambda CloudWatch logs to verify gas price configuration:
+
+```bash
+# View submit Lambda logs
+aws logs tail /aws/lambda/elephant-oracle-node-SubmitterFunction --follow
+```
+
+You should see log entries like:
+
+- `Using EIP-1559 maxFeePerGas: 50 Gwei` (for EIP-1559 format)
+- `Using EIP-1559 maxPriorityFeePerGas: 2 Gwei`
+- OR `Using legacy gas price: 50 Gwei` (for legacy format)
+
+#### Custom SSM Parameter Name
+
+By default, the system reads from `/elephant-oracle-node/gas-price`. To use a different parameter name, set the `GAS_PRICE_PARAMETER_NAME` environment variable in the Lambda function and update the IAM permissions in `prepare/template.yaml` accordingly.
 
 ### Update transform scripts
 

@@ -8,6 +8,10 @@ info() { echo -e "${GREEN}[INFO]${NC} $*"; }
 warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
 err()  { echo -e "${RED}[ERROR]${NC} $*"; }
 
+# Source the reusable Lambda image update script
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/update-lambda-image.sh"
+
 # Config with sane defaults
 STACK_NAME="${STACK_NAME:-elephant-oracle-node}"
 CODEBUILD_STACK_NAME="${CODEBUILD_STACK_NAME:-elephant-oracle-codebuild}"
@@ -27,6 +31,7 @@ UPLOAD_TRANSFORMS="${UPLOAD_TRANSFORMS:-false}"
 TRANSFORMS_UPLOAD_PENDING=0
 BROWSER_FLOWS_UPLOAD_PENDING=0
 MULTI_REQUEST_FLOWS_UPLOAD_PENDING=0
+STATIC_PARTS_UPLOAD_PENDING=0
 ENVIRONMENT_NAME="${ENVIRONMENT_NAME:-MWAAEnvironment}"
 
 CODEBUILD_RUNTIME_MODULE_DIR="codebuild/runtime-module"
@@ -52,10 +57,10 @@ check_prereqs() {
   command -v jq >/dev/null || { err "jq not found"; exit 1; }
   command -v zip >/dev/null || { err "zip not found"; exit 1; }
   command -v curl >/dev/null || { err "curl not found"; exit 1; }
-  command -v uv >/dev/null || { err "uv not found. Install: https://docs.astral.sh/uv/getting-started/installation/"; exit 1; }
   command -v sam >/dev/null || { err "sam CLI not found. Install: https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/install-sam-cli.html"; exit 1; }
   command -v git >/dev/null || { err "git not found"; exit 1; }
   command -v npm >/dev/null || { err "npm not found"; exit 1; }
+  command -v docker >/dev/null || { err "docker not found. Install: https://docs.docker.com/get-docker/"; exit 1; }
   [[ -f "$SAM_TEMPLATE" && -f "$STARTUP_SCRIPT" && -f "$PYPROJECT_FILE" ]] || { err "Missing required files"; exit 1; }
   [[ -f "$CODEBUILD_TEMPLATE" ]] || { err "Missing CodeBuild template: $CODEBUILD_TEMPLATE"; exit 1; }
 }
@@ -78,19 +83,41 @@ get_output() {
 
 sam_build() {
   info "Building SAM application"
-  sam build --template-file "$SAM_TEMPLATE" >/dev/null
+  info "Note: Docker image build may take 30-60 minutes on first run (downloads ML models)"
+  info "Building without cache to ensure latest git dependencies are fetched"
+
+  # Clean SAM build directory to ensure fresh build
+  rm -rf .aws-sam/build 2>/dev/null || true
+
+  # Use --no-cached to force a fresh build without using cached artifacts
+  # This ensures git dependencies like @elephant-xyz/cli always fetch latest commits
+  sam build --template-file "$SAM_TEMPLATE" --no-cached
 }
 
 sam_deploy() {
   info "Deploying SAM stack (initial)"
+  info "Note: Image push may take 20-60 minutes for large ML models (be patient!)"
+
+  # For image-based functions, use --resolve-image-repos to let SAM handle ECR
+  # Set Docker client timeout to 60 minutes for large ML model images
+  export DOCKER_CLIENT_TIMEOUT=3600
+  export COMPOSE_HTTP_TIMEOUT=3600
+
   sam deploy \
     --template-file "$BUILT_TEMPLATE" \
     --stack-name "$STACK_NAME" \
     --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \
     --resolve-s3 \
+    --resolve-image-repos \
     --no-confirm-changeset \
     --no-fail-on-empty-changeset \
     --parameter-overrides ${PARAM_OVERRIDES:-} >/dev/null
+
+  # CRITICAL: Force Lambda to pull the latest Docker image from ECR
+  # Lambda caches container images by digest, so even if we push a new 'latest' tag,
+  # Lambda might use the old cached image unless we explicitly update it
+  # Use the reusable function from update-lambda-image.sh for MVL Lambda
+  update_lambda_with_latest_image "" "WorkflowMirrorValidatorFunctionName"
 }
 
 sam_deploy_with_versions() {
@@ -316,6 +343,35 @@ upload_multi_request_flows_to_s3() {
   info "Multi-request flows uploaded to: $s3_prefix"
 }
 
+upload_static_parts_to_s3() {
+  local static_parts_dir="source-html-static-parts"
+
+  # Check if source-html-static-parts directory exists
+  if [[ ! -d "$static_parts_dir" ]]; then
+    info "No source-html-static-parts directory found, skipping static parts upload"
+    return 0
+  fi
+
+  local bucket
+  bucket=$(get_bucket)
+  if [[ -z "$bucket" ]]; then
+    # Bucket doesn't exist yet (first deploy). Will be uploaded after stack creation.
+    STATIC_PARTS_UPLOAD_PENDING=1
+    return 0
+  fi
+
+  local s3_prefix="s3://$bucket/source-html-static-parts"
+  info "Syncing static parts to $s3_prefix"
+
+  # Upload all .csv files from source-html-static-parts directory
+  aws s3 sync "$static_parts_dir" "$s3_prefix" --exclude "*" --include "*.csv" --delete || {
+    warn "Failed to sync static parts to $s3_prefix"
+    return 1
+  }
+
+  info "Static parts uploaded to: $s3_prefix"
+}
+
 package_and_upload_codebuild_runtime() {
   if [[ ! -d "$CODEBUILD_RUNTIME_MODULE_DIR" ]]; then
     warn "CodeBuild runtime module directory ($CODEBUILD_RUNTIME_MODULE_DIR) not found, skipping upload."
@@ -482,6 +538,14 @@ deploy_codebuild_stack() {
     return 0
   fi
 
+  local mvl_function_name
+  mvl_function_name=$(get_output "WorkflowMirrorValidatorFunctionName")
+  if [[ -z "$mvl_function_name" ]]; then
+    CODEBUILD_DEPLOY_PENDING=1
+    info "Delaying CodeBuild stack deployment until WorkflowMirrorValidatorFunctionName output is available."
+    return 0
+  fi
+
   local default_dlq_url
   default_dlq_url=$(get_output "MwaaDeadLetterQueueUrl")
   if [[ -z "$default_dlq_url" ]]; then
@@ -545,6 +609,7 @@ deploy_codebuild_stack() {
       ErrorsTableName="$errors_table_name" \
       TransformS3Prefix="$transform_s3_prefix" \
       PostProcessorFunctionName="$post_processor_function_name" \
+      MvlFunctionName="$mvl_function_name" \
       OpenAiApiKey="$openai_api_key" \
       TransactionsSqsQueueUrl="$transactions_sqs_queue_url" \
       DefaultDlqUrl="$default_dlq_url" \
@@ -556,6 +621,10 @@ deploy_codebuild_stack() {
 
   CODEBUILD_DEPLOY_PENDING=0
 }
+
+# Note: MVL Lambda Docker image is now built and pushed automatically by SAM
+# during sam_build and sam_deploy using --resolve-image-repos
+# No manual push needed anymore
 
 add_transform_prefix_override() {
   if [[ -z "${TRANSFORM_S3_PREFIX_VALUE:-}" ]]; then
@@ -592,7 +661,7 @@ add_transform_prefix_override() {
 
 populate_proxy_rotation_table() {
   local proxy_file="${PROXY_FILE:-}"
-  
+
   if [[ -z "$proxy_file" ]]; then
     info "No proxy file specified (PROXY_FILE environment variable not set), skipping proxy population"
     return 0
@@ -605,14 +674,14 @@ populate_proxy_rotation_table() {
 
   local table_name
   table_name=$(get_output "ProxyRotationTableName")
-  
+
   if [[ -z "$table_name" ]]; then
     err "ProxyRotationTable not found in stack outputs. Deploy the stack first."
     exit 1
   fi
 
   info "Populating proxy rotation table using Node.js script"
-  
+
   # Use Node.js script to populate proxies
   node scripts/populate-proxies.mjs "$table_name" "$proxy_file" || {
     err "Failed to populate proxies"
@@ -627,7 +696,7 @@ setup_github_secret() {
   fi
 
   info "Setting up GitHub token in Secrets Manager..."
-  
+
   # Check if secret exists
   if aws secretsmanager describe-secret --secret-id "$GITHUB_SECRET_NAME" >/dev/null 2>&1; then
     info "Updating existing secret: $GITHUB_SECRET_NAME"
@@ -647,7 +716,7 @@ setup_github_secret() {
       exit 1
     }
   fi
-  
+
   info "GitHub secret configured successfully"
 }
 
@@ -776,14 +845,15 @@ main() {
   setup_github_secret
 
   compute_param_overrides
-  
+
   # Upload transforms only if flag is set
   if [[ "$UPLOAD_TRANSFORMS" == "true" ]]; then
     upload_transforms_to_s3
   fi
-  
+
   upload_browser_flows_to_s3
   upload_multi_request_flows_to_s3
+  upload_static_parts_to_s3
   package_and_upload_codebuild_runtime
   package_and_upload_redrive_auto_repair
   deploy_codebuild_stack
@@ -820,7 +890,7 @@ main() {
 
   # Handle pending scenarios after stack creation
   local need_redeploy=false
-  
+
   # Handle transform upload/configuration if pending
   if [[ "$UPLOAD_TRANSFORMS" == "true" ]] && (( TRANSFORMS_UPLOAD_PENDING == 1 )); then
     upload_transforms_to_s3
@@ -840,7 +910,7 @@ main() {
       need_redeploy=true
     fi
   fi
-  
+
   # Redeploy if any pending items were resolved
   if [[ "$need_redeploy" == true ]]; then
     sam_deploy
@@ -859,6 +929,11 @@ main() {
   # Upload multi-request flows if pending
   if (( MULTI_REQUEST_FLOWS_UPLOAD_PENDING == 1 )); then
     upload_multi_request_flows_to_s3
+  fi
+
+  # Upload static parts if pending
+  if (( STATIC_PARTS_UPLOAD_PENDING == 1 )); then
+    upload_static_parts_to_s3
   fi
 
   handle_pending_keystore_upload
@@ -886,4 +961,6 @@ main() {
   fi
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi
