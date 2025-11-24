@@ -21,6 +21,7 @@ import path from "path";
 import {
   deleteExecution,
   markErrorsAsMaybeSolved,
+  markErrorsAsMaybeUnrecoverable,
   normalizeErrors,
   queryExecutionWithMostErrors,
 } from "./errors.mjs";
@@ -1183,6 +1184,62 @@ async function main() {
 
     // If we exit the loop without success, handle based on error scenario type
     const isMvlScenario = isMvlErrorScenario(currentErrorsS3Uri);
+    // If we exit the loop without success, mark errors as maybeUnrecoverable and send to DLQ
+    console.log(
+      `Auto-repair exhausted all retries. Marking errors as maybeUnrecoverable...`,
+    );
+
+    // Mark similar errors as maybeUnrecoverable before sending to DLQ
+    try {
+      if (currentErrorsS3Uri) {
+        console.log(
+          `Downloading errors CSV from ${currentErrorsS3Uri} to mark as maybeUnrecoverable...`,
+        );
+        const { bucket, key } = parseS3Uri(currentErrorsS3Uri);
+        const tmpFile = path.join(
+          os.tmpdir(),
+          `errors_unrecoverable_${Date.now()}.csv`,
+        );
+        await downloadS3Object({ bucket, key }, tmpFile);
+        const errorsArray = await csvToJson(tmpFile);
+
+        if (errorsArray.length > 0) {
+          const normalizedErrors = normalizeErrors(
+            errorsArray,
+            execution.county,
+          );
+          const errorHashes = normalizedErrors.map((e) => e.hash);
+
+          if (errorHashes.length > 0) {
+            console.log(
+              `Marking ${errorHashes.length} error hash(es) as maybeUnrecoverable for other executions...`,
+            );
+            await markErrorsAsMaybeUnrecoverable({
+              errorHashes,
+              tableName,
+              documentClient: dynamoClient,
+            });
+            console.log(`Successfully marked errors as maybeUnrecoverable`);
+          } else {
+            console.log(`No error hashes found to mark as maybeUnrecoverable`);
+          }
+        } else {
+          console.log(`No errors found in CSV file`);
+        }
+
+        // Cleanup temp file
+        await fs.rm(tmpFile, { force: true }).catch(() => {
+          // Ignore cleanup errors
+        });
+      } else {
+        console.log(`No errors S3 URI available to mark as maybeUnrecoverable`);
+      }
+    } catch (markError) {
+      // Don't block DLQ fallback if marking errors fails
+      console.error(
+        `Failed to mark errors as maybeUnrecoverable: ${markError.message}`,
+      );
+    }
 
     if (isMvlScenario) {
       // For MVL errors: Never send to DLQ, just delete execution
