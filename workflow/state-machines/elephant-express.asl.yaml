@@ -196,7 +196,7 @@ States:
       mvlMetric.$: $.Payload.mvlMetric
       mvlPassed.$: $.Payload.mvlPassed
     ResultPath: $.mvl
-    Next: CheckMvlResult
+    Next: QueueForTheSubmit
     Retry:
       - ErrorEquals:
           [
@@ -211,18 +211,6 @@ States:
       - ErrorEquals: [States.ALL]
         ResultPath: $.error
         Next: FailRuntime
-
-  CheckMvlResult:
-    Type: Choice
-    Choices:
-      - Variable: $.mvl.mvlPassed
-        BooleanEquals: true
-        Next: QueueForTheSubmit
-    Default: MvlValidationFailed
-
-  MvlValidationFailed:
-    Type: Succeed
-    Comment: "MVL validation failed - execution ends without submitting to queue"
 
   QueueForTheSubmit:
     Type: Task
