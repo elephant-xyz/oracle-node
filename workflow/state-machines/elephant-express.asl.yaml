@@ -148,7 +148,7 @@ States:
     ResultSelector:
       items.$: $.Payload.transactionItems
     ResultPath: $.post
-    Next: QueueForTheSubmit
+    Next: CheckTransactionItems
     Retry:
       - ErrorEquals:
           [
@@ -163,6 +163,19 @@ States:
       - ErrorEquals: [States.ALL]
         ResultPath: $.error
         Next: FailRuntime
+
+  CheckTransactionItems:
+    Type: Choice
+    Choices:
+      - Variable: $.post.items[0]
+        IsPresent: true
+        Next: QueueForTheSubmit
+    Default: SkipQueueOnValidationError
+
+  SkipQueueOnValidationError:
+    Type: Pass
+    Comment: Validation errors occurred, skipping transaction queue
+    End: true
 
   QueueForTheSubmit:
     Type: Task

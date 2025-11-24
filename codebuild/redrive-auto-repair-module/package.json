@@ -1,0 +1,17 @@
+{
+  "name": "@elephant-xyz/redrive-auto-repair-module",
+  "version": "0.1.0",
+  "description": "Runtime bundle executed by CodeBuild for re-queue workflow.",
+  "type": "module",
+  "main": "index.js",
+  "license": "UNLICENSED",
+  "private": true,
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.0.0",
+    "@aws-sdk/client-lambda": "^3.0.0",
+    "@aws-sdk/client-sqs": "^3.0.0",
+    "@aws-sdk/client-ssm": "^3.0.0",
+    "@aws-sdk/lib-dynamodb": "^3.0.0"
+  }
+}
+

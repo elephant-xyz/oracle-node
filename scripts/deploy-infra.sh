@@ -36,6 +36,12 @@ CODEBUILD_RUNTIME_UPLOAD_PENDING=0
 CODEBUILD_RUNTIME_ENTRYPOINT="${CODEBUILD_RUNTIME_ENTRYPOINT:-index.js}"
 CODEBUILD_TEMPLATE="codebuild/template.yaml"
 CODEBUILD_DEPLOY_PENDING=0
+AUTO_REPAIR_SCHEDULE="${AUTO_REPAIR_SCHEDULE:-30 minutes}"
+
+REDRIVE_AUTO_REPAIR_MODULE_DIR="codebuild/redrive-auto-repair-module"
+REDRIVE_AUTO_REPAIR_ARCHIVE_NAME="${REDRIVE_AUTO_REPAIR_ARCHIVE_NAME:-redrive-auto-repair-module.zip}"
+REDRIVE_AUTO_REPAIR_PREFIX="${REDRIVE_AUTO_REPAIR_PREFIX:-codebuild/redrive-auto-repair}"
+REDRIVE_AUTO_REPAIR_UPLOAD_PENDING=0
 
 mkdir -p "$BUILD_DIR"
 
@@ -369,6 +375,65 @@ package_and_upload_codebuild_runtime() {
   info "Uploaded CodeBuild runtime module to s3://${bucket}/${s3_key}"
 }
 
+package_and_upload_redrive_auto_repair() {
+  if [[ ! -d "$REDRIVE_AUTO_REPAIR_MODULE_DIR" ]]; then
+    warn "Redrive auto repair module directory ($REDRIVE_AUTO_REPAIR_MODULE_DIR) not found, skipping upload."
+    return 0
+  fi
+
+  local bucket="${CODEBUILD_RUNTIME_BUCKET:-}"
+  if [[ -z "$bucket" ]]; then
+    bucket=$(get_bucket)
+  fi
+
+  if [[ -z "$bucket" ]]; then
+    REDRIVE_AUTO_REPAIR_UPLOAD_PENDING=1
+    info "Delaying redrive auto repair module upload until environment bucket exists."
+    return 0
+  fi
+
+  local prefix="${REDRIVE_AUTO_REPAIR_PREFIX%/}"
+  prefix="${prefix#/}"
+  local dist_dir="codebuild/dist"
+  mkdir -p "$dist_dir"
+
+  local archive_path="${dist_dir}/${REDRIVE_AUTO_REPAIR_ARCHIVE_NAME}"
+  rm -f "$archive_path"
+
+  info "Installing redrive auto repair module production dependencies"
+  (
+    cd "$REDRIVE_AUTO_REPAIR_MODULE_DIR"
+    npm ci --omit=dev >/dev/null
+  ) || {
+    err "Failed to install redrive auto repair module dependencies."
+    exit 1
+  }
+
+  info "Packaging redrive auto repair module"
+  (
+    cd "$REDRIVE_AUTO_REPAIR_MODULE_DIR"
+    zip -r "../dist/${REDRIVE_AUTO_REPAIR_ARCHIVE_NAME}" . >/dev/null
+  ) || {
+    err "Failed to package redrive auto repair module."
+    exit 1
+  }
+
+  local s3_key
+  if [[ -n "$prefix" ]]; then
+    s3_key="${prefix}/${REDRIVE_AUTO_REPAIR_ARCHIVE_NAME}"
+  else
+    s3_key="${REDRIVE_AUTO_REPAIR_ARCHIVE_NAME}"
+  fi
+
+  aws s3 cp "$archive_path" "s3://${bucket}/${s3_key}" >/dev/null || {
+    err "Failed to upload redrive auto repair module to s3://${bucket}/${s3_key}"
+    exit 1
+  }
+
+  REDRIVE_AUTO_REPAIR_UPLOAD_PENDING=0
+  info "Uploaded redrive auto repair module to s3://${bucket}/${s3_key}"
+}
+
 deploy_codebuild_stack() {
 
   local openai_api_key="${OPENAI_API_KEY:-}"
@@ -443,6 +508,27 @@ deploy_codebuild_stack() {
   prefix="${prefix#/}"
   local entrypoint="$CODEBUILD_RUNTIME_ENTRYPOINT"
 
+  # Ensure AutoRepairSchedule has a valid value
+  AUTO_REPAIR_SCHEDULE="${AUTO_REPAIR_SCHEDULE:-30 minutes}"
+  # Validate the schedule format matches the pattern
+  # Note: For rate expressions, use format like "5 minutes" (without "rate()" wrapper)
+  # For cron, use full expression like "cron(0 */2 * * ? *)"
+  if ! echo "$AUTO_REPAIR_SCHEDULE" | grep -qE '^([0-9]+ (minute|minutes|hour|hours|day|days)|cron\(.+\))$'; then
+    err "Invalid AutoRepairSchedule value: '$AUTO_REPAIR_SCHEDULE'"
+    err "Expected format: '5 minutes', '30 minutes', '1 hour', or 'cron(0 */2 * * ? *)'"
+    err "Note: Do NOT include 'rate()' wrapper - just use the time value like '5 minutes'"
+    exit 1
+  fi
+  info "Using AutoRepairSchedule: '$AUTO_REPAIR_SCHEDULE' (will construct: rate($AUTO_REPAIR_SCHEDULE))"
+
+  # Get OutputBaseUri from prepare stack
+  local output_base_uri
+  output_base_uri=$(get_output "OutputBaseUri" 2>/dev/null || echo "")
+  if [[ -z "$output_base_uri" ]]; then
+    # Fallback: construct from bucket
+    output_base_uri="s3://${bucket}/outputs"
+  fi
+
   info "Deploying CodeBuild stack ($CODEBUILD_STACK_NAME) using artifacts bucket ${bucket}/${prefix}"
   sam deploy \
     --template-file "$CODEBUILD_TEMPLATE" \
@@ -461,7 +547,12 @@ deploy_codebuild_stack() {
       PostProcessorFunctionName="$post_processor_function_name" \
       OpenAiApiKey="$openai_api_key" \
       TransactionsSqsQueueUrl="$transactions_sqs_queue_url" \
-      DefaultDlqUrl="$default_dlq_url"
+      DefaultDlqUrl="$default_dlq_url" \
+      OutputBaseUri="$output_base_uri" \
+      EnableAutoRepair="${ENABLE_AUTO_REPAIR:-false}" \
+      WorkflowSqsQueueUrl="$(get_output "WorkflowQueueUrl" 2>/dev/null || echo "")" \
+      MaxExecutionsPerRun="${MAX_EXECUTIONS_PER_RUN:-}" \
+      Concurrency="${CONCURRENCY:-20}"
 
   CODEBUILD_DEPLOY_PENDING=0
 }
@@ -476,6 +567,27 @@ add_transform_prefix_override() {
   else
     PARAM_OVERRIDES+=" TransformS3Prefix=\"$TRANSFORM_S3_PREFIX_VALUE\""
   fi
+
+  # Add EnableAutoRepair parameter if set
+  if [[ -n "${ENABLE_AUTO_REPAIR:-}" ]]; then
+    PARAM_OVERRIDES+=" EnableAutoRepair=\"$ENABLE_AUTO_REPAIR\""
+  fi
+
+  # Get OutputBaseUri from prepare stack
+  local output_base_uri
+  output_base_uri=$(get_output "OutputBaseUri" || echo "")
+  if [[ -z "$output_base_uri" ]]; then
+    # Fallback: construct from bucket
+    local bucket
+    bucket=$(get_bucket 2>/dev/null || echo "")
+    if [[ -n "$bucket" ]]; then
+      output_base_uri="s3://${bucket}/outputs"
+    fi
+  fi
+  if [[ -n "$output_base_uri" ]]; then
+    PARAM_OVERRIDES+=" OutputBaseUri=\"$output_base_uri\""
+  fi
+
 }
 
 populate_proxy_rotation_table() {
@@ -673,6 +785,7 @@ main() {
   upload_browser_flows_to_s3
   upload_multi_request_flows_to_s3
   package_and_upload_codebuild_runtime
+  package_and_upload_redrive_auto_repair
   deploy_codebuild_stack
 
   # Handle TransformS3Prefix parameter
