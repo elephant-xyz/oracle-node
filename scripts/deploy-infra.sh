@@ -311,7 +311,7 @@ upload_browser_flows_to_s3() {
   info "Syncing browser flows to $s3_prefix"
 
   # Upload all .json files from browser-flows directory
-  aws s3 sync "$browser_flows_dir" "$s3_prefix" --exclude "*" --include "*.json" --delete || {
+  aws s3 sync "$browser_flows_dir" "$s3_prefix" --exclude "*" --include "*.json" || {
     warn "Failed to sync browser flows to $s3_prefix"
     return 1
   }
@@ -340,7 +340,7 @@ upload_multi_request_flows_to_s3() {
   info "Syncing multi-request flows to $s3_prefix"
 
   # Upload all .json files from multi-request-flows directory
-  aws s3 sync "$multi_request_flows_dir" "$s3_prefix" --exclude "*" --include "*.json" --delete || {
+  aws s3 sync "$multi_request_flows_dir" "$s3_prefix" --exclude "*" --include "*.json" || {
     warn "Failed to sync multi-request flows to $s3_prefix"
     return 1
   }
@@ -369,7 +369,7 @@ upload_static_parts_to_s3() {
   info "Syncing static parts to $s3_prefix"
 
   # Upload all .csv files from source-html-static-parts directory
-  aws s3 sync "$static_parts_dir" "$s3_prefix" --exclude "*" --include "*.csv" --delete || {
+  aws s3 sync "$static_parts_dir" "$s3_prefix" --exclude "*" --include "*.csv" || {
     warn "Failed to sync static parts to $s3_prefix"
     return 1
   }
