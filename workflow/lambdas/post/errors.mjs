@@ -630,7 +630,8 @@ async function markErrorsWithStatus({
           PK: item.PK,
           SK: item.SK,
         },
-        UpdateExpression: "SET #status = :targetStatus, #updatedAt = :updatedAt",
+        UpdateExpression:
+          "SET #status = :targetStatus, #updatedAt = :updatedAt",
         ExpressionAttributeNames: {
           "#status": "status",
           "#updatedAt": "updatedAt",
