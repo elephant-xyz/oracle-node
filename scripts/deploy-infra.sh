@@ -97,15 +97,27 @@ sam_deploy() {
   export DOCKER_CLIENT_TIMEOUT=3600
   export COMPOSE_HTTP_TIMEOUT=3600
 
-  sam deploy \
-    --template-file "$BUILT_TEMPLATE" \
-    --stack-name "$STACK_NAME" \
-    --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \
-    --resolve-s3 \
-    --resolve-image-repos \
-    --no-confirm-changeset \
-    --no-fail-on-empty-changeset \
-    --parameter-overrides ${PARAM_OVERRIDES:-} >/dev/null
+  # Use eval to properly expand PARAM_OVERRIDES with values containing spaces
+  if [[ -n "${PARAM_OVERRIDES:-}" ]]; then
+    eval "sam deploy \
+      --template-file \"$BUILT_TEMPLATE\" \
+      --stack-name \"$STACK_NAME\" \
+      --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \
+      --resolve-s3 \
+      --resolve-image-repos \
+      --no-confirm-changeset \
+      --no-fail-on-empty-changeset \
+      --parameter-overrides $PARAM_OVERRIDES >/dev/null"
+  else
+    sam deploy \
+      --template-file "$BUILT_TEMPLATE" \
+      --stack-name "$STACK_NAME" \
+      --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \
+      --resolve-s3 \
+      --resolve-image-repos \
+      --no-confirm-changeset \
+      --no-fail-on-empty-changeset >/dev/null
+  fi
 
   # CRITICAL: Force Lambda to pull the latest Docker image from ECR
   # Lambda caches container images by digest, so even if we push a new 'latest' tag,
@@ -117,19 +129,35 @@ sam_deploy() {
 sam_deploy_with_versions() {
   local script_ver=$1 req_ver=$2
   info "Deploying SAM stack with MWAA artifact versions"
-  sam deploy \
-    --template-file "$BUILT_TEMPLATE" \
-    --stack-name "$STACK_NAME" \
-    --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \
-    --resolve-s3 \
-    --no-confirm-changeset \
-    --no-fail-on-empty-changeset \
-    --parameter-overrides \
-      ${PARAM_OVERRIDES:-} \
-      StartupScriptS3Path="startup.sh" \
-      StartupScriptS3ObjectVersion="$script_ver" \
-      RequirementsS3Path="requirements.txt" \
-      RequirementsS3ObjectVersion="$req_ver" >/dev/null
+  # Use eval to properly expand PARAM_OVERRIDES with values containing spaces
+  if [[ -n "${PARAM_OVERRIDES:-}" ]]; then
+    eval "sam deploy \
+      --template-file \"$BUILT_TEMPLATE\" \
+      --stack-name \"$STACK_NAME\" \
+      --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \
+      --resolve-s3 \
+      --no-confirm-changeset \
+      --no-fail-on-empty-changeset \
+      --parameter-overrides \
+        $PARAM_OVERRIDES \
+        StartupScriptS3Path=\"startup.sh\" \
+        StartupScriptS3ObjectVersion=\"$script_ver\" \
+        RequirementsS3Path=\"requirements.txt\" \
+        RequirementsS3ObjectVersion=\"$req_ver\" >/dev/null"
+  else
+    sam deploy \
+      --template-file "$BUILT_TEMPLATE" \
+      --stack-name "$STACK_NAME" \
+      --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \
+      --resolve-s3 \
+      --no-confirm-changeset \
+      --no-fail-on-empty-changeset \
+      --parameter-overrides \
+        StartupScriptS3Path="startup.sh" \
+        StartupScriptS3ObjectVersion="$script_ver" \
+        RequirementsS3Path="requirements.txt" \
+        RequirementsS3ObjectVersion="$req_ver" >/dev/null
+  fi
 }
 
 compute_param_overrides() {
