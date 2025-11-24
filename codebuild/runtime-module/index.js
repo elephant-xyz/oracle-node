@@ -219,7 +219,7 @@ async function extractZip(zipPath, extractDir) {
 /**
  * Invoke OpenAI Codex to fix errors in scripts.
  *
- * @param {string} errorsPath - Array of errors to fix.
+ * @param {string} errorsPath - Path to CSV file containing errors to fix.
  * @param {string} scriptsDir - Directory containing transform scripts.
  * @param {string} inputsDir - Directory containing prepared inputs.
  * @param {string} dataGroupName - Name of the data group.
@@ -240,26 +240,152 @@ async function invokeAiForFix(
   await fs.cp(scriptsDir, scriptPathAI, { recursive: true });
 
   const prompt = `You are fixing transformation script errors in an Elephant Oracle data processing pipeline.
-        You can find an errors in the following CSV file: ${errorsPathAI}
-The transform scripts are located at: ${scriptPathAI}
-Sample input data is available at: ${inputDataAI}
-You are working on the ${dataGroupName} data group.
-For the address object use unnormalized_address if that is what the source provides.
-If source has adress normalized, then use it.
-Make sure to understand corectlly how oneOf works in the JSON schema.
-You are allowed only to modify existing Javascript files.
-Javascript files has to be CommonJs.
-Only library that is available for you to use is cheerio.
-Please analyze the errors and provide fixed versions of the scripts. Focus on fixing the error paths and messages mentioned above. Consider the input data structure when making fixes. To solve invalid URs issues remove it's generation from the scripts, it will be populated by the process. Return the complete fixed scripts with the same file names.
-Use elephant MCP to analyze the schema. Make sure to analyze verified scripts with it's examples as well
-Use listPropertiesByClassName to get available properties for the class. Output of that tool always has all properties.
-For address object you need to provide either unnormalized_address property or divided by different properties. NEVER provide both. Choose based on how address is presented in the input HTML/JSON. Do no try to normalize address on your own.
-NEVER try to assume property name and find it with getPropertySchema tool.
-Make sure to activly explore elephant schema and it's avaiable properties using elephant MCP to be sure, that the data, that will be produced by scripts is valid.
-Make sure, that scripts not only exctract the data, but also map it to the resulting JSON in the Elephant Schema, that you retreived from MCP
-Make sure, that if the error has html selector as error_path this data HAS to be mapped.
-Do not read whole input file, as it is big. Intelegentlly search for the parts, that you need
-`;
+
+IMPORTANT:
+- The scripts must be written back to disk using file operations (fs.writeFileSync or similar)
+- Do not return code in your response - write it directly to the files in ${scriptPathAI}
+- You can use Node.js to run and test scripts: node <script-file>.js
+- Test with the sample input data available in: ${inputDataAI}
+- You are allowed only to modify existing Javascript files
+- Javascript files has to be CommonJs
+- Only library that is available for you to use is cheerio
+
+WORKSPACE:
+- Transform scripts location: ${scriptPathAI}
+- Sample input data location: ${inputDataAI}
+- Data group: ${dataGroupName}
+- Errors CSV file: ${errorsPathAI}
+
+ERROR ANALYSIS REQUIREMENTS:
+1. Analyze ALL unique errors listed in the CSV file
+2. For each error, identify which script file generates the problematic output (use file_path to determine this)
+3. Fix EVERY unique error path and message listed above
+4. Ensure your fixes address all unique error paths and all affected files
+5. Do not skip any errors - the validation will fail if even one error remains
+6. ONLY modify code sections that are directly related to the errors being fixed - do not touch or refactor any other parts of the scripts that are not causing errors
+7. Preserve all existing working code that is not related to the reported errors
+
+ERROR FIELD DESCRIPTIONS:
+- file_path: The JSON file that contains the error (e.g., "data/deed_1.json") - use this to identify which script generates the output
+- error_path: The JSON path within that file where the error occurs (e.g., "deed_1.json/deed_type") - this is the exact property that has the problem. If error_path is an HTML selector, this data HAS to be mapped.
+- error_message: The validation error message - describes what's wrong (e.g., "unexpected property", "missing required property", "invalid type")
+- currentValue: The actual value that caused the error (if available) - use this to understand what incorrect value was provided
+
+ADDRESS HANDLING:
+- For the address object use unnormalized_address if that is what the source provides
+- If source has address normalized, then use it
+- For address object you need to provide either unnormalized_address property or divided by different properties. NEVER provide both. Choose based on how address is presented in the input HTML/JSON. Do not try to normalize address on your own.
+- Make sure to understand correctly how oneOf works in the JSON schema
+
+CRITICAL: Relationship Directions - VERIFY CORRECT DIRECTION:
+- Relationships have a specific direction that MUST match the Elephant MCP schema
+- ALWAYS use Elephant MCP to check the relationship class schema to verify the correct direction
+- The relationship file name pattern (e.g., "relationship_property_deed_1.json") indicates which relationship class to check
+- IMPORTANT: If validation complains about a field that is correctly part of the schema, the relationship direction might be wrong
+- Use Elephant MCP to:
+  1. Find the relationship class name from the file pattern (e.g., "relationship_property_deed" → check "property_has_deed" or similar)
+  2. Query the relationship class schema using Elephant MCP
+  3. Verify which entity should be "from" and which should be "to" according to the schema
+  4. Ensure the relationship structure matches the schema exactly
+- Do NOT assume relationship directions - always verify with Elephant MCP
+- If you see errors about unexpected properties in relationships, check if the direction is reversed by consulting Elephant MCP
+- If a property is valid in the schema but validation says it's unexpected, swap the "from" and "to" fields and verify with Elephant MCP
+
+CRITICAL: Script Error Handling - NEVER THROW ERRORS:
+- Scripts must NEVER throw errors, crash, or use throw statements - they must ALWAYS complete execution successfully
+- If a mapping lookup fails (e.g., unknown enum value, missing mapping key), DO NOT throw an error
+- Instead, set the property to "MAPPING NOT AVAILABLE" (or "MAPPING NOT FOUND" if preferred)
+- Example: Instead of throwing an error for unknown property type, use: property_type: "MAPPING NOT AVAILABLE"
+- Example: Instead of throwing when mapping fails, use: spaceType: mapping[code] || "MAPPING NOT AVAILABLE"
+- This allows the script to complete, and validation will catch and log the error properly
+- Do not use try-catch to suppress errors - instead, handle mapping failures by setting explicit error values
+- The goal is to have validation catch errors, not script execution failures
+- ALL mapping functions must return a string value (never throw) - use "MAPPING NOT AVAILABLE" as the fallback
+
+CRITICAL: When data is not found or invalid:
+- Use Elephant MCP to check the schema for each field to determine if it's required, optional, and whether null is allowed
+- Use listPropertiesByClassName to get available properties for the class. Output of that tool always has all properties.
+- NEVER try to assume property name and find it with getPropertySchema tool.
+- For REQUIRED fields that DO NOT allow null (type: "number" or "string" without null): You MUST extract valid data from the source. If data is missing, investigate the source HTML/CSV to find where it should come from. Do not set to null or omit required fields.
+- For REQUIRED fields that DO allow null (type: ["number", "null"] or ["string", "null"]): If data is not found, you CAN set it to null as null is a valid value for these fields.
+- For OPTIONAL fields (not required, type: ["number", "null"] or ["string", "null"]): ONLY include in the output object if they have valid values. If invalid or missing, OMIT the field entirely (do not set to null).
+- For numeric fields: only include if the value is a valid number (typeof value === "number" && Number.isFinite(value))
+- For string fields: only include if the value is a non-empty string
+- For date fields: only include if the value is a valid date/string
+- Use helper functions like assignIfNumber() to conditionally add optional fields only when they have valid values
+- DO NOT assume or hardcode values like tax years - each property can have different tax years. Always extract tax_year and other time-based values from the source data.
+- Do not read whole input file, as it is big. Intelligently search for the parts, that you need
+
+CRITICAL: Error Resolution Process:
+1. IDENTIFY THE PROBLEM:
+   - Read the error_path to determine which output file has the error
+   - Read the error_message to understand what's wrong
+   - Identify which script file generates that output file
+
+2. CONSULT THE SCHEMA:
+   - Use Elephant MCP to find the schema for the class corresponding to the output file
+   - Make sure to actively explore elephant schema and it's available properties using elephant MCP to be sure, that the data, that will be produced by scripts is valid
+   - Determine the class name from the file name pattern
+   - Check what properties are allowed, required, and their types/constraints
+   - Never invent properties - only use what exists in the Elephant MCP schema
+   - Make sure to analyze verified scripts with their examples as well
+
+3. RESOLVE THE ERROR:
+   - If a property is unexpected: Remove it or find the correct property name from the schema
+   - If a required property is missing: Find the data in the input file (JSON/HTML) and extract it. If not found, check if null is allowed by the schema
+   - If a value is invalid: Convert to the correct type or find valid data from the source
+   - Modify the script that creates the problematic output
+   - Make sure, that scripts not only extract the data, but also map it to the resulting JSON in the Elephant Schema, that you retrieved from MCP
+   - To solve invalid URs issues remove its generation from the scripts, it will be populated by the process
+
+4. VERIFY COMPLIANCE:
+   - Ensure output strictly matches the Elephant MCP schema
+   - Include only properties defined in the schema
+   - Include all required properties (or null if schema allows)
+   - Exclude any properties not in the schema
+
+ACTION REQUIRED - YOU MUST WRITE THE FIXED CODE:
+For EACH error in the list above, follow these steps:
+
+0. CHECK IF ALREADY FIXED:
+   - Before fixing an error, check the script to see if it was already modified in a previous update
+   - Look for recent changes that might have already addressed this error
+   - If the error is about an unexpected property, check if that property was already removed
+   - If the error is about a missing required property, check if that property was already added
+   - If the error is about relationship direction, check if "from" and "to" were already swapped
+   - Only proceed to fix if the error is still present in the current script code
+
+1. IDENTIFY THE SOURCE SCRIPT:
+   - Look at the file_path (e.g., "data/deed_1.json") to determine which output file has the error
+   - Find the script file that generates this output file by:
+     * Searching for the output filename pattern in script files (e.g., "deed_1.json" → search for "deed_" or "writeJson.*deed")
+     * Checking which script writes to the "data" directory
+     * Looking for writeJson() calls that match the file_path pattern
+   - Common patterns:
+     * "deed_*.json" → usually in data_extractor.js
+     * "file_*.json" → usually in data_extractor.js
+     * "sales_*.json" → usually in data_extractor.js
+     * "layout_*.json" → usually in layoutMapping.js
+     * "structure_*.json" → usually in structureMapping.js
+     * "utility_*.json" → usually in utilityMapping.js
+     * "person_*.json" → usually in ownerMapping.js or data_extractor.js
+
+2. UNDERSTAND THE ERROR:
+   - Read the error_path to see the exact property (e.g., "deed_1.json/deed_type")
+   - Read the error_message to understand what's wrong (e.g., "unexpected property", "missing required property")
+   - Check currentValue if available to see what incorrect value was provided
+   - Verify the error still exists in the current script code (it might have been fixed already)
+
+3. FIX THE SCRIPT:
+   - Open the identified script file
+   - Locate the code that generates the problematic output file
+   - Modify the code to fix the specific error:
+     * If unexpected property: Remove it from the output object
+     * If missing required property: Extract it from input or set to null if schema allows
+     * If invalid value: Convert to correct type or extract valid data
+     * If mapping fails: Set to "MAPPING NOT AVAILABLE" instead of throwing
+   - Save the modified script file using fs.writeFileSync or similar file operations
+   - Return the complete fixed scripts with the same file names`;
 
   const escapedPrompt = prompt
     .replace(/\\/g, "\\\\")
@@ -679,6 +805,43 @@ async function uploadFixedScripts(county, scriptsDir, transformPrefix) {
 }
 
 /**
+ * Restore original scripts from backup zip file to S3.
+ *
+ * @param {string} originalZipPath - Path to the original zip file backup.
+ * @param {string} county - County identifier.
+ * @param {string} transformPrefix - S3 prefix URI for transforms.
+ * @returns {Promise<void>}
+ */
+async function restoreOriginalScripts(
+  originalZipPath,
+  county,
+  transformPrefix,
+) {
+  console.log(`Restoring original scripts for county ${county}...`);
+  const { transformBucket, transformKey } = resolveTransformLocation({
+    countyName: county,
+    transformPrefixUri: transformPrefix,
+  });
+
+  // Read the original zip file
+  const originalZipBuffer = await fs.readFile(originalZipPath);
+
+  // Upload original zip back to S3
+  await s3Client.send(
+    new PutObjectCommand({
+      Bucket: transformBucket,
+      Key: transformKey,
+      Body: originalZipBuffer,
+      ContentType: "application/zip",
+    }),
+  );
+
+  console.log(
+    `Restored original scripts to s3://${transformBucket}/${transformKey}`,
+  );
+}
+
+/**
  * Construct seed_output_s3_uri from preparedS3Uri.
  * The seed output is stored at the same prefix as the prepared output, but with seed_output.zip filename.
  *
@@ -926,7 +1089,7 @@ async function runAutoRepairIteration({
       dataGroupName,
     );
 
-    // Step 4: Upload fixed scripts
+    // Step 4: Upload fixed scripts (keep reference to original zip for potential rollback)
     await uploadFixedScripts(county, updatedScripts, transformPrefix);
 
     // Step 5: Always verify fixes by running BOTH post-processing and MVL validation
@@ -1082,13 +1245,66 @@ async function runAutoRepairIteration({
 
         return { success: true };
       } else {
-        // Execution failed - throw error to trigger retry in main loop
+        // Execution failed, restore original scripts before throwing error
+        console.log(
+          `Post-processing failed with status: ${resultPayload.status}. Restoring original scripts...`,
+        );
+        try {
+          await restoreOriginalScripts(
+            transformScriptsZip,
+            county,
+            transformPrefix,
+          );
+          console.log("Successfully restored original scripts");
+        } catch (restoreError) {
+          console.error(
+            `Failed to restore original scripts: ${restoreError.message}`,
+          );
+          // Continue with error handling even if restore fails
+        }
+
+        // Throw error to trigger retry in main loop
         throw new Error(
           `Post-processing Lambda returned non-success status: ${resultPayload.status}`,
         );
       }
     } catch (lambdaError) {
-      // Re-throw to let the main loop handle retries and DLQ
+      // Post-processing failed, restore original scripts
+      console.log(
+        `Post-processing Lambda failed. Restoring original scripts...`,
+      );
+      try {
+        await restoreOriginalScripts(
+          transformScriptsZip,
+          county,
+          transformPrefix,
+        );
+        console.log("Successfully restored original scripts");
+      } catch (restoreError) {
+        console.error(
+          `Failed to restore original scripts: ${restoreError.message}`,
+        );
+        // Continue with error handling even if restore fails
+      }
+
+      // Try to extract new errors S3 URI from error message
+      const newErrorsS3Uri = extractErrorsS3Uri(lambdaError.message);
+
+      // If Lambda invocation failed and we can't retry, send to DLQ
+      if (!newErrorsS3Uri && source) {
+        try {
+          const dlqUrl = await getCountyDlqUrl(county);
+          await sendToDlq(dlqUrl, source);
+
+          console.error(
+            `Post-processing Lambda invocation failed. Sent original message to DLQ: ${dlqUrl}`,
+          );
+        } catch (dlqError) {
+          console.error(`Failed to send to DLQ: ${dlqError.message}`);
+        }
+      }
+
+      // Re-throw to let the main loop handle retries
       throw new Error(`Failed to verify fixes: ${lambdaError.message}`);
     }
   } finally {

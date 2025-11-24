@@ -152,7 +152,7 @@ States:
       executionId.$: $.Payload.executionId
       county.$: $.Payload.county
     ResultPath: $.post
-    Next: ShouldRunMirrorValidation
+    Next: CheckTransactionItems
     Retry:
       - ErrorEquals:
           [
@@ -168,15 +168,26 @@ States:
         ResultPath: $.error
         Next: FailRuntime
 
+  CheckTransactionItems:
+    Type: Choice
+    Comment: "Skip queue and mirror validation if validation failed (empty transactionItems)"
+    Choices:
+      - Variable: $.post.items[0]
+        IsPresent: false
+        Next: SkipQueueOnValidationError
+    Default: ShouldRunMirrorValidation
+
+  SkipQueueOnValidationError:
+    Type: Pass
+    Comment: Validation errors occurred, skipping transaction queue
+    End: true
+
   ShouldRunMirrorValidation:
     Type: Choice
-    Comment: "Skip mirror validation if validation failed (empty transactionItems)"
+    Comment: "Skip mirror validation if transformedOutputS3Uri is null"
     Choices:
       - Variable: $.post.transformedOutputS3Uri
         IsNull: true
-        Next: QueueForTheSubmit
-      - Variable: $.post.items[0]
-        IsPresent: false
         Next: QueueForTheSubmit
     Default: MirrorValidation
 
