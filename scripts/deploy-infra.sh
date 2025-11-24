@@ -34,6 +34,8 @@ MULTI_REQUEST_FLOWS_UPLOAD_PENDING=0
 STATIC_PARTS_UPLOAD_PENDING=0
 ENVIRONMENT_NAME="${ENVIRONMENT_NAME:-MWAAEnvironment}"
 
+declare -a PARAM_OVERRIDES=()
+
 CODEBUILD_RUNTIME_MODULE_DIR="codebuild/runtime-module"
 CODEBUILD_RUNTIME_ARCHIVE_NAME="${CODEBUILD_RUNTIME_ARCHIVE_NAME:-runtime-module.zip}"
 CODEBUILD_RUNTIME_PREFIX="${CODEBUILD_RUNTIME_PREFIX:-codebuild/runtime}"
@@ -103,15 +105,21 @@ sam_deploy() {
   export DOCKER_CLIENT_TIMEOUT=3600
   export COMPOSE_HTTP_TIMEOUT=3600
 
-  sam deploy \
-    --template-file "$BUILT_TEMPLATE" \
-    --stack-name "$STACK_NAME" \
-    --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \
-    --resolve-s3 \
-    --resolve-image-repos \
-    --no-confirm-changeset \
-    --no-fail-on-empty-changeset \
-    --parameter-overrides ${PARAM_OVERRIDES:-} >/dev/null
+  local -a sam_args=(
+    --template-file "$BUILT_TEMPLATE"
+    --stack-name "$STACK_NAME"
+    --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM
+    --resolve-s3
+    --resolve-image-repos
+    --no-confirm-changeset
+    --no-fail-on-empty-changeset
+  )
+
+  if ((${#PARAM_OVERRIDES[@]})); then
+    sam_args+=(--parameter-overrides "${PARAM_OVERRIDES[@]}")
+  fi
+
+  sam deploy "${sam_args[@]}" >/dev/null
 
   # CRITICAL: Force Lambda to pull the latest Docker image from ECR
   # Lambda caches container images by digest, so even if we push a new 'latest' tag,
@@ -123,19 +131,25 @@ sam_deploy() {
 sam_deploy_with_versions() {
   local script_ver=$1 req_ver=$2
   info "Deploying SAM stack with MWAA artifact versions"
-  sam deploy \
-    --template-file "$BUILT_TEMPLATE" \
-    --stack-name "$STACK_NAME" \
-    --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \
-    --resolve-s3 \
-    --no-confirm-changeset \
-    --no-fail-on-empty-changeset \
-    --parameter-overrides \
-      ${PARAM_OVERRIDES:-} \
-      StartupScriptS3Path="startup.sh" \
-      StartupScriptS3ObjectVersion="$script_ver" \
-      RequirementsS3Path="requirements.txt" \
-      RequirementsS3ObjectVersion="$req_ver" >/dev/null
+  local -a overrides=("${PARAM_OVERRIDES[@]}")
+  overrides+=(
+    'StartupScriptS3Path="startup.sh"'
+    "StartupScriptS3ObjectVersion=\"$script_ver\""
+    'RequirementsS3Path="requirements.txt"'
+    "RequirementsS3ObjectVersion=\"$req_ver\""
+  )
+
+  local -a sam_args=(
+    --template-file "$BUILT_TEMPLATE"
+    --stack-name "$STACK_NAME"
+    --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM
+    --resolve-s3
+    --no-confirm-changeset
+    --no-fail-on-empty-changeset
+    --parameter-overrides "${overrides[@]}"
+  )
+
+  sam deploy "${sam_args[@]}" >/dev/null
 }
 
 compute_param_overrides() {
@@ -161,8 +175,7 @@ compute_param_overrides() {
     info "Browser flow template configuration validated and converted to simple format"
   fi
 
-  # No need for parameter file with simple format
-  local use_param_file=false
+  local -a parts=()
 
   # Check if using keystore mode
   if [[ -n "${ELEPHANT_KEYSTORE_FILE:-}" ]]; then
@@ -187,7 +200,6 @@ compute_param_overrides() {
       ELEPHANT_KEYSTORE_S3_KEY="$keystore_s3_key"
     fi
 
-    local parts=()
     parts+=("ElephantRpcUrl=\"$ELEPHANT_RPC_URL\"")
     parts+=("ElephantPinataJwt=\"$ELEPHANT_PINATA_JWT\"")
     parts+=("ElephantKeystoreS3Key=\"${ELEPHANT_KEYSTORE_S3_KEY:-pending}\"")
@@ -201,7 +213,6 @@ compute_param_overrides() {
     : "${ELEPHANT_RPC_URL?Set ELEPHANT_RPC_URL}"
     : "${ELEPHANT_PINATA_JWT?Set ELEPHANT_PINATA_JWT}"
 
-    local parts=()
     parts+=("ElephantDomain=\"$ELEPHANT_DOMAIN\"")
     parts+=("ElephantApiKey=\"$ELEPHANT_API_KEY\"")
     parts+=("ElephantOracleKeyId=\"$ELEPHANT_ORACLE_KEY_ID\"")
@@ -235,7 +246,7 @@ compute_param_overrides() {
   : "${GITHUB_TOKEN?Set GITHUB_TOKEN to enable GitHub integration}"
   parts+=("GitHubToken=\"${GITHUB_TOKEN}\"")
 
-  PARAM_OVERRIDES="${parts[*]}"
+  PARAM_OVERRIDES=("${parts[@]}")
 }
 
 
@@ -631,15 +642,11 @@ add_transform_prefix_override() {
     err "Transform S3 prefix value not set; aborting."
     exit 1
   fi
-  if [[ -z "${PARAM_OVERRIDES:-}" ]]; then
-    PARAM_OVERRIDES="TransformS3Prefix=\"$TRANSFORM_S3_PREFIX_VALUE\""
-  else
-    PARAM_OVERRIDES+=" TransformS3Prefix=\"$TRANSFORM_S3_PREFIX_VALUE\""
-  fi
+  PARAM_OVERRIDES+=("TransformS3Prefix=\"$TRANSFORM_S3_PREFIX_VALUE\"")
 
   # Add EnableAutoRepair parameter if set
   if [[ -n "${ENABLE_AUTO_REPAIR:-}" ]]; then
-    PARAM_OVERRIDES+=" EnableAutoRepair=\"$ENABLE_AUTO_REPAIR\""
+    PARAM_OVERRIDES+=("EnableAutoRepair=\"$ENABLE_AUTO_REPAIR\"")
   fi
 
   # Get OutputBaseUri from prepare stack
@@ -654,9 +661,8 @@ add_transform_prefix_override() {
     fi
   fi
   if [[ -n "$output_base_uri" ]]; then
-    PARAM_OVERRIDES+=" OutputBaseUri=\"$output_base_uri\""
+    PARAM_OVERRIDES+=("OutputBaseUri=\"$output_base_uri\"")
   fi
-
 }
 
 populate_proxy_rotation_table() {
