@@ -604,7 +604,37 @@ deploy_codebuild_stack() {
     output_base_uri="s3://${bucket}/outputs"
   fi
 
+  local workflow_sqs_queue_url
+  workflow_sqs_queue_url=$(get_output "WorkflowQueueUrl" 2>/dev/null || echo "")
+  if [[ -z "$workflow_sqs_queue_url" ]]; then
+    CODEBUILD_DEPLOY_PENDING=1
+    info "Delaying CodeBuild stack deployment until WorkflowQueueUrl output is available."
+    return 0
+  fi
+
   info "Deploying CodeBuild stack ($CODEBUILD_STACK_NAME) using artifacts bucket ${bucket}/${prefix}"
+  local -a codebuild_params=(
+    "EnvironmentName=$ENVIRONMENT_NAME"
+    "RuntimeArtifactsBucket=$bucket"
+    "RuntimeArtifactsPrefix=$prefix"
+    "RuntimeEntryPoint=$entrypoint"
+    "ErrorsTableName=$errors_table_name"
+    "TransformS3Prefix=$transform_s3_prefix"
+    "PostProcessorFunctionName=$post_processor_function_name"
+    "MvlFunctionName=$mvl_function_name"
+    "OpenAiApiKey=$openai_api_key"
+    "TransactionsSqsQueueUrl=$transactions_sqs_queue_url"
+    "DefaultDlqUrl=$default_dlq_url"
+    "OutputBaseUri=$output_base_uri"
+    "EnableAutoRepair=${ENABLE_AUTO_REPAIR:-false}"
+    "WorkflowSqsQueueUrl=$workflow_sqs_queue_url"
+    "Concurrency=${CONCURRENCY:-20}"
+  )
+
+  if [[ -n "${MAX_EXECUTIONS_PER_RUN:-}" ]]; then
+    codebuild_params+=("MaxExecutionsPerRun=$MAX_EXECUTIONS_PER_RUN")
+  fi
+
   sam deploy \
     --template-file "$CODEBUILD_TEMPLATE" \
     --stack-name "$CODEBUILD_STACK_NAME" \
@@ -612,23 +642,7 @@ deploy_codebuild_stack() {
     --resolve-s3 \
     --no-confirm-changeset \
     --no-fail-on-empty-changeset \
-    --parameter-overrides \
-      EnvironmentName="$ENVIRONMENT_NAME" \
-      RuntimeArtifactsBucket="$bucket" \
-      RuntimeArtifactsPrefix="$prefix" \
-      RuntimeEntryPoint="$entrypoint" \
-      ErrorsTableName="$errors_table_name" \
-      TransformS3Prefix="$transform_s3_prefix" \
-      PostProcessorFunctionName="$post_processor_function_name" \
-      MvlFunctionName="$mvl_function_name" \
-      OpenAiApiKey="$openai_api_key" \
-      TransactionsSqsQueueUrl="$transactions_sqs_queue_url" \
-      DefaultDlqUrl="$default_dlq_url" \
-      OutputBaseUri="$output_base_uri" \
-      EnableAutoRepair="${ENABLE_AUTO_REPAIR:-false}" \
-      WorkflowSqsQueueUrl="$(get_output "WorkflowQueueUrl" 2>/dev/null || echo "")" \
-      MaxExecutionsPerRun="${MAX_EXECUTIONS_PER_RUN:-}" \
-      Concurrency="${CONCURRENCY:-20}"
+    --parameter-overrides "${codebuild_params[@]}"
 
   CODEBUILD_DEPLOY_PENDING=0
 }
