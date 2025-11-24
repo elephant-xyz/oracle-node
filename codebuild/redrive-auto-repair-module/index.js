@@ -1,13 +1,7 @@
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import {
-  DynamoDBDocumentClient,
-  QueryCommand,
-} from "@aws-sdk/lib-dynamodb";
+import { DynamoDBDocumentClient, QueryCommand } from "@aws-sdk/lib-dynamodb";
 import { SQSClient, SendMessageCommand } from "@aws-sdk/client-sqs";
-import {
-  deleteExecution,
-  deleteOrphanedErrorAggregates,
-} from "./errors.mjs";
+import { deleteExecution, deleteOrphanedErrorAggregates } from "./errors.mjs";
 
 const dynamoClient = DynamoDBDocumentClient.from(new DynamoDBClient({}), {
   marshallOptions: { removeUndefinedValues: true },
@@ -89,9 +83,7 @@ async function getFailedExecutions(
       ExclusiveStartKey: lastEvaluatedKey,
     };
 
-    const response = await dynamoClient.send(
-      new QueryCommand(queryParams),
-    );
+    const response = await dynamoClient.send(new QueryCommand(queryParams));
 
     if (response.Items && response.Items.length > 0) {
       // Filter and deduplicate
@@ -124,9 +116,10 @@ async function getFailedExecutions(
   } while (lastEvaluatedKey);
 
   // Apply max limit if specified
-  const result = maxExecutions === Infinity
-    ? allExecutions
-    : allExecutions.slice(0, maxExecutions);
+  const result =
+    maxExecutions === Infinity
+      ? allExecutions
+      : allExecutions.slice(0, maxExecutions);
 
   console.log(
     `Found ${allExecutions.length} total failed execution(s) created before ${beforeTimestamp} (${result.length} after applying limit, all unique)`,
@@ -143,11 +136,7 @@ async function getFailedExecutions(
  * @param {string} workflowQueueUrl - SQS queue URL for workflow.
  * @returns {Promise<{ success: boolean, errorHashes?: string[] }>}
  */
-async function processSingleExecution(
-  execution,
-  tableName,
-  workflowQueueUrl,
-) {
+async function processSingleExecution(execution, tableName, workflowQueueUrl) {
   console.log(
     `\n=== Re-queuing execution ${execution.executionId} (${execution.county}) ===`,
   );
@@ -155,7 +144,7 @@ async function processSingleExecution(
   // Step 1: Get the original CSV file location from source (required)
   if (!execution.source?.s3Bucket || !execution.source?.s3Key) {
     console.error(
-      `Skipping execution ${execution.executionId}: missing source information (s3Bucket: ${execution.source?.s3Bucket || 'missing'}, s3Key: ${execution.source?.s3Key || 'missing'})`,
+      `Skipping execution ${execution.executionId}: missing source information (s3Bucket: ${execution.source?.s3Bucket || "missing"}, s3Key: ${execution.source?.s3Key || "missing"})`,
     );
     return { success: false };
   }
@@ -165,7 +154,6 @@ async function processSingleExecution(
   console.log(`Using original source CSV: s3://${bucket}/${key}`);
 
   try {
-
     // Step 2: Create S3 event message (format expected by workflow)
     const s3EventMessage = {
       s3: {
@@ -186,7 +174,9 @@ async function processSingleExecution(
         MessageBody: JSON.stringify(s3EventMessage),
       }),
     );
-    console.log(`✓ Message sent to queue for execution ${execution.executionId}`);
+    console.log(
+      `✓ Message sent to queue for execution ${execution.executionId}`,
+    );
 
     // Step 4: Delete execution from DynamoDB and collect error hashes
     let errorHashes = [];
@@ -200,7 +190,10 @@ async function processSingleExecution(
         `✓ Deleted execution ${execution.executionId} and all associated errors from DynamoDB (${errorHashes.length} error hash(es) collected)`,
       );
     } catch (deleteError) {
-      const deleteErrorMessage = deleteError instanceof Error ? deleteError.message : String(deleteError);
+      const deleteErrorMessage =
+        deleteError instanceof Error
+          ? deleteError.message
+          : String(deleteError);
       console.error(
         `❌ FAILED to delete execution ${execution.executionId}: ${deleteErrorMessage}`,
       );
@@ -209,8 +202,7 @@ async function processSingleExecution(
 
     return { success: true, errorHashes };
   } catch (error) {
-    const errorMessage =
-      error instanceof Error ? error.message : String(error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
     console.error(
       `Error re-queuing execution ${execution.executionId}:`,
       errorMessage,
@@ -226,44 +218,62 @@ async function processSingleExecution(
  */
 async function main() {
   let autoRepairSchedulerFunctionName = null;
-  
+
   try {
     console.log("Starting re-queue workflow...");
 
     const tableName = requireEnv("ERRORS_TABLE_NAME");
     const workflowQueueUrl = requireEnv("WORKFLOW_SQS_QUEUE_URL");
-    autoRepairSchedulerFunctionName = process.env.AUTO_REPAIR_SCHEDULER_FUNCTION_NAME;
-    
+    autoRepairSchedulerFunctionName =
+      process.env.AUTO_REPAIR_SCHEDULER_FUNCTION_NAME;
+
     console.log(`Environment variables check:`);
     console.log(`  WORKFLOW_SQS_QUEUE_URL: ${workflowQueueUrl}`);
-    console.log(`  AUTO_REPAIR_SCHEDULER_FUNCTION_NAME: ${autoRepairSchedulerFunctionName || "(not set)"}`);
-    
+    console.log(
+      `  AUTO_REPAIR_SCHEDULER_FUNCTION_NAME: ${autoRepairSchedulerFunctionName || "(not set)"}`,
+    );
+
     // Don't disable starter Lambda EventSourceMapping - let it continue processing
-    console.log("Starter Lambda EventSourceMapping will remain enabled - new messages will continue to be processed");
-    
+    console.log(
+      "Starter Lambda EventSourceMapping will remain enabled - new messages will continue to be processed",
+    );
+
     // Don't disable auto-repair - instead, we'll set a timestamp so auto-repair only processes NEW executions
     // that come from re-queued items. We'll store this in SSM so auto-repair can read it.
     const requeueStartTime = new Date().toISOString();
     console.log(`Re-queue start time: ${requeueStartTime}`);
-    console.log("Auto-repair will continue running but will only process executions created after this time");
-    
+    console.log(
+      "Auto-repair will continue running but will only process executions created after this time",
+    );
+
     // Store the re-queue start time in SSM Parameter Store so auto-repair can read it
     try {
-      const { SSMClient, PutParameterCommand } = await import("@aws-sdk/client-ssm");
+      const { SSMClient, PutParameterCommand } = await import(
+        "@aws-sdk/client-ssm"
+      );
       const ssmClient = new SSMClient({});
-      await ssmClient.send(new PutParameterCommand({
-        Name: `/elephant-oracle/auto-repair/min-created-at`,
-        Value: requeueStartTime,
-        Type: "String",
-        Overwrite: true,
-        Description: "Minimum createdAt timestamp for auto-repair to process. Only executions created after this time will be processed.",
-      }));
-      console.log(`✓ Stored re-queue start time in SSM: /elephant-oracle/auto-repair/min-created-at`);
+      await ssmClient.send(
+        new PutParameterCommand({
+          Name: `/elephant-oracle/auto-repair/min-created-at`,
+          Value: requeueStartTime,
+          Type: "String",
+          Overwrite: true,
+          Description:
+            "Minimum createdAt timestamp for auto-repair to process. Only executions created after this time will be processed.",
+        }),
+      );
+      console.log(
+        `✓ Stored re-queue start time in SSM: /elephant-oracle/auto-repair/min-created-at`,
+      );
     } catch (error) {
-      console.warn(`Failed to store re-queue start time in SSM: ${error.message}`);
-      console.warn("Auto-repair may process old executions. Consider setting MIN_CREATED_AT environment variable manually.");
+      console.warn(
+        `Failed to store re-queue start time in SSM: ${error.message}`,
+      );
+      console.warn(
+        "Auto-repair may process old executions. Consider setting MIN_CREATED_AT environment variable manually.",
+      );
     }
-    
+
     // MAX_EXECUTIONS_PER_RUN is a safety limit (default: unlimited)
     // Set to a number to limit processing, or leave unset/0 to process ALL executions
     const maxExecutionsEnv = process.env.MAX_EXECUTIONS_PER_RUN;
@@ -301,7 +311,9 @@ async function main() {
     // Process executions in parallel for better performance
     // CONCURRENCY controls how many executions are processed simultaneously
     const CONCURRENCY = parseInt(process.env.CONCURRENCY || "20", 10);
-    console.log(`Processing with concurrency: ${CONCURRENCY} executions at a time`);
+    console.log(
+      `Processing with concurrency: ${CONCURRENCY} executions at a time`,
+    );
 
     let processed = 0;
     let successful = 0;
@@ -314,13 +326,15 @@ async function main() {
       const batch = failedExecutions.slice(i, i + CONCURRENCY);
       const batchNum = Math.floor(i / CONCURRENCY) + 1;
       const totalBatches = Math.ceil(failedExecutions.length / CONCURRENCY);
-      
-      console.log(`\nProcessing batch ${batchNum}/${totalBatches} (${batch.length} executions)...`);
-      
+
+      console.log(
+        `\nProcessing batch ${batchNum}/${totalBatches} (${batch.length} executions)...`,
+      );
+
       const results = await Promise.allSettled(
         batch.map((execution) =>
-          processSingleExecution(execution, tableName, workflowQueueUrl)
-        )
+          processSingleExecution(execution, tableName, workflowQueueUrl),
+        ),
       );
 
       for (const result of results) {
@@ -328,7 +342,10 @@ async function main() {
         if (result.status === "fulfilled" && result.value.success) {
           successful++;
           // Collect error hashes from successfully deleted executions
-          if (result.value.errorHashes && Array.isArray(result.value.errorHashes)) {
+          if (
+            result.value.errorHashes &&
+            Array.isArray(result.value.errorHashes)
+          ) {
             for (const hash of result.value.errorHashes) {
               allErrorHashes.add(hash);
             }
@@ -340,15 +357,15 @@ async function main() {
           }
         }
       }
-      
-      console.log(`Batch ${batchNum} complete: ${processed}/${failedExecutions.length} processed (${successful} successful, ${failed} failed)`);
+
+      console.log(
+        `Batch ${batchNum} complete: ${processed}/${failedExecutions.length} processed (${successful} successful, ${failed} failed)`,
+      );
     }
 
     // Step 5: Delete orphaned error aggregates
     if (allErrorHashes.size > 0) {
-      console.log(
-        `\n=== Cleaning up orphaned error aggregates ===`,
-      );
+      console.log(`\n=== Cleaning up orphaned error aggregates ===`);
       console.log(
         `Checking ${allErrorHashes.size} unique error hash(es) for orphaned aggregates...`,
       );
@@ -358,9 +375,7 @@ async function main() {
           tableName,
           documentClient: dynamoClient,
         });
-        console.log(
-          `✓ Deleted ${deletedCount} orphaned error aggregate(s)`,
-        );
+        console.log(`✓ Deleted ${deletedCount} orphaned error aggregate(s)`);
       } catch (aggregateError) {
         console.error(
           `Failed to delete orphaned error aggregates:`,
@@ -387,7 +402,9 @@ async function main() {
     // Note: We don't disable/enable anything anymore
     // - Starter Lambda EventSourceMapping stays enabled (new messages continue processing)
     // - Auto-repair stays enabled (it will only process executions created after re-queue start time)
-    console.log("Re-queue workflow completed. Starter Lambda and auto-repair remain enabled.");
+    console.log(
+      "Re-queue workflow completed. Starter Lambda and auto-repair remain enabled.",
+    );
   }
 }
 
