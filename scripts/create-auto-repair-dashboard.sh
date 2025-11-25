@@ -24,17 +24,35 @@ if [ -z "$STEP_FUNCTION_NAME" ]; then
     --output text 2>/dev/null || echo "")
   
   if [ -z "$STEP_FUNCTION_ARN" ] || [ "$STEP_FUNCTION_ARN" == "None" ]; then
-    echo "Warning: Could not discover Step Function ARN. Using default name: ElephantExpressWorkflow"
-    STEP_FUNCTION_NAME="ElephantExpressWorkflow"
-    # Try to construct ARN from account ID
-    ACCOUNT_ID=$(aws sts get-caller-identity --region "${REGION}" --query Account --output text 2>/dev/null || echo "*")
-    STEP_FUNCTION_ARN="arn:aws:states:${REGION}:${ACCOUNT_ID}:stateMachine:${STEP_FUNCTION_NAME}"
+    echo "Warning: Could not discover Step Function ARN from CloudFormation. Trying to find by name pattern..."
+    # Try to find Step Function by listing all state machines and matching name pattern
+    ACCOUNT_ID=$(aws sts get-caller-identity --region "${REGION}" --query Account --output text 2>/dev/null || echo "")
+    if [ -n "$ACCOUNT_ID" ]; then
+      # List all state machines and find one matching "ElephantExpress" pattern
+      STEP_FUNCTION_ARN=$(aws stepfunctions list-state-machines \
+        --region "${REGION}" \
+        --output json 2>/dev/null | \
+        jq -r --arg account "$ACCOUNT_ID" --arg region "$REGION" \
+          '.stateMachines[] | select(.name | contains("ElephantExpress") or contains("Express")) | "arn:aws:states:\($region):\($account):stateMachine:\(.name)"' | \
+        head -1)
+      
+      if [ -z "$STEP_FUNCTION_ARN" ]; then
+        echo "Error: Could not find Step Function in account ${ACCOUNT_ID}. Please provide STEP_FUNCTION_NAME as 4th argument."
+        exit 1
+      else
+        STEP_FUNCTION_NAME=$(echo "$STEP_FUNCTION_ARN" | awk -F: '{print $NF}')
+        echo "Found Step Function: ${STEP_FUNCTION_NAME} (${STEP_FUNCTION_ARN})"
+      fi
+    else
+      echo "Error: Could not determine AWS account ID. Please provide STEP_FUNCTION_NAME as 4th argument."
+      exit 1
+    fi
   else
     # Extract name from ARN
     STEP_FUNCTION_NAME=$(echo "$STEP_FUNCTION_ARN" | awk -F: '{print $NF}')
   fi
 else
-  # If name provided, try to get ARN or construct it
+  # If name provided, try to get ARN from CloudFormation first, then construct it
   STEP_FUNCTION_ARN=$(aws cloudformation describe-stacks \
     --stack-name "${STACK_NAME}" \
     --region "${REGION}" \
@@ -42,7 +60,12 @@ else
     --output text 2>/dev/null || echo "")
   
   if [ -z "$STEP_FUNCTION_ARN" ] || [ "$STEP_FUNCTION_ARN" == "None" ]; then
-    ACCOUNT_ID=$(aws sts get-caller-identity --region "${REGION}" --query Account --output text 2>/dev/null || echo "*")
+    # Construct ARN from account ID and provided name
+    ACCOUNT_ID=$(aws sts get-caller-identity --region "${REGION}" --query Account --output text 2>/dev/null || echo "")
+    if [ -z "$ACCOUNT_ID" ]; then
+      echo "Error: Could not determine AWS account ID."
+      exit 1
+    fi
     STEP_FUNCTION_ARN="arn:aws:states:${REGION}:${ACCOUNT_ID}:stateMachine:${STEP_FUNCTION_NAME}"
   fi
 fi
@@ -117,19 +140,34 @@ METRIC_ID=$((METRIC_ID + FAILURE_COUNT))
 # Build aggregated math expressions with comma-separated IDs
 SUCCESS_IDS_STR=$(echo "$SUCCESS_IDS_ARRAY" | jq -r 'join(", ")')
 FAILURE_IDS_STR=$(echo "$FAILURE_IDS_ARRAY" | jq -r 'join(", ")')
-SUCCESS_EXPR="SUM([${SUCCESS_IDS_STR}])"
-FAILURE_EXPR="SUM([${FAILURE_IDS_STR}])"
 
-# Build aggregated expressions only (no individual county metrics)
-# First, we need to build the individual metrics with IDs (hidden) for the math expressions to reference
-ALL_AUTOREPAIR_METRICS=$(echo "$SUCCESS_METRICS $FAILURE_METRICS" | jq -s 'add')
+# Only create expressions if there are metrics to aggregate
+COMBINED_AUTOREPAIR="[]"
+if [ -n "$SUCCESS_IDS_STR" ] || [ -n "$FAILURE_IDS_STR" ]; then
+  if [ -n "$SUCCESS_IDS_STR" ]; then
+    SUCCESS_EXPR="SUM([${SUCCESS_IDS_STR}])"
+  else
+    SUCCESS_EXPR=""
+  fi
+  if [ -n "$FAILURE_IDS_STR" ]; then
+    FAILURE_EXPR="SUM([${FAILURE_IDS_STR}])"
+  else
+    FAILURE_EXPR=""
+  fi
 
-# Create math expressions that reference the individual metrics
-COMBINED_AUTOREPAIR=$(echo '[]' | jq --arg success_expr "$SUCCESS_EXPR" --arg failure_expr "$FAILURE_EXPR" \
-  '. + [
-    [{"expression": $success_expr, "label": "Success", "color": "#2ca02c"}],
-    [{"expression": $failure_expr, "label": "Failure", "color": "#d62728"}]
-  ]')
+  # Build aggregated expressions only (no individual county metrics)
+  # First, we need to build the individual metrics with IDs (hidden) for the math expressions to reference
+  ALL_AUTOREPAIR_METRICS=$(echo "$SUCCESS_METRICS $FAILURE_METRICS" | jq -s 'add')
+
+  # Create math expressions that reference the individual metrics
+  COMBINED_AUTOREPAIR=$(echo '[]' | jq --arg success_expr "$SUCCESS_EXPR" --arg failure_expr "$FAILURE_EXPR" \
+    '. + 
+    (if $success_expr != "" then [[{"expression": $success_expr, "label": "Success", "color": "#2ca02c"}]] else [] end) +
+    (if $failure_expr != "" then [[{"expression": $failure_expr, "label": "Failure", "color": "#d62728"}]] else [] end)')
+else
+  # No metrics at all, use empty array
+  ALL_AUTOREPAIR_METRICS="[]"
+fi
 
 # Get all unique counties from ExecutionRestartSuccess metrics
 EXECUTIONRESTART_COUNTIES=$(aws cloudwatch list-metrics --namespace "${EXECUTIONRESTART_NAMESPACE}" --metric-name "ExecutionRestartSuccess" --region "${REGION}" --output json 2>/dev/null | \
@@ -163,26 +201,44 @@ done
 # Build aggregated math expressions for ExecutionRestart with comma-separated IDs
 EXECUTIONRESTART_SUCCESS_IDS_STR=$(echo "$EXECUTIONRESTART_SUCCESS_IDS_ARRAY" | jq -r 'join(", ")')
 EXECUTIONRESTART_FAILURE_IDS_STR=$(echo "$EXECUTIONRESTART_FAILURE_IDS_ARRAY" | jq -r 'join(", ")')
-if [ -n "$EXECUTIONRESTART_SUCCESS_IDS_STR" ]; then
-  EXECUTIONRESTART_SUCCESS_EXPR="SUM([${EXECUTIONRESTART_SUCCESS_IDS_STR}])"
-else
-  EXECUTIONRESTART_SUCCESS_EXPR=""
-fi
-if [ -n "$EXECUTIONRESTART_FAILURE_IDS_STR" ]; then
-  EXECUTIONRESTART_FAILURE_EXPR="SUM([${EXECUTIONRESTART_FAILURE_IDS_STR}])"
-else
-  EXECUTIONRESTART_FAILURE_EXPR=""
-fi
 
-# Build aggregated expressions only (no individual county metrics)
-# First, we need all individual metrics with IDs for the math expressions to reference
-ALL_EXECUTIONRESTART_METRICS=$(echo "$EXECUTIONRESTART_SUCCESS_METRICS $EXECUTIONRESTART_FAILURE_METRICS" | jq -s 'add')
+# Only create expressions if there are metrics to aggregate
+COMBINED_EXECUTIONRESTART="[]"
+if [ -n "$EXECUTIONRESTART_SUCCESS_IDS_STR" ] || [ -n "$EXECUTIONRESTART_FAILURE_IDS_STR" ]; then
+  if [ -n "$EXECUTIONRESTART_SUCCESS_IDS_STR" ]; then
+    EXECUTIONRESTART_SUCCESS_EXPR="SUM([${EXECUTIONRESTART_SUCCESS_IDS_STR}])"
+  else
+    EXECUTIONRESTART_SUCCESS_EXPR=""
+  fi
+  if [ -n "$EXECUTIONRESTART_FAILURE_IDS_STR" ]; then
+    EXECUTIONRESTART_FAILURE_EXPR="SUM([${EXECUTIONRESTART_FAILURE_IDS_STR}])"
+  else
+    EXECUTIONRESTART_FAILURE_EXPR=""
+  fi
+
+  # Build aggregated expressions only (no individual county metrics)
+  # First, we need all individual metrics with IDs for the math expressions to reference
+  ALL_EXECUTIONRESTART_METRICS=$(echo "$EXECUTIONRESTART_SUCCESS_METRICS $EXECUTIONRESTART_FAILURE_METRICS" | jq -s 'add')
 
 # Create math expressions that reference the individual metrics
 COMBINED_EXECUTIONRESTART=$(echo '[]' | jq --arg success_expr "$EXECUTIONRESTART_SUCCESS_EXPR" --arg failure_expr "$EXECUTIONRESTART_FAILURE_EXPR" \
   '. + 
   (if $success_expr != "" then [[{"expression": $success_expr, "label": "Success", "color": "#2ca02c"}]] else [] end) +
   (if $failure_expr != "" then [[{"expression": $failure_expr, "label": "Failure", "color": "#d62728"}]] else [] end)')
+else
+  # No metrics at all, use empty array
+  ALL_EXECUTIONRESTART_METRICS="[]"
+fi
+
+# Build final metrics arrays, ensuring they're never empty
+FINAL_AUTOREPAIR_METRICS=$(echo "$ALL_AUTOREPAIR_METRICS $COMBINED_AUTOREPAIR" | jq -s 'add')
+FINAL_EXECUTIONRESTART_METRICS=$(echo "$ALL_EXECUTIONRESTART_METRICS $COMBINED_EXECUTIONRESTART" | jq -s 'add')
+
+# If AutoRepair metrics array is empty, add a placeholder (hidden) metric
+FINAL_AUTOREPAIR_METRICS=$(echo "$FINAL_AUTOREPAIR_METRICS" | jq 'if length == 0 then [["AWS/CloudWatch", "NoData", {"stat": "Sum", "label": "No AutoRepair metrics available", "visible": false}]] else . end')
+
+# If ExecutionRestart metrics array is empty, add a placeholder (hidden) metric
+FINAL_EXECUTIONRESTART_METRICS=$(echo "$FINAL_EXECUTIONRESTART_METRICS" | jq 'if length == 0 then [["AWS/CloudWatch", "NoData", {"stat": "Sum", "label": "No ExecutionRestart metrics available", "visible": false}]] else . end')
 
 # Create dashboard JSON
 cat > /tmp/dashboard.json <<EOF
@@ -195,7 +251,7 @@ cat > /tmp/dashboard.json <<EOF
       "width": 24,
       "height": 6,
       "properties": {
-        "metrics": $(echo "$ALL_AUTOREPAIR_METRICS $COMBINED_AUTOREPAIR" | jq -s 'add'),
+        "metrics": $FINAL_AUTOREPAIR_METRICS,
         "period": 300,
         "stat": "Sum",
         "region": "${REGION}",
@@ -217,7 +273,7 @@ cat > /tmp/dashboard.json <<EOF
       "width": 24,
       "height": 6,
       "properties": {
-        "metrics": $(echo "$ALL_EXECUTIONRESTART_METRICS $COMBINED_EXECUTIONRESTART" | jq -s 'add'),
+        "metrics": $FINAL_EXECUTIONRESTART_METRICS,
         "period": 300,
         "stat": "Sum",
         "region": "${REGION}",
