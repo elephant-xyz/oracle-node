@@ -11,7 +11,6 @@ WORKDIR ${LAMBDA_TASK_ROOT}
 # Copy package files first for better caching
 # This layer is only invalidated when package files change
 COPY package.json .npmrc ./
-COPY package.json ./
 
 # Install production dependencies
 # Note: The postinstall script in @elephant-xyz/cli will download ML models
