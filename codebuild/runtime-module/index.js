@@ -23,7 +23,7 @@ import {
   markErrorsAsMaybeSolved,
   markErrorsAsMaybeUnrecoverable,
   normalizeErrors,
-  queryExecutionWithMostErrors,
+  queryExecutionWithLeastErrors,
 } from "./errors.mjs";
 
 const DEFAULT_DLQ_URL = process.env.DEFAULT_DLQ_URL;
@@ -113,7 +113,7 @@ function resolveTransformLocation({ countyName, transformPrefixUri }) {
  */
 async function getExecutionWithMostErrors(tableName) {
   console.log(`Querying DynamoDB for execution with most errors...`);
-  return await queryExecutionWithMostErrors({
+  return await queryExecutionWithLeastErrors({
     tableName,
     documentClient: dynamoClient,
   });
