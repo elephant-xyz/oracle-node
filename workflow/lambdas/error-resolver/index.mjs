@@ -200,7 +200,7 @@ async function getCountyDlqUrl(county) {
  */
 async function decrementOpenErrorCount({ client, tableName, executionId }) {
   const now = new Date().toISOString();
-  
+
   try {
     // Attempt to decrement atomically, but only if openErrorCount > 0
     const response = await client.send(
