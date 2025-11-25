@@ -251,7 +251,7 @@ async function fetchFromIpfs(cid) {
     if (!response.ok) {
       throw new Error(
         `IPFS fetch failed with status ${response.status} ${response.statusText || "Unknown error"}. ` +
-        `URL: ${url}`
+          `URL: ${url}`,
       );
     }
 
@@ -259,7 +259,7 @@ async function fetchFromIpfs(cid) {
     if (!contentType.includes("application/json")) {
       throw new Error(
         `IPFS returned non-JSON content. Content-Type: ${contentType}. ` +
-        `URL: ${url}. Expected JSON.`
+          `URL: ${url}. Expected JSON.`,
       );
     }
 
@@ -268,7 +268,7 @@ async function fetchFromIpfs(cid) {
     return jsonData;
   } catch (error) {
     throw new Error(
-      `Failed to fetch IPFS content for CID ${cid}: ${error.message}`
+      `Failed to fetch IPFS content for CID ${cid}: ${error.message}`,
     );
   }
 }
@@ -285,19 +285,22 @@ async function parseErrorsFromS3(errorsS3Uri) {
   const tmpFile = path.join(os.tmpdir(), `errors_${Date.now()}.csv`);
   await downloadS3Object({ bucket, key }, tmpFile);
   const content = await csvToJson(tmpFile);
-  
+
   if (!content || content.length === 0) {
     throw new Error(
-      `Errors CSV file is empty or invalid. S3 URI: ${errorsS3Uri}`
+      `Errors CSV file is empty or invalid. S3 URI: ${errorsS3Uri}`,
     );
   }
-  
+
   const dataGroupCid = content[0]?.data_group_cid;
-  const errorMessage = content[0]?.error_message || content[0]?.errorMessage || "";
-  const isUnusedFileError = errorMessage.includes("Unused data JSON file detected");
-  
+  const errorMessage =
+    content[0]?.error_message || content[0]?.errorMessage || "";
+  const isUnusedFileError = errorMessage.includes(
+    "Unused data JSON file detected",
+  );
+
   let dataGroupName = "Unknown Data Group";
-  
+
   // Only skip IPFS fetch for "Unused data JSON file detected" errors when data_group_cid is empty
   // For other errors, we should still try to fetch if CID is available
   if (dataGroupCid) {
@@ -310,7 +313,7 @@ async function parseErrorsFromS3(errorsS3Uri) {
     } catch (error) {
       console.warn(
         `Failed to fetch data group from IPFS (CID: ${dataGroupCid}): ${error.message}. ` +
-        `Continuing with default data group name.`
+          `Continuing with default data group name.`,
       );
     }
   } else if (isUnusedFileError) {
@@ -318,16 +321,16 @@ async function parseErrorsFromS3(errorsS3Uri) {
     // and we don't need schema information to fix this error type
     console.log(
       `No data_group_cid found for "Unused data JSON file detected" error. ` +
-      `Skipping IPFS fetch - this error type doesn't require schema information.`
+        `Skipping IPFS fetch - this error type doesn't require schema information.`,
     );
   } else {
     // For other errors with empty data_group_cid, log a warning but continue
     console.warn(
       `No data_group_cid found in errors CSV for error: "${errorMessage}". ` +
-      `This may indicate a data issue. Continuing with default data group name.`
+        `This may indicate a data issue. Continuing with default data group name.`,
     );
   }
-  
+
   return { errorPath: tmpFile, dataGroupName };
 }
 

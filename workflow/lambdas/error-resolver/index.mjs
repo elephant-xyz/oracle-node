@@ -682,7 +682,6 @@ export const handler = async (event) => {
               }),
             );
 
-
             // If any errors are maybeUnrecoverable, send to DLQ instead of restarting
             if (hasUnrecoverable) {
               console.log(
