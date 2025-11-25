@@ -23,7 +23,7 @@ DASHBOARD_BODY=$(cat <<EOF
       "type": "metric",
       "x": 0,
       "y": 0,
-      "width": 12,
+      "width": 24,
       "height": 6,
       "properties": {
         "metrics": [
@@ -46,57 +46,9 @@ DASHBOARD_BODY=$(cat <<EOF
     },
     {
       "type": "metric",
-      "x": 12,
-      "y": 0,
-      "width": 12,
-      "height": 6,
-      "properties": {
-        "metrics": [
-          ["${AUTOREPAIR_NAMESPACE}", "AutoRepairSuccess", "ErrorType", "SchemaValidation", {"stat": "Sum", "label": "Schema Validation"}],
-          ["${AUTOREPAIR_NAMESPACE}", "AutoRepairSuccess", "ErrorType", "MVL", {"stat": "Sum", "label": "MVL"}]
-        ],
-        "period": 3600,
-        "stat": "Sum",
-        "region": "${REGION}",
-        "title": "Success by Error Type",
-        "view": "timeSeries",
-        "stacked": false,
-        "yAxis": {
-          "left": {
-            "min": 0,
-            "label": "Count"
-          }
-        }
-      }
-    },
-    {
-      "type": "metric",
       "x": 0,
       "y": 6,
-      "width": 8,
-      "height": 6,
-      "properties": {
-        "metrics": [
-          ["${AUTOREPAIR_NAMESPACE}", "AutoRepairAttempts", {"stat": "Average", "label": "Avg Attempts"}]
-        ],
-        "period": 3600,
-        "stat": "Average",
-        "region": "${REGION}",
-        "title": "Average Attempts per Repair",
-        "view": "timeSeries",
-        "yAxis": {
-          "left": {
-            "min": 0,
-            "label": "Attempts"
-          }
-        }
-      }
-    },
-    {
-      "type": "metric",
-      "x": 8,
-      "y": 6,
-      "width": 8,
+      "width": 24,
       "height": 6,
       "properties": {
         "metrics": [
@@ -117,32 +69,9 @@ DASHBOARD_BODY=$(cat <<EOF
     },
     {
       "type": "metric",
-      "x": 16,
-      "y": 6,
-      "width": 8,
-      "height": 6,
-      "properties": {
-        "metrics": [
-          ["${AUTOREPAIR_NAMESPACE}", "AutoRepairWorkflowStarted", {"stat": "Sum", "label": "Workflows Started"}]
-        ],
-        "period": 3600,
-        "stat": "Sum",
-        "region": "${REGION}",
-        "title": "Workflows Started",
-        "view": "timeSeries",
-        "yAxis": {
-          "left": {
-            "min": 0,
-            "label": "Count"
-          }
-        }
-      }
-    },
-    {
-      "type": "metric",
       "x": 0,
       "y": 12,
-      "width": 12,
+      "width": 24,
       "height": 6,
       "properties": {
         "metrics": [
@@ -155,29 +84,6 @@ DASHBOARD_BODY=$(cat <<EOF
         "title": "Failure Reasons",
         "view": "timeSeries",
         "stacked": false,
-        "yAxis": {
-          "left": {
-            "min": 0,
-            "label": "Count"
-          }
-        }
-      }
-    },
-    {
-      "type": "metric",
-      "x": 12,
-      "y": 12,
-      "width": 12,
-      "height": 6,
-      "properties": {
-        "metrics": [
-          ["${AUTOREPAIR_NAMESPACE}", "AutoRepairErrorsProcessed", {"stat": "Sum", "label": "Errors Processed"}]
-        ],
-        "period": 3600,
-        "stat": "Sum",
-        "region": "${REGION}",
-        "title": "Errors Processed",
-        "view": "timeSeries",
         "yAxis": {
           "left": {
             "min": 0,
@@ -286,7 +192,7 @@ DASHBOARD_BODY=$(cat <<EOF
       "type": "metric",
       "x": 0,
       "y": 30,
-      "width": 12,
+      "width": 24,
       "height": 6,
       "properties": {
         "metrics": [
@@ -297,31 +203,6 @@ DASHBOARD_BODY=$(cat <<EOF
         "region": "${REGION}",
         "title": "Unrecoverable Executions",
         "view": "timeSeries",
-        "yAxis": {
-          "left": {
-            "min": 0,
-            "label": "Count"
-          }
-        }
-      }
-    },
-    {
-      "type": "metric",
-      "x": 12,
-      "y": 30,
-      "width": 12,
-      "height": 6,
-      "properties": {
-        "metrics": [
-          ["${EXECUTIONRESTART_NAMESPACE}", "ExecutionRestartDlqSendFailed", {"stat": "Sum", "label": "DLQ Send Failed"}],
-          ["${EXECUTIONRESTART_NAMESPACE}", "ExecutionRestartProcessingFailed", {"stat": "Sum", "label": "Processing Failed"}]
-        ],
-        "period": 3600,
-        "stat": "Sum",
-        "region": "${REGION}",
-        "title": "Execution Restart Errors",
-        "view": "timeSeries",
-        "stacked": false,
         "yAxis": {
           "left": {
             "min": 0,

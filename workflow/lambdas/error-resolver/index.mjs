@@ -891,14 +891,6 @@ export const handler = async (event) => {
                     }),
                   );
                 } catch (dlqError) {
-                  // Publish metric for DLQ send failure
-                  await publishMetric({
-                    metricName: "ExecutionRestartDlqSendFailed",
-                    dimensions: {
-                      County: updatedExecution.county,
-                    },
-                  });
-
                   console.error(
                     JSON.stringify({
                       ...logBase,
@@ -938,14 +930,6 @@ export const handler = async (event) => {
             restartedExecutions.add(executionId);
           }
         } catch (error) {
-          // Publish error metric
-          await publishMetric({
-            metricName: "ExecutionRestartProcessingFailed",
-            dimensions: {
-              County: execution?.county || "Unknown",
-            },
-          });
-
           console.error(
             JSON.stringify({
               ...logBase,

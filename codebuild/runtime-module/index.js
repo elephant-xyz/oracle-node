@@ -1221,13 +1221,6 @@ async function runAutoRepairIteration({
 
         // Publish success metrics
         await publishMetric({
-          metricName: "AutoRepairSuccess",
-          dimensions: {
-            County: county,
-            ErrorType: isMvlScenario ? "MVL" : "SchemaValidation",
-          },
-        });
-        await publishMetric({
           metricName: "AutoRepairErrorsFixed",
           value: errorHashes.length,
           dimensions: {
@@ -1335,22 +1328,6 @@ async function main() {
     console.log(`Prepared S3 URI: ${execution.preparedS3Uri}`);
     console.log(`Errors S3 URI: ${execution.errorsS3Uri}`);
 
-    // Publish metric for workflow start
-    await publishMetric({
-      metricName: "AutoRepairWorkflowStarted",
-      dimensions: {
-        County: execution.county,
-      },
-    });
-    await publishMetric({
-      metricName: "AutoRepairErrorsProcessed",
-      value: execution.uniqueErrorCount || 0,
-      unit: "Count",
-      dimensions: {
-        County: execution.county,
-      },
-    });
-
     if (!execution.errorsS3Uri) {
       console.log("No errors S3 URI found. Skipping.");
       return;
@@ -1401,15 +1378,6 @@ async function main() {
         console.error("Execution ID:", execution.executionId);
         console.error("County:", execution.county);
         console.error("========================================");
-
-        // Publish attempt failure metric
-        await publishMetric({
-          metricName: "AutoRepairAttemptFailure",
-          dimensions: {
-            County: execution.county,
-            Attempt: String(attempt),
-          },
-        });
 
         // Try to extract new errors S3 URI from error message
         const newErrorsS3Uri = extractErrorsS3Uri(error.message);
@@ -1531,15 +1499,6 @@ async function main() {
           attempt >= maxAttempts ? "MaxRetriesExceeded" : "NoErrorsUri",
       },
     });
-    await publishMetric({
-      metricName: "AutoRepairAttempts",
-      value: attempt,
-      unit: "Count",
-      dimensions: {
-        County: execution.county,
-        ErrorType: isMvlScenario ? "MVL" : "SchemaValidation",
-      },
-    });
 
     // Publish final failure metric before throwing
     await publishMetric({
@@ -1567,18 +1526,6 @@ async function main() {
     console.error("========================================");
     console.error(JSON.stringify(errorDetails, null, 2));
     console.error("========================================");
-
-    // Publish error metric for unhandled errors
-    try {
-      await publishMetric({
-        metricName: "AutoRepairWorkflowError",
-        dimensions: {
-          ErrorType: error.name || "Unknown",
-        },
-      });
-    } catch (metricError) {
-      console.error("Failed to publish error metric:", metricError.message);
-    }
 
     process.exit(1);
   }
