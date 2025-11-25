@@ -1228,7 +1228,7 @@ async function runAutoRepairIteration({
           value: errorHashes.length,
           dimensions: {
             County: county,
-            ErrorType: isMvlScenario ? "MVL" : "SchemaValidation",
+            ErrorType: isMvlScenario ? "MVL" : "SVL",
           },
         });
 
@@ -1497,7 +1497,7 @@ async function main() {
       metricName: "AutoRepairWorkflowFailure",
       dimensions: {
         County: execution.county,
-        ErrorType: isMvlScenario ? "MVL" : "SchemaValidation",
+        ErrorType: isMvlScenario ? "MVL" : "SVL",
         FailureReason:
           attempt >= maxAttempts ? "MaxRetriesExceeded" : "NoErrorsUri",
       },
