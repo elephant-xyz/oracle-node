@@ -11,6 +11,10 @@ import {
   SQSClient,
   SendMessageCommand,
 } from "@aws-sdk/client-sqs";
+import {
+  CloudWatchClient,
+  PutMetricDataCommand,
+} from "@aws-sdk/client-cloudwatch";
 import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import AdmZip from "adm-zip";
 import { exec } from "child_process";
@@ -39,6 +43,10 @@ const dynamoClient = DynamoDBDocumentClient.from(new DynamoDBClient({}), {
 });
 const lambdaClient = new LambdaClient({});
 const sqsClient = new SQSClient({});
+// Use AWS_REGION from environment if available, otherwise use default
+const cloudWatchClient = new CloudWatchClient({
+  region: process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION,
+});
 
 /**
  * Ensure required environment variables are present.
@@ -52,6 +60,53 @@ function requireEnv(name) {
     throw new Error(`${name} is required`);
   }
   return value;
+}
+
+/**
+ * Publish a CloudWatch metric.
+ *
+ * @param {object} params - Metric parameters.
+ * @param {string} params.metricName - Name of the metric.
+ * @param {number} params.value - Metric value (default: 1).
+ * @param {string} params.unit - Unit of measurement (default: "Count").
+ * @param {Record<string, string>} [params.dimensions] - Optional dimensions for the metric.
+ * @returns {Promise<void>}
+ */
+async function publishMetric({
+  metricName,
+  value = 1,
+  unit = "Count",
+  dimensions = {},
+}) {
+  const namespace = process.env.CLOUDWATCH_METRIC_NAMESPACE || "AutoRepair";
+  const metricData = {
+    MetricName: metricName,
+    Value: value,
+    Unit: unit,
+    Timestamp: new Date(),
+  };
+
+  if (Object.keys(dimensions).length > 0) {
+    metricData.Dimensions = Object.entries(dimensions).map(([Name, Value]) => ({
+      Name,
+      Value: String(Value),
+    }));
+  }
+
+  try {
+    await cloudWatchClient.send(
+      new PutMetricDataCommand({
+        Namespace: namespace,
+        MetricData: [metricData],
+      }),
+    );
+    console.log(
+      `Published metric: ${namespace}/${metricName} = ${value} (${unit})`,
+    );
+  } catch (error) {
+    // Log but don't throw - metrics should not break the workflow
+    console.error(`Failed to publish metric ${metricName}:`, error.message);
+  }
 }
 
 /**
@@ -1167,6 +1222,16 @@ async function runAutoRepairIteration({
           `✓ Deleted execution ${executionId} and all associated errors (${deletedErrorHashes.length} error hash(es))`,
         );
 
+        // Publish success metrics
+        await publishMetric({
+          metricName: "AutoRepairErrorsFixed",
+          value: errorHashes.length,
+          dimensions: {
+            County: county,
+            ErrorType: isMvlScenario ? "MVL" : "SVL",
+          },
+        });
+
         return { success: true };
       } else {
         // Execution failed, restore original scripts before throwing error
@@ -1296,9 +1361,26 @@ async function main() {
         });
 
         console.log("Auto-repair workflow completed successfully!");
+
+        // Publish overall success metric
+        await publishMetric({
+          metricName: "AutoRepairWorkflowSuccess",
+          dimensions: {
+            County: execution.county,
+          },
+        });
+
         return;
       } catch (error) {
-        console.error(`Attempt ${attempt} failed:`, error.message);
+        // Enhanced error logging for each attempt
+        console.error("========================================");
+        console.error(`AUTO-REPAIR ATTEMPT ${attempt}/${maxAttempts} FAILED`);
+        console.error("========================================");
+        console.error("Error Message:", error.message);
+        console.error("Error Stack:", error.stack);
+        console.error("Execution ID:", execution.executionId);
+        console.error("County:", execution.county);
+        console.error("========================================");
 
         // Try to extract new errors S3 URI from error message
         const newErrorsS3Uri = extractErrorsS3Uri(error.message);
@@ -1410,9 +1492,34 @@ async function main() {
     });
     console.log(`Execution ${execution.executionId} deleted.`);
 
+    // Publish final failure metric before throwing
+    await publishMetric({
+      metricName: "AutoRepairWorkflowFailure",
+      dimensions: {
+        County: execution.county,
+        ErrorType: isMvlScenario ? "MVL" : "SVL",
+        FailureReason:
+          attempt >= maxAttempts ? "MaxRetriesExceeded" : "NoErrorsUri",
+      },
+    });
+
     throw new Error(`Auto-repair failed after ${attempt} attempts`);
   } catch (error) {
-    console.error("Auto-repair workflow failed:", error);
+    // Enhanced error logging with full details
+    const errorDetails = {
+      message: error.message,
+      stack: error.stack,
+      name: error.name,
+      timestamp: new Date().toISOString(),
+      component: "auto-repair",
+    };
+
+    console.error("========================================");
+    console.error("AUTO-REPAIR WORKFLOW FAILED");
+    console.error("========================================");
+    console.error(JSON.stringify(errorDetails, null, 2));
+    console.error("========================================");
+
     process.exit(1);
   }
 }

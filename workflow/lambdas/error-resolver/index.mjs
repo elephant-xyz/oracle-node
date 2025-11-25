@@ -11,6 +11,10 @@ import {
   SendMessageCommand,
   GetQueueUrlCommand,
 } from "@aws-sdk/client-sqs";
+import {
+  CloudWatchClient,
+  PutMetricDataCommand,
+} from "@aws-sdk/client-cloudwatch";
 
 /**
  * @typedef {object} ExecutionErrorLink
@@ -53,6 +57,10 @@ const DEFAULT_CLIENT = DynamoDBDocumentClient.from(new DynamoDBClient({}), {
 
 const lambdaClient = new LambdaClient({});
 const sqsClient = new SQSClient({});
+// Use AWS_REGION from environment if available, otherwise use default
+const cloudWatchClient = new CloudWatchClient({
+  region: process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION,
+});
 
 /**
  * Ensure required environment variables are present.
@@ -66,6 +74,53 @@ function requireEnv(name) {
     throw new Error(`${name} is required`);
   }
   return value;
+}
+
+/**
+ * Publish a CloudWatch metric.
+ *
+ * @param {object} params - Metric parameters.
+ * @param {string} params.metricName - Name of the metric.
+ * @param {number} params.value - Metric value (default: 1).
+ * @param {string} params.unit - Unit of measurement (default: "Count").
+ * @param {Record<string, string>} [params.dimensions] - Optional dimensions for the metric.
+ * @returns {Promise<void>}
+ */
+async function publishMetric({
+  metricName,
+  value = 1,
+  unit = "Count",
+  dimensions = {},
+}) {
+  const namespace =
+    process.env.CLOUDWATCH_METRIC_NAMESPACE || "ExecutionRestart";
+  const metricData = {
+    MetricName: metricName,
+    Value: value,
+    Unit: unit,
+    Timestamp: new Date(),
+  };
+
+  if (Object.keys(dimensions).length > 0) {
+    metricData.Dimensions = Object.entries(dimensions).map(([Name, Value]) => ({
+      Name,
+      Value: String(Value),
+    }));
+  }
+
+  try {
+    await cloudWatchClient.send(
+      new PutMetricDataCommand({
+        Namespace: namespace,
+        MetricData: [metricData],
+      }),
+    );
+    console.log(
+      `Published metric: ${namespace}/${metricName} = ${value} (${unit})`,
+    );
+  } catch (error) {
+    // Silently fail - metrics are optional and should not break the workflow
+  }
 }
 
 /**
@@ -543,6 +598,13 @@ export const handler = async (event) => {
       }),
     );
 
+    // Publish metric for executions processed
+    await publishMetric({
+      metricName: "ExecutionRestartProcessed",
+      value: executionGroups.size,
+      dimensions: {},
+    });
+
     // Process each execution group
     // Track executions that have been restarted to avoid duplicate restarts
     /** @type {Set<string>} */
@@ -652,6 +714,14 @@ export const handler = async (event) => {
               const dlqUrl = await getCountyDlqUrl(execution.county);
               await sendToDlq(dlqUrl, execution.source);
 
+              // Publish metric for unrecoverable errors
+              await publishMetric({
+                metricName: "ExecutionRestartUnrecoverable",
+                dimensions: {
+                  County: execution.county,
+                },
+              });
+
               console.log(
                 JSON.stringify({
                   ...logBase,
@@ -739,6 +809,21 @@ export const handler = async (event) => {
                   resultPayload.transactionItems,
                 );
 
+                // Publish success metrics
+                await publishMetric({
+                  metricName: "ExecutionRestartSuccess",
+                  dimensions: {
+                    County: updatedExecution.county,
+                  },
+                });
+                await publishMetric({
+                  metricName: "ExecutionRestartTransactionItemsSent",
+                  value: resultPayload.transactionItems.length,
+                  dimensions: {
+                    County: updatedExecution.county,
+                  },
+                });
+
                 console.log(
                   JSON.stringify({
                     ...logBase,
@@ -760,6 +845,15 @@ export const handler = async (event) => {
                 const dlqUrl = await getCountyDlqUrl(updatedExecution.county);
                 await sendToDlq(dlqUrl, updatedExecution.source);
 
+                // Publish failure metric
+                await publishMetric({
+                  metricName: "ExecutionRestartFailure",
+                  dimensions: {
+                    County: updatedExecution.county,
+                    FailureReason: "PostProcessingFailed",
+                  },
+                });
+
                 console.log(
                   JSON.stringify({
                     ...logBase,
@@ -777,6 +871,15 @@ export const handler = async (event) => {
                 try {
                   const dlqUrl = await getCountyDlqUrl(updatedExecution.county);
                   await sendToDlq(dlqUrl, updatedExecution.source);
+
+                  // Publish failure metric
+                  await publishMetric({
+                    metricName: "ExecutionRestartFailure",
+                    dimensions: {
+                      County: updatedExecution.county,
+                      FailureReason: "LambdaInvocationFailed",
+                    },
+                  });
 
                   console.log(
                     JSON.stringify({
@@ -804,6 +907,14 @@ export const handler = async (event) => {
                   throw lambdaError;
                 }
               } else {
+                // Publish failure metric even without source
+                await publishMetric({
+                  metricName: "ExecutionRestartFailure",
+                  dimensions: {
+                    County: updatedExecution.county || "Unknown",
+                    FailureReason: "LambdaInvocationFailedNoSource",
+                  },
+                });
                 throw lambdaError;
               }
             }

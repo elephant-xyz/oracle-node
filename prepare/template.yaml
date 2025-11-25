@@ -631,6 +631,15 @@ Resources:
               Resource:
                 - !GetAtt TransactionsSqsQueue.Arn
                 - !Sub "arn:${AWS::Partition}:sqs:${AWS::Region}:${AWS::AccountId}:*"
+            - Effect: Allow
+              Action:
+                - cloudwatch:PutMetricData
+              Resource: "*"
+              Condition:
+                StringEquals:
+                  cloudwatch:namespace:
+                    - AutoRepair
+                    - ExecutionRestart
       Environment:
         Variables:
           ERRORS_TABLE_NAME: !Ref ErrorsTable
