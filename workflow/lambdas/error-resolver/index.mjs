@@ -84,6 +84,7 @@ function requireEnv(name) {
  * @param {number} params.value - Metric value (default: 1).
  * @param {string} params.unit - Unit of measurement (default: "Count").
  * @param {Record<string, string>} [params.dimensions] - Optional dimensions for the metric.
+ * @param {string} [params.namespace] - Optional namespace override (defaults to ExecutionRestart).
  * @returns {Promise<void>}
  */
 async function publishMetric({
@@ -91,9 +92,10 @@ async function publishMetric({
   value = 1,
   unit = "Count",
   dimensions = {},
+  namespace,
 }) {
-  const namespace =
-    process.env.CLOUDWATCH_METRIC_NAMESPACE || "ExecutionRestart";
+  const metricNamespace =
+    namespace || process.env.CLOUDWATCH_METRIC_NAMESPACE || "ExecutionRestart";
   const metricData = {
     MetricName: metricName,
     Value: value,
@@ -111,12 +113,12 @@ async function publishMetric({
   try {
     await cloudWatchClient.send(
       new PutMetricDataCommand({
-        Namespace: namespace,
+        Namespace: metricNamespace,
         MetricData: [metricData],
       }),
     );
     console.log(
-      `Published metric: ${namespace}/${metricName} = ${value} (${unit})`,
+      `Published metric: ${metricNamespace}/${metricName} = ${value} (${unit})`,
     );
   } catch (error) {
     // Silently fail - metrics are optional and should not break the workflow
@@ -598,13 +600,6 @@ export const handler = async (event) => {
       }),
     );
 
-    // Publish metric for executions processed
-    await publishMetric({
-      metricName: "ExecutionRestartProcessed",
-      value: executionGroups.size,
-      dimensions: {},
-    });
-
     // Process each execution group
     // Track executions that have been restarted to avoid duplicate restarts
     /** @type {Set<string>} */
@@ -687,12 +682,6 @@ export const handler = async (event) => {
               }),
             );
 
-            // Get execution details without updating status first
-            const execution = await getExecution({
-              client,
-              tableName,
-              executionId,
-            });
 
             // If any errors are maybeUnrecoverable, send to DLQ instead of restarting
             if (hasUnrecoverable) {
@@ -713,14 +702,6 @@ export const handler = async (event) => {
 
               const dlqUrl = await getCountyDlqUrl(execution.county);
               await sendToDlq(dlqUrl, execution.source);
-
-              // Publish metric for unrecoverable errors
-              await publishMetric({
-                metricName: "ExecutionRestartUnrecoverable",
-                dimensions: {
-                  County: execution.county,
-                },
-              });
 
               console.log(
                 JSON.stringify({
@@ -809,16 +790,9 @@ export const handler = async (event) => {
                   resultPayload.transactionItems,
                 );
 
-                // Publish success metrics
+                // Publish success metric
                 await publishMetric({
                   metricName: "ExecutionRestartSuccess",
-                  dimensions: {
-                    County: updatedExecution.county,
-                  },
-                });
-                await publishMetric({
-                  metricName: "ExecutionRestartTransactionItemsSent",
-                  value: resultPayload.transactionItems.length,
                   dimensions: {
                     County: updatedExecution.county,
                   },

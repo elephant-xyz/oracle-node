@@ -607,7 +607,7 @@ Resources:
       Architectures:
         - arm64
       MemorySize: 256
-      Timeout: 60
+      Timeout: 330
       CodeUri: ../workflow/lambdas/error-resolver
       Handler: index.handler
       Description: "Processes DynamoDB stream events to resolve execution errors and restart executions"
