@@ -1158,11 +1158,14 @@ async function runAutoRepairIteration({
         console.log(
           `Deleting execution ${executionId} and all its error links...`,
         );
-        await deleteExecution({
+        const deletedErrorHashes = await deleteExecution({
           executionId,
           tableName,
           documentClient: dynamoClient,
         });
+        console.log(
+          `✓ Deleted execution ${executionId} and all associated errors (${deletedErrorHashes.length} error hash(es))`,
+        );
 
         return { success: true };
       } else {
