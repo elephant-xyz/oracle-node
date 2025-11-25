@@ -11,6 +11,10 @@ import {
   SQSClient,
   SendMessageCommand,
 } from "@aws-sdk/client-sqs";
+import {
+  CloudWatchClient,
+  PutMetricDataCommand,
+} from "@aws-sdk/client-cloudwatch";
 import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import AdmZip from "adm-zip";
 import { exec } from "child_process";
@@ -39,6 +43,7 @@ const dynamoClient = DynamoDBDocumentClient.from(new DynamoDBClient({}), {
 });
 const lambdaClient = new LambdaClient({});
 const sqsClient = new SQSClient({});
+const cloudWatchClient = new CloudWatchClient({});
 
 /**
  * Ensure required environment variables are present.
@@ -52,6 +57,53 @@ function requireEnv(name) {
     throw new Error(`${name} is required`);
   }
   return value;
+}
+
+/**
+ * Publish a CloudWatch metric.
+ *
+ * @param {object} params - Metric parameters.
+ * @param {string} params.metricName - Name of the metric.
+ * @param {number} params.value - Metric value (default: 1).
+ * @param {string} params.unit - Unit of measurement (default: "Count").
+ * @param {Record<string, string>} [params.dimensions] - Optional dimensions for the metric.
+ * @returns {Promise<void>}
+ */
+async function publishMetric({
+  metricName,
+  value = 1,
+  unit = "Count",
+  dimensions = {},
+}) {
+  const namespace = process.env.CLOUDWATCH_METRIC_NAMESPACE || "AutoRepair";
+  const metricData = {
+    MetricName: metricName,
+    Value: value,
+    Unit: unit,
+    Timestamp: new Date(),
+  };
+
+  if (Object.keys(dimensions).length > 0) {
+    metricData.Dimensions = Object.entries(dimensions).map(([Name, Value]) => ({
+      Name,
+      Value: String(Value),
+    }));
+  }
+
+  try {
+    await cloudWatchClient.send(
+      new PutMetricDataCommand({
+        Namespace: namespace,
+        MetricData: [metricData],
+      }),
+    );
+    console.log(
+      `Published metric: ${namespace}/${metricName} = ${value} (${unit})`,
+    );
+  } catch (error) {
+    // Log but don't throw - metrics should not break the workflow
+    console.error(`Failed to publish metric ${metricName}:`, error.message);
+  }
 }
 
 /**
@@ -1164,6 +1216,23 @@ async function runAutoRepairIteration({
           documentClient: dynamoClient,
         });
 
+        // Publish success metrics
+        await publishMetric({
+          metricName: "AutoRepairSuccess",
+          dimensions: {
+            County: county,
+            ErrorType: isMvlScenario ? "MVL" : "SchemaValidation",
+          },
+        });
+        await publishMetric({
+          metricName: "AutoRepairErrorsFixed",
+          value: errorHashes.length,
+          dimensions: {
+            County: county,
+            ErrorType: isMvlScenario ? "MVL" : "SchemaValidation",
+          },
+        });
+
         return { success: true };
       } else {
         // Execution failed, restore original scripts before throwing error
@@ -1263,6 +1332,22 @@ async function main() {
     console.log(`Prepared S3 URI: ${execution.preparedS3Uri}`);
     console.log(`Errors S3 URI: ${execution.errorsS3Uri}`);
 
+    // Publish metric for workflow start
+    await publishMetric({
+      metricName: "AutoRepairWorkflowStarted",
+      dimensions: {
+        County: execution.county,
+      },
+    });
+    await publishMetric({
+      metricName: "AutoRepairErrorsProcessed",
+      value: execution.uniqueErrorCount || 0,
+      unit: "Count",
+      dimensions: {
+        County: execution.county,
+      },
+    });
+
     if (!execution.errorsS3Uri) {
       console.log("No errors S3 URI found. Skipping.");
       return;
@@ -1293,6 +1378,15 @@ async function main() {
         });
 
         console.log("Auto-repair workflow completed successfully!");
+        
+        // Publish overall success metric
+        await publishMetric({
+          metricName: "AutoRepairWorkflowSuccess",
+          dimensions: {
+            County: execution.county,
+          },
+        });
+        
         return;
       } catch (error) {
         console.error(`Attempt ${attempt} failed:`, error.message);
@@ -1406,6 +1500,25 @@ async function main() {
       documentClient: dynamoClient,
     });
     console.log(`Execution ${execution.executionId} deleted.`);
+
+    // Publish failure metrics
+    await publishMetric({
+      metricName: "AutoRepairFailure",
+      dimensions: {
+        County: execution.county,
+        ErrorType: isMvlScenario ? "MVL" : "SchemaValidation",
+        FailureReason: attempt >= maxAttempts ? "MaxRetriesExceeded" : "NoErrorsUri",
+      },
+    });
+    await publishMetric({
+      metricName: "AutoRepairAttempts",
+      value: attempt,
+      unit: "Count",
+      dimensions: {
+        County: execution.county,
+        ErrorType: isMvlScenario ? "MVL" : "SchemaValidation",
+      },
+    });
 
     throw new Error(`Auto-repair failed after ${attempt} attempts`);
   } catch (error) {

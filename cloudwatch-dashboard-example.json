@@ -1,0 +1,92 @@
+{
+  "widgets": [
+    {
+      "type": "metric",
+      "properties": {
+        "metrics": [
+          ["AutoRepair", "AutoRepairWorkflowSuccess", {"stat": "Sum"}],
+          [".", "AutoRepairFailure", {"stat": "Sum"}]
+        ],
+        "period": 3600,
+        "stat": "Sum",
+        "region": "us-east-1",
+        "title": "Auto-Repair Success vs Failure",
+        "yAxis": {
+          "left": {
+            "label": "Count"
+          }
+        }
+      }
+    },
+    {
+      "type": "metric",
+      "properties": {
+        "metrics": [
+          ["AutoRepair", "AutoRepairSuccess", {"stat": "Sum", "dimensions": {"ErrorType": "SchemaValidation"}}],
+          ["...", {"stat": "Sum", "dimensions": {"ErrorType": "MVL"}}]
+        ],
+        "period": 3600,
+        "stat": "Sum",
+        "region": "us-east-1",
+        "title": "Success by Error Type",
+        "yAxis": {
+          "left": {
+            "label": "Count"
+          }
+        }
+      }
+    },
+    {
+      "type": "metric",
+      "properties": {
+        "metrics": [
+          ["AutoRepair", "AutoRepairAttempts", {"stat": "Average"}]
+        ],
+        "period": 3600,
+        "stat": "Average",
+        "region": "us-east-1",
+        "title": "Average Attempts per Repair",
+        "yAxis": {
+          "left": {
+            "label": "Attempts"
+          }
+        }
+      }
+    },
+    {
+      "type": "metric",
+      "properties": {
+        "metrics": [
+          ["AutoRepair", "AutoRepairErrorsFixed", {"stat": "Sum"}]
+        ],
+        "period": 3600,
+        "stat": "Sum",
+        "region": "us-east-1",
+        "title": "Total Errors Fixed",
+        "yAxis": {
+          "left": {
+            "label": "Count"
+          }
+        }
+      }
+    },
+    {
+      "type": "metric",
+      "properties": {
+        "metrics": [
+          ["AutoRepair", "AutoRepairWorkflowStarted", {"stat": "Sum"}]
+        ],
+        "period": 3600,
+        "stat": "Sum",
+        "region": "us-east-1",
+        "title": "Workflows Started",
+        "yAxis": {
+          "left": {
+            "label": "Count"
+          }
+        }
+      }
+    }
+  ]
+}
+
