@@ -25,7 +25,7 @@
           [
             "AutoRepair",
             "AutoRepairSuccess",
-            { "stat": "Sum", "dimensions": { "ErrorType": "SchemaValidation" } }
+            { "stat": "Sum", "dimensions": { "ErrorType": "SVL" } }
           ],
           ["...", { "stat": "Sum", "dimensions": { "ErrorType": "MVL" } }]
         ],
