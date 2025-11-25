@@ -112,7 +112,7 @@ function resolveTransformLocation({ countyName, transformPrefixUri }) {
  * @returns {Promise<import("../../workflow/lambdas/post/errors.mjs").FailedExecutionItem | null>} - The execution with most errors, or null if none found.
  */
 async function getExecutionWithMostErrors(tableName) {
-  console.log(`Querying DynamoDB for execution with most errors...`);
+  console.log(`Querying DynamoDB for execution with least errors...`);
   return await queryExecutionWithLeastErrors({
     tableName,
     documentClient: dynamoClient,
