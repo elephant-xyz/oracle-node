@@ -703,12 +703,13 @@ export async function markErrorsAsMaybeUnrecoverable({
  * Delete an execution and all its related ExecutionErrorLink items from DynamoDB.
  * Queries all items with PK=EXECUTION#{executionId} (execution root + all error links)
  * and deletes them using BatchWriteCommand with DeleteRequest items.
+ * Returns an array of error hashes that were associated with the deleted execution.
  *
  * @param {object} params - Deletion parameters.
  * @param {string} params.executionId - Execution identifier to delete.
  * @param {string} params.tableName - DynamoDB table name.
  * @param {DynamoDBDocumentClient} [params.documentClient] - Optional document client (uses default if not provided).
- * @returns {Promise<void>} - Resolves when all deletions complete.
+ * @returns {Promise<string[]>} - Array of error hashes that were associated with the deleted execution.
  */
 export async function deleteExecution({
   executionId,
@@ -718,7 +719,7 @@ export async function deleteExecution({
   const client = documentClient ?? DEFAULT_CLIENT;
   const executionPk = buildExecutionPk(executionId);
 
-  /** @type {Array<{ PK: string, SK: string }>} */
+  /** @type {Array<{ PK: string, SK: string, errorHash?: string }>} */
   const itemsToDelete = [];
 
   // Query all items with PK=EXECUTION#{executionId} to get execution root + all error links
@@ -733,7 +734,7 @@ export async function deleteExecution({
       ExpressionAttributeValues: {
         ":pk": executionPk,
       },
-      ProjectionExpression: "PK, SK",
+      ProjectionExpression: "PK, SK, errorHash",
       ExclusiveStartKey: lastEvaluatedKey,
     };
 
@@ -745,6 +746,8 @@ export async function deleteExecution({
         ...response.Items.map((item) => ({
           PK: /** @type {string} */ (item.PK),
           SK: /** @type {string} */ (item.SK),
+          errorHash:
+            typeof item.errorHash === "string" ? item.errorHash : undefined,
         })),
       );
     }
@@ -756,8 +759,13 @@ export async function deleteExecution({
     console.log(
       `No items found for execution ${executionId}, nothing to delete`,
     );
-    return;
+    return [];
   }
+
+  // Extract error hashes before deletion
+  const errorHashes = itemsToDelete
+    .filter((item) => item.errorHash !== undefined)
+    .map((item) => /** @type {string} */ (item.errorHash));
 
   console.log(
     `Deleting ${itemsToDelete.length} item(s) for execution ${executionId}`,
@@ -821,4 +829,127 @@ export async function deleteExecution({
   console.log(
     `Successfully deleted ${itemsToDelete.length} item(s) for execution ${executionId}`,
   );
+
+  return errorHashes;
+}
+
+/**
+ * Delete orphaned error aggregate items from DynamoDB.
+ * For each error hash, checks if there are any ExecutionErrorLink items still referencing it.
+ * If no references exist, the ErrorAggregate item (PK=ERROR#{hash}, SK=ERROR#{hash}) is deleted.
+ *
+ * @param {object} params - Deletion parameters.
+ * @param {string[]} params.errorHashes - Array of error hashes to check for orphaned aggregates.
+ * @param {string} params.tableName - DynamoDB table name.
+ * @param {DynamoDBDocumentClient} [params.documentClient] - Optional document client (uses default if not provided).
+ * @returns {Promise<number>} - Number of orphaned aggregates deleted.
+ */
+export async function deleteOrphanedErrorAggregates({
+  errorHashes,
+  tableName,
+  documentClient,
+}) {
+  const client = documentClient ?? DEFAULT_CLIENT;
+
+  /** @type {Array<{ PK: string, SK: string }>} */
+  const aggregatesToDelete = [];
+
+  // For each error hash, check if there are any ExecutionErrorLink items referencing it
+  for (const errorHash of errorHashes) {
+    const errorPk = buildErrorPk(errorHash);
+
+    // Query the ErrorHashExecutionIndex to find any ExecutionErrorLink items with this error hash
+    /** @type {import("@aws-sdk/lib-dynamodb").QueryCommandInput} */
+    const queryParams = {
+      TableName: tableName,
+      IndexName: "ErrorHashExecutionIndex",
+      KeyConditionExpression: "GS1PK = :errorPk",
+      ExpressionAttributeValues: {
+        ":errorPk": errorPk,
+      },
+      ProjectionExpression: "PK, SK",
+      Limit: 1, // We only need to know if at least one exists
+    };
+
+    /** @type {import("@aws-sdk/lib-dynamodb").QueryCommandOutput} */
+    const response = await client.send(new QueryCommand(queryParams));
+
+    // If no ExecutionErrorLink items reference this error hash, it's orphaned
+    if (!response.Items || response.Items.length === 0) {
+      aggregatesToDelete.push({
+        PK: errorPk,
+        SK: buildErrorSk(errorHash),
+      });
+    }
+  }
+
+  if (aggregatesToDelete.length === 0) {
+    console.log("No orphaned error aggregates found");
+    return 0;
+  }
+
+  console.log(
+    `Deleting ${aggregatesToDelete.length} orphaned error aggregate(s)`,
+  );
+
+  // Delete orphaned aggregates in batches using BatchWriteCommand
+  const batches = chunkArray(aggregatesToDelete, BATCH_WRITE_MAX_ITEMS);
+  for (const batch of batches) {
+    let remaining = batch;
+    let attempts = 0;
+
+    while (remaining.length > 0) {
+      const response = await client.send(
+        new BatchWriteCommand({
+          RequestItems: {
+            [tableName]: remaining.map((item) => ({
+              DeleteRequest: {
+                Key: {
+                  PK: item.PK,
+                  SK: item.SK,
+                },
+              },
+            })),
+          },
+        }),
+      );
+
+      const unprocessed =
+        response.UnprocessedItems?.[tableName]?.map(
+          /** @param {import("@aws-sdk/client-dynamodb").WriteRequest} request */
+          (request) => {
+            const deleteRequest = request.DeleteRequest;
+            if (!deleteRequest || !deleteRequest.Key) {
+              return undefined;
+            }
+            return {
+              PK: deleteRequest.Key.PK,
+              SK: deleteRequest.Key.SK,
+            };
+          },
+        ) ?? [];
+
+      if (unprocessed.length === 0) {
+        break;
+      }
+
+      attempts += 1;
+      if (attempts > BATCH_WRITE_MAX_RETRIES) {
+        throw new Error(
+          `Exceeded BatchWrite retry attempts while deleting orphaned error aggregates`,
+        );
+      }
+
+      const delayMs = Math.min(1000, 2 ** attempts * 50);
+      await delay(delayMs);
+      // @ts-ignore
+      remaining = unprocessed.filter((item) => item !== undefined);
+    }
+  }
+
+  console.log(
+    `Successfully deleted ${aggregatesToDelete.length} orphaned error aggregate(s)`,
+  );
+
+  return aggregatesToDelete.length;
 }

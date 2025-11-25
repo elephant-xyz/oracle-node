@@ -1,6 +1,15 @@
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, QueryCommand } from "@aws-sdk/lib-dynamodb";
-import { SQSClient, SendMessageCommand } from "@aws-sdk/client-sqs";
+import {
+  DynamoDBDocumentClient,
+  QueryCommand,
+  ScanCommand,
+  BatchWriteCommand,
+} from "@aws-sdk/lib-dynamodb";
+import {
+  SQSClient,
+  SendMessageCommand,
+  GetQueueUrlCommand,
+} from "@aws-sdk/client-sqs";
 import { deleteExecution, deleteOrphanedErrorAggregates } from "./errors.mjs";
 
 const dynamoClient = DynamoDBDocumentClient.from(new DynamoDBClient({}), {
@@ -37,6 +46,132 @@ function parseS3Uri(s3Uri) {
     throw new Error(`Invalid S3 URI: ${s3Uri}`);
   }
   return { bucket: match[1], key: match[2] };
+}
+
+/**
+ * Normalize county name to lowercase with dashes instead of spaces.
+ *
+ * @param {string} county - County name.
+ * @returns {string} - Normalized county name.
+ */
+function normalizeCountyName(county) {
+  return county.toLowerCase().replace(/\s+/g, "-");
+}
+
+/**
+ * Resolve the appropriate SQS queue URL for a given county.
+ * Checks if a county-specific queue exists, otherwise returns the main workflow queue URL.
+ *
+ * @param {string} county - County name.
+ * @param {string} mainQueueUrl - Main workflow queue URL.
+ * @returns {Promise<string>} - Resolved queue URL.
+ */
+async function resolveQueueUrl(county, mainQueueUrl) {
+  // Extract the base queue name from the main queue URL
+  // Example: "https://sqs.us-east-1.amazonaws.com/529160768076/elephant-workflow-queue"
+  // -> "elephant-workflow-queue"
+  const mainQueueNameMatch = mainQueueUrl.match(/\/([^/]+)$/);
+  if (!mainQueueNameMatch) {
+    console.warn(`Could not parse queue name from URL: ${mainQueueUrl}`);
+    return mainQueueUrl;
+  }
+
+  const mainQueueName = mainQueueNameMatch[1];
+  const normalizedCounty = normalizeCountyName(county);
+  const countyQueueName = `${mainQueueName}-${normalizedCounty}`;
+
+  try {
+    // Try to get the county-specific queue URL
+    const response = await sqsClient.send(
+      new GetQueueUrlCommand({
+        QueueName: countyQueueName,
+      }),
+    );
+
+    if (response.QueueUrl) {
+      console.log(
+        `✓ Found county-specific queue for ${county}: ${response.QueueUrl}`,
+      );
+      return response.QueueUrl;
+    }
+  } catch (error) {
+    // Queue doesn't exist or we don't have permission to access it
+    if (
+      error.name === "QueueDoesNotExist" ||
+      error.name === "AWS.SimpleQueueService.NonExistentQueue"
+    ) {
+      console.log(
+        `County-specific queue "${countyQueueName}" does not exist, using main queue`,
+      );
+    } else {
+      console.warn(
+        `Error checking for county-specific queue "${countyQueueName}": ${error.message}`,
+      );
+    }
+  }
+
+  // Fall back to main queue
+  return mainQueueUrl;
+}
+
+/**
+ * Delete all remaining items from the DynamoDB table.
+ * This function scans the entire table and deletes all items in batches.
+ *
+ * @param {string} tableName - DynamoDB table name.
+ * @returns {Promise<number>} - Number of items deleted.
+ */
+async function deleteAllRemainingItems(tableName) {
+  console.log("\n=== Cleaning up all remaining items from DynamoDB ===");
+
+  const BATCH_SIZE = 25; // DynamoDB BatchWrite limit
+  let deletedCount = 0;
+  let lastEvaluatedKey = undefined;
+
+  do {
+    // Scan for all items
+    const scanParams = {
+      TableName: tableName,
+      ProjectionExpression: "PK, SK",
+      ExclusiveStartKey: lastEvaluatedKey,
+    };
+
+    const scanResponse = await dynamoClient.send(new ScanCommand(scanParams));
+
+    if (scanResponse.Items && scanResponse.Items.length > 0) {
+      console.log(`Found ${scanResponse.Items.length} items to delete`);
+
+      // Delete items in batches
+      for (let i = 0; i < scanResponse.Items.length; i += BATCH_SIZE) {
+        const batch = scanResponse.Items.slice(i, i + BATCH_SIZE);
+
+        const deleteRequests = batch.map((item) => ({
+          DeleteRequest: {
+            Key: {
+              PK: item.PK,
+              SK: item.SK,
+            },
+          },
+        }));
+
+        await dynamoClient.send(
+          new BatchWriteCommand({
+            RequestItems: {
+              [tableName]: deleteRequests,
+            },
+          }),
+        );
+
+        deletedCount += batch.length;
+        console.log(`Deleted ${deletedCount} items so far...`);
+      }
+    }
+
+    lastEvaluatedKey = scanResponse.LastEvaluatedKey;
+  } while (lastEvaluatedKey);
+
+  console.log(`✓ Total items deleted: ${deletedCount}`);
+  return deletedCount;
 }
 
 /**
@@ -133,10 +268,14 @@ async function getFailedExecutions(
  *
  * @param {import("./errors.mjs").FailedExecutionItem} execution - Execution to re-queue.
  * @param {string} tableName - DynamoDB table name.
- * @param {string} workflowQueueUrl - SQS queue URL for workflow.
+ * @param {string} mainWorkflowQueueUrl - Main SQS queue URL for workflow.
  * @returns {Promise<{ success: boolean, errorHashes?: string[] }>}
  */
-async function processSingleExecution(execution, tableName, workflowQueueUrl) {
+async function processSingleExecution(
+  execution,
+  tableName,
+  mainWorkflowQueueUrl,
+) {
   console.log(
     `\n=== Re-queuing execution ${execution.executionId} (${execution.county}) ===`,
   );
@@ -154,7 +293,13 @@ async function processSingleExecution(execution, tableName, workflowQueueUrl) {
   console.log(`Using original source CSV: s3://${bucket}/${key}`);
 
   try {
-    // Step 2: Create S3 event message (format expected by workflow)
+    // Step 2: Resolve the correct queue URL based on county
+    const targetQueueUrl = await resolveQueueUrl(
+      execution.county,
+      mainWorkflowQueueUrl,
+    );
+
+    // Step 3: Create S3 event message (format expected by workflow)
     const s3EventMessage = {
       s3: {
         bucket: {
@@ -166,11 +311,11 @@ async function processSingleExecution(execution, tableName, workflowQueueUrl) {
       },
     };
 
-    // Step 3: Send message to workflow queue
-    console.log(`Sending message to workflow queue: ${workflowQueueUrl}`);
+    // Step 4: Send message to the resolved queue
+    console.log(`Sending message to queue: ${targetQueueUrl}`);
     await sqsClient.send(
       new SendMessageCommand({
-        QueueUrl: workflowQueueUrl,
+        QueueUrl: targetQueueUrl,
         MessageBody: JSON.stringify(s3EventMessage),
       }),
     );
@@ -387,6 +532,22 @@ async function main() {
       }
     } else {
       console.log("No error hashes collected, skipping aggregate cleanup");
+    }
+
+    // Step 6: Delete all remaining items from DynamoDB
+    try {
+      const remainingItemsDeleted = await deleteAllRemainingItems(tableName);
+      console.log(
+        `✓ Cleanup complete: ${remainingItemsDeleted} remaining item(s) deleted from DynamoDB`,
+      );
+    } catch (cleanupError) {
+      console.error(
+        `Failed to delete remaining items from DynamoDB:`,
+        cleanupError instanceof Error
+          ? cleanupError.message
+          : String(cleanupError),
+      );
+      // Don't fail the entire workflow if final cleanup fails
     }
 
     console.log("\n=== Re-queue workflow summary ===");
