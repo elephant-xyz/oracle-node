@@ -190,6 +190,19 @@ Resources:
                 Condition:
                   StringEquals:
                     aws:CalledViaLast: bedrock.amazonaws.com
+        - PolicyName: PrepareRuntimeCodeBuildCloudWatch
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - cloudwatch:PutMetricData
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    cloudwatch:namespace:
+                      - AutoRepair
+                      - ExecutionRestart
 
       Tags:
         - Key: Environment
@@ -245,6 +258,9 @@ Resources:
           - Name: DEFAULT_DLQ_URL
             Type: PLAINTEXT
             Value: !Ref DefaultDlqUrl
+          - Name: AWS_REGION
+            Type: PLAINTEXT
+            Value: !Ref AWS::Region
       LogsConfig:
         CloudWatchLogs:
           GroupName: !Sub "/aws/codebuild/${EnvironmentName}-prepare-runtime"

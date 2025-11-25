@@ -28,12 +28,12 @@ DASHBOARD_BODY=$(cat <<EOF
       "properties": {
         "metrics": [
           ["${AUTOREPAIR_NAMESPACE}", "AutoRepairWorkflowSuccess", {"stat": "Sum", "label": "Success"}],
-          ["...", "AutoRepairFailure", {"stat": "Sum", "label": "Failure"}]
+          ["${AUTOREPAIR_NAMESPACE}", "AutoRepairWorkflowFailure", {"stat": "Sum", "label": "Failure"}]
         ],
-        "period": 3600,
+        "period": 300,
         "stat": "Sum",
         "region": "${REGION}",
-        "title": "Auto-Repair Success vs Failure",
+        "title": "Auto-Repair Success vs Failure (Note: Add dimensions in console if no data)",
         "view": "timeSeries",
         "stacked": false,
         "yAxis": {
@@ -52,9 +52,9 @@ DASHBOARD_BODY=$(cat <<EOF
       "height": 6,
       "properties": {
         "metrics": [
-          ["${AUTOREPAIR_NAMESPACE}", "AutoRepairErrorsFixed", {"stat": "Sum", "label": "Errors Fixed"}]
+          ["SEARCH('${AUTOREPAIR_NAMESPACE} \"AutoRepairErrorsFixed\"', 'Sum')"]
         ],
-        "period": 3600,
+        "period": 300,
         "stat": "Sum",
         "region": "${REGION}",
         "title": "Total Errors Fixed",
@@ -75,10 +75,9 @@ DASHBOARD_BODY=$(cat <<EOF
       "height": 6,
       "properties": {
         "metrics": [
-          ["${AUTOREPAIR_NAMESPACE}", "AutoRepairFailure", "FailureReason", "MaxRetriesExceeded", {"stat": "Sum", "label": "Max Retries"}],
-          ["${AUTOREPAIR_NAMESPACE}", "AutoRepairFailure", "FailureReason", "NoErrorsUri", {"stat": "Sum", "label": "No Errors URI"}]
+          ["SEARCH('${AUTOREPAIR_NAMESPACE} \"AutoRepairWorkflowFailure\"', 'Sum')"]
         ],
-        "period": 3600,
+        "period": 300,
         "stat": "Sum",
         "region": "${REGION}",
         "title": "Failure Reasons",
@@ -100,10 +99,10 @@ DASHBOARD_BODY=$(cat <<EOF
       "height": 6,
       "properties": {
         "metrics": [
-          ["${EXECUTIONRESTART_NAMESPACE}", "ExecutionRestartSuccess", {"stat": "Sum", "label": "Success"}],
-          ["...", "ExecutionRestartFailure", {"stat": "Sum", "label": "Failure"}]
+          ["SEARCH('${EXECUTIONRESTART_NAMESPACE} \"ExecutionRestartSuccess\"', 'Sum')"],
+          ["SEARCH('${EXECUTIONRESTART_NAMESPACE} \"ExecutionRestartFailure\"', 'Sum')"]
         ],
-        "period": 3600,
+        "period": 300,
         "stat": "Sum",
         "region": "${REGION}",
         "title": "Execution Restart Success vs Failure",
@@ -125,9 +124,9 @@ DASHBOARD_BODY=$(cat <<EOF
       "height": 6,
       "properties": {
         "metrics": [
-          ["${EXECUTIONRESTART_NAMESPACE}", "ExecutionRestartProcessed", {"stat": "Sum", "label": "Executions Processed"}]
+          ["SEARCH('${EXECUTIONRESTART_NAMESPACE} \"ExecutionRestartProcessed\"', 'Sum')"]
         ],
-        "period": 3600,
+        "period": 300,
         "stat": "Sum",
         "region": "${REGION}",
         "title": "Executions Processed",
@@ -148,10 +147,9 @@ DASHBOARD_BODY=$(cat <<EOF
       "height": 6,
       "properties": {
         "metrics": [
-          ["${EXECUTIONRESTART_NAMESPACE}", "ExecutionRestartFailure", "FailureReason", "PostProcessingFailed", {"stat": "Sum", "label": "Post Processing Failed"}],
-          ["${EXECUTIONRESTART_NAMESPACE}", "ExecutionRestartFailure", "FailureReason", "LambdaInvocationFailed", {"stat": "Sum", "label": "Lambda Invocation Failed"}]
+          ["SEARCH('${EXECUTIONRESTART_NAMESPACE} \"ExecutionRestartFailure\"', 'Sum')"]
         ],
-        "period": 3600,
+        "period": 300,
         "stat": "Sum",
         "region": "${REGION}",
         "title": "Execution Restart Failure Reasons",
@@ -173,9 +171,9 @@ DASHBOARD_BODY=$(cat <<EOF
       "height": 6,
       "properties": {
         "metrics": [
-          ["${EXECUTIONRESTART_NAMESPACE}", "ExecutionRestartTransactionItemsSent", {"stat": "Sum", "label": "Transaction Items Sent"}]
+          ["SEARCH('${EXECUTIONRESTART_NAMESPACE} \"ExecutionRestartTransactionItemsSent\"', 'Sum')"]
         ],
-        "period": 3600,
+        "period": 300,
         "stat": "Sum",
         "region": "${REGION}",
         "title": "Transaction Items Sent",
@@ -196,9 +194,9 @@ DASHBOARD_BODY=$(cat <<EOF
       "height": 6,
       "properties": {
         "metrics": [
-          ["${EXECUTIONRESTART_NAMESPACE}", "ExecutionRestartUnrecoverable", {"stat": "Sum", "label": "Unrecoverable"}]
+          ["SEARCH('${EXECUTIONRESTART_NAMESPACE} \"ExecutionRestartUnrecoverable\"', 'Sum')"]
         ],
-        "period": 3600,
+        "period": 300,
         "stat": "Sum",
         "region": "${REGION}",
         "title": "Unrecoverable Executions",

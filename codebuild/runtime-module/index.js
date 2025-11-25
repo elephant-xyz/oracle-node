@@ -43,7 +43,10 @@ const dynamoClient = DynamoDBDocumentClient.from(new DynamoDBClient({}), {
 });
 const lambdaClient = new LambdaClient({});
 const sqsClient = new SQSClient({});
-const cloudWatchClient = new CloudWatchClient({});
+// Use AWS_REGION from environment if available, otherwise use default
+const cloudWatchClient = new CloudWatchClient({
+  region: process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION,
+});
 
 /**
  * Ensure required environment variables are present.
@@ -1489,24 +1492,14 @@ async function main() {
     });
     console.log(`Execution ${execution.executionId} deleted.`);
 
-    // Publish failure metrics
-    await publishMetric({
-      metricName: "AutoRepairFailure",
-      dimensions: {
-        County: execution.county,
-        ErrorType: isMvlScenario ? "MVL" : "SchemaValidation",
-        FailureReason:
-          attempt >= maxAttempts ? "MaxRetriesExceeded" : "NoErrorsUri",
-      },
-    });
-
     // Publish final failure metric before throwing
     await publishMetric({
       metricName: "AutoRepairWorkflowFailure",
       dimensions: {
         County: execution.county,
         ErrorType: isMvlScenario ? "MVL" : "SchemaValidation",
-        FinalFailure: "true",
+        FailureReason:
+          attempt >= maxAttempts ? "MaxRetriesExceeded" : "NoErrorsUri",
       },
     });
 

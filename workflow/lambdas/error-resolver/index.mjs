@@ -57,7 +57,10 @@ const DEFAULT_CLIENT = DynamoDBDocumentClient.from(new DynamoDBClient({}), {
 
 const lambdaClient = new LambdaClient({});
 const sqsClient = new SQSClient({});
-const cloudWatchClient = new CloudWatchClient({});
+// Use AWS_REGION from environment if available, otherwise use default
+const cloudWatchClient = new CloudWatchClient({
+  region: process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION,
+});
 
 /**
  * Ensure required environment variables are present.
@@ -116,8 +119,7 @@ async function publishMetric({
       `Published metric: ${namespace}/${metricName} = ${value} (${unit})`,
     );
   } catch (error) {
-    // Log but don't throw - metrics should not break the workflow
-    console.error(`Failed to publish metric ${metricName}:`, error.message);
+    // Silently fail - metrics are optional and should not break the workflow
   }
 }
 
