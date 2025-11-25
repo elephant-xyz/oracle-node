@@ -1389,7 +1389,24 @@ async function main() {
         
         return;
       } catch (error) {
-        console.error(`Attempt ${attempt} failed:`, error.message);
+        // Enhanced error logging for each attempt
+        console.error("========================================");
+        console.error(`AUTO-REPAIR ATTEMPT ${attempt}/${maxAttempts} FAILED`);
+        console.error("========================================");
+        console.error("Error Message:", error.message);
+        console.error("Error Stack:", error.stack);
+        console.error("Execution ID:", execution.executionId);
+        console.error("County:", execution.county);
+        console.error("========================================");
+
+        // Publish attempt failure metric
+        await publishMetric({
+          metricName: "AutoRepairAttemptFailure",
+          dimensions: {
+            County: execution.county,
+            Attempt: String(attempt),
+          },
+        });
 
         // Try to extract new errors S3 URI from error message
         const newErrorsS3Uri = extractErrorsS3Uri(error.message);
@@ -1520,9 +1537,45 @@ async function main() {
       },
     });
 
+    // Publish final failure metric before throwing
+    await publishMetric({
+      metricName: "AutoRepairWorkflowFailure",
+      dimensions: {
+        County: execution.county,
+        ErrorType: isMvlScenario ? "MVL" : "SchemaValidation",
+        FinalFailure: "true",
+      },
+    });
+
     throw new Error(`Auto-repair failed after ${attempt} attempts`);
   } catch (error) {
-    console.error("Auto-repair workflow failed:", error);
+    // Enhanced error logging with full details
+    const errorDetails = {
+      message: error.message,
+      stack: error.stack,
+      name: error.name,
+      timestamp: new Date().toISOString(),
+      component: "auto-repair",
+    };
+
+    console.error("========================================");
+    console.error("AUTO-REPAIR WORKFLOW FAILED");
+    console.error("========================================");
+    console.error(JSON.stringify(errorDetails, null, 2));
+    console.error("========================================");
+
+    // Publish error metric for unhandled errors
+    try {
+      await publishMetric({
+        metricName: "AutoRepairWorkflowError",
+        dimensions: {
+          ErrorType: error.name || "Unknown",
+        },
+      });
+    } catch (metricError) {
+      console.error("Failed to publish error metric:", metricError.message);
+    }
+
     process.exit(1);
   }
 }

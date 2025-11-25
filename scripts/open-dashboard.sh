@@ -2,7 +2,7 @@
 # Open CloudWatch Dashboard in browser
 # Usage: ./open-dashboard.sh [dashboard-name] [region]
 
-DASHBOARD_NAME="${1:-AutoRepair-Metrics}"
+DASHBOARD_NAME="${1:-ErrorRecovery-Metrics}"
 REGION="${2:-${AWS_REGION:-us-east-1}}"
 
 # URL encode the dashboard name (replace spaces with %20)
