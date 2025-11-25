@@ -4,8 +4,8 @@
       "type": "metric",
       "properties": {
         "metrics": [
-          ["AutoRepair", "AutoRepairWorkflowSuccess", {"stat": "Sum"}],
-          [".", "AutoRepairFailure", {"stat": "Sum"}]
+          ["AutoRepair", "AutoRepairWorkflowSuccess", { "stat": "Sum" }],
+          [".", "AutoRepairFailure", { "stat": "Sum" }]
         ],
         "period": 3600,
         "stat": "Sum",
@@ -22,8 +22,12 @@
       "type": "metric",
       "properties": {
         "metrics": [
-          ["AutoRepair", "AutoRepairSuccess", {"stat": "Sum", "dimensions": {"ErrorType": "SchemaValidation"}}],
-          ["...", {"stat": "Sum", "dimensions": {"ErrorType": "MVL"}}]
+          [
+            "AutoRepair",
+            "AutoRepairSuccess",
+            { "stat": "Sum", "dimensions": { "ErrorType": "SchemaValidation" } }
+          ],
+          ["...", { "stat": "Sum", "dimensions": { "ErrorType": "MVL" } }]
         ],
         "period": 3600,
         "stat": "Sum",
@@ -40,7 +44,7 @@
       "type": "metric",
       "properties": {
         "metrics": [
-          ["AutoRepair", "AutoRepairAttempts", {"stat": "Average"}]
+          ["AutoRepair", "AutoRepairAttempts", { "stat": "Average" }]
         ],
         "period": 3600,
         "stat": "Average",
@@ -56,9 +60,7 @@
     {
       "type": "metric",
       "properties": {
-        "metrics": [
-          ["AutoRepair", "AutoRepairErrorsFixed", {"stat": "Sum"}]
-        ],
+        "metrics": [["AutoRepair", "AutoRepairErrorsFixed", { "stat": "Sum" }]],
         "period": 3600,
         "stat": "Sum",
         "region": "us-east-1",
@@ -74,7 +76,7 @@
       "type": "metric",
       "properties": {
         "metrics": [
-          ["AutoRepair", "AutoRepairWorkflowStarted", {"stat": "Sum"}]
+          ["AutoRepair", "AutoRepairWorkflowStarted", { "stat": "Sum" }]
         ],
         "period": 3600,
         "stat": "Sum",
@@ -89,4 +91,3 @@
     }
   ]
 }
-

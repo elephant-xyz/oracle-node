@@ -1378,7 +1378,7 @@ async function main() {
         });
 
         console.log("Auto-repair workflow completed successfully!");
-        
+
         // Publish overall success metric
         await publishMetric({
           metricName: "AutoRepairWorkflowSuccess",
@@ -1386,7 +1386,7 @@ async function main() {
             County: execution.county,
           },
         });
-        
+
         return;
       } catch (error) {
         // Enhanced error logging for each attempt
@@ -1524,7 +1524,8 @@ async function main() {
       dimensions: {
         County: execution.county,
         ErrorType: isMvlScenario ? "MVL" : "SchemaValidation",
-        FailureReason: attempt >= maxAttempts ? "MaxRetriesExceeded" : "NoErrorsUri",
+        FailureReason:
+          attempt >= maxAttempts ? "MaxRetriesExceeded" : "NoErrorsUri",
       },
     });
     await publishMetric({
