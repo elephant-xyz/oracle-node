@@ -28,12 +28,15 @@ DASHBOARD_BODY=$(cat <<EOF
       "properties": {
         "metrics": [
           ["${AUTOREPAIR_NAMESPACE}", "AutoRepairWorkflowSuccess", {"stat": "Sum", "label": "Success"}],
-          ["${AUTOREPAIR_NAMESPACE}", "AutoRepairWorkflowFailure", {"stat": "Sum", "label": "Failure"}]
+          ["${AUTOREPAIR_NAMESPACE}", "AutoRepairWorkflowFailure", "County", "Miami Dade", "ErrorType", "SchemaValidation", "FailureReason", "NoErrorsUri", {"stat": "Sum", "label": "Failure - NoErrorsUri"}],
+          ["${AUTOREPAIR_NAMESPACE}", "AutoRepairWorkflowFailure", "County", "Miami Dade", "ErrorType", "SchemaValidation", "FinalFailure", "true", {"stat": "Sum", "label": "Failure - Final"}],
+          ["${AUTOREPAIR_NAMESPACE}", "AutoRepairWorkflowFailure", "County", "Miami Dade", "ErrorType", "SVL", "FailureReason", "NoErrorsUri", {"stat": "Sum", "label": "Failure - NoErrorsUri (SVL)"}],
+          ["${AUTOREPAIR_NAMESPACE}", "AutoRepairWorkflowFailure", "County", "Miami Dade", "ErrorType", "SVL", "FinalFailure", "true", {"stat": "Sum", "label": "Failure - Final (SVL)"}]
         ],
         "period": 300,
         "stat": "Sum",
         "region": "${REGION}",
-        "title": "Auto-Repair Success vs Failure (Note: Add dimensions in console if no data)",
+        "title": "Auto-Repair Success vs Failure",
         "view": "timeSeries",
         "stacked": false,
         "yAxis": {
@@ -52,7 +55,9 @@ DASHBOARD_BODY=$(cat <<EOF
       "height": 6,
       "properties": {
         "metrics": [
-          ["SEARCH('${AUTOREPAIR_NAMESPACE} \"AutoRepairErrorsFixed\"', 'Sum')"]
+          ["${AUTOREPAIR_NAMESPACE}", "AutoRepairErrorsFixed", "County", "Miami Dade", "ErrorType", "SchemaValidation", {"stat": "Sum", "label": "Errors Fixed (SchemaValidation)"}],
+          ["${AUTOREPAIR_NAMESPACE}", "AutoRepairErrorsFixed", "County", "Miami Dade", "ErrorType", "SVL", {"stat": "Sum", "label": "Errors Fixed (SVL)"}],
+          ["${AUTOREPAIR_NAMESPACE}", "AutoRepairErrorsFixed", "County", "Miami Dade", "ErrorType", "MVL", {"stat": "Sum", "label": "Errors Fixed (MVL)"}]
         ],
         "period": 300,
         "stat": "Sum",
@@ -75,7 +80,11 @@ DASHBOARD_BODY=$(cat <<EOF
       "height": 6,
       "properties": {
         "metrics": [
-          ["SEARCH('${AUTOREPAIR_NAMESPACE} \"AutoRepairWorkflowFailure\"', 'Sum')"]
+          ["${AUTOREPAIR_NAMESPACE}", "AutoRepairWorkflowFailure", "County", "Miami Dade", "ErrorType", "SchemaValidation", "FailureReason", "NoErrorsUri", {"stat": "Sum", "label": "NoErrorsUri"}],
+          ["${AUTOREPAIR_NAMESPACE}", "AutoRepairWorkflowFailure", "County", "Miami Dade", "ErrorType", "SchemaValidation", "FinalFailure", "true", {"stat": "Sum", "label": "FinalFailure"}],
+          ["${AUTOREPAIR_NAMESPACE}", "AutoRepairWorkflowFailure", "County", "Miami Dade", "ErrorType", "SchemaValidation", "FailureReason", "MaxRetriesExceeded", {"stat": "Sum", "label": "MaxRetriesExceeded"}],
+          ["${AUTOREPAIR_NAMESPACE}", "AutoRepairWorkflowFailure", "County", "Miami Dade", "ErrorType", "SVL", "FailureReason", "NoErrorsUri", {"stat": "Sum", "label": "NoErrorsUri (SVL)"}],
+          ["${AUTOREPAIR_NAMESPACE}", "AutoRepairWorkflowFailure", "County", "Miami Dade", "ErrorType", "SVL", "FinalFailure", "true", {"stat": "Sum", "label": "FinalFailure (SVL)"}]
         ],
         "period": 300,
         "stat": "Sum",
@@ -99,8 +108,8 @@ DASHBOARD_BODY=$(cat <<EOF
       "height": 6,
       "properties": {
         "metrics": [
-          ["SEARCH('${EXECUTIONRESTART_NAMESPACE} \"ExecutionRestartSuccess\"', 'Sum')"],
-          ["SEARCH('${EXECUTIONRESTART_NAMESPACE} \"ExecutionRestartFailure\"', 'Sum')"]
+          ["${EXECUTIONRESTART_NAMESPACE}", "ExecutionRestartSuccess", {"stat": "Sum", "label": "Success"}],
+          ["${EXECUTIONRESTART_NAMESPACE}", "ExecutionRestartFailure", {"stat": "Sum", "label": "Failure"}]
         ],
         "period": 300,
         "stat": "Sum",
@@ -124,7 +133,7 @@ DASHBOARD_BODY=$(cat <<EOF
       "height": 6,
       "properties": {
         "metrics": [
-          ["SEARCH('${EXECUTIONRESTART_NAMESPACE} \"ExecutionRestartProcessed\"', 'Sum')"]
+          ["${EXECUTIONRESTART_NAMESPACE}", "ExecutionRestartProcessed", {"stat": "Sum", "label": "Executions Processed"}]
         ],
         "period": 300,
         "stat": "Sum",
@@ -147,7 +156,7 @@ DASHBOARD_BODY=$(cat <<EOF
       "height": 6,
       "properties": {
         "metrics": [
-          ["SEARCH('${EXECUTIONRESTART_NAMESPACE} \"ExecutionRestartFailure\"', 'Sum')"]
+          ["${EXECUTIONRESTART_NAMESPACE}", "ExecutionRestartFailure", {"stat": "Sum", "label": "All Failures"}]
         ],
         "period": 300,
         "stat": "Sum",
@@ -171,7 +180,7 @@ DASHBOARD_BODY=$(cat <<EOF
       "height": 6,
       "properties": {
         "metrics": [
-          ["SEARCH('${EXECUTIONRESTART_NAMESPACE} \"ExecutionRestartTransactionItemsSent\"', 'Sum')"]
+          ["${EXECUTIONRESTART_NAMESPACE}", "ExecutionRestartTransactionItemsSent", {"stat": "Sum", "label": "Transaction Items Sent"}]
         ],
         "period": 300,
         "stat": "Sum",
@@ -194,7 +203,7 @@ DASHBOARD_BODY=$(cat <<EOF
       "height": 6,
       "properties": {
         "metrics": [
-          ["SEARCH('${EXECUTIONRESTART_NAMESPACE} \"ExecutionRestartUnrecoverable\"', 'Sum')"]
+          ["${EXECUTIONRESTART_NAMESPACE}", "ExecutionRestartUnrecoverable", {"stat": "Sum", "label": "Unrecoverable"}]
         ],
         "period": 300,
         "stat": "Sum",
