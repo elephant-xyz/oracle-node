@@ -23,7 +23,7 @@ import {
   markErrorsAsMaybeSolved,
   markErrorsAsMaybeUnrecoverable,
   normalizeErrors,
-  queryExecutionWithMostErrors,
+  queryExecutionWithLeastErrors,
 } from "./errors.mjs";
 
 const DEFAULT_DLQ_URL = process.env.DEFAULT_DLQ_URL;
@@ -112,8 +112,8 @@ function resolveTransformLocation({ countyName, transformPrefixUri }) {
  * @returns {Promise<import("../../workflow/lambdas/post/errors.mjs").FailedExecutionItem | null>} - The execution with most errors, or null if none found.
  */
 async function getExecutionWithMostErrors(tableName) {
-  console.log(`Querying DynamoDB for execution with most errors...`);
-  return await queryExecutionWithMostErrors({
+  console.log(`Querying DynamoDB for execution with least errors...`);
+  return await queryExecutionWithLeastErrors({
     tableName,
     documentClient: dynamoClient,
   });

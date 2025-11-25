@@ -526,7 +526,7 @@ function buildErrorSk(errorHash) {
  * @param {DynamoDBDocumentClient} [params.documentClient] - Optional document client (uses default if not provided).
  * @returns {Promise<FailedExecutionItem | null>} - The execution with most errors, or null if none found.
  */
-export async function queryExecutionWithMostErrors({
+export async function queryExecutionWithLeastErrors({
   tableName,
   documentClient,
 }) {
@@ -547,7 +547,7 @@ export async function queryExecutionWithMostErrors({
         ":status": "failed",
         ":entityType": "FailedExecution",
       },
-      ScanIndexForward: false,
+      ScanIndexForward: true,
       Limit: 1,
     }),
   );
