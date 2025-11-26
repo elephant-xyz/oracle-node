@@ -3,6 +3,7 @@ import {
   DynamoDBDocumentClient,
   UpdateCommand,
   QueryCommand,
+  GetCommand,
 } from "@aws-sdk/lib-dynamodb";
 import { unmarshall } from "@aws-sdk/util-dynamodb";
 import { LambdaClient, InvokeCommand } from "@aws-sdk/client-lambda";
@@ -84,6 +85,7 @@ function requireEnv(name) {
  * @param {number} params.value - Metric value (default: 1).
  * @param {string} params.unit - Unit of measurement (default: "Count").
  * @param {Record<string, string>} [params.dimensions] - Optional dimensions for the metric.
+ * @param {string} [params.namespace] - Optional namespace override (defaults to ExecutionRestart).
  * @returns {Promise<void>}
  */
 async function publishMetric({
@@ -91,9 +93,10 @@ async function publishMetric({
   value = 1,
   unit = "Count",
   dimensions = {},
+  namespace,
 }) {
-  const namespace =
-    process.env.CLOUDWATCH_METRIC_NAMESPACE || "ExecutionRestart";
+  const metricNamespace =
+    namespace || process.env.CLOUDWATCH_METRIC_NAMESPACE || "ExecutionRestart";
   const metricData = {
     MetricName: metricName,
     Value: value,
@@ -111,12 +114,12 @@ async function publishMetric({
   try {
     await cloudWatchClient.send(
       new PutMetricDataCommand({
-        Namespace: namespace,
+        Namespace: metricNamespace,
         MetricData: [metricData],
       }),
     );
     console.log(
-      `Published metric: ${namespace}/${metricName} = ${value} (${unit})`,
+      `Published metric: ${metricNamespace}/${metricName} = ${value} (${unit})`,
     );
   } catch (error) {
     // Silently fail - metrics are optional and should not break the workflow
@@ -187,6 +190,7 @@ async function getCountyDlqUrl(county) {
 
 /**
  * Atomically decrement openErrorCount for a failed execution.
+ * Only decrements if openErrorCount > 0 to prevent negative values.
  *
  * @param {object} params - Update parameters.
  * @param {DynamoDBDocumentClient} params.client - DynamoDB document client.
@@ -196,39 +200,68 @@ async function getCountyDlqUrl(county) {
  */
 async function decrementOpenErrorCount({ client, tableName, executionId }) {
   const now = new Date().toISOString();
-  const response = await client.send(
-    new UpdateCommand({
-      TableName: tableName,
-      Key: {
-        PK: buildExecutionPk(executionId),
-        SK: buildExecutionSk(executionId),
-      },
-      UpdateExpression:
-        "ADD #openErrorCount :decrement SET #updatedAt = :updatedAt",
-      ExpressionAttributeNames: {
-        "#openErrorCount": "openErrorCount",
-        "#updatedAt": "updatedAt",
-      },
-      ExpressionAttributeValues: {
-        ":decrement": -1,
-        ":updatedAt": now,
-      },
-      ReturnValues: "ALL_NEW",
-    }),
-  );
 
-  if (!response.Attributes) {
-    throw new Error(
-      `Failed to update execution ${executionId}: no attributes returned`,
+  try {
+    // Attempt to decrement atomically, but only if openErrorCount > 0
+    const response = await client.send(
+      new UpdateCommand({
+        TableName: tableName,
+        Key: {
+          PK: buildExecutionPk(executionId),
+          SK: buildExecutionSk(executionId),
+        },
+        UpdateExpression:
+          "ADD #openErrorCount :decrement SET #updatedAt = :updatedAt",
+        ConditionExpression: "#openErrorCount > :zero",
+        ExpressionAttributeNames: {
+          "#openErrorCount": "openErrorCount",
+          "#updatedAt": "updatedAt",
+        },
+        ExpressionAttributeValues: {
+          ":decrement": -1,
+          ":zero": 0,
+          ":updatedAt": now,
+        },
+        ReturnValues: "ALL_NEW",
+      }),
     );
+
+    if (!response.Attributes) {
+      throw new Error(
+        `Failed to update execution ${executionId}: no attributes returned`,
+      );
+    }
+
+    const execution = /** @type {FailedExecutionItem} */ (response.Attributes);
+
+    return {
+      openErrorCount: execution.openErrorCount ?? 0,
+      status: execution.status ?? "failed",
+    };
+  } catch (error) {
+    // If condition check failed (count is already <= 0), get current values and return them
+    if (
+      error instanceof Error &&
+      (error.name === "ConditionalCheckFailedException" ||
+        error.message?.includes("ConditionalCheckFailedException") ||
+        error.message?.includes("conditional"))
+    ) {
+      // Count is already 0 or negative, get current execution and return without decrementing
+      const currentExecution = await getExecution({
+        client,
+        tableName,
+        executionId,
+      });
+
+      return {
+        openErrorCount: currentExecution.openErrorCount ?? 0,
+        status: currentExecution.status ?? "failed",
+      };
+    }
+
+    // Re-throw other errors
+    throw error;
   }
-
-  const execution = /** @type {FailedExecutionItem} */ (response.Attributes);
-
-  return {
-    openErrorCount: execution.openErrorCount ?? 0,
-    status: execution.status ?? "failed",
-  };
 }
 
 /**
@@ -242,22 +275,20 @@ async function decrementOpenErrorCount({ client, tableName, executionId }) {
  */
 async function getExecution({ client, tableName, executionId }) {
   const response = await client.send(
-    new QueryCommand({
+    new GetCommand({
       TableName: tableName,
-      KeyConditionExpression: "PK = :pk AND SK = :sk",
-      ExpressionAttributeValues: {
-        ":pk": buildExecutionPk(executionId),
-        ":sk": buildExecutionSk(executionId),
+      Key: {
+        PK: buildExecutionPk(executionId),
+        SK: buildExecutionSk(executionId),
       },
-      Limit: 1,
     }),
   );
 
-  if (!response.Items || response.Items.length === 0) {
+  if (!response.Item) {
     throw new Error(`Execution ${executionId} not found`);
   }
 
-  return /** @type {FailedExecutionItem} */ (response.Items[0]);
+  return /** @type {FailedExecutionItem} */ (response.Item);
 }
 
 /**
@@ -598,13 +629,6 @@ export const handler = async (event) => {
       }),
     );
 
-    // Publish metric for executions processed
-    await publishMetric({
-      metricName: "ExecutionRestartProcessed",
-      value: executionGroups.size,
-      dimensions: {},
-    });
-
     // Process each execution group
     // Track executions that have been restarted to avoid duplicate restarts
     /** @type {Set<string>} */
@@ -654,14 +678,20 @@ export const handler = async (event) => {
             }),
           );
 
-          // If count reached 0 and status is still "failed", check error statuses and decide next action
-          if (openErrorCount === 0 && status === "failed") {
+          // If count reached 0 or below and status is "failed" or "maybeSolved", check error statuses and decide next action
+          // Also handle cases where count is negative (due to multiple decrements) but status indicates errors are solved
+          if (
+            openErrorCount <= 0 &&
+            (status === "failed" || status === "maybeSolved")
+          ) {
             console.log(
               JSON.stringify({
                 ...logBase,
                 level: "info",
                 msg: "all_errors_resolved_checking_statuses",
                 executionId,
+                openErrorCount,
+                status,
               }),
             );
 
@@ -687,13 +717,6 @@ export const handler = async (event) => {
               }),
             );
 
-            // Get execution details without updating status first
-            const execution = await getExecution({
-              client,
-              tableName,
-              executionId,
-            });
-
             // If any errors are maybeUnrecoverable, send to DLQ instead of restarting
             if (hasUnrecoverable) {
               console.log(
@@ -705,6 +728,12 @@ export const handler = async (event) => {
                 }),
               );
 
+              const execution = await getExecution({
+                client,
+                tableName,
+                executionId,
+              });
+
               if (!execution.source) {
                 throw new Error(
                   `Execution ${executionId} has unrecoverable errors but source information is missing, cannot send to DLQ`,
@@ -713,14 +742,6 @@ export const handler = async (event) => {
 
               const dlqUrl = await getCountyDlqUrl(execution.county);
               await sendToDlq(dlqUrl, execution.source);
-
-              // Publish metric for unrecoverable errors
-              await publishMetric({
-                metricName: "ExecutionRestartUnrecoverable",
-                dimensions: {
-                  County: execution.county,
-                },
-              });
 
               console.log(
                 JSON.stringify({
@@ -738,14 +759,15 @@ export const handler = async (event) => {
               continue;
             }
 
-            // If not all errors are solved, skip restart (shouldn't happen if count is 0, but defensive check)
+            // If not all errors are solved, skip restart (shouldn't happen if count is <= 0, but defensive check)
             if (!allSolved) {
               console.log(
                 JSON.stringify({
                   ...logBase,
                   level: "warn",
-                  msg: "execution_has_unsolved_errors_but_count_is_zero",
+                  msg: "execution_has_unsolved_errors_but_count_is_zero_or_negative",
                   executionId,
+                  openErrorCount,
                 }),
               );
               restartedExecutions.add(executionId);
@@ -762,12 +784,21 @@ export const handler = async (event) => {
               }),
             );
 
-            // Update execution status to "maybeSolved" before restarting
-            const updatedExecution = await updateExecutionStatusToMaybeSolved({
-              client,
-              tableName,
-              executionId,
-            });
+            // Get execution details (update status to "maybeSolved" if not already)
+            let updatedExecution;
+            if (status === "maybeSolved") {
+              updatedExecution = await getExecution({
+                client,
+                tableName,
+                executionId,
+              });
+            } else {
+              updatedExecution = await updateExecutionStatusToMaybeSolved({
+                client,
+                tableName,
+                executionId,
+              });
+            }
 
             if (!updatedExecution.preparedS3Uri) {
               throw new Error(
@@ -809,16 +840,9 @@ export const handler = async (event) => {
                   resultPayload.transactionItems,
                 );
 
-                // Publish success metrics
+                // Publish success metric
                 await publishMetric({
                   metricName: "ExecutionRestartSuccess",
-                  dimensions: {
-                    County: updatedExecution.county,
-                  },
-                });
-                await publishMetric({
-                  metricName: "ExecutionRestartTransactionItemsSent",
-                  value: resultPayload.transactionItems.length,
                   dimensions: {
                     County: updatedExecution.county,
                   },

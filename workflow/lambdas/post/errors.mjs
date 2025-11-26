@@ -548,7 +548,7 @@ export async function queryExecutionWithLeastErrors({
         ":entityType": "FailedExecution",
       },
       ScanIndexForward: true,
-      Limit: 1,
+      Limit: 100,
     }),
   );
 

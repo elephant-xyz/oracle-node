@@ -1,22 +1,247 @@
 #!/bin/bash
 # Create CloudWatch Dashboard for Auto-Repair and Execution Restart Metrics
-# Usage: ./create-auto-repair-dashboard.sh [dashboard-name] [region]
+# Usage: ./create-auto-repair-dashboard.sh [dashboard-name] [region] [stack-name] [step-function-name] [dynamodb-table-name]
 
 set -e
 
 DASHBOARD_NAME="${1:-ErrorRecovery-Metrics}"
 REGION="${2:-${AWS_REGION:-us-east-1}}"
+STACK_NAME="${3:-${AWS_STACK_NAME:-elephant-oracle-node}}"
+STEP_FUNCTION_NAME="${4:-}"
+DYNAMODB_TABLE_NAME="${5:-}"
+
 AUTOREPAIR_NAMESPACE="${AUTOREPAIR_METRIC_NAMESPACE:-AutoRepair}"
 EXECUTIONRESTART_NAMESPACE="${EXECUTIONRESTART_METRIC_NAMESPACE:-ExecutionRestart}"
+
+# Try to discover Step Function ARN from CloudFormation
+STEP_FUNCTION_ARN=""
+if [ -z "$STEP_FUNCTION_NAME" ]; then
+  echo "Discovering Step Function ARN from CloudFormation stack: ${STACK_NAME}..."
+  STEP_FUNCTION_ARN=$(aws cloudformation describe-stacks \
+    --stack-name "${STACK_NAME}" \
+    --region "${REGION}" \
+    --query "Stacks[0].Outputs[?OutputKey=='ElephantExpressStateMachineArn'].OutputValue" \
+    --output text 2>/dev/null || echo "")
+  
+  if [ -z "$STEP_FUNCTION_ARN" ] || [ "$STEP_FUNCTION_ARN" == "None" ]; then
+    echo "Warning: Could not discover Step Function ARN from CloudFormation. Trying to find by name pattern..."
+    # Try to find Step Function by listing all state machines and matching name pattern
+    ACCOUNT_ID=$(aws sts get-caller-identity --region "${REGION}" --query Account --output text 2>/dev/null || echo "")
+    if [ -n "$ACCOUNT_ID" ]; then
+      # List all state machines and find one matching "ElephantExpress" pattern
+      STEP_FUNCTION_ARN=$(aws stepfunctions list-state-machines \
+        --region "${REGION}" \
+        --output json 2>/dev/null | \
+        jq -r --arg account "$ACCOUNT_ID" --arg region "$REGION" \
+          '.stateMachines[] | select(.name | contains("ElephantExpress") or contains("Express")) | "arn:aws:states:\($region):\($account):stateMachine:\(.name)"' | \
+        head -1)
+      
+      if [ -z "$STEP_FUNCTION_ARN" ]; then
+        echo "Error: Could not find Step Function in account ${ACCOUNT_ID}. Please provide STEP_FUNCTION_NAME as 4th argument."
+        exit 1
+      else
+        STEP_FUNCTION_NAME=$(echo "$STEP_FUNCTION_ARN" | awk -F: '{print $NF}')
+        echo "Found Step Function: ${STEP_FUNCTION_NAME} (${STEP_FUNCTION_ARN})"
+      fi
+    else
+      echo "Error: Could not determine AWS account ID. Please provide STEP_FUNCTION_NAME as 4th argument."
+      exit 1
+    fi
+  else
+    # Extract name from ARN
+    STEP_FUNCTION_NAME=$(echo "$STEP_FUNCTION_ARN" | awk -F: '{print $NF}')
+  fi
+else
+  # If name provided, try to get ARN from CloudFormation first, then construct it
+  STEP_FUNCTION_ARN=$(aws cloudformation describe-stacks \
+    --stack-name "${STACK_NAME}" \
+    --region "${REGION}" \
+    --query "Stacks[0].Outputs[?OutputKey=='ElephantExpressStateMachineArn'].OutputValue" \
+    --output text 2>/dev/null || echo "")
+  
+  if [ -z "$STEP_FUNCTION_ARN" ] || [ "$STEP_FUNCTION_ARN" == "None" ]; then
+    # Construct ARN from account ID and provided name
+    ACCOUNT_ID=$(aws sts get-caller-identity --region "${REGION}" --query Account --output text 2>/dev/null || echo "")
+    if [ -z "$ACCOUNT_ID" ]; then
+      echo "Error: Could not determine AWS account ID."
+      exit 1
+    fi
+    STEP_FUNCTION_ARN="arn:aws:states:${REGION}:${ACCOUNT_ID}:stateMachine:${STEP_FUNCTION_NAME}"
+  fi
+fi
+
+# Try to discover DynamoDB table name from CloudFormation if not provided
+if [ -z "$DYNAMODB_TABLE_NAME" ]; then
+  echo "Discovering DynamoDB table name from CloudFormation stack: ${STACK_NAME}..."
+  DYNAMODB_TABLE_NAME=$(aws cloudformation describe-stacks \
+    --stack-name "${STACK_NAME}" \
+    --region "${REGION}" \
+    --query "Stacks[0].Outputs[?OutputKey=='ErrorsTableName'].OutputValue" \
+    --output text 2>/dev/null || echo "")
+  
+  if [ -z "$DYNAMODB_TABLE_NAME" ] || [ "$DYNAMODB_TABLE_NAME" == "None" ]; then
+    echo "Warning: Could not discover DynamoDB table name. Using default: ${STACK_NAME}-ErrorsTable"
+    DYNAMODB_TABLE_NAME="${STACK_NAME}-ErrorsTable"
+  fi
+fi
 
 echo "Creating CloudWatch Dashboard: ${DASHBOARD_NAME}"
 echo "Region: ${REGION}"
 echo "AutoRepair Namespace: ${AUTOREPAIR_NAMESPACE}"
 echo "ExecutionRestart Namespace: ${EXECUTIONRESTART_NAMESPACE}"
+echo "Step Function Name: ${STEP_FUNCTION_NAME}"
+echo "Step Function ARN: ${STEP_FUNCTION_ARN}"
+echo "DynamoDB Table Name: ${DYNAMODB_TABLE_NAME}"
 echo ""
 
-# Create dashboard body
-DASHBOARD_BODY=$(cat <<EOF
+# Discover all counties and build metric arrays
+echo "Discovering counties and building metric queries..."
+
+# Get all unique counties from AutoRepairWorkflowSuccess metrics
+COUNTIES=$(aws cloudwatch list-metrics --namespace "${AUTOREPAIR_NAMESPACE}" --metric-name "AutoRepairWorkflowSuccess" --region "${REGION}" --output json 2>/dev/null | \
+  jq -r '.Metrics[].Dimensions[]? | select(.Name == "County") | .Value' | sort -u)
+
+# Build Success metrics array (one per county with IDs for aggregation, hidden)
+SUCCESS_METRICS="[]"
+SUCCESS_IDS_ARRAY="[]"
+METRIC_ID=1
+for COUNTY in $COUNTIES; do
+  ID="m${METRIC_ID}"
+  SUCCESS_IDS_ARRAY=$(echo "$SUCCESS_IDS_ARRAY" | jq --arg id "$ID" '. + [$id]')
+  SUCCESS_METRICS=$(echo "$SUCCESS_METRICS" | jq --arg ns "${AUTOREPAIR_NAMESPACE}" --arg county "$COUNTY" --arg id "$ID" \
+    '. + [["\($ns)", "AutoRepairWorkflowSuccess", "County", $county, {"stat": "Sum", "id": $id, "visible": false}]]')
+  METRIC_ID=$((METRIC_ID + 1))
+done
+
+# Build Failure metrics array (SVL only, include all dimensions as they exist, with IDs)
+FAILURE_METRICS_RAW=$(aws cloudwatch list-metrics \
+  --namespace "${AUTOREPAIR_NAMESPACE}" \
+  --metric-name "AutoRepairWorkflowFailure" \
+  --region "${REGION}" \
+  --output json 2>/dev/null | \
+  jq '[.Metrics[] | select(.Dimensions[]? | select(.Name == "ErrorType" and .Value == "SVL"))]')
+
+FAILURE_COUNT=$(echo "$FAILURE_METRICS_RAW" | jq 'length')
+FAILURE_METRICS=$(echo "$FAILURE_METRICS_RAW" | \
+  jq --arg ns "${AUTOREPAIR_NAMESPACE}" --argjson start_id $METRIC_ID '
+    to_entries |
+    map(
+      ["\($ns)", "AutoRepairWorkflowFailure"] + 
+      (.value.Dimensions | map(.Name, .Value) | flatten) + 
+      [{"stat": "Sum", "id": "m\($start_id + .key)", "visible": false}]
+    )
+  ')
+
+FAILURE_IDS_ARRAY=$(echo "$FAILURE_METRICS_RAW" | \
+  jq --argjson start_id $METRIC_ID '[to_entries | .[] | "m\($start_id + .key)"]')
+
+METRIC_ID=$((METRIC_ID + FAILURE_COUNT))
+
+# Build aggregated math expressions with comma-separated IDs
+SUCCESS_IDS_STR=$(echo "$SUCCESS_IDS_ARRAY" | jq -r 'join(", ")')
+FAILURE_IDS_STR=$(echo "$FAILURE_IDS_ARRAY" | jq -r 'join(", ")')
+
+# Only create expressions if there are metrics to aggregate
+COMBINED_AUTOREPAIR="[]"
+if [ -n "$SUCCESS_IDS_STR" ] || [ -n "$FAILURE_IDS_STR" ]; then
+  if [ -n "$SUCCESS_IDS_STR" ]; then
+    SUCCESS_EXPR="SUM([${SUCCESS_IDS_STR}])"
+  else
+    SUCCESS_EXPR=""
+  fi
+  if [ -n "$FAILURE_IDS_STR" ]; then
+    FAILURE_EXPR="SUM([${FAILURE_IDS_STR}])"
+  else
+    FAILURE_EXPR=""
+  fi
+
+  # Build aggregated expressions only (no individual county metrics)
+  # First, we need to build the individual metrics with IDs (hidden) for the math expressions to reference
+  ALL_AUTOREPAIR_METRICS=$(echo "$SUCCESS_METRICS $FAILURE_METRICS" | jq -s 'add')
+
+  # Create math expressions that reference the individual metrics
+  COMBINED_AUTOREPAIR=$(echo '[]' | jq --arg success_expr "$SUCCESS_EXPR" --arg failure_expr "$FAILURE_EXPR" \
+    '. + 
+    (if $success_expr != "" then [[{"expression": $success_expr, "label": "Success", "color": "#2ca02c"}]] else [] end) +
+    (if $failure_expr != "" then [[{"expression": $failure_expr, "label": "Failure", "color": "#d62728"}]] else [] end)')
+else
+  # No metrics at all, use empty array
+  ALL_AUTOREPAIR_METRICS="[]"
+fi
+
+# Get all unique counties from ExecutionRestartSuccess metrics
+EXECUTIONRESTART_COUNTIES=$(aws cloudwatch list-metrics --namespace "${EXECUTIONRESTART_NAMESPACE}" --metric-name "ExecutionRestartSuccess" --region "${REGION}" --output json 2>/dev/null | \
+  jq -r '.Metrics[].Dimensions[]? | select(.Name == "County") | .Value' | sort -u)
+
+# Build ExecutionRestart Success metrics array (with IDs for aggregation, hidden)
+EXECUTIONRESTART_SUCCESS_METRICS="[]"
+EXECUTIONRESTART_SUCCESS_IDS_ARRAY="[]"
+EXECUTIONRESTART_METRIC_ID=100
+for COUNTY in $EXECUTIONRESTART_COUNTIES; do
+  ID="m${EXECUTIONRESTART_METRIC_ID}"
+  EXECUTIONRESTART_SUCCESS_IDS_ARRAY=$(echo "$EXECUTIONRESTART_SUCCESS_IDS_ARRAY" | jq --arg id "$ID" '. + [$id]')
+  EXECUTIONRESTART_SUCCESS_METRICS=$(echo "$EXECUTIONRESTART_SUCCESS_METRICS" | jq --arg ns "${EXECUTIONRESTART_NAMESPACE}" --arg county "$COUNTY" --arg id "$ID" \
+    '. + [["\($ns)", "ExecutionRestartSuccess", "County", $county, {"stat": "Sum", "id": $id, "visible": false}]]')
+  EXECUTIONRESTART_METRIC_ID=$((EXECUTIONRESTART_METRIC_ID + 1))
+done
+
+# Build ExecutionRestart Failure metrics array (if any exist, with IDs)
+EXECUTIONRESTART_FAILURE_METRICS="[]"
+EXECUTIONRESTART_FAILURE_IDS_ARRAY="[]"
+EXECUTIONRESTART_FAILURE_COUNTIES=$(aws cloudwatch list-metrics --namespace "${EXECUTIONRESTART_NAMESPACE}" --metric-name "ExecutionRestartFailure" --region "${REGION}" --output json 2>/dev/null | \
+  jq -r '.Metrics[].Dimensions[]? | select(.Name == "County") | .Value' | sort -u)
+for COUNTY in $EXECUTIONRESTART_FAILURE_COUNTIES; do
+  ID="m${EXECUTIONRESTART_METRIC_ID}"
+  EXECUTIONRESTART_FAILURE_IDS_ARRAY=$(echo "$EXECUTIONRESTART_FAILURE_IDS_ARRAY" | jq --arg id "$ID" '. + [$id]')
+  EXECUTIONRESTART_FAILURE_METRICS=$(echo "$EXECUTIONRESTART_FAILURE_METRICS" | jq --arg ns "${EXECUTIONRESTART_NAMESPACE}" --arg county "$COUNTY" --arg id "$ID" \
+    '. + [["\($ns)", "ExecutionRestartFailure", "County", $county, {"stat": "Sum", "id": $id, "visible": false}]]')
+  EXECUTIONRESTART_METRIC_ID=$((EXECUTIONRESTART_METRIC_ID + 1))
+done
+
+# Build aggregated math expressions for ExecutionRestart with comma-separated IDs
+EXECUTIONRESTART_SUCCESS_IDS_STR=$(echo "$EXECUTIONRESTART_SUCCESS_IDS_ARRAY" | jq -r 'join(", ")')
+EXECUTIONRESTART_FAILURE_IDS_STR=$(echo "$EXECUTIONRESTART_FAILURE_IDS_ARRAY" | jq -r 'join(", ")')
+
+# Only create expressions if there are metrics to aggregate
+COMBINED_EXECUTIONRESTART="[]"
+if [ -n "$EXECUTIONRESTART_SUCCESS_IDS_STR" ] || [ -n "$EXECUTIONRESTART_FAILURE_IDS_STR" ]; then
+  if [ -n "$EXECUTIONRESTART_SUCCESS_IDS_STR" ]; then
+    EXECUTIONRESTART_SUCCESS_EXPR="SUM([${EXECUTIONRESTART_SUCCESS_IDS_STR}])"
+  else
+    EXECUTIONRESTART_SUCCESS_EXPR=""
+  fi
+  if [ -n "$EXECUTIONRESTART_FAILURE_IDS_STR" ]; then
+    EXECUTIONRESTART_FAILURE_EXPR="SUM([${EXECUTIONRESTART_FAILURE_IDS_STR}])"
+  else
+    EXECUTIONRESTART_FAILURE_EXPR=""
+  fi
+
+  # Build aggregated expressions only (no individual county metrics)
+  # First, we need all individual metrics with IDs for the math expressions to reference
+  ALL_EXECUTIONRESTART_METRICS=$(echo "$EXECUTIONRESTART_SUCCESS_METRICS $EXECUTIONRESTART_FAILURE_METRICS" | jq -s 'add')
+
+# Create math expressions that reference the individual metrics
+COMBINED_EXECUTIONRESTART=$(echo '[]' | jq --arg success_expr "$EXECUTIONRESTART_SUCCESS_EXPR" --arg failure_expr "$EXECUTIONRESTART_FAILURE_EXPR" \
+  '. + 
+  (if $success_expr != "" then [[{"expression": $success_expr, "label": "Success", "color": "#2ca02c"}]] else [] end) +
+  (if $failure_expr != "" then [[{"expression": $failure_expr, "label": "Failure", "color": "#d62728"}]] else [] end)')
+else
+  # No metrics at all, use empty array
+  ALL_EXECUTIONRESTART_METRICS="[]"
+fi
+
+# Build final metrics arrays, ensuring they're never empty
+FINAL_AUTOREPAIR_METRICS=$(echo "$ALL_AUTOREPAIR_METRICS $COMBINED_AUTOREPAIR" | jq -s 'add')
+FINAL_EXECUTIONRESTART_METRICS=$(echo "$ALL_EXECUTIONRESTART_METRICS $COMBINED_EXECUTIONRESTART" | jq -s 'add')
+
+# If AutoRepair metrics array is empty, add a placeholder (hidden) metric
+FINAL_AUTOREPAIR_METRICS=$(echo "$FINAL_AUTOREPAIR_METRICS" | jq 'if length == 0 then [["AWS/CloudWatch", "NoData", {"stat": "Sum", "label": "No AutoRepair metrics available", "visible": false}]] else . end')
+
+# If ExecutionRestart metrics array is empty, add a placeholder (hidden) metric
+FINAL_EXECUTIONRESTART_METRICS=$(echo "$FINAL_EXECUTIONRESTART_METRICS" | jq 'if length == 0 then [["AWS/CloudWatch", "NoData", {"stat": "Sum", "label": "No ExecutionRestart metrics available", "visible": false}]] else . end')
+
+# Create dashboard JSON
+cat > /tmp/dashboard.json <<EOF
 {
   "widgets": [
     {
@@ -26,17 +251,11 @@ DASHBOARD_BODY=$(cat <<EOF
       "width": 24,
       "height": 6,
       "properties": {
-        "metrics": [
-          ["${AUTOREPAIR_NAMESPACE}", "AutoRepairWorkflowSuccess", {"stat": "Sum", "label": "Success"}],
-          ["${AUTOREPAIR_NAMESPACE}", "AutoRepairWorkflowFailure", "County", "Miami Dade", "ErrorType", "SchemaValidation", "FailureReason", "NoErrorsUri", {"stat": "Sum", "label": "Failure - NoErrorsUri"}],
-          ["${AUTOREPAIR_NAMESPACE}", "AutoRepairWorkflowFailure", "County", "Miami Dade", "ErrorType", "SchemaValidation", "FinalFailure", "true", {"stat": "Sum", "label": "Failure - Final"}],
-          ["${AUTOREPAIR_NAMESPACE}", "AutoRepairWorkflowFailure", "County", "Miami Dade", "ErrorType", "SVL", "FailureReason", "NoErrorsUri", {"stat": "Sum", "label": "Failure - NoErrorsUri (SVL)"}],
-          ["${AUTOREPAIR_NAMESPACE}", "AutoRepairWorkflowFailure", "County", "Miami Dade", "ErrorType", "SVL", "FinalFailure", "true", {"stat": "Sum", "label": "Failure - Final (SVL)"}]
-        ],
+        "metrics": $FINAL_AUTOREPAIR_METRICS,
         "period": 300,
         "stat": "Sum",
         "region": "${REGION}",
-        "title": "Auto-Repair Success vs Failure",
+        "title": "AutoRepair Success/Failure",
         "view": "timeSeries",
         "stacked": false,
         "yAxis": {
@@ -54,16 +273,13 @@ DASHBOARD_BODY=$(cat <<EOF
       "width": 24,
       "height": 6,
       "properties": {
-        "metrics": [
-          ["${AUTOREPAIR_NAMESPACE}", "AutoRepairErrorsFixed", "County", "Miami Dade", "ErrorType", "SchemaValidation", {"stat": "Sum", "label": "Errors Fixed (SchemaValidation)"}],
-          ["${AUTOREPAIR_NAMESPACE}", "AutoRepairErrorsFixed", "County", "Miami Dade", "ErrorType", "SVL", {"stat": "Sum", "label": "Errors Fixed (SVL)"}],
-          ["${AUTOREPAIR_NAMESPACE}", "AutoRepairErrorsFixed", "County", "Miami Dade", "ErrorType", "MVL", {"stat": "Sum", "label": "Errors Fixed (MVL)"}]
-        ],
+        "metrics": $FINAL_EXECUTIONRESTART_METRICS,
         "period": 300,
         "stat": "Sum",
         "region": "${REGION}",
-        "title": "Total Errors Fixed",
+        "title": "AutoErrorResolver",
         "view": "timeSeries",
+        "stacked": false,
         "yAxis": {
           "left": {
             "min": 0,
@@ -80,16 +296,14 @@ DASHBOARD_BODY=$(cat <<EOF
       "height": 6,
       "properties": {
         "metrics": [
-          ["${AUTOREPAIR_NAMESPACE}", "AutoRepairWorkflowFailure", "County", "Miami Dade", "ErrorType", "SchemaValidation", "FailureReason", "NoErrorsUri", {"stat": "Sum", "label": "NoErrorsUri"}],
-          ["${AUTOREPAIR_NAMESPACE}", "AutoRepairWorkflowFailure", "County", "Miami Dade", "ErrorType", "SchemaValidation", "FinalFailure", "true", {"stat": "Sum", "label": "FinalFailure"}],
-          ["${AUTOREPAIR_NAMESPACE}", "AutoRepairWorkflowFailure", "County", "Miami Dade", "ErrorType", "SchemaValidation", "FailureReason", "MaxRetriesExceeded", {"stat": "Sum", "label": "MaxRetriesExceeded"}],
-          ["${AUTOREPAIR_NAMESPACE}", "AutoRepairWorkflowFailure", "County", "Miami Dade", "ErrorType", "SVL", "FailureReason", "NoErrorsUri", {"stat": "Sum", "label": "NoErrorsUri (SVL)"}],
-          ["${AUTOREPAIR_NAMESPACE}", "AutoRepairWorkflowFailure", "County", "Miami Dade", "ErrorType", "SVL", "FinalFailure", "true", {"stat": "Sum", "label": "FinalFailure (SVL)"}]
+          ["AWS/States", "ExecutionsStarted", "StateMachineArn", "${STEP_FUNCTION_ARN}", {"stat": "Sum", "label": "Executions Started", "color": "#1f77b4"}],
+          ["AWS/States", "ExecutionsSucceeded", "StateMachineArn", "${STEP_FUNCTION_ARN}", {"stat": "Sum", "label": "Executions Succeeded", "color": "#2ca02c"}],
+          ["AWS/States", "ExecutionsFailed", "StateMachineArn", "${STEP_FUNCTION_ARN}", {"stat": "Sum", "label": "Executions Failed", "color": "#d62728"}]
         ],
         "period": 300,
         "stat": "Sum",
         "region": "${REGION}",
-        "title": "Failure Reasons",
+        "title": "Execution",
         "view": "timeSeries",
         "stacked": false,
         "yAxis": {
@@ -104,116 +318,21 @@ DASHBOARD_BODY=$(cat <<EOF
       "type": "metric",
       "x": 0,
       "y": 18,
-      "width": 12,
-      "height": 6,
-      "properties": {
-        "metrics": [
-          ["${EXECUTIONRESTART_NAMESPACE}", "ExecutionRestartSuccess", {"stat": "Sum", "label": "Success"}],
-          ["${EXECUTIONRESTART_NAMESPACE}", "ExecutionRestartFailure", {"stat": "Sum", "label": "Failure"}]
-        ],
-        "period": 300,
-        "stat": "Sum",
-        "region": "${REGION}",
-        "title": "Execution Restart Success vs Failure",
-        "view": "timeSeries",
-        "stacked": false,
-        "yAxis": {
-          "left": {
-            "min": 0,
-            "label": "Count"
-          }
-        }
-      }
-    },
-    {
-      "type": "metric",
-      "x": 12,
-      "y": 18,
-      "width": 12,
-      "height": 6,
-      "properties": {
-        "metrics": [
-          ["${EXECUTIONRESTART_NAMESPACE}", "ExecutionRestartProcessed", {"stat": "Sum", "label": "Executions Processed"}]
-        ],
-        "period": 300,
-        "stat": "Sum",
-        "region": "${REGION}",
-        "title": "Executions Processed",
-        "view": "timeSeries",
-        "yAxis": {
-          "left": {
-            "min": 0,
-            "label": "Count"
-          }
-        }
-      }
-    },
-    {
-      "type": "metric",
-      "x": 0,
-      "y": 24,
-      "width": 12,
-      "height": 6,
-      "properties": {
-        "metrics": [
-          ["${EXECUTIONRESTART_NAMESPACE}", "ExecutionRestartFailure", {"stat": "Sum", "label": "All Failures"}]
-        ],
-        "period": 300,
-        "stat": "Sum",
-        "region": "${REGION}",
-        "title": "Execution Restart Failure Reasons",
-        "view": "timeSeries",
-        "stacked": false,
-        "yAxis": {
-          "left": {
-            "min": 0,
-            "label": "Count"
-          }
-        }
-      }
-    },
-    {
-      "type": "metric",
-      "x": 12,
-      "y": 24,
-      "width": 12,
-      "height": 6,
-      "properties": {
-        "metrics": [
-          ["${EXECUTIONRESTART_NAMESPACE}", "ExecutionRestartTransactionItemsSent", {"stat": "Sum", "label": "Transaction Items Sent"}]
-        ],
-        "period": 300,
-        "stat": "Sum",
-        "region": "${REGION}",
-        "title": "Transaction Items Sent",
-        "view": "timeSeries",
-        "yAxis": {
-          "left": {
-            "min": 0,
-            "label": "Count"
-          }
-        }
-      }
-    },
-    {
-      "type": "metric",
-      "x": 0,
-      "y": 30,
       "width": 24,
       "height": 6,
       "properties": {
         "metrics": [
-          ["${EXECUTIONRESTART_NAMESPACE}", "ExecutionRestartUnrecoverable", {"stat": "Sum", "label": "Unrecoverable"}]
+          ["AWS/DynamoDB", "ConsumedWriteCapacityUnits", "TableName", "${DYNAMODB_TABLE_NAME}", {"stat": "Sum", "label": "Write Capacity Consumed"}]
         ],
         "period": 300,
         "stat": "Sum",
         "region": "${REGION}",
-        "title": "Unrecoverable Executions",
+        "title": "Validation Error DynamoDB Write",
         "view": "timeSeries",
         "yAxis": {
           "left": {
             "min": 0,
-            "label": "Count"
+            "label": "Capacity Units"
           }
         }
       }
@@ -221,25 +340,22 @@ DASHBOARD_BODY=$(cat <<EOF
   ]
 }
 EOF
-)
 
 # Create the dashboard
 aws cloudwatch put-dashboard \
   --dashboard-name "${DASHBOARD_NAME}" \
-  --dashboard-body "${DASHBOARD_BODY}" \
+  --dashboard-body file:///tmp/dashboard.json \
   --region "${REGION}"
 
 if [ $? -eq 0 ]; then
   echo ""
   echo "✅ Dashboard created successfully!"
   echo ""
+  echo "Dashboard uses SEARCH expressions to aggregate metrics across all dimensions"
+  echo ""
   echo "View it at:"
   echo "https://${REGION}.console.aws.amazon.com/cloudwatch/home?region=${REGION}#dashboards:name=${DASHBOARD_NAME}"
-  echo ""
-  echo "Or run:"
-  echo "aws cloudwatch get-dashboard --dashboard-name ${DASHBOARD_NAME} --region ${REGION}"
 else
   echo "❌ Failed to create dashboard"
   exit 1
 fi
-

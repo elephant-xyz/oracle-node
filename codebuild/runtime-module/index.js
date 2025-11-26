@@ -233,11 +233,44 @@ async function csvToJson(csvPath) {
 /**
  * Fetch content from IPFS
  * @param {string} cid - CID of the content to fetch
- * @returns {Promise<object | array | null>} - Content as a buffer
+ * @returns {Promise<object | array | null>} - Content as JSON object or array, or null if CID is empty
+ * @throws {Error} If the fetch fails (but not if CID is empty - returns null instead)
  */
 async function fetchFromIpfs(cid) {
-  const result = await fetch(`https://ipfs.io/ipfs/${cid}`);
-  return await result.json();
+  if (!cid) {
+    console.log("IPFS CID is empty, skipping IPFS fetch");
+    return null;
+  }
+
+  const url = `https://ipfs.io/ipfs/${cid}`;
+  console.log(`Fetching IPFS content from ${url}...`);
+
+  try {
+    const response = await fetch(url);
+
+    if (!response.ok) {
+      throw new Error(
+        `IPFS fetch failed with status ${response.status} ${response.statusText || "Unknown error"}. ` +
+          `URL: ${url}`,
+      );
+    }
+
+    const contentType = response.headers.get("content-type") || "";
+    if (!contentType.includes("application/json")) {
+      throw new Error(
+        `IPFS returned non-JSON content. Content-Type: ${contentType}. ` +
+          `URL: ${url}. Expected JSON.`,
+      );
+    }
+
+    const jsonData = await response.json();
+    console.log(`Successfully fetched IPFS content for CID: ${cid}`);
+    return jsonData;
+  } catch (error) {
+    throw new Error(
+      `Failed to fetch IPFS content for CID ${cid}: ${error.message}`,
+    );
+  }
 }
 
 /**
@@ -252,9 +285,53 @@ async function parseErrorsFromS3(errorsS3Uri) {
   const tmpFile = path.join(os.tmpdir(), `errors_${Date.now()}.csv`);
   await downloadS3Object({ bucket, key }, tmpFile);
   const content = await csvToJson(tmpFile);
+
+  if (!content || content.length === 0) {
+    throw new Error(
+      `Errors CSV file is empty or invalid. S3 URI: ${errorsS3Uri}`,
+    );
+  }
+
   const dataGroupCid = content[0]?.data_group_cid;
-  const dataGroupContent = await fetchFromIpfs(dataGroupCid);
-  return { errorPath: tmpFile, dataGroupName: dataGroupContent.title };
+  const errorMessage =
+    content[0]?.error_message || content[0]?.errorMessage || "";
+  const isUnusedFileError = errorMessage.includes(
+    "Unused data JSON file detected",
+  );
+
+  let dataGroupName = "Unknown Data Group";
+
+  // Only skip IPFS fetch for "Unused data JSON file detected" errors when data_group_cid is empty
+  // For other errors, we should still try to fetch if CID is available
+  if (dataGroupCid) {
+    console.log(`Fetching data group from IPFS CID: ${dataGroupCid}`);
+    try {
+      const dataGroupContent = await fetchFromIpfs(dataGroupCid);
+      if (dataGroupContent && dataGroupContent.title) {
+        dataGroupName = dataGroupContent.title;
+      }
+    } catch (error) {
+      console.warn(
+        `Failed to fetch data group from IPFS (CID: ${dataGroupCid}): ${error.message}. ` +
+          `Continuing with default data group name.`,
+      );
+    }
+  } else if (isUnusedFileError) {
+    // For "Unused data JSON file detected" errors, empty data_group_cid is expected
+    // and we don't need schema information to fix this error type
+    console.log(
+      `No data_group_cid found for "Unused data JSON file detected" error. ` +
+        `Skipping IPFS fetch - this error type doesn't require schema information.`,
+    );
+  } else {
+    // For other errors with empty data_group_cid, log a warning but continue
+    console.warn(
+      `No data_group_cid found in errors CSV for error: "${errorMessage}". ` +
+        `This may indicate a data issue. Continuing with default data group name.`,
+    );
+  }
+
+  return { errorPath: tmpFile, dataGroupName };
 }
 
 /**
@@ -322,9 +399,26 @@ ERROR ANALYSIS REQUIREMENTS:
 
 ERROR FIELD DESCRIPTIONS:
 - file_path: The JSON file that contains the error (e.g., "data/deed_1.json") - use this to identify which script generates the output
-- error_path: The JSON path within that file where the error occurs (e.g., "deed_1.json/deed_type") - this is the exact property that has the problem. If error_path is an HTML selector, this data HAS to be mapped.
-- error_message: The validation error message - describes what's wrong (e.g., "unexpected property", "missing required property", "invalid type")
+- error_path: The JSON path within that file where the error occurs (e.g., "deed_1.json/deed_type") - this is the exact property that has the problem. If error_path is an HTML selector, this data HAS to be mapped. If error_path is "root", the entire file may be the problem.
+- error_message: The validation error message - describes what's wrong (e.g., "unexpected property", "missing required property", "invalid type", "Unused data JSON file detected")
 - currentValue: The actual value that caused the error (if available) - use this to understand what incorrect value was provided
+
+CRITICAL: Handling "Unused data JSON file detected" Errors:
+- If error_message contains "Unused data JSON file detected", this means a file is being generated that is not referenced by any relationship
+- The file_path will indicate which file is unused (e.g., "data/person_3.json")
+- DO NOT simply remove the file - instead, you MUST create the relationship that should reference it
+- Steps to fix:
+  1. Identify the class name from the file_path (e.g., "person_3.json" → "person" class)
+  2. Use Elephant MCP to find what relationships should connect to this class:
+     * Use listClassesByDataGroup to see all classes in the data group
+     * Look for relationship classes that should reference this entity (e.g., property_has_person, deed_has_person, etc.)
+     * Use getPropertySchema to understand the relationship structure
+  3. Find the script that generates relationships (usually relationshipMapping.js or data_extractor.js)
+  4. Add code to generate the relationship that connects the unused file to the appropriate entity
+  5. The relationship should link from the main entity (e.g., property, deed) TO the unused entity (e.g., person)
+  6. Ensure the relationship file is generated (e.g., "relationship_property_person_1.json")
+- If you cannot determine the correct relationship from the schema, then remove the unused file generation
+- The goal is to make the file "used" by creating the appropriate relationship, not to delete it
 
 ADDRESS HANDLING:
 - For the address object use unnormalized_address if that is what the source provides
@@ -439,6 +533,13 @@ For EACH error in the list above, follow these steps:
      * If missing required property: Extract it from input or set to null if schema allows
      * If invalid value: Convert to correct type or extract valid data
      * If mapping fails: Set to "MAPPING NOT AVAILABLE" instead of throwing
+     * If "Unused data JSON file detected": 
+       - Use Elephant MCP to find the relationship class that should reference this file
+       - Determine which entity should be "from" and which should be "to" in the relationship
+       - Find or create the relationship generation code
+       - Add code to generate the relationship file (e.g., "relationship_property_person_1.json")
+       - Ensure the relationship connects the main entity to the unused entity
+       - If no appropriate relationship can be found, then remove the unused file generation
    - Save the modified script file using fs.writeFileSync or similar file operations
    - Return the complete fixed scripts with the same file names`;
 
