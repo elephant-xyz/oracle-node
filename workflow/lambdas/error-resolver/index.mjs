@@ -1,4 +1,4 @@
-import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
+import { DynamoDBClient, AttributeValue } from "@aws-sdk/client-dynamodb";
 import {
   DynamoDBDocumentClient,
   UpdateCommand,
@@ -15,6 +15,7 @@ import {
 import {
   CloudWatchClient,
   PutMetricDataCommand,
+  StandardUnit,
 } from "@aws-sdk/client-cloudwatch";
 
 /**
@@ -40,11 +41,16 @@ import {
  */
 
 /**
+ * @typedef {object} DynamoDBStreamRecordData
+ * @property {Record<string, AttributeValue>} [Keys] - Key attributes.
+ * @property {Record<string, AttributeValue>} [OldImage] - Previous item state.
+ * @property {Record<string, AttributeValue>} [NewImage] - Current item state.
+ */
+
+/**
  * @typedef {object} DynamoDBStreamRecord
  * @property {string} eventName - Event type (INSERT, MODIFY, REMOVE).
- * @property {{ Keys: Record<string, unknown> } | undefined} dynamodb - DynamoDB stream record data.
- * @property {{ [key: string]: unknown } | undefined} dynamodb.OldImage - Previous item state.
- * @property {{ [key: string]: unknown } | undefined} dynamodb.NewImage - Current item state.
+ * @property {DynamoDBStreamRecordData} [dynamodb] - DynamoDB stream record data.
  */
 
 /**
@@ -82,8 +88,8 @@ function requireEnv(name) {
  *
  * @param {object} params - Metric parameters.
  * @param {string} params.metricName - Name of the metric.
- * @param {number} params.value - Metric value (default: 1).
- * @param {string} params.unit - Unit of measurement (default: "Count").
+ * @param {number} [params.value] - Metric value (default: 1).
+ * @param {string} [params.unit] - Unit of measurement (default: "Count").
  * @param {Record<string, string>} [params.dimensions] - Optional dimensions for the metric.
  * @param {string} [params.namespace] - Optional namespace override (defaults to ExecutionRestart).
  * @returns {Promise<void>}
@@ -97,10 +103,11 @@ async function publishMetric({
 }) {
   const metricNamespace =
     namespace || process.env.CLOUDWATCH_METRIC_NAMESPACE || "ExecutionRestart";
+  /** @type {{ MetricName: string; Value: number; Unit: StandardUnit; Timestamp: Date; Dimensions?: Array<{ Name: string; Value: string }> }} */
   const metricData = {
     MetricName: metricName,
     Value: value,
-    Unit: unit,
+    Unit: /** @type {StandardUnit} */ (unit),
     Timestamp: new Date(),
   };
 
@@ -160,6 +167,9 @@ function constructSeedOutputS3Uri(preparedS3Uri) {
   }
   const bucket = match[1];
   const key = match[2];
+  if (!bucket || !key) {
+    throw new Error(`Bad S3 URI: ${preparedS3Uri}`);
+  }
   // Replace /output.zip with /seed_output.zip
   const seedKey = key.replace(/\/output\.zip$/, "/seed_output.zip");
   return `s3://${bucket}/${seedKey}`;
@@ -182,8 +192,9 @@ async function getCountyDlqUrl(county) {
     }
     return response.QueueUrl;
   } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
     throw new Error(
-      `Failed to get DLQ URL for county ${county}: ${error.message}`,
+      `Failed to get DLQ URL for county ${county}: ${errorMessage}`,
     );
   }
 }
@@ -355,6 +366,7 @@ async function invokePostProcessingLambda({
   console.log(`Prepared S3 URI: ${preparedS3Uri}`);
   console.log(`Seed output S3 URI: ${seedOutputS3Uri}`);
 
+  /** @type {{ prepare: { output_s3_uri: string }; seed_output_s3_uri: string; prepareSkipped: boolean; saveErrorsOnValidationFailure: boolean; s3?: { bucket: { name: string }; object: { key: string } } }} */
   const payload = {
     prepare: {
       output_s3_uri: preparedS3Uri,
@@ -487,6 +499,7 @@ async function queryExecutionErrorLinks({ client, tableName, executionId }) {
   let lastEvaluatedKey = undefined;
 
   do {
+    /** @type {{ Items?: Record<string, unknown>[]; LastEvaluatedKey?: Record<string, unknown> }} */
     const response = await client.send(
       new QueryCommand({
         TableName: tableName,
@@ -507,7 +520,7 @@ async function queryExecutionErrorLinks({ client, tableName, executionId }) {
     if (response.Items && response.Items.length > 0) {
       errorLinks.push(
         ...response.Items.map(
-          (item) => /** @type {ExecutionErrorLink} */ (item),
+          (item) => /** @type {ExecutionErrorLink} */(item),
         ),
       );
     }
@@ -813,9 +826,9 @@ export const handler = async (event) => {
             // Build S3 event from source
             const s3Event = updatedExecution.source
               ? {
-                  bucket: { name: updatedExecution.source.s3Bucket },
-                  object: { key: updatedExecution.source.s3Key },
-                }
+                bucket: { name: updatedExecution.source.s3Bucket },
+                object: { key: updatedExecution.source.s3Key },
+              }
               : undefined;
 
             // Invoke post-processing Lambda to restart execution
