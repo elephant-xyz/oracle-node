@@ -373,11 +373,12 @@ cat > /tmp/dashboard.json <<EOF
 }
 EOF
 
-# Create the dashboard
-aws cloudwatch put-dashboard \
+# Create the dashboard (disable pager to avoid interactive prompts)
+AWS_PAGER="" aws cloudwatch put-dashboard \
   --dashboard-name "${DASHBOARD_NAME}" \
   --dashboard-body file:///tmp/dashboard.json \
-  --region "${REGION}"
+  --region "${REGION}" \
+  --no-cli-pager
 
 if [ $? -eq 0 ]; then
   echo ""
