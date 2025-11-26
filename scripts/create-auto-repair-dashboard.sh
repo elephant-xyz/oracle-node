@@ -1,5 +1,5 @@
 #!/bin/bash
-# Create CloudWatch Dashboard for Auto-Repair and Execution Restart Metrics
+# Create CloudWatch Dashboard for Auto-Repair, Execution Restart, and Workflow Execution Metrics
 # Usage: ./create-auto-repair-dashboard.sh [dashboard-name] [region] [stack-name] [step-function-name] [dynamodb-table-name]
 
 set -e
@@ -12,6 +12,7 @@ DYNAMODB_TABLE_NAME="${5:-}"
 
 AUTOREPAIR_NAMESPACE="${AUTOREPAIR_METRIC_NAMESPACE:-AutoRepair}"
 EXECUTIONRESTART_NAMESPACE="${EXECUTIONRESTART_METRIC_NAMESPACE:-ExecutionRestart}"
+ELEPHANTWORKFLOW_NAMESPACE="${ELEPHANTWORKFLOW_METRIC_NAMESPACE:-ElephantWorkflow}"
 
 # Try to discover Step Function ARN from CloudFormation
 STEP_FUNCTION_ARN=""
@@ -89,6 +90,7 @@ echo "Creating CloudWatch Dashboard: ${DASHBOARD_NAME}"
 echo "Region: ${REGION}"
 echo "AutoRepair Namespace: ${AUTOREPAIR_NAMESPACE}"
 echo "ExecutionRestart Namespace: ${EXECUTIONRESTART_NAMESPACE}"
+echo "ElephantWorkflow Namespace: ${ELEPHANTWORKFLOW_NAMESPACE}"
 echo "Step Function Name: ${STEP_FUNCTION_NAME}"
 echo "Step Function ARN: ${STEP_FUNCTION_ARN}"
 echo "DynamoDB Table Name: ${DYNAMODB_TABLE_NAME}"
@@ -240,6 +242,14 @@ FINAL_AUTOREPAIR_METRICS=$(echo "$FINAL_AUTOREPAIR_METRICS" | jq 'if length == 0
 # If ExecutionRestart metrics array is empty, add a placeholder (hidden) metric
 FINAL_EXECUTIONRESTART_METRICS=$(echo "$FINAL_EXECUTIONRESTART_METRICS" | jq 'if length == 0 then [["AWS/CloudWatch", "NoData", {"stat": "Sum", "label": "No ExecutionRestart metrics available", "visible": false}]] else . end')
 
+# Build ElephantWorkflow metrics array - simple direct metrics without county aggregation
+# The metric only has Status dimension (Started, Success, Failure)
+FINAL_ELEPHANTWORKFLOW_METRICS=$(jq -n --arg ns "${ELEPHANTWORKFLOW_NAMESPACE}" '[
+  ["\($ns)", "WorkflowExecution", "Status", "Started", {"stat": "Sum", "label": "Started", "color": "#1f77b4"}],
+  ["\($ns)", "WorkflowExecution", "Status", "Success", {"stat": "Sum", "label": "Success", "color": "#2ca02c"}],
+  ["\($ns)", "WorkflowExecution", "Status", "Failure", {"stat": "Sum", "label": "Failure", "color": "#d62728"}]
+]')
+
 # Create dashboard JSON
 cat > /tmp/dashboard.json <<EOF
 {
@@ -295,6 +305,28 @@ cat > /tmp/dashboard.json <<EOF
       "width": 24,
       "height": 6,
       "properties": {
+        "metrics": $FINAL_ELEPHANTWORKFLOW_METRICS,
+        "period": 300,
+        "stat": "Sum",
+        "region": "${REGION}",
+        "title": "Workflow Execution Success/Failure",
+        "view": "timeSeries",
+        "stacked": false,
+        "yAxis": {
+          "left": {
+            "min": 0,
+            "label": "Count"
+          }
+        }
+      }
+    },
+    {
+      "type": "metric",
+      "x": 0,
+      "y": 18,
+      "width": 24,
+      "height": 6,
+      "properties": {
         "metrics": [
           ["AWS/States", "ExecutionsStarted", "StateMachineArn", "${STEP_FUNCTION_ARN}", {"stat": "Sum", "label": "Executions Started", "color": "#1f77b4"}],
           ["AWS/States", "ExecutionsSucceeded", "StateMachineArn", "${STEP_FUNCTION_ARN}", {"stat": "Sum", "label": "Executions Succeeded", "color": "#2ca02c"}],
@@ -317,7 +349,7 @@ cat > /tmp/dashboard.json <<EOF
     {
       "type": "metric",
       "x": 0,
-      "y": 18,
+      "y": 24,
       "width": 24,
       "height": 6,
       "properties": {
@@ -341,11 +373,12 @@ cat > /tmp/dashboard.json <<EOF
 }
 EOF
 
-# Create the dashboard
-aws cloudwatch put-dashboard \
+# Create the dashboard (disable pager to avoid interactive prompts)
+AWS_PAGER="" aws cloudwatch put-dashboard \
   --dashboard-name "${DASHBOARD_NAME}" \
   --dashboard-body file:///tmp/dashboard.json \
-  --region "${REGION}"
+  --region "${REGION}" \
+  --no-cli-pager
 
 if [ $? -eq 0 ]; then
   echo ""

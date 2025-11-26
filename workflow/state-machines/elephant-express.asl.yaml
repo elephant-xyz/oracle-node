@@ -1,6 +1,26 @@
 Comment: Elephant Express workflow. Triggered by Starter Lambda with one SQS message payload.
-StartAt: Preprocess
+StartAt: RecordStartedMetric
 States:
+  RecordStartedMetric:
+    Type: Task
+    Resource: arn:aws:states:::aws-sdk:cloudwatch:putMetricData
+    Parameters:
+      Namespace: ElephantWorkflow
+      MetricData:
+        - MetricName: WorkflowExecution
+          Value: 1
+          Unit: Count
+          Timestamp.$: $$.State.EnteredTime
+          Dimensions:
+            - Name: Status
+              Value: Started
+    ResultPath: $.metricResult
+    Next: Preprocess
+    Catch:
+      - ErrorEquals: [States.ALL]
+        ResultPath: $.metricError
+        Next: Preprocess
+
   Preprocess:
     Type: Task
     Resource: arn:aws:states:::lambda:invoke
@@ -29,6 +49,26 @@ States:
     Catch:
       - ErrorEquals: [States.ALL]
         ResultPath: $.error
+        Next: RecordPreprocessFailureMetric
+
+  RecordPreprocessFailureMetric:
+    Type: Task
+    Resource: arn:aws:states:::aws-sdk:cloudwatch:putMetricData
+    Parameters:
+      Namespace: ElephantWorkflow
+      MetricData:
+        - MetricName: WorkflowExecution
+          Value: 1
+          Unit: Count
+          Timestamp.$: $$.State.EnteredTime
+          Dimensions:
+            - Name: Status
+              Value: Failure
+    ResultPath: $.metricResult
+    Next: FailRuntime
+    Catch:
+      - ErrorEquals: [States.ALL]
+        ResultPath: $.metricError
         Next: FailRuntime
 
   BuildRepairParamName:
@@ -133,6 +173,26 @@ States:
     Catch:
       - ErrorEquals: [States.ALL]
         ResultPath: $.error
+        Next: RecordPrepareFailureMetric
+
+  RecordPrepareFailureMetric:
+    Type: Task
+    Resource: arn:aws:states:::aws-sdk:cloudwatch:putMetricData
+    Parameters:
+      Namespace: ElephantWorkflow
+      MetricData:
+        - MetricName: WorkflowExecution
+          Value: 1
+          Unit: Count
+          Timestamp.$: $$.State.EnteredTime
+          Dimensions:
+            - Name: Status
+              Value: Failure
+    ResultPath: $.metricResult
+    Next: FailRuntime
+    Catch:
+      - ErrorEquals: [States.ALL]
+        ResultPath: $.metricError
         Next: FailRuntime
 
   Postprocess:
@@ -166,6 +226,26 @@ States:
     Catch:
       - ErrorEquals: [States.ALL]
         ResultPath: $.error
+        Next: RecordPostprocessFailureMetric
+
+  RecordPostprocessFailureMetric:
+    Type: Task
+    Resource: arn:aws:states:::aws-sdk:cloudwatch:putMetricData
+    Parameters:
+      Namespace: ElephantWorkflow
+      MetricData:
+        - MetricName: WorkflowExecution
+          Value: 1
+          Unit: Count
+          Timestamp.$: $$.State.EnteredTime
+          Dimensions:
+            - Name: Status
+              Value: Failure
+    ResultPath: $.metricResult
+    Next: FailRuntime
+    Catch:
+      - ErrorEquals: [States.ALL]
+        ResultPath: $.metricError
         Next: FailRuntime
 
   CheckTransactionItems:
@@ -174,13 +254,44 @@ States:
     Choices:
       - Variable: $.post.items[0]
         IsPresent: false
-        Next: SkipQueueOnValidationError
-    Default: QueueForTheSubmit
+        Next: RecordValidationFailureMetric
+    Default: RecordSuccessMetric
 
-  SkipQueueOnValidationError:
-    Type: Pass
-    Comment: Validation errors occurred, skipping transaction queue
+  RecordValidationFailureMetric:
+    Type: Task
+    Resource: arn:aws:states:::aws-sdk:cloudwatch:putMetricData
+    Parameters:
+      Namespace: ElephantWorkflow
+      MetricData:
+        - MetricName: WorkflowExecution
+          Value: 1
+          Unit: Count
+          Timestamp.$: $$.State.EnteredTime
+          Dimensions:
+            - Name: Status
+              Value: Failure
+    ResultPath: $.metricResult
     End: true
+
+  RecordSuccessMetric:
+    Type: Task
+    Resource: arn:aws:states:::aws-sdk:cloudwatch:putMetricData
+    Parameters:
+      Namespace: ElephantWorkflow
+      MetricData:
+        - MetricName: WorkflowExecution
+          Value: 1
+          Unit: Count
+          Timestamp.$: $$.State.EnteredTime
+          Dimensions:
+            - Name: Status
+              Value: Success
+    ResultPath: $.metricResult
+    Next: QueueForTheSubmit
+    Catch:
+      - ErrorEquals: [States.ALL]
+        ResultPath: $.metricError
+        Next: QueueForTheSubmit
 
   QueueForTheSubmit:
     Type: Task
