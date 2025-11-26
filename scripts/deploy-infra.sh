@@ -857,9 +857,40 @@ apply_county_configs() {
   fi
 }
 
+cleanup_old_dashboards() {
+  info "Checking for old CloudWatch dashboards to clean up..."
+  
+  local region="${AWS_REGION:-us-east-1}"
+  local old_dashboard_names=(
+    "ErrorRecovery-Metrics"
+  )
+  
+  # Check each old dashboard name pattern and delete if exists
+  for old_name in "${old_dashboard_names[@]}"; do
+    info "Checking for dashboard: $old_name"
+    
+    # Use delete-dashboards directly - it's idempotent and won't fail if dashboard doesn't exist
+    local delete_output
+    delete_output=$(aws cloudwatch delete-dashboards --dashboard-names "$old_name" --region "$region" 2>&1) || true
+    
+    # Check if the output indicates success or dashboard not found (both are fine)
+    if [[ -z "$delete_output" ]] || echo "$delete_output" | grep -q "DashboardNotFoundError" 2>/dev/null; then
+      info "Dashboard '$old_name' cleaned up (or did not exist)"
+    else
+      # Log any other output but continue anyway
+      info "Attempted cleanup of '$old_name': $delete_output"
+    fi
+  done
+  
+  return 0
+}
+
 main() {
   check_prereqs
   ensure_lambda_concurrency_quota
+
+  # Clean up old dashboards before deploying new CloudFormation-managed one
+  cleanup_old_dashboards
 
   # Setup GitHub secret if GitHub integration is enabled
   setup_github_secret
@@ -969,18 +1000,6 @@ main() {
 
   if (( CODEBUILD_DEPLOY_PENDING == 1 )); then
     deploy_codebuild_stack
-  fi
-
-  # Create or update CloudWatch dashboard for monitoring
-  if [[ "${CREATE_DASHBOARD:-true}" == "true" ]]; then
-    info "Creating CloudWatch dashboard for metrics monitoring..."
-    if "$SCRIPT_DIR/create-auto-repair-dashboard.sh" "" "" "$STACK_NAME"; then
-      info "CloudWatch dashboard created successfully"
-    else
-      warn "Failed to create CloudWatch dashboard (non-fatal)"
-    fi
-  else
-    info "Dashboard creation skipped (CREATE_DASHBOARD=false)"
   fi
 
   bucket=$(get_bucket)

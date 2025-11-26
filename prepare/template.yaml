@@ -798,6 +798,149 @@ Resources:
                 Resource: "*"
 
   #####################################################################################################################
+  # CloudWatch Dashboard for Error Recovery Metrics
+  #####################################################################################################################
+
+  ErrorRecoveryDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Sub "${AWS::StackName}-ErrorRecovery"
+      DashboardBody: !Sub
+        - |
+          {
+            "widgets": [
+              {
+                "type": "metric",
+                "x": 0,
+                "y": 0,
+                "width": 24,
+                "height": 6,
+                "properties": {
+                  "metrics": [
+                    [{"expression": "SEARCH('{AutoRepair,County} MetricName=\"AutoRepairWorkflowSuccess\"', 'Sum', 300)", "label": "Success", "color": "#2ca02c", "id": "e1"}],
+                    [{"expression": "SEARCH('{AutoRepair} MetricName=\"AutoRepairWorkflowFailure\" ErrorType=\"SVL\"', 'Sum', 300)", "label": "Failure", "color": "#d62728", "id": "e2"}]
+                  ],
+                  "period": 300,
+                  "stat": "Sum",
+                  "region": "${Region}",
+                  "title": "AutoRepair Success/Failure",
+                  "view": "timeSeries",
+                  "stacked": false,
+                  "yAxis": {
+                    "left": {
+                      "min": 0,
+                      "label": "Count"
+                    }
+                  }
+                }
+              },
+              {
+                "type": "metric",
+                "x": 0,
+                "y": 6,
+                "width": 24,
+                "height": 6,
+                "properties": {
+                  "metrics": [
+                    [{"expression": "SEARCH('{ExecutionRestart,County} MetricName=\"ExecutionRestartSuccess\"', 'Sum', 300)", "label": "Success", "color": "#2ca02c", "id": "e3"}],
+                    [{"expression": "SEARCH('{ExecutionRestart,County} MetricName=\"ExecutionRestartFailure\"', 'Sum', 300)", "label": "Failure", "color": "#d62728", "id": "e4"}]
+                  ],
+                  "period": 300,
+                  "stat": "Sum",
+                  "region": "${Region}",
+                  "title": "AutoErrorResolver",
+                  "view": "timeSeries",
+                  "stacked": false,
+                  "yAxis": {
+                    "left": {
+                      "min": 0,
+                      "label": "Count"
+                    }
+                  }
+                }
+              },
+              {
+                "type": "metric",
+                "x": 0,
+                "y": 12,
+                "width": 24,
+                "height": 6,
+                "properties": {
+                  "metrics": [
+                    ["ElephantWorkflow", "WorkflowExecution", "Status", "Started", {"stat": "Sum", "label": "Started", "color": "#1f77b4"}],
+                    ["ElephantWorkflow", "WorkflowExecution", "Status", "Success", {"stat": "Sum", "label": "Success", "color": "#2ca02c"}],
+                    ["ElephantWorkflow", "WorkflowExecution", "Status", "Failure", {"stat": "Sum", "label": "Failure", "color": "#d62728"}]
+                  ],
+                  "period": 300,
+                  "stat": "Sum",
+                  "region": "${Region}",
+                  "title": "Workflow Execution Success/Failure",
+                  "view": "timeSeries",
+                  "stacked": false,
+                  "yAxis": {
+                    "left": {
+                      "min": 0,
+                      "label": "Count"
+                    }
+                  }
+                }
+              },
+              {
+                "type": "metric",
+                "x": 0,
+                "y": 18,
+                "width": 24,
+                "height": 6,
+                "properties": {
+                  "metrics": [
+                    ["AWS/States", "ExecutionsStarted", "StateMachineArn", "${StateMachineArn}", {"stat": "Sum", "label": "Executions Started", "color": "#1f77b4"}],
+                    ["AWS/States", "ExecutionsSucceeded", "StateMachineArn", "${StateMachineArn}", {"stat": "Sum", "label": "Executions Succeeded", "color": "#2ca02c"}],
+                    ["AWS/States", "ExecutionsFailed", "StateMachineArn", "${StateMachineArn}", {"stat": "Sum", "label": "Executions Failed", "color": "#d62728"}]
+                  ],
+                  "period": 300,
+                  "stat": "Sum",
+                  "region": "${Region}",
+                  "title": "Execution",
+                  "view": "timeSeries",
+                  "stacked": false,
+                  "yAxis": {
+                    "left": {
+                      "min": 0,
+                      "label": "Count"
+                    }
+                  }
+                }
+              },
+              {
+                "type": "metric",
+                "x": 0,
+                "y": 24,
+                "width": 24,
+                "height": 6,
+                "properties": {
+                  "metrics": [
+                    ["AWS/DynamoDB", "ConsumedWriteCapacityUnits", "TableName", "${ErrorsTableName}", {"stat": "Sum", "label": "Write Capacity Consumed"}]
+                  ],
+                  "period": 300,
+                  "stat": "Sum",
+                  "region": "${Region}",
+                  "title": "Validation Error DynamoDB Write",
+                  "view": "timeSeries",
+                  "yAxis": {
+                    "left": {
+                      "min": 0,
+                      "label": "Capacity Units"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        - Region: !Ref AWS::Region
+          StateMachineArn: !Ref ElephantExpressStateMachine
+          ErrorsTableName: !Ref ErrorsTable
+
+  #####################################################################################################################
   # Step Function for S3 to SQS processing
   #####################################################################################################################
 
@@ -1251,3 +1394,6 @@ Outputs:
   GitHubSyncFunctionArn:
     Description: ARN of the GitHub Sync Lambda function
     Value: !GetAtt GitHubSyncFunction.Arn
+  ErrorRecoveryDashboardUrl:
+    Description: URL to the ErrorRecovery CloudWatch Dashboard
+    Value: !Sub "https://${AWS::Region}.console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#dashboards:name=${AWS::StackName}-ErrorRecovery"
