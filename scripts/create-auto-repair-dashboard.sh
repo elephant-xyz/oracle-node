@@ -242,74 +242,13 @@ FINAL_AUTOREPAIR_METRICS=$(echo "$FINAL_AUTOREPAIR_METRICS" | jq 'if length == 0
 # If ExecutionRestart metrics array is empty, add a placeholder (hidden) metric
 FINAL_EXECUTIONRESTART_METRICS=$(echo "$FINAL_EXECUTIONRESTART_METRICS" | jq 'if length == 0 then [["AWS/CloudWatch", "NoData", {"stat": "Sum", "label": "No ExecutionRestart metrics available", "visible": false}]] else . end')
 
-# Get all unique counties from ElephantWorkflow WorkflowExecution Success metrics
-ELEPHANTWORKFLOW_SUCCESS_COUNTIES=$(aws cloudwatch list-metrics --namespace "${ELEPHANTWORKFLOW_NAMESPACE}" --metric-name "WorkflowExecution" --region "${REGION}" --output json 2>/dev/null | \
-  jq -r '.Metrics[] | select(.Dimensions[]? | select(.Name == "Status" and .Value == "Success")) | .Dimensions[]? | select(.Name == "County") | .Value' | sort -u)
-
-# Build ElephantWorkflow Success metrics array (with IDs for aggregation, hidden)
-ELEPHANTWORKFLOW_SUCCESS_METRICS="[]"
-ELEPHANTWORKFLOW_SUCCESS_IDS_ARRAY="[]"
-ELEPHANTWORKFLOW_METRIC_ID=200
-for COUNTY in $ELEPHANTWORKFLOW_SUCCESS_COUNTIES; do
-  ID="m${ELEPHANTWORKFLOW_METRIC_ID}"
-  ELEPHANTWORKFLOW_SUCCESS_IDS_ARRAY=$(echo "$ELEPHANTWORKFLOW_SUCCESS_IDS_ARRAY" | jq --arg id "$ID" '. + [$id]')
-  ELEPHANTWORKFLOW_SUCCESS_METRICS=$(echo "$ELEPHANTWORKFLOW_SUCCESS_METRICS" | jq --arg ns "${ELEPHANTWORKFLOW_NAMESPACE}" --arg county "$COUNTY" --arg id "$ID" \
-    '. + [["\($ns)", "WorkflowExecution", "Status", "Success", "County", $county, {"stat": "Sum", "id": $id, "visible": false}]]')
-  ELEPHANTWORKFLOW_METRIC_ID=$((ELEPHANTWORKFLOW_METRIC_ID + 1))
-done
-
-# Get all unique counties from ElephantWorkflow WorkflowExecution Failure metrics
-ELEPHANTWORKFLOW_FAILURE_COUNTIES=$(aws cloudwatch list-metrics --namespace "${ELEPHANTWORKFLOW_NAMESPACE}" --metric-name "WorkflowExecution" --region "${REGION}" --output json 2>/dev/null | \
-  jq -r '.Metrics[] | select(.Dimensions[]? | select(.Name == "Status" and .Value == "Failure")) | .Dimensions[]? | select(.Name == "County") | .Value' | sort -u)
-
-# Build ElephantWorkflow Failure metrics array (with IDs for aggregation, hidden)
-ELEPHANTWORKFLOW_FAILURE_METRICS="[]"
-ELEPHANTWORKFLOW_FAILURE_IDS_ARRAY="[]"
-for COUNTY in $ELEPHANTWORKFLOW_FAILURE_COUNTIES; do
-  ID="m${ELEPHANTWORKFLOW_METRIC_ID}"
-  ELEPHANTWORKFLOW_FAILURE_IDS_ARRAY=$(echo "$ELEPHANTWORKFLOW_FAILURE_IDS_ARRAY" | jq --arg id "$ID" '. + [$id]')
-  ELEPHANTWORKFLOW_FAILURE_METRICS=$(echo "$ELEPHANTWORKFLOW_FAILURE_METRICS" | jq --arg ns "${ELEPHANTWORKFLOW_NAMESPACE}" --arg county "$COUNTY" --arg id "$ID" \
-    '. + [["\($ns)", "WorkflowExecution", "Status", "Failure", "County", $county, {"stat": "Sum", "id": $id, "visible": false}]]')
-  ELEPHANTWORKFLOW_METRIC_ID=$((ELEPHANTWORKFLOW_METRIC_ID + 1))
-done
-
-# Build aggregated math expressions for ElephantWorkflow with comma-separated IDs
-ELEPHANTWORKFLOW_SUCCESS_IDS_STR=$(echo "$ELEPHANTWORKFLOW_SUCCESS_IDS_ARRAY" | jq -r 'join(", ")')
-ELEPHANTWORKFLOW_FAILURE_IDS_STR=$(echo "$ELEPHANTWORKFLOW_FAILURE_IDS_ARRAY" | jq -r 'join(", ")')
-
-# Only create expressions if there are metrics to aggregate
-COMBINED_ELEPHANTWORKFLOW="[]"
-if [ -n "$ELEPHANTWORKFLOW_SUCCESS_IDS_STR" ] || [ -n "$ELEPHANTWORKFLOW_FAILURE_IDS_STR" ]; then
-  if [ -n "$ELEPHANTWORKFLOW_SUCCESS_IDS_STR" ]; then
-    ELEPHANTWORKFLOW_SUCCESS_EXPR="SUM([${ELEPHANTWORKFLOW_SUCCESS_IDS_STR}])"
-  else
-    ELEPHANTWORKFLOW_SUCCESS_EXPR=""
-  fi
-  if [ -n "$ELEPHANTWORKFLOW_FAILURE_IDS_STR" ]; then
-    ELEPHANTWORKFLOW_FAILURE_EXPR="SUM([${ELEPHANTWORKFLOW_FAILURE_IDS_STR}])"
-  else
-    ELEPHANTWORKFLOW_FAILURE_EXPR=""
-  fi
-
-  # Build aggregated expressions only (no individual county metrics)
-  # First, we need all individual metrics with IDs for the math expressions to reference
-  ALL_ELEPHANTWORKFLOW_METRICS=$(echo "$ELEPHANTWORKFLOW_SUCCESS_METRICS $ELEPHANTWORKFLOW_FAILURE_METRICS" | jq -s 'add')
-
-  # Create math expressions that reference the individual metrics
-  COMBINED_ELEPHANTWORKFLOW=$(echo '[]' | jq --arg success_expr "$ELEPHANTWORKFLOW_SUCCESS_EXPR" --arg failure_expr "$ELEPHANTWORKFLOW_FAILURE_EXPR" \
-    '. +
-    (if $success_expr != "" then [[{"expression": $success_expr, "label": "Success", "color": "#2ca02c"}]] else [] end) +
-    (if $failure_expr != "" then [[{"expression": $failure_expr, "label": "Failure", "color": "#d62728"}]] else [] end)')
-else
-  # No metrics at all, use empty array
-  ALL_ELEPHANTWORKFLOW_METRICS="[]"
-fi
-
-# Build final metrics arrays, ensuring they're never empty
-FINAL_ELEPHANTWORKFLOW_METRICS=$(echo "$ALL_ELEPHANTWORKFLOW_METRICS $COMBINED_ELEPHANTWORKFLOW" | jq -s 'add')
-
-# If ElephantWorkflow metrics array is empty, add a placeholder (hidden) metric
-FINAL_ELEPHANTWORKFLOW_METRICS=$(echo "$FINAL_ELEPHANTWORKFLOW_METRICS" | jq 'if length == 0 then [["AWS/CloudWatch", "NoData", {"stat": "Sum", "label": "No ElephantWorkflow metrics available", "visible": false}]] else . end')
+# Build ElephantWorkflow metrics array - simple direct metrics without county aggregation
+# The metric only has Status dimension (Started, Success, Failure)
+FINAL_ELEPHANTWORKFLOW_METRICS=$(jq -n --arg ns "${ELEPHANTWORKFLOW_NAMESPACE}" '[
+  ["\($ns)", "WorkflowExecution", "Status", "Started", {"stat": "Sum", "label": "Started", "color": "#1f77b4"}],
+  ["\($ns)", "WorkflowExecution", "Status", "Success", {"stat": "Sum", "label": "Success", "color": "#2ca02c"}],
+  ["\($ns)", "WorkflowExecution", "Status", "Failure", {"stat": "Sum", "label": "Failure", "color": "#d62728"}]
+]')
 
 # Create dashboard JSON
 cat > /tmp/dashboard.json <<EOF

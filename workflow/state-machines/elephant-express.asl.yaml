@@ -1,6 +1,26 @@
 Comment: Elephant Express workflow. Triggered by Starter Lambda with one SQS message payload.
-StartAt: Preprocess
+StartAt: RecordStartedMetric
 States:
+  RecordStartedMetric:
+    Type: Task
+    Resource: arn:aws:states:::aws-sdk:cloudwatch:putMetricData
+    Parameters:
+      Namespace: ElephantWorkflow
+      MetricData:
+        - MetricName: WorkflowExecution
+          Value: 1
+          Unit: Count
+          Timestamp.$: $$.State.EnteredTime
+          Dimensions:
+            - Name: Status
+              Value: Started
+    ResultPath: $.metricResult
+    Next: Preprocess
+    Catch:
+      - ErrorEquals: [States.ALL]
+        ResultPath: $.metricError
+        Next: Preprocess
+
   Preprocess:
     Type: Task
     Resource: arn:aws:states:::lambda:invoke
@@ -44,8 +64,6 @@ States:
           Dimensions:
             - Name: Status
               Value: Failure
-            - Name: County
-              Value.$: States.ArrayGetItem(States.StringSplit($.message.s3.object.key, '/'), 1)
     ResultPath: $.metricResult
     Next: FailRuntime
     Catch:
@@ -170,8 +188,6 @@ States:
           Dimensions:
             - Name: Status
               Value: Failure
-            - Name: County
-              Value.$: $.pre.county_name
     ResultPath: $.metricResult
     Next: FailRuntime
     Catch:
@@ -225,8 +241,6 @@ States:
           Dimensions:
             - Name: Status
               Value: Failure
-            - Name: County
-              Value.$: $.post.county
     ResultPath: $.metricResult
     Next: FailRuntime
     Catch:
@@ -256,8 +270,6 @@ States:
           Dimensions:
             - Name: Status
               Value: Failure
-            - Name: County
-              Value.$: $.post.county
     ResultPath: $.metricResult
     End: true
     Catch:
@@ -278,8 +290,6 @@ States:
           Dimensions:
             - Name: Status
               Value: Success
-            - Name: County
-              Value.$: $.post.county
     ResultPath: $.metricResult
     Next: QueueForTheSubmit
     Catch:
