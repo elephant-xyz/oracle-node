@@ -272,10 +272,6 @@ States:
               Value: Failure
     ResultPath: $.metricResult
     End: true
-    Catch:
-      - ErrorEquals: [States.ALL]
-        ResultPath: $.metricError
-        End: true
 
   RecordSuccessMetric:
     Type: Task
