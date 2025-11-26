@@ -520,7 +520,7 @@ async function queryExecutionErrorLinks({ client, tableName, executionId }) {
     if (response.Items && response.Items.length > 0) {
       errorLinks.push(
         ...response.Items.map(
-          (item) => /** @type {ExecutionErrorLink} */(item),
+          (item) => /** @type {ExecutionErrorLink} */ (item),
         ),
       );
     }
@@ -826,9 +826,9 @@ export const handler = async (event) => {
             // Build S3 event from source
             const s3Event = updatedExecution.source
               ? {
-                bucket: { name: updatedExecution.source.s3Bucket },
-                object: { key: updatedExecution.source.s3Key },
-              }
+                  bucket: { name: updatedExecution.source.s3Bucket },
+                  object: { key: updatedExecution.source.s3Key },
+                }
               : undefined;
 
             // Invoke post-processing Lambda to restart execution
