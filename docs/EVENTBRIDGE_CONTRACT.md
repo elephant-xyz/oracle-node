@@ -1,15 +1,15 @@
 # EventBridge Contract: Workflow Orchestration Events
 
-## Event Type: `WorkflowParked`
+## Event Type: `WorkflowEvent`
 
-Emitted when a workflow execution is parked awaiting external resolution.
+Emitted on workflow step status changes (success, failure, or parked).
 
 ### Event Structure
 
 ```json
 {
   "source": "elephant.workflow",
-  "detail-type": "WorkflowParked",
+  "detail-type": "WorkflowEvent",
   "detail": {
     "executionId": "string",
     "county": "string",
