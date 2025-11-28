@@ -1,9 +1,9 @@
 /**
- * Starter Lambda: triggered by SQS with BatchSize=1. Starts Express SFN synchronously.
- * Throws error on step function failure to trigger SQS DLQ redelivery.
+ * Starter Lambda: triggered by SQS with BatchSize=1. Starts Standard SFN asynchronously.
+ * Throws error on step function start failure to trigger SQS DLQ redelivery.
  */
 
-import { SFNClient, StartSyncExecutionCommand } from "@aws-sdk/client-sfn";
+import { SFNClient, StartExecutionCommand } from "@aws-sdk/client-sfn";
 
 /**
  * @typedef {Object} S3EventRecord
@@ -46,47 +46,29 @@ export const handler = async (event) => {
     }
     const bodyRaw = record.body;
     const parsed = JSON.parse(bodyRaw);
-    // Start the Express workflow synchronously
-    const cmd = new StartSyncExecutionCommand({
+    // Start the Standard workflow asynchronously
+    const cmd = new StartExecutionCommand({
       stateMachineArn: process.env.STATE_MACHINE_ARN,
       input: JSON.stringify({ message: parsed }),
     });
     const resp = await sfn.send(cmd);
     const executionArn = resp.executionArn || "arn not found";
 
-    // Check if the step function execution failed
-    if (resp.status === "FAILED" || resp.status === "TIMED_OUT") {
-      console.error(
-        JSON.stringify({
-          ...logBase,
-          level: "error",
-          msg: "workflow_failed",
-          executionArn: executionArn,
-          status: resp.status,
-          cause: resp.cause,
-          error: resp.error,
-        }),
-      );
-      // Throw error to trigger SQS redelivery to DLQ
-      throw new Error(
-        `Step function execution failed with status: ${resp.status}. Cause: ${resp.cause || "N/A"}`,
-      );
-    }
-
+    // For Standard workflows, execution starts asynchronously
+    // We can't check status immediately, but we log the execution ARN
+    // Execution status can be checked via DescribeExecution if needed
     console.log(
       JSON.stringify({
         ...logBase,
         level: "info",
-        msg: "completed",
+        msg: "execution_started",
         executionArn: executionArn,
-        status: resp.status,
       }),
     );
 
     return {
       status: "ok",
       executionArn: executionArn,
-      workflowStatus: resp.status || "status not found",
     };
   } catch (err) {
     console.error(

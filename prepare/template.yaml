@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
-Description: Unified SAM template defining downloader/updater Lambdas + AWS Step Functions (Express) workflow with SQS and Lambda
+Description: Unified SAM template defining downloader/updater Lambdas + AWS Step Functions (Standard) workflow with SQS and Lambda
 
 Parameters:
   EnvironmentName:
@@ -56,7 +56,7 @@ Parameters:
     Type: Number
     Default: 100
   WorkflowStateMachineName:
-    Description: Name for the Express Step Functions state machine
+    Description: Name for the Standard Step Functions state machine
     Type: String
     Default: ElephantExpressWorkflow
 
@@ -490,7 +490,7 @@ Resources:
       Timeout: 330
       CodeUri: ../workflow/lambdas/starter
       Handler: index.handler
-      Description: "SQS-triggered starter that sync-starts the Express state machine"
+      Description: "SQS-triggered starter that starts the Standard state machine"
       LoggingConfig:
         LogFormat: JSON
       Policies:
@@ -500,7 +500,7 @@ Resources:
           Statement:
             - Effect: Allow
               Action:
-                - states:StartSyncExecution
+                - states:StartExecution
               Resource: !Sub "arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:${WorkflowStateMachineName}"
       Environment:
         Variables:
@@ -705,14 +705,14 @@ Resources:
                     Value: .zip
 
   #####################################################################################################################
-  # Express Step Functions State Machine (separate definition file)
+  # Standard Step Functions State Machine (separate definition file)
   #####################################################################################################################
 
   ElephantExpressStateMachine:
     Type: AWS::Serverless::StateMachine
     Properties:
       Name: !Ref WorkflowStateMachineName
-      Type: EXPRESS
+      Type: STANDARD
       DefinitionUri: ../workflow/state-machines/elephant-express.asl.yaml
       DefinitionSubstitutions:
         WorkflowPreProcessorFunction: !GetAtt WorkflowPreProcessorFunction.Arn
@@ -1341,10 +1341,10 @@ Outputs:
     Description: ARN of the workflow SQS queue
     Value: !GetAtt WorkflowSqsQueue.Arn
   ElephantExpressStateMachineArn:
-    Description: ARN of the Elephant Express state machine
+    Description: ARN of the Elephant Standard state machine
     Value: !Ref ElephantExpressStateMachine
   ElephantExpressStateMachineName:
-    Description: Name of the Elephant Express state machine
+    Description: Name of the Elephant Standard state machine
     Value: !GetAtt ElephantExpressStateMachine.Name
   WorkflowPostProcessorLogGroupName:
     Description: CloudWatch Log Group name for the post processor Lambda function
