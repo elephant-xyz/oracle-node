@@ -56,7 +56,7 @@ Parameters:
     Type: Number
     Default: 100
   WorkflowStateMachineName:
-    Description: Name for the Standard Step Functions state machine
+    Description: Name for the Standard Step Functions state machine (leave empty for auto-generated name, useful when updating Type to allow replacement)
     Type: String
     Default: ElephantStandardWorkflow
 
@@ -116,6 +116,7 @@ Parameters:
     NoEcho: true
 
 Conditions:
+  HasStateMachineName: !Not [!Equals [!Ref WorkflowStateMachineName, ""]]
   IsRateExpression:
     !Not [!Equals [!Select [0, !Split ["(", !Ref UpdaterScheduleRate]], "cron"]]
 
@@ -719,9 +720,12 @@ Resources:
   ElephantExpressStateMachine:
     Type: AWS::Serverless::StateMachine
     Properties:
-      # Name temporarily removed to allow CloudFormation to replace the resource
-      # After deployment, you can manually rename it or add Name back with new value
-      # Name: !Ref WorkflowStateMachineName
+      # Conditionally set Name only if parameter is provided (for fresh deployments)
+      # For updates changing Type, leave parameter empty to allow replacement
+      !If:
+        - HasStateMachineName
+        - Name: !Ref WorkflowStateMachineName
+        - !Ref AWS::NoValue
       Type: STANDARD
       DefinitionUri: ../workflow/state-machines/elephant-express.asl.yaml
       DefinitionSubstitutions:
