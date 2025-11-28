@@ -120,6 +120,7 @@ Parameters:
     NoEcho: true
 
 Conditions:
+  HasStateMachineName: !Not [!Equals [!Ref WorkflowStateMachineName, ""]]
   IsRateExpression:
     !Not [!Equals [!Select [0, !Split ["(", !Ref UpdaterScheduleRate]], "cron"]]
 
@@ -724,10 +725,12 @@ Resources:
   ElephantExpressStateMachine:
     Type: AWS::Serverless::StateMachine
     Properties:
-      # Name property commented out to allow CloudFormation replacement when changing Type
-      # For fresh deployments: Uncomment the line below and set WorkflowStateMachineName parameter
-      # For updates: Leave commented to allow auto-generated name (enables replacement)
-      # Name: !Ref WorkflowStateMachineName
+      # Conditionally set Name only if parameter is provided (for fresh deployments)
+      # For updates changing Type, leave parameter empty to allow replacement
+      !If:
+        - HasStateMachineName
+        - Name: !Ref WorkflowStateMachineName
+        - !Ref AWS::NoValue
       Type: STANDARD
       DefinitionUri: ../workflow/state-machines/elephant-express.asl.yaml
       DefinitionSubstitutions:
