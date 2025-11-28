@@ -3,7 +3,12 @@
  * Enforces concurrency limits and throws error on failure to trigger SQS DLQ redelivery.
  */
 
-import { SFNClient, StartExecutionCommand, ListExecutionsCommand, DescribeExecutionCommand } from "@aws-sdk/client-sfn";
+import {
+  SFNClient,
+  StartExecutionCommand,
+  ListExecutionsCommand,
+  DescribeExecutionCommand,
+} from "@aws-sdk/client-sfn";
 
 /**
  * @typedef {Object} S3EventRecord
@@ -89,7 +94,11 @@ async function waitForCompletion(executionArn, maxWaitSeconds, logBase) {
         return { status: "SUCCEEDED" };
       }
 
-      if (status === "FAILED" || status === "TIMED_OUT" || status === "ABORTED") {
+      if (
+        status === "FAILED" ||
+        status === "TIMED_OUT" ||
+        status === "ABORTED"
+      ) {
         console.error(
           JSON.stringify({
             ...logBase,
@@ -180,11 +189,16 @@ export const handler = async (event) => {
     }
     const bodyRaw = record.body;
     const parsed = JSON.parse(bodyRaw);
-    
+
     // Check current running executions to enforce concurrency limit
-    const maxConcurrency = parseInt(process.env.MAX_CONCURRENT_EXECUTIONS || "100", 10);
-    const runningCount = await getRunningExecutionCount(process.env.STATE_MACHINE_ARN);
-    
+    const maxConcurrency = parseInt(
+      process.env.MAX_CONCURRENT_EXECUTIONS || "100",
+      10,
+    );
+    const runningCount = await getRunningExecutionCount(
+      process.env.STATE_MACHINE_ARN,
+    );
+
     if (runningCount >= maxConcurrency) {
       const errorMsg = `Step Function concurrency limit reached: ${runningCount}/${maxConcurrency} executions running`;
       console.warn(
@@ -199,7 +213,7 @@ export const handler = async (event) => {
       // Throw error to trigger SQS redelivery (message will be retried later)
       throw new Error(errorMsg);
     }
-    
+
     // Start the Standard workflow
     const cmd = new StartExecutionCommand({
       stateMachineArn: process.env.STATE_MACHINE_ARN,
@@ -219,10 +233,17 @@ export const handler = async (event) => {
 
     // Wait for full completion
     // Use Lambda timeout minus buffer (30 seconds) as max wait time
-    const lambdaTimeoutSeconds = parseInt(process.env.AWS_LAMBDA_FUNCTION_TIMEOUT || "900", 10);
+    const lambdaTimeoutSeconds = parseInt(
+      process.env.AWS_LAMBDA_FUNCTION_TIMEOUT || "900",
+      10,
+    );
     const maxWaitSeconds = lambdaTimeoutSeconds - 30; // Leave 30 second buffer
 
-    const completionResult = await waitForCompletion(executionArn, maxWaitSeconds, logBase);
+    const completionResult = await waitForCompletion(
+      executionArn,
+      maxWaitSeconds,
+      logBase,
+    );
 
     // If execution failed, throw error to trigger SQS redelivery
     if (completionResult.status !== "SUCCEEDED") {
