@@ -52,13 +52,13 @@ Parameters:
     Type: String
     Default: elephant-workflow-queue
   WorkflowStarterReservedConcurrency:
-    Description: Max concurrent SQS messages to process via EventSourceMapping ScalingConfig
+    Description: Max concurrent Lambda invocations and Step Function executions (since Lambda waits for completion, this controls both)
     Type: Number
     Default: 100
   WorkflowStateMachineName:
     Description: Name for the Standard Step Functions state machine
     Type: String
-    Default: ElephantExpressWorkflow
+    Default: ElephantStandardWorkflow
 
   # Prepare function flags (only applied if set to 'true')
   ElephantPrepareUseBrowser:
@@ -487,10 +487,10 @@ Resources:
       Architectures:
         - arm64
       MemorySize: 128
-      Timeout: 330
+      Timeout: 900
       CodeUri: ../workflow/lambdas/starter
       Handler: index.handler
-      Description: "SQS-triggered starter that starts the Standard state machine"
+      Description: "SQS-triggered starter that starts Standard state machine and waits for full completion with concurrency control"
       LoggingConfig:
         LogFormat: JSON
       Policies:
@@ -501,10 +501,17 @@ Resources:
             - Effect: Allow
               Action:
                 - states:StartExecution
+                - states:ListExecutions
+                - states:DescribeExecution
               Resource: !Sub "arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:${WorkflowStateMachineName}"
+            - Effect: Allow
+              Action:
+                - states:DescribeExecution
+              Resource: !Sub "arn:aws:states:${AWS::Region}:${AWS::AccountId}:execution:${WorkflowStateMachineName}:*"
       Environment:
         Variables:
           STATE_MACHINE_ARN: !Sub "arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:${WorkflowStateMachineName}"
+          MAX_CONCURRENT_EXECUTIONS: !Ref WorkflowStarterReservedConcurrency
       Events:
         SqsEvent:
           Type: SQS
@@ -514,6 +521,7 @@ Resources:
             MaximumBatchingWindowInSeconds: 0
             ScalingConfig:
               MaximumConcurrency: !Ref WorkflowStarterReservedConcurrency
+      ReservedConcurrentExecutions: !Ref WorkflowStarterReservedConcurrency
 
   WorkflowPreProcessorFunction:
     Type: AWS::Serverless::Function
