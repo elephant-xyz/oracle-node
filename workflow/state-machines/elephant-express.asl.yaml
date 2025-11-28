@@ -293,14 +293,51 @@ States:
         ResultPath: $.metricError
         Next: QueueForTheSubmit
 
-  QueueForTheSubmit:
+  SubmitToBlockchain:
     Type: Task
-    Resource: arn:aws:states:::sqs:sendMessage
+    Resource: arn:aws:states:::lambda:invoke.waitForTaskToken
     Parameters:
-      QueueUrl: ${TransactionsSqsQueueUrl}
-      MessageBody.$: "States.JsonToString($.post.items)"
-    ResultPath: null
+      FunctionName: ${SubmitterFunction}
+      Payload:
+        taskToken.$: $$.Task.Token
+        executionArn.$: $$.Execution.Id
+        transactionItems.$: $.post.items
+    TimeoutSeconds: 600
+    HeartbeatSeconds: 60
+    ResultPath: $.submit
     End: true
+    Retry:
+      - ErrorEquals:
+          - Lambda.ServiceException
+          - Lambda.AWSLambdaException
+          - Lambda.SdkClientException
+        IntervalSeconds: 2
+        MaxAttempts: 2
+        BackoffRate: 2
+    Catch:
+      - ErrorEquals: [States.ALL]
+        ResultPath: $.submitError
+        Next: RecordSubmitFailureMetric
+
+  RecordSubmitFailureMetric:
+    Type: Task
+    Resource: arn:aws:states:::aws-sdk:cloudwatch:putMetricData
+    Parameters:
+      Namespace: ElephantWorkflow
+      MetricData:
+        - MetricName: WorkflowExecution
+          Value: 1
+          Unit: Count
+          Timestamp.$: $$.State.EnteredTime
+          Dimensions:
+            - Name: Status
+              Value: SubmitFailure
+    ResultPath: $.metricResult
+    Next: FailRuntime
+    Catch:
+      - ErrorEquals: [States.ALL]
+        ResultPath: $.metricError
+        Next: FailRuntime
 
   FailRuntime:
     Type: Fail

@@ -460,6 +460,11 @@ Resources:
               Action:
                 - s3:GetObject
               Resource: !Sub "${EnvironmentBucket.Arn}/keystores/*"
+            - Effect: Allow
+              Action:
+                - states:SendTaskSuccess
+                - states:SendTaskFailure
+              Resource: "*"
       Environment:
         Variables:
           ELEPHANT_DOMAIN: !Ref ElephantDomain
@@ -470,15 +475,6 @@ Resources:
           ELEPHANT_KEYSTORE_S3_KEY: !Ref ElephantKeystoreS3Key
           ELEPHANT_KEYSTORE_PASSWORD: !Ref ElephantKeystorePassword
           ENVIRONMENT_BUCKET: !Ref EnvironmentBucket
-      Events:
-        Submit:
-          Type: SQS
-          Properties:
-            Queue: !GetAtt TransactionsSqsQueue.Arn
-            BatchSize: 150
-            MaximumBatchingWindowInSeconds: 300
-            ScalingConfig:
-              MaximumConcurrency: 2
 
   WorkflowStarterFunction:
     Type: AWS::Serverless::Function
@@ -730,7 +726,7 @@ Resources:
         DownloaderFunction: !GetAtt DownloaderFunction.Arn
         WorkflowPostProcessorFunction: !GetAtt WorkflowPostProcessorFunction.Arn
         WorkflowMirrorValidatorFunction: !GetAtt WorkflowMirrorValidatorFunction.Arn
-        TransactionsSqsQueueUrl: !Ref TransactionsSqsQueue
+        SubmitterFunction: !GetAtt SubmitterFunction.Arn
         StackName: !Ref AWS::StackName
       Role: !GetAtt ElephantExpressStateMachineRole.Arn
       Logging:
@@ -774,6 +770,7 @@ Resources:
                   - !GetAtt DownloaderFunction.Arn
                   - !GetAtt WorkflowPostProcessorFunction.Arn
                   - !GetAtt WorkflowMirrorValidatorFunction.Arn
+                  - !GetAtt SubmitterFunction.Arn
               - Effect: Allow
                 Action:
                   - sqs:SendMessage

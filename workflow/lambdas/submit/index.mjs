@@ -6,12 +6,21 @@ import { parse } from "csv-parse/sync";
 import { submitToContract } from "@elephant-xyz/cli/lib";
 import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
 import { SSMClient, GetParameterCommand } from "@aws-sdk/client-ssm";
+import {
+  SFNClient,
+  SendTaskSuccessCommand,
+  SendTaskFailureCommand,
+} from "@aws-sdk/client-sfn";
 
 const s3Client = new S3Client({
   region: process.env.AWS_REGION || "us-east-1",
 });
 
 const ssmClient = new SSMClient({
+  region: process.env.AWS_REGION || "us-east-1",
+});
+
+const sfnClient = new SFNClient({
   region: process.env.AWS_REGION || "us-east-1",
 });
 
@@ -22,7 +31,10 @@ const ssmClient = new SSMClient({
 
 /**
  * @typedef {Object} SubmitInput
- * @property {{ body: string }[]} Records
+ * @property {{ body: string }[]} [Records] - SQS event format (for backward compatibility)
+ * @property {string} [taskToken] - Step Function task token (when invoked from Step Functions)
+ * @property {string} [executionArn] - Step Function execution ARN (when invoked from Step Functions)
+ * @property {Object[]} [transactionItems] - Transaction items array (when invoked from Step Functions)
  */
 
 /**
@@ -176,18 +188,107 @@ async function getGasPriceFromSSM() {
 }
 
 /**
- * Build paths and derive prepare input from SQS/S3 event message.
- * - Extracts bucket/key from S3 event in SQS body
- * - Produces output prefix and input path for prepare Lambda
+ * Send success callback to Step Functions
+ * @param {string} taskToken
+ * @param {Object} output
+ * @returns {Promise<void>}
+ */
+async function sendTaskSuccess(taskToken, output) {
+  try {
+    const cmd = new SendTaskSuccessCommand({
+      taskToken: taskToken,
+      output: JSON.stringify(output),
+    });
+    await sfnClient.send(cmd);
+    console.log({
+      ...base,
+      level: "info",
+      msg: "task_success_sent_to_step_functions",
+    });
+  } catch (err) {
+    console.error({
+      ...base,
+      level: "error",
+      msg: "failed_to_send_task_success",
+      error: err instanceof Error ? err.message : String(err),
+    });
+    throw err;
+  }
+}
+
+/**
+ * Send failure callback to Step Functions
+ * @param {string} taskToken
+ * @param {string} error
+ * @param {string} [cause]
+ * @returns {Promise<void>}
+ */
+async function sendTaskFailure(taskToken, error, cause) {
+  try {
+    const cmd = new SendTaskFailureCommand({
+      taskToken: taskToken,
+      error: error,
+      cause: cause,
+    });
+    await sfnClient.send(cmd);
+    console.log({
+      ...base,
+      level: "info",
+      msg: "task_failure_sent_to_step_functions",
+    });
+  } catch (err) {
+    console.error({
+      ...base,
+      level: "error",
+      msg: "failed_to_send_task_failure",
+      error: err instanceof Error ? err.message : String(err),
+    });
+    throw err;
+  }
+}
+
+/**
+ * Submit handler - supports both SQS events and Step Function Task Token invocations
+ * - SQS format: { Records: [{ body: string }] }
+ * - Step Function format: { taskToken: string, executionArn: string, transactionItems: Object[] }
  *
- * @param {SubmitInput} event - Original SQS body JSON (already parsed by starter)
+ * @param {SubmitInput} event - Either SQS event or Step Function task token payload
  * @returns {Promise<SubmitOutput>}
  */
 export const handler = async (event) => {
-  if (!event.Records) throw new Error("Missing SQS Records");
+  const isStepFunctionInvocation = !!event.taskToken;
+  let toSubmit;
 
-  const toSubmit = event.Records.map((r) => JSON.parse(r.body)).flat();
-  if (!toSubmit.length) throw new Error("No records to submit");
+  if (isStepFunctionInvocation) {
+    // Invoked from Step Functions with Task Token
+    if (!event.transactionItems || !Array.isArray(event.transactionItems)) {
+      const error = "Missing or invalid transactionItems in Step Function payload";
+      if (event.taskToken) {
+        await sendTaskFailure(event.taskToken, "InvalidInput", error);
+      }
+      throw new Error(error);
+    }
+    toSubmit = event.transactionItems;
+    console.log({
+      ...base,
+      level: "info",
+      msg: "invoked_from_step_functions",
+      executionArn: event.executionArn,
+      itemCount: toSubmit.length,
+    });
+  } else {
+    // Invoked from SQS (backward compatibility)
+    if (!event.Records) throw new Error("Missing SQS Records");
+    toSubmit = event.Records.map((r) => JSON.parse(r.body)).flat();
+  }
+
+  if (!toSubmit.length) {
+    const error = "No records to submit";
+    if (isStepFunctionInvocation && event.taskToken) {
+      await sendTaskFailure(event.taskToken, "EmptyInput", error);
+    }
+    throw new Error(error);
+  }
 
   const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "submit-"));
   try {
@@ -337,12 +438,30 @@ export const handler = async (event) => {
       submit_errors: submitErrors,
     });
     if (allErrors.length > 0) {
-      throw new Error(
-        "Submit to the blockchain failed" + JSON.stringify(allErrors),
-      );
+      const errorMsg = "Submit to the blockchain failed" + JSON.stringify(allErrors);
+      if (isStepFunctionInvocation && event.taskToken) {
+        await sendTaskFailure(event.taskToken, "SubmitFailed", errorMsg);
+      }
+      throw new Error(errorMsg);
     }
-    console.log({ ...base, level: "info", msg: "completed" });
-    return { status: "success" };
+
+    const result = { status: "success", submitResults: submitResults };
+    console.log({ ...base, level: "info", msg: "completed", result });
+
+    // Send success callback to Step Functions if invoked with task token
+    if (isStepFunctionInvocation && event.taskToken) {
+      await sendTaskSuccess(event.taskToken, result);
+    }
+
+    return result;
+  } catch (err) {
+    // If we have a task token and haven't sent failure yet, send it now
+    if (isStepFunctionInvocation && event.taskToken) {
+      const errMessage = err instanceof Error ? err.message : String(err);
+      const errCause = err instanceof Error ? err.stack : undefined;
+      await sendTaskFailure(event.taskToken, "SubmitError", errCause || errMessage);
+    }
+    throw err;
   } finally {
     await fs.rm(tmp, { recursive: true, force: true });
   }
