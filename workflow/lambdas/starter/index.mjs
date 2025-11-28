@@ -105,7 +105,11 @@ async function waitForCompletion(executionArn, maxWaitSeconds, logBase) {
         return { status: "SUCCEEDED" };
       }
 
-      if (status === "FAILED" || status === "TIMED_OUT" || status === "ABORTED") {
+      if (
+        status === "FAILED" ||
+        status === "TIMED_OUT" ||
+        status === "ABORTED"
+      ) {
         console.error(
           JSON.stringify({
             ...logBase,
@@ -240,10 +244,17 @@ export const handler = async (event) => {
 
     // Wait for full completion
     // Use Lambda timeout minus buffer (30 seconds) as max wait time
-    const lambdaTimeoutSeconds = parseInt(process.env.AWS_LAMBDA_FUNCTION_TIMEOUT || "900", 10);
+    const lambdaTimeoutSeconds = parseInt(
+      process.env.AWS_LAMBDA_FUNCTION_TIMEOUT || "900",
+      10,
+    );
     const maxWaitSeconds = lambdaTimeoutSeconds - 30; // Leave 30 second buffer
 
-    const completionResult = await waitForCompletion(executionArn, maxWaitSeconds, logBase);
+    const completionResult = await waitForCompletion(
+      executionArn,
+      maxWaitSeconds,
+      logBase,
+    );
 
     // If execution failed, throw error to trigger SQS redelivery
     if (completionResult.status !== "SUCCEEDED") {
