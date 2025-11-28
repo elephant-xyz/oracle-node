@@ -154,7 +154,9 @@ async function waitForCompletion(executionArn, maxWaitSeconds, logBase) {
       // Unknown status
       throw new Error(`Unexpected execution status: ${status}`);
     } catch (err) {
-      if (err.message.includes("Step Function execution did not complete")) {
+      const errMessage =
+        err instanceof Error ? err.message : String(err);
+      if (errMessage.includes("Step Function execution did not complete")) {
         throw err;
       }
       // Retry on DescribeExecution errors
