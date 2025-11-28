@@ -1,0 +1,396 @@
+Comment: Build Transaction Workflow - Processes data through Transform, SVL, MVL (optional), Hash, and Upload steps
+QueryLanguage: JSONata
+StartAt: InitializeWorkflow
+
+States:
+  # Initialize workflow variables and derive execution context
+  InitializeWorkflow:
+    Type: Pass
+    Comment: "Initialize workflow state with input parameters"
+    Output: >-
+      {%
+        {
+          "workflowInput": $states.input,
+          "inputS3Uri": $states.input.inputS3Uri,
+          "seedOutputS3Uri": $states.input.seedOutputS3Uri,
+          "county": $states.input.county,
+          "outputPrefix": $states.input.outputPrefix,
+          "executionId": $states.input.executionId,
+          "mvlEnabled": $states.input.mvlEnabled = true
+        }
+      %}
+    Next: QueryTransformEvaluationErrors
+
+  # === TRANSFORM PHASE ===
+
+  QueryTransformEvaluationErrors:
+    Type: Pass
+    Comment: "Query for any blocking errors that would prevent Transform from running. Currently stubbed - will integrate with error resolution service."
+    Output: >-
+      {%
+        $merge([$states.input, { "transformEvaluationErrors": [] }])
+      %}
+    Next: TransformEvaluation
+
+  TransformEvaluation:
+    Type: Choice
+    Comment: "Should we run Transform or wait for errors to be resolved?"
+    Choices:
+      - Next: ParkUntilTransformErrorsResolved
+        Condition: "{% $count($states.input.transformEvaluationErrors) > 0 %}"
+    Default: Transform
+
+  ParkUntilTransformErrorsResolved:
+    Type: Task
+    Comment: "Park execution until Transform blocking errors are resolved. Uses EventBridge waitForTaskToken pattern."
+    Resource: arn:aws:states:::events:putEvents.waitForTaskToken
+    Arguments:
+      Entries:
+        - Detail:
+            ExecutionId: "{% $states.input.executionId %}"
+            County: "{% $states.input.county %}"
+            Phase: Transform
+            Errors: "{% $states.input.transformEvaluationErrors %}"
+            TaskToken: "{% $states.context.Task.Token %}"
+          DetailType: BuildTransactionWorkflowParked
+          EventBusName: ${ErrorResolutionEventBusName}
+          Source: build-transaction-workflow
+    Next: QueryTransformEvaluationErrors
+
+  Transform:
+    Type: Task
+    Comment: "Run Transform step via SQS + Lambda worker with task token callback"
+    Resource: arn:aws:states:::sqs:sendMessage.waitForTaskToken
+    Arguments:
+      QueueUrl: ${TransformQueueUrl}
+      MessageBody:
+        taskToken: "{% $states.context.Task.Token %}"
+        input:
+          inputS3Uri: "{% $states.input.inputS3Uri %}"
+          county: "{% $states.input.county %}"
+          outputPrefix: "{% $states.input.outputPrefix %}"
+          executionId: "{% $states.input.executionId %}"
+    Output: >-
+      {%
+        $merge([$states.input, {
+          "transformedOutputS3Uri": $states.result.transformedOutputS3Uri
+        }])
+      %}
+    Catch:
+      - ErrorEquals:
+          - ScriptsFailedError
+        Comment: "Transform scripts failed - park until resolved"
+        ResultPath: "{% { 'transformError': $states.errorOutput } %}"
+        Next: SaveTransformErrors
+    Next: SVL
+
+  SaveTransformErrors:
+    Type: Task
+    Comment: "Save Transform errors to DynamoDB for tracking and resolution"
+    Resource: arn:aws:states:::dynamodb:putItem
+    Arguments:
+      TableName: ${ErrorsTableName}
+      Item:
+        PK:
+          S: "{% 'EXECUTION#' & $states.input.executionId %}"
+        SK:
+          S: "{% 'ERROR#TRANSFORM#' & $string($millis()) %}"
+        entityType:
+          S: TransformError
+        executionId:
+          S: "{% $states.input.executionId %}"
+        county:
+          S: "{% $states.input.county %}"
+        phase:
+          S: Transform
+        errorMessage:
+          S: "{% $states.input.transformError.Cause %}"
+        status:
+          S: failed
+        createdAt:
+          S: "{% $now() %}"
+    ResultPath: null
+    Next: ParkUntilTransformErrorsResolved
+
+  # === SVL (Schema Validation Layer) PHASE ===
+
+  SVL:
+    Type: Task
+    Comment: "Run Schema Validation Layer via SQS + Lambda worker"
+    Resource: arn:aws:states:::sqs:sendMessage.waitForTaskToken
+    Arguments:
+      QueueUrl: ${SvlQueueUrl}
+      MessageBody:
+        taskToken: "{% $states.context.Task.Token %}"
+        input:
+          transformedOutputS3Uri: "{% $states.input.transformedOutputS3Uri %}"
+          county: "{% $states.input.county %}"
+          outputPrefix: "{% $states.input.outputPrefix %}"
+          executionId: "{% $states.input.executionId %}"
+    Output: >-
+      {%
+        $merge([$states.input, {
+          "validatedOutputS3Uri": $states.result.validatedOutputS3Uri,
+          "svlPassed": $states.result.validationPassed
+        }])
+      %}
+    Catch:
+      - ErrorEquals:
+          - SvlFailedError
+        Comment: "SVL validation failed"
+        ResultPath: "{% { 'svlError': $states.errorOutput } %}"
+        Next: SaveSvlErrors
+    Next: IsMvlEnabled
+
+  SaveSvlErrors:
+    Type: Task
+    Comment: "Save SVL errors to DynamoDB"
+    Resource: arn:aws:states:::dynamodb:putItem
+    Arguments:
+      TableName: ${ErrorsTableName}
+      Item:
+        PK:
+          S: "{% 'EXECUTION#' & $states.input.executionId %}"
+        SK:
+          S: "{% 'ERROR#SVL#' & $string($millis()) %}"
+        entityType:
+          S: SvlError
+        executionId:
+          S: "{% $states.input.executionId %}"
+        county:
+          S: "{% $states.input.county %}"
+        phase:
+          S: SVL
+        errorMessage:
+          S: "{% $states.input.svlError.Cause %}"
+        status:
+          S: failed
+        createdAt:
+          S: "{% $now() %}"
+    ResultPath: null
+    Next: ParkUntilTransformErrorsResolved
+
+  # === MVL (Mirror Validation Layer) PHASE - Optional ===
+
+  IsMvlEnabled:
+    Type: Choice
+    Comment: "Check if MVL is enabled for this execution"
+    Choices:
+      - Next: MVL
+        Condition: "{% $states.input.mvlEnabled = true %}"
+    Default: QueryHashEvaluationErrors
+
+  MVL:
+    Type: Task
+    Comment: "Run Mirror Validation Layer via SQS + Lambda worker"
+    Resource: arn:aws:states:::sqs:sendMessage.waitForTaskToken
+    Arguments:
+      QueueUrl: ${MvlQueueUrl}
+      MessageBody:
+        taskToken: "{% $states.context.Task.Token %}"
+        input:
+          preparedInputS3Uri: "{% $states.input.inputS3Uri %}"
+          transformedOutputS3Uri: "{% $states.input.transformedOutputS3Uri %}"
+          county: "{% $states.input.county %}"
+          outputPrefix: "{% $states.input.outputPrefix %}"
+          executionId: "{% $states.input.executionId %}"
+    Output: >-
+      {%
+        $merge([$states.input, {
+          "mvlMetric": $states.result.mvlMetric,
+          "mvlPassed": $states.result.mvlPassed
+        }])
+      %}
+    Catch:
+      - ErrorEquals:
+          - MvlFailedError
+        Comment: "MVL validation failed"
+        ResultPath: "{% { 'mvlError': $states.errorOutput } %}"
+        Next: SaveMvlErrors
+    Next: QueryHashEvaluationErrors
+
+  SaveMvlErrors:
+    Type: Task
+    Comment: "Save MVL errors to DynamoDB"
+    Resource: arn:aws:states:::dynamodb:putItem
+    Arguments:
+      TableName: ${ErrorsTableName}
+      Item:
+        PK:
+          S: "{% 'EXECUTION#' & $states.input.executionId %}"
+        SK:
+          S: "{% 'ERROR#MVL#' & $string($millis()) %}"
+        entityType:
+          S: MvlError
+        executionId:
+          S: "{% $states.input.executionId %}"
+        county:
+          S: "{% $states.input.county %}"
+        phase:
+          S: MVL
+        errorMessage:
+          S: "{% $states.input.mvlError.Cause %}"
+        status:
+          S: failed
+        createdAt:
+          S: "{% $now() %}"
+    ResultPath: null
+    Next: ParkUntilTransformErrorsResolved
+
+  # === HASH PHASE ===
+
+  QueryHashEvaluationErrors:
+    Type: Pass
+    Comment: "Query for any blocking errors that would prevent Hash from running. Currently stubbed."
+    Output: >-
+      {%
+        $merge([$states.input, { "hashEvaluationErrors": [] }])
+      %}
+    Next: HashEvaluation
+
+  HashEvaluation:
+    Type: Choice
+    Comment: "Should we run Hash or wait for errors to be resolved?"
+    Choices:
+      - Next: ParkUntilHashErrorsResolved
+        Condition: "{% $count($states.input.hashEvaluationErrors) > 0 %}"
+    Default: Hash
+
+  ParkUntilHashErrorsResolved:
+    Type: Task
+    Comment: "Park execution until Hash blocking errors are resolved"
+    Resource: arn:aws:states:::events:putEvents.waitForTaskToken
+    Arguments:
+      Entries:
+        - Detail:
+            ExecutionId: "{% $states.input.executionId %}"
+            County: "{% $states.input.county %}"
+            Phase: Hash
+            Errors: "{% $states.input.hashEvaluationErrors %}"
+            TaskToken: "{% $states.context.Task.Token %}"
+          DetailType: BuildTransactionWorkflowParked
+          EventBusName: ${ErrorResolutionEventBusName}
+          Source: build-transaction-workflow
+    Next: QueryHashEvaluationErrors
+
+  Hash:
+    Type: Task
+    Comment: "Run Hash generation via SQS + Lambda worker"
+    Resource: arn:aws:states:::sqs:sendMessage.waitForTaskToken
+    Arguments:
+      QueueUrl: ${HashQueueUrl}
+      MessageBody:
+        taskToken: "{% $states.context.Task.Token %}"
+        input:
+          validatedOutputS3Uri: "{% $states.input.validatedOutputS3Uri ? $states.input.validatedOutputS3Uri : $states.input.transformedOutputS3Uri %}"
+          seedOutputS3Uri: "{% $states.input.seedOutputS3Uri %}"
+          county: "{% $states.input.county %}"
+          outputPrefix: "{% $states.input.outputPrefix %}"
+          executionId: "{% $states.input.executionId %}"
+    Output: >-
+      {%
+        $merge([$states.input, {
+          "seedHashZipS3Uri": $states.result.seedHashZipS3Uri,
+          "countyHashZipS3Uri": $states.result.countyHashZipS3Uri,
+          "combinedHashCsvS3Uri": $states.result.combinedHashCsvS3Uri,
+          "propertyCid": $states.result.propertyCid
+        }])
+      %}
+    Next: QueryUploadEvaluationErrors
+
+  # === UPLOAD PHASE ===
+
+  QueryUploadEvaluationErrors:
+    Type: Pass
+    Comment: "Query for any blocking errors that would prevent Upload from running. Currently stubbed."
+    Output: >-
+      {%
+        $merge([$states.input, { "uploadEvaluationErrors": [] }])
+      %}
+    Next: UploadEvaluation
+
+  UploadEvaluation:
+    Type: Choice
+    Comment: "Should we run Upload or wait for errors to be resolved?"
+    Choices:
+      - Next: ParkUntilUploadErrorsResolved
+        Condition: "{% $count($states.input.uploadEvaluationErrors) > 0 %}"
+    Default: Upload
+
+  ParkUntilUploadErrorsResolved:
+    Type: Task
+    Comment: "Park execution until Upload blocking errors are resolved"
+    Resource: arn:aws:states:::events:putEvents.waitForTaskToken
+    Arguments:
+      Entries:
+        - Detail:
+            ExecutionId: "{% $states.input.executionId %}"
+            County: "{% $states.input.county %}"
+            Phase: Upload
+            Errors: "{% $states.input.uploadEvaluationErrors %}"
+            TaskToken: "{% $states.context.Task.Token %}"
+          DetailType: BuildTransactionWorkflowParked
+          EventBusName: ${ErrorResolutionEventBusName}
+          Source: build-transaction-workflow
+    Next: QueryUploadEvaluationErrors
+
+  Upload:
+    Type: Task
+    Comment: "Run Upload to IPFS via SQS + Lambda worker"
+    Resource: arn:aws:states:::sqs:sendMessage.waitForTaskToken
+    Arguments:
+      QueueUrl: ${UploadQueueUrl}
+      MessageBody:
+        taskToken: "{% $states.context.Task.Token %}"
+        input:
+          seedHashZipS3Uri: "{% $states.input.seedHashZipS3Uri %}"
+          countyHashZipS3Uri: "{% $states.input.countyHashZipS3Uri %}"
+          county: "{% $states.input.county %}"
+          executionId: "{% $states.input.executionId %}"
+    Output: >-
+      {%
+        $merge([$states.input, {
+          "uploadSuccess": $states.result.uploadSuccess
+        }])
+      %}
+    Catch:
+      - ErrorEquals:
+          - UploadFailedError
+        Comment: "Upload failed"
+        ResultPath: "{% { 'uploadError': $states.errorOutput } %}"
+        Next: SaveUploadErrors
+    Next: WorkflowSuccess
+
+  SaveUploadErrors:
+    Type: Task
+    Comment: "Save Upload errors to DynamoDB"
+    Resource: arn:aws:states:::dynamodb:putItem
+    Arguments:
+      TableName: ${ErrorsTableName}
+      Item:
+        PK:
+          S: "{% 'EXECUTION#' & $states.input.executionId %}"
+        SK:
+          S: "{% 'ERROR#UPLOAD#' & $string($millis()) %}"
+        entityType:
+          S: UploadError
+        executionId:
+          S: "{% $states.input.executionId %}"
+        county:
+          S: "{% $states.input.county %}"
+        phase:
+          S: Upload
+        errorMessage:
+          S: "{% $states.input.uploadError.Cause %}"
+        status:
+          S: failed
+        createdAt:
+          S: "{% $now() %}"
+    ResultPath: null
+    Next: ParkUntilUploadErrorsResolved
+
+  # === WORKFLOW COMPLETION ===
+
+  WorkflowSuccess:
+    Type: Succeed
+    Comment: "Workflow completed successfully"
