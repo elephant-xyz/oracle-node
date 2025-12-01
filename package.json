@@ -3,10 +3,11 @@
   "private": true,
   "workspaces": [
     "prepare/lambdas/*",
-    "workflow/lambdas/*"
+    "workflow/lambdas/*",
+    "workflow-events/lambdas/*"
   ],
   "scripts": {
-    "typecheck": "npm run typecheck --workspace=prepare/lambdas/downloader && npm run typecheck --workspace=prepare/lambdas/updater && npm run typecheck --workspace=workflow/lambdas/post && npm run typecheck --workspace=workflow/lambdas/pre && npm run typecheck --workspace=workflow/lambdas/starter && npm run typecheck --workspace=workflow/lambdas/submit && npm run typecheck --workspace=workflow/lambdas/error-resolver",
+    "typecheck": "npm run typecheck --workspace=prepare/lambdas/downloader && npm run typecheck --workspace=prepare/lambdas/updater && npm run typecheck --workspace=workflow/lambdas/post && npm run typecheck --workspace=workflow/lambdas/pre && npm run typecheck --workspace=workflow/lambdas/starter && npm run typecheck --workspace=workflow/lambdas/submit && npm run typecheck --workspace=workflow/lambdas/error-resolver && npm run typecheck --workspace=workflow-events/lambdas/event-handler",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "install-workspaces": "npm install --workspaces",

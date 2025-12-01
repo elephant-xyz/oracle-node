@@ -1,0 +1,18 @@
+{
+  "name": "workflow-events-handler",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Lambda function for processing EventBridge WorkflowEvent events",
+  "main": "index.ts",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "typecheck": "tsc --pretty false --noEmit -p tsconfig.json"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.145",
+    "@types/node": "^20.16.3",
+    "typescript": "^5.7.2"
+  }
+}
+
