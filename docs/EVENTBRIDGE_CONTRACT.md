@@ -77,6 +77,8 @@ Emitted on workflow step status changes (success, failure, or parked).
 
 | Status | Description |
 |--------|-------------|
+| `SCHEDULED` | Step is scheduled for execution |
+| `IN_PROGRESS` | Step is currently executing |
 | `SUCCEEDED` | Step completed successfully |
 | `PARKED` | Execution is paused awaiting external action |
 | `FAILED` | Execution has failed and requires intervention |
