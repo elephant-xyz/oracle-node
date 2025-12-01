@@ -80,6 +80,7 @@ Emitted on workflow step status changes (success, failure, or parked).
 
 | Step                | Phase     | Description                    |
 | ------------------- | --------- | ------------------------------ |
+| `Prepare`           | Prepare   | Data preparation/download      |
 | `EvaluateTransform` | Transform | Evaluation of transform errors |
 | `Transform`         | Transform | Data transformation processing |
 | `SVL`               | SVL       | Schema validation              |

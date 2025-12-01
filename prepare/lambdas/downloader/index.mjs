@@ -8,6 +8,15 @@ import {
   QueryCommand,
   UpdateItemCommand,
 } from "@aws-sdk/client-dynamodb";
+import {
+  EventBridgeClient,
+  PutEventsCommand,
+} from "@aws-sdk/client-eventbridge";
+import {
+  SFNClient,
+  SendTaskSuccessCommand,
+  SendTaskFailureCommand,
+} from "@aws-sdk/client-sfn";
 import { promises as fs } from "fs";
 import path from "path";
 import { prepare } from "@elephant-xyz/cli/lib";
@@ -15,6 +24,166 @@ import { networkInterfaces } from "os";
 import AdmZip from "adm-zip";
 
 const RE_S3PATH = /^s3:\/\/([^/]+)\/(.*)$/i;
+const eventBridgeClient = new EventBridgeClient({});
+const sfnClient = new SFNClient({});
+
+const EVENT_BUS_NAME = process.env.EVENT_BUS_NAME || "default";
+
+/**
+ * Emits a workflow event to EventBridge following EVENTBRIDGE_CONTRACT.md
+ * @param {Object} params - Event parameters
+ * @param {string} params.executionId - Step Functions execution ARN
+ * @param {string} params.county - County identifier being processed
+ * @param {"SCHEDULED"|"IN_PROGRESS"|"SUCCEEDED"|"PARKED"|"FAILED"} params.status - Current workflow status
+ * @param {string} [params.taskToken] - Step Functions task token for resumption
+ * @param {Array<{code: string, details: Object}>} [params.errors] - List of error objects
+ * @returns {Promise<void>}
+ */
+async function emitWorkflowEvent({
+  executionId,
+  county,
+  status,
+  taskToken,
+  errors,
+}) {
+  const detail = {
+    executionId,
+    county,
+    status,
+    phase: "Prepare",
+    step: "Prepare",
+    ...(taskToken && { taskToken }),
+    ...(errors && errors.length > 0 && { errors }),
+  };
+
+  console.log(`📤 Emitting EventBridge event: ${status}`, JSON.stringify(detail, null, 2));
+
+  try {
+    await eventBridgeClient.send(
+      new PutEventsCommand({
+        Entries: [
+          {
+            Source: "elephant.workflow",
+            DetailType: "WorkflowEvent",
+            Detail: JSON.stringify(detail),
+            EventBusName: EVENT_BUS_NAME,
+          },
+        ],
+      })
+    );
+    console.log(`✅ EventBridge event emitted: ${status}`);
+  } catch (error) {
+    console.error(
+      `❌ Failed to emit EventBridge event: ${error instanceof Error ? error.message : String(error)}`
+    );
+    // Don't throw - EventBridge emission failure shouldn't block the workflow
+  }
+}
+
+/**
+ * Sends task success to Step Functions
+ * @param {string} taskToken - The task token from SQS message
+ * @param {Object} output - The output to send back to Step Functions
+ * @returns {Promise<void>}
+ */
+async function sendTaskSuccess(taskToken, output) {
+  console.log(`📤 Sending task success to Step Functions...`);
+  try {
+    await sfnClient.send(
+      new SendTaskSuccessCommand({
+        taskToken,
+        output: JSON.stringify(output),
+      })
+    );
+    console.log(`✅ Task success sent`);
+  } catch (error) {
+    console.error(
+      `❌ Failed to send task success: ${error instanceof Error ? error.message : String(error)}`
+    );
+    throw error;
+  }
+}
+
+/**
+ * Sends task failure to Step Functions
+ * @param {string} taskToken - The task token from SQS message
+ * @param {string} errorCode - Error code identifier
+ * @param {string} cause - Error cause description
+ * @returns {Promise<void>}
+ */
+async function sendTaskFailure(taskToken, errorCode, cause) {
+  console.log(`📤 Sending task failure to Step Functions...`);
+  try {
+    await sfnClient.send(
+      new SendTaskFailureCommand({
+        taskToken,
+        error: errorCode,
+        cause: cause.substring(0, 256), // Max 256 chars
+      })
+    );
+    console.log(`✅ Task failure sent`);
+  } catch (error) {
+    console.error(
+      `❌ Failed to send task failure: ${error instanceof Error ? error.message : String(error)}`
+    );
+    throw error;
+  }
+}
+
+/**
+ * Extracts county name from the input zip's input.csv (county column)
+ * Falls back to unnormalized_address.json if input.csv doesn't have county
+ * @param {AdmZip} zip - AdmZip instance
+ * @returns {string|null} County name or null
+ */
+function extractCountyFromZip(zip) {
+  try {
+    const zipEntries = zip.getEntries();
+
+    // First, try to get county from input.csv
+    const inputCsvEntry = zipEntries.find(
+      (entry) => entry.entryName === "input.csv" || entry.entryName.endsWith("/input.csv")
+    );
+
+    if (inputCsvEntry) {
+      const csvContent = zip.readAsText(inputCsvEntry);
+      const rows = parseCSV(csvContent);
+
+      if (rows.length > 0) {
+        const firstRow = rows[0];
+        // Look for 'county' column (case-insensitive)
+        const countyKey = Object.keys(firstRow).find(
+          k => k.toLowerCase() === 'county'
+        );
+
+        if (countyKey && firstRow[countyKey] && firstRow[countyKey].trim() !== '') {
+          const county = firstRow[countyKey].trim();
+          console.log(`✅ Found county in input.csv: ${county}`);
+          return county;
+        }
+      }
+    }
+
+    // Fallback: try unnormalized_address.json
+    const addressEntry = zipEntries.find(
+      (entry) => entry.entryName === "unnormalized_address.json"
+    );
+
+    if (addressEntry) {
+      const addressContent = zip.readAsText(addressEntry);
+      const addressData = JSON.parse(addressContent);
+      if (addressData.county_jurisdiction) {
+        console.log(`✅ Found county in unnormalized_address.json: ${addressData.county_jurisdiction}`);
+        return addressData.county_jurisdiction;
+      }
+    }
+  } catch (error) {
+    console.warn(
+      `⚠️ Could not extract county from zip: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+  return null;
+}
 
 /**
  * @typedef {Object} IPInfo
@@ -571,57 +740,28 @@ const splitS3Uri = (s3Uri) => {
 };
 
 /**
- * Lambda handler for processing orders and storing receipts in S3.
- * @param {Object} event - Input event containing order details
- * @param {string} event.input_s3_uri - S3 URI of input file
- * @param {string} event.output_s3_uri_prefix - S3 URI prefix for output files
- * @returns {Promise<{ output_s3_uri: string }>} Success message
+ * Processes the prepare step for a single parcel
+ * @param {Object} params - Processing parameters
+ * @param {string} params.input_s3_uri - S3 URI of input file
+ * @param {string} [params.output_s3_uri_prefix] - S3 URI prefix for output files
+ * @param {string} [params.executionId] - Step Functions execution ARN
+ * @param {string} [params.taskToken] - Task token for SQS callback
+ * @returns {Promise<{ output_s3_uri: string }>} Success result
  */
-export const handler = async (event) => {
+async function processPrepare({
+  input_s3_uri,
+  output_s3_uri_prefix,
+  executionId,
+  taskToken,
+}) {
   const startTime = Date.now();
-  console.log("Event:", event);
-  console.log(`🚀 Lambda handler started at: ${new Date().toISOString()}`);
+  console.log(`🚀 Prepare processing started at: ${new Date().toISOString()}`);
 
-  // Log IP address and Lambda environment information
-  console.log("🌐 Getting Lambda IP address information...");
-  try {
-    const ipInfo = await getIPAddresses();
-    console.log(`🔍 Lambda Instance Info:`);
-    console.log(`   Function: ${ipInfo.lambdaFunction}`);
-    console.log(
-      `   Version: ${process.env.AWS_LAMBDA_FUNCTION_VERSION || "unknown"}`,
-    );
-    console.log(`   Region: ${ipInfo.awsRegion}`);
-    console.log(
-      `   Memory: ${process.env.AWS_LAMBDA_FUNCTION_MEMORY_SIZE || "unknown"}MB`,
-    );
-    console.log(`   Runtime: ${process.env.AWS_EXECUTION_ENV || "unknown"}`);
-    console.log(`   Request ID: ${process.env.AWS_REQUEST_ID || "unknown"}`);
-    console.log(
-      `   Local IPs: ${ipInfo.localIPs.length > 0 ? ipInfo.localIPs.join(", ") : "None found"}`,
-    );
-    console.log(`   Public IP: ${ipInfo.publicIP || "Not available"}`);
-
-    // Also log some additional network diagnostics
-    if (ipInfo.publicIP) {
-      console.log(
-        `🌍 Network: Lambda has outbound internet access via IP ${ipInfo.publicIP}`,
-      );
-    } else {
-      console.log(
-        `🚫 Network: No public IP detected (may be VPC-only or blocked)`,
-      );
-    }
-  } catch (error) {
-    console.log(
-      `⚠️ Could not get IP information: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-
-  if (!event || !event.input_s3_uri) {
+  if (!input_s3_uri) {
     throw new Error("Missing required field: input_s3_uri");
   }
-  const { bucket, key } = splitS3Uri(event.input_s3_uri);
+
+  const { bucket, key } = splitS3Uri(input_s3_uri);
   console.log("Bucket:", bucket);
   console.log("Key:", key);
   const s3 = new S3Client({});
@@ -643,17 +783,19 @@ export const handler = async (event) => {
       }
     } catch (proxyError) {
       console.error(
-        `⚠️ Failed to get proxy from DynamoDB: ${proxyError instanceof Error ? proxyError.message : String(proxyError)}`,
+        `⚠️ Failed to get proxy from DynamoDB: ${proxyError instanceof Error ? proxyError.message : String(proxyError)}`
       );
       console.log("ℹ️ Proceeding without proxy");
     }
   } else {
     console.log(
-      "ℹ️ Proxy rotation table not configured, proceeding without proxy",
+      "ℹ️ Proxy rotation table not configured, proceeding without proxy"
     );
   }
 
   const tempDir = await fs.mkdtemp("/tmp/prepare-");
+  let countyName = null;
+
   try {
     // S3 Download Phase
     console.log("📥 Starting S3 download...");
@@ -661,7 +803,7 @@ export const handler = async (event) => {
 
     const inputZip = path.join(tempDir, path.basename(key));
     const getResp = await s3.send(
-      new GetObjectCommand({ Bucket: bucket, Key: key }),
+      new GetObjectCommand({ Bucket: bucket, Key: key })
     );
     const inputBytes = await getResp.Body?.transformToByteArray();
     if (!inputBytes) {
@@ -671,47 +813,37 @@ export const handler = async (event) => {
 
     const s3DownloadDuration = Date.now() - s3DownloadStart;
     console.log(
-      `✅ S3 download completed: ${s3DownloadDuration}ms (${(s3DownloadDuration / 1000).toFixed(2)}s)`,
+      `✅ S3 download completed: ${s3DownloadDuration}ms (${(s3DownloadDuration / 1000).toFixed(2)}s)`
     );
     console.log(
-      `📊 Downloaded ${inputBytes.length} bytes from s3://${bucket}/${key}`,
+      `📊 Downloaded ${inputBytes.length} bytes from s3://${bucket}/${key}`
     );
 
     // Extract county name from unnormalized_address.json
-    let countyName = null;
     console.log("📍 Extracting county information from input...");
 
     try {
-      // Use adm-zip to read the zip file directly without extracting to disk
       const zip = new AdmZip(inputZip);
-      const zipEntries = zip.getEntries();
-
-      // Find unnormalized_address.json in the zip
-      const addressEntry = zipEntries.find(
-        (entry) => entry.entryName === "unnormalized_address.json",
-      );
-
-      if (addressEntry) {
-        // Read the file content directly from zip
-        const addressContent = zip.readAsText(addressEntry);
-        const addressData = JSON.parse(addressContent);
-
-        if (addressData.county_jurisdiction) {
-          countyName = addressData.county_jurisdiction;
-          console.log(`✅ Detected county: ${countyName}`);
-        } else {
-          console.log(
-            "⚠️ No county_jurisdiction found in unnormalized_address.json",
-          );
-        }
+      countyName = extractCountyFromZip(zip);
+      if (countyName) {
+        console.log(`✅ Detected county: ${countyName}`);
       } else {
-        console.log("⚠️ unnormalized_address.json not found in zip file");
+        console.log("⚠️ No county_jurisdiction found");
       }
     } catch (error) {
       console.error(
-        `⚠️ Could not extract county information: ${error instanceof Error ? error.message : String(error)}`,
+        `⚠️ Could not extract county information: ${error instanceof Error ? error.message : String(error)}`
       );
       console.log("Continuing with general configuration...");
+    }
+
+    // Emit IN_PROGRESS event now that we have county info
+    if (executionId) {
+      await emitWorkflowEvent({
+        executionId,
+        county: countyName || "unknown",
+        status: "IN_PROGRESS",
+      });
     }
 
     // Load configuration from S3 if specified in input.csv
@@ -743,7 +875,6 @@ export const handler = async (event) => {
     console.log("Building prepare options...");
 
     // Helper function to get config value with S3 priority, then env var fallback
-    // Priority: S3 config county-specific -> S3 config general -> env var county-specific -> env var general
     /**
      * @param {string} baseKey
      * @returns {string | undefined}
@@ -754,11 +885,10 @@ export const handler = async (event) => {
 
     // Helper function to download flow files from S3
     /**
-     * Downloads a flow file from S3 for a specific county
-     * @param {string} flowType - Type of flow (e.g., "browser", "multi-request")
-     * @param {string} s3Prefix - S3 prefix path (e.g., "browser-flows")
-     * @param {string} localFileName - Local filename to save as (e.g., "browser-flow.json")
-     * @param {string} optionKey - Key in prepareOptions to set (e.g., "browserFlowFile")
+     * @param {string} flowType
+     * @param {string} s3Prefix
+     * @param {string} localFileName
+     * @param {string} optionKey
      * @returns {Promise<void>}
      */
     const downloadFlowFile = async (
@@ -772,14 +902,14 @@ export const handler = async (event) => {
 
         try {
           console.log(
-            `Checking for ${flowType} flow file: s3://${environmentBucket}/${s3Key}`,
+            `Checking for ${flowType} flow file: s3://${environmentBucket}/${s3Key}`
           );
 
           const response = await s3.send(
             new GetObjectCommand({
               Bucket: environmentBucket,
               Key: s3Key,
-            }),
+            })
           );
 
           const fileBytes = await response.Body?.transformToByteArray();
@@ -789,30 +919,27 @@ export const handler = async (event) => {
 
           const filePath = path.join(tempDir, localFileName);
           await fs.writeFile(filePath, Buffer.from(fileBytes));
-          // @ts-ignore - Dynamic key assignment for flow file options
+          // @ts-ignore
           prepareOptions[optionKey] = filePath;
           console.log(
-            `✓ ${flowType} flow file downloaded and set for county ${countyName}: ${filePath}`,
+            `✓ ${flowType} flow file downloaded and set for county ${countyName}: ${filePath}`
           );
         } catch (downloadError) {
-          // File not found or other error - this is not critical, just log it
           if (
             downloadError instanceof Error &&
             downloadError.name === "NoSuchKey"
           ) {
             console.log(
-              `No ${flowType} flow file found for county ${countyName}, continuing without it`,
+              `No ${flowType} flow file found for county ${countyName}, continuing without it`
             );
           } else {
             console.error(
-              `Failed to download ${flowType} flow file for county ${countyName}: ${downloadError instanceof Error ? downloadError.message : String(downloadError)}`,
+              `Failed to download ${flowType} flow file for county ${countyName}: ${downloadError instanceof Error ? downloadError.message : String(downloadError)}`
             );
           }
         }
       }
     };
-
-    // Configuration map for prepare flags
 
     /** @type {FlagConfig[]} */
     const flagConfig = [
@@ -833,21 +960,20 @@ export const handler = async (event) => {
       },
     ];
 
-    // Determine useBrowser setting from config with county-specific fallback
+    // Determine useBrowser setting
     const useBrowserEnv = getEnvWithCountyFallback("ELEPHANT_PREPARE_USE_BROWSER");
-    let useBrowser = true; // Default to true if not specified
+    let useBrowser = true;
     if (useBrowserEnv !== undefined) {
       useBrowser = useBrowserEnv === "true";
       console.log(
-        `Setting useBrowser: ${useBrowser} (from environment variable)`,
+        `Setting useBrowser: ${useBrowser} (from environment variable)`
       );
     } else {
       console.log(
-        `Using default useBrowser: ${useBrowser} (no environment variable set)`,
+        `Using default useBrowser: ${useBrowser} (no environment variable set)`
       );
     }
 
-    // Build prepare options based on environment variables
     /** @type {{ useBrowser: boolean, noFast?: boolean, noContinue?: boolean, browserFlowTemplate?: string, browserFlowParameters?: string, proxyUrl?: string, ignoreCaptcha?: boolean, continueButtonSelector?: string, browserFlowFile?: string, multiRequestFlowFile?: string }} */
     const prepareOptions = { useBrowser };
 
@@ -860,7 +986,7 @@ export const handler = async (event) => {
     console.log("Checking environment variables for prepare flags:");
     if (countyName) {
       console.log(
-        `🏛️ Looking for county-specific configurations for: ${countyName}`,
+        `🏛️ Looking for county-specific configurations for: ${countyName}`
       );
     }
 
@@ -874,41 +1000,39 @@ export const handler = async (event) => {
       }
     }
 
-    // Handle continue button selector configuration with county-specific lookup
+    // Handle continue button selector
     const continueButtonSelector = getEnvWithCountyFallback("ELEPHANT_PREPARE_CONTINUE_BUTTON");
-
     if (continueButtonSelector && continueButtonSelector.trim() !== "") {
       prepareOptions.continueButtonSelector = continueButtonSelector;
       console.log(
-        `✓ Setting continueButtonSelector: ${continueButtonSelector}`,
+        `✓ Setting continueButtonSelector: ${continueButtonSelector}`
       );
     }
 
-    // Check for browser flow file in S3 (county-specific)
+    // Check for flow files in S3
     const environmentBucket = process.env.ENVIRONMENT_BUCKET;
     await downloadFlowFile(
       "browser",
       "browser-flows",
       "browser-flow.json",
-      "browserFlowFile",
+      "browserFlowFile"
     );
 
-    // Check for multi-request flow file in S3 (county-specific)
     await downloadFlowFile(
       "multi-request",
       "multi-request-flows",
       "multi-request-flow.json",
-      "multiRequestFlowFile",
+      "multiRequestFlowFile"
     );
 
-    // Handle browser flow template configuration with county-specific lookup
+    // Handle browser flow template configuration
     const browserFlowTemplate = getEnvWithCountyFallback("ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE");
     let browserFlowParameters = getEnvWithCountyFallback("ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS");
 
     if (browserFlowTemplate && browserFlowTemplate.trim() !== "") {
       console.log("Browser flow template configuration detected:");
       console.log(
-        `✓ ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE='${browserFlowTemplate}'`,
+        `✓ ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE='${browserFlowTemplate}'`
       );
 
       if (browserFlowParameters && browserFlowParameters.trim() !== "") {
@@ -917,13 +1041,10 @@ export const handler = async (event) => {
           let parsedParams = {};
           const trimmedParams = browserFlowParameters.trim();
 
-          // Check if parameters are in JSON format (starts with { and ends with })
           if (trimmedParams.startsWith("{") && trimmedParams.endsWith("}")) {
-            // Parse as JSON directly
             parsedParams = JSON.parse(trimmedParams);
             console.log(`✓ ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS detected as JSON format`);
           } else {
-            // Parse simple key:value format (e.g., "timeout:30000,retries:3,selector:#main-content")
             console.log(`✓ ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS detected as key:value format`);
             const pairs = browserFlowParameters.split(",");
 
@@ -931,7 +1052,7 @@ export const handler = async (event) => {
               const colonIndex = pair.indexOf(":");
               if (colonIndex === -1) {
                 throw new Error(
-                  `Invalid parameter format: "${pair}" - expected key:value`,
+                  `Invalid parameter format: "${pair}" - expected key:value`
                 );
               }
 
@@ -942,7 +1063,6 @@ export const handler = async (event) => {
                 throw new Error(`Empty key in parameter: "${pair}"`);
               }
 
-              // Try to parse numeric values
               if (/^\d+$/.test(value)) {
                 parsedParams[key] = parseInt(value, 10);
               } else if (/^\d+\.\d+$/.test(value)) {
@@ -952,62 +1072,57 @@ export const handler = async (event) => {
               } else if (value.toLowerCase() === "false") {
                 parsedParams[key] = false;
               } else {
-                // Keep as string
                 parsedParams[key] = value;
               }
             }
           }
 
           prepareOptions.browserFlowTemplate = browserFlowTemplate;
-          // Pass as JSON string, not as object
           prepareOptions.browserFlowParameters = JSON.stringify(parsedParams);
           console.log(
             `✓ ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS parsed successfully:`,
-            JSON.stringify(parsedParams, null, 2),
+            JSON.stringify(parsedParams, null, 2)
           );
         } catch (parseError) {
           console.error(
-            `✗ Failed to parse ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS: ${parseError instanceof Error ? parseError.message : String(parseError)}`,
+            `✗ Failed to parse ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS: ${parseError instanceof Error ? parseError.message : String(parseError)}`
           );
           console.error(
-            `Invalid format: ${browserFlowParameters.substring(0, 100)}...`,
+            `Invalid format: ${browserFlowParameters.substring(0, 100)}...`
           );
           console.error(`Expected format: JSON object or key1:value1,key2:value2`);
-          // Continue without browser flow parameters rather than failing
           console.warn(
-            "Continuing without browser flow configuration due to invalid format",
+            "Continuing without browser flow configuration due to invalid format"
           );
         }
       } else {
         console.log(
-          `✗ ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS not set or empty - browser flow template will not be used`,
+          `✗ ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS not set or empty - browser flow template will not be used`
         );
       }
     } else if (browserFlowParameters && browserFlowParameters.trim() !== "") {
       console.warn(
-        "⚠️ ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS is set but ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE is not - ignoring parameters",
+        "⚠️ ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS is set but ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE is not - ignoring parameters"
       );
     }
 
-    // Prepare Phase (Main bottleneck)
+    // Prepare Phase
     console.log("🔄 Starting prepare() function...");
     const prepareStart = Date.now();
     console.log(
       "Calling prepare() with these options:",
-      JSON.stringify(prepareOptions, null, 2),
+      JSON.stringify(prepareOptions, null, 2)
     );
 
     let prepareDuration;
-    let prepareSucceeded = false;
     try {
       await prepare(inputZip, outputZip, prepareOptions);
       prepareDuration = Date.now() - prepareStart;
-      prepareSucceeded = true;
       console.log(
-        `✅ Prepare function completed: ${prepareDuration}ms (${(prepareDuration / 1000).toFixed(2)}s)`,
+        `✅ Prepare function completed: ${prepareDuration}ms (${(prepareDuration / 1000).toFixed(2)}s)`
       );
       console.log(
-        `🔍 PERFORMANCE: Local=2s, Lambda=${(prepareDuration / 1000).toFixed(1)}s - ${prepareDuration > 3000 ? "⚠️ SLOW" : "✅ OK"}`,
+        `🔍 PERFORMANCE: Local=2s, Lambda=${(prepareDuration / 1000).toFixed(1)}s - ${prepareDuration > 3000 ? "⚠️ SLOW" : "✅ OK"}`
       );
 
       // Update proxy usage as successful
@@ -1016,92 +1131,11 @@ export const handler = async (event) => {
           dynamoClient,
           proxyTableName,
           selectedProxy.proxyId,
-          false,
+          false
         );
       }
     } catch (prepareError) {
       prepareDuration = Date.now() - prepareStart;
-
-      // Gather file system context
-      let inputFileInfo = null;
-      let outputFileInfo = null;
-
-      try {
-        const inputStats = await fs.stat(inputZip);
-        inputFileInfo = {
-          exists: true,
-          size: inputStats.size,
-          path: inputZip,
-        };
-      } catch (statsError) {
-        inputFileInfo = {
-          exists: false,
-          error:
-            statsError instanceof Error
-              ? statsError.message
-              : String(statsError),
-          path: inputZip,
-        };
-      }
-
-      try {
-        const outputStats = await fs.stat(outputZip);
-        outputFileInfo = {
-          exists: true,
-          size: outputStats.size,
-          partiallyCreated: true,
-          path: outputZip,
-        };
-      } catch (outputError) {
-        outputFileInfo = {
-          exists: false,
-          partiallyCreated: false,
-          path: outputZip,
-        };
-      }
-
-      // Structured error log
-      const prepareErrorLog = {
-        timestamp: new Date().toISOString(),
-        level: "ERROR",
-        type: "PREPARE_FUNCTION_ERROR",
-        message: "Prepare function execution failed",
-        error: {
-          name:
-            prepareError instanceof Error
-              ? prepareError.name
-              : String(prepareError),
-          message:
-            prepareError instanceof Error
-              ? prepareError.message
-              : String(prepareError),
-          stack:
-            prepareError instanceof Error
-              ? prepareError.stack
-              : String(prepareError),
-        },
-        execution: {
-          duration: prepareDuration,
-          durationSeconds: (prepareDuration / 1000).toFixed(2),
-          phase: "prepare",
-        },
-        context: {
-          inputS3Uri: event.input_s3_uri,
-          inputFile: inputFileInfo,
-          outputFile: outputFileInfo,
-          options: prepareOptions,
-        },
-        lambda: {
-          function: process.env.AWS_LAMBDA_FUNCTION_NAME,
-          version: process.env.AWS_LAMBDA_FUNCTION_VERSION,
-          requestId: process.env.AWS_REQUEST_ID,
-          region: process.env.AWS_REGION,
-          memorySize: process.env.AWS_LAMBDA_FUNCTION_MEMORY_SIZE,
-        },
-      };
-
-      console.error("❌ PREPARE FUNCTION FAILED");
-      console.error(prepareErrorLog);
 
       // Update proxy usage as failed
       if (selectedProxy && proxyTableName) {
@@ -1109,25 +1143,22 @@ export const handler = async (event) => {
           dynamoClient,
           proxyTableName,
           selectedProxy.proxyId,
-          true,
+          true
         );
       }
 
       // Re-throw with enhanced context
       /** @type {EnhancedError} */
       const enhancedError = new Error(
-        `Prepare function failed: ${prepareError instanceof Error ? prepareError.message : String(prepareError)}`,
+        `Prepare function failed: ${prepareError instanceof Error ? prepareError.message : String(prepareError)}`
       );
       enhancedError.originalError =
         prepareError instanceof Error ? prepareError : undefined;
       enhancedError.type = "PREPARE_FUNCTION_ERROR";
-      enhancedError.context = prepareErrorLog.context;
-      enhancedError.execution = prepareErrorLog.execution;
       throw enhancedError;
     }
 
-    // Add input.csv to the output zip if it exists in the input zip
-    // This ensures input.csv is available downstream in the post step
+    // Add input.csv to the output zip
     console.log("📝 Adding input.csv to output zip...");
     try {
       const inputZipReader = new AdmZip(inputZip);
@@ -1143,9 +1174,8 @@ export const handler = async (event) => {
       }
     } catch (csvError) {
       console.warn(
-        `⚠️ Failed to add input.csv to output: ${csvError instanceof Error ? csvError.message : String(csvError)}`,
+        `⚠️ Failed to add input.csv to output: ${csvError instanceof Error ? csvError.message : String(csvError)}`
       );
-      // Don't fail the entire process if CSV addition fails
     }
 
     // Check output file size
@@ -1155,14 +1185,11 @@ export const handler = async (event) => {
     // Determine upload destination
     let outBucket = bucket;
     let outKey = key;
-    if (event.output_s3_uri_prefix) {
-      const { bucket: outB, key: outPrefix } = splitS3Uri(
-        event.output_s3_uri_prefix,
-      );
+    if (output_s3_uri_prefix) {
+      const { bucket: outB, key: outPrefix } = splitS3Uri(output_s3_uri_prefix);
       outBucket = outB;
       outKey = path.posix.join(outPrefix.replace(/\/$/, ""), "output.zip");
     } else {
-      // Default: write next to input with a suffix
       const dir = path.posix.dirname(key);
       const base = path.posix.basename(key, path.extname(key));
       outKey = path.posix.join(dir, `${base}.prepared.zip`);
@@ -1178,89 +1205,176 @@ export const handler = async (event) => {
         Bucket: outBucket,
         Key: outKey,
         Body: outputBody,
-      }),
+      })
     );
 
     const s3UploadDuration = Date.now() - s3UploadStart;
     console.log(
-      `✅ S3 upload completed: ${s3UploadDuration}ms (${(s3UploadDuration / 1000).toFixed(2)}s)`,
+      `✅ S3 upload completed: ${s3UploadDuration}ms (${(s3UploadDuration / 1000).toFixed(2)}s)`
     );
     console.log(
-      `📊 Uploaded ${outputBody.length} bytes to s3://${outBucket}/${outKey}`,
+      `📊 Uploaded ${outputBody.length} bytes to s3://${outBucket}/${outKey}`
     );
 
     // Total timing summary
     const totalDuration = Date.now() - startTime;
     console.log(`\n🎯 TIMING SUMMARY:`);
     console.log(
-      `   S3 Download: ${s3DownloadDuration}ms (${(s3DownloadDuration / 1000).toFixed(2)}s)`,
+      `   S3 Download: ${s3DownloadDuration}ms (${(s3DownloadDuration / 1000).toFixed(2)}s)`
     );
     console.log(
-      `   Prepare:     ${prepareDuration}ms (${(prepareDuration / 1000).toFixed(2)}s)`,
+      `   Prepare:     ${prepareDuration}ms (${(prepareDuration / 1000).toFixed(2)}s)`
     );
     console.log(
-      `   S3 Upload:   ${s3UploadDuration}ms (${(s3UploadDuration / 1000).toFixed(2)}s)`,
+      `   S3 Upload:   ${s3UploadDuration}ms (${(s3UploadDuration / 1000).toFixed(2)}s)`
     );
     console.log(
-      `   TOTAL:       ${totalDuration}ms (${(totalDuration / 1000).toFixed(2)}s)`,
+      `   TOTAL:       ${totalDuration}ms (${(totalDuration / 1000).toFixed(2)}s)`
     );
     console.log(
-      `🏁 Lambda handler completed at: ${new Date().toISOString()}\n`,
+      `🏁 Prepare processing completed at: ${new Date().toISOString()}\n`
     );
 
-    return { output_s3_uri: `s3://${outBucket}/${outKey}` };
-  } catch (lambdaError) {
-    const totalDuration = Date.now() - startTime;
-    if (!(lambdaError instanceof Error)) {
-      throw new Error("Lambda execution failed, but no error was thrown");
-    }
-    /** @type {EnhancedError} */
-    const error = lambdaError;
-
-    // Structured Lambda error log
-    const lambdaErrorLog = {
-      timestamp: new Date().toISOString(),
-      level: "ERROR",
-      type: error.type || "LAMBDA_EXECUTION_ERROR",
-      message: "Lambda execution failed",
-      error: {
-        name: error.name,
-        message: error.message,
-        stack: error.stack,
-      },
-      execution: {
-        totalDuration: totalDuration,
-        totalDurationSeconds: (totalDuration / 1000).toFixed(2),
-        failed: true,
-      },
-      input: {
-        event: event,
-        inputS3Uri: event?.input_s3_uri || null,
-      },
-      context: error.context || null,
-      validationErrors: error.validationErrors || null,
-      lambda: {
-        function: process.env.AWS_LAMBDA_FUNCTION_NAME,
-        version: process.env.AWS_LAMBDA_FUNCTION_VERSION,
-        requestId: process.env.AWS_REQUEST_ID,
-        region: process.env.AWS_REGION,
-        memorySize: process.env.AWS_LAMBDA_FUNCTION_MEMORY_SIZE,
-        runtime: process.env.AWS_EXECUTION_ENV,
-      },
-    };
-
-    console.error("LAMBDA EXECUTION FAILED");
-    console.error(lambdaErrorLog);
-
-    throw lambdaError;
+    return { output_s3_uri: `s3://${outBucket}/${outKey}`, county: countyName };
   } finally {
     try {
       await fs.rm(tempDir, { recursive: true, force: true });
       console.log(`🧹 Cleaned up temporary directory: ${tempDir}`);
     } catch (cleanupError) {
       console.error(
-        `⚠️ Failed to cleanup temp directory ${tempDir}: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`,
+        `⚠️ Failed to cleanup temp directory ${tempDir}: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`
       );
     }
   }
+}
+
+/**
+ * Lambda handler for processing orders and storing receipts in S3.
+ * Supports both direct invocation and SQS trigger with task token.
+ * @param {Object} event - Input event (direct invoke or SQS event)
+ * @returns {Promise<{ output_s3_uri: string } | void>} Success message (direct invoke only)
+ */
+export const handler = async (event) => {
+  console.log("Event:", JSON.stringify(event, null, 2));
+  console.log(`🚀 Lambda handler started at: ${new Date().toISOString()}`);
+
+  // Detect if this is an SQS event
+  const isSQSEvent = event.Records && Array.isArray(event.Records) && event.Records[0]?.eventSource === "aws:sqs";
+
+  if (isSQSEvent) {
+    // Process SQS messages (with task token pattern)
+    console.log(`📬 Processing ${event.Records.length} SQS message(s)`);
+
+    for (const record of event.Records) {
+      let messageBody;
+      let taskToken;
+      let executionId;
+      let county = "unknown";
+
+      try {
+        messageBody = JSON.parse(record.body);
+        taskToken = messageBody.taskToken;
+        executionId = messageBody.executionId;
+
+        console.log(`📋 Processing message with executionId: ${executionId}`);
+
+        if (!taskToken) {
+          throw new Error("Missing taskToken in SQS message body");
+        }
+
+        const result = await processPrepare({
+          input_s3_uri: messageBody.input_s3_uri,
+          output_s3_uri_prefix: messageBody.output_s3_uri_prefix,
+          executionId,
+          taskToken,
+        });
+
+        county = result.county || county;
+
+        // Emit SUCCEEDED event
+        await emitWorkflowEvent({
+          executionId,
+          county,
+          status: "SUCCEEDED",
+        });
+
+        // Send task success to Step Functions
+        await sendTaskSuccess(taskToken, result);
+
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        console.error(`❌ Prepare processing failed: ${errorMessage}`);
+
+        // Emit PARKED event with error details and task token for retry
+        if (executionId && taskToken) {
+          await emitWorkflowEvent({
+            executionId,
+            county,
+            status: "PARKED",
+            taskToken,
+            errors: [
+              {
+                code: "PREPARE_FAILED",
+                details: {
+                  message: errorMessage,
+                  input_s3_uri: messageBody?.input_s3_uri,
+                },
+              },
+            ],
+          });
+        }
+
+        // NOTE: We intentionally do NOT call sendTaskFailure here.
+        // The workflow will remain parked, waiting for external retry via sendTaskSuccess.
+        // The SQS message will be deleted (not retried) since we're not throwing.
+        console.log(`⏸️ Workflow parked for manual retry. Use taskToken to resume.`);
+      }
+    }
+
+    // Return void for SQS - acknowledgment is implicit
+    return;
+  }
+
+  // Direct invocation (legacy support)
+  console.log("📞 Processing direct invocation");
+
+  // Log IP address and Lambda environment information
+  console.log("🌐 Getting Lambda IP address information...");
+  try {
+    const ipInfo = await getIPAddresses();
+    console.log(`🔍 Lambda Instance Info:`);
+    console.log(`   Function: ${ipInfo.lambdaFunction}`);
+    console.log(
+      `   Version: ${process.env.AWS_LAMBDA_FUNCTION_VERSION || "unknown"}`
+    );
+    console.log(`   Region: ${ipInfo.awsRegion}`);
+    console.log(
+      `   Memory: ${process.env.AWS_LAMBDA_FUNCTION_MEMORY_SIZE || "unknown"}MB`
+    );
+    console.log(`   Runtime: ${process.env.AWS_EXECUTION_ENV || "unknown"}`);
+    console.log(`   Request ID: ${process.env.AWS_REQUEST_ID || "unknown"}`);
+    console.log(
+      `   Local IPs: ${ipInfo.localIPs.length > 0 ? ipInfo.localIPs.join(", ") : "None found"}`
+    );
+    console.log(`   Public IP: ${ipInfo.publicIP || "Not available"}`);
+
+    if (ipInfo.publicIP) {
+      console.log(
+        `🌍 Network: Lambda has outbound internet access via IP ${ipInfo.publicIP}`
+      );
+    } else {
+      console.log(
+        `🚫 Network: No public IP detected (may be VPC-only or blocked)`
+      );
+    }
+  } catch (error) {
+    console.log(
+      `⚠️ Could not get IP information: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+
+  return processPrepare({
+    input_s3_uri: event.input_s3_uri,
+    output_s3_uri_prefix: event.output_s3_uri_prefix,
+  });
 };
