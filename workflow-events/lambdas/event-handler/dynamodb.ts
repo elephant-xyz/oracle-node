@@ -3,6 +3,7 @@ import {
   DynamoDBDocumentClient,
   TransactWriteCommand,
   UpdateCommand,
+  BatchGetCommand,
 } from "@aws-sdk/lib-dynamodb";
 import type {
   WorkflowEventDetail,
@@ -125,9 +126,9 @@ const buildErrorRecordUpdate = (
 } => {
   const pk = createKey("ERROR", errorCode);
   const errorType = extractErrorType(errorCode);
-  // GS3SK format: COUNT#{errorType}#{paddedCount}#ERROR#{errorCode}
-  // For new errors, count starts at the number of occurrences
-  const gs3sk = `COUNT#${errorType}#${padCount(occurrences)}#ERROR#${errorCode}`;
+  // Note: GS2SK and GS3SK are NOT set here - they are updated separately
+  // after the transaction via refreshErrorRecordSortKeys to reflect the
+  // actual totalCount (since totalCount uses atomic increment).
 
   return {
     Update: {
@@ -149,8 +150,7 @@ const buildErrorRecordUpdate = (
             GS1PK = :gs1pk,
             GS1SK = :gs1sk,
             GS2PK = :gs2pk,
-            GS3PK = :gs3pk,
-            GS3SK = :gs3sk
+            GS3PK = :gs3pk
       `.trim(),
       ExpressionAttributeValues: {
         ":errorCode": errorCode,
@@ -166,7 +166,6 @@ const buildErrorRecordUpdate = (
         ":gs1sk": pk,
         ":gs2pk": "TYPE#ERROR",
         ":gs3pk": "METRIC#ERRORCOUNT",
-        ":gs3sk": gs3sk,
       },
     },
   };
@@ -245,7 +244,7 @@ interface ExecutionErrorStats {
   totalOccurrences: number;
   /** Number of unique error codes. */
   uniqueErrorCount: number;
-  /** Error type for the execution (single type or "MIXED" if multiple types). */
+  /** Error type for the execution (first 2 characters of error code). */
   errorType: string;
 }
 
@@ -270,6 +269,8 @@ const buildFailedExecutionItemUpdate = (
   };
 } => {
   const pk = createKey("EXECUTION", detail.executionId);
+  // GS1SK format: COUNT#{paddedCount}#EXECUTION#{executionId}
+  const gs1sk = `COUNT#${padCount(stats.uniqueErrorCount)}#EXECUTION#${detail.executionId}`;
   // GS3SK format: COUNT#{errorType}#{paddedCount}#EXECUTION#{executionId}
   const gs3sk = `COUNT#${stats.errorType}#${padCount(stats.uniqueErrorCount)}#EXECUTION#${detail.executionId}`;
 
@@ -292,6 +293,8 @@ const buildFailedExecutionItemUpdate = (
             taskToken = :taskToken,
             createdAt = if_not_exists(createdAt, :now),
             updatedAt = :now,
+            GS1PK = :gs1pk,
+            GS1SK = :gs1sk,
             GS3PK = :gs3pk,
             GS3SK = :gs3sk
       `.trim(),
@@ -309,11 +312,137 @@ const buildFailedExecutionItemUpdate = (
         ":uniqueErrorCount": stats.uniqueErrorCount,
         ":taskToken": detail.taskToken,
         ":now": now,
+        ":gs1pk": "METRIC#ERRORCOUNT",
+        ":gs1sk": gs1sk,
         ":gs3pk": "METRIC#ERRORCOUNT",
         ":gs3sk": gs3sk,
       },
     },
   };
+};
+
+/**
+ * Retrieves the current totalCount for multiple error codes using BatchGetItem.
+ * @param errorCodes - Array of error codes to look up
+ * @returns Map of error code to totalCount
+ */
+const getErrorRecordCounts = async (
+  errorCodes: string[],
+): Promise<Map<string, number>> => {
+  if (!TABLE_NAME) {
+    throw new Error(
+      "WORKFLOW_ERRORS_TABLE_NAME environment variable is not set",
+    );
+  }
+
+  const countMap = new Map<string, number>();
+
+  if (errorCodes.length === 0) {
+    return countMap;
+  }
+
+  // BatchGetItem is limited to 100 items per request
+  const BATCH_LIMIT = 100;
+
+  for (let i = 0; i < errorCodes.length; i += BATCH_LIMIT) {
+    const batch = errorCodes.slice(i, i + BATCH_LIMIT);
+    const keys = batch.map((errorCode) => {
+      const pk = createKey("ERROR", errorCode);
+      return { PK: pk, SK: pk };
+    });
+
+    const command = new BatchGetCommand({
+      RequestItems: {
+        [TABLE_NAME]: {
+          Keys: keys,
+          ProjectionExpression: "errorCode, totalCount",
+        },
+      },
+    });
+
+    const response = await docClient.send(command);
+    const items = response.Responses?.[TABLE_NAME] ?? [];
+
+    for (const item of items) {
+      const errorCode = item.errorCode as string;
+      const totalCount = item.totalCount as number;
+      countMap.set(errorCode, totalCount);
+    }
+  }
+
+  return countMap;
+};
+
+/**
+ * Updates GS2SK and GS3SK for an ErrorRecord to reflect the new total count.
+ * This is a separate operation because these sort keys include the padded count
+ * which can only be determined after the atomic increment.
+ *
+ * Note: This is called after the main transaction to update the sort keys
+ * for count-based sorting. In a high-concurrency scenario, this could
+ * result in slightly stale sort order, which is acceptable for analytics.
+ *
+ * @param errorCode - The error code to update
+ * @param newCount - The new total count for GS2SK and GS3SK
+ */
+export const updateErrorRecordSortKey = async (
+  errorCode: string,
+  newCount: number,
+): Promise<void> => {
+  if (!TABLE_NAME) {
+    throw new Error(
+      "WORKFLOW_ERRORS_TABLE_NAME environment variable is not set",
+    );
+  }
+
+  const pk = createKey("ERROR", errorCode);
+  const errorType = extractErrorType(errorCode);
+  // GS2SK format: COUNT#{paddedCount}#ERROR#{errorCode}
+  const gs2sk = `COUNT#${padCount(newCount)}#ERROR#${errorCode}`;
+  // GS3SK format: COUNT#{errorType}#{paddedCount}#ERROR#{errorCode}
+  const gs3sk = `COUNT#${errorType}#${padCount(newCount)}#ERROR#${errorCode}`;
+
+  const command = new UpdateCommand({
+    TableName: TABLE_NAME,
+    Key: {
+      PK: pk,
+      SK: pk,
+    },
+    UpdateExpression: "SET GS2SK = :gs2sk, GS3SK = :gs3sk",
+    ExpressionAttributeValues: {
+      ":gs2sk": gs2sk,
+      ":gs3sk": gs3sk,
+    },
+  });
+
+  await docClient.send(command);
+};
+
+/**
+ * Refreshes GS2SK and GS3SK for multiple error records after a transaction.
+ * Fetches the actual totalCount for each error and updates sort keys accordingly.
+ * @param errorCodes - Array of error codes to refresh
+ */
+const refreshErrorRecordSortKeys = async (
+  errorCodes: string[],
+): Promise<void> => {
+  if (errorCodes.length === 0) {
+    return;
+  }
+
+  // Get current counts for all error codes
+  const countMap = await getErrorRecordCounts(errorCodes);
+
+  // Update GS2SK for each error record
+  const updatePromises = errorCodes.map((errorCode) => {
+    const count = countMap.get(errorCode);
+    if (count !== undefined) {
+      return updateErrorRecordSortKey(errorCode, count);
+    }
+    return Promise.resolve();
+  });
+
+  await Promise.all(updatePromises);
 };
 
 /**
@@ -360,14 +489,10 @@ export const saveErrorRecords = async (
   const now = new Date().toISOString();
   const errorOccurrences = countErrorOccurrences(errors);
 
-  // Determine error type for the execution
-  // If all errors share the same type, use that type; otherwise use "MIXED"
-  const errorTypes = new Set<string>();
-  for (const errorCode of errorOccurrences.keys()) {
-    errorTypes.add(extractErrorType(errorCode));
-  }
-  const executionErrorType =
-    errorTypes.size === 1 ? Array.from(errorTypes)[0] : "MIXED";
+  // Determine error type for the execution (first 2 characters of error code)
+  // All errors within one invocation should have the same type
+  const firstErrorCode = errorOccurrences.keys().next().value as string;
+  const executionErrorType = extractErrorType(firstErrorCode);
 
   // Calculate statistics
   const stats: ExecutionErrorStats = {
@@ -445,50 +570,15 @@ export const saveErrorRecords = async (
     }
   }
 
+  // After the transaction, refresh GS2SK with the actual totalCount values.
+  // This is done separately because totalCount uses atomic increment,
+  // so we need to read the updated values before setting GS2SK.
+  await refreshErrorRecordSortKeys(errorCodes);
+
   return {
     success: true,
     uniqueErrorCount: stats.uniqueErrorCount,
     totalOccurrences: stats.totalOccurrences,
     errorCodes,
   };
-};
-
-/**
- * Updates the GS2SK for an ErrorRecord to reflect the new total count.
- * This is a separate operation because GS2SK includes the padded count
- * which can only be determined after the atomic increment.
- *
- * Note: This is called after the main transaction to update the sort key
- * for count-based sorting. In a high-concurrency scenario, this could
- * result in slightly stale sort order, which is acceptable for analytics.
- *
- * @param errorCode - The error code to update
- * @param newCount - The new total count for GS2SK
- */
-export const updateErrorRecordSortKey = async (
-  errorCode: string,
-  newCount: number,
-): Promise<void> => {
-  if (!TABLE_NAME) {
-    throw new Error(
-      "WORKFLOW_ERRORS_TABLE_NAME environment variable is not set",
-    );
-  }
-
-  const pk = createKey("ERROR", errorCode);
-  const gs2sk = `COUNT#${padCount(newCount)}#ERROR#${errorCode}`;
-
-  const command = new UpdateCommand({
-    TableName: TABLE_NAME,
-    Key: {
-      PK: pk,
-      SK: pk,
-    },
-    UpdateExpression: "SET GS2SK = :gs2sk",
-    ExpressionAttributeValues: {
-      ":gs2sk": gs2sk,
-    },
-  });
-
-  await docClient.send(command);
 };

@@ -44,7 +44,7 @@ export interface ErrorRecord {
   SK: string;
   /** Error code identifier. */
   errorCode: string;
-  /** Error type. First 2 characters of the error code, that is common to all errors in the execution.*/
+  /** Error type. First 2 characters of the error code.*/
   errorType: string;
   /** Entity discriminator. */
   entityType: string;

@@ -648,35 +648,6 @@ describe("event-handler", () => {
       ).toBe("01");
     });
 
-    it("should set errorType to 'MIXED' in FailedExecutionItem when errors have different types", async () => {
-      ddbMock.on(TransactWriteCommand).resolves({});
-
-      const { saveErrorRecords } = await import(
-        "../../../../workflow-events/lambdas/event-handler/dynamodb.js"
-      );
-
-      const detail = createWorkflowDetail({
-        executionId: "exec-errortype-mixed-001",
-        errors: [
-          createError("01256"), // type "01"
-          createError("02789"), // type "02"
-        ],
-      });
-
-      await saveErrorRecords(detail);
-
-      const calls = ddbMock.commandCalls(TransactWriteCommand);
-      const transactItems = calls[0].args[0].input.TransactItems;
-
-      // Find FailedExecutionItem
-      const failedExecutionItem = transactItems![0].Update;
-
-      // When errors have mixed types, errorType should be "MIXED"
-      expect(
-        failedExecutionItem?.ExpressionAttributeValues?.[":errorType"],
-      ).toBe("MIXED");
-    });
-
     it("should include errorType in GS3SK for ErrorRecord", async () => {
       ddbMock.on(TransactWriteCommand).resolves({});
 
@@ -730,32 +701,6 @@ describe("event-handler", () => {
       // For 2 unique errors: COUNT#01#0000000002#EXECUTION#exec-gs3-exec-001
       expect(failedExecutionItem?.ExpressionAttributeValues?.[":gs3sk"]).toBe(
         "COUNT#01#0000000002#EXECUTION#exec-gs3-exec-001",
-      );
-    });
-
-    it("should include 'MIXED' errorType in GS3SK for FailedExecutionItem with mixed error types", async () => {
-      ddbMock.on(TransactWriteCommand).resolves({});
-
-      const { saveErrorRecords } = await import(
-        "../../../../workflow-events/lambdas/event-handler/dynamodb.js"
-      );
-
-      const detail = createWorkflowDetail({
-        executionId: "exec-gs3-mixed-001",
-        errors: [createError("01256"), createError("02789")], // Different types
-      });
-
-      await saveErrorRecords(detail);
-
-      const calls = ddbMock.commandCalls(TransactWriteCommand);
-      const transactItems = calls[0].args[0].input.TransactItems;
-
-      // Find FailedExecutionItem
-      const failedExecutionItem = transactItems![0].Update;
-
-      // GS3SK format: COUNT#MIXED#{paddedCount}#EXECUTION#{executionId}
-      expect(failedExecutionItem?.ExpressionAttributeValues?.[":gs3sk"]).toBe(
-        "COUNT#MIXED#0000000002#EXECUTION#exec-gs3-mixed-001",
       );
     });
 

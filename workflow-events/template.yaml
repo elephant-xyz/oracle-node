@@ -65,7 +65,7 @@ Resources:
               KeyType: RANGE
           Projection:
             ProjectionType: ALL
-        # GSI3: Execution error count sorting (FailedExecutionItem)
+        # GSI3: Error count sorting (ErrorRecord and FailedExecutionItem)
         - IndexName: GS3
           KeySchema:
             - AttributeName: GS3PK
