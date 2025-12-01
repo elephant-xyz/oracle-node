@@ -77,6 +77,13 @@ Resources:
       Tags:
         - Key: Environment
           Value: !Ref EnvironmentName
+  WorkflowEventHandlerDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      MessageRetentionPeriod: 1209600
+      Tags:
+        - Key: Environment
+          Value: !Ref EnvironmentName
 
   WorkflowEventHandlerFunction:
     Type: AWS::Serverless::Function
@@ -87,6 +94,9 @@ Resources:
         - arm64
       Handler: index.handler
       CodeUri: lambdas/event-handler
+      DeadLetterQueue:
+        TargetArn: !GetAtt WorkflowEventHandlerDeadLetterQueue.Arn
+        Type: SQS
       Description: "Processes EventBridge WorkflowEvent events from elephant.workflow source"
       Environment:
         Variables:

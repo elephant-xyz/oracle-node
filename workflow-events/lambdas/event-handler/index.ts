@@ -14,7 +14,7 @@ export const handler = async (
   event: EventBridgeEvent<"WorkflowEvent", WorkflowEventDetail>,
 ): Promise<void> => {
   try {
-    console.debug(
+    console.info(
       createLogEntry("received_workflow_event", event, {
         executionId: event.detail.executionId,
         county: event.detail.county,
@@ -49,7 +49,7 @@ export const handler = async (
       );
     } else {
       // No errors in this event - other cases will be implemented later
-      console.debug(
+      console.info(
         createLogEntry("no_errors_to_process", event, {
           executionId: event.detail.executionId,
           status: event.detail.status,

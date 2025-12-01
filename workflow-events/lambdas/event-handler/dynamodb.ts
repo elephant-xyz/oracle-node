@@ -105,6 +105,7 @@ const countErrorOccurrences = (
  * @param errorCode - The error code identifier
  * @param errorDetails - Additional error details
  * @param executionId - The execution ID that observed this error
+ * @param occurrences - Number of times this error occurred in the execution
  * @param now - ISO timestamp for the operation
  * @returns UpdateCommand input for ErrorRecord upsert
  */
@@ -112,21 +113,21 @@ const buildErrorRecordUpdate = (
   errorCode: string,
   errorDetails: Record<string, unknown>,
   executionId: string,
+  occurrences: number,
   now: string,
 ): {
   Update: {
     TableName: string;
     Key: Pick<ErrorRecord, "PK" | "SK">;
     UpdateExpression: string;
-    ExpressionAttributeNames: Record<string, string>;
     ExpressionAttributeValues: Record<string, string | number>;
   };
 } => {
   const pk = createKey("ERROR", errorCode);
   const errorType = extractErrorType(errorCode);
   // GS3SK format: COUNT#{errorType}#{paddedCount}#ERROR#{errorCode}
-  // For new errors, count starts at 1
-  const gs3sk = `COUNT#${errorType}#${padCount(1)}#ERROR#${errorCode}`;
+  // For new errors, count starts at the number of occurrences
+  const gs3sk = `COUNT#${errorType}#${padCount(occurrences)}#ERROR#${errorCode}`;
 
   return {
     Update: {
@@ -151,7 +152,6 @@ const buildErrorRecordUpdate = (
             GS3PK = :gs3pk,
             GS3SK = :gs3sk
       `.trim(),
-      ExpressionAttributeNames: {},
       ExpressionAttributeValues: {
         ":errorCode": errorCode,
         ":entityType": ENTITY_TYPES.ERROR,
@@ -159,7 +159,7 @@ const buildErrorRecordUpdate = (
         ":errorDetails": JSON.stringify(errorDetails),
         ":defaultStatus": DEFAULT_ERROR_STATUS,
         ":zero": 0,
-        ":increment": 1,
+        ":increment": occurrences,
         ":now": now,
         ":executionId": executionId,
         ":gs1pk": "TYPE#ERROR",
@@ -382,7 +382,7 @@ export const saveErrorRecords = async (
       TableName: string;
       Key: Record<string, string>;
       UpdateExpression: string;
-      ExpressionAttributeNames: Record<string, string>;
+      ExpressionAttributeNames?: Record<string, string>;
       ExpressionAttributeValues: Record<string, string | number | undefined>;
     };
   }> = [];
@@ -393,7 +393,7 @@ export const saveErrorRecords = async (
   // Add ErrorRecord and ExecutionErrorLink updates for each unique error
   for (const [errorCode, { count, details }] of errorOccurrences) {
     transactItems.push(
-      buildErrorRecordUpdate(errorCode, details, detail.executionId, now),
+      buildErrorRecordUpdate(errorCode, details, detail.executionId, count, now),
     );
     transactItems.push(
       buildExecutionErrorLinkUpdate(
