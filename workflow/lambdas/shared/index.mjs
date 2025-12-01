@@ -13,6 +13,8 @@ export {
   s3,
 } from "./s3-utils.mjs";
 
+export { emitWorkflowEvent, createWorkflowError } from "./eventbridge.mjs";
+
 /**
  * Ensure required environment variables are present.
  *

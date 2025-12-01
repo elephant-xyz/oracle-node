@@ -738,6 +738,10 @@ Resources:
                 - states:SendTaskSuccess
                 - states:SendTaskFailure
               Resource: "*"
+            - Effect: Allow
+              Action:
+                - events:PutEvents
+              Resource: "*"
       Environment:
         Variables:
           TRANSFORM_S3_PREFIX: !Ref TransformS3Prefix
@@ -777,6 +781,10 @@ Resources:
                 - states:SendTaskSuccess
                 - states:SendTaskFailure
               Resource: "*"
+            - Effect: Allow
+              Action:
+                - events:PutEvents
+              Resource: "*"
       Environment:
         Variables:
           ERRORS_TABLE_NAME: !Ref ErrorsTable
@@ -814,6 +822,10 @@ Resources:
                 - states:SendTaskSuccess
                 - states:SendTaskFailure
               Resource: "*"
+            - Effect: Allow
+              Action:
+                - events:PutEvents
+              Resource: "*"
       Events:
         SqsEvent:
           Type: SQS
@@ -847,6 +859,10 @@ Resources:
               Action:
                 - states:SendTaskSuccess
                 - states:SendTaskFailure
+              Resource: "*"
+            - Effect: Allow
+              Action:
+                - events:PutEvents
               Resource: "*"
       Environment:
         Variables:
@@ -1058,6 +1074,10 @@ Resources:
                   StringEquals:
                     cloudwatch:namespace:
                       - ElephantWorkflow
+              - Effect: Allow
+                Action:
+                  - events:PutEvents
+                Resource: "*"
               - Effect: Allow
                 Action:
                   - logs:CreateLogDelivery

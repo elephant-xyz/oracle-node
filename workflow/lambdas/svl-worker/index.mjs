@@ -9,6 +9,8 @@ import {
   downloadS3Object,
   uploadToS3,
   createLogger,
+  emitWorkflowEvent,
+  createWorkflowError,
 } from "../shared/index.mjs";
 import { createErrorsRepository } from "../post/errors.mjs";
 
@@ -260,21 +262,86 @@ export const handler = async (event) => {
       transformedOutputS3Uri: input.transformedOutputS3Uri,
     });
 
-    await executeWithTaskToken({
+    // Emit IN_PROGRESS event
+    await emitWorkflowEvent({
+      executionId: input.executionId,
+      county: input.county,
+      status: "IN_PROGRESS",
+      phase: "SVL",
+      step: "SVL",
       taskToken,
       log,
-      workerFn: async () => {
-        return await runSvl({
-          transformedOutputS3Uri: input.transformedOutputS3Uri,
-          county: input.county,
-          outputPrefix: input.outputPrefix,
+    });
+
+    try {
+      const result = await runSvl({
+        transformedOutputS3Uri: input.transformedOutputS3Uri,
+        county: input.county,
+        outputPrefix: input.outputPrefix,
+        executionId: input.executionId,
+        preparedS3Uri: input.preparedS3Uri,
+        s3: input.s3,
+        log,
+      });
+
+      if (result.validationPassed) {
+        // Emit SUCCEEDED event
+        await emitWorkflowEvent({
           executionId: input.executionId,
-          preparedS3Uri: input.preparedS3Uri,
-          s3: input.s3,
+          county: input.county,
+          status: "SUCCEEDED",
+          phase: "SVL",
+          step: "SVL",
           log,
         });
-      },
-    });
+      } else {
+        // Emit PARKED event - validation failed but errors saved to DynamoDB
+        await emitWorkflowEvent({
+          executionId: input.executionId,
+          county: input.county,
+          status: "PARKED",
+          phase: "SVL",
+          step: "SVL",
+          taskToken,
+          errors: [
+            createWorkflowError("SVL_VALIDATION_ERROR", {
+              errorsS3Uri: result.errorsS3Uri,
+            }),
+          ],
+          log,
+        });
+      }
+
+      await executeWithTaskToken({
+        taskToken,
+        log,
+        workerFn: async () => result,
+      });
+    } catch (err) {
+      // Emit FAILED event
+      await emitWorkflowEvent({
+        executionId: input.executionId,
+        county: input.county,
+        status: "FAILED",
+        phase: "SVL",
+        step: "SVL",
+        taskToken,
+        errors: [
+          createWorkflowError("SVL_FAILED", {
+            message: err instanceof Error ? err.message : String(err),
+          }),
+        ],
+        log,
+      });
+
+      await executeWithTaskToken({
+        taskToken,
+        log,
+        workerFn: async () => {
+          throw err;
+        },
+      });
+    }
 
     log("info", "svl_worker_complete", {});
   }

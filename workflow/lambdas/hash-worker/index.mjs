@@ -9,6 +9,8 @@ import {
   downloadS3Object,
   uploadToS3,
   createLogger,
+  emitWorkflowEvent,
+  createWorkflowError,
 } from "../shared/index.mjs";
 
 /**
@@ -233,20 +235,67 @@ export const handler = async (event) => {
       seedOutputS3Uri: input.seedOutputS3Uri,
     });
 
-    await executeWithTaskToken({
+    // Emit IN_PROGRESS event
+    await emitWorkflowEvent({
+      executionId: input.executionId,
+      county: input.county,
+      status: "IN_PROGRESS",
+      phase: "Hash",
+      step: "Hash",
       taskToken,
       log,
-      workerFn: async () => {
-        return await runHash({
-          validatedOutputS3Uri: input.validatedOutputS3Uri,
-          seedOutputS3Uri: input.seedOutputS3Uri,
-          county: input.county,
-          outputPrefix: input.outputPrefix,
-          executionId: input.executionId,
-          log,
-        });
-      },
     });
+
+    try {
+      const result = await runHash({
+        validatedOutputS3Uri: input.validatedOutputS3Uri,
+        seedOutputS3Uri: input.seedOutputS3Uri,
+        county: input.county,
+        outputPrefix: input.outputPrefix,
+        executionId: input.executionId,
+        log,
+      });
+
+      // Emit SUCCEEDED event
+      await emitWorkflowEvent({
+        executionId: input.executionId,
+        county: input.county,
+        status: "SUCCEEDED",
+        phase: "Hash",
+        step: "Hash",
+        log,
+      });
+
+      await executeWithTaskToken({
+        taskToken,
+        log,
+        workerFn: async () => result,
+      });
+    } catch (err) {
+      // Emit FAILED event
+      await emitWorkflowEvent({
+        executionId: input.executionId,
+        county: input.county,
+        status: "FAILED",
+        phase: "Hash",
+        step: "Hash",
+        taskToken,
+        errors: [
+          createWorkflowError("HASH_FAILED", {
+            message: err instanceof Error ? err.message : String(err),
+          }),
+        ],
+        log,
+      });
+
+      await executeWithTaskToken({
+        taskToken,
+        log,
+        workerFn: async () => {
+          throw err;
+        },
+      });
+    }
 
     log("info", "hash_worker_complete", {});
   }
