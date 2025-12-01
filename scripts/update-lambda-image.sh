@@ -150,7 +150,8 @@ update_lambda_with_latest_image() {
       --function-name "$function_name" \
       --query 'Code.ImageUri' \
       --output text 2>&1)
-    repo_uri=$(echo "$image_uri" | cut -d':' -f1)
+    # Extract repository URI by removing digest (@sha256:...) or tag (:tag)
+    repo_uri=$(echo "$image_uri" | sed -E 's/(@sha256:[a-f0-9]+|:[^/@]+)$//')
   fi
 
   info "ECR repository: $repo_uri"
