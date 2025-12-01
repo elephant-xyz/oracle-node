@@ -11,8 +11,8 @@ import {
   createLogger,
   emitWorkflowEvent,
   createWorkflowError,
-} from "../shared/index.mjs";
-import { createErrorsRepository } from "../post/errors.mjs";
+} from "workflow-shared-utils";
+import { createErrorsRepository } from "./errors.mjs";
 
 /**
  * @typedef {object} SvlInput
@@ -43,13 +43,13 @@ import { createErrorsRepository } from "../post/errors.mjs";
  * @property {SvlInput} input - SVL input parameters.
  */
 
-/** @type {import("../post/errors.mjs").ErrorsRepository | null} */
+/** @type {import("./errors.mjs").ErrorsRepository | null} */
 let cachedErrorsRepository = null;
 
 /**
  * Lazy-initialize the DynamoDB errors repository.
  *
- * @returns {import("../post/errors.mjs").ErrorsRepository} - Repository instance.
+ * @returns {import("./errors.mjs").ErrorsRepository} - Repository instance.
  */
 function getErrorsRepository() {
   if (!cachedErrorsRepository) {
