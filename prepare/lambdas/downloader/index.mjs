@@ -1291,12 +1291,15 @@ export const handler = async (event) => {
 
         county = result.county || county;
 
-        // Emit SUCCEEDED event
+        // Emit SUCCEEDED event with taskToken for traceability
         await emitWorkflowEvent({
           executionId,
           county,
           status: "SUCCEEDED",
+          taskToken,
         });
+
+        console.log(`✅ Prepare succeeded. TaskToken: ${taskToken.substring(0, 50)}...`);
 
         // Send task success to Step Functions
         await sendTaskSuccess(taskToken, result);
@@ -1327,7 +1330,7 @@ export const handler = async (event) => {
         // NOTE: We intentionally do NOT call sendTaskFailure here.
         // The workflow will remain parked, waiting for external retry via sendTaskSuccess.
         // The SQS message will be deleted (not retried) since we're not throwing.
-        console.log(`⏸️ Workflow parked for manual retry. Use taskToken to resume.`);
+        console.log(`⏸️ Workflow parked for manual retry. TaskToken: ${taskToken.substring(0, 50)}...`);
       }
     }
 
