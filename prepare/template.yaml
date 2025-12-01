@@ -345,6 +345,102 @@ Resources:
           Value: !Ref EnvironmentName
 
   #####################################################################################################################
+  # SQS Queues for Granular Workflow Steps (Transform, SVL, Hash, Upload)
+  #####################################################################################################################
+
+  TransformDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      MessageRetentionPeriod: 1209600
+      VisibilityTimeout: 331
+      SqsManagedSseEnabled: true
+      Tags:
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  TransformQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      VisibilityTimeout: 331
+      MessageRetentionPeriod: 1209600
+      SqsManagedSseEnabled: true
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt TransformDeadLetterQueue.Arn
+        maxReceiveCount: 1
+      Tags:
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  SvlDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      MessageRetentionPeriod: 1209600
+      VisibilityTimeout: 331
+      SqsManagedSseEnabled: true
+      Tags:
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  SvlQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      VisibilityTimeout: 331
+      MessageRetentionPeriod: 1209600
+      SqsManagedSseEnabled: true
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt SvlDeadLetterQueue.Arn
+        maxReceiveCount: 1
+      Tags:
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  HashDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      MessageRetentionPeriod: 1209600
+      VisibilityTimeout: 331
+      SqsManagedSseEnabled: true
+      Tags:
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  HashQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      VisibilityTimeout: 331
+      MessageRetentionPeriod: 1209600
+      SqsManagedSseEnabled: true
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt HashDeadLetterQueue.Arn
+        maxReceiveCount: 1
+      Tags:
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  UploadDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      MessageRetentionPeriod: 1209600
+      VisibilityTimeout: 331
+      SqsManagedSseEnabled: true
+      Tags:
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  UploadQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      VisibilityTimeout: 331
+      MessageRetentionPeriod: 1209600
+      SqsManagedSseEnabled: true
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt UploadDeadLetterQueue.Arn
+        maxReceiveCount: 1
+      Tags:
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  #####################################################################################################################
   # DynamoDB Table for Proxy Rotation
   #####################################################################################################################
 
@@ -613,6 +709,157 @@ Resources:
       DockerContext: ../workflow/lambdas/mvl
       Dockerfile: Dockerfile
 
+  #####################################################################################################################
+  # Granular Workflow Worker Lambdas (Transform, SVL, Hash, Upload)
+  #####################################################################################################################
+
+  TransformWorkerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Runtime: nodejs22.x
+      Architectures:
+        - arm64
+      MemorySize: 512
+      Timeout: 300
+      EphemeralStorage:
+        Size: 2048
+      CodeUri: ../workflow/lambdas/transform-worker
+      Handler: index.handler
+      Description: "Performs county data transformation"
+      LoggingConfig:
+        LogFormat: JSON
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - states:SendTaskSuccess
+                - states:SendTaskFailure
+              Resource: "*"
+      Environment:
+        Variables:
+          TRANSFORM_S3_PREFIX: !Ref TransformS3Prefix
+      Events:
+        SqsEvent:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt TransformQueue.Arn
+            BatchSize: 1
+            ScalingConfig:
+              MaximumConcurrency: 10
+
+  SvlWorkerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Runtime: nodejs22.x
+      Architectures:
+        - arm64
+      MemorySize: 512
+      Timeout: 300
+      EphemeralStorage:
+        Size: 2048
+      CodeUri: ../workflow/lambdas/svl-worker
+      Handler: index.handler
+      Description: "Performs schema validation layer checks"
+      LoggingConfig:
+        LogFormat: JSON
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ErrorsTable
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - states:SendTaskSuccess
+                - states:SendTaskFailure
+              Resource: "*"
+      Environment:
+        Variables:
+          ERRORS_TABLE_NAME: !Ref ErrorsTable
+      Events:
+        SqsEvent:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt SvlQueue.Arn
+            BatchSize: 1
+            ScalingConfig:
+              MaximumConcurrency: 10
+
+  HashWorkerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Runtime: nodejs22.x
+      Architectures:
+        - arm64
+      MemorySize: 512
+      Timeout: 300
+      EphemeralStorage:
+        Size: 2048
+      CodeUri: ../workflow/lambdas/hash-worker
+      Handler: index.handler
+      Description: "Generates hash outputs for seed and county data"
+      LoggingConfig:
+        LogFormat: JSON
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - states:SendTaskSuccess
+                - states:SendTaskFailure
+              Resource: "*"
+      Events:
+        SqsEvent:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt HashQueue.Arn
+            BatchSize: 1
+            ScalingConfig:
+              MaximumConcurrency: 10
+
+  UploadWorkerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Runtime: nodejs22.x
+      Architectures:
+        - arm64
+      MemorySize: 512
+      Timeout: 300
+      EphemeralStorage:
+        Size: 2048
+      CodeUri: ../workflow/lambdas/upload-worker
+      Handler: index.handler
+      Description: "Uploads hash archives to IPFS via Pinata"
+      LoggingConfig:
+        LogFormat: JSON
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - states:SendTaskSuccess
+                - states:SendTaskFailure
+              Resource: "*"
+      Environment:
+        Variables:
+          ELEPHANT_PINATA_JWT: !Ref ElephantPinataJwt
+      Events:
+        SqsEvent:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt UploadQueue.Arn
+            BatchSize: 1
+            ScalingConfig:
+              MaximumConcurrency: 5
+
   ErrorResolverFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -736,6 +983,10 @@ Resources:
         WorkflowPostProcessorFunction: !GetAtt WorkflowPostProcessorFunction.Arn
         WorkflowMirrorValidatorFunction: !GetAtt WorkflowMirrorValidatorFunction.Arn
         TransactionsSqsQueueUrl: !Ref TransactionsSqsQueue
+        TransformQueueUrl: !Ref TransformQueue
+        SvlQueueUrl: !Ref SvlQueue
+        HashQueueUrl: !Ref HashQueue
+        UploadQueueUrl: !Ref UploadQueue
         StackName: !Ref AWS::StackName
       Role: !GetAtt ElephantExpressStateMachineRole.Arn
       Logging:
@@ -784,6 +1035,10 @@ Resources:
                   - sqs:SendMessage
                 Resource:
                   - !GetAtt TransactionsSqsQueue.Arn
+                  - !GetAtt TransformQueue.Arn
+                  - !GetAtt SvlQueue.Arn
+                  - !GetAtt HashQueue.Arn
+                  - !GetAtt UploadQueue.Arn
               - Effect: Allow
                 Action:
                   - ssm:GetParameter
@@ -1415,3 +1670,55 @@ Outputs:
   ErrorRecoveryDashboardUrl:
     Description: URL to the ErrorRecovery CloudWatch Dashboard
     Value: !Sub "https://${AWS::Region}.console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#dashboards:name=${AWS::StackName}-ErrorRecovery"
+
+  # Granular Workflow Step Queues
+  TransformQueueUrl:
+    Description: URL of the Transform SQS Queue
+    Value: !Ref TransformQueue
+  TransformQueueArn:
+    Description: ARN of the Transform SQS Queue
+    Value: !GetAtt TransformQueue.Arn
+  SvlQueueUrl:
+    Description: URL of the SVL SQS Queue
+    Value: !Ref SvlQueue
+  SvlQueueArn:
+    Description: ARN of the SVL SQS Queue
+    Value: !GetAtt SvlQueue.Arn
+  HashQueueUrl:
+    Description: URL of the Hash SQS Queue
+    Value: !Ref HashQueue
+  HashQueueArn:
+    Description: ARN of the Hash SQS Queue
+    Value: !GetAtt HashQueue.Arn
+  UploadQueueUrl:
+    Description: URL of the Upload SQS Queue
+    Value: !Ref UploadQueue
+  UploadQueueArn:
+    Description: ARN of the Upload SQS Queue
+    Value: !GetAtt UploadQueue.Arn
+
+  # Granular Workflow Worker Functions
+  TransformWorkerFunctionName:
+    Description: Name of the Transform Worker Lambda function
+    Value: !Ref TransformWorkerFunction
+  TransformWorkerFunctionArn:
+    Description: ARN of the Transform Worker Lambda function
+    Value: !GetAtt TransformWorkerFunction.Arn
+  SvlWorkerFunctionName:
+    Description: Name of the SVL Worker Lambda function
+    Value: !Ref SvlWorkerFunction
+  SvlWorkerFunctionArn:
+    Description: ARN of the SVL Worker Lambda function
+    Value: !GetAtt SvlWorkerFunction.Arn
+  HashWorkerFunctionName:
+    Description: Name of the Hash Worker Lambda function
+    Value: !Ref HashWorkerFunction
+  HashWorkerFunctionArn:
+    Description: ARN of the Hash Worker Lambda function
+    Value: !GetAtt HashWorkerFunction.Arn
+  UploadWorkerFunctionName:
+    Description: Name of the Upload Worker Lambda function
+    Value: !Ref UploadWorkerFunction
+  UploadWorkerFunctionArn:
+    Description: ARN of the Upload Worker Lambda function
+    Value: !GetAtt UploadWorkerFunction.Arn
