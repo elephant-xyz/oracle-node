@@ -50,6 +50,10 @@ REDRIVE_AUTO_REPAIR_ARCHIVE_NAME="${REDRIVE_AUTO_REPAIR_ARCHIVE_NAME:-redrive-au
 REDRIVE_AUTO_REPAIR_PREFIX="${REDRIVE_AUTO_REPAIR_PREFIX:-codebuild/redrive-auto-repair}"
 REDRIVE_AUTO_REPAIR_UPLOAD_PENDING=0
 
+WORKFLOW_EVENTS_STACK_NAME="${WORKFLOW_EVENTS_STACK_NAME:-workflow-events-stack}"
+WORKFLOW_EVENTS_TEMPLATE="workflow-events/template.yaml"
+DEPLOY_WORKFLOW_EVENTS="${DEPLOY_WORKFLOW_EVENTS:-true}"
+
 mkdir -p "$BUILD_DIR"
 
 check_prereqs() {
@@ -63,6 +67,7 @@ check_prereqs() {
   command -v git >/dev/null || { err "git not found"; exit 1; }
   command -v npm >/dev/null || { err "npm not found"; exit 1; }
   command -v docker >/dev/null || { err "docker not found. Install: https://docs.docker.com/get-docker/"; exit 1; }
+  command -v esbuild >/dev/null || { err "esbuild not found. Install with npm i -g esbuild"; exit 1; }
   [[ -f "$SAM_TEMPLATE" && -f "$STARTUP_SCRIPT" && -f "$PYPROJECT_FILE" ]] || { err "Missing required files"; exit 1; }
   [[ -f "$CODEBUILD_TEMPLATE" ]] || { err "Missing CodeBuild template: $CODEBUILD_TEMPLATE"; exit 1; }
 }
@@ -224,6 +229,7 @@ compute_param_overrides() {
   # Build parameters with simple format
   [[ -n "${WORKFLOW_QUEUE_NAME:-}" ]] && parts+=("WorkflowQueueName=\"$WORKFLOW_QUEUE_NAME\"")
   [[ -n "${WORKFLOW_STARTER_RESERVED_CONCURRENCY:-}" ]] && parts+=("WorkflowStarterReservedConcurrency=\"$WORKFLOW_STARTER_RESERVED_CONCURRENCY\"")
+  [[ -n "${MAX_RUNNING_EXECUTIONS:-}" ]] && parts+=("MaxRunningExecutions=\"$MAX_RUNNING_EXECUTIONS\"")
   [[ -n "${WORKFLOW_STATE_MACHINE_NAME:-}" ]] && parts+=("WorkflowStateMachineName=\"$WORKFLOW_STATE_MACHINE_NAME\"")
 
   # Prepare function flags
@@ -647,6 +653,44 @@ deploy_codebuild_stack() {
   CODEBUILD_DEPLOY_PENDING=0
 }
 
+deploy_workflow_events_stack() {
+  if [[ "$DEPLOY_WORKFLOW_EVENTS" != "true" ]]; then
+    info "DEPLOY_WORKFLOW_EVENTS flag not set (default: true), skipping workflow-events stack deployment"
+    return 0
+  fi
+
+  if [[ ! -f "$WORKFLOW_EVENTS_TEMPLATE" ]]; then
+    warn "Workflow events template not found at $WORKFLOW_EVENTS_TEMPLATE, skipping deployment."
+    return 0
+  fi
+
+  info "Building and deploying workflow-events stack ($WORKFLOW_EVENTS_STACK_NAME)"
+
+  # Build the workflow-events stack with beta features for TypeScript support
+  sam build \
+    --template-file "$WORKFLOW_EVENTS_TEMPLATE" \
+    --beta-features \
+    --build-dir ".aws-sam/workflow-events" || {
+    err "Failed to build workflow-events stack"
+    return 1
+  }
+
+  # Deploy the workflow-events stack
+  sam deploy \
+    --template-file ".aws-sam/workflow-events/template.yaml" \
+    --stack-name "$WORKFLOW_EVENTS_STACK_NAME" \
+    --capabilities CAPABILITY_IAM \
+    --resolve-s3 \
+    --beta-features \
+    --no-confirm-changeset \
+    --no-fail-on-empty-changeset || {
+    err "Failed to deploy workflow-events stack"
+    return 1
+  }
+
+  info "Workflow-events stack deployed successfully"
+}
+
 # Note: MVL Lambda Docker image is now built and pushed automatically by SAM
 # during sam_build and sam_deploy using --resolve-image-repos
 # No manual push needed anymore
@@ -889,6 +933,8 @@ main() {
   check_prereqs
   ensure_lambda_concurrency_quota
 
+  # Deploy workflow-events stack (separate independent stack)
+  deploy_workflow_events_stack
   # Clean up old dashboards before deploying new CloudFormation-managed one
   cleanup_old_dashboards
 
@@ -1001,6 +1047,19 @@ main() {
   if (( CODEBUILD_DEPLOY_PENDING == 1 )); then
     deploy_codebuild_stack
   fi
+
+  # Create or update CloudWatch dashboard for monitoring
+  if [[ "${CREATE_DASHBOARD:-true}" == "true" ]]; then
+    info "Creating CloudWatch dashboard for metrics monitoring..."
+    if "$SCRIPT_DIR/create-auto-repair-dashboard.sh" "" "" "$STACK_NAME"; then
+      info "CloudWatch dashboard created successfully"
+    else
+      warn "Failed to create CloudWatch dashboard (non-fatal)"
+    fi
+  else
+    info "Dashboard creation skipped (CREATE_DASHBOARD=false)"
+  fi
+
 
   bucket=$(get_bucket)
   echo

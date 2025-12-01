@@ -1,0 +1,18 @@
+version = 0.1
+
+[default]
+[default.global.parameters]
+stack_name = "workflow-events-stack"
+
+[default.build.parameters]
+beta_features = true
+
+[default.sync.parameters]
+beta_features = true
+
+[default.deploy.parameters]
+capabilities = "CAPABILITY_IAM"
+confirm_changeset = true
+resolve_s3 = true
+region = "us-east-1"
+
