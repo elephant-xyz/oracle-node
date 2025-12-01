@@ -12,7 +12,7 @@ const mockCreateLogger = vi.fn(() => vi.fn());
 const mockEmitWorkflowEvent = vi.fn();
 const mockCreateWorkflowError = vi.fn((code, details) => ({ code, details }));
 
-vi.mock("workflow-shared-utils", () => ({
+vi.mock("../../../../workflow/lambdas/svl-worker/shared/index.mjs", () => ({
   executeWithTaskToken: mockExecuteWithTaskToken,
   parseS3Uri: mockParseS3Uri,
   downloadS3Object: mockDownloadS3Object,
