@@ -9,6 +9,8 @@ import {
   downloadS3Object,
   requireEnv,
   createLogger,
+  emitWorkflowEvent,
+  createWorkflowError,
 } from "../shared/index.mjs";
 
 /**
@@ -179,19 +181,69 @@ export const handler = async (event) => {
       countyHashZipS3Uri: input.countyHashZipS3Uri,
     });
 
-    await executeWithTaskToken({
+    // Emit IN_PROGRESS event
+    await emitWorkflowEvent({
+      executionId: input.executionId,
+      county: input.county,
+      status: "IN_PROGRESS",
+      phase: "Upload",
+      step: "Upload",
       taskToken,
       log,
-      workerFn: async () => {
-        return await runUpload({
-          seedHashZipS3Uri: input.seedHashZipS3Uri,
-          countyHashZipS3Uri: input.countyHashZipS3Uri,
-          county: input.county,
-          executionId: input.executionId,
-          log,
-        });
-      },
     });
+
+    try {
+      const result = await runUpload({
+        seedHashZipS3Uri: input.seedHashZipS3Uri,
+        countyHashZipS3Uri: input.countyHashZipS3Uri,
+        county: input.county,
+        executionId: input.executionId,
+        log,
+      });
+
+      // Emit SUCCEEDED event
+      await emitWorkflowEvent({
+        executionId: input.executionId,
+        county: input.county,
+        status: "SUCCEEDED",
+        phase: "Upload",
+        step: "Upload",
+        log,
+      });
+
+      await executeWithTaskToken({
+        taskToken,
+        log,
+        workerFn: async () => result,
+      });
+    } catch (err) {
+      // Emit FAILED event
+      await emitWorkflowEvent({
+        executionId: input.executionId,
+        county: input.county,
+        status: "FAILED",
+        phase: "Upload",
+        step: "Upload",
+        taskToken,
+        errors: [
+          createWorkflowError(
+            err instanceof Error && err.name === "UploadFailedError"
+              ? "UPLOAD_IPFS_FAILED"
+              : "UPLOAD_FAILED",
+            { message: err instanceof Error ? err.message : String(err) },
+          ),
+        ],
+        log,
+      });
+
+      await executeWithTaskToken({
+        taskToken,
+        log,
+        workerFn: async () => {
+          throw err;
+        },
+      });
+    }
 
     log("info", "upload_worker_complete", {});
   }

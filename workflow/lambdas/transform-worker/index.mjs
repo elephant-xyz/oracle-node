@@ -8,6 +8,8 @@ import {
   downloadS3Object,
   uploadToS3,
   createLogger,
+  emitWorkflowEvent,
+  createWorkflowError,
 } from "../shared/index.mjs";
 import { createTransformScriptsManager } from "./scripts-manager.mjs";
 import { S3Client } from "@aws-sdk/client-s3";
@@ -192,19 +194,69 @@ export const handler = async (event) => {
       inputS3Uri: input.inputS3Uri,
     });
 
-    await executeWithTaskToken({
+    // Emit IN_PROGRESS event
+    await emitWorkflowEvent({
+      executionId: input.executionId,
+      county: input.county,
+      status: "IN_PROGRESS",
+      phase: "Transform",
+      step: "Transform",
       taskToken,
       log,
-      workerFn: async () => {
-        return await runTransform({
-          inputS3Uri: input.inputS3Uri,
-          county: input.county,
-          outputPrefix: input.outputPrefix,
-          executionId: input.executionId,
-          log,
-        });
-      },
     });
+
+    try {
+      const result = await runTransform({
+        inputS3Uri: input.inputS3Uri,
+        county: input.county,
+        outputPrefix: input.outputPrefix,
+        executionId: input.executionId,
+        log,
+      });
+
+      // Emit SUCCEEDED event
+      await emitWorkflowEvent({
+        executionId: input.executionId,
+        county: input.county,
+        status: "SUCCEEDED",
+        phase: "Transform",
+        step: "Transform",
+        log,
+      });
+
+      await executeWithTaskToken({
+        taskToken,
+        log,
+        workerFn: async () => result,
+      });
+    } catch (err) {
+      // Emit FAILED event
+      await emitWorkflowEvent({
+        executionId: input.executionId,
+        county: input.county,
+        status: "FAILED",
+        phase: "Transform",
+        step: "Transform",
+        taskToken,
+        errors: [
+          createWorkflowError(
+            err instanceof Error && err.name === "ScriptsFailedError"
+              ? "TRANSFORM_SCRIPTS_FAILED"
+              : "TRANSFORM_FAILED",
+            { message: err instanceof Error ? err.message : String(err) },
+          ),
+        ],
+        log,
+      });
+
+      await executeWithTaskToken({
+        taskToken,
+        log,
+        workerFn: async () => {
+          throw err;
+        },
+      });
+    }
 
     log("info", "transform_worker_complete", {});
   }

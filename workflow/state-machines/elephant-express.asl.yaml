@@ -207,9 +207,30 @@ States:
           "outputPrefix": $states.input.pre.output_prefix
         }])
       %}
-    Next: Transform
+    Next: EmitTransformScheduled
 
   # === TRANSFORM STEP ===
+
+  EmitTransformScheduled:
+    Type: Task
+    Resource: arn:aws:states:::events:putEvents
+    Comment: "Emit SCHEDULED event for Transform step"
+    Parameters:
+      Entries:
+        - Source: elephant.workflow
+          DetailType: WorkflowEvent
+          Detail:
+            executionId.$: $.executionId
+            county.$: $.pre.county_name
+            status: SCHEDULED
+            phase: Transform
+            step: Transform
+    ResultPath: $.eventResult
+    Next: Transform
+    Catch:
+      - ErrorEquals: [States.ALL]
+        ResultPath: $.eventError
+        Next: Transform
 
   Transform:
     Type: Task
@@ -229,7 +250,7 @@ States:
       county.$: $.county
       executionId.$: $.executionId
     ResultPath: $.transform
-    Next: SVL
+    Next: EmitSvlScheduled
     Retry:
       - ErrorEquals: [States.Timeout]
         IntervalSeconds: 5
@@ -267,6 +288,27 @@ States:
         Next: FailRuntime
 
   # === SVL (Schema Validation Layer) STEP ===
+
+  EmitSvlScheduled:
+    Type: Task
+    Resource: arn:aws:states:::events:putEvents
+    Comment: "Emit SCHEDULED event for SVL step"
+    Parameters:
+      Entries:
+        - Source: elephant.workflow
+          DetailType: WorkflowEvent
+          Detail:
+            executionId.$: $.executionId
+            county.$: $.pre.county_name
+            status: SCHEDULED
+            phase: SVL
+            step: SVL
+    ResultPath: $.eventResult
+    Next: SVL
+    Catch:
+      - ErrorEquals: [States.ALL]
+        ResultPath: $.eventError
+        Next: SVL
 
   SVL:
     Type: Task
@@ -343,8 +385,29 @@ States:
     Choices:
       - Variable: $.message.mvlEnabled
         BooleanEquals: true
+        Next: EmitMvlScheduled
+    Default: EmitHashScheduled
+
+  EmitMvlScheduled:
+    Type: Task
+    Resource: arn:aws:states:::events:putEvents
+    Comment: "Emit SCHEDULED event for MVL step"
+    Parameters:
+      Entries:
+        - Source: elephant.workflow
+          DetailType: WorkflowEvent
+          Detail:
+            executionId.$: $.executionId
+            county.$: $.pre.county_name
+            status: SCHEDULED
+            phase: MVL
+            step: MVL
+    ResultPath: $.eventResult
+    Next: MVL
+    Catch:
+      - ErrorEquals: [States.ALL]
+        ResultPath: $.eventError
         Next: MVL
-    Default: Hash
 
   MVL:
     Type: Task
@@ -387,7 +450,7 @@ States:
       - Variable: $.mvl.mvlPassed
         BooleanEquals: false
         Next: RecordValidationFailureMetric
-    Default: Hash
+    Default: EmitHashScheduled
 
   RecordMvlFailureMetric:
     Type: Task
@@ -413,6 +476,27 @@ States:
 
   # === HASH STEP ===
 
+  EmitHashScheduled:
+    Type: Task
+    Resource: arn:aws:states:::events:putEvents
+    Comment: "Emit SCHEDULED event for Hash step"
+    Parameters:
+      Entries:
+        - Source: elephant.workflow
+          DetailType: WorkflowEvent
+          Detail:
+            executionId.$: $.executionId
+            county.$: $.pre.county_name
+            status: SCHEDULED
+            phase: Hash
+            step: Hash
+    ResultPath: $.eventResult
+    Next: Hash
+    Catch:
+      - ErrorEquals: [States.ALL]
+        ResultPath: $.eventError
+        Next: Hash
+
   Hash:
     Type: Task
     Resource: arn:aws:states:::sqs:sendMessage.waitForTaskToken
@@ -435,7 +519,7 @@ States:
       executionId.$: $.executionId
       propertyCid.$: $.propertyCid
     ResultPath: $.hash
-    Next: Upload
+    Next: EmitUploadScheduled
     Retry:
       - ErrorEquals: [States.Timeout]
         IntervalSeconds: 5
@@ -469,6 +553,27 @@ States:
         Next: FailRuntime
 
   # === UPLOAD STEP ===
+
+  EmitUploadScheduled:
+    Type: Task
+    Resource: arn:aws:states:::events:putEvents
+    Comment: "Emit SCHEDULED event for Upload step"
+    Parameters:
+      Entries:
+        - Source: elephant.workflow
+          DetailType: WorkflowEvent
+          Detail:
+            executionId.$: $.executionId
+            county.$: $.pre.county_name
+            status: SCHEDULED
+            phase: Upload
+            step: Upload
+    ResultPath: $.eventResult
+    Next: Upload
+    Catch:
+      - ErrorEquals: [States.ALL]
+        ResultPath: $.eventError
+        Next: Upload
 
   Upload:
     Type: Task
