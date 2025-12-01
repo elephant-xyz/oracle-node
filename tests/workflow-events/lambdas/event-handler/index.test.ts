@@ -4,6 +4,7 @@ import {
   DynamoDBDocumentClient,
   TransactWriteCommand,
   UpdateCommand,
+  BatchGetCommand,
 } from "@aws-sdk/lib-dynamodb";
 import type { EventBridgeEvent } from "aws-lambda";
 import type {
@@ -74,9 +75,16 @@ const createError = (
 describe("event-handler", () => {
   const originalEnv = process.env;
 
+  /**
+   * Tracks the current total count for each error code across test operations.
+   * Used by the BatchGetCommand mock to return the correct totalCount after transactions.
+   */
+  let errorCountTracker: Map<string, number>;
+
   beforeEach(() => {
     vi.resetModules();
     ddbMock.reset();
+    errorCountTracker = new Map();
     process.env = {
       ...originalEnv,
       WORKFLOW_ERRORS_TABLE_NAME: TEST_TABLE_NAME,
@@ -85,6 +93,22 @@ describe("event-handler", () => {
     vi.spyOn(console, "info").mockImplementation(() => {});
     vi.spyOn(console, "debug").mockImplementation(() => {});
     vi.spyOn(console, "error").mockImplementation(() => {});
+
+    // Default mock for BatchGetCommand - returns totalCount from tracker
+    // This simulates reading back the error records after a transaction
+    ddbMock.on(BatchGetCommand).callsFake((input) => {
+      const keys = input.RequestItems?.[TEST_TABLE_NAME]?.Keys ?? [];
+      const items = keys.map((key: { PK: string; SK: string }) => {
+        // Extract error code from PK (format: ERROR#{errorCode})
+        const errorCode = key.PK.replace("ERROR#", "");
+        const totalCount = errorCountTracker.get(errorCode) ?? 1;
+        return { errorCode, totalCount };
+      });
+      return { Responses: { [TEST_TABLE_NAME]: items } };
+    });
+
+    // Default mock for UpdateCommand (for updateErrorRecordSortKey calls)
+    ddbMock.on(UpdateCommand).resolves({});
   });
 
   afterEach(() => {
@@ -662,19 +686,18 @@ describe("event-handler", () => {
 
       await saveErrorRecords(detail);
 
-      const calls = ddbMock.commandCalls(TransactWriteCommand);
-      const transactItems = calls[0].args[0].input.TransactItems;
-
-      // Find ErrorRecord
-      const errorRecord = transactItems!.find(
-        (item) => item.Update?.Key?.PK === "ERROR#01256",
-      )?.Update;
+      // GS3SK is set via a separate UpdateCommand after the transaction
+      // (because it depends on the atomic totalCount increment)
+      const updateCalls = ddbMock.commandCalls(UpdateCommand);
+      const sortKeyUpdate = updateCalls.find(
+        (call) => call.args[0].input.Key?.PK === "ERROR#01256",
+      );
 
       // GS3SK format: COUNT#{errorType}#{paddedCount}#ERROR#{errorCode}
       // For a new error with count 1: COUNT#01#0000000001#ERROR#01256
-      expect(errorRecord?.ExpressionAttributeValues?.[":gs3sk"]).toMatch(
-        /^COUNT#01#\d{10}#ERROR#01256$/,
-      );
+      expect(
+        sortKeyUpdate?.args[0].input.ExpressionAttributeValues?.[":gs3sk"],
+      ).toMatch(/^COUNT#01#\d{10}#ERROR#01256$/);
     });
 
     it("should include errorType in GS3SK for FailedExecutionItem with uniform error type", async () => {
@@ -852,13 +875,22 @@ describe("event-handler", () => {
         "TYPE#ERROR",
       );
 
-      // GS3: METRIC#ERRORCOUNT -> COUNT#{errorType}#{paddedCount}#ERROR#{errorCode}
+      // GS3: METRIC#ERRORCOUNT (GS3SK is updated separately via updateErrorRecordSortKey)
       expect(errorRecord?.ExpressionAttributeValues?.[":gs3pk"]).toBe(
         "METRIC#ERRORCOUNT",
       );
-      expect(errorRecord?.ExpressionAttributeValues?.[":gs3sk"]).toMatch(
-        /^COUNT#12#\d{10}#ERROR#12345$/,
+
+      // GS2SK and GS3SK are set via separate UpdateCommand after the transaction
+      const updateCalls = ddbMock.commandCalls(UpdateCommand);
+      const sortKeyUpdate = updateCalls.find(
+        (call) => call.args[0].input.Key?.PK === "ERROR#12345",
       );
+      expect(
+        sortKeyUpdate?.args[0].input.ExpressionAttributeValues?.[":gs2sk"],
+      ).toMatch(/^COUNT#\d{10}#ERROR#12345$/);
+      expect(
+        sortKeyUpdate?.args[0].input.ExpressionAttributeValues?.[":gs3sk"],
+      ).toMatch(/^COUNT#12#\d{10}#ERROR#12345$/);
     });
 
     it("should set correct GSI keys for ExecutionErrorLink", async () => {
@@ -1006,13 +1038,13 @@ describe("event-handler", () => {
       // Should use single TransactWriteCommand
       expect(ddbMock).toHaveReceivedCommandTimes(TransactWriteCommand, 1);
 
-      // Should NOT use UpdateCommand (no separate processing needed)
-      expect(ddbMock).not.toHaveReceivedCommand(UpdateCommand);
+      // UpdateCommand is called once per error to refresh GS2SK and GS3SK sort keys
+      expect(ddbMock).toHaveReceivedCommandTimes(UpdateCommand, 33);
     });
   });
 
   describe("updateErrorRecordSortKey", () => {
-    it("should update GS2SK for an error record with padded count", async () => {
+    it("should update GS2SK and GS3SK for an error record with padded count", async () => {
       ddbMock.on(UpdateCommand).resolves({});
 
       const { updateErrorRecordSortKey } = await import(
@@ -1027,9 +1059,10 @@ describe("event-handler", () => {
           PK: "ERROR#12345",
           SK: "ERROR#12345",
         },
-        UpdateExpression: "SET GS2SK = :gs2sk",
+        UpdateExpression: "SET GS2SK = :gs2sk, GS3SK = :gs3sk",
         ExpressionAttributeValues: {
           ":gs2sk": "COUNT#0000000042#ERROR#12345",
+          ":gs3sk": "COUNT#12#0000000042#ERROR#12345",
         },
       });
     });
