@@ -229,6 +229,7 @@ compute_param_overrides() {
   # Build parameters with simple format
   [[ -n "${WORKFLOW_QUEUE_NAME:-}" ]] && parts+=("WorkflowQueueName=\"$WORKFLOW_QUEUE_NAME\"")
   [[ -n "${WORKFLOW_STARTER_RESERVED_CONCURRENCY:-}" ]] && parts+=("WorkflowStarterReservedConcurrency=\"$WORKFLOW_STARTER_RESERVED_CONCURRENCY\"")
+  [[ -n "${MAX_RUNNING_EXECUTIONS:-}" ]] && parts+=("MaxRunningExecutions=\"$MAX_RUNNING_EXECUTIONS\"")
   [[ -n "${WORKFLOW_STATE_MACHINE_NAME:-}" ]] && parts+=("WorkflowStateMachineName=\"$WORKFLOW_STATE_MACHINE_NAME\"")
 
   # Prepare function flags

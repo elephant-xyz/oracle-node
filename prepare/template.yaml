@@ -55,6 +55,10 @@ Parameters:
     Description: Max concurrent Lambda invocations and Step Function executions (since Lambda waits for completion, this controls both)
     Type: Number
     Default: 100
+  MaxRunningExecutions:
+    Description: Maximum number of running executions to check when enforcing concurrency limits (used for ListExecutions maxResults)
+    Type: Number
+    Default: 1000
   WorkflowStateMachineName:
     Description: Name for the Standard Step Functions state machine (leave empty for auto-generated name, useful when updating Type to allow replacement)
     Type: String
@@ -512,6 +516,7 @@ Resources:
         Variables:
           STATE_MACHINE_ARN: !GetAtt ElephantExpressStateMachine.Arn
           MAX_CONCURRENT_EXECUTIONS: !Ref WorkflowStarterReservedConcurrency
+          MAX_RUNNING_EXECUTIONS: !Ref MaxRunningExecutions
       Events:
         SqsEvent:
           Type: SQS
