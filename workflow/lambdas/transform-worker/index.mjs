@@ -132,7 +132,9 @@ async function runTransform({
 
       // Create a specific error for script failures
       if (transformResult.scriptFailure) {
-        const err = new Error(transformResult.error || "Transform scripts failed");
+        const err = new Error(
+          transformResult.error || "Transform scripts failed",
+        );
         err.name = "ScriptsFailedError";
         throw err;
       }

@@ -78,7 +78,14 @@ async function combineCsv(seedHashCsv, countyHashCsv, tmpDir) {
  * @param {ReturnType<typeof createLogger>} params.log - Logger.
  * @returns {Promise<HashOutput>}
  */
-async function runHash({ validatedOutputS3Uri, seedOutputS3Uri, county, outputPrefix, executionId, log }) {
+async function runHash({
+  validatedOutputS3Uri,
+  seedOutputS3Uri,
+  county,
+  outputPrefix,
+  executionId,
+  log,
+}) {
   const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "hash-"));
 
   try {
@@ -160,17 +167,35 @@ async function runHash({ validatedOutputS3Uri, seedOutputS3Uri, county, outputPr
     });
 
     // Combine CSVs
-    const combinedCsvPath = await combineCsv(seedHashCsv, countyHashCsv, tmpDir);
+    const combinedCsvPath = await combineCsv(
+      seedHashCsv,
+      countyHashCsv,
+      tmpDir,
+    );
 
     // Upload all artifacts to S3
     const { bucket: outputBucket } = parseS3Uri(outputPrefix);
     const baseKey = `${outputPrefix.replace(/^s3:\/\/[^/]+\//, "").replace(/\/$/, "")}/${executionId}`;
 
-    const [seedHashZipS3Uri, countyHashZipS3Uri, combinedHashCsvS3Uri] = await Promise.all([
-      uploadToS3(seedHashZip, { bucket: outputBucket, key: `${baseKey}/seed_hash.zip` }, log),
-      uploadToS3(countyHashZip, { bucket: outputBucket, key: `${baseKey}/county_hash.zip` }, log),
-      uploadToS3(combinedCsvPath, { bucket: outputBucket, key: `${baseKey}/combined_hash.csv` }, log, "text/csv"),
-    ]);
+    const [seedHashZipS3Uri, countyHashZipS3Uri, combinedHashCsvS3Uri] =
+      await Promise.all([
+        uploadToS3(
+          seedHashZip,
+          { bucket: outputBucket, key: `${baseKey}/seed_hash.zip` },
+          log,
+        ),
+        uploadToS3(
+          countyHashZip,
+          { bucket: outputBucket, key: `${baseKey}/county_hash.zip` },
+          log,
+        ),
+        uploadToS3(
+          combinedCsvPath,
+          { bucket: outputBucket, key: `${baseKey}/combined_hash.csv` },
+          log,
+          "text/csv",
+        ),
+      ]);
 
     return {
       seedHashZipS3Uri,

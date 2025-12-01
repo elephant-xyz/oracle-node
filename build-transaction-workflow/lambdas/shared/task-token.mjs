@@ -63,7 +63,9 @@ export async function sendTaskFailure({ taskToken, error, cause }) {
 export async function executeWithTaskToken({ taskToken, workerFn, log }) {
   try {
     const result = await workerFn();
-    log("info", "task_success", { taskToken: taskToken.substring(0, 50) + "..." });
+    log("info", "task_success", {
+      taskToken: taskToken.substring(0, 50) + "...",
+    });
     await sendTaskSuccess({ taskToken, output: result });
   } catch (err) {
     const error = err instanceof Error ? err : new Error(String(err));

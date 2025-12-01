@@ -97,7 +97,12 @@ export async function uploadToS3(localPath, { bucket, key }, log, contentType) {
  * @param {string} [contentType] - Optional content type.
  * @returns {Promise<string>} - S3 URI of uploaded object.
  */
-export async function uploadContentToS3(content, { bucket, key }, log, contentType) {
+export async function uploadContentToS3(
+  content,
+  { bucket, key },
+  log,
+  contentType,
+) {
   log("info", "upload_s3_content", { bucket, key });
   await s3.send(
     new PutObjectCommand({

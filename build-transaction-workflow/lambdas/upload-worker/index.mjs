@@ -112,7 +112,13 @@ async function uploadHashOutputs({ filesForIpfs, tmpDir, log, pinataJwt }) {
  * @param {ReturnType<typeof createLogger>} params.log - Logger.
  * @returns {Promise<UploadOutput>}
  */
-async function runUpload({ seedHashZipS3Uri, countyHashZipS3Uri, county, executionId, log }) {
+async function runUpload({
+  seedHashZipS3Uri,
+  countyHashZipS3Uri,
+  county,
+  executionId,
+  log,
+}) {
   const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "upload-"));
 
   try {
