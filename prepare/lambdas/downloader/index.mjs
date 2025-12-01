@@ -44,6 +44,200 @@ const RE_S3PATH = /^s3:\/\/([^/]+)\/(.*)$/i;
  */
 
 /**
+ * Parses a CSV line respecting quoted fields (handles commas inside quotes)
+ * @param {string} line - Single CSV line
+ * @returns {string[]} Array of field values
+ */
+function parseCSVLine(line) {
+  const values = [];
+  let current = '';
+  let inQuotes = false;
+
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i];
+
+    if (char === '"') {
+      inQuotes = !inQuotes;
+    } else if (char === ',' && !inQuotes) {
+      values.push(current.trim().replace(/^"|"$/g, ''));
+      current = '';
+    } else {
+      current += char;
+    }
+  }
+  values.push(current.trim().replace(/^"|"$/g, ''));
+  return values;
+}
+
+/**
+ * Parses a CSV and returns array of row objects
+ * Handles quoted fields with commas inside them
+ * @param {string} csvContent - CSV content as string
+ * @returns {Array<{[key: string]: string}>} Array of row objects
+ */
+function parseCSV(csvContent) {
+  const lines = csvContent.trim().split('\n');
+  if (lines.length < 2) {
+    return [];
+  }
+
+  const headers = parseCSVLine(lines[0]);
+  const rows = [];
+
+  for (let i = 1; i < lines.length; i++) {
+    const values = parseCSVLine(lines[i]);
+    const row = {};
+    headers.forEach((header, index) => {
+      row[header] = values[index] || '';
+    });
+    rows.push(row);
+  }
+
+  return rows;
+}
+
+/**
+ * Reads configuration S3 URI from input.csv in the zip file
+ * @param {AdmZip} zip - AdmZip instance of the input zip
+ * @returns {string | null} Configuration S3 URI or null if not found
+ */
+function getConfigurationUriFromInputCsv(zip) {
+  const zipEntries = zip.getEntries();
+
+  // Find input.csv in the zip
+  const inputCsvEntry = zipEntries.find(
+    (entry) => entry.entryName === "input.csv" || entry.entryName.endsWith("/input.csv")
+  );
+
+  if (!inputCsvEntry) {
+    console.log("📄 input.csv not found in zip file");
+    return null;
+  }
+
+  try {
+    const csvContent = zip.readAsText(inputCsvEntry);
+    const rows = parseCSV(csvContent);
+
+    if (rows.length === 0) {
+      console.log("📄 input.csv is empty or has no data rows");
+      return null;
+    }
+
+    // Get configuration column from first row (case-insensitive)
+    const firstRow = rows[0];
+    const configKey = Object.keys(firstRow).find(
+      k => k.toLowerCase() === 'configuration' || k.toLowerCase() === 'config'
+    );
+
+    if (configKey && firstRow[configKey] && firstRow[configKey].trim() !== '') {
+      const configUri = firstRow[configKey].trim();
+      console.log(`✅ Found configuration URI in input.csv: ${configUri}`);
+      return configUri;
+    }
+
+    console.log("📄 No 'configuration' column found in input.csv, using environment variables");
+    return null;
+  } catch (error) {
+    console.error(`⚠️ Error reading input.csv: ${error instanceof Error ? error.message : String(error)}`);
+    return null;
+  }
+}
+
+/**
+ * Downloads and parses JSON configuration file from S3
+ * @param {S3Client} s3Client - S3 client instance
+ * @param {string} configS3Uri - S3 URI of configuration file (s3://bucket/key.json)
+ * @returns {Promise<{[key: string]: any} | null>} Configuration object or null on failure
+ */
+async function downloadConfigurationFromS3(s3Client, configS3Uri) {
+  try {
+    const match = RE_S3PATH.exec(configS3Uri);
+    if (!match) {
+      console.error(`❌ Invalid S3 URI format: ${configS3Uri}`);
+      return null;
+    }
+
+    const [, bucket, key] = match;
+    console.log(`📥 Downloading configuration from s3://${bucket}/${key}`);
+
+    const response = await s3Client.send(
+      new GetObjectCommand({ Bucket: bucket, Key: key })
+    );
+
+    const configBytes = await response.Body?.transformToByteArray();
+    if (!configBytes) {
+      throw new Error("Failed to download configuration file body");
+    }
+
+    const configContent = new TextDecoder().decode(configBytes);
+    const config = JSON.parse(configContent);
+
+    console.log(`✅ Configuration loaded from S3 (${Object.keys(config).length} keys):`);
+    // Log keys (redact sensitive values)
+    for (const configKey of Object.keys(config)) {
+      if (configKey.includes('KEY') || configKey.includes('JWT') || configKey.includes('TOKEN') || configKey.includes('PASSWORD') || configKey.includes('SECRET')) {
+        console.log(`   ${configKey}: ***REDACTED***`);
+      } else {
+        const value = config[configKey];
+        const displayValue = typeof value === 'object' ? JSON.stringify(value) : value;
+        console.log(`   ${configKey}: ${displayValue}`);
+      }
+    }
+
+    return config;
+  } catch (error) {
+    if (error instanceof Error && error.name === "NoSuchKey") {
+      console.error(`❌ Configuration file not found: ${configS3Uri}`);
+    } else {
+      console.error(`❌ Failed to download configuration: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    return null;
+  }
+}
+
+/**
+ * Gets a configuration value with S3 config priority, then falls back to environment variables
+ * Priority: S3 config county-specific -> S3 config general -> env var county-specific -> env var general
+ * @param {string} baseKey - Base configuration key (e.g., "ELEPHANT_PREPARE_USE_BROWSER")
+ * @param {string | null} countyName - County name for county-specific lookups
+ * @param {{[key: string]: any} | null} s3Config - Configuration loaded from S3
+ * @returns {string | undefined} Configuration value or undefined if not found
+ */
+function getConfigValue(baseKey, countyName, s3Config) {
+  // Sanitize county name for key lookup (replace spaces with underscores)
+  const sanitizedCounty = countyName ? countyName.replace(/ /g, "_") : null;
+  const countySpecificKey = sanitizedCounty ? `${baseKey}_${sanitizedCounty}` : null;
+
+  // 1. Check S3 config county-specific
+  if (s3Config && countySpecificKey && s3Config[countySpecificKey] !== undefined) {
+    const value = s3Config[countySpecificKey];
+    console.log(`  Using S3 config (county-specific): ${countySpecificKey}`);
+    return typeof value === 'object' ? JSON.stringify(value) : String(value);
+  }
+
+  // 2. Check S3 config general
+  if (s3Config && s3Config[baseKey] !== undefined) {
+    const value = s3Config[baseKey];
+    console.log(`  Using S3 config (general): ${baseKey}`);
+    return typeof value === 'object' ? JSON.stringify(value) : String(value);
+  }
+
+  // 3. Check env var county-specific (backward compatibility)
+  if (countySpecificKey && process.env[countySpecificKey] !== undefined) {
+    console.log(`  Using env var (county-specific): ${countySpecificKey}`);
+    return process.env[countySpecificKey];
+  }
+
+  // 4. Check env var general (backward compatibility)
+  if (process.env[baseKey] !== undefined) {
+    console.log(`  Using env var (general): ${baseKey}`);
+    return process.env[baseKey];
+  }
+
+  return undefined;
+}
+
+/**
  * Cleans up stale proxy locks that have been held for more than the timeout period
  * @param {DynamoDBClient} dynamoClient - DynamoDB client instance
  * @param {string} tableName - Name of the DynamoDB table
@@ -520,36 +714,42 @@ export const handler = async (event) => {
       console.log("Continuing with general configuration...");
     }
 
+    // Load configuration from S3 if specified in input.csv
+    /** @type {{[key: string]: any} | null} */
+    let s3Config = null;
+    try {
+      const zip = new AdmZip(inputZip);
+      const configUri = getConfigurationUriFromInputCsv(zip);
+      if (configUri) {
+        console.log("📦 Loading configuration from S3...");
+        s3Config = await downloadConfigurationFromS3(s3, configUri);
+        if (s3Config) {
+          console.log("✅ S3 configuration loaded successfully - will prioritize over environment variables");
+        } else {
+          console.log("⚠️ Failed to load S3 configuration, falling back to environment variables");
+        }
+      } else {
+        console.log("ℹ️ No configuration URI in input.csv, using environment variables only");
+      }
+    } catch (configError) {
+      console.error(
+        `⚠️ Error loading S3 configuration: ${configError instanceof Error ? configError.message : String(configError)}`
+      );
+      console.log("Continuing with environment variables...");
+    }
+
     const outputZip = path.join(tempDir, "output.zip");
 
     console.log("Building prepare options...");
 
-    // Helper function to get environment variable with county-specific fallback
+    // Helper function to get config value with S3 priority, then env var fallback
+    // Priority: S3 config county-specific -> S3 config general -> env var county-specific -> env var general
     /**
-     * @param {string} baseEnvVar
-     * @param {string | null} countyName
+     * @param {string} baseKey
      * @returns {string | undefined}
      */
-    const getEnvWithCountyFallback = (baseEnvVar, countyName) => {
-      if (countyName) {
-        // Replace spaces with underscores for environment variable names
-        // e.g., "Santa Rosa" becomes "Santa_Rosa"
-        const sanitizedCountyName = countyName.replace(/ /g, "_");
-        const countySpecificVar = `${baseEnvVar}_${sanitizedCountyName}`;
-        if (process.env[countySpecificVar] !== undefined) {
-          console.log(
-            `  Using county-specific: ${countySpecificVar}='${process.env[countySpecificVar]}'`,
-          );
-          return process.env[countySpecificVar];
-        }
-      }
-      if (process.env[baseEnvVar] !== undefined) {
-        console.log(
-          `  Using general: ${baseEnvVar}='${process.env[baseEnvVar]}'`,
-        );
-        return process.env[baseEnvVar];
-      }
-      return undefined;
+    const getEnvWithCountyFallback = (baseKey) => {
+      return getConfigValue(baseKey, countyName, s3Config);
     };
 
     // Helper function to download flow files from S3
@@ -633,11 +833,8 @@ export const handler = async (event) => {
       },
     ];
 
-    // Determine useBrowser setting from environment variable with county-specific fallback
-    const useBrowserEnv = getEnvWithCountyFallback(
-      "ELEPHANT_PREPARE_USE_BROWSER",
-      countyName,
-    );
+    // Determine useBrowser setting from config with county-specific fallback
+    const useBrowserEnv = getEnvWithCountyFallback("ELEPHANT_PREPARE_USE_BROWSER");
     let useBrowser = true; // Default to true if not specified
     if (useBrowserEnv !== undefined) {
       useBrowser = useBrowserEnv === "true";
@@ -668,7 +865,7 @@ export const handler = async (event) => {
     }
 
     for (const { envVar, optionKey, description } of flagConfig) {
-      const envValue = getEnvWithCountyFallback(envVar, countyName);
+      const envValue = getEnvWithCountyFallback(envVar);
       if (envValue === "true") {
         prepareOptions[optionKey] = true;
         console.log(`✓ Setting ${optionKey}: true (${description})`);
@@ -678,10 +875,7 @@ export const handler = async (event) => {
     }
 
     // Handle continue button selector configuration with county-specific lookup
-    const continueButtonSelector = getEnvWithCountyFallback(
-      "ELEPHANT_PREPARE_CONTINUE_BUTTON",
-      countyName,
-    );
+    const continueButtonSelector = getEnvWithCountyFallback("ELEPHANT_PREPARE_CONTINUE_BUTTON");
 
     if (continueButtonSelector && continueButtonSelector.trim() !== "") {
       prepareOptions.continueButtonSelector = continueButtonSelector;
@@ -708,14 +902,8 @@ export const handler = async (event) => {
     );
 
     // Handle browser flow template configuration with county-specific lookup
-    const browserFlowTemplate = getEnvWithCountyFallback(
-      "ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE",
-      countyName,
-    );
-    let browserFlowParameters = getEnvWithCountyFallback(
-      "ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS",
-      countyName,
-    );
+    const browserFlowTemplate = getEnvWithCountyFallback("ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE");
+    let browserFlowParameters = getEnvWithCountyFallback("ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS");
 
     if (browserFlowTemplate && browserFlowTemplate.trim() !== "") {
       console.log("Browser flow template configuration detected:");
@@ -725,38 +913,48 @@ export const handler = async (event) => {
 
       if (browserFlowParameters && browserFlowParameters.trim() !== "") {
         try {
-          // Parse simple key:value format (e.g., "timeout:30000,retries:3,selector:#main-content")
           /** @type {{ [key: string]: string | number | boolean }} */
-          const parsedParams = {};
-          const pairs = browserFlowParameters.split(",");
+          let parsedParams = {};
+          const trimmedParams = browserFlowParameters.trim();
 
-          for (const pair of pairs) {
-            const colonIndex = pair.indexOf(":");
-            if (colonIndex === -1) {
-              throw new Error(
-                `Invalid parameter format: "${pair}" - expected key:value`,
-              );
-            }
+          // Check if parameters are in JSON format (starts with { and ends with })
+          if (trimmedParams.startsWith("{") && trimmedParams.endsWith("}")) {
+            // Parse as JSON directly
+            parsedParams = JSON.parse(trimmedParams);
+            console.log(`✓ ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS detected as JSON format`);
+          } else {
+            // Parse simple key:value format (e.g., "timeout:30000,retries:3,selector:#main-content")
+            console.log(`✓ ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS detected as key:value format`);
+            const pairs = browserFlowParameters.split(",");
 
-            const key = pair.substring(0, colonIndex).trim();
-            const value = pair.substring(colonIndex + 1).trim();
+            for (const pair of pairs) {
+              const colonIndex = pair.indexOf(":");
+              if (colonIndex === -1) {
+                throw new Error(
+                  `Invalid parameter format: "${pair}" - expected key:value`,
+                );
+              }
 
-            if (!key) {
-              throw new Error(`Empty key in parameter: "${pair}"`);
-            }
+              const key = pair.substring(0, colonIndex).trim();
+              const value = pair.substring(colonIndex + 1).trim();
 
-            // Try to parse numeric values
-            if (/^\d+$/.test(value)) {
-              parsedParams[key] = parseInt(value, 10);
-            } else if (/^\d+\.\d+$/.test(value)) {
-              parsedParams[key] = parseFloat(value);
-            } else if (value.toLowerCase() === "true") {
-              parsedParams[key] = true;
-            } else if (value.toLowerCase() === "false") {
-              parsedParams[key] = false;
-            } else {
-              // Keep as string
-              parsedParams[key] = value;
+              if (!key) {
+                throw new Error(`Empty key in parameter: "${pair}"`);
+              }
+
+              // Try to parse numeric values
+              if (/^\d+$/.test(value)) {
+                parsedParams[key] = parseInt(value, 10);
+              } else if (/^\d+\.\d+$/.test(value)) {
+                parsedParams[key] = parseFloat(value);
+              } else if (value.toLowerCase() === "true") {
+                parsedParams[key] = true;
+              } else if (value.toLowerCase() === "false") {
+                parsedParams[key] = false;
+              } else {
+                // Keep as string
+                parsedParams[key] = value;
+              }
             }
           }
 
@@ -774,7 +972,7 @@ export const handler = async (event) => {
           console.error(
             `Invalid format: ${browserFlowParameters.substring(0, 100)}...`,
           );
-          console.error(`Expected format: key1:value1,key2:value2`);
+          console.error(`Expected format: JSON object or key1:value1,key2:value2`);
           // Continue without browser flow parameters rather than failing
           console.warn(
             "Continuing without browser flow configuration due to invalid format",
