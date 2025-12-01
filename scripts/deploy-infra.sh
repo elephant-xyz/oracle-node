@@ -50,10 +50,6 @@ REDRIVE_AUTO_REPAIR_ARCHIVE_NAME="${REDRIVE_AUTO_REPAIR_ARCHIVE_NAME:-redrive-au
 REDRIVE_AUTO_REPAIR_PREFIX="${REDRIVE_AUTO_REPAIR_PREFIX:-codebuild/redrive-auto-repair}"
 REDRIVE_AUTO_REPAIR_UPLOAD_PENDING=0
 
-WORKFLOW_EVENTS_STACK_NAME="${WORKFLOW_EVENTS_STACK_NAME:-workflow-events-stack}"
-WORKFLOW_EVENTS_TEMPLATE="workflow-events/template.yaml"
-DEPLOY_WORKFLOW_EVENTS="${DEPLOY_WORKFLOW_EVENTS:-true}"
-
 mkdir -p "$BUILD_DIR"
 
 check_prereqs() {
@@ -651,44 +647,6 @@ deploy_codebuild_stack() {
   CODEBUILD_DEPLOY_PENDING=0
 }
 
-deploy_workflow_events_stack() {
-  if [[ "$DEPLOY_WORKFLOW_EVENTS" != "true" ]]; then
-    info "DEPLOY_WORKFLOW_EVENTS flag not set (default: true), skipping workflow-events stack deployment"
-    return 0
-  fi
-
-  if [[ ! -f "$WORKFLOW_EVENTS_TEMPLATE" ]]; then
-    warn "Workflow events template not found at $WORKFLOW_EVENTS_TEMPLATE, skipping deployment."
-    return 0
-  fi
-
-  info "Building and deploying workflow-events stack ($WORKFLOW_EVENTS_STACK_NAME)"
-
-  # Build the workflow-events stack with beta features for TypeScript support
-  sam build \
-    --template-file "$WORKFLOW_EVENTS_TEMPLATE" \
-    --beta-features \
-    --build-dir ".aws-sam/workflow-events" || {
-    err "Failed to build workflow-events stack"
-    return 1
-  }
-
-  # Deploy the workflow-events stack
-  sam deploy \
-    --template-file ".aws-sam/workflow-events/template.yaml" \
-    --stack-name "$WORKFLOW_EVENTS_STACK_NAME" \
-    --capabilities CAPABILITY_IAM \
-    --resolve-s3 \
-    --beta-features \
-    --no-confirm-changeset \
-    --no-fail-on-empty-changeset || {
-    err "Failed to deploy workflow-events stack"
-    return 1
-  }
-
-  info "Workflow-events stack deployed successfully"
-}
-
 # Note: MVL Lambda Docker image is now built and pushed automatically by SAM
 # during sam_build and sam_deploy using --resolve-image-repos
 # No manual push needed anymore
@@ -1043,9 +1001,6 @@ main() {
   if (( CODEBUILD_DEPLOY_PENDING == 1 )); then
     deploy_codebuild_stack
   fi
-
-  # Deploy workflow-events stack (separate independent stack)
-  deploy_workflow_events_stack
 
   bucket=$(get_bucket)
   echo
