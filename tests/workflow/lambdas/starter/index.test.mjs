@@ -8,6 +8,7 @@ describe("starter lambda", () => {
   const originalEnv = process.env;
 
   beforeEach(() => {
+    vi.resetModules();
     sfnMock.reset();
     process.env = {
       ...originalEnv,
@@ -19,6 +20,7 @@ describe("starter lambda", () => {
 
   afterEach(() => {
     process.env = originalEnv;
+    vi.restoreAllMocks();
   });
 
   it("should throw error when STATE_MACHINE_ARN is missing", async () => {
@@ -120,7 +122,7 @@ describe("starter lambda", () => {
     };
 
     await expect(handler(event)).rejects.toThrow(
-      "Step function execution failed with status: FAILED",
+      "Step function execution failed with status: FAILED. Cause: Some error occurred",
     );
   });
 
@@ -139,7 +141,7 @@ describe("starter lambda", () => {
     };
 
     await expect(handler(event)).rejects.toThrow(
-      "Step function execution failed with status: TIMED_OUT",
+      "Step function execution failed with status: TIMED_OUT. Cause: N/A",
     );
   });
 });
