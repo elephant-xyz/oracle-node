@@ -393,7 +393,13 @@ export const saveErrorRecords = async (
   // Add ErrorRecord and ExecutionErrorLink updates for each unique error
   for (const [errorCode, { count, details }] of errorOccurrences) {
     transactItems.push(
-      buildErrorRecordUpdate(errorCode, details, detail.executionId, count, now),
+      buildErrorRecordUpdate(
+        errorCode,
+        details,
+        detail.executionId,
+        count,
+        now,
+      ),
     );
     transactItems.push(
       buildExecutionErrorLinkUpdate(
