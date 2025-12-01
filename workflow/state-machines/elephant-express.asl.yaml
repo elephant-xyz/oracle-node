@@ -27,7 +27,6 @@ States:
     Parameters:
       FunctionName: ${WorkflowPreProcessorFunction}
       Payload.$: $.message
-    # Store full Lambda invoke result under $.pre so we can shape it next
     ResultSelector:
       county_prep_input_s3_uri.$: $.Payload.county_prep_input_s3_uri
       output_prefix.$: $.Payload.output_prefix
@@ -144,7 +143,7 @@ States:
       output_s3_uri.$: $.head.expectedOutputUri
       prepareSkipped: true
     ResultPath: $.prepare
-    Next: Postprocess
+    Next: GenerateExecutionId
 
   Prepare:
     Type: Task
@@ -159,7 +158,7 @@ States:
       output_s3_uri.$: $.Payload.output_s3_uri
       prepareSkipped: false
     ResultPath: $.prepare
-    Next: Postprocess
+    Next: GenerateExecutionId
     Retry:
       - ErrorEquals:
           [
@@ -195,40 +194,57 @@ States:
         ResultPath: $.metricError
         Next: FailRuntime
 
-  Postprocess:
+  # === GRANULAR POSTPROCESS STEPS ===
+
+  GenerateExecutionId:
+    Type: Pass
+    QueryLanguage: JSONata
+    Comment: "Generate unique execution ID and prepare context for granular steps"
+    Output: >-
+      {%
+        $merge([$states.input, {
+          "executionId": $states.context.Execution.Name,
+          "outputPrefix": $states.input.pre.output_prefix
+        }])
+      %}
+    Next: Transform
+
+  # === TRANSFORM STEP ===
+
+  Transform:
     Type: Task
-    Resource: arn:aws:states:::lambda:invoke
+    Resource: arn:aws:states:::sqs:sendMessage.waitForTaskToken
+    Comment: "Run Transform step via SQS + Lambda worker with task token callback"
     Parameters:
-      FunctionName: ${WorkflowPostProcessorFunction}
-      Payload:
-        s3.$: $.message.s3
-        prepare.$: $.prepare
-        seed_output_s3_uri.$: $.pre.seed_output_s3_uri
-        prepareSkipped.$: $.prepare.prepareSkipped
+      QueueUrl: ${TransformQueueUrl}
+      MessageBody:
+        taskToken.$: $$.Task.Token
+        input:
+          inputS3Uri.$: $.prepare.output_s3_uri
+          county.$: $.pre.county_name
+          outputPrefix.$: $.outputPrefix
+          executionId.$: $.executionId
     ResultSelector:
-      items.$: $.Payload.transactionItems
-      transformedOutputS3Uri.$: $.Payload.transformedOutputS3Uri
-      preparedInputS3Uri.$: $.Payload.preparedInputS3Uri
-      executionId.$: $.Payload.executionId
-      county.$: $.Payload.county
-    ResultPath: $.post
-    Next: CheckTransactionItems
+      transformedOutputS3Uri.$: $.transformedOutputS3Uri
+      county.$: $.county
+      executionId.$: $.executionId
+    ResultPath: $.transform
+    Next: SVL
     Retry:
-      - ErrorEquals:
-          [
-            Lambda.ServiceException,
-            Lambda.AWSLambdaException,
-            Lambda.SdkClientException,
-          ]
+      - ErrorEquals: [States.Timeout]
         IntervalSeconds: 5
         MaxAttempts: 2
         BackoffRate: 2
     Catch:
+      - ErrorEquals: [ScriptsFailedError]
+        Comment: "Transform scripts failed"
+        ResultPath: $.transformError
+        Next: RecordTransformFailureMetric
       - ErrorEquals: [States.ALL]
-        ResultPath: $.error
-        Next: RecordPostprocessFailureMetric
+        ResultPath: $.transformError
+        Next: RecordTransformFailureMetric
 
-  RecordPostprocessFailureMetric:
+  RecordTransformFailureMetric:
     Type: Task
     Resource: arn:aws:states:::aws-sdk:cloudwatch:putMetricData
     Parameters:
@@ -241,6 +257,8 @@ States:
           Dimensions:
             - Name: Status
               Value: Failure
+            - Name: Step
+              Value: Transform
     ResultPath: $.metricResult
     Next: FailRuntime
     Catch:
@@ -248,14 +266,302 @@ States:
         ResultPath: $.metricError
         Next: FailRuntime
 
-  CheckTransactionItems:
+  # === SVL (Schema Validation Layer) STEP ===
+
+  SVL:
+    Type: Task
+    Resource: arn:aws:states:::sqs:sendMessage.waitForTaskToken
+    Comment: "Run Schema Validation Layer via SQS + Lambda worker"
+    Parameters:
+      QueueUrl: ${SvlQueueUrl}
+      MessageBody:
+        taskToken.$: $$.Task.Token
+        input:
+          transformedOutputS3Uri.$: $.transform.transformedOutputS3Uri
+          county.$: $.pre.county_name
+          outputPrefix.$: $.outputPrefix
+          executionId.$: $.executionId
+          preparedS3Uri.$: $.prepare.output_s3_uri
+          s3.$: $.message.s3
+    ResultSelector:
+      validatedOutputS3Uri.$: $.validatedOutputS3Uri
+      county.$: $.county
+      executionId.$: $.executionId
+      validationPassed.$: $.validationPassed
+    ResultPath: $.svl
+    Next: CheckSvlResult
+    Retry:
+      - ErrorEquals: [States.Timeout]
+        IntervalSeconds: 5
+        MaxAttempts: 2
+        BackoffRate: 2
+    Catch:
+      - ErrorEquals: [SvlFailedError]
+        Comment: "SVL validation failed"
+        ResultPath: $.svlError
+        Next: RecordSvlFailureMetric
+      - ErrorEquals: [States.ALL]
+        ResultPath: $.svlError
+        Next: RecordSvlFailureMetric
+
+  CheckSvlResult:
     Type: Choice
-    Comment: "Skip queue if validation failed (empty transactionItems)"
+    Comment: "Check if SVL validation passed or failed (errors saved to DynamoDB)"
     Choices:
-      - Variable: $.post.items[0]
-        IsPresent: false
+      - Variable: $.svl.validationPassed
+        BooleanEquals: false
         Next: RecordValidationFailureMetric
-    Default: RecordSuccessMetric
+    Default: IsMvlEnabled
+
+  RecordSvlFailureMetric:
+    Type: Task
+    Resource: arn:aws:states:::aws-sdk:cloudwatch:putMetricData
+    Parameters:
+      Namespace: ElephantWorkflow
+      MetricData:
+        - MetricName: WorkflowExecution
+          Value: 1
+          Unit: Count
+          Timestamp.$: $$.State.EnteredTime
+          Dimensions:
+            - Name: Status
+              Value: Failure
+            - Name: Step
+              Value: SVL
+    ResultPath: $.metricResult
+    Next: FailRuntime
+    Catch:
+      - ErrorEquals: [States.ALL]
+        ResultPath: $.metricError
+        Next: FailRuntime
+
+  # === MVL (Mirror Validation Layer) STEP - Optional ===
+
+  IsMvlEnabled:
+    Type: Choice
+    Comment: "Check if MVL is enabled for this execution (default: false)"
+    Choices:
+      - Variable: $.message.mvlEnabled
+        BooleanEquals: true
+        Next: MVL
+    Default: Hash
+
+  MVL:
+    Type: Task
+    Resource: arn:aws:states:::lambda:invoke
+    Comment: "Run Mirror Validation Layer via Lambda"
+    Parameters:
+      FunctionName: ${WorkflowMirrorValidatorFunction}
+      Payload:
+        preparedInputS3Uri.$: $.prepare.output_s3_uri
+        transformedOutputS3Uri.$: $.transform.transformedOutputS3Uri
+        preparedOutputS3Uri.$: $.prepare.output_s3_uri
+        county.$: $.pre.county_name
+        executionId.$: $.executionId
+        s3.$: $.message.s3
+    ResultSelector:
+      mvlMetric.$: $.Payload.mvlMetric
+      mvlPassed.$: $.Payload.mvlPassed
+      errorsS3Uri.$: $.Payload.errorsS3Uri
+    ResultPath: $.mvl
+    Next: CheckMvlResult
+    Retry:
+      - ErrorEquals:
+          [
+            Lambda.ServiceException,
+            Lambda.AWSLambdaException,
+            Lambda.SdkClientException,
+          ]
+        IntervalSeconds: 5
+        MaxAttempts: 2
+        BackoffRate: 2
+    Catch:
+      - ErrorEquals: [States.ALL]
+        ResultPath: $.mvlError
+        Next: RecordMvlFailureMetric
+
+  CheckMvlResult:
+    Type: Choice
+    Comment: "Check if MVL validation passed or failed (errors saved to DynamoDB)"
+    Choices:
+      - Variable: $.mvl.mvlPassed
+        BooleanEquals: false
+        Next: RecordValidationFailureMetric
+    Default: Hash
+
+  RecordMvlFailureMetric:
+    Type: Task
+    Resource: arn:aws:states:::aws-sdk:cloudwatch:putMetricData
+    Parameters:
+      Namespace: ElephantWorkflow
+      MetricData:
+        - MetricName: WorkflowExecution
+          Value: 1
+          Unit: Count
+          Timestamp.$: $$.State.EnteredTime
+          Dimensions:
+            - Name: Status
+              Value: Failure
+            - Name: Step
+              Value: MVL
+    ResultPath: $.metricResult
+    Next: FailRuntime
+    Catch:
+      - ErrorEquals: [States.ALL]
+        ResultPath: $.metricError
+        Next: FailRuntime
+
+  # === HASH STEP ===
+
+  Hash:
+    Type: Task
+    Resource: arn:aws:states:::sqs:sendMessage.waitForTaskToken
+    Comment: "Run Hash generation via SQS + Lambda worker"
+    Parameters:
+      QueueUrl: ${HashQueueUrl}
+      MessageBody:
+        taskToken.$: $$.Task.Token
+        input:
+          validatedOutputS3Uri.$: $.transform.transformedOutputS3Uri
+          seedOutputS3Uri.$: $.pre.seed_output_s3_uri
+          county.$: $.pre.county_name
+          outputPrefix.$: $.outputPrefix
+          executionId.$: $.executionId
+    ResultSelector:
+      seedHashZipS3Uri.$: $.seedHashZipS3Uri
+      countyHashZipS3Uri.$: $.countyHashZipS3Uri
+      combinedHashCsvS3Uri.$: $.combinedHashCsvS3Uri
+      county.$: $.county
+      executionId.$: $.executionId
+      propertyCid.$: $.propertyCid
+    ResultPath: $.hash
+    Next: Upload
+    Retry:
+      - ErrorEquals: [States.Timeout]
+        IntervalSeconds: 5
+        MaxAttempts: 2
+        BackoffRate: 2
+    Catch:
+      - ErrorEquals: [States.ALL]
+        ResultPath: $.hashError
+        Next: RecordHashFailureMetric
+
+  RecordHashFailureMetric:
+    Type: Task
+    Resource: arn:aws:states:::aws-sdk:cloudwatch:putMetricData
+    Parameters:
+      Namespace: ElephantWorkflow
+      MetricData:
+        - MetricName: WorkflowExecution
+          Value: 1
+          Unit: Count
+          Timestamp.$: $$.State.EnteredTime
+          Dimensions:
+            - Name: Status
+              Value: Failure
+            - Name: Step
+              Value: Hash
+    ResultPath: $.metricResult
+    Next: FailRuntime
+    Catch:
+      - ErrorEquals: [States.ALL]
+        ResultPath: $.metricError
+        Next: FailRuntime
+
+  # === UPLOAD STEP ===
+
+  Upload:
+    Type: Task
+    Resource: arn:aws:states:::sqs:sendMessage.waitForTaskToken
+    Comment: "Run Upload to IPFS via SQS + Lambda worker"
+    Parameters:
+      QueueUrl: ${UploadQueueUrl}
+      MessageBody:
+        taskToken.$: $$.Task.Token
+        input:
+          seedHashZipS3Uri.$: $.hash.seedHashZipS3Uri
+          countyHashZipS3Uri.$: $.hash.countyHashZipS3Uri
+          county.$: $.pre.county_name
+          executionId.$: $.executionId
+    ResultSelector:
+      uploadSuccess.$: $.uploadSuccess
+      county.$: $.county
+      executionId.$: $.executionId
+    ResultPath: $.upload
+    Next: PrepareTransactionItems
+    Retry:
+      - ErrorEquals: [States.Timeout]
+        IntervalSeconds: 5
+        MaxAttempts: 2
+        BackoffRate: 2
+    Catch:
+      - ErrorEquals: [UploadFailedError]
+        Comment: "Upload to IPFS failed"
+        ResultPath: $.uploadError
+        Next: RecordUploadFailureMetric
+      - ErrorEquals: [States.ALL]
+        ResultPath: $.uploadError
+        Next: RecordUploadFailureMetric
+
+  RecordUploadFailureMetric:
+    Type: Task
+    Resource: arn:aws:states:::aws-sdk:cloudwatch:putMetricData
+    Parameters:
+      Namespace: ElephantWorkflow
+      MetricData:
+        - MetricName: WorkflowExecution
+          Value: 1
+          Unit: Count
+          Timestamp.$: $$.State.EnteredTime
+          Dimensions:
+            - Name: Status
+              Value: Failure
+            - Name: Step
+              Value: Upload
+    ResultPath: $.metricResult
+    Next: FailRuntime
+    Catch:
+      - ErrorEquals: [States.ALL]
+        ResultPath: $.metricError
+        Next: FailRuntime
+
+  # === PREPARE TRANSACTION ITEMS ===
+
+  PrepareTransactionItems:
+    Type: Pass
+    QueryLanguage: JSONata
+    Comment: "Prepare transaction items from hash CSV for submit queue"
+    Output: >-
+      {%
+        $merge([$states.input, {
+          "post": {
+            "items": [],
+            "transformedOutputS3Uri": $states.input.transform.transformedOutputS3Uri,
+            "preparedInputS3Uri": $states.input.prepare.output_s3_uri,
+            "executionId": $states.input.executionId,
+            "county": $states.input.pre.county_name,
+            "combinedHashCsvS3Uri": $states.input.hash.combinedHashCsvS3Uri
+          }
+        }])
+      %}
+    Next: LoadTransactionItemsFromS3
+
+  LoadTransactionItemsFromS3:
+    Type: Task
+    Resource: arn:aws:states:::aws-sdk:s3:getObject
+    Comment: "Load combined hash CSV from S3 to get transaction items"
+    Parameters:
+      Bucket.$: States.ArrayGetItem(States.StringSplit($.hash.combinedHashCsvS3Uri, '/'), 2)
+      Key.$: States.Format('{}/{}', States.ArrayGetItem(States.StringSplit($.hash.combinedHashCsvS3Uri, '/'), 3), States.ArrayGetItem(States.StringSplit($.hash.combinedHashCsvS3Uri, '/'), 4))
+    ResultSelector:
+      csvContent.$: $.Body
+    ResultPath: $.csvData
+    Next: RecordSuccessMetric
+    Catch:
+      - ErrorEquals: [States.ALL]
+        Comment: "Failed to load transaction items - proceed anyway"
+        ResultPath: $.csvLoadError
+        Next: RecordSuccessMetric
 
   RecordValidationFailureMetric:
     Type: Task
@@ -296,9 +602,10 @@ States:
   QueueForTheSubmit:
     Type: Task
     Resource: arn:aws:states:::sqs:sendMessage
+    Comment: "Queue combined hash CSV S3 URI for submit processing"
     Parameters:
       QueueUrl: ${TransactionsSqsQueueUrl}
-      MessageBody.$: "States.JsonToString($.post.items)"
+      MessageBody.$: States.JsonToString($.hash)
     ResultPath: null
     End: true
 
