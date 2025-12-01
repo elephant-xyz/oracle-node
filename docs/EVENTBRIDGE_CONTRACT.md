@@ -41,10 +41,28 @@ Emitted on workflow step status changes (success, failure, or parked).
 
 ### Error Object Schema
 
-| Field     | Type   | Description                                                              |
-| --------- | ------ | ------------------------------------------------------------------------ |
-| `code`    | string | Error code identifier (e.g., `TRANSFORM_FAILED`, `SVL_VALIDATION_ERROR`) |
-| `details` | object | Free-form object with error-specific details                             |
+| Field     | Type   | Description                                  |
+| --------- | ------ | -------------------------------------------- |
+| `code`    | string | Error code identifier                        |
+| `details` | object | Free-form object with error-specific details |
+
+### Error code
+
+`error.code` is a **stable, machine-readable identifier for a specific error condition** that occurred in the workflow.
+
+- **Purpose**:
+  - **Uniquely identifies** the type of error so it can be counted, queried, and triaged.
+  - Multiple entries in the `errors` array with the **same** `code` are treated as **multiple occurrences of the same error** by the error handler in `workflow-events/lambdas/event-handler/index.ts`.
+- **Format**:
+  - Must be a **non-empty string**.
+  - Recommended pattern: a short prefix for the high-level error family followed by a more specific suffix (for example: `01012`, `01013`).
+  - The system derives an internal _error type_ from the **first two characters** of the code for aggregation (for example, codes `01012` and `01013` are both treated as type `01` for metrics).
+- **Stability**:
+  - Once defined, a given `code` should **always represent the same error meaning** across time and across executions.
+  - Do **not** reuse a code for a different error condition.
+- **Usage in events**:
+  - Producers may emit **zero, one, or many** error objects per event.
+  - If the same error happens multiple times in a single execution, emit multiple entries with the same `code` (and appropriate `details`); the event handler will **aggregate the occurrences**.
 
 ### Phase Values
 
