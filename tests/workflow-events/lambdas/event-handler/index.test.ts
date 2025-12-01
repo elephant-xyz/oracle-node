@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mockClient } from "aws-sdk-client-mock";
 import { DynamoDBDocumentClient, TransactWriteCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import type { EventBridgeEvent } from "aws-lambda";
-import type { WorkflowEventDetail, WorkflowError } from "../types.js";
+import type { WorkflowEventDetail, WorkflowError } from "../../../../workflow-events/lambdas/event-handler/types.js";
 
 /**
  * Mock the DynamoDB Document Client for all tests.
@@ -74,10 +74,10 @@ describe("event-handler", () => {
       ...originalEnv,
       WORKFLOW_ERRORS_TABLE_NAME: TEST_TABLE_NAME,
     };
-    vi.spyOn(console, "log").mockImplementation(() => {});
-    vi.spyOn(console, "info").mockImplementation(() => {});
-    vi.spyOn(console, "debug").mockImplementation(() => {});
-    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(console, "log").mockImplementation(() => { });
+    vi.spyOn(console, "info").mockImplementation(() => { });
+    vi.spyOn(console, "debug").mockImplementation(() => { });
+    vi.spyOn(console, "error").mockImplementation(() => { });
   });
 
   afterEach(() => {
@@ -89,7 +89,7 @@ describe("event-handler", () => {
     it("should process event with errors and save to DynamoDB", async () => {
       ddbMock.on(TransactWriteCommand).resolves({});
 
-      const { handler } = await import("../index.js");
+      const { handler } = await import("../../../../workflow-events/lambdas/event-handler/index.js");
 
       const detail = createWorkflowDetail({
         executionId: "exec-integration-001",
@@ -103,7 +103,7 @@ describe("event-handler", () => {
     });
 
     it("should skip DynamoDB save when event has no errors", async () => {
-      const { handler } = await import("../index.js");
+      const { handler } = await import("../../../../workflow-events/lambdas/event-handler/index.js");
 
       const detail = createWorkflowDetail({
         executionId: "exec-no-errors-001",
@@ -119,7 +119,7 @@ describe("event-handler", () => {
     it("should propagate DynamoDB errors to caller", async () => {
       ddbMock.on(TransactWriteCommand).rejects(new Error("DynamoDB transaction failed"));
 
-      const { handler } = await import("../index.js");
+      const { handler } = await import("../../../../workflow-events/lambdas/event-handler/index.js");
 
       const detail = createWorkflowDetail({
         executionId: "exec-error-001",
@@ -133,7 +133,7 @@ describe("event-handler", () => {
     it("should throw error when WORKFLOW_ERRORS_TABLE_NAME is not set", async () => {
       delete process.env.WORKFLOW_ERRORS_TABLE_NAME;
 
-      const { handler } = await import("../index.js");
+      const { handler } = await import("../../../../workflow-events/lambdas/event-handler/index.js");
 
       const detail = createWorkflowDetail({
         errors: [createError("01256")],
@@ -150,7 +150,7 @@ describe("event-handler", () => {
     it("should create FailedExecutionItem, ErrorRecord, and ExecutionErrorLink for single error", async () => {
       ddbMock.on(TransactWriteCommand).resolves({});
 
-      const { saveErrorRecords } = await import("../dynamodb.js");
+      const { saveErrorRecords } = await import("../../../../workflow-events/lambdas/event-handler/dynamodb.js");
 
       const detail = createWorkflowDetail({
         executionId: "exec-single-001",
@@ -213,7 +213,7 @@ describe("event-handler", () => {
     it("should include taskToken in FailedExecutionItem when provided", async () => {
       ddbMock.on(TransactWriteCommand).resolves({});
 
-      const { saveErrorRecords } = await import("../dynamodb.js");
+      const { saveErrorRecords } = await import("../../../../workflow-events/lambdas/event-handler/dynamodb.js");
 
       const detail = createWorkflowDetail({
         executionId: "exec-with-token-001",
@@ -237,7 +237,7 @@ describe("event-handler", () => {
     it("should create separate ErrorRecord and ExecutionErrorLink for each unique error", async () => {
       ddbMock.on(TransactWriteCommand).resolves({});
 
-      const { saveErrorRecords } = await import("../dynamodb.js");
+      const { saveErrorRecords } = await import("../../../../workflow-events/lambdas/event-handler/dynamodb.js");
 
       const detail = createWorkflowDetail({
         executionId: "exec-multi-001",
@@ -274,7 +274,7 @@ describe("event-handler", () => {
     it("should aggregate repeated errors and count unique errors correctly", async () => {
       ddbMock.on(TransactWriteCommand).resolves({});
 
-      const { saveErrorRecords } = await import("../dynamodb.js");
+      const { saveErrorRecords } = await import("../../../../workflow-events/lambdas/event-handler/dynamodb.js");
 
       // 5 total errors, but only 2 unique error codes
       const detail = createWorkflowDetail({
@@ -310,7 +310,7 @@ describe("event-handler", () => {
     it("should set occurrence count per error code in ExecutionErrorLink", async () => {
       ddbMock.on(TransactWriteCommand).resolves({});
 
-      const { saveErrorRecords } = await import("../dynamodb.js");
+      const { saveErrorRecords } = await import("../../../../workflow-events/lambdas/event-handler/dynamodb.js");
 
       // Error "01256" occurs 3 times, "23456" occurs 1 time
       const detail = createWorkflowDetail({
@@ -352,7 +352,7 @@ describe("event-handler", () => {
     it("should use first occurrence details for error record when same error repeats", async () => {
       ddbMock.on(TransactWriteCommand).resolves({});
 
-      const { saveErrorRecords } = await import("../dynamodb.js");
+      const { saveErrorRecords } = await import("../../../../workflow-events/lambdas/event-handler/dynamodb.js");
 
       const detail = createWorkflowDetail({
         executionId: "exec-details-001",
@@ -383,7 +383,7 @@ describe("event-handler", () => {
     it("should correctly increment ErrorRecord totalCount for shared errors across executions", async () => {
       ddbMock.on(TransactWriteCommand).resolves({});
 
-      const { saveErrorRecords } = await import("../dynamodb.js");
+      const { saveErrorRecords } = await import("../../../../workflow-events/lambdas/event-handler/dynamodb.js");
 
       // First execution with errors "01256" and "23456"
       const detail1 = createWorkflowDetail({
@@ -446,7 +446,7 @@ describe("event-handler", () => {
     it("should maintain separate ExecutionErrorLink for each execution even with shared errors", async () => {
       ddbMock.on(TransactWriteCommand).resolves({});
 
-      const { saveErrorRecords } = await import("../dynamodb.js");
+      const { saveErrorRecords } = await import("../../../../workflow-events/lambdas/event-handler/dynamodb.js");
 
       // Two executions with the same error
       await saveErrorRecords(
@@ -517,7 +517,7 @@ describe("event-handler", () => {
     it("should extract errorType for each unique error code in ErrorRecord", async () => {
       ddbMock.on(TransactWriteCommand).resolves({});
 
-      const { saveErrorRecords } = await import("../dynamodb.js");
+      const { saveErrorRecords } = await import("../../../../workflow-events/lambdas/event-handler/dynamodb.js");
 
       const detail = createWorkflowDetail({
         executionId: "exec-errortype-multi-001",
@@ -601,7 +601,7 @@ describe("event-handler", () => {
     it("should include errorType in GS3SK for ErrorRecord", async () => {
       ddbMock.on(TransactWriteCommand).resolves({});
 
-      const { saveErrorRecords } = await import("../dynamodb.js");
+      const { saveErrorRecords } = await import("../../../../workflow-events/lambdas/event-handler/dynamodb.js");
 
       const detail = createWorkflowDetail({
         executionId: "exec-gs3-error-001",
@@ -628,7 +628,7 @@ describe("event-handler", () => {
     it("should include errorType in GS3SK for FailedExecutionItem with uniform error type", async () => {
       ddbMock.on(TransactWriteCommand).resolves({});
 
-      const { saveErrorRecords } = await import("../dynamodb.js");
+      const { saveErrorRecords } = await import("../../../../workflow-events/lambdas/event-handler/dynamodb.js");
 
       const detail = createWorkflowDetail({
         executionId: "exec-gs3-exec-001",
@@ -653,7 +653,7 @@ describe("event-handler", () => {
     it("should include 'MIXED' errorType in GS3SK for FailedExecutionItem with mixed error types", async () => {
       ddbMock.on(TransactWriteCommand).resolves({});
 
-      const { saveErrorRecords } = await import("../dynamodb.js");
+      const { saveErrorRecords } = await import("../../../../workflow-events/lambdas/event-handler/dynamodb.js");
 
       const detail = createWorkflowDetail({
         executionId: "exec-gs3-mixed-001",
@@ -677,7 +677,7 @@ describe("event-handler", () => {
     it("should handle error codes shorter than 2 characters for errorType", async () => {
       ddbMock.on(TransactWriteCommand).resolves({});
 
-      const { saveErrorRecords } = await import("../dynamodb.js");
+      const { saveErrorRecords } = await import("../../../../workflow-events/lambdas/event-handler/dynamodb.js");
 
       const detail = createWorkflowDetail({
         executionId: "exec-short-code-001",
@@ -703,7 +703,7 @@ describe("event-handler", () => {
     it("should use correct composite key format for ErrorRecord", async () => {
       ddbMock.on(TransactWriteCommand).resolves({});
 
-      const { saveErrorRecords } = await import("../dynamodb.js");
+      const { saveErrorRecords } = await import("../../../../workflow-events/lambdas/event-handler/dynamodb.js");
 
       const detail = createWorkflowDetail({
         executionId: "exec-keys-001",
@@ -730,7 +730,7 @@ describe("event-handler", () => {
     it("should use correct composite key format for ExecutionErrorLink", async () => {
       ddbMock.on(TransactWriteCommand).resolves({});
 
-      const { saveErrorRecords } = await import("../dynamodb.js");
+      const { saveErrorRecords } = await import("../../../../workflow-events/lambdas/event-handler/dynamodb.js");
 
       const detail = createWorkflowDetail({
         executionId: "exec-keys-002",
@@ -757,7 +757,7 @@ describe("event-handler", () => {
     it("should use correct composite key format for FailedExecutionItem", async () => {
       ddbMock.on(TransactWriteCommand).resolves({});
 
-      const { saveErrorRecords } = await import("../dynamodb.js");
+      const { saveErrorRecords } = await import("../../../../workflow-events/lambdas/event-handler/dynamodb.js");
 
       const detail = createWorkflowDetail({
         executionId: "exec-keys-003",
@@ -783,7 +783,7 @@ describe("event-handler", () => {
     it("should set correct GSI keys for ErrorRecord", async () => {
       ddbMock.on(TransactWriteCommand).resolves({});
 
-      const { saveErrorRecords } = await import("../dynamodb.js");
+      const { saveErrorRecords } = await import("../../../../workflow-events/lambdas/event-handler/dynamodb.js");
 
       const detail = createWorkflowDetail({
         executionId: "exec-gsi-001",
@@ -816,7 +816,7 @@ describe("event-handler", () => {
     it("should set correct GSI keys for ExecutionErrorLink", async () => {
       ddbMock.on(TransactWriteCommand).resolves({});
 
-      const { saveErrorRecords } = await import("../dynamodb.js");
+      const { saveErrorRecords } = await import("../../../../workflow-events/lambdas/event-handler/dynamodb.js");
 
       const detail = createWorkflowDetail({
         executionId: "exec-gsi-002",
@@ -844,7 +844,7 @@ describe("event-handler", () => {
     it("should set correct GSI keys for FailedExecutionItem with padded count and errorType", async () => {
       ddbMock.on(TransactWriteCommand).resolves({});
 
-      const { saveErrorRecords } = await import("../dynamodb.js");
+      const { saveErrorRecords } = await import("../../../../workflow-events/lambdas/event-handler/dynamodb.js");
 
       const detail = createWorkflowDetail({
         executionId: "exec-gsi-003",
@@ -870,7 +870,7 @@ describe("event-handler", () => {
 
   describe("empty errors handling", () => {
     it("should return early result when errors array is empty", async () => {
-      const { saveErrorRecords } = await import("../dynamodb.js");
+      const { saveErrorRecords } = await import("../../../../workflow-events/lambdas/event-handler/dynamodb.js");
 
       const detail = createWorkflowDetail({
         executionId: "exec-empty-001",
@@ -895,7 +895,7 @@ describe("event-handler", () => {
       ddbMock.on(TransactWriteCommand).resolves({});
       ddbMock.on(UpdateCommand).resolves({});
 
-      const { saveErrorRecords } = await import("../dynamodb.js");
+      const { saveErrorRecords } = await import("../../../../workflow-events/lambdas/event-handler/dynamodb.js");
 
       // Create 60 unique errors
       // This will create: 1 FailedExecutionItem + 60 ErrorRecords + 60 ExecutionErrorLinks = 121 items
@@ -925,7 +925,7 @@ describe("event-handler", () => {
     it("should use single transaction when under 100 items", async () => {
       ddbMock.on(TransactWriteCommand).resolves({});
 
-      const { saveErrorRecords } = await import("../dynamodb.js");
+      const { saveErrorRecords } = await import("../../../../workflow-events/lambdas/event-handler/dynamodb.js");
 
       // Create 33 unique errors
       // This will create: 1 FailedExecutionItem + 33 ErrorRecords + 33 ExecutionErrorLinks = 67 items
@@ -955,7 +955,7 @@ describe("event-handler", () => {
     it("should update GS2SK for an error record with padded count", async () => {
       ddbMock.on(UpdateCommand).resolves({});
 
-      const { updateErrorRecordSortKey } = await import("../dynamodb.js");
+      const { updateErrorRecordSortKey } = await import("../../../../workflow-events/lambdas/event-handler/dynamodb.js");
 
       await updateErrorRecordSortKey("12345", 42);
 
@@ -975,7 +975,7 @@ describe("event-handler", () => {
     it("should throw error when table name is not set", async () => {
       delete process.env.WORKFLOW_ERRORS_TABLE_NAME;
 
-      const { updateErrorRecordSortKey } = await import("../dynamodb.js");
+      const { updateErrorRecordSortKey } = await import("../../../../workflow-events/lambdas/event-handler/dynamodb.js");
 
       await expect(updateErrorRecordSortKey("12345", 42)).rejects.toThrow(
         "WORKFLOW_ERRORS_TABLE_NAME environment variable is not set"
@@ -987,7 +987,7 @@ describe("event-handler", () => {
     it("should set default error status to 'failed' for new records", async () => {
       ddbMock.on(TransactWriteCommand).resolves({});
 
-      const { saveErrorRecords } = await import("../dynamodb.js");
+      const { saveErrorRecords } = await import("../../../../workflow-events/lambdas/event-handler/dynamodb.js");
 
       const detail = createWorkflowDetail({
         executionId: "exec-status-001",
@@ -1027,7 +1027,7 @@ describe("event-handler", () => {
     it("should correctly set county in FailedExecutionItem and ExecutionErrorLink", async () => {
       ddbMock.on(TransactWriteCommand).resolves({});
 
-      const { saveErrorRecords } = await import("../dynamodb.js");
+      const { saveErrorRecords } = await import("../../../../workflow-events/lambdas/event-handler/dynamodb.js");
 
       const detail = createWorkflowDetail({
         executionId: "exec-county-001",
