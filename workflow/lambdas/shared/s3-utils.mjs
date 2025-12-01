@@ -74,12 +74,7 @@ export async function downloadS3Object({ bucket, key }, destinationPath, log) {
  * @param {string} [contentType] - Optional content type.
  * @returns {Promise<string>} - S3 URI of uploaded object.
  */
-export async function uploadToS3(
-  localPath,
-  { bucket, key },
-  log,
-  contentType,
-) {
+export async function uploadToS3(localPath, { bucket, key }, log, contentType) {
   log("info", "upload_s3_object", { bucket, key });
   const content = await fs.readFile(localPath);
   await s3.send(

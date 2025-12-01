@@ -1,6 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mockClient } from "aws-sdk-client-mock";
-import { SFNClient, StartSyncExecutionCommand } from "@aws-sdk/client-sfn";
+import {
+  SFNClient,
+  StartExecutionCommand,
+  ListExecutionsCommand,
+  DescribeExecutionCommand,
+} from "@aws-sdk/client-sfn";
 
 const sfnMock = mockClient(SFNClient);
 
@@ -13,9 +18,11 @@ describe("starter lambda", () => {
     process.env = {
       ...originalEnv,
       STATE_MACHINE_ARN: "arn:aws:states:us-east-1:123456789:stateMachine:test",
+      MAX_CONCURRENT_EXECUTIONS: "100",
     };
     vi.spyOn(console, "log").mockImplementation(() => {});
     vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
   });
 
   afterEach(() => {
@@ -77,8 +84,18 @@ describe("starter lambda", () => {
   });
 
   it("should successfully start workflow and return ok status", async () => {
-    sfnMock.on(StartSyncExecutionCommand).resolves({
+    // Mock ListExecutionsCommand to return no running executions
+    sfnMock.on(ListExecutionsCommand).resolves({
+      executions: [],
+    });
+
+    // Mock StartExecutionCommand
+    sfnMock.on(StartExecutionCommand).resolves({
       executionArn: "arn:aws:states:us-east-1:123456789:execution:test:abc123",
+    });
+
+    // Mock DescribeExecutionCommand to return SUCCEEDED
+    sfnMock.on(DescribeExecutionCommand).resolves({
       status: "SUCCEEDED",
     });
 
@@ -100,15 +117,25 @@ describe("starter lambda", () => {
     expect(result.workflowStatus).toBe("SUCCEEDED");
 
     // Verify AWS SDK was called correctly using custom matchers
-    expect(sfnMock).toHaveReceivedCommandWith(StartSyncExecutionCommand, {
+    expect(sfnMock).toHaveReceivedCommandWith(StartExecutionCommand, {
       stateMachineArn: "arn:aws:states:us-east-1:123456789:stateMachine:test",
       input: JSON.stringify({ message: inputData }),
     });
   });
 
   it("should throw error when step function execution fails", async () => {
-    sfnMock.on(StartSyncExecutionCommand).resolves({
+    // Mock ListExecutionsCommand to return no running executions
+    sfnMock.on(ListExecutionsCommand).resolves({
+      executions: [],
+    });
+
+    // Mock StartExecutionCommand
+    sfnMock.on(StartExecutionCommand).resolves({
       executionArn: "arn:aws:states:us-east-1:123456789:execution:test:abc123",
+    });
+
+    // Mock DescribeExecutionCommand to return FAILED
+    sfnMock.on(DescribeExecutionCommand).resolves({
       status: "FAILED",
       cause: "Some error occurred",
     });
@@ -122,13 +149,23 @@ describe("starter lambda", () => {
     };
 
     await expect(handler(event)).rejects.toThrow(
-      "Step function execution failed with status: FAILED. Cause: Some error occurred",
+      "Step function execution FAILED",
     );
   });
 
   it("should throw error when step function times out", async () => {
-    sfnMock.on(StartSyncExecutionCommand).resolves({
+    // Mock ListExecutionsCommand to return no running executions
+    sfnMock.on(ListExecutionsCommand).resolves({
+      executions: [],
+    });
+
+    // Mock StartExecutionCommand
+    sfnMock.on(StartExecutionCommand).resolves({
       executionArn: "arn:aws:states:us-east-1:123456789:execution:test:abc123",
+    });
+
+    // Mock DescribeExecutionCommand to return TIMED_OUT
+    sfnMock.on(DescribeExecutionCommand).resolves({
       status: "TIMED_OUT",
     });
 
@@ -141,7 +178,32 @@ describe("starter lambda", () => {
     };
 
     await expect(handler(event)).rejects.toThrow(
-      "Step function execution failed with status: TIMED_OUT. Cause: N/A",
+      "Step function execution TIMED_OUT",
+    );
+  });
+
+  it("should throw error when concurrency limit is reached", async () => {
+    // Mock ListExecutionsCommand to return many running executions
+    const manyExecutions = Array(100)
+      .fill(null)
+      .map((_, i) => ({
+        executionArn: `arn:aws:states:us-east-1:123456789:execution:test:exec${i}`,
+      }));
+
+    sfnMock.on(ListExecutionsCommand).resolves({
+      executions: manyExecutions,
+    });
+
+    const { handler } = await import(
+      "../../../../workflow/lambdas/starter/index.mjs"
+    );
+
+    const event = {
+      Records: [{ body: JSON.stringify({ test: "data" }) }],
+    };
+
+    await expect(handler(event)).rejects.toThrow(
+      "Step Function concurrency limit reached",
     );
   });
 });

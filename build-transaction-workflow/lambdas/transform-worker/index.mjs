@@ -74,7 +74,13 @@ function resolveTransformLocation({ countyName, transformPrefixUri }) {
  * @param {ReturnType<typeof createLogger>} params.log - Logger.
  * @returns {Promise<TransformOutput>}
  */
-async function runTransform({ inputS3Uri, county, outputPrefix, executionId, log }) {
+async function runTransform({
+  inputS3Uri,
+  county,
+  outputPrefix,
+  executionId,
+  log,
+}) {
   const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "transform-"));
 
   try {
@@ -88,12 +94,13 @@ async function runTransform({ inputS3Uri, county, outputPrefix, executionId, log
       transformPrefixUri: process.env.TRANSFORM_S3_PREFIX,
     });
 
-    const { scriptsZipPath } = await transformScriptsManager.ensureScriptsForCounty({
-      countyName: county,
-      transformBucket,
-      transformKey,
-      log,
-    });
+    const { scriptsZipPath } =
+      await transformScriptsManager.ensureScriptsForCounty({
+        countyName: county,
+        transformBucket,
+        transformKey,
+        log,
+      });
 
     // Run transform
     const outputZipLocal = path.join(tmpDir, "transformed_output.zip");
@@ -124,7 +131,9 @@ async function runTransform({ inputS3Uri, county, outputPrefix, executionId, log
 
       // Create a specific error for script failures
       if (transformResult.scriptFailure) {
-        const err = new Error(transformResult.error || "Transform scripts failed");
+        const err = new Error(
+          transformResult.error || "Transform scripts failed",
+        );
         err.name = "ScriptsFailedError";
         throw err;
       }

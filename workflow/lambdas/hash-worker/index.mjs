@@ -168,7 +168,11 @@ async function runHash({
     });
 
     // Combine CSVs
-    const combinedCsvPath = await combineCsv(seedHashCsv, countyHashCsv, tmpDir);
+    const combinedCsvPath = await combineCsv(
+      seedHashCsv,
+      countyHashCsv,
+      tmpDir,
+    );
 
     // Upload all artifacts to S3
     const { bucket: outputBucket } = parseS3Uri(outputPrefix);

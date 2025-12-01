@@ -66,13 +66,23 @@ async function csvToJson(csvPath) {
  * @param {ReturnType<typeof createLogger>} params.log - Logger.
  * @returns {Promise<SvlOutput>}
  */
-async function runSvl({ transformedOutputS3Uri, county, outputPrefix, executionId, log }) {
+async function runSvl({
+  transformedOutputS3Uri,
+  county,
+  outputPrefix,
+  executionId,
+  log,
+}) {
   const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "svl-"));
 
   try {
     // Download transformed output zip
     const transformedZipLocal = path.join(tmpDir, "transformed_output.zip");
-    await downloadS3Object(parseS3Uri(transformedOutputS3Uri), transformedZipLocal, log);
+    await downloadS3Object(
+      parseS3Uri(transformedOutputS3Uri),
+      transformedZipLocal,
+      log,
+    );
 
     // Run validation
     log("info", "svl_start", {
@@ -82,7 +92,10 @@ async function runSvl({ transformedOutputS3Uri, county, outputPrefix, executionI
     });
 
     const validationStart = Date.now();
-    const validationResult = await validate({ input: transformedZipLocal, cwd: tmpDir });
+    const validationResult = await validate({
+      input: transformedZipLocal,
+      cwd: tmpDir,
+    });
     const validationDuration = Date.now() - validationStart;
 
     log("info", "svl_complete", {
@@ -98,7 +111,10 @@ async function runSvl({ transformedOutputS3Uri, county, outputPrefix, executionI
       let errorsS3Uri = null;
 
       try {
-        const errorsExist = await fs.access(submitErrorsPath).then(() => true).catch(() => false);
+        const errorsExist = await fs
+          .access(submitErrorsPath)
+          .then(() => true)
+          .catch(() => false);
 
         if (errorsExist) {
           const submitErrors = await csvToJson(submitErrorsPath);
@@ -126,7 +142,9 @@ async function runSvl({ transformedOutputS3Uri, county, outputPrefix, executionI
       }
 
       // Throw a specific error for SVL failures
-      const err = new Error(validationResult.error || "Schema validation failed");
+      const err = new Error(
+        validationResult.error || "Schema validation failed",
+      );
       err.name = "SvlFailedError";
       // @ts-ignore - attach errorsS3Uri for error handling
       err.errorsS3Uri = errorsS3Uri;

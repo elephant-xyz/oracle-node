@@ -98,7 +98,11 @@ function escapeCsvField(value) {
  * @param {string} dataGroupCid - CID of the datagroup.
  * @returns {Promise<string>} - Path to generated CSV.
  */
-async function generateMirrorValidationErrorsCsv(sources, tmpDir, dataGroupCid) {
+async function generateMirrorValidationErrorsCsv(
+  sources,
+  tmpDir,
+  dataGroupCid,
+) {
   const csvPath = path.join(tmpDir, "mvl_errors.csv");
   const header = "error_path,error_message,data_group_cid\n";
   const rows = sources.map(
@@ -127,13 +131,24 @@ async function tryDownloadStaticParts(county, tmpDir, log) {
   const staticPartsKey = `source-html-static-parts/${normalizedCounty}.csv`;
 
   try {
-    await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: staticPartsKey }));
+    await s3.send(
+      new HeadObjectCommand({ Bucket: bucket, Key: staticPartsKey }),
+    );
     const staticCsvLocal = path.join(tmpDir, "static-parts.csv");
-    await downloadS3Object({ bucket, key: staticPartsKey }, staticCsvLocal, log);
-    log("info", "mvl_static_parts_downloaded", { county, s3_uri: `s3://${bucket}/${staticPartsKey}` });
+    await downloadS3Object(
+      { bucket, key: staticPartsKey },
+      staticCsvLocal,
+      log,
+    );
+    log("info", "mvl_static_parts_downloaded", {
+      county,
+      s3_uri: `s3://${bucket}/${staticPartsKey}`,
+    });
     return staticCsvLocal;
   } catch (error) {
-    const err = /** @type {Error & {$metadata?: {httpStatusCode?: number}}} */ (error);
+    const err = /** @type {Error & {$metadata?: {httpStatusCode?: number}}} */ (
+      error
+    );
     if (err.name !== "NotFound" && err.$metadata?.httpStatusCode !== 404) {
       log("error", "mvl_static_parts_error", { county, error: String(err) });
     }
@@ -153,7 +168,14 @@ async function tryDownloadStaticParts(county, tmpDir, log) {
  * @param {ReturnType<typeof createLogger>} params.log - Logger.
  * @returns {Promise<MvlOutput>}
  */
-async function runMvl({ preparedInputS3Uri, transformedOutputS3Uri, county, outputPrefix, executionId, log }) {
+async function runMvl({
+  preparedInputS3Uri,
+  transformedOutputS3Uri,
+  county,
+  outputPrefix,
+  executionId,
+  log,
+}) {
   const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "mvl-"));
 
   try {
@@ -163,7 +185,11 @@ async function runMvl({ preparedInputS3Uri, transformedOutputS3Uri, county, outp
 
     await Promise.all([
       downloadS3Object(parseS3Uri(preparedInputS3Uri), preparedZipLocal, log),
-      downloadS3Object(parseS3Uri(transformedOutputS3Uri), transformedZipLocal, log),
+      downloadS3Object(
+        parseS3Uri(transformedOutputS3Uri),
+        transformedZipLocal,
+        log,
+      ),
     ]);
 
     // Try to get static parts file
@@ -225,7 +251,9 @@ async function runMvl({ preparedInputS3Uri, transformedOutputS3Uri, county, outp
     let errorsS3Uri = null;
     if (!mvlPassed && mvlResult.comparison) {
       const unmatchedSources = extractUnmatchedSources(
-        /** @type {Record<string, { unmatchedFromA?: unknown[] }>} */ (mvlResult.comparison),
+        /** @type {Record<string, { unmatchedFromA?: unknown[] }>} */ (
+          mvlResult.comparison
+        ),
       );
       if (unmatchedSources.length > 0) {
         const errorsCsvPath = await generateMirrorValidationErrorsCsv(
