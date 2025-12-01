@@ -16,6 +16,68 @@ Globals:
       LogFormat: JSON
 
 Resources:
+  # DynamoDB table for storing workflow errors with single-table design
+  WorkflowErrorsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "${EnvironmentName}-workflow-errors"
+      BillingMode: PAY_PER_REQUEST
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      AttributeDefinitions:
+        - AttributeName: PK
+          AttributeType: S
+        - AttributeName: SK
+          AttributeType: S
+        - AttributeName: GS1PK
+          AttributeType: S
+        - AttributeName: GS1SK
+          AttributeType: S
+        - AttributeName: GS2PK
+          AttributeType: S
+        - AttributeName: GS2SK
+          AttributeType: S
+        - AttributeName: GS3PK
+          AttributeType: S
+        - AttributeName: GS3SK
+          AttributeType: S
+      KeySchema:
+        - AttributeName: PK
+          KeyType: HASH
+        - AttributeName: SK
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        # GSI1: Error-to-execution lookups (ErrorRecord, ExecutionErrorLink)
+        - IndexName: GS1
+          KeySchema:
+            - AttributeName: GS1PK
+              KeyType: HASH
+            - AttributeName: GS1SK
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+        # GSI2: Count-based sorting for errors (ErrorRecord)
+        - IndexName: GS2
+          KeySchema:
+            - AttributeName: GS2PK
+              KeyType: HASH
+            - AttributeName: GS2SK
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+        # GSI3: Execution error count sorting (FailedExecutionItem)
+        - IndexName: GS3
+          KeySchema:
+            - AttributeName: GS3PK
+              KeyType: HASH
+            - AttributeName: GS3SK
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      Tags:
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
   WorkflowEventHandlerFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -26,8 +88,13 @@ Resources:
       Handler: index.handler
       CodeUri: lambdas/event-handler
       Description: "Processes EventBridge WorkflowEvent events from elephant.workflow source"
+      Environment:
+        Variables:
+          WORKFLOW_ERRORS_TABLE_NAME: !Ref WorkflowErrorsTable
       Policies:
         - AWSLambdaBasicExecutionRole
+        - DynamoDBCrudPolicy:
+            TableName: !Ref WorkflowErrorsTable
       Events:
         WorkflowEventRule:
           Type: EventBridgeRule
@@ -58,3 +125,9 @@ Outputs:
   WorkflowEventRuleName:
     Description: Name of the EventBridge rule that triggers the Lambda
     Value: !Sub "${EnvironmentName}-workflow-event-rule"
+  WorkflowErrorsTableName:
+    Description: Name of the DynamoDB table for workflow errors
+    Value: !Ref WorkflowErrorsTable
+  WorkflowErrorsTableArn:
+    Description: ARN of the DynamoDB table for workflow errors
+    Value: !GetAtt WorkflowErrorsTable.Arn
