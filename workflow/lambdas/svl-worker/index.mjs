@@ -11,7 +11,7 @@ import {
   createLogger,
   emitWorkflowEvent,
   createWorkflowError,
-} from "workflow-shared-utils";
+} from "./shared/index.mjs";
 import { createErrorsRepository } from "./errors.mjs";
 
 /**

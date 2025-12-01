@@ -10,7 +10,7 @@ import {
   createLogger,
   emitWorkflowEvent,
   createWorkflowError,
-} from "workflow-shared-utils";
+} from "./shared/index.mjs";
 import { createTransformScriptsManager } from "./scripts-manager.mjs";
 import { S3Client } from "@aws-sdk/client-s3";
 
