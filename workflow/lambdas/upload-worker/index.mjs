@@ -11,7 +11,7 @@ import {
   createLogger,
   emitWorkflowEvent,
   createWorkflowError,
-} from "../shared/index.mjs";
+} from "workflow-shared-utils";
 
 /**
  * @typedef {object} UploadInput
