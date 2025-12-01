@@ -12,4 +12,3 @@ import { allCustomMatcher } from "aws-sdk-client-mock-vitest";
 // - toHaveReceivedAnyCommand()
 // - toHaveReceivedCommandExactlyOnceWith(Command, input)
 expect.extend(allCustomMatcher);
-

@@ -54,6 +54,17 @@ const padCount = (count: number, length: number = 10): string => {
 };
 
 /**
+ * Extracts the error type from an error code.
+ * The error type is the first 2 characters of the error code.
+ * For error codes shorter than 2 characters, returns the code itself.
+ * @param errorCode - The error code to extract the type from
+ * @returns The error type (first 2 characters or full code if shorter)
+ */
+const extractErrorType = (errorCode: string): string => {
+  return errorCode.length >= 2 ? errorCode.substring(0, 2) : errorCode;
+};
+
+/**
  * Creates a composite key for DynamoDB.
  * @param prefix - The key prefix (e.g., "ERROR", "EXECUTION")
  * @param value - The key value
@@ -112,6 +123,10 @@ const buildErrorRecordUpdate = (
   };
 } => {
   const pk = createKey("ERROR", errorCode);
+  const errorType = extractErrorType(errorCode);
+  // GS3SK format: COUNT#{errorType}#{paddedCount}#ERROR#{errorCode}
+  // For new errors, count starts at 1
+  const gs3sk = `COUNT#${errorType}#${padCount(1)}#ERROR#${errorCode}`;
 
   return {
     Update: {
@@ -123,6 +138,7 @@ const buildErrorRecordUpdate = (
       UpdateExpression: `
         SET errorCode = :errorCode,
             entityType = :entityType,
+            errorType = :errorType,
             errorDetails = :errorDetails,
             errorStatus = if_not_exists(errorStatus, :defaultStatus),
             totalCount = if_not_exists(totalCount, :zero) + :increment,
@@ -131,12 +147,15 @@ const buildErrorRecordUpdate = (
             latestExecutionId = :executionId,
             GS1PK = :gs1pk,
             GS1SK = :gs1sk,
-            GS2PK = :gs2pk
+            GS2PK = :gs2pk,
+            GS3PK = :gs3pk,
+            GS3SK = :gs3sk
       `.trim(),
       ExpressionAttributeNames: {},
       ExpressionAttributeValues: {
         ":errorCode": errorCode,
         ":entityType": ENTITY_TYPES.ERROR,
+        ":errorType": errorType,
         ":errorDetails": JSON.stringify(errorDetails),
         ":defaultStatus": DEFAULT_ERROR_STATUS,
         ":zero": 0,
@@ -146,6 +165,8 @@ const buildErrorRecordUpdate = (
         ":gs1pk": "TYPE#ERROR",
         ":gs1sk": pk,
         ":gs2pk": "TYPE#ERROR",
+        ":gs3pk": "METRIC#ERRORCOUNT",
+        ":gs3sk": gs3sk,
       },
     },
   };
@@ -224,6 +245,8 @@ interface ExecutionErrorStats {
   totalOccurrences: number;
   /** Number of unique error codes. */
   uniqueErrorCount: number;
+  /** Error type for the execution (single type or "MIXED" if multiple types). */
+  errorType: string;
 }
 
 /**
@@ -247,6 +270,8 @@ const buildFailedExecutionItemUpdate = (
   };
 } => {
   const pk = createKey("EXECUTION", detail.executionId);
+  // GS3SK format: COUNT#{errorType}#{paddedCount}#EXECUTION#{executionId}
+  const gs3sk = `COUNT#${stats.errorType}#${padCount(stats.uniqueErrorCount)}#EXECUTION#${detail.executionId}`;
 
   return {
     Update: {
@@ -258,6 +283,7 @@ const buildFailedExecutionItemUpdate = (
       UpdateExpression: `
         SET executionId = :executionId,
             entityType = :entityType,
+            errorType = :errorType,
             #status = if_not_exists(#status, :defaultStatus),
             county = :county,
             totalOccurrences = if_not_exists(totalOccurrences, :zero) + :totalOccurrences,
@@ -275,6 +301,7 @@ const buildFailedExecutionItemUpdate = (
       ExpressionAttributeValues: {
         ":executionId": detail.executionId,
         ":entityType": ENTITY_TYPES.FAILED_EXECUTION,
+        ":errorType": stats.errorType,
         ":defaultStatus": DEFAULT_ERROR_STATUS,
         ":county": detail.county,
         ":zero": 0,
@@ -283,7 +310,7 @@ const buildFailedExecutionItemUpdate = (
         ":taskToken": detail.taskToken,
         ":now": now,
         ":gs3pk": "METRIC#ERRORCOUNT",
-        ":gs3sk": `COUNT#${padCount(stats.uniqueErrorCount)}#EXECUTION#${detail.executionId}`,
+        ":gs3sk": gs3sk,
       },
     },
   };
@@ -315,7 +342,9 @@ export const saveErrorRecords = async (
   detail: WorkflowEventDetail,
 ): Promise<SaveErrorRecordsResult> => {
   if (!TABLE_NAME) {
-    throw new Error("WORKFLOW_ERRORS_TABLE_NAME environment variable is not set");
+    throw new Error(
+      "WORKFLOW_ERRORS_TABLE_NAME environment variable is not set",
+    );
   }
 
   const errors = detail.errors;
@@ -331,10 +360,20 @@ export const saveErrorRecords = async (
   const now = new Date().toISOString();
   const errorOccurrences = countErrorOccurrences(errors);
 
+  // Determine error type for the execution
+  // If all errors share the same type, use that type; otherwise use "MIXED"
+  const errorTypes = new Set<string>();
+  for (const errorCode of errorOccurrences.keys()) {
+    errorTypes.add(extractErrorType(errorCode));
+  }
+  const executionErrorType =
+    errorTypes.size === 1 ? Array.from(errorTypes)[0] : "MIXED";
+
   // Calculate statistics
   const stats: ExecutionErrorStats = {
     totalOccurrences: errors.length,
     uniqueErrorCount: errorOccurrences.size,
+    errorType: executionErrorType,
   };
 
   // Build transaction items for each unique error
@@ -385,7 +424,9 @@ export const saveErrorRecords = async (
     const errorItems = transactItems.slice(1);
 
     // Update FailedExecutionItem separately
-    const failedExecutionCommand = new UpdateCommand(failedExecutionUpdate.Update);
+    const failedExecutionCommand = new UpdateCommand(
+      failedExecutionUpdate.Update,
+    );
     await docClient.send(failedExecutionCommand);
 
     // Batch error items (ErrorRecord + ExecutionErrorLink pairs)
@@ -423,7 +464,9 @@ export const updateErrorRecordSortKey = async (
   newCount: number,
 ): Promise<void> => {
   if (!TABLE_NAME) {
-    throw new Error("WORKFLOW_ERRORS_TABLE_NAME environment variable is not set");
+    throw new Error(
+      "WORKFLOW_ERRORS_TABLE_NAME environment variable is not set",
+    );
   }
 
   const pk = createKey("ERROR", errorCode);
@@ -443,4 +486,3 @@ export const updateErrorRecordSortKey = async (
 
   await docClient.send(command);
 };
-
