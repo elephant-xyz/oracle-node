@@ -44,6 +44,8 @@ export interface ErrorRecord {
   SK: string;
   /** Error code identifier. */
   errorCode: string;
+  /** Error type. First 2 characters of the error code, that is common to all errors in the execution.*/
+  errorType: string;
   /** Entity discriminator. */
   entityType: string;
   /** Error details JSON-encoded key-value pairs. */
@@ -66,6 +68,10 @@ export interface ErrorRecord {
   GS2PK: string;
   /** Global secondary index SK (`COUNT#000010#ERROR#errorCode`) for reverse lookup. */
   GS2SK: string;
+  /** Global secondary index partition key (`METRIC#ERRORCOUNT`). */
+  GS3PK: string;
+  /** Global secondary index sort key for the generalized count sort key (`COUNT#{errorType}#000010#ERROR#errorCode`). */
+  GS3SK: string;
 }
 
 /**
@@ -112,6 +118,8 @@ export interface FailedExecutionItem {
   entityType: string;
   /** Execution status bucket (`failed` | `maybeSolved` | `solved`). */
   status: ErrorStatus;
+  /** Error type. First 2 characters of the error code, that is common to all errors in the execution.*/
+  errorType: string;
   /** County identifier. */
   county: string;
   /** Total error occurrences observed. */
@@ -127,7 +135,11 @@ export interface FailedExecutionItem {
   /** ISO timestamp when the execution record was updated. */
   updatedAt: string;
   /** Global secondary index partition key (`METRIC#ERRORCOUNT`). */
+  GS1PK: string;
+  /** Global secondary index sort key for the generalized count sort key (`COUNT#000010#EXECUTION#uuid`). */
+  GS1SK: string;
+  /** Global secondary index partition key (`METRIC#ERRORCOUNT`). */
   GS3PK: string;
-  /** Global secondary index sort key (for example `COUNT#000010#EXECUTION#uuid`). */
+  /** Global secondary index sort key (for example `COUNT#{errorType}#000010#EXECUTION#uuid`). */
   GS3SK: string;
 }
