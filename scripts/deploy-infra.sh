@@ -67,6 +67,7 @@ check_prereqs() {
   command -v git >/dev/null || { err "git not found"; exit 1; }
   command -v npm >/dev/null || { err "npm not found"; exit 1; }
   command -v docker >/dev/null || { err "docker not found. Install: https://docs.docker.com/get-docker/"; exit 1; }
+  command -v esbuild >/dev/null || { err "esbuild not found. Install with npm i -g esbuild"; exit 1; }
   [[ -f "$SAM_TEMPLATE" && -f "$STARTUP_SCRIPT" && -f "$PYPROJECT_FILE" ]] || { err "Missing required files"; exit 1; }
   [[ -f "$CODEBUILD_TEMPLATE" ]] || { err "Missing CodeBuild template: $CODEBUILD_TEMPLATE"; exit 1; }
 }
@@ -931,6 +932,8 @@ main() {
   check_prereqs
   ensure_lambda_concurrency_quota
 
+  # Deploy workflow-events stack (separate independent stack)
+  deploy_workflow_events_stack
   # Clean up old dashboards before deploying new CloudFormation-managed one
   cleanup_old_dashboards
 
@@ -1056,8 +1059,6 @@ main() {
     info "Dashboard creation skipped (CREATE_DASHBOARD=false)"
   fi
 
-  # Deploy workflow-events stack (separate independent stack)
-  deploy_workflow_events_stack
 
   bucket=$(get_bucket)
   echo
