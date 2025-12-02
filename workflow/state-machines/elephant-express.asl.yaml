@@ -241,7 +241,7 @@ States:
             phase: Transform
             step: EvaluateTransform
             errors:
-              - code: TRANSFORM_FAILED
+              - code: "20001"
                 details:
                   error.$: States.JsonToString($.transformError)
     ResultPath: $.eventResult
@@ -361,11 +361,11 @@ States:
             phase: SVL
             step: SVL
     ResultPath: $.eventResult
-    Next: IsMvlEnabled
+    Next: EmitHashScheduled
     Catch:
       - ErrorEquals: [States.ALL]
         ResultPath: $.eventError
-        Next: IsMvlEnabled
+        Next: EmitHashScheduled
 
   EmitSvlValidationParked:
     Type: Task
@@ -382,7 +382,7 @@ States:
             phase: SVL
             step: SVL
             errors:
-              - code: SVL_VALIDATION_ERROR
+              - code: "30001"
                 details:
                   validationPassed.$: $.svl.validationPassed
     ResultPath: $.eventResult
@@ -407,7 +407,7 @@ States:
             phase: SVL
             step: SVL
             errors:
-              - code: SVL_FAILED
+              - code: "30002"
                 details:
                   error.$: States.JsonToString($.svlError)
     ResultPath: $.eventResult
@@ -443,180 +443,6 @@ States:
         Comment: "Resolution failed - stay parked and wait again"
         ResultPath: $.svlError
         Next: EmitSvlParked
-
-  # === MVL (Mirror Validation Layer) STEP - Optional ===
-
-  IsMvlEnabled:
-    Type: Choice
-    Comment: "Check if MVL is enabled for this execution (default: false)"
-    Choices:
-      - Variable: $.message.mvlEnabled
-        BooleanEquals: true
-        Next: EmitMvlScheduled
-    Default: EmitHashScheduled
-
-  EmitMvlScheduled:
-    Type: Task
-    Resource: arn:aws:states:::events:putEvents
-    Comment: "Emit SCHEDULED event for MVL step"
-    Parameters:
-      Entries:
-        - Source: elephant.workflow
-          DetailType: WorkflowEvent
-          Detail:
-            executionId.$: $.executionId
-            county.$: $.pre.county_name
-            status: SCHEDULED
-            phase: MVL
-            step: MVL
-    ResultPath: $.eventResult
-    Next: MVL
-    Catch:
-      - ErrorEquals: [States.ALL]
-        ResultPath: $.eventError
-        Next: MVL
-
-  MVL:
-    Type: Task
-    Resource: arn:aws:states:::lambda:invoke
-    Comment: "Run Mirror Validation Layer via Lambda"
-    Parameters:
-      FunctionName: ${WorkflowMirrorValidatorFunction}
-      Payload:
-        preparedInputS3Uri.$: $.prepare.output_s3_uri
-        transformedOutputS3Uri.$: $.transform.transformedOutputS3Uri
-        preparedOutputS3Uri.$: $.prepare.output_s3_uri
-        county.$: $.pre.county_name
-        executionId.$: $.executionId
-        s3.$: $.message.s3
-    ResultSelector:
-      mvlMetric.$: $.Payload.mvlMetric
-      mvlPassed.$: $.Payload.mvlPassed
-      errorsS3Uri.$: $.Payload.errorsS3Uri
-    ResultPath: $.mvl
-    Next: CheckMvlResult
-    Retry:
-      - ErrorEquals:
-          [
-            Lambda.ServiceException,
-            Lambda.AWSLambdaException,
-            Lambda.SdkClientException,
-          ]
-        IntervalSeconds: 5
-        MaxAttempts: 2
-        BackoffRate: 2
-    Catch:
-      - ErrorEquals: [States.ALL]
-        ResultPath: $.mvlError
-        Next: EmitMvlParked
-
-  CheckMvlResult:
-    Type: Choice
-    Comment: "Check if MVL validation passed or failed (errors saved to DynamoDB)"
-    Choices:
-      - Variable: $.mvl.mvlPassed
-        BooleanEquals: false
-        Next: EmitMvlValidationParked
-    Default: EmitMvlSucceeded
-
-  EmitMvlSucceeded:
-    Type: Task
-    Resource: arn:aws:states:::events:putEvents
-    Comment: "Emit SUCCEEDED event for MVL step"
-    Parameters:
-      Entries:
-        - Source: elephant.workflow
-          DetailType: WorkflowEvent
-          Detail:
-            executionId.$: $.executionId
-            county.$: $.pre.county_name
-            status: SUCCEEDED
-            phase: MVL
-            step: MVL
-    ResultPath: $.eventResult
-    Next: EmitHashScheduled
-    Catch:
-      - ErrorEquals: [States.ALL]
-        ResultPath: $.eventError
-        Next: EmitHashScheduled
-
-  EmitMvlValidationParked:
-    Type: Task
-    Resource: arn:aws:states:::events:putEvents
-    Comment: "Emit FAILED event for MVL validation errors - waiting for external resolution"
-    Parameters:
-      Entries:
-        - Source: elephant.workflow
-          DetailType: WorkflowEvent
-          Detail:
-            executionId.$: $.executionId
-            county.$: $.pre.county_name
-            status: FAILED
-            phase: MVL
-            step: MVL
-            errors:
-              - code: MVL_VALIDATION_ERROR
-                details:
-                  mvlPassed.$: $.mvl.mvlPassed
-                  errorsS3Uri.$: $.mvl.errorsS3Uri
-    ResultPath: $.eventResult
-    Next: WaitForMvlResolution
-    Catch:
-      - ErrorEquals: [States.ALL]
-        ResultPath: $.eventError
-        Next: WaitForMvlResolution
-
-  EmitMvlParked:
-    Type: Task
-    Resource: arn:aws:states:::events:putEvents
-    Comment: "Emit FAILED event for MVL step - waiting for external resolution"
-    Parameters:
-      Entries:
-        - Source: elephant.workflow
-          DetailType: WorkflowEvent
-          Detail:
-            executionId.$: $.executionId
-            county.$: $.pre.county_name
-            status: FAILED
-            phase: MVL
-            step: MVL
-            errors:
-              - code: MVL_FAILED
-                details:
-                  error.$: States.JsonToString($.mvlError)
-    ResultPath: $.eventResult
-    Next: WaitForMvlResolution
-    Catch:
-      - ErrorEquals: [States.ALL]
-        ResultPath: $.eventError
-        Next: WaitForMvlResolution
-
-  WaitForMvlResolution:
-    Type: Task
-    Resource: arn:aws:states:::sqs:sendMessage.waitForTaskToken
-    Comment: "Wait for external resolution of MVL failure - retry target is Transform"
-    HeartbeatSeconds: 86400
-    Parameters:
-      QueueUrl: ${TransformQueueUrl}
-      MessageBody:
-        taskToken.$: $$.Task.Token
-        input:
-          inputS3Uri.$: $.prepare.output_s3_uri
-          county.$: $.pre.county_name
-          outputPrefix.$: $.outputPrefix
-          executionId.$: $.executionId
-          isRetry: true
-    ResultSelector:
-      transformedOutputS3Uri.$: $.transformedOutputS3Uri
-      county.$: $.county
-      executionId.$: $.executionId
-    ResultPath: $.transform
-    Next: EmitTransformSucceeded
-    Catch:
-      - ErrorEquals: [States.ALL]
-        Comment: "Resolution failed - stay parked and wait again"
-        ResultPath: $.mvlError
-        Next: EmitMvlParked
 
   # === HASH STEP ===
 
@@ -710,7 +536,7 @@ States:
             phase: Hash
             step: EvaluateHash
             errors:
-              - code: HASH_FAILED
+              - code: "40001"
                 details:
                   error.$: States.JsonToString($.hashError)
     ResultPath: $.eventResult
@@ -843,7 +669,7 @@ States:
             phase: Upload
             step: EvaluateUpload
             errors:
-              - code: UPLOAD_FAILED
+              - code: "50001"
                 details:
                   error.$: States.JsonToString($.uploadError)
     ResultPath: $.eventResult
