@@ -259,15 +259,7 @@ export const handler = async (event) => {
         log,
       });
 
-      // Emit SUCCEEDED event
-      await emitWorkflowEvent({
-        executionId: input.executionId,
-        county: input.county,
-        status: "SUCCEEDED",
-        phase: "Transform",
-        step: "Transform",
-        log,
-      });
+      // Note: SUCCEEDED event is emitted by the state machine after this step completes
 
       await executeWithTaskToken({
         taskToken,

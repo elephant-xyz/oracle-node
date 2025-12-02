@@ -118,7 +118,7 @@ describe("svl-worker handler", () => {
       });
     });
 
-    it("should emit SUCCEEDED event when validation passes", async () => {
+    it("should only emit IN_PROGRESS event when validation passes (SUCCEEDED is emitted by state machine)", async () => {
       mockValidate.mockResolvedValue({ success: true });
 
       const { handler } = await import(
@@ -134,16 +134,18 @@ describe("svl-worker handler", () => {
 
       await handler(event);
 
-      // Should have 2 emitWorkflowEvent calls: IN_PROGRESS and SUCCEEDED
-      expect(mockEmitWorkflowEvent).toHaveBeenCalledTimes(2);
+      // Should have only 1 emitWorkflowEvent call: IN_PROGRESS
+      // SUCCEEDED event is now emitted by the state machine, not the worker
+      expect(mockEmitWorkflowEvent).toHaveBeenCalledTimes(1);
 
-      // Second call should be SUCCEEDED
-      expect(mockEmitWorkflowEvent).toHaveBeenNthCalledWith(2, {
+      // Should be IN_PROGRESS
+      expect(mockEmitWorkflowEvent).toHaveBeenCalledWith({
         executionId: "exec-success",
         county: "valid-county",
-        status: "SUCCEEDED",
+        status: "IN_PROGRESS",
         phase: "SVL",
         step: "SVL",
+        taskToken: "task-token-success",
         log: expect.any(Function),
       });
     });
@@ -407,8 +409,9 @@ describe("svl-worker handler", () => {
 
       await handler(event);
 
-      // Should have processed both records (2 IN_PROGRESS + 2 SUCCEEDED = 4 events)
-      expect(mockEmitWorkflowEvent).toHaveBeenCalledTimes(4);
+      // Should have processed both records (2 IN_PROGRESS events only)
+      // SUCCEEDED events are now emitted by the state machine
+      expect(mockEmitWorkflowEvent).toHaveBeenCalledTimes(2);
       expect(mockExecuteWithTaskToken).toHaveBeenCalledTimes(2);
     });
 

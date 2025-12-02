@@ -124,7 +124,7 @@ describe("transform-worker handler", () => {
     });
   });
 
-  it("should emit SUCCEEDED event on successful transform", async () => {
+  it("should only emit IN_PROGRESS event on successful transform (SUCCEEDED is emitted by state machine)", async () => {
     mockTransform.mockResolvedValue({ success: true });
     mockExecuteWithTaskToken.mockResolvedValue(undefined);
 
@@ -141,16 +141,18 @@ describe("transform-worker handler", () => {
 
     await handler(event);
 
-    // Should have 2 emitWorkflowEvent calls: IN_PROGRESS and SUCCEEDED
-    expect(mockEmitWorkflowEvent).toHaveBeenCalledTimes(2);
+    // Should have only 1 emitWorkflowEvent call: IN_PROGRESS
+    // SUCCEEDED event is now emitted by the state machine, not the worker
+    expect(mockEmitWorkflowEvent).toHaveBeenCalledTimes(1);
 
-    // Second call should be SUCCEEDED
-    expect(mockEmitWorkflowEvent).toHaveBeenNthCalledWith(2, {
+    // Should be IN_PROGRESS
+    expect(mockEmitWorkflowEvent).toHaveBeenCalledWith({
       executionId: "exec-success",
       county: "success-county",
-      status: "SUCCEEDED",
+      status: "IN_PROGRESS",
       phase: "Transform",
       step: "Transform",
+      taskToken: "task-token-success",
       log: expect.any(Function),
     });
   });

@@ -281,15 +281,7 @@ export const handler = async (event) => {
       });
 
       if (result.validationPassed) {
-        // Emit SUCCEEDED event
-        await emitWorkflowEvent({
-          executionId: input.executionId,
-          county: input.county,
-          status: "SUCCEEDED",
-          phase: "SVL",
-          step: "SVL",
-          log,
-        });
+        // Note: SUCCEEDED event is emitted by the state machine after this step completes
       } else {
         // Emit PARKED event - validation failed but errors uploaded to S3
         await emitWorkflowEvent({

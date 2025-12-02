@@ -250,7 +250,7 @@ States:
       county.$: $.county
       executionId.$: $.executionId
     ResultPath: $.transform
-    Next: EmitSvlScheduled
+    Next: EmitTransformSucceeded
     Retry:
       - ErrorEquals: [States.Timeout]
         IntervalSeconds: 5
@@ -258,9 +258,81 @@ States:
         BackoffRate: 2
     Catch:
       - ErrorEquals: [ScriptsFailedError]
-        Comment: "Transform scripts failed"
+        Comment: "Transform scripts failed - park for resolution"
         ResultPath: $.transformError
-        Next: RecordTransformFailureMetric
+        Next: EmitTransformParked
+      - ErrorEquals: [States.ALL]
+        ResultPath: $.transformError
+        Next: EmitTransformParked
+
+  EmitTransformSucceeded:
+    Type: Task
+    Resource: arn:aws:states:::events:putEvents
+    Comment: "Emit SUCCEEDED event for Transform step"
+    Parameters:
+      Entries:
+        - Source: elephant.workflow
+          DetailType: WorkflowEvent
+          Detail:
+            executionId.$: $.executionId
+            county.$: $.pre.county_name
+            status: SUCCEEDED
+            phase: Transform
+            step: Transform
+    ResultPath: $.eventResult
+    Next: EmitSvlScheduled
+    Catch:
+      - ErrorEquals: [States.ALL]
+        ResultPath: $.eventError
+        Next: EmitSvlScheduled
+
+  EmitTransformParked:
+    Type: Task
+    Resource: arn:aws:states:::events:putEvents
+    Comment: "Emit PARKED event for Transform step - waiting for external resolution"
+    Parameters:
+      Entries:
+        - Source: elephant.workflow
+          DetailType: WorkflowEvent
+          Detail:
+            executionId.$: $.executionId
+            county.$: $.pre.county_name
+            status: PARKED
+            phase: Transform
+            step: EvaluateTransform
+            errors:
+              - code: TRANSFORM_FAILED
+                details:
+                  error.$: States.JsonToString($.transformError)
+    ResultPath: $.eventResult
+    Next: WaitForTransformResolution
+    Catch:
+      - ErrorEquals: [States.ALL]
+        ResultPath: $.eventError
+        Next: WaitForTransformResolution
+
+  WaitForTransformResolution:
+    Type: Task
+    Resource: arn:aws:states:::sqs:sendMessage.waitForTaskToken
+    Comment: "Wait for external resolution of Transform failure - retry target is Transform"
+    HeartbeatSeconds: 86400
+    Parameters:
+      QueueUrl: ${TransformQueueUrl}
+      MessageBody:
+        taskToken.$: $$.Task.Token
+        input:
+          inputS3Uri.$: $.prepare.output_s3_uri
+          county.$: $.pre.county_name
+          outputPrefix.$: $.outputPrefix
+          executionId.$: $.executionId
+          isRetry: true
+    ResultSelector:
+      transformedOutputS3Uri.$: $.transformedOutputS3Uri
+      county.$: $.county
+      executionId.$: $.executionId
+    ResultPath: $.transform
+    Next: EmitTransformSucceeded
+    Catch:
       - ErrorEquals: [States.ALL]
         ResultPath: $.transformError
         Next: RecordTransformFailureMetric
@@ -268,6 +340,7 @@ States:
   RecordTransformFailureMetric:
     Type: Task
     Resource: arn:aws:states:::aws-sdk:cloudwatch:putMetricData
+    Comment: "Record metric only after external resolution fails"
     Parameters:
       Namespace: ElephantWorkflow
       MetricData:
@@ -339,12 +412,12 @@ States:
         BackoffRate: 2
     Catch:
       - ErrorEquals: [SvlFailedError]
-        Comment: "SVL validation failed"
+        Comment: "SVL validation failed - park for resolution"
         ResultPath: $.svlError
-        Next: RecordSvlFailureMetric
+        Next: EmitSvlParked
       - ErrorEquals: [States.ALL]
         ResultPath: $.svlError
-        Next: RecordSvlFailureMetric
+        Next: EmitSvlParked
 
   CheckSvlResult:
     Type: Choice
@@ -352,12 +425,110 @@ States:
     Choices:
       - Variable: $.svl.validationPassed
         BooleanEquals: false
-        Next: RecordValidationFailureMetric
-    Default: IsMvlEnabled
+        Next: EmitSvlValidationParked
+    Default: EmitSvlSucceeded
+
+  EmitSvlSucceeded:
+    Type: Task
+    Resource: arn:aws:states:::events:putEvents
+    Comment: "Emit SUCCEEDED event for SVL step"
+    Parameters:
+      Entries:
+        - Source: elephant.workflow
+          DetailType: WorkflowEvent
+          Detail:
+            executionId.$: $.executionId
+            county.$: $.pre.county_name
+            status: SUCCEEDED
+            phase: SVL
+            step: SVL
+    ResultPath: $.eventResult
+    Next: IsMvlEnabled
+    Catch:
+      - ErrorEquals: [States.ALL]
+        ResultPath: $.eventError
+        Next: IsMvlEnabled
+
+  EmitSvlValidationParked:
+    Type: Task
+    Resource: arn:aws:states:::events:putEvents
+    Comment: "Emit PARKED event for SVL validation errors - waiting for external resolution"
+    Parameters:
+      Entries:
+        - Source: elephant.workflow
+          DetailType: WorkflowEvent
+          Detail:
+            executionId.$: $.executionId
+            county.$: $.pre.county_name
+            status: PARKED
+            phase: SVL
+            step: SVL
+            errors:
+              - code: SVL_VALIDATION_ERROR
+                details:
+                  validationPassed.$: $.svl.validationPassed
+    ResultPath: $.eventResult
+    Next: WaitForSvlResolution
+    Catch:
+      - ErrorEquals: [States.ALL]
+        ResultPath: $.eventError
+        Next: WaitForSvlResolution
+
+  EmitSvlParked:
+    Type: Task
+    Resource: arn:aws:states:::events:putEvents
+    Comment: "Emit PARKED event for SVL step - waiting for external resolution"
+    Parameters:
+      Entries:
+        - Source: elephant.workflow
+          DetailType: WorkflowEvent
+          Detail:
+            executionId.$: $.executionId
+            county.$: $.pre.county_name
+            status: PARKED
+            phase: SVL
+            step: SVL
+            errors:
+              - code: SVL_FAILED
+                details:
+                  error.$: States.JsonToString($.svlError)
+    ResultPath: $.eventResult
+    Next: WaitForSvlResolution
+    Catch:
+      - ErrorEquals: [States.ALL]
+        ResultPath: $.eventError
+        Next: WaitForSvlResolution
+
+  WaitForSvlResolution:
+    Type: Task
+    Resource: arn:aws:states:::sqs:sendMessage.waitForTaskToken
+    Comment: "Wait for external resolution of SVL failure - retry target is Transform"
+    HeartbeatSeconds: 86400
+    Parameters:
+      QueueUrl: ${TransformQueueUrl}
+      MessageBody:
+        taskToken.$: $$.Task.Token
+        input:
+          inputS3Uri.$: $.prepare.output_s3_uri
+          county.$: $.pre.county_name
+          outputPrefix.$: $.outputPrefix
+          executionId.$: $.executionId
+          isRetry: true
+    ResultSelector:
+      transformedOutputS3Uri.$: $.transformedOutputS3Uri
+      county.$: $.county
+      executionId.$: $.executionId
+    ResultPath: $.transform
+    Next: EmitTransformSucceeded
+    Catch:
+      - ErrorEquals: [States.ALL]
+        ResultPath: $.svlError
+        Next: RecordSvlFailureMetric
 
   RecordSvlFailureMetric:
     Type: Task
     Resource: arn:aws:states:::aws-sdk:cloudwatch:putMetricData
+    Comment: "Record metric only after external resolution fails"
     Parameters:
       Namespace: ElephantWorkflow
       MetricData:
@@ -441,7 +612,7 @@ States:
     Catch:
       - ErrorEquals: [States.ALL]
         ResultPath: $.mvlError
-        Next: RecordMvlFailureMetric
+        Next: EmitMvlParked
 
   CheckMvlResult:
     Type: Choice
@@ -449,12 +620,111 @@ States:
     Choices:
       - Variable: $.mvl.mvlPassed
         BooleanEquals: false
-        Next: RecordValidationFailureMetric
-    Default: EmitHashScheduled
+        Next: EmitMvlValidationParked
+    Default: EmitMvlSucceeded
+
+  EmitMvlSucceeded:
+    Type: Task
+    Resource: arn:aws:states:::events:putEvents
+    Comment: "Emit SUCCEEDED event for MVL step"
+    Parameters:
+      Entries:
+        - Source: elephant.workflow
+          DetailType: WorkflowEvent
+          Detail:
+            executionId.$: $.executionId
+            county.$: $.pre.county_name
+            status: SUCCEEDED
+            phase: MVL
+            step: MVL
+    ResultPath: $.eventResult
+    Next: EmitHashScheduled
+    Catch:
+      - ErrorEquals: [States.ALL]
+        ResultPath: $.eventError
+        Next: EmitHashScheduled
+
+  EmitMvlValidationParked:
+    Type: Task
+    Resource: arn:aws:states:::events:putEvents
+    Comment: "Emit PARKED event for MVL validation errors - waiting for external resolution"
+    Parameters:
+      Entries:
+        - Source: elephant.workflow
+          DetailType: WorkflowEvent
+          Detail:
+            executionId.$: $.executionId
+            county.$: $.pre.county_name
+            status: PARKED
+            phase: MVL
+            step: MVL
+            errors:
+              - code: MVL_VALIDATION_ERROR
+                details:
+                  mvlPassed.$: $.mvl.mvlPassed
+                  errorsS3Uri.$: $.mvl.errorsS3Uri
+    ResultPath: $.eventResult
+    Next: WaitForMvlResolution
+    Catch:
+      - ErrorEquals: [States.ALL]
+        ResultPath: $.eventError
+        Next: WaitForMvlResolution
+
+  EmitMvlParked:
+    Type: Task
+    Resource: arn:aws:states:::events:putEvents
+    Comment: "Emit PARKED event for MVL step - waiting for external resolution"
+    Parameters:
+      Entries:
+        - Source: elephant.workflow
+          DetailType: WorkflowEvent
+          Detail:
+            executionId.$: $.executionId
+            county.$: $.pre.county_name
+            status: PARKED
+            phase: MVL
+            step: MVL
+            errors:
+              - code: MVL_FAILED
+                details:
+                  error.$: States.JsonToString($.mvlError)
+    ResultPath: $.eventResult
+    Next: WaitForMvlResolution
+    Catch:
+      - ErrorEquals: [States.ALL]
+        ResultPath: $.eventError
+        Next: WaitForMvlResolution
+
+  WaitForMvlResolution:
+    Type: Task
+    Resource: arn:aws:states:::sqs:sendMessage.waitForTaskToken
+    Comment: "Wait for external resolution of MVL failure - retry target is Transform"
+    HeartbeatSeconds: 86400
+    Parameters:
+      QueueUrl: ${TransformQueueUrl}
+      MessageBody:
+        taskToken.$: $$.Task.Token
+        input:
+          inputS3Uri.$: $.prepare.output_s3_uri
+          county.$: $.pre.county_name
+          outputPrefix.$: $.outputPrefix
+          executionId.$: $.executionId
+          isRetry: true
+    ResultSelector:
+      transformedOutputS3Uri.$: $.transformedOutputS3Uri
+      county.$: $.county
+      executionId.$: $.executionId
+    ResultPath: $.transform
+    Next: EmitTransformSucceeded
+    Catch:
+      - ErrorEquals: [States.ALL]
+        ResultPath: $.mvlError
+        Next: RecordMvlFailureMetric
 
   RecordMvlFailureMetric:
     Type: Task
     Resource: arn:aws:states:::aws-sdk:cloudwatch:putMetricData
+    Comment: "Record metric only after external resolution fails"
     Parameters:
       Namespace: ElephantWorkflow
       MetricData:
@@ -519,7 +789,7 @@ States:
       executionId.$: $.executionId
       propertyCid.$: $.propertyCid
     ResultPath: $.hash
-    Next: EmitUploadScheduled
+    Next: EmitHashSucceeded
     Retry:
       - ErrorEquals: [States.Timeout]
         IntervalSeconds: 5
@@ -528,11 +798,88 @@ States:
     Catch:
       - ErrorEquals: [States.ALL]
         ResultPath: $.hashError
+        Next: EmitHashParked
+
+  EmitHashSucceeded:
+    Type: Task
+    Resource: arn:aws:states:::events:putEvents
+    Comment: "Emit SUCCEEDED event for Hash step"
+    Parameters:
+      Entries:
+        - Source: elephant.workflow
+          DetailType: WorkflowEvent
+          Detail:
+            executionId.$: $.executionId
+            county.$: $.pre.county_name
+            status: SUCCEEDED
+            phase: Hash
+            step: Hash
+    ResultPath: $.eventResult
+    Next: EmitUploadScheduled
+    Catch:
+      - ErrorEquals: [States.ALL]
+        ResultPath: $.eventError
+        Next: EmitUploadScheduled
+
+  EmitHashParked:
+    Type: Task
+    Resource: arn:aws:states:::events:putEvents
+    Comment: "Emit PARKED event for Hash step - waiting for external resolution"
+    Parameters:
+      Entries:
+        - Source: elephant.workflow
+          DetailType: WorkflowEvent
+          Detail:
+            executionId.$: $.executionId
+            county.$: $.pre.county_name
+            status: PARKED
+            phase: Hash
+            step: EvaluateHash
+            errors:
+              - code: HASH_FAILED
+                details:
+                  error.$: States.JsonToString($.hashError)
+    ResultPath: $.eventResult
+    Next: WaitForHashResolution
+    Catch:
+      - ErrorEquals: [States.ALL]
+        ResultPath: $.eventError
+        Next: WaitForHashResolution
+
+  WaitForHashResolution:
+    Type: Task
+    Resource: arn:aws:states:::sqs:sendMessage.waitForTaskToken
+    Comment: "Wait for external resolution of Hash failure - retry target is Hash"
+    HeartbeatSeconds: 86400
+    Parameters:
+      QueueUrl: ${HashQueueUrl}
+      MessageBody:
+        taskToken.$: $$.Task.Token
+        input:
+          validatedOutputS3Uri.$: $.transform.transformedOutputS3Uri
+          seedOutputS3Uri.$: $.pre.seed_output_s3_uri
+          county.$: $.pre.county_name
+          outputPrefix.$: $.outputPrefix
+          executionId.$: $.executionId
+          isRetry: true
+    ResultSelector:
+      seedHashZipS3Uri.$: $.seedHashZipS3Uri
+      countyHashZipS3Uri.$: $.countyHashZipS3Uri
+      combinedHashCsvS3Uri.$: $.combinedHashCsvS3Uri
+      county.$: $.county
+      executionId.$: $.executionId
+      propertyCid.$: $.propertyCid
+    ResultPath: $.hash
+    Next: EmitHashSucceeded
+    Catch:
+      - ErrorEquals: [States.ALL]
+        ResultPath: $.hashError
         Next: RecordHashFailureMetric
 
   RecordHashFailureMetric:
     Type: Task
     Resource: arn:aws:states:::aws-sdk:cloudwatch:putMetricData
+    Comment: "Record metric only after external resolution fails"
     Parameters:
       Namespace: ElephantWorkflow
       MetricData:
@@ -593,7 +940,7 @@ States:
       county.$: $.county
       executionId.$: $.executionId
     ResultPath: $.upload
-    Next: PrepareTransactionItems
+    Next: EmitUploadSucceeded
     Retry:
       - ErrorEquals: [States.Timeout]
         IntervalSeconds: 5
@@ -601,9 +948,81 @@ States:
         BackoffRate: 2
     Catch:
       - ErrorEquals: [UploadFailedError]
-        Comment: "Upload to IPFS failed"
+        Comment: "Upload to IPFS failed - park for resolution"
         ResultPath: $.uploadError
-        Next: RecordUploadFailureMetric
+        Next: EmitUploadParked
+      - ErrorEquals: [States.ALL]
+        ResultPath: $.uploadError
+        Next: EmitUploadParked
+
+  EmitUploadSucceeded:
+    Type: Task
+    Resource: arn:aws:states:::events:putEvents
+    Comment: "Emit SUCCEEDED event for Upload step"
+    Parameters:
+      Entries:
+        - Source: elephant.workflow
+          DetailType: WorkflowEvent
+          Detail:
+            executionId.$: $.executionId
+            county.$: $.pre.county_name
+            status: SUCCEEDED
+            phase: Upload
+            step: Upload
+    ResultPath: $.eventResult
+    Next: PrepareTransactionItems
+    Catch:
+      - ErrorEquals: [States.ALL]
+        ResultPath: $.eventError
+        Next: PrepareTransactionItems
+
+  EmitUploadParked:
+    Type: Task
+    Resource: arn:aws:states:::events:putEvents
+    Comment: "Emit PARKED event for Upload step - waiting for external resolution"
+    Parameters:
+      Entries:
+        - Source: elephant.workflow
+          DetailType: WorkflowEvent
+          Detail:
+            executionId.$: $.executionId
+            county.$: $.pre.county_name
+            status: PARKED
+            phase: Upload
+            step: EvaluateUpload
+            errors:
+              - code: UPLOAD_FAILED
+                details:
+                  error.$: States.JsonToString($.uploadError)
+    ResultPath: $.eventResult
+    Next: WaitForUploadResolution
+    Catch:
+      - ErrorEquals: [States.ALL]
+        ResultPath: $.eventError
+        Next: WaitForUploadResolution
+
+  WaitForUploadResolution:
+    Type: Task
+    Resource: arn:aws:states:::sqs:sendMessage.waitForTaskToken
+    Comment: "Wait for external resolution of Upload failure - retry target is Upload"
+    HeartbeatSeconds: 86400
+    Parameters:
+      QueueUrl: ${UploadQueueUrl}
+      MessageBody:
+        taskToken.$: $$.Task.Token
+        input:
+          seedHashZipS3Uri.$: $.hash.seedHashZipS3Uri
+          countyHashZipS3Uri.$: $.hash.countyHashZipS3Uri
+          county.$: $.pre.county_name
+          executionId.$: $.executionId
+          isRetry: true
+    ResultSelector:
+      uploadSuccess.$: $.uploadSuccess
+      county.$: $.county
+      executionId.$: $.executionId
+    ResultPath: $.upload
+    Next: EmitUploadSucceeded
+    Catch:
       - ErrorEquals: [States.ALL]
         ResultPath: $.uploadError
         Next: RecordUploadFailureMetric
@@ -611,6 +1030,7 @@ States:
   RecordUploadFailureMetric:
     Type: Task
     Resource: arn:aws:states:::aws-sdk:cloudwatch:putMetricData
+    Comment: "Record metric only after external resolution fails"
     Parameters:
       Namespace: ElephantWorkflow
       MetricData:
@@ -667,22 +1087,6 @@ States:
         Comment: "Failed to load transaction items - proceed anyway"
         ResultPath: $.csvLoadError
         Next: RecordSuccessMetric
-
-  RecordValidationFailureMetric:
-    Type: Task
-    Resource: arn:aws:states:::aws-sdk:cloudwatch:putMetricData
-    Parameters:
-      Namespace: ElephantWorkflow
-      MetricData:
-        - MetricName: WorkflowExecution
-          Value: 1
-          Unit: Count
-          Timestamp.$: $$.State.EnteredTime
-          Dimensions:
-            - Name: Status
-              Value: Failure
-    ResultPath: $.metricResult
-    End: true
 
   RecordSuccessMetric:
     Type: Task
