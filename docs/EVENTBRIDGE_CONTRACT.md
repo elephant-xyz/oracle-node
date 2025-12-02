@@ -29,15 +29,15 @@ Emitted on workflow step status changes (success, failure, or parked).
 
 ### Field Definitions
 
-| Field         | Type   | Description                                        |
-| ------------- | ------ | -------------------------------------------------- |
-| `executionId` | string | Step Functions execution ARN                       |
-| `county`      | string | County identifier being processed                  |
-| `status`      | string | Current workflow status (e.g., `PARKED`, `FAILED`) |
-| `phase`       | string | High-level workflow phase                          |
-| `step`        | string | Granular step within the phase                     |
-| `taskToken`   | string | Step Functions task token for resumption           |
-| `errors`      | array  | List of error objects                              |
+| Field         | Type   | Description                                           |
+| ------------- | ------ | ----------------------------------------------------- |
+| `executionId` | string | Step Functions execution ARN                          |
+| `county`      | string | County identifier being processed                     |
+| `status`      | string | Current workflow status (e.g., `SUCCEEDED`, `FAILED`) |
+| `phase`       | string | High-level workflow phase                             |
+| `step`        | string | Granular step within the phase                        |
+| `taskToken`   | string | Step Functions task token for resumption              |
+| `errors`      | array  | List of error objects                                 |
 
 ### Error Object Schema
 
@@ -93,19 +93,18 @@ Emitted on workflow step status changes (success, failure, or parked).
 
 ### Status Values
 
-| Status        | Description                                    |
-| ------------- | ---------------------------------------------- |
-| `SCHEDULED`   | Step is scheduled for execution                |
-| `IN_PROGRESS` | Step is currently executing                    |
-| `SUCCEEDED`   | Step completed successfully                    |
-| `PARKED`      | Execution is paused awaiting external action   |
-| `FAILED`      | Execution has failed and requires intervention |
+| Status        | Description                                             |
+| ------------- | ------------------------------------------------------- |
+| `SCHEDULED`   | Step is scheduled for execution                         |
+| `IN_PROGRESS` | Step is currently executing                             |
+| `SUCCEEDED`   | Step completed successfully                             |
+| `FAILED`      | Execution has failed, paused, and requires intervention |
 
 ---
 
 ## Resumption
 
-To resume a parked workflow, call Step Functions `SendTaskSuccess` with the `taskToken`:
+To resume a failed (parked) workflow, call Step Functions `SendTaskSuccess` with the `taskToken`:
 
 ```javascript
 import { SFNClient, SendTaskSuccessCommand } from "@aws-sdk/client-sfn";

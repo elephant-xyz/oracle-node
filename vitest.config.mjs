@@ -3,6 +3,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+import { resolve } from "path";
 
 export default defineConfig({
   resolve: {
@@ -29,6 +30,8 @@ export default defineConfig({
         __dirname,
         "node_modules/@aws-sdk/lib-dynamodb",
       ),
+      // Resolve 'shared/*' imports to the shared-layer source for tests
+      shared: resolve(__dirname, "workflow-events/layers/shared/src"),
     },
   },
   test: {
