@@ -648,40 +648,6 @@ Resources:
         Variables:
           OUTPUT_BASE_URI: !Sub "s3://${EnvironmentBucket}/outputs"
 
-  WorkflowPostProcessorFunction:
-    Type: AWS::Serverless::Function
-    Properties:
-      Runtime: nodejs22.x
-      Architectures:
-        - arm64
-      MemorySize: 512
-      Timeout: 300
-      EphemeralStorage:
-        Size: 2048
-      CodeUri: ../workflow/lambdas/post
-      Handler: index.handler
-      Description: "Performs county transform, hash, and upload"
-      LoggingConfig:
-        LogFormat: JSON
-      Policies:
-        - AWSLambdaBasicExecutionRole
-        - S3CrudPolicy:
-            BucketName: !Ref EnvironmentBucket
-        - arn:aws:iam::aws:policy/AmazonS3FullAccess
-        - DynamoDBCrudPolicy:
-            TableName: !Ref ErrorsTable
-      Environment:
-        Variables:
-          OUTPUT_BASE_URI: !Sub "s3://${EnvironmentBucket}/outputs"
-          ELEPHANT_DOMAIN: !Ref ElephantDomain
-          ELEPHANT_API_KEY: !Ref ElephantApiKey
-          ELEPHANT_ORACLE_KEY_ID: !Ref ElephantOracleKeyId
-          ELEPHANT_FROM_ADDRESS: !Ref ElephantFromAddress
-          ELEPHANT_RPC_URL: !Ref ElephantRpcUrl
-          ELEPHANT_PINATA_JWT: !Ref ElephantPinataJwt
-          TRANSFORM_S3_PREFIX: !Ref TransformS3Prefix
-          ERRORS_TABLE_NAME: !Ref ErrorsTable
-
   WorkflowMirrorValidatorFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -899,13 +865,13 @@ Resources:
               Action:
                 - lambda:InvokeFunction
               Resource:
-                - !GetAtt WorkflowPostProcessorFunction.Arn
+                - !GetAtt TransformWorkerFunction.Arn
+                - !GetAtt SvlWorkerFunction.Arn
             - Effect: Allow
               Action:
                 - sqs:SendMessage
                 - sqs:GetQueueUrl
               Resource:
-                - !GetAtt TransactionsSqsQueue.Arn
                 - !Sub "arn:${AWS::Partition}:sqs:${AWS::Region}:${AWS::AccountId}:*"
             - Effect: Allow
               Action:
@@ -919,8 +885,9 @@ Resources:
       Environment:
         Variables:
           ERRORS_TABLE_NAME: !Ref ErrorsTable
-          POST_PROCESSOR_FUNCTION_NAME: !Ref WorkflowPostProcessorFunction
-          TRANSACTIONS_SQS_QUEUE_URL: !Ref TransactionsSqsQueue
+          TRANSFORM_WORKER_FUNCTION_NAME: !Ref TransformWorkerFunction
+          SVL_WORKER_FUNCTION_NAME: !Ref SvlWorkerFunction
+          OUTPUT_S3_PREFIX: !Sub "s3://${EnvironmentBucket}/outputs"
       Events:
         ErrorsTableStream:
           Type: DynamoDB
@@ -996,7 +963,6 @@ Resources:
       DefinitionSubstitutions:
         WorkflowPreProcessorFunction: !GetAtt WorkflowPreProcessorFunction.Arn
         DownloaderFunction: !GetAtt DownloaderFunction.Arn
-        WorkflowPostProcessorFunction: !GetAtt WorkflowPostProcessorFunction.Arn
         WorkflowMirrorValidatorFunction: !GetAtt WorkflowMirrorValidatorFunction.Arn
         TransactionsSqsQueueUrl: !Ref TransactionsSqsQueue
         TransformQueueUrl: !Ref TransformQueue
@@ -1044,7 +1010,6 @@ Resources:
                 Resource:
                   - !GetAtt WorkflowPreProcessorFunction.Arn
                   - !GetAtt DownloaderFunction.Arn
-                  - !GetAtt WorkflowPostProcessorFunction.Arn
                   - !GetAtt WorkflowMirrorValidatorFunction.Arn
               - Effect: Allow
                 Action:
@@ -1639,12 +1604,6 @@ Outputs:
   ElephantExpressStateMachineName:
     Description: Name of the Elephant Standard state machine
     Value: !GetAtt ElephantExpressStateMachine.Name
-  WorkflowPostProcessorLogGroupName:
-    Description: CloudWatch Log Group name for the post processor Lambda function
-    Value: !Sub "/aws/lambda/${WorkflowPostProcessorFunction}"
-  WorkflowPostProcessorFunctionName:
-    Description: Name of the Workflow Post Processor Lambda function
-    Value: !Ref WorkflowPostProcessorFunction
   WorkflowMirrorValidatorFunctionName:
     Description: Name of the Workflow Mirror Validator Lambda function
     Value: !Ref WorkflowMirrorValidatorFunction

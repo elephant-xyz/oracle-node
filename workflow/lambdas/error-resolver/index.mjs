@@ -154,28 +154,6 @@ function buildExecutionSk(executionId) {
 }
 
 /**
- * Construct seed_output_s3_uri from preparedS3Uri.
- * The seed output is stored at the same prefix as the prepared output, but with seed_output.zip filename.
- *
- * @param {string} preparedS3Uri - S3 URI of the prepared output (e.g., s3://bucket/outputs/fileBase/output.zip).
- * @returns {string} - S3 URI of the seed output (e.g., s3://bucket/outputs/fileBase/seed_output.zip).
- */
-function constructSeedOutputS3Uri(preparedS3Uri) {
-  const match = /^s3:\/\/([^/]+)\/(.*)$/.exec(preparedS3Uri);
-  if (!match) {
-    throw new Error(`Bad S3 URI: ${preparedS3Uri}`);
-  }
-  const bucket = match[1];
-  const key = match[2];
-  if (!bucket || !key) {
-    throw new Error(`Bad S3 URI: ${preparedS3Uri}`);
-  }
-  // Replace /output.zip with /seed_output.zip
-  const seedKey = key.replace(/\/output\.zip$/, "/seed_output.zip");
-  return `s3://${bucket}/${seedKey}`;
-}
-
-/**
  * Get the county-specific DLQ URL by queue name.
  *
  * @param {string} county - County identifier (will be lowercased).
@@ -347,93 +325,104 @@ async function updateExecutionStatusToMaybeSolved({
 }
 
 /**
- * Invoke the post-processing Lambda function to restart the execution.
+ * Invoke transform and SVL workers to validate if transformation script fixes worked.
+ * This replaces the old invokePostProcessingLambda which called the monolithic post lambda.
  *
  * @param {object} params - Invocation parameters.
- * @param {string} params.functionName - Lambda function name or ARN.
- * @param {string} params.preparedS3Uri - S3 URI of the prepared output.
- * @param {string} params.seedOutputS3Uri - S3 URI of the seed output.
- * @param {{ bucket?: { name?: string }, object?: { key?: string } } | undefined} params.s3Event - Optional S3 event information.
- * @returns {Promise<{ status: string, transactionItems?: unknown[] }>} - Result payload from post-processing Lambda.
+ * @param {string} params.transformFunctionName - Transform worker Lambda function name or ARN.
+ * @param {string} params.svlFunctionName - SVL worker Lambda function name or ARN.
+ * @param {string} params.preparedS3Uri - S3 URI of the prepared output (input for transform).
+ * @param {string} params.county - County name.
+ * @param {string} params.executionId - Execution identifier.
+ * @param {string} params.outputPrefix - S3 prefix for output files.
+ * @returns {Promise<{ status: string, validationPassed: boolean }>} - Result indicating if validation passed.
  */
-async function invokePostProcessingLambda({
-  functionName,
+async function invokeTransformAndSvlWorkers({
+  transformFunctionName,
+  svlFunctionName,
   preparedS3Uri,
-  seedOutputS3Uri,
-  s3Event,
+  county,
+  executionId,
+  outputPrefix,
 }) {
-  console.log(`Invoking post-processing Lambda ${functionName}...`);
+  console.log(`Starting transform and SVL validation for execution ${executionId}...`);
   console.log(`Prepared S3 URI: ${preparedS3Uri}`);
-  console.log(`Seed output S3 URI: ${seedOutputS3Uri}`);
 
-  /** @type {{ prepare: { output_s3_uri: string }; seed_output_s3_uri: string; prepareSkipped: boolean; saveErrorsOnValidationFailure: boolean; s3?: { bucket: { name: string }; object: { key: string } } }} */
-  const payload = {
-    prepare: {
-      output_s3_uri: preparedS3Uri,
-    },
-    seed_output_s3_uri: seedOutputS3Uri,
-    prepareSkipped: false,
-    saveErrorsOnValidationFailure: false,
+  // Step 1: Invoke transform worker
+  console.log(`Invoking transform worker ${transformFunctionName}...`);
+
+  const transformPayload = {
+    inputS3Uri: preparedS3Uri,
+    county,
+    outputPrefix,
+    executionId,
+    directInvocation: true,
   };
 
-  // Add S3 event if available
-  if (s3Event?.bucket?.name && s3Event?.object?.key) {
-    payload.s3 = {
-      bucket: {
-        name: s3Event.bucket.name,
-      },
-      object: {
-        key: s3Event.object.key,
-      },
+  const transformResponse = await lambdaClient.send(
+    new InvokeCommand({
+      FunctionName: transformFunctionName,
+      InvocationType: "RequestResponse",
+      Payload: JSON.stringify(transformPayload),
+    }),
+  );
+
+  if (transformResponse.FunctionError) {
+    const errorPayload = JSON.parse(
+      new TextDecoder().decode(transformResponse.Payload ?? new Uint8Array()),
+    );
+    throw new Error(
+      `Transform worker failed: ${errorPayload.errorMessage || errorPayload.errorType || JSON.stringify(errorPayload)}`,
+    );
+  }
+
+  const transformResult = JSON.parse(
+    new TextDecoder().decode(transformResponse.Payload ?? new Uint8Array()),
+  );
+
+  console.log(`Transform worker completed. Output: ${transformResult.transformedOutputS3Uri}`);
+
+  // Step 2: Invoke SVL worker with transform output
+  console.log(`Invoking SVL worker ${svlFunctionName}...`);
+
+  const svlPayload = {
+    transformedOutputS3Uri: transformResult.transformedOutputS3Uri,
+    county,
+    outputPrefix,
+    executionId,
+    directInvocation: true,
+  };
+
+  const svlResponse = await lambdaClient.send(
+    new InvokeCommand({
+      FunctionName: svlFunctionName,
+      InvocationType: "RequestResponse",
+      Payload: JSON.stringify(svlPayload),
+    }),
+  );
+
+  if (svlResponse.FunctionError) {
+    const errorPayload = JSON.parse(
+      new TextDecoder().decode(svlResponse.Payload ?? new Uint8Array()),
+    );
+    // SVL validation failure - this is expected when fixes don't work
+    console.log(`SVL validation failed: ${errorPayload.errorMessage || errorPayload.errorType}`);
+    return {
+      status: "validation_failed",
+      validationPassed: false,
     };
   }
 
-  const response = await lambdaClient.send(
-    new InvokeCommand({
-      FunctionName: functionName,
-      InvocationType: "RequestResponse",
-      Payload: JSON.stringify(payload),
-    }),
+  const svlResult = JSON.parse(
+    new TextDecoder().decode(svlResponse.Payload ?? new Uint8Array()),
   );
 
-  if (response.FunctionError) {
-    const errorPayload = JSON.parse(
-      new TextDecoder().decode(response.Payload ?? new Uint8Array()),
-    );
-    throw new Error(
-      `Post-processing Lambda failed: ${errorPayload.errorMessage || errorPayload.errorType || JSON.stringify(errorPayload)}`,
-    );
-  }
+  console.log(`SVL worker completed. Validation passed: ${svlResult.validationPassed}`);
 
-  const resultPayload = JSON.parse(
-    new TextDecoder().decode(response.Payload ?? new Uint8Array()),
-  );
-
-  console.log(
-    `Post-processing Lambda returned status: ${resultPayload.status} with ${resultPayload.transactionItems?.length || 0} transaction items`,
-  );
-
-  return resultPayload;
-}
-
-/**
- * Send transaction items to the Transactions SQS queue.
- *
- * @param {string} queueUrl - Transactions SQS queue URL.
- * @param {unknown[]} transactionItems - Array of transaction items to send.
- * @returns {Promise<void>}
- */
-async function sendToTransactionsQueue(queueUrl, transactionItems) {
-  console.log(
-    `Sending ${transactionItems.length} transaction items to Transactions queue`,
-  );
-  await sqsClient.send(
-    new SendMessageCommand({
-      QueueUrl: queueUrl,
-      MessageBody: JSON.stringify(transactionItems),
-    }),
-  );
-  console.log("Successfully sent transaction items to Transactions queue");
+  return {
+    status: svlResult.validationPassed ? "success" : "validation_failed",
+    validationPassed: svlResult.validationPassed,
+  };
 }
 
 /**
@@ -575,10 +564,9 @@ export const handler = async (event) => {
     );
 
     const tableName = requireEnv("ERRORS_TABLE_NAME");
-    const postProcessorFunctionName = requireEnv(
-      "POST_PROCESSOR_FUNCTION_NAME",
-    );
-    const transactionsQueueUrl = requireEnv("TRANSACTIONS_SQS_QUEUE_URL");
+    const transformFunctionName = requireEnv("TRANSFORM_WORKER_FUNCTION_NAME");
+    const svlFunctionName = requireEnv("SVL_WORKER_FUNCTION_NAME");
+    const outputPrefix = requireEnv("OUTPUT_S3_PREFIX");
     const client = DEFAULT_CLIENT;
 
     // Group ExecutionErrorLink records by executionId
@@ -819,40 +807,20 @@ export const handler = async (event) => {
               );
             }
 
-            const seedOutputS3Uri = constructSeedOutputS3Uri(
-              updatedExecution.preparedS3Uri,
-            );
-
-            // Build S3 event from source
-            const s3Event = updatedExecution.source
-              ? {
-                  bucket: { name: updatedExecution.source.s3Bucket },
-                  object: { key: updatedExecution.source.s3Key },
-                }
-              : undefined;
-
-            // Invoke post-processing Lambda to restart execution
+            // Invoke transform and SVL workers to validate if fixes worked
             let resultPayload;
             try {
-              resultPayload = await invokePostProcessingLambda({
-                functionName: postProcessorFunctionName,
+              resultPayload = await invokeTransformAndSvlWorkers({
+                transformFunctionName,
+                svlFunctionName,
                 preparedS3Uri: updatedExecution.preparedS3Uri,
-                seedOutputS3Uri,
-                s3Event,
+                county: updatedExecution.county,
+                executionId,
+                outputPrefix,
               });
 
-              // Check if execution was successful
-              if (
-                resultPayload.status === "success" &&
-                Array.isArray(resultPayload.transactionItems) &&
-                resultPayload.transactionItems.length > 0
-              ) {
-                // Send successful results to Transactions queue
-                await sendToTransactionsQueue(
-                  transactionsQueueUrl,
-                  resultPayload.transactionItems,
-                );
-
+              // Check if validation was successful
+              if (resultPayload.validationPassed) {
                 // Publish success metric
                 await publishMetric({
                   metricName: "ExecutionRestartSuccess",
@@ -865,17 +833,15 @@ export const handler = async (event) => {
                   JSON.stringify({
                     ...logBase,
                     level: "info",
-                    msg: "execution_succeeded_and_sent_to_transactions_queue",
+                    msg: "execution_validation_succeeded",
                     executionId,
-                    transactionItemsCount:
-                      resultPayload.transactionItems.length,
                   }),
                 );
               } else {
-                // Execution failed, send original message to DLQ
+                // Validation failed, send original message to DLQ
                 if (!updatedExecution.source) {
                   throw new Error(
-                    `Execution ${executionId} failed but source information is missing, cannot send to DLQ`,
+                    `Execution ${executionId} validation failed but source information is missing, cannot send to DLQ`,
                   );
                 }
 
@@ -887,7 +853,7 @@ export const handler = async (event) => {
                   metricName: "ExecutionRestartFailure",
                   dimensions: {
                     County: updatedExecution.county,
-                    FailureReason: "PostProcessingFailed",
+                    FailureReason: "ValidationFailed",
                   },
                 });
 
@@ -895,7 +861,7 @@ export const handler = async (event) => {
                   JSON.stringify({
                     ...logBase,
                     level: "info",
-                    msg: "execution_failed_and_sent_to_dlq",
+                    msg: "execution_validation_failed_and_sent_to_dlq",
                     executionId,
                     county: updatedExecution.county,
                     dlqUrl,
@@ -914,7 +880,7 @@ export const handler = async (event) => {
                     metricName: "ExecutionRestartFailure",
                     dimensions: {
                       County: updatedExecution.county,
-                      FailureReason: "LambdaInvocationFailed",
+                      FailureReason: "WorkerInvocationFailed",
                     },
                   });
 
@@ -922,7 +888,7 @@ export const handler = async (event) => {
                     JSON.stringify({
                       ...logBase,
                       level: "warn",
-                      msg: "execution_invocation_failed_and_sent_to_dlq",
+                      msg: "execution_worker_invocation_failed_and_sent_to_dlq",
                       executionId,
                       county: updatedExecution.county,
                       dlqUrl,
@@ -949,7 +915,7 @@ export const handler = async (event) => {
                   metricName: "ExecutionRestartFailure",
                   dimensions: {
                     County: updatedExecution.county || "Unknown",
-                    FailureReason: "LambdaInvocationFailedNoSource",
+                    FailureReason: "WorkerInvocationFailedNoSource",
                   },
                 });
                 throw lambdaError;

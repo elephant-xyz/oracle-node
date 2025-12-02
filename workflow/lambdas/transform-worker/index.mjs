@@ -35,6 +35,15 @@ const transformScriptsManager = createTransformScriptsManager({
  */
 
 /**
+ * @typedef {object} DirectInvocationInput
+ * @property {string} inputS3Uri - S3 URI of the input zip file.
+ * @property {string} county - County name.
+ * @property {string} outputPrefix - S3 URI prefix for output files.
+ * @property {string} executionId - Execution identifier.
+ * @property {boolean} [directInvocation] - If true, skip EventBridge events and task token handling.
+ */
+
+/**
  * @typedef {object} TransformOutput
  * @property {string} transformedOutputS3Uri - S3 URI of the transformed output zip.
  * @property {string} county - County name.
@@ -173,14 +182,48 @@ async function runTransform({
 
 /**
  * Lambda handler for Transform worker.
- * Triggered by SQS messages from the Step Functions workflow.
+ * Supports two invocation modes:
+ * 1. SQS trigger from Step Functions workflow (with task token)
+ * 2. Direct invocation from error-resolver/auto-repair (with directInvocation flag)
  *
- * @param {import("aws-lambda").SQSEvent} event - SQS event containing messages.
- * @returns {Promise<void>}
+ * @param {import("aws-lambda").SQSEvent | DirectInvocationInput} event - SQS event or direct invocation input.
+ * @returns {Promise<void | TransformOutput>}
  */
 export const handler = async (event) => {
-  // Process each SQS message (typically batch size is 1 for task token pattern)
-  for (const record of event.Records) {
+  // Check if this is a direct invocation (from error-resolver/auto-repair)
+  if ("directInvocation" in event && event.directInvocation) {
+    const input = /** @type {DirectInvocationInput} */ (event);
+
+    const log = createLogger({
+      component: "transform-worker",
+      at: new Date().toISOString(),
+      county: input.county,
+      executionId: input.executionId,
+    });
+
+    log("info", "transform_worker_start_direct", {
+      inputS3Uri: input.inputS3Uri,
+      directInvocation: true,
+    });
+
+    // Direct invocation: skip EventBridge events and task token handling
+    const result = await runTransform({
+      inputS3Uri: input.inputS3Uri,
+      county: input.county,
+      outputPrefix: input.outputPrefix,
+      executionId: input.executionId,
+      log,
+    });
+
+    log("info", "transform_worker_complete_direct", {});
+
+    return result;
+  }
+
+  // SQS trigger mode: process each message with task token pattern
+  const sqsEvent = /** @type {import("aws-lambda").SQSEvent} */ (event);
+
+  for (const record of sqsEvent.Records) {
     /** @type {SQSMessageBody} */
     const messageBody = JSON.parse(record.body);
     const { taskToken, input } = messageBody;

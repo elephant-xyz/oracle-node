@@ -12,7 +12,6 @@ import {
   emitWorkflowEvent,
   createWorkflowError,
 } from "./shared/index.mjs";
-import { createErrorsRepository } from "./errors.mjs";
 
 /**
  * @typedef {object} SvlInput
@@ -43,24 +42,14 @@ import { createErrorsRepository } from "./errors.mjs";
  * @property {SvlInput} input - SVL input parameters.
  */
 
-/** @type {import("./errors.mjs").ErrorsRepository | null} */
-let cachedErrorsRepository = null;
-
 /**
- * Lazy-initialize the DynamoDB errors repository.
- *
- * @returns {import("./errors.mjs").ErrorsRepository} - Repository instance.
+ * @typedef {object} DirectInvocationInput
+ * @property {string} transformedOutputS3Uri - S3 URI of transformed output zip.
+ * @property {string} county - County name.
+ * @property {string} outputPrefix - S3 URI prefix for output files.
+ * @property {string} executionId - Execution identifier.
+ * @property {boolean} [directInvocation] - If true, skip EventBridge events and task token handling.
  */
-function getErrorsRepository() {
-  if (!cachedErrorsRepository) {
-    const tableName = process.env.ERRORS_TABLE_NAME;
-    if (!tableName) {
-      throw new Error("ERRORS_TABLE_NAME is required");
-    }
-    cachedErrorsRepository = createErrorsRepository({ tableName });
-  }
-  return cachedErrorsRepository;
-}
 
 /**
  * Convert CSV file to JSON array
@@ -89,8 +78,6 @@ async function csvToJson(csvPath) {
  * @param {string} params.county - County name.
  * @param {string} params.outputPrefix - Output S3 prefix.
  * @param {string} params.executionId - Execution ID.
- * @param {string} [params.preparedS3Uri] - S3 URI of prepared input.
- * @param {object} [params.s3] - Original S3 event object.
  * @param {ReturnType<typeof createLogger>} params.log - Logger.
  * @returns {Promise<SvlOutput>}
  */
@@ -99,8 +86,6 @@ async function runSvl({
   county,
   outputPrefix,
   executionId,
-  preparedS3Uri,
-  s3,
   log,
 }) {
   const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "svl-"));
@@ -165,48 +150,14 @@ async function runSvl({
             log,
           );
 
-          // Save errors to DynamoDB (same as post lambda does)
-          if (submitErrors.length > 0) {
-            try {
-              await getErrorsRepository().saveFailedExecution({
-                executionId,
-                county,
-                errors: submitErrors.map((row) => ({
-                  errorMessage: row.error_message ?? undefined,
-                  error_message: row.error_message ?? undefined,
-                  errorPath: row.error_path ?? undefined,
-                  error_path: row.error_path ?? undefined,
-                })),
-                source: {
-                  s3Bucket: s3?.bucket?.name,
-                  s3Key: s3?.object?.key,
-                },
-                errorsS3Uri: errorsS3Uri ?? undefined,
-                failureMessage: validationResult.error,
-                occurredAt: new Date().toISOString(),
-                preparedS3Uri: preparedS3Uri,
-              });
-
-              log("info", "svl_errors_saved_to_dynamodb", {
-                execution_id: executionId,
-                error_count: submitErrors.length,
-              });
-
-              // Return success with empty validation (errors saved to DynamoDB)
-              return {
-                validatedOutputS3Uri: transformedOutputS3Uri,
-                county,
-                executionId,
-                validationPassed: false,
-                errorsS3Uri,
-              };
-            } catch (repoError) {
-              log("error", "svl_errors_repository_save_failed", {
-                error: String(repoError),
-                execution_id: executionId,
-              });
-            }
-          }
+          // Return validation failed result - errors will be handled by workflow-events service via EventBridge
+          return {
+            validatedOutputS3Uri: transformedOutputS3Uri,
+            county,
+            executionId,
+            validationPassed: false,
+            errorsS3Uri,
+          };
         }
       } catch (uploadError) {
         log("error", "svl_errors_upload_failed", {
@@ -214,7 +165,7 @@ async function runSvl({
         });
       }
 
-      // Throw error if we couldn't save to DynamoDB
+      // Throw error if validation failed
       const err = new Error(
         validationResult.error || "Schema validation failed",
       );
@@ -240,13 +191,60 @@ async function runSvl({
 
 /**
  * Lambda handler for SVL worker.
- * Triggered by SQS messages from the Step Functions workflow.
+ * Supports two invocation modes:
+ * 1. SQS trigger from Step Functions workflow (with task token)
+ * 2. Direct invocation from error-resolver/auto-repair (with directInvocation flag)
  *
- * @param {import("aws-lambda").SQSEvent} event - SQS event containing messages.
- * @returns {Promise<void>}
+ * @param {import("aws-lambda").SQSEvent | DirectInvocationInput} event - SQS event or direct invocation input.
+ * @returns {Promise<void | SvlOutput>}
  */
 export const handler = async (event) => {
-  for (const record of event.Records) {
+  // Check if this is a direct invocation (from error-resolver/auto-repair)
+  if ("directInvocation" in event && event.directInvocation) {
+    const input = /** @type {DirectInvocationInput} */ (event);
+
+    const log = createLogger({
+      component: "svl-worker",
+      at: new Date().toISOString(),
+      county: input.county,
+      executionId: input.executionId,
+    });
+
+    log("info", "svl_worker_start_direct", {
+      transformedOutputS3Uri: input.transformedOutputS3Uri,
+      directInvocation: true,
+    });
+
+    // Direct invocation: skip EventBridge events and task token handling
+    // For direct invocation, throw on validation failure instead of returning success
+    const result = await runSvl({
+      transformedOutputS3Uri: input.transformedOutputS3Uri,
+      county: input.county,
+      outputPrefix: input.outputPrefix,
+      executionId: input.executionId,
+      log,
+    });
+
+    // For direct invocation, if validation failed, throw an error
+    if (!result.validationPassed) {
+      const err = new Error(
+        `SVL validation failed. Errors CSV: ${result.errorsS3Uri}`,
+      );
+      err.name = "SvlValidationError";
+      // @ts-ignore - attach errorsS3Uri for error handling
+      err.errorsS3Uri = result.errorsS3Uri;
+      throw err;
+    }
+
+    log("info", "svl_worker_complete_direct", {});
+
+    return result;
+  }
+
+  // SQS trigger mode: process each message with task token pattern
+  const sqsEvent = /** @type {import("aws-lambda").SQSEvent} */ (event);
+
+  for (const record of sqsEvent.Records) {
     /** @type {SQSMessageBody} */
     const messageBody = JSON.parse(record.body);
     const { taskToken, input } = messageBody;
@@ -279,8 +277,6 @@ export const handler = async (event) => {
         county: input.county,
         outputPrefix: input.outputPrefix,
         executionId: input.executionId,
-        preparedS3Uri: input.preparedS3Uri,
-        s3: input.s3,
         log,
       });
 
@@ -295,7 +291,7 @@ export const handler = async (event) => {
           log,
         });
       } else {
-        // Emit PARKED event - validation failed but errors saved to DynamoDB
+        // Emit PARKED event - validation failed but errors uploaded to S3
         await emitWorkflowEvent({
           executionId: input.executionId,
           county: input.county,
