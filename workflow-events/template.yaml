@@ -22,14 +22,14 @@ Resources:
     Properties:
       LayerName: !Sub "${EnvironmentName}-workflow-events-shared"
       Description: Shared utilities for workflow-events lambdas (DynamoDB client, types, keys)
-      ContentUri: lambdas/shared-layer
+      ContentUri: layers/shared
       CompatibleRuntimes:
         - nodejs22.x
       CompatibleArchitectures:
         - arm64
       RetentionPolicy: Delete
     Metadata:
-      BuildMethod: makefile
+      BuildMethod: nodejs22.x
       BuildArchitecture: arm64
 
   # DynamoDB table for storing workflow errors with single-table design
@@ -136,6 +136,12 @@ Resources:
     Metadata:
       BuildMethod: esbuild
       BuildProperties:
+        Format: esm
+        OutExtension:
+          - .js=.mjs
+        External:
+          - "@aws-sdk/*"
+          - "@smithy/*"
         Minify: true
         Target: es2022
         EntryPoints:
@@ -167,6 +173,12 @@ Resources:
     Metadata:
       BuildMethod: esbuild
       BuildProperties:
+        Format: esm
+        OutExtension:
+          - .js=.mjs
+        External:
+          - "@aws-sdk/*"
+          - "@smithy/*"
         Minify: true
         Target: es2022
         EntryPoints:
