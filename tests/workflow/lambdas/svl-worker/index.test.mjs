@@ -150,7 +150,7 @@ describe("svl-worker handler", () => {
       });
     });
 
-    it("should emit PARKED event when validation fails with errors file", async () => {
+    it("should emit FAILED event when validation fails with errors file", async () => {
       // Mock validation failure with errors file existing
       mockValidate.mockImplementation(async ({ cwd }) => {
         // Create submit_errors.csv in the cwd
@@ -170,26 +170,26 @@ describe("svl-worker handler", () => {
         "../../../../workflow/lambdas/svl-worker/index.mjs"
       );
 
-      const event = createSqsEvent("task-token-parked", {
+      const event = createSqsEvent("task-token-failed", {
         transformedOutputS3Uri: "s3://bucket/transformed.zip",
-        county: "parked-county",
+        county: "failed-county",
         outputPrefix: "s3://output-bucket/outputs/",
-        executionId: "exec-parked",
+        executionId: "exec-failed",
       });
 
       await handler(event);
 
-      // Should have 2 emitWorkflowEvent calls: IN_PROGRESS and PARKED
+      // Should have 2 emitWorkflowEvent calls: IN_PROGRESS and FAILED
       expect(mockEmitWorkflowEvent).toHaveBeenCalledTimes(2);
 
-      // Second call should be PARKED with SVL_VALIDATION_ERROR
+      // Second call should be FAILED with SVL_VALIDATION_ERROR
       expect(mockEmitWorkflowEvent).toHaveBeenNthCalledWith(2, {
-        executionId: "exec-parked",
-        county: "parked-county",
-        status: "PARKED",
+        executionId: "exec-failed",
+        county: "failed-county",
+        status: "FAILED",
         phase: "SVL",
         step: "SVL",
-        taskToken: "task-token-parked",
+        taskToken: "task-token-failed",
         errors: [
           {
             code: "SVL_VALIDATION_ERROR",
@@ -255,7 +255,7 @@ describe("svl-worker handler", () => {
 
       await handler(event);
 
-      // Should emit FAILED since no errors file to create PARKED state
+      // Should emit FAILED since validation failed
       expect(mockEmitWorkflowEvent).toHaveBeenCalledTimes(2);
       expect(mockEmitWorkflowEvent).toHaveBeenNthCalledWith(2, {
         executionId: "exec-no-errors",

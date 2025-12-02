@@ -229,7 +229,7 @@ States:
   EmitTransformParked:
     Type: Task
     Resource: arn:aws:states:::events:putEvents
-    Comment: "Emit PARKED event for Transform step - waiting for external resolution"
+    Comment: "Emit FAILED event for Transform step - waiting for external resolution"
     Parameters:
       Entries:
         - Source: elephant.workflow
@@ -237,7 +237,7 @@ States:
           Detail:
             executionId.$: $.executionId
             county.$: $.pre.county_name
-            status: PARKED
+            status: FAILED
             phase: Transform
             step: EvaluateTransform
             errors:
@@ -370,7 +370,7 @@ States:
   EmitSvlValidationParked:
     Type: Task
     Resource: arn:aws:states:::events:putEvents
-    Comment: "Emit PARKED event for SVL validation errors - waiting for external resolution"
+    Comment: "Emit FAILED event for SVL validation errors - waiting for external resolution"
     Parameters:
       Entries:
         - Source: elephant.workflow
@@ -378,7 +378,7 @@ States:
           Detail:
             executionId.$: $.executionId
             county.$: $.pre.county_name
-            status: PARKED
+            status: FAILED
             phase: SVL
             step: SVL
             errors:
@@ -395,7 +395,7 @@ States:
   EmitSvlParked:
     Type: Task
     Resource: arn:aws:states:::events:putEvents
-    Comment: "Emit PARKED event for SVL step - waiting for external resolution"
+    Comment: "Emit FAILED event for SVL step - waiting for external resolution"
     Parameters:
       Entries:
         - Source: elephant.workflow
@@ -403,7 +403,7 @@ States:
           Detail:
             executionId.$: $.executionId
             county.$: $.pre.county_name
-            status: PARKED
+            status: FAILED
             phase: SVL
             step: SVL
             errors:
@@ -543,7 +543,7 @@ States:
   EmitMvlValidationParked:
     Type: Task
     Resource: arn:aws:states:::events:putEvents
-    Comment: "Emit PARKED event for MVL validation errors - waiting for external resolution"
+    Comment: "Emit FAILED event for MVL validation errors - waiting for external resolution"
     Parameters:
       Entries:
         - Source: elephant.workflow
@@ -551,7 +551,7 @@ States:
           Detail:
             executionId.$: $.executionId
             county.$: $.pre.county_name
-            status: PARKED
+            status: FAILED
             phase: MVL
             step: MVL
             errors:
@@ -569,7 +569,7 @@ States:
   EmitMvlParked:
     Type: Task
     Resource: arn:aws:states:::events:putEvents
-    Comment: "Emit PARKED event for MVL step - waiting for external resolution"
+    Comment: "Emit FAILED event for MVL step - waiting for external resolution"
     Parameters:
       Entries:
         - Source: elephant.workflow
@@ -577,7 +577,7 @@ States:
           Detail:
             executionId.$: $.executionId
             county.$: $.pre.county_name
-            status: PARKED
+            status: FAILED
             phase: MVL
             step: MVL
             errors:
@@ -698,7 +698,7 @@ States:
   EmitHashParked:
     Type: Task
     Resource: arn:aws:states:::events:putEvents
-    Comment: "Emit PARKED event for Hash step - waiting for external resolution"
+    Comment: "Emit FAILED event for Hash step - waiting for external resolution"
     Parameters:
       Entries:
         - Source: elephant.workflow
@@ -706,7 +706,7 @@ States:
           Detail:
             executionId.$: $.executionId
             county.$: $.pre.county_name
-            status: PARKED
+            status: FAILED
             phase: Hash
             step: EvaluateHash
             errors:
@@ -831,7 +831,7 @@ States:
   EmitUploadParked:
     Type: Task
     Resource: arn:aws:states:::events:putEvents
-    Comment: "Emit PARKED event for Upload step - waiting for external resolution"
+    Comment: "Emit FAILED event for Upload step - waiting for external resolution"
     Parameters:
       Entries:
         - Source: elephant.workflow
@@ -839,7 +839,7 @@ States:
           Detail:
             executionId.$: $.executionId
             county.$: $.pre.county_name
-            status: PARKED
+            status: FAILED
             phase: Upload
             step: EvaluateUpload
             errors:
