@@ -379,6 +379,7 @@ describe("svl-worker handler", () => {
         county: "result-county",
         executionId: "exec-result",
         validationPassed: true,
+        svlErrors: [],
       });
     });
 
@@ -558,6 +559,7 @@ describe("svl-worker handler", () => {
         county: "direct-county",
         executionId: "exec-direct",
         validationPassed: true,
+        svlErrors: [],
       });
     });
 

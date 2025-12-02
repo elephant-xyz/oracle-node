@@ -223,6 +223,7 @@ async function runSvl({
       county,
       executionId,
       validationPassed: true,
+      svlErrors: [],
     };
   } finally {
     // Cleanup
