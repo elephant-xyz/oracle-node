@@ -16,6 +16,22 @@ Globals:
       LogFormat: JSON
 
 Resources:
+  # Shared layer containing common code for all lambdas
+  SharedLayer:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      LayerName: !Sub "${EnvironmentName}-workflow-events-shared"
+      Description: Shared utilities for workflow-events lambdas (DynamoDB client, types, keys)
+      ContentUri: layers/shared
+      CompatibleRuntimes:
+        - nodejs22.x
+      CompatibleArchitectures:
+        - arm64
+      RetentionPolicy: Delete
+    Metadata:
+      BuildMethod: makefile
+      BuildArchitecture: arm64
+
   # DynamoDB table for storing workflow errors with single-table design
   WorkflowErrorsTable:
     Type: AWS::DynamoDB::Table
@@ -94,6 +110,8 @@ Resources:
         - arm64
       Handler: index.handler
       CodeUri: lambdas/event-handler
+      Layers:
+        - !Ref SharedLayer
       DeadLetterQueue:
         TargetArn: !GetAtt WorkflowEventHandlerDeadLetterQueue.Arn
         Type: SQS
@@ -118,6 +136,49 @@ Resources:
     Metadata:
       BuildMethod: esbuild
       BuildProperties:
+        Format: esm
+        OutExtension:
+          - .js=.mjs
+        External:
+          - "@aws-sdk/*"
+          - "@smithy/*"
+          - "shared"
+        Minify: true
+        Target: es2022
+        EntryPoints:
+          - index.ts
+        Sourcemap: true
+        LogLevel: info
+
+  GetExecutionFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${EnvironmentName}-get-execution"
+      Runtime: nodejs22.x
+      Architectures:
+        - arm64
+      Handler: index.handler
+      CodeUri: lambdas/get-execution
+      Layers:
+        - !Ref SharedLayer
+      Description: "Retrieves executions by error count with optional error type filter"
+      Environment:
+        Variables:
+          WORKFLOW_ERRORS_TABLE_NAME: !Ref WorkflowErrorsTable
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - DynamoDBReadPolicy:
+            TableName: !Ref WorkflowErrorsTable
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Format: esm
+        OutExtension:
+          - .js=.mjs
+        External:
+          - "@aws-sdk/*"
+          - "@smithy/*"
+          - "shared"
         Minify: true
         Target: es2022
         EntryPoints:
@@ -141,3 +202,9 @@ Outputs:
   WorkflowErrorsTableArn:
     Description: ARN of the DynamoDB table for workflow errors
     Value: !GetAtt WorkflowErrorsTable.Arn
+  GetExecutionFunctionName:
+    Description: Name of the get execution Lambda function
+    Value: !Ref GetExecutionFunction
+  GetExecutionFunctionArn:
+    Description: ARN of the get execution Lambda function
+    Value: !GetAtt GetExecutionFunction.Arn

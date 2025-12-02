@@ -1,6 +1,4 @@
-import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import {
-  DynamoDBDocumentClient,
   TransactWriteCommand,
   UpdateCommand,
   BatchGetCommand,
@@ -12,68 +10,19 @@ import type {
   ExecutionErrorLink,
   FailedExecutionItem,
   ErrorStatus,
-} from "./types.js";
-
-/**
- * Environment variable for DynamoDB table name.
- */
-const TABLE_NAME = process.env.WORKFLOW_ERRORS_TABLE_NAME;
-
-/**
- * Entity type discriminators for single-table design.
- */
-const ENTITY_TYPES = {
-  ERROR: "Error",
-  EXECUTION_ERROR: "ExecutionError",
-  FAILED_EXECUTION: "FailedExecution",
-} as const;
+} from "shared/types.js";
+import { TABLE_NAME, docClient } from "shared/dynamodb-client.js";
+import {
+  ENTITY_TYPES,
+  padCount,
+  extractErrorType,
+  createKey,
+} from "shared/keys.js";
 
 /**
  * Default error status for new records.
  */
 const DEFAULT_ERROR_STATUS: ErrorStatus = "failed";
-
-/**
- * DynamoDB Document Client with marshalling options.
- * Reuses connections via Keep-Alive for better performance.
- */
-const dynamoDbClient = new DynamoDBClient({});
-const docClient = DynamoDBDocumentClient.from(dynamoDbClient, {
-  marshallOptions: {
-    removeUndefinedValues: true,
-  },
-});
-
-/**
- * Pads a number with leading zeros for lexicographic sorting.
- * @param count - The number to pad
- * @param length - The total length of the resulting string
- * @returns Zero-padded string representation
- */
-const padCount = (count: number, length: number = 10): string => {
-  return count.toString().padStart(length, "0");
-};
-
-/**
- * Extracts the error type from an error code.
- * The error type is the first 2 characters of the error code.
- * For error codes shorter than 2 characters, returns the code itself.
- * @param errorCode - The error code to extract the type from
- * @returns The error type (first 2 characters or full code if shorter)
- */
-const extractErrorType = (errorCode: string): string => {
-  return errorCode.length >= 2 ? errorCode.substring(0, 2) : errorCode;
-};
-
-/**
- * Creates a composite key for DynamoDB.
- * @param prefix - The key prefix (e.g., "ERROR", "EXECUTION")
- * @param value - The key value
- * @returns Composite key string
- */
-const createKey = (prefix: string, value: string): string => {
-  return `${prefix}#${value}`;
-};
 
 /**
  * Counts occurrences of each error code in the errors array.
@@ -177,6 +126,7 @@ const buildErrorRecordUpdate = (
  * @param executionId - The execution ID
  * @param county - The county identifier
  * @param occurrences - Number of times this error occurred in the execution
+ * @param errorDetails - Additional error details (key-value pairs)
  * @param now - ISO timestamp for the operation
  * @returns UpdateCommand input for ExecutionErrorLink upsert
  */
@@ -185,6 +135,7 @@ const buildExecutionErrorLinkUpdate = (
   executionId: string,
   county: string,
   occurrences: number,
+  errorDetails: Record<string, unknown>,
   now: string,
 ): {
   Update: {
@@ -210,6 +161,7 @@ const buildExecutionErrorLinkUpdate = (
             errorCode = :errorCode,
             #status = if_not_exists(#status, :defaultStatus),
             occurrences = if_not_exists(occurrences, :zero) + :occurrences,
+            errorDetails = :errorDetails,
             executionId = :executionId,
             county = :county,
             createdAt = if_not_exists(createdAt, :now),
@@ -226,6 +178,7 @@ const buildExecutionErrorLinkUpdate = (
         ":defaultStatus": DEFAULT_ERROR_STATUS,
         ":zero": 0,
         ":occurrences": occurrences,
+        ":errorDetails": JSON.stringify(errorDetails),
         ":executionId": executionId,
         ":county": county,
         ":now": now,
@@ -532,6 +485,7 @@ export const saveErrorRecords = async (
         detail.executionId,
         detail.county,
         count,
+        details,
         now,
       ),
     );
