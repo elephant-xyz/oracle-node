@@ -150,7 +150,7 @@ describe("svl-worker handler", () => {
       });
     });
 
-    it("should emit FAILED event when validation fails with errors file", async () => {
+    it("should return svlErrors when validation fails with errors file (FAILED event emitted by state machine)", async () => {
       // Mock validation failure with errors file existing
       mockValidate.mockImplementation(async ({ cwd }) => {
         // Create submit_errors.csv in the cwd
@@ -179,24 +179,27 @@ describe("svl-worker handler", () => {
 
       await handler(event);
 
-      // Should have 2 emitWorkflowEvent calls: IN_PROGRESS and FAILED
-      expect(mockEmitWorkflowEvent).toHaveBeenCalledTimes(2);
+      // Should have only 1 emitWorkflowEvent call: IN_PROGRESS
+      // FAILED event is now emitted by the state machine with structured errors
+      expect(mockEmitWorkflowEvent).toHaveBeenCalledTimes(1);
 
-      // Second call should be FAILED with SVL_VALIDATION_ERROR
-      expect(mockEmitWorkflowEvent).toHaveBeenNthCalledWith(2, {
-        executionId: "exec-failed",
-        county: "failed-county",
-        status: "FAILED",
-        phase: "SVL",
-        step: "SVL",
+      // Should have called executeWithTaskToken with result containing svlErrors
+      expect(mockExecuteWithTaskToken).toHaveBeenCalledWith({
         taskToken: "task-token-failed",
-        errors: [
-          {
-            code: "SVL_VALIDATION_ERROR",
-            details: { errorsS3Uri: expect.any(String) },
-          },
-        ],
         log: expect.any(Function),
+        workerFn: expect.any(Function),
+      });
+
+      // Verify the workerFn returns the result with svlErrors
+      const workerFn = mockExecuteWithTaskToken.mock.calls[0][0].workerFn;
+      const result = await workerFn();
+      expect(result).toEqual({
+        validatedOutputS3Uri: "s3://bucket/transformed.zip",
+        county: "failed-county",
+        executionId: "exec-failed",
+        validationPassed: false,
+        errorsS3Uri: expect.any(String),
+        svlErrors: [{ error_message: "Test error", error_path: "$.field" }],
       });
 
       // Should have uploaded errors to S3

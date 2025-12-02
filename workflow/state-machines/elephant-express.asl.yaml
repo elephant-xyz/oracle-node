@@ -297,6 +297,7 @@ States:
       county.$: $.county
       executionId.$: $.executionId
       validationPassed.$: $.validationPassed
+      svlErrors.$: $.svlErrors
     ResultPath: $.svl
     Next: CheckSvlResult
     Retry:
@@ -308,10 +309,10 @@ States:
       - ErrorEquals: [SvlFailedError]
         Comment: "SVL validation failed - park for resolution"
         ResultPath: $.svlError
-        Next: WaitForSvlResolution
+        Next: WaitForSvlExceptionResolution
       - ErrorEquals: [States.ALL]
         ResultPath: $.svlError
-        Next: WaitForSvlResolution
+        Next: WaitForSvlExceptionResolution
 
   CheckSvlResult:
     Type: Choice
@@ -319,7 +320,7 @@ States:
     Choices:
       - Variable: $.svl.validationPassed
         BooleanEquals: false
-        Next: WaitForSvlResolution
+        Next: WaitForSvlValidationResolution
     Default: EmitSvlSucceeded
 
   EmitSvlSucceeded:
@@ -343,10 +344,47 @@ States:
         ResultPath: $.eventError
         Next: EmitHashScheduled
 
-  WaitForSvlResolution:
+  WaitForSvlValidationResolution:
     Type: Task
     Resource: arn:aws:states:::events:putEvents.waitForTaskToken
-    Comment: "Emit FAILED event and wait for external resolution - retry target is Transform"
+    QueryLanguage: JSONata
+    Comment: "Emit FAILED event with individual validation errors and wait for external resolution - retry target is Transform"
+    HeartbeatSeconds: 86400
+    Arguments:
+      Entries:
+        - Source: elephant.workflow
+          DetailType: WorkflowEvent
+          Detail:
+            executionId: "{% $states.input.executionId %}"
+            county: "{% $states.input.pre.county_name %}"
+            status: FAILED
+            phase: SVL
+            step: EvaluateSvl
+            taskToken: "{% $states.context.Task.Token %}"
+            errors: >-
+              {%
+                $states.input.svl.svlErrors ~> $map(function($e) {
+                  {
+                    "code": "SVL_VALIDATION_ERROR",
+                    "details": {
+                      "error_message": $e.error_message,
+                      "error_path": $e.error_path
+                    }
+                  }
+                })
+              %}
+    Output: "{% $states.input %}"
+    Next: Transform
+    Catch:
+      - ErrorEquals: [States.ALL]
+        Comment: "Resolution failed - stay parked and wait again"
+        Output: "{% $merge([$states.input, {'svlError': $states.result}]) %}"
+        Next: WaitForSvlValidationResolution
+
+  WaitForSvlExceptionResolution:
+    Type: Task
+    Resource: arn:aws:states:::events:putEvents.waitForTaskToken
+    Comment: "Emit FAILED event for SVL exception and wait for external resolution - retry target is Transform"
     HeartbeatSeconds: 86400
     Parameters:
       Entries:
@@ -360,7 +398,7 @@ States:
             step: EvaluateSvl
             taskToken.$: $$.Task.Token
             errors:
-              - code: "30001"
+              - code: SVL_FAILED
                 details:
                   error.$: States.JsonToString($.svlError)
     ResultPath: $.resolutionResult
@@ -369,7 +407,7 @@ States:
       - ErrorEquals: [States.ALL]
         Comment: "Resolution failed - stay parked and wait again"
         ResultPath: $.svlError
-        Next: WaitForSvlResolution
+        Next: WaitForSvlExceptionResolution
 
   # === HASH STEP ===
 

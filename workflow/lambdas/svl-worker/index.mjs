@@ -28,12 +28,19 @@ import {
  */
 
 /**
+ * @typedef {object} SvlValidationError
+ * @property {string} error_message - Validation error message.
+ * @property {string} error_path - JSON path where the error occurred.
+ */
+
+/**
  * @typedef {object} SvlOutput
  * @property {string} validatedOutputS3Uri - S3 URI of the validated output zip (same as input if valid).
  * @property {string} county - County name.
  * @property {string} executionId - Execution identifier.
  * @property {boolean} validationPassed - Whether validation succeeded.
  * @property {string} [errorsS3Uri] - S3 URI of validation errors CSV (if validation failed).
+ * @property {SvlValidationError[]} [svlErrors] - Array of validation errors (if validation failed).
  */
 
 /**
@@ -68,6 +75,25 @@ async function csvToJson(csvPath) {
   } catch {
     return [];
   }
+}
+
+/**
+ * Normalize raw CSV error rows to a consistent format.
+ * Handles both camelCase (errorMessage, errorPath) and snake_case (error_message, error_path) field names.
+ * @param {Record<string, string>[]} rawRows - Raw error rows from CSV
+ * @returns {SvlValidationError[]} - Normalized validation errors
+ */
+function normalizeValidationErrors(rawRows) {
+  return rawRows.map((row) => {
+    const errorMessage =
+      row.errorMessage?.trim() || row.error_message?.trim() || "Unknown error";
+    const errorPath =
+      row.errorPath?.trim() || row.error_path?.trim() || "unknown";
+    return {
+      error_message: errorMessage,
+      error_path: errorPath,
+    };
+  });
 }
 
 /**
@@ -121,9 +147,11 @@ async function runSvl({
     });
 
     if (!validationResult.success) {
-      // Handle validation failure - upload errors CSV to S3 and save to DynamoDB
+      // Handle validation failure - upload errors CSV to S3 and return structured errors
       const submitErrorsPath = path.join(tmpDir, "submit_errors.csv");
       let errorsS3Uri = null;
+      /** @type {SvlValidationError[]} */
+      let svlErrors = [];
 
       try {
         const errorsExist = await fs
@@ -132,12 +160,13 @@ async function runSvl({
           .catch(() => false);
 
         if (errorsExist) {
-          const submitErrors = await csvToJson(submitErrorsPath);
+          const submitErrorsRaw = await csvToJson(submitErrorsPath);
+          svlErrors = normalizeValidationErrors(submitErrorsRaw);
 
           log("error", "svl_validation_failed", {
             step: "validate",
             error: validationResult.error,
-            error_count: submitErrors.length,
+            error_count: svlErrors.length,
           });
 
           // Upload errors to S3
@@ -150,13 +179,14 @@ async function runSvl({
             log,
           );
 
-          // Return validation failed result - errors will be handled by workflow-events service via EventBridge
+          // Return validation failed result with structured errors
           return {
             validatedOutputS3Uri: transformedOutputS3Uri,
             county,
             executionId,
             validationPassed: false,
             errorsS3Uri,
+            svlErrors,
           };
         }
       } catch (uploadError) {
@@ -165,13 +195,15 @@ async function runSvl({
         });
       }
 
-      // Throw error if validation failed
+      // Throw error if validation failed (no errors file found or upload failed)
       const err = new Error(
         validationResult.error || "Schema validation failed",
       );
       err.name = "SvlFailedError";
-      // @ts-ignore - attach errorsS3Uri for error handling
+      // @ts-ignore - attach errorsS3Uri and svlErrors for error handling
       err.errorsS3Uri = errorsS3Uri;
+      // @ts-ignore
+      err.svlErrors = svlErrors;
       throw err;
     }
 
@@ -280,25 +312,8 @@ export const handler = async (event) => {
         log,
       });
 
-      if (result.validationPassed) {
-        // Note: SUCCEEDED event is emitted by the state machine after this step completes
-      } else {
-        // Emit FAILED event - validation failed but errors uploaded to S3
-        await emitWorkflowEvent({
-          executionId: input.executionId,
-          county: input.county,
-          status: "FAILED",
-          phase: "SVL",
-          step: "SVL",
-          taskToken,
-          errors: [
-            createWorkflowError("SVL_VALIDATION_ERROR", {
-              errorsS3Uri: result.errorsS3Uri,
-            }),
-          ],
-          log,
-        });
-      }
+      // Note: SUCCEEDED/FAILED events are emitted by the state machine after this step completes
+      // The worker returns svlErrors in the result, which the state machine uses for EventBridge emission
 
       await executeWithTaskToken({
         taskToken,
