@@ -229,6 +229,7 @@ compute_param_overrides() {
   # Build parameters with simple format
   [[ -n "${WORKFLOW_QUEUE_NAME:-}" ]] && parts+=("WorkflowQueueName=\"$WORKFLOW_QUEUE_NAME\"")
   [[ -n "${WORKFLOW_STARTER_RESERVED_CONCURRENCY:-}" ]] && parts+=("WorkflowStarterReservedConcurrency=\"$WORKFLOW_STARTER_RESERVED_CONCURRENCY\"")
+  [[ -n "${MAX_RUNNING_EXECUTIONS:-}" ]] && parts+=("MaxRunningExecutions=\"$MAX_RUNNING_EXECUTIONS\"")
   [[ -n "${WORKFLOW_STATE_MACHINE_NAME:-}" ]] && parts+=("WorkflowStateMachineName=\"$WORKFLOW_STATE_MACHINE_NAME\"")
 
   # Prepare function flags
@@ -1045,18 +1046,6 @@ main() {
 
   if (( CODEBUILD_DEPLOY_PENDING == 1 )); then
     deploy_codebuild_stack
-  fi
-
-  # Create or update CloudWatch dashboard for monitoring
-  if [[ "${CREATE_DASHBOARD:-true}" == "true" ]]; then
-    info "Creating CloudWatch dashboard for metrics monitoring..."
-    if "$SCRIPT_DIR/create-auto-repair-dashboard.sh" "" "" "$STACK_NAME"; then
-      info "CloudWatch dashboard created successfully"
-    else
-      warn "Failed to create CloudWatch dashboard (non-fatal)"
-    fi
-  else
-    info "Dashboard creation skipped (CREATE_DASHBOARD=false)"
   fi
 
 

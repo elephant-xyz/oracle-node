@@ -1,9 +1,13 @@
 /**
- * Starter Lambda: triggered by SQS with BatchSize=1. Starts Express SFN synchronously.
- * Throws error on step function failure to trigger SQS DLQ redelivery.
+ * Starter Lambda: triggered by SQS with BatchSize=1. Starts Standard SFN and waits for full completion.
+ * Enforces concurrency limits and throws error on failure to trigger SQS DLQ redelivery.
  */
 
-import { SFNClient, StartSyncExecutionCommand } from "@aws-sdk/client-sfn";
+import {
+  SFNClient,
+  StartExecutionCommand,
+  ListExecutionsCommand,
+} from "@aws-sdk/client-sfn";
 
 /**
  * @typedef {Object} S3EventRecord
@@ -18,9 +22,48 @@ import { SFNClient, StartSyncExecutionCommand } from "@aws-sdk/client-sfn";
 
 const sfn = new SFNClient({});
 
+const MAX_RUNNING_EXECUTIONS = parseInt(
+  process.env.MAX_RUNNING_EXECUTIONS || "1000",
+  10,
+);
+
+/**
+ * Check how many Step Function executions are currently running
+ * @param {string} stateMachineArn
+ * @returns {Promise<number>}
+ */
+async function getRunningExecutionCount(stateMachineArn) {
+  try {
+    const cmd = new ListExecutionsCommand({
+      stateMachineArn: stateMachineArn,
+      statusFilter: "RUNNING",
+      maxResults: MAX_RUNNING_EXECUTIONS,
+    });
+    const resp = await sfn.send(cmd);
+    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
+    return (
+      resp.executions?.filter(
+        (execution) =>
+          execution.startDate && execution.startDate < fiveMinutesAgo,
+      ).length || 0
+    );
+  } catch (err) {
+    console.error(
+      JSON.stringify({
+        component: "starter",
+        level: "error",
+        msg: "failed_to_check_running_executions",
+        error: String(err),
+      }),
+    );
+    // If we can't check, assume we're at limit to be safe
+    return MAX_RUNNING_EXECUTIONS;
+  }
+}
+
 /**
  * @param {SqsEvent} event
- * @returns {Promise<{status:string, executionArn?:string, workflowStatus?:string, error?:string}>}
+ * @returns {Promise<{status:string, executionArn?:string, workflowStatus?:string}>}
  */
 export const handler = async (event) => {
   const logBase = { component: "starter", at: new Date().toISOString() };
@@ -46,47 +89,51 @@ export const handler = async (event) => {
     }
     const bodyRaw = record.body;
     const parsed = JSON.parse(bodyRaw);
-    // Start the Express workflow synchronously
-    const cmd = new StartSyncExecutionCommand({
+
+    // Check current running executions to enforce concurrency limit
+    const maxConcurrency = parseInt(
+      process.env.MAX_CONCURRENT_EXECUTIONS || "100",
+      10,
+    );
+    const runningCount = await getRunningExecutionCount(
+      process.env.STATE_MACHINE_ARN,
+    );
+
+    if (runningCount >= maxConcurrency) {
+      const errorMsg = `Step Function concurrency limit reached: ${runningCount}/${maxConcurrency} executions running`;
+      console.warn(
+        JSON.stringify({
+          ...logBase,
+          level: "warn",
+          msg: "concurrency_limit_reached",
+          runningCount: runningCount,
+          maxConcurrency: maxConcurrency,
+        }),
+      );
+      // Throw error to trigger SQS redelivery (message will be retried later)
+      throw new Error(errorMsg);
+    }
+
+    // Start the Standard workflow
+    const cmd = new StartExecutionCommand({
       stateMachineArn: process.env.STATE_MACHINE_ARN,
       input: JSON.stringify({ message: parsed }),
     });
     const resp = await sfn.send(cmd);
     const executionArn = resp.executionArn || "arn not found";
 
-    // Check if the step function execution failed
-    if (resp.status === "FAILED" || resp.status === "TIMED_OUT") {
-      console.error(
-        JSON.stringify({
-          ...logBase,
-          level: "error",
-          msg: "workflow_failed",
-          executionArn: executionArn,
-          status: resp.status,
-          cause: resp.cause,
-          error: resp.error,
-        }),
-      );
-      // Throw error to trigger SQS redelivery to DLQ
-      throw new Error(
-        `Step function execution failed with status: ${resp.status}. Cause: ${resp.cause || "N/A"}`,
-      );
-    }
-
     console.log(
       JSON.stringify({
         ...logBase,
         level: "info",
-        msg: "completed",
+        msg: "execution_started",
         executionArn: executionArn,
-        status: resp.status,
       }),
     );
 
     return {
       status: "ok",
       executionArn: executionArn,
-      workflowStatus: resp.status || "status not found",
     };
   } catch (err) {
     console.error(
