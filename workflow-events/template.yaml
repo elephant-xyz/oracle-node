@@ -29,7 +29,7 @@ Resources:
         - arm64
       RetentionPolicy: Delete
     Metadata:
-      BuildMethod: nodejs22.x
+      BuildMethod: makefile
       BuildArchitecture: arm64
 
   # DynamoDB table for storing workflow errors with single-table design
