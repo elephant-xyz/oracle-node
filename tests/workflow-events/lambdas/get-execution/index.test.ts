@@ -1,10 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mockClient } from "aws-sdk-client-mock";
 import { DynamoDBDocumentClient, QueryCommand } from "@aws-sdk/lib-dynamodb";
+import type { FailedExecutionItem, ExecutionErrorLink } from "shared/types.js";
 import type {
-  FailedExecutionItem,
-  ExecutionErrorLink,
-} from "../../../../workflow-events/lambdas/shared-layer/src/types.js";
+  ExecutionBusinessData,
+  ErrorBusinessData,
+} from "../../../../workflow-events/lambdas/get-execution/index.js";
 
 /**
  * Mock the DynamoDB Document Client for all tests.
@@ -70,6 +71,46 @@ const createMockErrorLink = (
   GS1SK: `EXECUTION#${executionId}`,
   ...overrides,
 });
+
+/**
+ * Strips DynamoDB-specific fields from FailedExecutionItem, returning only business fields.
+ * @param item - The FailedExecutionItem from DynamoDB
+ * @returns ExecutionBusinessData with only business fields
+ */
+const stripExecutionFields = (
+  item: FailedExecutionItem,
+): ExecutionBusinessData => {
+  return {
+    executionId: item.executionId,
+    status: item.status,
+    errorType: item.errorType,
+    county: item.county,
+    totalOccurrences: item.totalOccurrences,
+    openErrorCount: item.openErrorCount,
+    uniqueErrorCount: item.uniqueErrorCount,
+    taskToken: item.taskToken,
+    createdAt: item.createdAt,
+    updatedAt: item.updatedAt,
+  };
+};
+
+/**
+ * Strips DynamoDB-specific fields from ExecutionErrorLink, returning only business fields.
+ * @param item - The ExecutionErrorLink from DynamoDB
+ * @returns ErrorBusinessData with only business fields
+ */
+const stripErrorFields = (item: ExecutionErrorLink): ErrorBusinessData => {
+  return {
+    errorCode: item.errorCode,
+    status: item.status,
+    occurrences: item.occurrences,
+    errorDetails: item.errorDetails,
+    executionId: item.executionId,
+    county: item.county,
+    createdAt: item.createdAt,
+    updatedAt: item.updatedAt,
+  };
+};
 
 describe("get-execution handler", () => {
   const originalEnv = process.env;
@@ -245,8 +286,8 @@ describe("get-execution handler", () => {
       const result = await handler({ sortOrder: "most" });
 
       expect(result.success).toBe(true);
-      expect(result.execution).toEqual(mockExecution);
-      expect(result.errors).toEqual(mockErrors);
+      expect(result.execution).toEqual(stripExecutionFields(mockExecution));
+      expect(result.errors).toEqual(mockErrors.map(stripErrorFields));
       expect(result.error).toBeUndefined();
     });
 
@@ -285,7 +326,7 @@ describe("get-execution handler", () => {
       const result = await handler({ sortOrder: "least" });
 
       expect(result.success).toBe(true);
-      expect(result.execution).toEqual(mockExecution);
+      expect(result.execution).toEqual(stripExecutionFields(mockExecution));
       expect(result.errors).toEqual([]);
     });
   });
@@ -456,6 +497,21 @@ describe("get-execution handler", () => {
       expect(result.success).toBe(true);
       expect(result.errors).toHaveLength(5);
       expect(result.execution?.uniqueErrorCount).toBe(5);
+      // Verify DynamoDB-specific fields are not present
+      expect(result.execution).not.toHaveProperty("PK");
+      expect(result.execution).not.toHaveProperty("SK");
+      expect(result.execution).not.toHaveProperty("GS1PK");
+      expect(result.execution).not.toHaveProperty("GS1SK");
+      expect(result.execution).not.toHaveProperty("GS3PK");
+      expect(result.execution).not.toHaveProperty("GS3SK");
+      expect(result.execution).not.toHaveProperty("entityType");
+      result.errors.forEach((error) => {
+        expect(error).not.toHaveProperty("PK");
+        expect(error).not.toHaveProperty("SK");
+        expect(error).not.toHaveProperty("GS1PK");
+        expect(error).not.toHaveProperty("GS1SK");
+        expect(error).not.toHaveProperty("entityType");
+      });
     });
   });
 

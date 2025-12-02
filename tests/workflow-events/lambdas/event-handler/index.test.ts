@@ -7,10 +7,7 @@ import {
   BatchGetCommand,
 } from "@aws-sdk/lib-dynamodb";
 import type { EventBridgeEvent } from "aws-lambda";
-import type {
-  WorkflowEventDetail,
-  WorkflowError,
-} from "../../../../workflow-events/lambdas/event-handler/types.js";
+import type { WorkflowEventDetail, WorkflowError } from "shared/types.js";
 
 /**
  * Mock the DynamoDB Document Client for all tests.
