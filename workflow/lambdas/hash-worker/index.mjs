@@ -29,6 +29,7 @@ import {
  * @property {string} county - County name.
  * @property {string} executionId - Execution identifier.
  * @property {string} [propertyCid] - Property CID extracted from seed hash.
+ * @property {Record<string, string>[]} transactionItems - Parsed transaction items from combined CSV.
  */
 
 /**
@@ -177,6 +178,14 @@ async function runHash({
     const { bucket: outputBucket } = parseS3Uri(outputPrefix);
     const baseKey = `${outputPrefix.replace(/^s3:\/\/[^/]+\//, "").replace(/\/$/, "")}/${executionId}`;
 
+    // Parse combined CSV to get transaction items for submission
+    const combinedCsvContent = await fs.readFile(combinedCsvPath, "utf8");
+    const transactionItems = parse(combinedCsvContent, {
+      columns: true,
+      skip_empty_lines: true,
+      trim: true,
+    });
+
     const [seedHashZipS3Uri, countyHashZipS3Uri, combinedHashCsvS3Uri] =
       await Promise.all([
         uploadToS3(
@@ -204,6 +213,7 @@ async function runHash({
       county,
       executionId,
       propertyCid,
+      transactionItems,
     };
   } finally {
     // Cleanup

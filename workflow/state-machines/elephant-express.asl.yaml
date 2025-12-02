@@ -454,6 +454,7 @@ States:
       county.$: $.county
       executionId.$: $.executionId
       propertyCid.$: $.propertyCid
+      transactionItems.$: $.transactionItems
     ResultPath: $.hash
     Next: EmitHashSucceeded
     Retry:
@@ -586,11 +587,11 @@ States:
             phase: Upload
             step: Upload
     ResultPath: $.eventResult
-    Next: PrepareTransactionItems
+    Next: QueueForTheSubmit
     Catch:
       - ErrorEquals: [States.ALL]
         ResultPath: $.eventError
-        Next: PrepareTransactionItems
+        Next: QueueForTheSubmit
 
   WaitForUploadResolution:
     Type: Task
@@ -620,51 +621,15 @@ States:
         ResultPath: $.uploadError
         Next: WaitForUploadResolution
 
-  # === PREPARE TRANSACTION ITEMS ===
-
-  PrepareTransactionItems:
-    Type: Pass
-    QueryLanguage: JSONata
-    Comment: "Prepare transaction items from hash CSV for submit queue"
-    Output: >-
-      {%
-        $merge([$states.input, {
-          "post": {
-            "items": [],
-            "transformedOutputS3Uri": $states.input.transform.transformedOutputS3Uri,
-            "preparedInputS3Uri": $states.input.prepare.output_s3_uri,
-            "executionId": $states.input.executionId,
-            "county": $states.input.pre.county_name,
-            "combinedHashCsvS3Uri": $states.input.hash.combinedHashCsvS3Uri
-          }
-        }])
-      %}
-    Next: LoadTransactionItemsFromS3
-
-  LoadTransactionItemsFromS3:
-    Type: Task
-    Resource: arn:aws:states:::aws-sdk:s3:getObject
-    Comment: "Load combined hash CSV from S3 to get transaction items"
-    Parameters:
-      Bucket.$: States.ArrayGetItem(States.StringSplit($.hash.combinedHashCsvS3Uri, '/'), 2)
-      Key.$: States.Format('{}/{}', States.ArrayGetItem(States.StringSplit($.hash.combinedHashCsvS3Uri, '/'), 3), States.ArrayGetItem(States.StringSplit($.hash.combinedHashCsvS3Uri, '/'), 4))
-    ResultSelector:
-      csvContent.$: $.Body
-    ResultPath: $.csvData
-    Next: QueueForTheSubmit
-    Catch:
-      - ErrorEquals: [States.ALL]
-        Comment: "Failed to load transaction items - proceed anyway"
-        ResultPath: $.csvLoadError
-        Next: QueueForTheSubmit
+  # === QUEUE FOR SUBMIT ===
 
   QueueForTheSubmit:
     Type: Task
     Resource: arn:aws:states:::sqs:sendMessage
-    Comment: "Queue combined hash CSV S3 URI for submit processing"
+    Comment: "Queue transaction items for blockchain submission"
     Parameters:
       QueueUrl: ${TransactionsSqsQueueUrl}
-      MessageBody.$: States.JsonToString($.hash)
+      MessageBody.$: States.JsonToString($.hash.transactionItems)
     ResultPath: null
     End: true
 
