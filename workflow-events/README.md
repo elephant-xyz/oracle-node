@@ -180,5 +180,3 @@ aws lambda invoke \
 ```
 
 The `response.json` file will contain a `GetExecutionResponse` object as described above.
-
-
