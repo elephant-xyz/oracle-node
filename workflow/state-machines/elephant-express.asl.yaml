@@ -230,7 +230,7 @@ States:
     Type: Task
     Resource: arn:aws:states:::events:putEvents.waitForTaskToken
     Comment: "Emit FAILED event and wait for external resolution - retry target is Transform"
-    HeartbeatSeconds: 86400
+    HeartbeatSeconds: 2592000 # 30 days
     Parameters:
       Entries:
         - Source: elephant.workflow
@@ -240,7 +240,7 @@ States:
             county.$: $.pre.county_name
             status: FAILED
             phase: Transform
-            step: EvaluateTransform
+            step: Transform
             taskToken.$: $$.Task.Token
             errors:
               - code: "20001"
@@ -349,7 +349,7 @@ States:
     Resource: arn:aws:states:::events:putEvents.waitForTaskToken
     QueryLanguage: JSONata
     Comment: "Emit FAILED event with individual validation errors and wait for external resolution - retry target is Transform"
-    HeartbeatSeconds: 86400
+    HeartbeatSeconds: 2592000 # 30 days
     Arguments:
       Entries:
         - Source: elephant.workflow
@@ -359,7 +359,7 @@ States:
             county: "{% $states.input.pre.county_name %}"
             status: FAILED
             phase: SVL
-            step: EvaluateSvl
+            step: SVL
             taskToken: "{% $states.context.Task.Token %}"
             errors: >-
               {%
@@ -385,7 +385,7 @@ States:
     Type: Task
     Resource: arn:aws:states:::events:putEvents.waitForTaskToken
     Comment: "Emit FAILED event for SVL exception and wait for external resolution - retry target is Transform"
-    HeartbeatSeconds: 86400
+    HeartbeatSeconds: 2592000 # 30 days
     Parameters:
       Entries:
         - Source: elephant.workflow
@@ -395,7 +395,7 @@ States:
             county.$: $.pre.county_name
             status: FAILED
             phase: SVL
-            step: EvaluateSvl
+            step: SVL
             taskToken.$: $$.Task.Token
             errors:
               - code: "30002"
@@ -490,7 +490,7 @@ States:
     Type: Task
     Resource: arn:aws:states:::events:putEvents.waitForTaskToken
     Comment: "Emit FAILED event and wait for external resolution - retry target is Hash"
-    HeartbeatSeconds: 86400
+    HeartbeatSeconds: 2592000 # 30 days
     Parameters:
       Entries:
         - Source: elephant.workflow
@@ -500,7 +500,7 @@ States:
             county.$: $.pre.county_name
             status: FAILED
             phase: Hash
-            step: EvaluateHash
+            step: Hash
             taskToken.$: $$.Task.Token
             errors:
               - code: "40001"
@@ -595,7 +595,7 @@ States:
     Type: Task
     Resource: arn:aws:states:::events:putEvents.waitForTaskToken
     Comment: "Emit FAILED event and wait for external resolution - retry target is Upload"
-    HeartbeatSeconds: 86400
+    HeartbeatSeconds: 2592000 # 30 days
     Parameters:
       Entries:
         - Source: elephant.workflow
@@ -605,7 +605,7 @@ States:
             county.$: $.pre.county_name
             status: FAILED
             phase: Upload
-            step: EvaluateUpload
+            step: Upload
             taskToken.$: $$.Task.Token
             errors:
               - code: "50001"
