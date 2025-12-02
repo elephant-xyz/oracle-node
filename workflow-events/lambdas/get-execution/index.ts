@@ -1,4 +1,5 @@
 import * as z from "zod";
+import type { ZodIssue } from "zod";
 import {
   getExecutionWithErrors,
   type GetExecutionInput,
@@ -30,8 +31,8 @@ export type GetExecutionEvent = z.infer<typeof GetExecutionEventSchema>;
 export interface GetExecutionResponse extends GetExecutionResult {
   /** Whether the operation was successful. */
   success: boolean;
-  /** Error message if the operation failed. */
-  error?: any;
+  /** Error message or validation issues if the operation failed. */
+  error?: string | ZodIssue[];
 }
 
 /**
@@ -48,7 +49,7 @@ export interface GetExecutionResponse extends GetExecutionResult {
  * - success: boolean - whether the operation succeeded
  * - execution: FailedExecutionItem | null - the found execution or null
  * - errors: ExecutionErrorLink[] - array of errors for the execution
- * - error?: string - error message if operation failed
+ * - error?: string | ZodIssue[] - error message if operation failed, or ZodIssue[] if validation failed
  *
  * @param event - Direct invocation event with sortOrder and optional errorType
  * @returns Response with execution data or error
@@ -62,16 +63,15 @@ export const handler = async (
     // Validate input using Zod
     const parseResult = GetExecutionEventSchema.safeParse(event);
     if (!parseResult.success) {
-      const errorMessage = parseResult.error.issues;
       console.warn("input-validation-failed", {
-        error: errorMessage,
+        error: parseResult.error.issues,
         issues: parseResult.error.issues,
       });
       return {
         success: false,
         execution: null,
         errors: [],
-        error: errorMessage,
+        error: parseResult.error.issues,
       };
     }
 

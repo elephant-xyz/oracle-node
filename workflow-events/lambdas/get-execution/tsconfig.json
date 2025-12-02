@@ -18,9 +18,9 @@
     "types": ["node", "aws-lambda"],
     "baseUrl": ".",
     "paths": {
-      "shared/*": ["../shared-layer/src/*"]
+      "shared/*": ["../../layers/shared/src/*"]
     }
   },
-  "include": ["**/*.ts", "../shared-layer/src/**/*.ts"],
+  "include": ["**/*.ts", "../../layers/shared/src/**/*.ts"],
   "exclude": ["node_modules", "dist"]
 }

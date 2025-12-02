@@ -34,7 +34,8 @@ export interface GetExecutionResult {
  *
  * GSI Strategy:
  * - GS1: GS1PK = "METRIC#ERRORCOUNT", GS1SK = "COUNT#{paddedCount}#EXECUTION#{executionId}"
- * - GS3: GS3PK = "METRIC#ERRORCOUNT", GS3SK = "COUNT#{errorType}#{paddedCount}#EXECUTION#{executionId}"
+ * - GS3: GS3PK = "METRIC#ERRORCOUNT" (FailedExecutionItem only; ErrorRecord uses "METRIC#ERRORCOUNT#ERROR"),
+ *        GS3SK = "COUNT#{errorType}#{paddedCount}#EXECUTION#{executionId}"
  *
  * @param input - Query parameters including sortOrder and optional errorType
  * @returns The matching FailedExecutionItem or null if none found
@@ -54,16 +55,16 @@ export const queryExecutionByErrorCount = async (
 
   if (errorType) {
     // Use GS3 with errorType filter using begins_with on GS3SK
+    // No FilterExpression needed: ErrorRecord uses GS3PK="METRIC#ERRORCOUNT#ERROR",
+    // so only FailedExecutionItem (GS3PK="METRIC#ERRORCOUNT") matches this query
     const command = new QueryCommand({
       TableName: TABLE_NAME,
       IndexName: "GS3",
       KeyConditionExpression:
         "GS3PK = :gs3pk AND begins_with(GS3SK, :gs3skPrefix)",
-      FilterExpression: "entityType = :entityType",
       ExpressionAttributeValues: {
         ":gs3pk": "METRIC#ERRORCOUNT",
         ":gs3skPrefix": `COUNT#${errorType}#`,
-        ":entityType": ENTITY_TYPES.FAILED_EXECUTION,
       },
       ScanIndexForward: scanIndexForward,
       Limit: 1,
