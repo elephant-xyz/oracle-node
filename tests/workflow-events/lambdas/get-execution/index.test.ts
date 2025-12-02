@@ -61,6 +61,7 @@ const createMockErrorLink = (
   errorCode,
   status: "failed",
   occurrences: 1,
+  errorDetails: "{}",
   executionId,
   county: "palm_beach",
   createdAt: "2025-01-01T00:00:00.000Z",
@@ -101,9 +102,19 @@ describe("get-execution handler", () => {
       const result = await handler({});
 
       expect(result.success).toBe(false);
-      expect(result.error).toContain("sortOrder");
       expect(result.execution).toBeNull();
       expect(result.errors).toEqual([]);
+      // error can be string or ZodIssue[] - check for sortOrder in either format
+      if (Array.isArray(result.error)) {
+        expect(
+          result.error.some((issue) =>
+            issue.path.some((p) => String(p) === "sortOrder"),
+          ),
+        ).toBe(true);
+      } else {
+        expect(result.error).toBeDefined();
+        expect(String(result.error)).toContain("sortOrder");
+      }
     });
 
     it("should return validation error when sortOrder is invalid", async () => {
@@ -114,9 +125,19 @@ describe("get-execution handler", () => {
       const result = await handler({ sortOrder: "invalid" });
 
       expect(result.success).toBe(false);
-      expect(result.error).toContain("sortOrder");
       expect(result.execution).toBeNull();
       expect(result.errors).toEqual([]);
+      // error can be string or ZodIssue[] - check for sortOrder in either format
+      if (Array.isArray(result.error)) {
+        expect(
+          result.error.some((issue) =>
+            issue.path.some((p) => String(p) === "sortOrder"),
+          ),
+        ).toBe(true);
+      } else {
+        expect(result.error).toBeDefined();
+        expect(String(result.error)).toContain("sortOrder");
+      }
     });
 
     it("should return validation error when errorType is empty string", async () => {
@@ -127,10 +148,18 @@ describe("get-execution handler", () => {
       const result = await handler({ sortOrder: "most", errorType: "" });
 
       expect(result.success).toBe(false);
-      expect(result.error).toContain("errorType");
-      expect(result.error).toContain("cannot be an empty string");
       expect(result.execution).toBeNull();
       expect(result.errors).toEqual([]);
+      // error can be string or ZodIssue[] - check for errorType in either format
+      if (Array.isArray(result.error)) {
+        const errorStr = JSON.stringify(result.error);
+        expect(errorStr).toContain("errorType");
+        expect(errorStr).toContain("cannot be an empty string");
+      } else {
+        expect(result.error).toBeDefined();
+        expect(String(result.error)).toContain("errorType");
+        expect(String(result.error)).toContain("cannot be an empty string");
+      }
     });
 
     it("should accept valid sortOrder 'most'", async () => {
@@ -296,6 +325,23 @@ describe("get-execution handler", () => {
         ":gs3skPrefix": "COUNT#01#",
       });
     });
+
+    it("should not use FilterExpression in GS3 query (partition key separation)", async () => {
+      ddbMock.on(QueryCommand).resolves({ Items: [] });
+
+      const { handler } = await import(
+        "../../../../workflow-events/lambdas/get-execution/index.js"
+      );
+
+      await handler({ sortOrder: "most", errorType: "01" });
+
+      const calls = ddbMock.commandCalls(QueryCommand);
+      expect(calls[0].args[0].input.FilterExpression).toBeUndefined();
+      // Verify entityType is not in ExpressionAttributeValues for GS3 query
+      expect(
+        calls[0].args[0].input.ExpressionAttributeValues,
+      ).not.toHaveProperty(":entityType");
+    });
   });
 
   describe("sort order", () => {
@@ -414,7 +460,7 @@ describe("get-execution handler", () => {
   });
 
   describe("filter expression", () => {
-    it("should filter by FailedExecution entity type", async () => {
+    it("should filter by FailedExecution entity type in GS1 query", async () => {
       ddbMock.on(QueryCommand).resolves({ Items: [] });
 
       const { handler } = await import(

@@ -263,6 +263,9 @@ describe("event-handler", () => {
       expect(
         executionErrorLink?.ExpressionAttributeValues?.[":occurrences"],
       ).toBe(1);
+      expect(
+        executionErrorLink?.ExpressionAttributeValues?.[":errorDetails"],
+      ).toBe(JSON.stringify({ reason: "login timeout" }));
     });
 
     it("should include taskToken in FailedExecutionItem when provided", async () => {
