@@ -345,7 +345,9 @@ async function invokeTransformAndSvlWorkers({
   executionId,
   outputPrefix,
 }) {
-  console.log(`Starting transform and SVL validation for execution ${executionId}...`);
+  console.log(
+    `Starting transform and SVL validation for execution ${executionId}...`,
+  );
   console.log(`Prepared S3 URI: ${preparedS3Uri}`);
 
   // Step 1: Invoke transform worker
@@ -380,7 +382,9 @@ async function invokeTransformAndSvlWorkers({
     new TextDecoder().decode(transformResponse.Payload ?? new Uint8Array()),
   );
 
-  console.log(`Transform worker completed. Output: ${transformResult.transformedOutputS3Uri}`);
+  console.log(
+    `Transform worker completed. Output: ${transformResult.transformedOutputS3Uri}`,
+  );
 
   // Step 2: Invoke SVL worker with transform output
   console.log(`Invoking SVL worker ${svlFunctionName}...`);
@@ -406,7 +410,9 @@ async function invokeTransformAndSvlWorkers({
       new TextDecoder().decode(svlResponse.Payload ?? new Uint8Array()),
     );
     // SVL validation failure - this is expected when fixes don't work
-    console.log(`SVL validation failed: ${errorPayload.errorMessage || errorPayload.errorType}`);
+    console.log(
+      `SVL validation failed: ${errorPayload.errorMessage || errorPayload.errorType}`,
+    );
     return {
       status: "validation_failed",
       validationPassed: false,
@@ -417,7 +423,9 @@ async function invokeTransformAndSvlWorkers({
     new TextDecoder().decode(svlResponse.Payload ?? new Uint8Array()),
   );
 
-  console.log(`SVL worker completed. Validation passed: ${svlResult.validationPassed}`);
+  console.log(
+    `SVL worker completed. Validation passed: ${svlResult.validationPassed}`,
+  );
 
   return {
     status: svlResult.validationPassed ? "success" : "validation_failed",
