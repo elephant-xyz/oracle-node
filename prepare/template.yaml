@@ -1701,3 +1701,6 @@ Outputs:
   UploadWorkerFunctionArn:
     Description: ARN of the Upload Worker Lambda function
     Value: !GetAtt UploadWorkerFunction.Arn
+  OutputS3Prefix:
+    Description: S3 prefix for workflow output files
+    Value: !Sub "s3://${EnvironmentBucket}/outputs"
