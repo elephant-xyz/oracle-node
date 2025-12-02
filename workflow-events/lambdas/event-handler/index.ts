@@ -1,5 +1,5 @@
 import type { EventBridgeEvent } from "aws-lambda";
-import type { WorkflowEventDetail } from "../shared/types.js";
+import type { WorkflowEventDetail } from "shared/types.js";
 
 import { createLogEntry } from "./log.js";
 import { saveErrorRecords } from "./dynamodb.js";

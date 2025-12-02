@@ -2,9 +2,9 @@ import { QueryCommand } from "@aws-sdk/lib-dynamodb";
 import type {
   FailedExecutionItem,
   ExecutionErrorLink,
-} from "../shared/types.js";
-import { TABLE_NAME, docClient } from "../shared/dynamodb-client.js";
-import { createKey, ENTITY_TYPES } from "../shared/keys.js";
+} from "shared/types.js";
+import { TABLE_NAME, docClient } from "shared/dynamodb-client.js";
+import { createKey, ENTITY_TYPES } from "shared/keys.js";
 
 /**
  * Sort order for querying executions by error count.

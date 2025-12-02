@@ -10,14 +10,14 @@ import type {
   ExecutionErrorLink,
   FailedExecutionItem,
   ErrorStatus,
-} from "../shared/types.js";
-import { TABLE_NAME, docClient } from "../shared/dynamodb-client.js";
+} from "shared/types.js";
+import { TABLE_NAME, docClient } from "shared/dynamodb-client.js";
 import {
   ENTITY_TYPES,
   padCount,
   extractErrorType,
   createKey,
-} from "../shared/keys.js";
+} from "shared/keys.js";
 
 /**
  * Default error status for new records.

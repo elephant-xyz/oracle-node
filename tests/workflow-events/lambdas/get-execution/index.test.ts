@@ -4,7 +4,7 @@ import { DynamoDBDocumentClient, QueryCommand } from "@aws-sdk/lib-dynamodb";
 import type {
   FailedExecutionItem,
   ExecutionErrorLink,
-} from "../../../../workflow-events/lambdas/shared/types.js";
+} from "../../../../workflow-events/lambdas/shared-layer/src/types.js";
 
 /**
  * Mock the DynamoDB Document Client for all tests.

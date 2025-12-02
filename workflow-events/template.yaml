@@ -16,6 +16,22 @@ Globals:
       LogFormat: JSON
 
 Resources:
+  # Shared layer containing common code for all lambdas
+  SharedLayer:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      LayerName: !Sub "${EnvironmentName}-workflow-events-shared"
+      Description: Shared utilities for workflow-events lambdas (DynamoDB client, types, keys)
+      ContentUri: lambdas/shared-layer
+      CompatibleRuntimes:
+        - nodejs22.x
+      CompatibleArchitectures:
+        - arm64
+      RetentionPolicy: Delete
+    Metadata:
+      BuildMethod: makefile
+      BuildArchitecture: arm64
+
   # DynamoDB table for storing workflow errors with single-table design
   WorkflowErrorsTable:
     Type: AWS::DynamoDB::Table
@@ -94,6 +110,8 @@ Resources:
         - arm64
       Handler: index.handler
       CodeUri: lambdas/event-handler
+      Layers:
+        - !Ref SharedLayer
       DeadLetterQueue:
         TargetArn: !GetAtt WorkflowEventHandlerDeadLetterQueue.Arn
         Type: SQS
@@ -124,6 +142,8 @@ Resources:
           - index.ts
         Sourcemap: true
         LogLevel: info
+        External:
+          - shared
 
   GetExecutionFunction:
     Type: AWS::Serverless::Function
@@ -134,6 +154,8 @@ Resources:
         - arm64
       Handler: index.handler
       CodeUri: lambdas/get-execution
+      Layers:
+        - !Ref SharedLayer
       Description: "Retrieves executions by error count with optional error type filter"
       Environment:
         Variables:
@@ -151,6 +173,8 @@ Resources:
           - index.ts
         Sourcemap: true
         LogLevel: info
+        External:
+          - shared
 
 Outputs:
   WorkflowEventHandlerFunctionName:

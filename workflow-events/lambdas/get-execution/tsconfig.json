@@ -14,10 +14,14 @@
     "declarationMap": true,
     "sourceMap": true,
     "outDir": "./dist",
-    "rootDir": "../",
+    "rootDir": "./",
     "noEmit": true,
-    "types": ["node", "aws-lambda"]
+    "types": ["node", "aws-lambda"],
+    "baseUrl": ".",
+    "paths": {
+      "shared/*": ["../shared-layer/src/*"]
+    }
   },
-  "include": ["**/*.ts", "../shared/**/*.ts"],
+  "include": ["**/*.ts"],
   "exclude": ["node_modules", "dist"]
 }

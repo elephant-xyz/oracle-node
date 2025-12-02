@@ -1,0 +1,14 @@
+{
+  "name": "shared-layer",
+  "version": "1.0.0",
+  "description": "Shared layer containing common code for workflow-events lambdas",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "@aws-sdk/client-dynamodb": "^3.583.0",
+    "@aws-sdk/lib-dynamodb": "^3.583.0",
+    "@types/node": "^22.0.0",
+    "esbuild": "^0.21.0",
+    "typescript": "^5.4.0"
+  }
+}
