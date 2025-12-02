@@ -340,9 +340,10 @@ describe("transform-worker handler", () => {
     );
 
     // The error should be passed to executeWithTaskToken to throw
-    const failureCall = mockExecuteWithTaskToken.mock.calls[
-      mockExecuteWithTaskToken.mock.calls.length - 1
-    ];
+    const failureCall =
+      mockExecuteWithTaskToken.mock.calls[
+        mockExecuteWithTaskToken.mock.calls.length - 1
+      ];
     const workerFn = failureCall[0].workerFn;
     await expect(workerFn()).rejects.toThrow("TRANSFORM_S3_PREFIX is required");
   });
@@ -512,16 +513,15 @@ describe("transform-worker handler", () => {
     expect(mockEmitWorkflowEvent).toHaveBeenCalledWith(
       expect.objectContaining({
         status: "FAILED",
-        errors: [
-          expect.objectContaining({ code: "TRANSFORM_SCRIPTS_FAILED" }),
-        ],
+        errors: [expect.objectContaining({ code: "TRANSFORM_SCRIPTS_FAILED" })],
       }),
     );
 
     // The workerFn should throw ScriptsFailedError
-    const failureCall = mockExecuteWithTaskToken.mock.calls[
-      mockExecuteWithTaskToken.mock.calls.length - 1
-    ];
+    const failureCall =
+      mockExecuteWithTaskToken.mock.calls[
+        mockExecuteWithTaskToken.mock.calls.length - 1
+      ];
     const workerFn = failureCall[0].workerFn;
 
     await expect(workerFn()).rejects.toThrow("Transform scripts failed");

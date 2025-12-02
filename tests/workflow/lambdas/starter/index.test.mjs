@@ -364,9 +364,7 @@ describe("starter lambda", () => {
   });
 
   it("should return MAX_RUNNING_EXECUTIONS when ListExecutions fails", async () => {
-    sfnMock
-      .on(ListExecutionsCommand)
-      .rejects(new Error("Access Denied"));
+    sfnMock.on(ListExecutionsCommand).rejects(new Error("Access Denied"));
 
     // Set max concurrent to 1000 (the default MAX_RUNNING_EXECUTIONS)
     process.env.MAX_CONCURRENT_EXECUTIONS = "1000";
