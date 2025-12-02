@@ -10,8 +10,6 @@ const mockDownloadS3Object = vi.fn();
 const mockRequireEnv = vi.fn();
 const mockCreateLogger = vi.fn(() => vi.fn());
 const mockEmitWorkflowEvent = vi.fn();
-const mockCreateWorkflowError = vi.fn((code, details) => ({ code, details }));
-
 vi.mock("../../../../workflow/lambdas/upload-worker/shared/index.mjs", () => ({
   executeWithTaskToken: mockExecuteWithTaskToken,
   parseS3Uri: mockParseS3Uri,
@@ -19,7 +17,6 @@ vi.mock("../../../../workflow/lambdas/upload-worker/shared/index.mjs", () => ({
   requireEnv: mockRequireEnv,
   createLogger: mockCreateLogger,
   emitWorkflowEvent: mockEmitWorkflowEvent,
-  createWorkflowError: mockCreateWorkflowError,
 }));
 
 // Mock @elephant-xyz/cli/lib
@@ -158,7 +155,7 @@ describe("upload-worker handler", () => {
     });
   });
 
-  it("should emit FAILED event with UPLOAD_IPFS_FAILED on UploadFailedError", async () => {
+  it("should only emit IN_PROGRESS event on UploadFailedError (FAILED is emitted by state machine)", async () => {
     mockUpload.mockResolvedValue({
       success: false,
       errorMessage: "IPFS upload failed",
@@ -178,23 +175,21 @@ describe("upload-worker handler", () => {
 
     await handler(event);
 
-    // Should have 2 emitWorkflowEvent calls: IN_PROGRESS and FAILED
-    expect(mockEmitWorkflowEvent).toHaveBeenCalledTimes(2);
-
-    // Second call should be FAILED with UPLOAD_IPFS_FAILED
-    expect(mockEmitWorkflowEvent).toHaveBeenNthCalledWith(2, {
+    // Should have only 1 emitWorkflowEvent call: IN_PROGRESS
+    // FAILED event is now emitted by the state machine's WaitForUploadResolution state
+    expect(mockEmitWorkflowEvent).toHaveBeenCalledTimes(1);
+    expect(mockEmitWorkflowEvent).toHaveBeenCalledWith({
       executionId: "exec-ipfs-fail",
       county: "ipfs-fail-county",
-      status: "FAILED",
+      status: "IN_PROGRESS",
       phase: "Upload",
       step: "Upload",
       taskToken: "task-token-ipfs-fail",
-      errors: [{ code: "UPLOAD_IPFS_FAILED", details: expect.any(Object) }],
       log: expect.any(Function),
     });
   });
 
-  it("should emit FAILED event with UPLOAD_FAILED on general failure", async () => {
+  it("should only emit IN_PROGRESS event on general failure (FAILED is emitted by state machine)", async () => {
     mockDownloadS3Object.mockRejectedValue(new Error("S3 download failed"));
 
     const { handler } = await import(
@@ -210,23 +205,21 @@ describe("upload-worker handler", () => {
 
     await handler(event);
 
-    // Should have 2 emitWorkflowEvent calls: IN_PROGRESS and FAILED
-    expect(mockEmitWorkflowEvent).toHaveBeenCalledTimes(2);
-
-    // Second call should be FAILED with UPLOAD_FAILED
-    expect(mockEmitWorkflowEvent).toHaveBeenNthCalledWith(2, {
+    // Should have only 1 emitWorkflowEvent call: IN_PROGRESS
+    // FAILED event is now emitted by the state machine's WaitForUploadResolution state
+    expect(mockEmitWorkflowEvent).toHaveBeenCalledTimes(1);
+    expect(mockEmitWorkflowEvent).toHaveBeenCalledWith({
       executionId: "exec-general-fail",
       county: "general-fail-county",
-      status: "FAILED",
+      status: "IN_PROGRESS",
       phase: "Upload",
       step: "Upload",
       taskToken: "task-token-general-fail",
-      errors: [{ code: "UPLOAD_FAILED", details: expect.any(Object) }],
       log: expect.any(Function),
     });
   });
 
-  it("should throw error when ELEPHANT_PINATA_JWT is missing", async () => {
+  it("should only emit IN_PROGRESS event when ELEPHANT_PINATA_JWT is missing (FAILED is emitted by state machine)", async () => {
     mockRequireEnv.mockImplementation((name) => {
       throw new Error(`Missing required env: ${name}`);
     });
@@ -244,10 +237,12 @@ describe("upload-worker handler", () => {
 
     await handler(event);
 
-    // Should emit FAILED event
+    // Should have only 1 emitWorkflowEvent call: IN_PROGRESS
+    // FAILED event is now emitted by the state machine's WaitForUploadResolution state
+    expect(mockEmitWorkflowEvent).toHaveBeenCalledTimes(1);
     expect(mockEmitWorkflowEvent).toHaveBeenCalledWith(
       expect.objectContaining({
-        status: "FAILED",
+        status: "IN_PROGRESS",
       }),
     );
   });

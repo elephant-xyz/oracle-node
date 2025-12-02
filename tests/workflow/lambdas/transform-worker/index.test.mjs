@@ -23,8 +23,6 @@ const mockDownloadS3Object = vi.fn();
 const mockUploadToS3 = vi.fn().mockResolvedValue("s3://bucket/output.zip");
 const mockCreateLogger = vi.fn(() => vi.fn());
 const mockEmitWorkflowEvent = vi.fn();
-const mockCreateWorkflowError = vi.fn((code, details) => ({ code, details }));
-
 vi.mock(
   "../../../../workflow/lambdas/transform-worker/shared/index.mjs",
   () => ({
@@ -34,7 +32,6 @@ vi.mock(
     uploadToS3: mockUploadToS3,
     createLogger: mockCreateLogger,
     emitWorkflowEvent: mockEmitWorkflowEvent,
-    createWorkflowError: mockCreateWorkflowError,
   }),
 );
 
@@ -157,7 +154,7 @@ describe("transform-worker handler", () => {
     });
   });
 
-  it("should emit FAILED event with TRANSFORM_SCRIPTS_FAILED on script failure", async () => {
+  it("should only emit IN_PROGRESS event on script failure (FAILED is emitted by state machine)", async () => {
     mockTransform.mockResolvedValue({
       success: false,
       error: "Script execution failed",
@@ -178,25 +175,21 @@ describe("transform-worker handler", () => {
 
     await handler(event);
 
-    // Should have 2 emitWorkflowEvent calls: IN_PROGRESS and FAILED
-    expect(mockEmitWorkflowEvent).toHaveBeenCalledTimes(2);
-
-    // Second call should be FAILED with TRANSFORM_SCRIPTS_FAILED
-    expect(mockEmitWorkflowEvent).toHaveBeenNthCalledWith(2, {
+    // Should have only 1 emitWorkflowEvent call: IN_PROGRESS
+    // FAILED event is now emitted by the state machine's WaitForTransformResolution state
+    expect(mockEmitWorkflowEvent).toHaveBeenCalledTimes(1);
+    expect(mockEmitWorkflowEvent).toHaveBeenCalledWith({
       executionId: "exec-script-fail",
       county: "script-fail-county",
-      status: "FAILED",
+      status: "IN_PROGRESS",
       phase: "Transform",
       step: "Transform",
       taskToken: "task-token-script-fail",
-      errors: [
-        { code: "TRANSFORM_SCRIPTS_FAILED", details: expect.any(Object) },
-      ],
       log: expect.any(Function),
     });
   });
 
-  it("should emit FAILED event with TRANSFORM_FAILED on general failure", async () => {
+  it("should only emit IN_PROGRESS event on general failure (FAILED is emitted by state machine)", async () => {
     mockTransform.mockResolvedValue({
       success: false,
       error: "General failure",
@@ -217,15 +210,16 @@ describe("transform-worker handler", () => {
 
     await handler(event);
 
-    // Second call should be FAILED with TRANSFORM_FAILED
-    expect(mockEmitWorkflowEvent).toHaveBeenNthCalledWith(2, {
+    // Should have only 1 emitWorkflowEvent call: IN_PROGRESS
+    // FAILED event is now emitted by the state machine's WaitForTransformResolution state
+    expect(mockEmitWorkflowEvent).toHaveBeenCalledTimes(1);
+    expect(mockEmitWorkflowEvent).toHaveBeenCalledWith({
       executionId: "exec-general-fail",
       county: "general-fail-county",
-      status: "FAILED",
+      status: "IN_PROGRESS",
       phase: "Transform",
       step: "Transform",
       taskToken: "task-token-general-fail",
-      errors: [{ code: "TRANSFORM_FAILED", details: expect.any(Object) }],
       log: expect.any(Function),
     });
   });
@@ -328,16 +322,14 @@ describe("transform-worker handler", () => {
       executionId: "exec-no-prefix",
     });
 
-    // The handler catches the error and emits FAILED event
+    // The handler catches the error and passes it to executeWithTaskToken
     await handler(event);
 
-    // Should have emitted FAILED event with TRANSFORM_FAILED
+    // Should have only emitted IN_PROGRESS (FAILED is emitted by state machine)
+    expect(mockEmitWorkflowEvent).toHaveBeenCalledTimes(1);
     expect(mockEmitWorkflowEvent).toHaveBeenCalledWith(
       expect.objectContaining({
-        status: "FAILED",
-        errors: expect.arrayContaining([
-          expect.objectContaining({ code: "TRANSFORM_FAILED" }),
-        ]),
+        status: "IN_PROGRESS",
       }),
     );
 
@@ -481,10 +473,11 @@ describe("transform-worker handler", () => {
 
     await handler(event);
 
-    // Should still emit FAILED
+    // Should only emit IN_PROGRESS (FAILED is emitted by state machine)
+    expect(mockEmitWorkflowEvent).toHaveBeenCalledTimes(1);
     expect(mockEmitWorkflowEvent).toHaveBeenCalledWith(
       expect.objectContaining({
-        status: "FAILED",
+        status: "IN_PROGRESS",
       }),
     );
   });
@@ -511,11 +504,11 @@ describe("transform-worker handler", () => {
 
     await handler(event);
 
-    // Should emit FAILED with TRANSFORM_SCRIPTS_FAILED
+    // Should only emit IN_PROGRESS (FAILED is emitted by state machine)
+    expect(mockEmitWorkflowEvent).toHaveBeenCalledTimes(1);
     expect(mockEmitWorkflowEvent).toHaveBeenCalledWith(
       expect.objectContaining({
-        status: "FAILED",
-        errors: [expect.objectContaining({ code: "TRANSFORM_SCRIPTS_FAILED" })],
+        status: "IN_PROGRESS",
       }),
     );
 

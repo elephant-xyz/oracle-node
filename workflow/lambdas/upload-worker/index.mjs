@@ -10,7 +10,6 @@ import {
   requireEnv,
   createLogger,
   emitWorkflowEvent,
-  createWorkflowError,
 } from "./shared/index.mjs";
 
 /**
@@ -209,25 +208,7 @@ export const handler = async (event) => {
         workerFn: async () => result,
       });
     } catch (err) {
-      // Emit FAILED event
-      await emitWorkflowEvent({
-        executionId: input.executionId,
-        county: input.county,
-        status: "FAILED",
-        phase: "Upload",
-        step: "Upload",
-        taskToken,
-        errors: [
-          createWorkflowError(
-            err instanceof Error && err.name === "UploadFailedError"
-              ? "UPLOAD_IPFS_FAILED"
-              : "UPLOAD_FAILED",
-            { message: err instanceof Error ? err.message : String(err) },
-          ),
-        ],
-        log,
-      });
-
+      // Note: FAILED event is emitted by the state machine's WaitForUploadResolution state
       await executeWithTaskToken({
         taskToken,
         log,

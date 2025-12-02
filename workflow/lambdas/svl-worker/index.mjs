@@ -10,7 +10,6 @@ import {
   uploadToS3,
   createLogger,
   emitWorkflowEvent,
-  createWorkflowError,
 } from "./shared/index.mjs";
 
 /**
@@ -321,22 +320,7 @@ export const handler = async (event) => {
         workerFn: async () => result,
       });
     } catch (err) {
-      // Emit FAILED event
-      await emitWorkflowEvent({
-        executionId: input.executionId,
-        county: input.county,
-        status: "FAILED",
-        phase: "SVL",
-        step: "SVL",
-        taskToken,
-        errors: [
-          createWorkflowError("SVL_FAILED", {
-            message: err instanceof Error ? err.message : String(err),
-          }),
-        ],
-        log,
-      });
-
+      // Note: FAILED event is emitted by the state machine's WaitForSvlExceptionResolution state
       await executeWithTaskToken({
         taskToken,
         log,

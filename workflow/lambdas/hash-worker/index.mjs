@@ -10,7 +10,6 @@ import {
   uploadToS3,
   createLogger,
   emitWorkflowEvent,
-  createWorkflowError,
 } from "./shared/index.mjs";
 
 /**
@@ -268,22 +267,7 @@ export const handler = async (event) => {
         workerFn: async () => result,
       });
     } catch (err) {
-      // Emit FAILED event
-      await emitWorkflowEvent({
-        executionId: input.executionId,
-        county: input.county,
-        status: "FAILED",
-        phase: "Hash",
-        step: "Hash",
-        taskToken,
-        errors: [
-          createWorkflowError("HASH_FAILED", {
-            message: err instanceof Error ? err.message : String(err),
-          }),
-        ],
-        log,
-      });
-
+      // Note: FAILED event is emitted by the state machine's WaitForHashResolution state
       await executeWithTaskToken({
         taskToken,
         log,

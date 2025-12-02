@@ -10,8 +10,6 @@ const mockDownloadS3Object = vi.fn();
 const mockUploadToS3 = vi.fn();
 const mockCreateLogger = vi.fn(() => vi.fn());
 const mockEmitWorkflowEvent = vi.fn();
-const mockCreateWorkflowError = vi.fn((code, details) => ({ code, details }));
-
 vi.mock("../../../../workflow/lambdas/hash-worker/shared/index.mjs", () => ({
   executeWithTaskToken: mockExecuteWithTaskToken,
   parseS3Uri: mockParseS3Uri,
@@ -19,7 +17,6 @@ vi.mock("../../../../workflow/lambdas/hash-worker/shared/index.mjs", () => ({
   uploadToS3: mockUploadToS3,
   createLogger: mockCreateLogger,
   emitWorkflowEvent: mockEmitWorkflowEvent,
-  createWorkflowError: mockCreateWorkflowError,
 }));
 
 // Mock @elephant-xyz/cli/lib
@@ -146,7 +143,7 @@ describe("hash-worker handler", () => {
     });
   });
 
-  it("should emit FAILED event with HASH_FAILED on seed hash failure", async () => {
+  it("should only emit IN_PROGRESS event on seed hash failure (FAILED is emitted by state machine)", async () => {
     mockHash.mockResolvedValue({
       success: false,
       error: "Seed hash calculation failed",
@@ -166,23 +163,21 @@ describe("hash-worker handler", () => {
 
     await handler(event);
 
-    // Should have 2 emitWorkflowEvent calls: IN_PROGRESS and FAILED
-    expect(mockEmitWorkflowEvent).toHaveBeenCalledTimes(2);
-
-    // Second call should be FAILED with HASH_FAILED
-    expect(mockEmitWorkflowEvent).toHaveBeenNthCalledWith(2, {
+    // Should have only 1 emitWorkflowEvent call: IN_PROGRESS
+    // FAILED event is now emitted by the state machine's WaitForHashResolution state
+    expect(mockEmitWorkflowEvent).toHaveBeenCalledTimes(1);
+    expect(mockEmitWorkflowEvent).toHaveBeenCalledWith({
       executionId: "exec-seed-fail",
       county: "seed-fail-county",
-      status: "FAILED",
+      status: "IN_PROGRESS",
       phase: "Hash",
       step: "Hash",
       taskToken: "task-token-seed-fail",
-      errors: [{ code: "HASH_FAILED", details: expect.any(Object) }],
       log: expect.any(Function),
     });
   });
 
-  it("should emit FAILED event with HASH_FAILED on county hash failure", async () => {
+  it("should only emit IN_PROGRESS event on county hash failure (FAILED is emitted by state machine)", async () => {
     // First call (seed) succeeds, second call (county) fails
     mockHash.mockResolvedValueOnce({ success: true }).mockResolvedValueOnce({
       success: false,
@@ -203,15 +198,16 @@ describe("hash-worker handler", () => {
 
     await handler(event);
 
-    // Second call should be FAILED with HASH_FAILED
-    expect(mockEmitWorkflowEvent).toHaveBeenNthCalledWith(2, {
+    // Should have only 1 emitWorkflowEvent call: IN_PROGRESS
+    // FAILED event is now emitted by the state machine's WaitForHashResolution state
+    expect(mockEmitWorkflowEvent).toHaveBeenCalledTimes(1);
+    expect(mockEmitWorkflowEvent).toHaveBeenCalledWith({
       executionId: "exec-county-fail",
       county: "county-fail-county",
-      status: "FAILED",
+      status: "IN_PROGRESS",
       phase: "Hash",
       step: "Hash",
       taskToken: "task-token-county-fail",
-      errors: [{ code: "HASH_FAILED", details: expect.any(Object) }],
       log: expect.any(Function),
     });
   });

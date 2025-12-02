@@ -13,8 +13,6 @@ const mockDownloadS3Object = vi.fn();
 const mockUploadToS3 = vi.fn();
 const mockCreateLogger = vi.fn(() => vi.fn());
 const mockEmitWorkflowEvent = vi.fn();
-const mockCreateWorkflowError = vi.fn((code, details) => ({ code, details }));
-
 vi.mock("../../../../workflow/lambdas/svl-worker/shared/index.mjs", () => ({
   executeWithTaskToken: mockExecuteWithTaskToken,
   parseS3Uri: mockParseS3Uri,
@@ -22,7 +20,6 @@ vi.mock("../../../../workflow/lambdas/svl-worker/shared/index.mjs", () => ({
   uploadToS3: mockUploadToS3,
   createLogger: mockCreateLogger,
   emitWorkflowEvent: mockEmitWorkflowEvent,
-  createWorkflowError: mockCreateWorkflowError,
 }));
 
 // Mock @elephant-xyz/cli/lib
@@ -206,7 +203,7 @@ describe("svl-worker handler", () => {
       expect(mockUploadToS3).toHaveBeenCalled();
     });
 
-    it("should emit FAILED event with SVL_FAILED on general failure", async () => {
+    it("should only emit IN_PROGRESS event on general failure (FAILED is emitted by state machine)", async () => {
       mockValidate.mockRejectedValue(new Error("Validation process crashed"));
 
       const { handler } = await import(
@@ -222,23 +219,21 @@ describe("svl-worker handler", () => {
 
       await handler(event);
 
-      // Should have 2 emitWorkflowEvent calls: IN_PROGRESS and FAILED
-      expect(mockEmitWorkflowEvent).toHaveBeenCalledTimes(2);
-
-      // Second call should be FAILED with SVL_FAILED
-      expect(mockEmitWorkflowEvent).toHaveBeenNthCalledWith(2, {
+      // Should have only 1 emitWorkflowEvent call: IN_PROGRESS
+      // FAILED event is now emitted by the state machine's WaitForSvlExceptionResolution state
+      expect(mockEmitWorkflowEvent).toHaveBeenCalledTimes(1);
+      expect(mockEmitWorkflowEvent).toHaveBeenCalledWith({
         executionId: "exec-error",
         county: "error-county",
-        status: "FAILED",
+        status: "IN_PROGRESS",
         phase: "SVL",
         step: "SVL",
         taskToken: "task-token-error",
-        errors: [{ code: "SVL_FAILED", details: expect.any(Object) }],
         log: expect.any(Function),
       });
     });
 
-    it("should emit FAILED event when validation fails without errors file", async () => {
+    it("should only emit IN_PROGRESS event when validation fails without errors file (FAILED is emitted by state machine)", async () => {
       // Mock validation failure without errors file
       mockValidate.mockResolvedValue({
         success: false,
@@ -258,16 +253,16 @@ describe("svl-worker handler", () => {
 
       await handler(event);
 
-      // Should emit FAILED since validation failed
-      expect(mockEmitWorkflowEvent).toHaveBeenCalledTimes(2);
-      expect(mockEmitWorkflowEvent).toHaveBeenNthCalledWith(2, {
+      // Should have only 1 emitWorkflowEvent call: IN_PROGRESS
+      // FAILED event is now emitted by the state machine's WaitForSvlExceptionResolution state
+      expect(mockEmitWorkflowEvent).toHaveBeenCalledTimes(1);
+      expect(mockEmitWorkflowEvent).toHaveBeenCalledWith({
         executionId: "exec-no-errors",
         county: "no-errors-county",
-        status: "FAILED",
+        status: "IN_PROGRESS",
         phase: "SVL",
         step: "SVL",
         taskToken: "task-token-no-errors-file",
-        errors: [{ code: "SVL_FAILED", details: expect.any(Object) }],
         log: expect.any(Function),
       });
     });
@@ -441,11 +436,12 @@ describe("svl-worker handler", () => {
 
       await handler(event);
 
-      // Should still emit FAILED event
-      expect(mockEmitWorkflowEvent).toHaveBeenNthCalledWith(
-        2,
+      // Should have only 1 emitWorkflowEvent call: IN_PROGRESS
+      // FAILED event is now emitted by the state machine's WaitForSvlExceptionResolution state
+      expect(mockEmitWorkflowEvent).toHaveBeenCalledTimes(1);
+      expect(mockEmitWorkflowEvent).toHaveBeenCalledWith(
         expect.objectContaining({
-          status: "FAILED",
+          status: "IN_PROGRESS",
         }),
       );
     });
@@ -641,12 +637,12 @@ describe("svl-worker handler", () => {
 
       await handler(event);
 
-      // Should still emit FAILED with default message
-      expect(mockEmitWorkflowEvent).toHaveBeenCalledTimes(2);
-      expect(mockEmitWorkflowEvent).toHaveBeenNthCalledWith(
-        2,
+      // Should have only 1 emitWorkflowEvent call: IN_PROGRESS
+      // FAILED event is now emitted by the state machine's WaitForSvlExceptionResolution state
+      expect(mockEmitWorkflowEvent).toHaveBeenCalledTimes(1);
+      expect(mockEmitWorkflowEvent).toHaveBeenCalledWith(
         expect.objectContaining({
-          status: "FAILED",
+          status: "IN_PROGRESS",
         }),
       );
     });
@@ -668,7 +664,8 @@ describe("svl-worker handler", () => {
       await handler(event);
 
       // Handler should complete without throwing (cleanup is silent)
-      expect(mockEmitWorkflowEvent).toHaveBeenCalledTimes(2);
+      // Should have only 1 emitWorkflowEvent call: IN_PROGRESS
+      expect(mockEmitWorkflowEvent).toHaveBeenCalledTimes(1);
     });
   });
 });

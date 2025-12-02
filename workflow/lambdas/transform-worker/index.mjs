@@ -9,7 +9,6 @@ import {
   uploadToS3,
   createLogger,
   emitWorkflowEvent,
-  createWorkflowError,
 } from "./shared/index.mjs";
 import { createTransformScriptsManager } from "./scripts-manager.mjs";
 import { S3Client } from "@aws-sdk/client-s3";
@@ -267,25 +266,7 @@ export const handler = async (event) => {
         workerFn: async () => result,
       });
     } catch (err) {
-      // Emit FAILED event
-      await emitWorkflowEvent({
-        executionId: input.executionId,
-        county: input.county,
-        status: "FAILED",
-        phase: "Transform",
-        step: "Transform",
-        taskToken,
-        errors: [
-          createWorkflowError(
-            err instanceof Error && err.name === "ScriptsFailedError"
-              ? "TRANSFORM_SCRIPTS_FAILED"
-              : "TRANSFORM_FAILED",
-            { message: err instanceof Error ? err.message : String(err) },
-          ),
-        ],
-        log,
-      });
-
+      // Note: FAILED event is emitted by the state machine's WaitForTransformResolution state
       await executeWithTaskToken({
         taskToken,
         log,
