@@ -365,7 +365,7 @@ States:
               {%
                 $states.input.svl.svlErrors ~> $map(function($e) {
                   {
-                    "code": "SVL_VALIDATION_ERROR",
+                    "code": "30001",
                     "details": {
                       "error_message": $e.error_message,
                       "error_path": $e.error_path
@@ -398,7 +398,7 @@ States:
             step: EvaluateSvl
             taskToken.$: $$.Task.Token
             errors:
-              - code: SVL_FAILED
+              - code: "30002"
                 details:
                   error.$: States.JsonToString($.svlError)
     ResultPath: $.resolutionResult
