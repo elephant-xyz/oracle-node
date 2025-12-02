@@ -31,7 +31,7 @@ export interface GetExecutionResponse extends GetExecutionResult {
   /** Whether the operation was successful. */
   success: boolean;
   /** Error message if the operation failed. */
-  error?: string;
+  error?: any;
 }
 
 /**
@@ -62,9 +62,7 @@ export const handler = async (
     // Validate input using Zod
     const parseResult = GetExecutionEventSchema.safeParse(event);
     if (!parseResult.success) {
-      const errorMessage = parseResult.error.issues
-        .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
-        .join("; ");
+      const errorMessage = parseResult.error.issues;
       console.warn("input-validation-failed", {
         error: errorMessage,
         issues: parseResult.error.issues,
