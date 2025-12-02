@@ -1,26 +1,6 @@
 Comment: Elephant Express workflow. Triggered by Starter Lambda with one SQS message payload.
-StartAt: RecordStartedMetric
+StartAt: Preprocess
 States:
-  RecordStartedMetric:
-    Type: Task
-    Resource: arn:aws:states:::aws-sdk:cloudwatch:putMetricData
-    Parameters:
-      Namespace: ElephantWorkflow
-      MetricData:
-        - MetricName: WorkflowExecution
-          Value: 1
-          Unit: Count
-          Timestamp.$: $$.State.EnteredTime
-          Dimensions:
-            - Name: Status
-              Value: Started
-    ResultPath: $.metricResult
-    Next: Preprocess
-    Catch:
-      - ErrorEquals: [States.ALL]
-        ResultPath: $.metricError
-        Next: Preprocess
-
   Preprocess:
     Type: Task
     Resource: arn:aws:states:::lambda:invoke
@@ -48,26 +28,6 @@ States:
     Catch:
       - ErrorEquals: [States.ALL]
         ResultPath: $.error
-        Next: RecordPreprocessFailureMetric
-
-  RecordPreprocessFailureMetric:
-    Type: Task
-    Resource: arn:aws:states:::aws-sdk:cloudwatch:putMetricData
-    Parameters:
-      Namespace: ElephantWorkflow
-      MetricData:
-        - MetricName: WorkflowExecution
-          Value: 1
-          Unit: Count
-          Timestamp.$: $$.State.EnteredTime
-          Dimensions:
-            - Name: Status
-              Value: Failure
-    ResultPath: $.metricResult
-    Next: FailRuntime
-    Catch:
-      - ErrorEquals: [States.ALL]
-        ResultPath: $.metricError
         Next: FailRuntime
 
   BuildRepairParamName:
@@ -172,26 +132,6 @@ States:
     Catch:
       - ErrorEquals: [States.ALL]
         ResultPath: $.error
-        Next: RecordPrepareFailureMetric
-
-  RecordPrepareFailureMetric:
-    Type: Task
-    Resource: arn:aws:states:::aws-sdk:cloudwatch:putMetricData
-    Parameters:
-      Namespace: ElephantWorkflow
-      MetricData:
-        - MetricName: WorkflowExecution
-          Value: 1
-          Unit: Count
-          Timestamp.$: $$.State.EnteredTime
-          Dimensions:
-            - Name: Status
-              Value: Failure
-    ResultPath: $.metricResult
-    Next: FailRuntime
-    Catch:
-      - ErrorEquals: [States.ALL]
-        ResultPath: $.metricError
         Next: FailRuntime
 
   # === GRANULAR POSTPROCESS STEPS ===
@@ -334,31 +274,9 @@ States:
     Next: EmitTransformSucceeded
     Catch:
       - ErrorEquals: [States.ALL]
+        Comment: "Resolution failed - stay parked and wait again"
         ResultPath: $.transformError
-        Next: RecordTransformFailureMetric
-
-  RecordTransformFailureMetric:
-    Type: Task
-    Resource: arn:aws:states:::aws-sdk:cloudwatch:putMetricData
-    Comment: "Record metric only after external resolution fails"
-    Parameters:
-      Namespace: ElephantWorkflow
-      MetricData:
-        - MetricName: WorkflowExecution
-          Value: 1
-          Unit: Count
-          Timestamp.$: $$.State.EnteredTime
-          Dimensions:
-            - Name: Status
-              Value: Failure
-            - Name: Step
-              Value: Transform
-    ResultPath: $.metricResult
-    Next: FailRuntime
-    Catch:
-      - ErrorEquals: [States.ALL]
-        ResultPath: $.metricError
-        Next: FailRuntime
+        Next: EmitTransformParked
 
   # === SVL (Schema Validation Layer) STEP ===
 
@@ -522,31 +440,9 @@ States:
     Next: EmitTransformSucceeded
     Catch:
       - ErrorEquals: [States.ALL]
+        Comment: "Resolution failed - stay parked and wait again"
         ResultPath: $.svlError
-        Next: RecordSvlFailureMetric
-
-  RecordSvlFailureMetric:
-    Type: Task
-    Resource: arn:aws:states:::aws-sdk:cloudwatch:putMetricData
-    Comment: "Record metric only after external resolution fails"
-    Parameters:
-      Namespace: ElephantWorkflow
-      MetricData:
-        - MetricName: WorkflowExecution
-          Value: 1
-          Unit: Count
-          Timestamp.$: $$.State.EnteredTime
-          Dimensions:
-            - Name: Status
-              Value: Failure
-            - Name: Step
-              Value: SVL
-    ResultPath: $.metricResult
-    Next: FailRuntime
-    Catch:
-      - ErrorEquals: [States.ALL]
-        ResultPath: $.metricError
-        Next: FailRuntime
+        Next: EmitSvlParked
 
   # === MVL (Mirror Validation Layer) STEP - Optional ===
 
@@ -718,31 +614,9 @@ States:
     Next: EmitTransformSucceeded
     Catch:
       - ErrorEquals: [States.ALL]
+        Comment: "Resolution failed - stay parked and wait again"
         ResultPath: $.mvlError
-        Next: RecordMvlFailureMetric
-
-  RecordMvlFailureMetric:
-    Type: Task
-    Resource: arn:aws:states:::aws-sdk:cloudwatch:putMetricData
-    Comment: "Record metric only after external resolution fails"
-    Parameters:
-      Namespace: ElephantWorkflow
-      MetricData:
-        - MetricName: WorkflowExecution
-          Value: 1
-          Unit: Count
-          Timestamp.$: $$.State.EnteredTime
-          Dimensions:
-            - Name: Status
-              Value: Failure
-            - Name: Step
-              Value: MVL
-    ResultPath: $.metricResult
-    Next: FailRuntime
-    Catch:
-      - ErrorEquals: [States.ALL]
-        ResultPath: $.metricError
-        Next: FailRuntime
+        Next: EmitMvlParked
 
   # === HASH STEP ===
 
@@ -873,31 +747,9 @@ States:
     Next: EmitHashSucceeded
     Catch:
       - ErrorEquals: [States.ALL]
+        Comment: "Resolution failed - stay parked and wait again"
         ResultPath: $.hashError
-        Next: RecordHashFailureMetric
-
-  RecordHashFailureMetric:
-    Type: Task
-    Resource: arn:aws:states:::aws-sdk:cloudwatch:putMetricData
-    Comment: "Record metric only after external resolution fails"
-    Parameters:
-      Namespace: ElephantWorkflow
-      MetricData:
-        - MetricName: WorkflowExecution
-          Value: 1
-          Unit: Count
-          Timestamp.$: $$.State.EnteredTime
-          Dimensions:
-            - Name: Status
-              Value: Failure
-            - Name: Step
-              Value: Hash
-    ResultPath: $.metricResult
-    Next: FailRuntime
-    Catch:
-      - ErrorEquals: [States.ALL]
-        ResultPath: $.metricError
-        Next: FailRuntime
+        Next: EmitHashParked
 
   # === UPLOAD STEP ===
 
@@ -1024,31 +876,9 @@ States:
     Next: EmitUploadSucceeded
     Catch:
       - ErrorEquals: [States.ALL]
+        Comment: "Resolution failed - stay parked and wait again"
         ResultPath: $.uploadError
-        Next: RecordUploadFailureMetric
-
-  RecordUploadFailureMetric:
-    Type: Task
-    Resource: arn:aws:states:::aws-sdk:cloudwatch:putMetricData
-    Comment: "Record metric only after external resolution fails"
-    Parameters:
-      Namespace: ElephantWorkflow
-      MetricData:
-        - MetricName: WorkflowExecution
-          Value: 1
-          Unit: Count
-          Timestamp.$: $$.State.EnteredTime
-          Dimensions:
-            - Name: Status
-              Value: Failure
-            - Name: Step
-              Value: Upload
-    ResultPath: $.metricResult
-    Next: FailRuntime
-    Catch:
-      - ErrorEquals: [States.ALL]
-        ResultPath: $.metricError
-        Next: FailRuntime
+        Next: EmitUploadParked
 
   # === PREPARE TRANSACTION ITEMS ===
 
@@ -1081,31 +911,11 @@ States:
     ResultSelector:
       csvContent.$: $.Body
     ResultPath: $.csvData
-    Next: RecordSuccessMetric
+    Next: QueueForTheSubmit
     Catch:
       - ErrorEquals: [States.ALL]
         Comment: "Failed to load transaction items - proceed anyway"
         ResultPath: $.csvLoadError
-        Next: RecordSuccessMetric
-
-  RecordSuccessMetric:
-    Type: Task
-    Resource: arn:aws:states:::aws-sdk:cloudwatch:putMetricData
-    Parameters:
-      Namespace: ElephantWorkflow
-      MetricData:
-        - MetricName: WorkflowExecution
-          Value: 1
-          Unit: Count
-          Timestamp.$: $$.State.EnteredTime
-          Dimensions:
-            - Name: Status
-              Value: Success
-    ResultPath: $.metricResult
-    Next: QueueForTheSubmit
-    Catch:
-      - ErrorEquals: [States.ALL]
-        ResultPath: $.metricError
         Next: QueueForTheSubmit
 
   QueueForTheSubmit:
