@@ -13,6 +13,10 @@ import {
   SendTaskSuccessCommand,
   SendTaskFailureCommand,
 } from "@aws-sdk/client-sfn";
+import {
+  EventBridgeClient,
+  PutEventsCommand,
+} from "@aws-sdk/client-eventbridge";
 import { promises as fs } from "fs";
 import path from "path";
 import { prepare } from "@elephant-xyz/cli/lib";
@@ -21,6 +25,50 @@ import AdmZip from "adm-zip";
 
 const RE_S3PATH = /^s3:\/\/([^/]+)\/(.*)$/i;
 const sfnClient = new SFNClient({});
+const eventBridgeClient = new EventBridgeClient({});
+
+/**
+ * Emits a workflow event to EventBridge
+ * @param {Object} params - Event parameters
+ * @param {string} params.executionId - Step Functions execution ARN
+ * @param {string} params.county - County name
+ * @param {string} params.status - Event status (IN_PROGRESS, etc.)
+ * @param {string} [params.taskToken] - Optional task token
+ * @returns {Promise<void>}
+ */
+async function emitWorkflowEvent({ executionId, county, status, taskToken }) {
+  console.log(`📤 Emitting EventBridge event: status=${status}, county=${county}`);
+  try {
+    const detail = {
+      executionId,
+      county,
+      status,
+      phase: "Prepare",
+      step: "Prepare",
+    };
+    if (taskToken) {
+      detail.taskToken = taskToken;
+    }
+
+    await eventBridgeClient.send(
+      new PutEventsCommand({
+        Entries: [
+          {
+            Source: "elephant.workflow",
+            DetailType: "WorkflowEvent",
+            Detail: JSON.stringify(detail),
+          },
+        ],
+      })
+    );
+    console.log(`✅ EventBridge event emitted: ${status}`);
+  } catch (error) {
+    console.error(
+      `⚠️ Failed to emit EventBridge event: ${error instanceof Error ? error.message : String(error)}`
+    );
+    // Don't throw - EventBridge emission is non-critical
+  }
+}
 
 /**
  * Sends task success to Step Functions
@@ -1220,6 +1268,14 @@ export const handler = async (event) => {
         if (!taskToken) {
           throw new Error("Missing taskToken in SQS message body");
         }
+
+        // Emit IN_PROGRESS event to EventBridge
+        await emitWorkflowEvent({
+          executionId,
+          county,
+          status: "IN_PROGRESS",
+          taskToken,
+        });
 
         const result = await processPrepare({
           input_s3_uri: messageBody.input_s3_uri,

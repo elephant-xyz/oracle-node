@@ -180,11 +180,24 @@ States:
             phase: Prepare
             step: Prepare
     ResultPath: $.eventResult
-    Next: Prepare
+    Next: GetPrepareQueueUrl
     Catch:
       - ErrorEquals: [States.ALL]
         ResultPath: $.eventError
-        Next: Prepare
+        Next: GetPrepareQueueUrl
+
+  GetPrepareQueueUrl:
+    Type: Task
+    Resource: arn:aws:states:::aws-sdk:sqs:getQueueUrl
+    Comment: "Get queue URL by name. Throws Sqs.QueueDoesNotExistException if queue not found."
+    Parameters:
+      QueueName.$: States.Format('${StackName}-prepare-queue-{}', $.pre.county_name)
+    ResultPath: $.queue
+    Next: Prepare
+    Catch:
+      - ErrorEquals: [Sqs.QueueDoesNotExistException]
+        ResultPath: $.prepareError
+        Next: EmitPrepareQueueNotFound
 
   Prepare:
     Type: Task
@@ -192,7 +205,7 @@ States:
     TimeoutSeconds: 900
     Comment: "Timeout matches Lambda timeout (15 min). If Lambda times out, Catch handles it."
     Parameters:
-      QueueUrl: ${PrepareQueueUrl}
+      QueueUrl.$: $.queue.QueueUrl
       MessageBody:
         taskToken.$: $$.Task.Token
         executionId.$: $$.Execution.Id
@@ -213,6 +226,31 @@ States:
       - ErrorEquals: [States.ALL]
         ResultPath: $.prepareError
         Next: EmitPrepareFailed
+
+  EmitPrepareQueueNotFound:
+    Type: Task
+    Resource: arn:aws:states:::events:putEvents.waitForTaskToken
+    Comment: "Emit FAILED event with taskToken when queue not found. Waits for external retry (e.g., after queue is created)."
+    Parameters:
+      Entries:
+        - Source: elephant.workflow
+          DetailType: WorkflowEvent
+          Detail:
+            executionId.$: $$.Execution.Id
+            county.$: $.pre.county_name
+            status: FAILED
+            phase: Prepare
+            step: Prepare
+            taskToken.$: $$.Task.Token
+            errors:
+              - code: PREPARE_QUEUE_NOT_FOUND
+                details.$: $.prepareError
+    ResultPath: $.queueNotFoundResult
+    Next: GetPrepareQueueUrl
+    Catch:
+      - ErrorEquals: [States.ALL]
+        ResultPath: $.error
+        Next: RecordPrepareFailureMetric
 
   ReportPrepareLambdaSuccess:
     Type: Task
