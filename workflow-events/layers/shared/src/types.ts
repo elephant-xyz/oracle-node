@@ -90,6 +90,8 @@ export interface ExecutionErrorLink {
   status: ErrorStatus;
   /** Occurrence count within the execution. */
   occurrences: number;
+  /** Error details JSON-encoded key-value pairs. */
+  errorDetails: string;
   /** Identifier of the failed execution. */
   executionId: string;
   /** County identifier. */

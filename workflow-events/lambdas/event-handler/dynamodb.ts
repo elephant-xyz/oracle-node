@@ -126,6 +126,7 @@ const buildErrorRecordUpdate = (
  * @param executionId - The execution ID
  * @param county - The county identifier
  * @param occurrences - Number of times this error occurred in the execution
+ * @param errorDetails - Additional error details (key-value pairs)
  * @param now - ISO timestamp for the operation
  * @returns UpdateCommand input for ExecutionErrorLink upsert
  */
@@ -134,6 +135,7 @@ const buildExecutionErrorLinkUpdate = (
   executionId: string,
   county: string,
   occurrences: number,
+  errorDetails: Record<string, unknown>,
   now: string,
 ): {
   Update: {
@@ -159,6 +161,7 @@ const buildExecutionErrorLinkUpdate = (
             errorCode = :errorCode,
             #status = if_not_exists(#status, :defaultStatus),
             occurrences = if_not_exists(occurrences, :zero) + :occurrences,
+            errorDetails = :errorDetails,
             executionId = :executionId,
             county = :county,
             createdAt = if_not_exists(createdAt, :now),
@@ -175,6 +178,7 @@ const buildExecutionErrorLinkUpdate = (
         ":defaultStatus": DEFAULT_ERROR_STATUS,
         ":zero": 0,
         ":occurrences": occurrences,
+        ":errorDetails": JSON.stringify(errorDetails),
         ":executionId": executionId,
         ":county": county,
         ":now": now,
@@ -481,6 +485,7 @@ export const saveErrorRecords = async (
         detail.executionId,
         detail.county,
         count,
+        details,
         now,
       ),
     );
