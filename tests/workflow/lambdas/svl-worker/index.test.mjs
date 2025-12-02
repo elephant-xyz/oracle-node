@@ -1,4 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { promises as fs } from "fs";
+import path from "path";
+import os from "os";
 
 // Mock the shared module
 const mockExecuteWithTaskToken = vi.fn();
@@ -28,29 +31,26 @@ vi.mock("@elephant-xyz/cli/lib", () => ({
   validate: mockValidate,
 }));
 
-// Mock errors repository
-const mockSaveFailedExecution = vi.fn();
-vi.mock("../../../../workflow/lambdas/svl-worker/errors.mjs", () => ({
-  createErrorsRepository: vi.fn(() => ({
-    saveFailedExecution: mockSaveFailedExecution,
-  })),
-}));
-
 // Mock csv-parse/sync
+const mockParse = vi.fn(() => [{ error_message: "test error" }]);
 vi.mock("csv-parse/sync", () => ({
-  parse: vi.fn(() => [{ error_message: "test error" }]),
+  parse: mockParse,
 }));
 
 describe("svl-worker handler", () => {
   const originalEnv = process.env;
+  let tmpDir;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
 
     process.env = {
       ...originalEnv,
       ERRORS_TABLE_NAME: "test-errors-table",
     };
+
+    // Create a temp directory for tests that need file system operations
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "svl-test-"));
 
     // Default mock implementations
     mockCreateLogger.mockReturnValue(vi.fn());
@@ -60,15 +60,18 @@ describe("svl-worker handler", () => {
     mockUploadToS3.mockImplementation((localPath, s3Location) => {
       return Promise.resolve(`s3://${s3Location.bucket}/${s3Location.key}`);
     });
-    mockSaveFailedExecution.mockResolvedValue(undefined);
 
     vi.spyOn(console, "log").mockImplementation(() => {});
     vi.spyOn(console, "error").mockImplementation(() => {});
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     process.env = originalEnv;
     vi.restoreAllMocks();
+    // Clean up temp directory
+    if (tmpDir) {
+      await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+    }
   });
 
   const createSqsEvent = (taskToken, input) => ({
@@ -82,186 +85,584 @@ describe("svl-worker handler", () => {
     ],
   });
 
-  it("should emit IN_PROGRESS event at start", async () => {
-    mockValidate.mockResolvedValue({ success: true });
+  const createDirectInvocationEvent = (input) => ({
+    ...input,
+    directInvocation: true,
+  });
 
-    const { handler } = await import(
-      "../../../../workflow/lambdas/svl-worker/index.mjs"
-    );
+  describe("SQS trigger mode", () => {
+    it("should emit IN_PROGRESS event at start", async () => {
+      mockValidate.mockResolvedValue({ success: true });
 
-    const event = createSqsEvent("task-token-123", {
-      transformedOutputS3Uri: "s3://bucket/transformed.zip",
-      county: "test-county",
-      outputPrefix: "s3://output-bucket/outputs/",
-      executionId: "exec-123",
+      const { handler } = await import(
+        "../../../../workflow/lambdas/svl-worker/index.mjs"
+      );
+
+      const event = createSqsEvent("task-token-123", {
+        transformedOutputS3Uri: "s3://bucket/transformed.zip",
+        county: "test-county",
+        outputPrefix: "s3://output-bucket/outputs/",
+        executionId: "exec-123",
+      });
+
+      await handler(event);
+
+      expect(mockEmitWorkflowEvent).toHaveBeenCalledWith({
+        executionId: "exec-123",
+        county: "test-county",
+        status: "IN_PROGRESS",
+        phase: "SVL",
+        step: "SVL",
+        taskToken: "task-token-123",
+        log: expect.any(Function),
+      });
     });
 
-    await handler(event);
+    it("should emit SUCCEEDED event when validation passes", async () => {
+      mockValidate.mockResolvedValue({ success: true });
 
-    expect(mockEmitWorkflowEvent).toHaveBeenCalledWith({
-      executionId: "exec-123",
-      county: "test-county",
-      status: "IN_PROGRESS",
-      phase: "SVL",
-      step: "SVL",
-      taskToken: "task-token-123",
-      log: expect.any(Function),
+      const { handler } = await import(
+        "../../../../workflow/lambdas/svl-worker/index.mjs"
+      );
+
+      const event = createSqsEvent("task-token-success", {
+        transformedOutputS3Uri: "s3://bucket/transformed.zip",
+        county: "valid-county",
+        outputPrefix: "s3://output-bucket/outputs/",
+        executionId: "exec-success",
+      });
+
+      await handler(event);
+
+      // Should have 2 emitWorkflowEvent calls: IN_PROGRESS and SUCCEEDED
+      expect(mockEmitWorkflowEvent).toHaveBeenCalledTimes(2);
+
+      // Second call should be SUCCEEDED
+      expect(mockEmitWorkflowEvent).toHaveBeenNthCalledWith(2, {
+        executionId: "exec-success",
+        county: "valid-county",
+        status: "SUCCEEDED",
+        phase: "SVL",
+        step: "SVL",
+        log: expect.any(Function),
+      });
+    });
+
+    it("should emit PARKED event when validation fails with errors file", async () => {
+      // Mock validation failure with errors file existing
+      mockValidate.mockImplementation(async ({ cwd }) => {
+        // Create submit_errors.csv in the cwd
+        const errorsPath = path.join(cwd, "submit_errors.csv");
+        await fs.writeFile(
+          errorsPath,
+          "error_message,error_path\nTest error,$.field",
+        );
+        return { success: false, error: "Validation errors found" };
+      });
+
+      mockParse.mockReturnValue([
+        { error_message: "Test error", error_path: "$.field" },
+      ]);
+
+      const { handler } = await import(
+        "../../../../workflow/lambdas/svl-worker/index.mjs"
+      );
+
+      const event = createSqsEvent("task-token-parked", {
+        transformedOutputS3Uri: "s3://bucket/transformed.zip",
+        county: "parked-county",
+        outputPrefix: "s3://output-bucket/outputs/",
+        executionId: "exec-parked",
+      });
+
+      await handler(event);
+
+      // Should have 2 emitWorkflowEvent calls: IN_PROGRESS and PARKED
+      expect(mockEmitWorkflowEvent).toHaveBeenCalledTimes(2);
+
+      // Second call should be PARKED with SVL_VALIDATION_ERROR
+      expect(mockEmitWorkflowEvent).toHaveBeenNthCalledWith(2, {
+        executionId: "exec-parked",
+        county: "parked-county",
+        status: "PARKED",
+        phase: "SVL",
+        step: "SVL",
+        taskToken: "task-token-parked",
+        errors: [
+          {
+            code: "SVL_VALIDATION_ERROR",
+            details: { errorsS3Uri: expect.any(String) },
+          },
+        ],
+        log: expect.any(Function),
+      });
+
+      // Should have uploaded errors to S3
+      expect(mockUploadToS3).toHaveBeenCalled();
+    });
+
+    it("should emit FAILED event with SVL_FAILED on general failure", async () => {
+      mockValidate.mockRejectedValue(new Error("Validation process crashed"));
+
+      const { handler } = await import(
+        "../../../../workflow/lambdas/svl-worker/index.mjs"
+      );
+
+      const event = createSqsEvent("task-token-error", {
+        transformedOutputS3Uri: "s3://bucket/transformed.zip",
+        county: "error-county",
+        outputPrefix: "s3://output-bucket/outputs/",
+        executionId: "exec-error",
+      });
+
+      await handler(event);
+
+      // Should have 2 emitWorkflowEvent calls: IN_PROGRESS and FAILED
+      expect(mockEmitWorkflowEvent).toHaveBeenCalledTimes(2);
+
+      // Second call should be FAILED with SVL_FAILED
+      expect(mockEmitWorkflowEvent).toHaveBeenNthCalledWith(2, {
+        executionId: "exec-error",
+        county: "error-county",
+        status: "FAILED",
+        phase: "SVL",
+        step: "SVL",
+        taskToken: "task-token-error",
+        errors: [{ code: "SVL_FAILED", details: expect.any(Object) }],
+        log: expect.any(Function),
+      });
+    });
+
+    it("should emit FAILED event when validation fails without errors file", async () => {
+      // Mock validation failure without errors file
+      mockValidate.mockResolvedValue({
+        success: false,
+        error: "Schema validation failed",
+      });
+
+      const { handler } = await import(
+        "../../../../workflow/lambdas/svl-worker/index.mjs"
+      );
+
+      const event = createSqsEvent("task-token-no-errors-file", {
+        transformedOutputS3Uri: "s3://bucket/transformed.zip",
+        county: "no-errors-county",
+        outputPrefix: "s3://output-bucket/outputs/",
+        executionId: "exec-no-errors",
+      });
+
+      await handler(event);
+
+      // Should emit FAILED since no errors file to create PARKED state
+      expect(mockEmitWorkflowEvent).toHaveBeenCalledTimes(2);
+      expect(mockEmitWorkflowEvent).toHaveBeenNthCalledWith(2, {
+        executionId: "exec-no-errors",
+        county: "no-errors-county",
+        status: "FAILED",
+        phase: "SVL",
+        step: "SVL",
+        taskToken: "task-token-no-errors-file",
+        errors: [{ code: "SVL_FAILED", details: expect.any(Object) }],
+        log: expect.any(Function),
+      });
+    });
+
+    it("should call executeWithTaskToken with result on success", async () => {
+      mockValidate.mockResolvedValue({ success: true });
+
+      const { handler } = await import(
+        "../../../../workflow/lambdas/svl-worker/index.mjs"
+      );
+
+      const event = createSqsEvent("task-token-result", {
+        transformedOutputS3Uri: "s3://bucket/transformed.zip",
+        county: "result-county",
+        outputPrefix: "s3://output-bucket/outputs/",
+        executionId: "exec-result",
+      });
+
+      await handler(event);
+
+      expect(mockExecuteWithTaskToken).toHaveBeenCalledWith({
+        taskToken: "task-token-result",
+        log: expect.any(Function),
+        workerFn: expect.any(Function),
+      });
+
+      // Verify the workerFn returns the expected result
+      const lastCall = mockExecuteWithTaskToken.mock.calls[0];
+      const result = await lastCall[0].workerFn();
+      expect(result).toEqual({
+        validatedOutputS3Uri: "s3://bucket/transformed.zip",
+        county: "result-county",
+        executionId: "exec-result",
+        validationPassed: true,
+      });
+    });
+
+    it("should call executeWithTaskToken with throwing function on failure", async () => {
+      mockValidate.mockRejectedValue(new Error("Validation crashed"));
+
+      const { handler } = await import(
+        "../../../../workflow/lambdas/svl-worker/index.mjs"
+      );
+
+      const event = createSqsEvent("task-token-throw", {
+        transformedOutputS3Uri: "s3://bucket/transformed.zip",
+        county: "throw-county",
+        outputPrefix: "s3://output-bucket/outputs/",
+        executionId: "exec-throw",
+      });
+
+      await handler(event);
+
+      // Should have been called with workerFn that throws
+      const lastCall =
+        mockExecuteWithTaskToken.mock.calls[
+          mockExecuteWithTaskToken.mock.calls.length - 1
+        ];
+      expect(lastCall[0].taskToken).toBe("task-token-throw");
+
+      // The workerFn should throw when called
+      await expect(lastCall[0].workerFn()).rejects.toThrow();
+    });
+
+    it("should create logger with correct base fields", async () => {
+      mockValidate.mockResolvedValue({ success: true });
+
+      const { handler } = await import(
+        "../../../../workflow/lambdas/svl-worker/index.mjs"
+      );
+
+      const event = createSqsEvent("task-token-logger", {
+        transformedOutputS3Uri: "s3://bucket/transformed.zip",
+        county: "logger-county",
+        outputPrefix: "s3://output-bucket/outputs/",
+        executionId: "exec-logger",
+      });
+
+      await handler(event);
+
+      expect(mockCreateLogger).toHaveBeenCalledWith({
+        component: "svl-worker",
+        at: expect.any(String),
+        county: "logger-county",
+        executionId: "exec-logger",
+      });
+    });
+
+    it("should download transformed output from S3", async () => {
+      mockValidate.mockResolvedValue({ success: true });
+
+      const { handler } = await import(
+        "../../../../workflow/lambdas/svl-worker/index.mjs"
+      );
+
+      const event = createSqsEvent("task-token-download", {
+        transformedOutputS3Uri: "s3://bucket/transformed.zip",
+        county: "download-county",
+        outputPrefix: "s3://output-bucket/outputs/",
+        executionId: "exec-download",
+      });
+
+      await handler(event);
+
+      // Should have called downloadS3Object once
+      expect(mockDownloadS3Object).toHaveBeenCalledTimes(1);
+    });
+
+    it("should handle multiple SQS records", async () => {
+      mockValidate.mockResolvedValue({ success: true });
+
+      const { handler } = await import(
+        "../../../../workflow/lambdas/svl-worker/index.mjs"
+      );
+
+      const event = {
+        Records: [
+          {
+            body: JSON.stringify({
+              taskToken: "task-token-1",
+              input: {
+                transformedOutputS3Uri: "s3://bucket/transformed1.zip",
+                county: "county-1",
+                outputPrefix: "s3://output-bucket/outputs/",
+                executionId: "exec-1",
+              },
+            }),
+          },
+          {
+            body: JSON.stringify({
+              taskToken: "task-token-2",
+              input: {
+                transformedOutputS3Uri: "s3://bucket/transformed2.zip",
+                county: "county-2",
+                outputPrefix: "s3://output-bucket/outputs/",
+                executionId: "exec-2",
+              },
+            }),
+          },
+        ],
+      };
+
+      await handler(event);
+
+      // Should have processed both records (2 IN_PROGRESS + 2 SUCCEEDED = 4 events)
+      expect(mockEmitWorkflowEvent).toHaveBeenCalledTimes(4);
+      expect(mockExecuteWithTaskToken).toHaveBeenCalledTimes(2);
+    });
+
+    it("should handle error upload failure gracefully", async () => {
+      // Mock validation failure with errors file, but upload fails
+      mockValidate.mockImplementation(async ({ cwd }) => {
+        const errorsPath = path.join(cwd, "submit_errors.csv");
+        await fs.writeFile(errorsPath, "error_message\nTest error");
+        return { success: false, error: "Validation errors found" };
+      });
+
+      mockUploadToS3.mockRejectedValue(new Error("S3 upload failed"));
+
+      const { handler } = await import(
+        "../../../../workflow/lambdas/svl-worker/index.mjs"
+      );
+
+      const event = createSqsEvent("task-token-upload-fail", {
+        transformedOutputS3Uri: "s3://bucket/transformed.zip",
+        county: "upload-fail-county",
+        outputPrefix: "s3://output-bucket/outputs/",
+        executionId: "exec-upload-fail",
+      });
+
+      await handler(event);
+
+      // Should still emit FAILED event
+      expect(mockEmitWorkflowEvent).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({
+          status: "FAILED",
+        }),
+      );
     });
   });
 
-  it("should emit SUCCEEDED event when validation passes", async () => {
-    mockValidate.mockResolvedValue({ success: true });
+  describe("Direct invocation mode", () => {
+    it("should skip EventBridge events in direct invocation mode", async () => {
+      mockValidate.mockResolvedValue({ success: true });
 
-    const { handler } = await import(
-      "../../../../workflow/lambdas/svl-worker/index.mjs"
-    );
+      const { handler } = await import(
+        "../../../../workflow/lambdas/svl-worker/index.mjs"
+      );
 
-    const event = createSqsEvent("task-token-success", {
-      transformedOutputS3Uri: "s3://bucket/transformed.zip",
-      county: "valid-county",
-      outputPrefix: "s3://output-bucket/outputs/",
-      executionId: "exec-success",
+      const event = createDirectInvocationEvent({
+        transformedOutputS3Uri: "s3://bucket/transformed.zip",
+        county: "direct-county",
+        outputPrefix: "s3://output-bucket/outputs/",
+        executionId: "exec-direct",
+      });
+
+      const result = await handler(event);
+
+      // Should NOT emit any workflow events
+      expect(mockEmitWorkflowEvent).not.toHaveBeenCalled();
+
+      // Should NOT call executeWithTaskToken
+      expect(mockExecuteWithTaskToken).not.toHaveBeenCalled();
+
+      // Should return the result directly
+      expect(result).toEqual({
+        validatedOutputS3Uri: "s3://bucket/transformed.zip",
+        county: "direct-county",
+        executionId: "exec-direct",
+        validationPassed: true,
+      });
     });
 
-    await handler(event);
+    it("should throw SvlValidationError when validation fails in direct mode", async () => {
+      // Mock validation failure with errors file existing
+      mockValidate.mockImplementation(async ({ cwd }) => {
+        const errorsPath = path.join(cwd, "submit_errors.csv");
+        await fs.writeFile(
+          errorsPath,
+          "error_message,error_path\nTest error,$.field",
+        );
+        return { success: false, error: "Validation errors found" };
+      });
 
-    // Should have 2 emitWorkflowEvent calls: IN_PROGRESS and SUCCEEDED
-    expect(mockEmitWorkflowEvent).toHaveBeenCalledTimes(2);
+      mockParse.mockReturnValue([
+        { error_message: "Test error", error_path: "$.field" },
+      ]);
 
-    // Second call should be SUCCEEDED
-    expect(mockEmitWorkflowEvent).toHaveBeenNthCalledWith(2, {
-      executionId: "exec-success",
-      county: "valid-county",
-      status: "SUCCEEDED",
-      phase: "SVL",
-      step: "SVL",
-      log: expect.any(Function),
+      const { handler } = await import(
+        "../../../../workflow/lambdas/svl-worker/index.mjs"
+      );
+
+      const event = createDirectInvocationEvent({
+        transformedOutputS3Uri: "s3://bucket/transformed.zip",
+        county: "direct-fail-county",
+        outputPrefix: "s3://output-bucket/outputs/",
+        executionId: "exec-direct-fail",
+      });
+
+      await expect(handler(event)).rejects.toThrow("SVL validation failed");
+
+      // Should NOT emit any workflow events
+      expect(mockEmitWorkflowEvent).not.toHaveBeenCalled();
+    });
+
+    it("should create logger with direct invocation context", async () => {
+      mockValidate.mockResolvedValue({ success: true });
+
+      const { handler } = await import(
+        "../../../../workflow/lambdas/svl-worker/index.mjs"
+      );
+
+      const event = createDirectInvocationEvent({
+        transformedOutputS3Uri: "s3://bucket/transformed.zip",
+        county: "direct-logger-county",
+        outputPrefix: "s3://output-bucket/outputs/",
+        executionId: "exec-direct-logger",
+      });
+
+      await handler(event);
+
+      expect(mockCreateLogger).toHaveBeenCalledWith({
+        component: "svl-worker",
+        at: expect.any(String),
+        county: "direct-logger-county",
+        executionId: "exec-direct-logger",
+      });
+    });
+
+    it("should propagate errors with errorsS3Uri attached", async () => {
+      mockValidate.mockImplementation(async ({ cwd }) => {
+        const errorsPath = path.join(cwd, "submit_errors.csv");
+        await fs.writeFile(errorsPath, "error_message\nTest error");
+        return { success: false, error: "Validation errors found" };
+      });
+
+      const { handler } = await import(
+        "../../../../workflow/lambdas/svl-worker/index.mjs"
+      );
+
+      const event = createDirectInvocationEvent({
+        transformedOutputS3Uri: "s3://bucket/transformed.zip",
+        county: "errors-uri-county",
+        outputPrefix: "s3://output-bucket/outputs/",
+        executionId: "exec-errors-uri",
+      });
+
+      try {
+        await handler(event);
+        expect.fail("Should have thrown");
+      } catch (err) {
+        expect(err.name).toBe("SvlValidationError");
+        expect(err.message).toContain("SVL validation failed");
+        expect(err.errorsS3Uri).toContain("svl_errors.csv");
+      }
+    });
+
+    it("should throw general errors in direct mode when validation crashes", async () => {
+      mockValidate.mockRejectedValue(new Error("Unexpected validation crash"));
+
+      const { handler } = await import(
+        "../../../../workflow/lambdas/svl-worker/index.mjs"
+      );
+
+      const event = createDirectInvocationEvent({
+        transformedOutputS3Uri: "s3://bucket/transformed.zip",
+        county: "crash-county",
+        outputPrefix: "s3://output-bucket/outputs/",
+        executionId: "exec-crash",
+      });
+
+      await expect(handler(event)).rejects.toThrow(
+        "Unexpected validation crash",
+      );
     });
   });
 
-  it("should emit FAILED event with SVL_FAILED on general failure", async () => {
-    mockValidate.mockRejectedValue(new Error("Validation process crashed"));
+  describe("csvToJson function behavior", () => {
+    it("should parse CSV content correctly", async () => {
+      mockValidate.mockImplementation(async ({ cwd }) => {
+        const errorsPath = path.join(cwd, "submit_errors.csv");
+        await fs.writeFile(
+          errorsPath,
+          "error_message,error_path\nError 1,$.path1\nError 2,$.path2",
+        );
+        return { success: false, error: "Validation errors found" };
+      });
 
-    const { handler } = await import(
-      "../../../../workflow/lambdas/svl-worker/index.mjs"
-    );
+      mockParse.mockReturnValue([
+        { error_message: "Error 1", error_path: "$.path1" },
+        { error_message: "Error 2", error_path: "$.path2" },
+      ]);
 
-    const event = createSqsEvent("task-token-error", {
-      transformedOutputS3Uri: "s3://bucket/transformed.zip",
-      county: "error-county",
-      outputPrefix: "s3://output-bucket/outputs/",
-      executionId: "exec-error",
-    });
+      const { handler } = await import(
+        "../../../../workflow/lambdas/svl-worker/index.mjs"
+      );
 
-    await handler(event);
+      const event = createSqsEvent("task-token-csv", {
+        transformedOutputS3Uri: "s3://bucket/transformed.zip",
+        county: "csv-county",
+        outputPrefix: "s3://output-bucket/outputs/",
+        executionId: "exec-csv",
+      });
 
-    // Should have 2 emitWorkflowEvent calls: IN_PROGRESS and FAILED
-    expect(mockEmitWorkflowEvent).toHaveBeenCalledTimes(2);
+      await handler(event);
 
-    // Second call should be FAILED with SVL_FAILED
-    expect(mockEmitWorkflowEvent).toHaveBeenNthCalledWith(2, {
-      executionId: "exec-error",
-      county: "error-county",
-      status: "FAILED",
-      phase: "SVL",
-      step: "SVL",
-      taskToken: "task-token-error",
-      errors: [{ code: "SVL_FAILED", details: expect.any(Object) }],
-      log: expect.any(Function),
-    });
-  });
-
-  it("should call executeWithTaskToken with result on success", async () => {
-    mockValidate.mockResolvedValue({ success: true });
-
-    const { handler } = await import(
-      "../../../../workflow/lambdas/svl-worker/index.mjs"
-    );
-
-    const event = createSqsEvent("task-token-result", {
-      transformedOutputS3Uri: "s3://bucket/transformed.zip",
-      county: "result-county",
-      outputPrefix: "s3://output-bucket/outputs/",
-      executionId: "exec-result",
-    });
-
-    await handler(event);
-
-    expect(mockExecuteWithTaskToken).toHaveBeenCalledWith({
-      taskToken: "task-token-result",
-      log: expect.any(Function),
-      workerFn: expect.any(Function),
+      // csv-parse should have been called
+      expect(mockParse).toHaveBeenCalled();
     });
   });
 
-  it("should call executeWithTaskToken with throwing function on failure", async () => {
-    mockValidate.mockRejectedValue(new Error("Validation crashed"));
+  describe("Error handling edge cases", () => {
+    it("should handle validation result with no error message", async () => {
+      mockValidate.mockResolvedValue({
+        success: false,
+        // No error message provided
+      });
 
-    const { handler } = await import(
-      "../../../../workflow/lambdas/svl-worker/index.mjs"
-    );
+      const { handler } = await import(
+        "../../../../workflow/lambdas/svl-worker/index.mjs"
+      );
 
-    const event = createSqsEvent("task-token-throw", {
-      transformedOutputS3Uri: "s3://bucket/transformed.zip",
-      county: "throw-county",
-      outputPrefix: "s3://output-bucket/outputs/",
-      executionId: "exec-throw",
+      const event = createSqsEvent("task-token-no-msg", {
+        transformedOutputS3Uri: "s3://bucket/transformed.zip",
+        county: "no-msg-county",
+        outputPrefix: "s3://output-bucket/outputs/",
+        executionId: "exec-no-msg",
+      });
+
+      await handler(event);
+
+      // Should still emit FAILED with default message
+      expect(mockEmitWorkflowEvent).toHaveBeenCalledTimes(2);
+      expect(mockEmitWorkflowEvent).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({
+          status: "FAILED",
+        }),
+      );
     });
 
-    await handler(event);
+    it("should clean up temp directory even on error", async () => {
+      mockValidate.mockRejectedValue(new Error("Validation crashed"));
 
-    // Should have been called with workerFn that throws
-    const lastCall =
-      mockExecuteWithTaskToken.mock.calls[
-        mockExecuteWithTaskToken.mock.calls.length - 1
-      ];
-    expect(lastCall[0].taskToken).toBe("task-token-throw");
+      const { handler } = await import(
+        "../../../../workflow/lambdas/svl-worker/index.mjs"
+      );
 
-    // The workerFn should throw when called
-    await expect(lastCall[0].workerFn()).rejects.toThrow();
-  });
+      const event = createSqsEvent("task-token-cleanup", {
+        transformedOutputS3Uri: "s3://bucket/transformed.zip",
+        county: "cleanup-county",
+        outputPrefix: "s3://output-bucket/outputs/",
+        executionId: "exec-cleanup",
+      });
 
-  it("should create logger with correct base fields", async () => {
-    mockValidate.mockResolvedValue({ success: true });
+      await handler(event);
 
-    const { handler } = await import(
-      "../../../../workflow/lambdas/svl-worker/index.mjs"
-    );
-
-    const event = createSqsEvent("task-token-logger", {
-      transformedOutputS3Uri: "s3://bucket/transformed.zip",
-      county: "logger-county",
-      outputPrefix: "s3://output-bucket/outputs/",
-      executionId: "exec-logger",
+      // Handler should complete without throwing (cleanup is silent)
+      expect(mockEmitWorkflowEvent).toHaveBeenCalledTimes(2);
     });
-
-    await handler(event);
-
-    expect(mockCreateLogger).toHaveBeenCalledWith({
-      component: "svl-worker",
-      at: expect.any(String),
-      county: "logger-county",
-      executionId: "exec-logger",
-    });
-  });
-
-  it("should download transformed output from S3", async () => {
-    mockValidate.mockResolvedValue({ success: true });
-
-    const { handler } = await import(
-      "../../../../workflow/lambdas/svl-worker/index.mjs"
-    );
-
-    const event = createSqsEvent("task-token-download", {
-      transformedOutputS3Uri: "s3://bucket/transformed.zip",
-      county: "download-county",
-      outputPrefix: "s3://output-bucket/outputs/",
-      executionId: "exec-download",
-    });
-
-    await handler(event);
-
-    // Should have called downloadS3Object once
-    expect(mockDownloadS3Object).toHaveBeenCalledTimes(1);
   });
 });

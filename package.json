@@ -27,6 +27,7 @@
     "@aws-sdk/lib-dynamodb": "^3.879.0",
     "@smithy/util-stream": "^4.2.0",
     "@types/node": "^20.16.3",
+    "@vitest/coverage-v8": "^4.0.14",
     "aws-sdk-client-mock": "^4.1.0",
     "aws-sdk-client-mock-vitest": "^7.0.1",
     "chalk": "^4.1.2",
