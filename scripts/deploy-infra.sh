@@ -1048,18 +1048,6 @@ main() {
     deploy_codebuild_stack
   fi
 
-  # Create or update CloudWatch dashboard for monitoring
-  if [[ "${CREATE_DASHBOARD:-true}" == "true" ]]; then
-    info "Creating CloudWatch dashboard for metrics monitoring..."
-    if "$SCRIPT_DIR/create-auto-repair-dashboard.sh" "" "" "$STACK_NAME"; then
-      info "CloudWatch dashboard created successfully"
-    else
-      warn "Failed to create CloudWatch dashboard (non-fatal)"
-    fi
-  else
-    info "Dashboard creation skipped (CREATE_DASHBOARD=false)"
-  fi
-
 
   bucket=$(get_bucket)
   echo
