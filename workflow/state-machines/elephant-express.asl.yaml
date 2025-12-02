@@ -378,7 +378,7 @@ States:
     Catch:
       - ErrorEquals: [States.ALL]
         Comment: "Resolution failed - stay parked and wait again"
-        Output: "{% $merge([$states.input, {'svlError': $states.result}]) %}"
+        Output: "{% $states.input %}"
         Next: WaitForSvlValidationResolution
 
   WaitForSvlExceptionResolution:
