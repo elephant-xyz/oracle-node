@@ -200,10 +200,10 @@ States:
       - ErrorEquals: [ScriptsFailedError]
         Comment: "Transform scripts failed - park for resolution"
         ResultPath: $.transformError
-        Next: EmitTransformParked
+        Next: WaitForTransformResolution
       - ErrorEquals: [States.ALL]
         ResultPath: $.transformError
-        Next: EmitTransformParked
+        Next: WaitForTransformResolution
 
   EmitTransformSucceeded:
     Type: Task
@@ -226,10 +226,11 @@ States:
         ResultPath: $.eventError
         Next: EmitSvlScheduled
 
-  EmitTransformParked:
+  WaitForTransformResolution:
     Type: Task
-    Resource: arn:aws:states:::events:putEvents
-    Comment: "Emit FAILED event for Transform step - waiting for external resolution"
+    Resource: arn:aws:states:::events:putEvents.waitForTaskToken
+    Comment: "Emit FAILED event and wait for external resolution - retry target is Transform"
+    HeartbeatSeconds: 86400
     Parameters:
       Entries:
         - Source: elephant.workflow
@@ -240,43 +241,18 @@ States:
             status: FAILED
             phase: Transform
             step: EvaluateTransform
+            taskToken.$: $$.Task.Token
             errors:
               - code: "20001"
                 details:
                   error.$: States.JsonToString($.transformError)
-    ResultPath: $.eventResult
-    Next: WaitForTransformResolution
-    Catch:
-      - ErrorEquals: [States.ALL]
-        ResultPath: $.eventError
-        Next: WaitForTransformResolution
-
-  WaitForTransformResolution:
-    Type: Task
-    Resource: arn:aws:states:::sqs:sendMessage.waitForTaskToken
-    Comment: "Wait for external resolution of Transform failure - retry target is Transform"
-    HeartbeatSeconds: 86400
-    Parameters:
-      QueueUrl: ${TransformQueueUrl}
-      MessageBody:
-        taskToken.$: $$.Task.Token
-        input:
-          inputS3Uri.$: $.prepare.output_s3_uri
-          county.$: $.pre.county_name
-          outputPrefix.$: $.outputPrefix
-          executionId.$: $.executionId
-          isRetry: true
-    ResultSelector:
-      transformedOutputS3Uri.$: $.transformedOutputS3Uri
-      county.$: $.county
-      executionId.$: $.executionId
-    ResultPath: $.transform
-    Next: EmitTransformSucceeded
+    ResultPath: $.resolutionResult
+    Next: Transform
     Catch:
       - ErrorEquals: [States.ALL]
         Comment: "Resolution failed - stay parked and wait again"
         ResultPath: $.transformError
-        Next: EmitTransformParked
+        Next: WaitForTransformResolution
 
   # === SVL (Schema Validation Layer) STEP ===
 
@@ -332,10 +308,10 @@ States:
       - ErrorEquals: [SvlFailedError]
         Comment: "SVL validation failed - park for resolution"
         ResultPath: $.svlError
-        Next: EmitSvlParked
+        Next: WaitForSvlResolution
       - ErrorEquals: [States.ALL]
         ResultPath: $.svlError
-        Next: EmitSvlParked
+        Next: WaitForSvlResolution
 
   CheckSvlResult:
     Type: Choice
@@ -343,7 +319,7 @@ States:
     Choices:
       - Variable: $.svl.validationPassed
         BooleanEquals: false
-        Next: EmitSvlValidationParked
+        Next: WaitForSvlResolution
     Default: EmitSvlSucceeded
 
   EmitSvlSucceeded:
@@ -367,10 +343,11 @@ States:
         ResultPath: $.eventError
         Next: EmitHashScheduled
 
-  EmitSvlValidationParked:
+  WaitForSvlResolution:
     Type: Task
-    Resource: arn:aws:states:::events:putEvents
-    Comment: "Emit FAILED event for SVL validation errors - waiting for external resolution"
+    Resource: arn:aws:states:::events:putEvents.waitForTaskToken
+    Comment: "Emit FAILED event and wait for external resolution - retry target is Transform"
+    HeartbeatSeconds: 86400
     Parameters:
       Entries:
         - Source: elephant.workflow
@@ -380,69 +357,19 @@ States:
             county.$: $.pre.county_name
             status: FAILED
             phase: SVL
-            step: SVL
+            step: EvaluateSvl
+            taskToken.$: $$.Task.Token
             errors:
               - code: "30001"
                 details:
-                  validationPassed.$: $.svl.validationPassed
-    ResultPath: $.eventResult
-    Next: WaitForSvlResolution
-    Catch:
-      - ErrorEquals: [States.ALL]
-        ResultPath: $.eventError
-        Next: WaitForSvlResolution
-
-  EmitSvlParked:
-    Type: Task
-    Resource: arn:aws:states:::events:putEvents
-    Comment: "Emit FAILED event for SVL step - waiting for external resolution"
-    Parameters:
-      Entries:
-        - Source: elephant.workflow
-          DetailType: WorkflowEvent
-          Detail:
-            executionId.$: $.executionId
-            county.$: $.pre.county_name
-            status: FAILED
-            phase: SVL
-            step: SVL
-            errors:
-              - code: "30002"
-                details:
                   error.$: States.JsonToString($.svlError)
-    ResultPath: $.eventResult
-    Next: WaitForSvlResolution
-    Catch:
-      - ErrorEquals: [States.ALL]
-        ResultPath: $.eventError
-        Next: WaitForSvlResolution
-
-  WaitForSvlResolution:
-    Type: Task
-    Resource: arn:aws:states:::sqs:sendMessage.waitForTaskToken
-    Comment: "Wait for external resolution of SVL failure - retry target is Transform"
-    HeartbeatSeconds: 86400
-    Parameters:
-      QueueUrl: ${TransformQueueUrl}
-      MessageBody:
-        taskToken.$: $$.Task.Token
-        input:
-          inputS3Uri.$: $.prepare.output_s3_uri
-          county.$: $.pre.county_name
-          outputPrefix.$: $.outputPrefix
-          executionId.$: $.executionId
-          isRetry: true
-    ResultSelector:
-      transformedOutputS3Uri.$: $.transformedOutputS3Uri
-      county.$: $.county
-      executionId.$: $.executionId
-    ResultPath: $.transform
-    Next: EmitTransformSucceeded
+    ResultPath: $.resolutionResult
+    Next: Transform
     Catch:
       - ErrorEquals: [States.ALL]
         Comment: "Resolution failed - stay parked and wait again"
         ResultPath: $.svlError
-        Next: EmitSvlParked
+        Next: WaitForSvlResolution
 
   # === HASH STEP ===
 
@@ -498,7 +425,7 @@ States:
     Catch:
       - ErrorEquals: [States.ALL]
         ResultPath: $.hashError
-        Next: EmitHashParked
+        Next: WaitForHashResolution
 
   EmitHashSucceeded:
     Type: Task
@@ -521,10 +448,11 @@ States:
         ResultPath: $.eventError
         Next: EmitUploadScheduled
 
-  EmitHashParked:
+  WaitForHashResolution:
     Type: Task
-    Resource: arn:aws:states:::events:putEvents
-    Comment: "Emit FAILED event for Hash step - waiting for external resolution"
+    Resource: arn:aws:states:::events:putEvents.waitForTaskToken
+    Comment: "Emit FAILED event and wait for external resolution - retry target is Hash"
+    HeartbeatSeconds: 86400
     Parameters:
       Entries:
         - Source: elephant.workflow
@@ -535,47 +463,18 @@ States:
             status: FAILED
             phase: Hash
             step: EvaluateHash
+            taskToken.$: $$.Task.Token
             errors:
               - code: "40001"
                 details:
                   error.$: States.JsonToString($.hashError)
-    ResultPath: $.eventResult
-    Next: WaitForHashResolution
-    Catch:
-      - ErrorEquals: [States.ALL]
-        ResultPath: $.eventError
-        Next: WaitForHashResolution
-
-  WaitForHashResolution:
-    Type: Task
-    Resource: arn:aws:states:::sqs:sendMessage.waitForTaskToken
-    Comment: "Wait for external resolution of Hash failure - retry target is Hash"
-    HeartbeatSeconds: 86400
-    Parameters:
-      QueueUrl: ${HashQueueUrl}
-      MessageBody:
-        taskToken.$: $$.Task.Token
-        input:
-          validatedOutputS3Uri.$: $.transform.transformedOutputS3Uri
-          seedOutputS3Uri.$: $.pre.seed_output_s3_uri
-          county.$: $.pre.county_name
-          outputPrefix.$: $.outputPrefix
-          executionId.$: $.executionId
-          isRetry: true
-    ResultSelector:
-      seedHashZipS3Uri.$: $.seedHashZipS3Uri
-      countyHashZipS3Uri.$: $.countyHashZipS3Uri
-      combinedHashCsvS3Uri.$: $.combinedHashCsvS3Uri
-      county.$: $.county
-      executionId.$: $.executionId
-      propertyCid.$: $.propertyCid
-    ResultPath: $.hash
-    Next: EmitHashSucceeded
+    ResultPath: $.resolutionResult
+    Next: Hash
     Catch:
       - ErrorEquals: [States.ALL]
         Comment: "Resolution failed - stay parked and wait again"
         ResultPath: $.hashError
-        Next: EmitHashParked
+        Next: WaitForHashResolution
 
   # === UPLOAD STEP ===
 
@@ -628,10 +527,10 @@ States:
       - ErrorEquals: [UploadFailedError]
         Comment: "Upload to IPFS failed - park for resolution"
         ResultPath: $.uploadError
-        Next: EmitUploadParked
+        Next: WaitForUploadResolution
       - ErrorEquals: [States.ALL]
         ResultPath: $.uploadError
-        Next: EmitUploadParked
+        Next: WaitForUploadResolution
 
   EmitUploadSucceeded:
     Type: Task
@@ -654,10 +553,11 @@ States:
         ResultPath: $.eventError
         Next: PrepareTransactionItems
 
-  EmitUploadParked:
+  WaitForUploadResolution:
     Type: Task
-    Resource: arn:aws:states:::events:putEvents
-    Comment: "Emit FAILED event for Upload step - waiting for external resolution"
+    Resource: arn:aws:states:::events:putEvents.waitForTaskToken
+    Comment: "Emit FAILED event and wait for external resolution - retry target is Upload"
+    HeartbeatSeconds: 86400
     Parameters:
       Entries:
         - Source: elephant.workflow
@@ -668,43 +568,18 @@ States:
             status: FAILED
             phase: Upload
             step: EvaluateUpload
+            taskToken.$: $$.Task.Token
             errors:
               - code: "50001"
                 details:
                   error.$: States.JsonToString($.uploadError)
-    ResultPath: $.eventResult
-    Next: WaitForUploadResolution
-    Catch:
-      - ErrorEquals: [States.ALL]
-        ResultPath: $.eventError
-        Next: WaitForUploadResolution
-
-  WaitForUploadResolution:
-    Type: Task
-    Resource: arn:aws:states:::sqs:sendMessage.waitForTaskToken
-    Comment: "Wait for external resolution of Upload failure - retry target is Upload"
-    HeartbeatSeconds: 86400
-    Parameters:
-      QueueUrl: ${UploadQueueUrl}
-      MessageBody:
-        taskToken.$: $$.Task.Token
-        input:
-          seedHashZipS3Uri.$: $.hash.seedHashZipS3Uri
-          countyHashZipS3Uri.$: $.hash.countyHashZipS3Uri
-          county.$: $.pre.county_name
-          executionId.$: $.executionId
-          isRetry: true
-    ResultSelector:
-      uploadSuccess.$: $.uploadSuccess
-      county.$: $.county
-      executionId.$: $.executionId
-    ResultPath: $.upload
-    Next: EmitUploadSucceeded
+    ResultPath: $.resolutionResult
+    Next: Upload
     Catch:
       - ErrorEquals: [States.ALL]
         Comment: "Resolution failed - stay parked and wait again"
         ResultPath: $.uploadError
-        Next: EmitUploadParked
+        Next: WaitForUploadResolution
 
   # === PREPARE TRANSACTION ITEMS ===
 
