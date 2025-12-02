@@ -14,7 +14,6 @@
     "declarationMap": true,
     "sourceMap": true,
     "outDir": "./dist",
-    "rootDir": "./",
     "noEmit": true,
     "types": ["node", "aws-lambda"],
     "baseUrl": ".",
@@ -22,6 +21,6 @@
       "shared/*": ["../shared-layer/src/*"]
     }
   },
-  "include": ["**/*.ts"],
+  "include": ["**/*.ts", "../shared-layer/src/**/*.ts"],
   "exclude": ["node_modules", "dist"]
 }
