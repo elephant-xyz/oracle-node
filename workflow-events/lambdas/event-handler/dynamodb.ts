@@ -114,7 +114,7 @@ const buildErrorRecordUpdate = (
         ":gs1pk": "TYPE#ERROR",
         ":gs1sk": pk,
         ":gs2pk": "TYPE#ERROR",
-        ":gs3pk": "METRIC#ERRORCOUNT#ERROR",
+        ":gs3pk": "METRIC#ERRORCOUNT",
       },
     },
   };
