@@ -140,9 +140,12 @@ async function runTransform({
 
       // Create a specific error for script failures
       if (transformResult.scriptFailure) {
-        const err = new Error(
-          transformResult.error || "Transform scripts failed",
-        );
+        // Include stderr in the error cause for Step Functions to capture
+        const errorCause = {
+          message: transformResult.error || "Transform scripts failed",
+          stderr: transformResult.scriptFailure.stderr,
+        };
+        const err = new Error(JSON.stringify(errorCause));
         err.name = "ScriptsFailedError";
         throw err;
       }
