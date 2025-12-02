@@ -368,7 +368,8 @@ States:
                     "code": "30001",
                     "details": {
                       "error_message": $e.error_message,
-                      "error_path": $e.error_path
+                      "error_path": $e.error_path,
+                      "data_group_cid": $e.data_group_cid
                     }
                   }
                 })

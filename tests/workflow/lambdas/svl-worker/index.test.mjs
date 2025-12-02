@@ -203,6 +203,88 @@ describe("svl-worker handler", () => {
       expect(mockUploadToS3).toHaveBeenCalled();
     });
 
+    it("should include data_group_cid in svlErrors when present in CSV", async () => {
+      // Mock validation failure with errors file containing data_group_cid
+      mockValidate.mockImplementation(async ({ cwd }) => {
+        const errorsPath = path.join(cwd, "submit_errors.csv");
+        await fs.writeFile(
+          errorsPath,
+          "error_message,error_path,data_group_cid\nTest error,$.field,bafkreitest123",
+        );
+        return { success: false, error: "Validation errors found" };
+      });
+
+      mockParse.mockReturnValue([
+        {
+          error_message: "Test error",
+          error_path: "$.field",
+          data_group_cid: "bafkreitest123",
+        },
+      ]);
+
+      const { handler } = await import(
+        "../../../../workflow/lambdas/svl-worker/index.mjs"
+      );
+
+      const event = createSqsEvent("task-token-with-cid", {
+        transformedOutputS3Uri: "s3://bucket/transformed.zip",
+        county: "cid-county",
+        outputPrefix: "s3://output-bucket/outputs/",
+        executionId: "exec-with-cid",
+      });
+
+      await handler(event);
+
+      // Verify the workerFn returns the result with svlErrors including data_group_cid
+      const workerFn = mockExecuteWithTaskToken.mock.calls[0][0].workerFn;
+      const result = await workerFn();
+      expect(result.svlErrors).toEqual([
+        {
+          error_message: "Test error",
+          error_path: "$.field",
+          data_group_cid: "bafkreitest123",
+        },
+      ]);
+    });
+
+    it("should omit data_group_cid from svlErrors when not present in CSV", async () => {
+      // Mock validation failure with errors file without data_group_cid
+      mockValidate.mockImplementation(async ({ cwd }) => {
+        const errorsPath = path.join(cwd, "submit_errors.csv");
+        await fs.writeFile(
+          errorsPath,
+          "error_message,error_path\nTest error,$.field",
+        );
+        return { success: false, error: "Validation errors found" };
+      });
+
+      mockParse.mockReturnValue([
+        { error_message: "Test error", error_path: "$.field" },
+      ]);
+
+      const { handler } = await import(
+        "../../../../workflow/lambdas/svl-worker/index.mjs"
+      );
+
+      const event = createSqsEvent("task-token-no-cid", {
+        transformedOutputS3Uri: "s3://bucket/transformed.zip",
+        county: "no-cid-county",
+        outputPrefix: "s3://output-bucket/outputs/",
+        executionId: "exec-no-cid",
+      });
+
+      await handler(event);
+
+      // Verify the workerFn returns the result with svlErrors without data_group_cid
+      const workerFn = mockExecuteWithTaskToken.mock.calls[0][0].workerFn;
+      const result = await workerFn();
+      expect(result.svlErrors).toEqual([
+        { error_message: "Test error", error_path: "$.field" },
+      ]);
+      // Verify data_group_cid is not present as a key
+      expect(result.svlErrors[0]).not.toHaveProperty("data_group_cid");
+    });
+
     it("should only emit IN_PROGRESS event on general failure (FAILED is emitted by state machine)", async () => {
       mockValidate.mockRejectedValue(new Error("Validation process crashed"));
 

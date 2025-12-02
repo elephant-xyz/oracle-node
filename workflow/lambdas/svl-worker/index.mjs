@@ -30,6 +30,7 @@ import {
  * @typedef {object} SvlValidationError
  * @property {string} error_message - Validation error message.
  * @property {string} error_path - JSON path where the error occurred.
+ * @property {string} [data_group_cid] - CID of the data group that caused the error.
  */
 
 /**
@@ -88,10 +89,21 @@ function normalizeValidationErrors(rawRows) {
       row.errorMessage?.trim() || row.error_message?.trim() || "Unknown error";
     const errorPath =
       row.errorPath?.trim() || row.error_path?.trim() || "unknown";
-    return {
+    const dataGroupCid =
+      row.dataGroupCid?.trim() || row.data_group_cid?.trim() || undefined;
+
+    /** @type {SvlValidationError} */
+    const error = {
       error_message: errorMessage,
       error_path: errorPath,
     };
+
+    // Only include data_group_cid if it has a value
+    if (dataGroupCid) {
+      error.data_group_cid = dataGroupCid;
+    }
+
+    return error;
   });
 }
 
