@@ -109,6 +109,23 @@ export interface ExecutionErrorLink {
 }
 
 /**
+ * Event detail for ElephantErrorResolved events.
+ * Used to mark errors as resolved across executions.
+ */
+export interface ElephantErrorResolvedDetail {
+  /**
+   * Execution ID - if provided, gets all error codes from this execution
+   * and deletes them from ALL executions that have those errors.
+   */
+  executionId?: string;
+  /**
+   * Error code - if provided (without executionId), deletes this error
+   * from ALL executions that have it.
+   */
+  errorCode?: string;
+}
+
+/**
  * Failed execution item in DynamoDB.
  */
 export interface FailedExecutionItem {

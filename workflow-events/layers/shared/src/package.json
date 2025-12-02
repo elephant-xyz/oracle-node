@@ -10,6 +10,8 @@
     "./types": "./types.mjs",
     "./types.js": "./types.mjs",
     "./keys": "./keys.mjs",
-    "./keys.js": "./keys.mjs"
+    "./keys.js": "./keys.mjs",
+    "./repository": "./repository.mjs",
+    "./repository.js": "./repository.mjs"
   }
 }
