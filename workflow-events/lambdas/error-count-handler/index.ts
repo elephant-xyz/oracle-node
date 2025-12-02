@@ -14,14 +14,30 @@ import type {
   BatchDecrementResultItem,
 } from "shared/repository.js";
 
+/**
+ * Step Functions client for sending task success callbacks.
+ */
 const sfnClient = new SFNClient({});
 
+/**
+ * Result of pre-processing a DynamoDB stream record.
+ */
 interface PreProcessedRecord {
+  /** The execution ID from the record. */
   executionId: string;
+  /** Whether the record is valid for processing. */
   valid: boolean;
+  /** Event ID for logging purposes. */
   eventId: string;
 }
 
+/**
+ * Creates a structured log entry for consistent logging.
+ *
+ * @param action - The action being performed
+ * @param data - Additional data to log
+ * @returns Structured log object as JSON string
+ */
 const createLogEntry = (
   action: string,
   data: Record<string, unknown>,
@@ -33,9 +49,17 @@ const createLogEntry = (
   });
 };
 
+/**
+ * Pre-processes a single DynamoDB stream record to extract execution ID.
+ * Validates that it's an ExecutionErrorLink REMOVE event.
+ *
+ * @param record - The DynamoDB stream record to pre-process
+ * @returns Pre-processed record with validation result
+ */
 const preProcessRecord = (record: DynamoDBRecord): PreProcessedRecord => {
   const eventId = record.eventID ?? "unknown";
 
+  // Check if this is a REMOVE event
   if (record.eventName !== "REMOVE") {
     return { executionId: "", valid: false, eventId };
   }
@@ -45,14 +69,17 @@ const preProcessRecord = (record: DynamoDBRecord): PreProcessedRecord => {
     return { executionId: "", valid: false, eventId };
   }
 
+  // Unmarshall the old image to check entity type and get execution ID
   const item = unmarshall(
     oldImage as Record<string, AttributeValue>,
   ) as Partial<ExecutionErrorLink>;
 
+  // Validate entity type
   if (item.entityType !== ENTITY_TYPES.EXECUTION_ERROR) {
     return { executionId: "", valid: false, eventId };
   }
 
+  // Extract execution ID
   const executionId = item.executionId;
   if (!executionId) {
     return { executionId: "", valid: false, eventId };
@@ -61,6 +88,12 @@ const preProcessRecord = (record: DynamoDBRecord): PreProcessedRecord => {
   return { executionId, valid: true, eventId };
 };
 
+/**
+ * Groups pre-processed records by execution ID and counts removals per execution.
+ *
+ * @param records - Array of pre-processed records
+ * @returns Map of execution ID to removal count
+ */
 const groupByExecution = (
   records: PreProcessedRecord[],
 ): Map<string, number> => {
@@ -78,6 +111,12 @@ const groupByExecution = (
   return executionRemovals;
 };
 
+/**
+ * Sends a task success callback to Step Functions.
+ *
+ * @param taskToken - The task token for the callback
+ * @param executionId - The execution ID (for logging)
+ */
 const sendTaskSuccess = async (
   taskToken: string,
   executionId: string,
@@ -103,6 +142,11 @@ const sendTaskSuccess = async (
   );
 };
 
+/**
+ * Sends task success callbacks in parallel for all executions that reached zero errors.
+ *
+ * @param results - Array of decrement results for executions that reached zero
+ */
 const sendTaskSuccessCallbacks = async (
   results: BatchDecrementResultItem[],
 ): Promise<void> => {
@@ -112,6 +156,7 @@ const sendTaskSuccessCallbacks = async (
       try {
         await sendTaskSuccess(result.taskToken as string, result.executionId);
       } catch (error) {
+        // Log but don't throw - the task token might be expired or invalid
         console.error(
           createLogEntry("task_success_failed", {
             executionId: result.executionId,
@@ -124,6 +169,19 @@ const sendTaskSuccessCallbacks = async (
   await Promise.all(callbackPromises);
 };
 
+/**
+ * Main handler for DynamoDB Stream events.
+ * Processes REMOVE events for ExecutionErrorLink items using batch operations.
+ *
+ * Processing flow:
+ * 1. Pre-process all records in parallel to extract execution IDs
+ * 2. Group by execution ID and count removals
+ * 3. Batch decrement openErrorCount for all executions
+ * 4. Update GSI keys for executions with remaining errors
+ * 5. Send task success callbacks and delete executions that reached zero
+ *
+ * @param event - DynamoDB Stream event containing batch of records
+ */
 export const handler = async (event: DynamoDBStreamEvent): Promise<void> => {
   console.info(
     createLogEntry("received_stream_event", {
@@ -131,8 +189,10 @@ export const handler = async (event: DynamoDBStreamEvent): Promise<void> => {
     }),
   );
 
+  // Step 1: Pre-process all records in parallel
   const preProcessedRecords = event.Records.map(preProcessRecord);
 
+  // Log invalid records
   const invalidRecords = preProcessedRecords.filter(
     (r) => !r.valid && r.eventId !== "unknown",
   );
@@ -144,6 +204,7 @@ export const handler = async (event: DynamoDBStreamEvent): Promise<void> => {
     );
   }
 
+  // Step 2: Group by execution ID
   const executionRemovals = groupByExecution(preProcessedRecords);
 
   if (executionRemovals.size === 0) {
@@ -167,6 +228,7 @@ export const handler = async (event: DynamoDBStreamEvent): Promise<void> => {
     }),
   );
 
+  // Step 3: Batch decrement openErrorCount for all executions
   const decrementInputs: BatchDecrementInput[] = Array.from(
     executionRemovals.entries(),
   ).map(([executionId, decrementBy]) => ({
@@ -176,6 +238,7 @@ export const handler = async (event: DynamoDBStreamEvent): Promise<void> => {
 
   const decrementResults = await batchDecrementOpenErrorCounts(decrementInputs);
 
+  // Log decrement results
   const successfulDecrements = decrementResults.filter((r) => r.success);
   const failedDecrements = decrementResults.filter((r) => !r.success);
 
@@ -197,6 +260,7 @@ export const handler = async (event: DynamoDBStreamEvent): Promise<void> => {
     );
   }
 
+  // Step 4: Separate results into zero and non-zero error counts
   const executionsReachedZero = successfulDecrements.filter(
     (r) => r.newOpenErrorCount === 0,
   );
@@ -211,6 +275,7 @@ export const handler = async (event: DynamoDBStreamEvent): Promise<void> => {
     }),
   );
 
+  // Step 5: Update GSI keys for executions with remaining errors
   if (executionsWithRemainingErrors.length > 0) {
     const gsiUpdates = executionsWithRemainingErrors.map((r) => ({
       executionId: r.executionId,
@@ -227,6 +292,7 @@ export const handler = async (event: DynamoDBStreamEvent): Promise<void> => {
     );
   }
 
+  // Step 6: Handle executions that reached zero errors
   if (executionsReachedZero.length > 0) {
     console.info(
       createLogEntry("all_errors_resolved", {
@@ -234,8 +300,10 @@ export const handler = async (event: DynamoDBStreamEvent): Promise<void> => {
       }),
     );
 
+    // Send task success callbacks in parallel
     await sendTaskSuccessCallbacks(executionsReachedZero);
 
+    // Batch delete FailedExecutionItems
     const executionIdsToDelete = executionsReachedZero.map(
       (r) => r.executionId,
     );

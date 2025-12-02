@@ -516,7 +516,9 @@ describe("get-execution handler", () => {
   });
 
   describe("filter expression", () => {
-    it("should filter by FailedExecution entity type in GS1 query", async () => {
+    it("should NOT use FilterExpression in GS1 query (partition key separation)", async () => {
+      // GS1PK="METRIC#ERRORCOUNT" is only used by FailedExecutionItem,
+      // so FilterExpression is unnecessary and can cause issues with Limit
       ddbMock.on(QueryCommand).resolves({ Items: [] });
 
       const { handler } = await import(
@@ -526,12 +528,10 @@ describe("get-execution handler", () => {
       await handler({ sortOrder: "most" });
 
       const calls = ddbMock.commandCalls(QueryCommand);
-      expect(calls[0].args[0].input.FilterExpression).toBe(
-        "entityType = :entityType",
-      );
-      expect(calls[0].args[0].input.ExpressionAttributeValues).toMatchObject({
-        ":entityType": "FailedExecution",
-      });
+      expect(calls[0].args[0].input.FilterExpression).toBeUndefined();
+      expect(
+        calls[0].args[0].input.ExpressionAttributeValues,
+      ).not.toHaveProperty(":entityType");
     });
   });
 
@@ -576,7 +576,7 @@ describe("get-execution dynamodb functions", () => {
       ddbMock.on(QueryCommand).resolves({ Items: undefined });
 
       const { queryExecutionByErrorCount } = await import(
-        "../../../../workflow-events/lambdas/get-execution/dynamodb.js"
+        "shared/repository.js"
       );
 
       const result = await queryExecutionByErrorCount({
@@ -590,7 +590,7 @@ describe("get-execution dynamodb functions", () => {
       ddbMock.on(QueryCommand).resolves({ Items: [] });
 
       const { queryExecutionByErrorCount } = await import(
-        "../../../../workflow-events/lambdas/get-execution/dynamodb.js"
+        "shared/repository.js"
       );
 
       const result = await queryExecutionByErrorCount({
@@ -605,7 +605,7 @@ describe("get-execution dynamodb functions", () => {
       ddbMock.on(QueryCommand).resolves({ Items: [mockExecution] });
 
       const { queryExecutionByErrorCount } = await import(
-        "../../../../workflow-events/lambdas/get-execution/dynamodb.js"
+        "shared/repository.js"
       );
 
       const result = await queryExecutionByErrorCount({
@@ -619,7 +619,7 @@ describe("get-execution dynamodb functions", () => {
       delete process.env.WORKFLOW_ERRORS_TABLE_NAME;
 
       const { queryExecutionByErrorCount } = await import(
-        "../../../../workflow-events/lambdas/get-execution/dynamodb.js"
+        "shared/repository.js"
       );
 
       await expect(
@@ -634,8 +634,8 @@ describe("get-execution dynamodb functions", () => {
     it("should return empty array when no errors found", async () => {
       ddbMock.on(QueryCommand).resolves({ Items: [] });
 
-      const { queryExecutionErrors } = await import(
-        "../../../../workflow-events/lambdas/get-execution/dynamodb.js"
+      const { queryExecutionErrorLinks: queryExecutionErrors } = await import(
+        "shared/repository.js"
       );
 
       const result = await queryExecutionErrors("exec-001");
@@ -650,8 +650,8 @@ describe("get-execution dynamodb functions", () => {
       ];
       ddbMock.on(QueryCommand).resolves({ Items: mockErrors });
 
-      const { queryExecutionErrors } = await import(
-        "../../../../workflow-events/lambdas/get-execution/dynamodb.js"
+      const { queryExecutionErrorLinks: queryExecutionErrors } = await import(
+        "shared/repository.js"
       );
 
       const result = await queryExecutionErrors("exec-001");
@@ -674,8 +674,8 @@ describe("get-execution dynamodb functions", () => {
           LastEvaluatedKey: undefined,
         });
 
-      const { queryExecutionErrors } = await import(
-        "../../../../workflow-events/lambdas/get-execution/dynamodb.js"
+      const { queryExecutionErrorLinks: queryExecutionErrors } = await import(
+        "shared/repository.js"
       );
 
       const result = await queryExecutionErrors("exec-001");
@@ -686,11 +686,13 @@ describe("get-execution dynamodb functions", () => {
       expect(ddbMock).toHaveReceivedCommandTimes(QueryCommand, 2);
     });
 
-    it("should query with correct key conditions", async () => {
+    it("should query with correct key conditions and no FilterExpression", async () => {
+      // Key condition already guarantees only ExecutionErrorLink items are returned
+      // (FailedExecutionItem has SK="EXECUTION#{id}" which doesn't match "ERROR#" prefix)
       ddbMock.on(QueryCommand).resolves({ Items: [] });
 
-      const { queryExecutionErrors } = await import(
-        "../../../../workflow-events/lambdas/get-execution/dynamodb.js"
+      const { queryExecutionErrorLinks: queryExecutionErrors } = await import(
+        "shared/repository.js"
       );
 
       await queryExecutionErrors("exec-query-test-001");
@@ -702,15 +704,19 @@ describe("get-execution dynamodb functions", () => {
       expect(calls[0].args[0].input.ExpressionAttributeValues).toMatchObject({
         ":pk": "EXECUTION#exec-query-test-001",
         ":skPrefix": "ERROR#",
-        ":entityType": "ExecutionError",
       });
+      // FilterExpression should NOT be used - key conditions are sufficient
+      expect(calls[0].args[0].input.FilterExpression).toBeUndefined();
+      expect(
+        calls[0].args[0].input.ExpressionAttributeValues,
+      ).not.toHaveProperty(":entityType");
     });
 
     it("should throw error when table name is not set", async () => {
       delete process.env.WORKFLOW_ERRORS_TABLE_NAME;
 
-      const { queryExecutionErrors } = await import(
-        "../../../../workflow-events/lambdas/get-execution/dynamodb.js"
+      const { queryExecutionErrorLinks: queryExecutionErrors } = await import(
+        "shared/repository.js"
       );
 
       await expect(queryExecutionErrors("exec-001")).rejects.toThrow(
@@ -734,9 +740,7 @@ describe("get-execution dynamodb functions", () => {
         .resolvesOnce({ Items: [mockExecution] })
         .resolvesOnce({ Items: mockErrors });
 
-      const { getExecutionWithErrors } = await import(
-        "../../../../workflow-events/lambdas/get-execution/dynamodb.js"
-      );
+      const { getExecutionWithErrors } = await import("shared/repository.js");
 
       const result = await getExecutionWithErrors({ sortOrder: "most" });
 
@@ -747,9 +751,7 @@ describe("get-execution dynamodb functions", () => {
     it("should return null execution and empty errors when not found", async () => {
       ddbMock.on(QueryCommand).resolves({ Items: [] });
 
-      const { getExecutionWithErrors } = await import(
-        "../../../../workflow-events/lambdas/get-execution/dynamodb.js"
-      );
+      const { getExecutionWithErrors } = await import("shared/repository.js");
 
       const result = await getExecutionWithErrors({ sortOrder: "most" });
 
@@ -760,9 +762,7 @@ describe("get-execution dynamodb functions", () => {
     it("should not query for errors when execution is not found", async () => {
       ddbMock.on(QueryCommand).resolves({ Items: [] });
 
-      const { getExecutionWithErrors } = await import(
-        "../../../../workflow-events/lambdas/get-execution/dynamodb.js"
-      );
+      const { getExecutionWithErrors } = await import("shared/repository.js");
 
       await getExecutionWithErrors({ sortOrder: "most" });
 

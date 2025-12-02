@@ -1,14 +1,14 @@
 import * as z from "zod";
-import {
-  getExecutionWithErrors,
-  type GetExecutionInput,
-  type SortOrder,
-} from "./dynamodb.js";
 import type {
   FailedExecutionItem,
   ExecutionErrorLink,
   ErrorStatus,
 } from "shared/types.js";
+import {
+  getExecutionWithErrors,
+  type GetExecutionInput,
+  type SortOrder,
+} from "shared/repository.js";
 
 /**
  * Zod schema for validating the input event.

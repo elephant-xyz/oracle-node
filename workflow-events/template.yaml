@@ -90,9 +90,13 @@ Resources:
               KeyType: RANGE
           Projection:
             ProjectionType: ALL
+      # Enable DynamoDB Streams for error resolution processing
+      StreamSpecification:
+        StreamViewType: OLD_IMAGE
       Tags:
         - Key: Environment
           Value: !Ref EnvironmentName
+
   WorkflowEventHandlerDeadLetterQueue:
     Type: AWS::SQS::Queue
     Properties:
@@ -115,7 +119,7 @@ Resources:
       DeadLetterQueue:
         TargetArn: !GetAtt WorkflowEventHandlerDeadLetterQueue.Arn
         Type: SQS
-      Description: "Processes EventBridge WorkflowEvent events from elephant.workflow source"
+      Description: "Processes EventBridge events from elephant.workflow source (WorkflowEvent and ElephantErrorResolved)"
       Environment:
         Variables:
           WORKFLOW_ERRORS_TABLE_NAME: !Ref WorkflowErrorsTable
@@ -133,6 +137,7 @@ Resources:
                 - elephant.workflow
               detail-type:
                 - WorkflowEvent
+                - ElephantErrorResolved
             State: ENABLED
     Metadata:
       BuildMethod: esbuild
@@ -489,6 +494,73 @@ Resources:
           ]
         }
 
+  # Dead letter queue for error count handler
+  ErrorCountHandlerDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      MessageRetentionPeriod: 1209600
+      Tags:
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  # Lambda function triggered by DynamoDB Streams to manage error counts
+  ErrorCountHandlerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${EnvironmentName}-error-count-handler"
+      Runtime: nodejs22.x
+      Architectures:
+        - arm64
+      Handler: index.handler
+      CodeUri: lambdas/error-count-handler
+      Layers:
+        - !Ref SharedLayer
+      DeadLetterQueue:
+        TargetArn: !GetAtt ErrorCountHandlerDeadLetterQueue.Arn
+        Type: SQS
+      ReservedConcurrentExecutions: 1
+      Description: "Processes DynamoDB Stream events to manage error counts and send task success callbacks"
+      Environment:
+        Variables:
+          WORKFLOW_ERRORS_TABLE_NAME: !Ref WorkflowErrorsTable
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - DynamoDBCrudPolicy:
+            TableName: !Ref WorkflowErrorsTable
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - states:SendTaskSuccess
+              Resource: "*"
+      Events:
+        DynamoDBStream:
+          Type: DynamoDB
+          Properties:
+            Stream: !GetAtt WorkflowErrorsTable.StreamArn
+            StartingPosition: TRIM_HORIZON
+            BatchSize: 100
+            MaximumBatchingWindowInSeconds: 5
+            FilterCriteria:
+              Filters:
+                - Pattern: '{"eventName": ["REMOVE"]}'
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Format: esm
+        OutExtension:
+          - .js=.mjs
+        External:
+          - "@aws-sdk/*"
+          - "@smithy/*"
+          - "shared"
+        Minify: true
+        Target: es2022
+        EntryPoints:
+          - index.ts
+        Sourcemap: true
+        LogLevel: info
+
 Outputs:
   WorkflowEventHandlerFunctionName:
     Description: Name of the workflow event handler Lambda function
@@ -526,3 +598,12 @@ Outputs:
   WorkflowErrorsDashboardName:
     Description: Name of the CloudWatch dashboard for workflow errors
     Value: !Ref WorkflowErrorsDashboard
+  ErrorCountHandlerFunctionName:
+    Description: Name of the error count handler Lambda function
+    Value: !Ref ErrorCountHandlerFunction
+  ErrorCountHandlerFunctionArn:
+    Description: ARN of the error count handler Lambda function
+    Value: !GetAtt ErrorCountHandlerFunction.Arn
+  WorkflowErrorsTableStreamArn:
+    Description: ARN of the DynamoDB Stream for workflow errors table
+    Value: !GetAtt WorkflowErrorsTable.StreamArn
