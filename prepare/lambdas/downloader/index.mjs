@@ -9,10 +9,6 @@ import {
   UpdateItemCommand,
 } from "@aws-sdk/client-dynamodb";
 import {
-  EventBridgeClient,
-  PutEventsCommand,
-} from "@aws-sdk/client-eventbridge";
-import {
   SFNClient,
   SendTaskSuccessCommand,
   SendTaskFailureCommand,
@@ -24,61 +20,7 @@ import { networkInterfaces } from "os";
 import AdmZip from "adm-zip";
 
 const RE_S3PATH = /^s3:\/\/([^/]+)\/(.*)$/i;
-const eventBridgeClient = new EventBridgeClient({});
 const sfnClient = new SFNClient({});
-
-const EVENT_BUS_NAME = process.env.EVENT_BUS_NAME || "default";
-
-/**
- * Emits a workflow event to EventBridge following EVENTBRIDGE_CONTRACT.md
- * @param {Object} params - Event parameters
- * @param {string} params.executionId - Step Functions execution ARN
- * @param {string} params.county - County identifier being processed
- * @param {"SCHEDULED"|"IN_PROGRESS"|"SUCCEEDED"|"PARKED"|"FAILED"} params.status - Current workflow status
- * @param {string} [params.taskToken] - Step Functions task token for resumption
- * @param {Array<{code: string, details: Object}>} [params.errors] - List of error objects
- * @returns {Promise<void>}
- */
-async function emitWorkflowEvent({
-  executionId,
-  county,
-  status,
-  taskToken,
-  errors,
-}) {
-  const detail = {
-    executionId,
-    county,
-    status,
-    phase: "Prepare",
-    step: "Prepare",
-    ...(taskToken && { taskToken }),
-    ...(errors && errors.length > 0 && { errors }),
-  };
-
-  console.log(`📤 Emitting EventBridge event: ${status}`, JSON.stringify(detail, null, 2));
-
-  try {
-    await eventBridgeClient.send(
-      new PutEventsCommand({
-        Entries: [
-          {
-            Source: "elephant.workflow",
-            DetailType: "WorkflowEvent",
-            Detail: JSON.stringify(detail),
-            EventBusName: EVENT_BUS_NAME,
-          },
-        ],
-      })
-    );
-    console.log(`✅ EventBridge event emitted: ${status}`);
-  } catch (error) {
-    console.error(
-      `❌ Failed to emit EventBridge event: ${error instanceof Error ? error.message : String(error)}`
-    );
-    // Don't throw - EventBridge emission failure shouldn't block the workflow
-  }
-}
 
 /**
  * Sends task success to Step Functions
@@ -837,13 +779,9 @@ async function processPrepare({
       console.log("Continuing with general configuration...");
     }
 
-    // Emit IN_PROGRESS event now that we have county info
+    // Log that we have county info (EventBridge events are emitted by the state machine)
     if (executionId) {
-      await emitWorkflowEvent({
-        executionId,
-        county: countyName || "unknown",
-        status: "IN_PROGRESS",
-      });
+      console.log(`📋 Processing for execution: ${executionId}, county: ${countyName || "unknown"}`);
     }
 
     // Load configuration from S3 if specified in input.csv
@@ -1275,6 +1213,7 @@ export const handler = async (event) => {
         messageBody = JSON.parse(record.body);
         taskToken = messageBody.taskToken;
         executionId = messageBody.executionId;
+        county = messageBody.county || "unknown";
 
         console.log(`📋 Processing message with executionId: ${executionId}`);
 
@@ -1291,46 +1230,30 @@ export const handler = async (event) => {
 
         county = result.county || county;
 
-        // Emit SUCCEEDED event with taskToken for traceability
-        await emitWorkflowEvent({
-          executionId,
+        console.log(`✅ Prepare succeeded for county: ${county}`);
+
+        // Send success to Step Functions with taskToken for EventBridge
+        await sendTaskSuccess(taskToken, {
+          output_s3_uri: result.output_s3_uri,
           county,
-          status: "SUCCEEDED",
-          taskToken,
+          taskToken,  // Include taskToken so state machine can pass to EventBridge
         });
-
-        console.log(`✅ Prepare succeeded. TaskToken: ${taskToken.substring(0, 50)}...`);
-
-        // Send task success to Step Functions
-        await sendTaskSuccess(taskToken, result);
 
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         console.error(`❌ Prepare processing failed: ${errorMessage}`);
 
-        // Emit PARKED event with error details and task token for retry
-        if (executionId && taskToken) {
-          await emitWorkflowEvent({
-            executionId,
-            county,
-            status: "PARKED",
-            taskToken,
-            errors: [
-              {
-                code: "PREPARE_FAILED",
-                details: {
-                  message: errorMessage,
-                  input_s3_uri: messageBody?.input_s3_uri,
-                },
-              },
-            ],
+        // Send failure to Step Functions with taskToken in cause (JSON encoded)
+        // State machine can extract taskToken from cause for EventBridge
+        if (taskToken) {
+          const causePayload = JSON.stringify({
+            message: errorMessage,
+            taskToken: taskToken,
+            county: county,
+            input_s3_uri: messageBody?.input_s3_uri,
           });
+          await sendTaskFailure(taskToken, "PREPARE_FAILED", causePayload);
         }
-
-        // NOTE: We intentionally do NOT call sendTaskFailure here.
-        // The workflow will remain parked, waiting for external retry via sendTaskSuccess.
-        // The SQS message will be deleted (not retried) since we're not throwing.
-        console.log(`⏸️ Workflow parked for manual retry. TaskToken: ${taskToken.substring(0, 50)}...`);
       }
     }
 

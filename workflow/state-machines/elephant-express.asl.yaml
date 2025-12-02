@@ -189,6 +189,8 @@ States:
   Prepare:
     Type: Task
     Resource: arn:aws:states:::sqs:sendMessage.waitForTaskToken
+    TimeoutSeconds: 900
+    Comment: "Timeout matches Lambda timeout (15 min). If Lambda times out, Catch handles it."
     Parameters:
       QueueUrl: ${PrepareQueueUrl}
       MessageBody:
@@ -199,9 +201,60 @@ States:
         county.$: $.pre.county_name
     ResultSelector:
       output_s3_uri.$: $.output_s3_uri
+      county.$: $.county
+      taskToken.$: $.taskToken
       prepareSkipped: false
     ResultPath: $.prepare
+    Next: ReportPrepareLambdaSuccess
+    Catch:
+      - ErrorEquals: [States.Timeout]
+        ResultPath: $.prepareError
+        Next: EmitPrepareFailed
+      - ErrorEquals: [States.ALL]
+        ResultPath: $.prepareError
+        Next: EmitPrepareFailed
+
+  ReportPrepareLambdaSuccess:
+    Type: Task
+    Resource: arn:aws:states:::events:putEvents
+    Parameters:
+      Entries:
+        - Source: elephant.workflow
+          DetailType: WorkflowEvent
+          Detail:
+            executionId.$: $$.Execution.Id
+            county.$: $.prepare.county
+            status: SUCCEEDED
+            phase: Prepare
+            step: Prepare
+            taskToken.$: $.prepare.taskToken
+    ResultPath: $.eventResult
     Next: Postprocess
+    Catch:
+      - ErrorEquals: [States.ALL]
+        ResultPath: $.eventError
+        Next: Postprocess
+
+  EmitPrepareFailed:
+    Type: Task
+    Resource: arn:aws:states:::events:putEvents.waitForTaskToken
+    Comment: "Emit FAILED event with NEW taskToken. Waits for external sendTaskSuccess to resume, then loops back to Prepare."
+    Parameters:
+      Entries:
+        - Source: elephant.workflow
+          DetailType: WorkflowEvent
+          Detail:
+            executionId.$: $$.Execution.Id
+            county.$: $.pre.county_name
+            status: FAILED
+            phase: Prepare
+            step: Prepare
+            taskToken.$: $$.Task.Token
+            errors:
+              - code: PREPARE_FAILED
+                details.$: $.prepareError
+    ResultPath: $.failedResult
+    Next: Prepare
     Catch:
       - ErrorEquals: [States.ALL]
         ResultPath: $.error
