@@ -142,14 +142,13 @@ Resources:
         External:
           - "@aws-sdk/*"
           - "@smithy/*"
+          - "shared"
         Minify: true
         Target: es2022
         EntryPoints:
           - index.ts
         Sourcemap: true
         LogLevel: info
-        External:
-          - shared
 
   GetExecutionFunction:
     Type: AWS::Serverless::Function
@@ -179,14 +178,13 @@ Resources:
         External:
           - "@aws-sdk/*"
           - "@smithy/*"
+          - "shared"
         Minify: true
         Target: es2022
         EntryPoints:
           - index.ts
         Sourcemap: true
         LogLevel: info
-        External:
-          - shared
 
 Outputs:
   WorkflowEventHandlerFunctionName:

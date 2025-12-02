@@ -11,5 +11,6 @@ build-SharedLayer:
 		--outdir="$(ARTIFACTS_DIR)/nodejs/node_modules/shared" \
 		--out-extension:.js=.mjs \
 		--external:@aws-sdk/* \
+		--external:@smithy/* \
 		--sourcemap
 	cp src/package.json "$(ARTIFACTS_DIR)/nodejs/node_modules/shared/"
