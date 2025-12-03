@@ -207,24 +207,6 @@ describe("dashboard-executions-widget handler", () => {
       const calls = ddbMock.commandCalls(QueryCommand);
       expect(calls[0].args[0].input.Limit).toBe(10);
     });
-
-    it("should filter by FailedExecution entity type", async () => {
-      ddbMock.on(QueryCommand).resolves({ Items: [] });
-
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/dashboard-executions-widget/index.js"
-      );
-
-      await handler({});
-
-      const calls = ddbMock.commandCalls(QueryCommand);
-      expect(calls[0].args[0].input.FilterExpression).toBe(
-        "entityType = :entityType",
-      );
-      expect(calls[0].args[0].input.ExpressionAttributeValues).toMatchObject({
-        ":entityType": "FailedExecution",
-      });
-    });
   });
 
   describe("error handling", () => {

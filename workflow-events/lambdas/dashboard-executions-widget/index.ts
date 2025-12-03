@@ -77,10 +77,8 @@ const queryExecutionsWithMostErrors = async (
     TableName: TABLE_NAME,
     IndexName: "GS1",
     KeyConditionExpression: "GS1PK = :gs1pk",
-    FilterExpression: "entityType = :entityType",
     ExpressionAttributeValues: {
       ":gs1pk": "METRIC#ERRORCOUNT",
-      ":entityType": ENTITY_TYPES.FAILED_EXECUTION,
     },
     ScanIndexForward: false, // Descending order (most errors first)
     Limit: limit,

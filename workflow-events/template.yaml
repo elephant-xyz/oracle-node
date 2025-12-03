@@ -265,7 +265,7 @@ Resources:
   WorkflowErrorsDashboard:
     Type: AWS::CloudWatch::Dashboard
     Properties:
-      DashboardName: elepaht-oracle-node-dashboard
+      DashboardName: elephant-oracle-node-dashboard
       DashboardBody: !Sub |
         {
           "widgets": [
