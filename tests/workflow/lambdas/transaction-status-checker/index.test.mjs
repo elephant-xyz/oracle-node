@@ -2,11 +2,26 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mockClient } from "aws-sdk-client-mock";
 import { SFNClient } from "@aws-sdk/client-sfn";
 import { EventBridgeClient } from "@aws-sdk/client-eventbridge";
-import { SQSClient } from "@aws-sdk/client-sqs";
+import { SQSClient, SendMessageCommand } from "@aws-sdk/client-sqs";
 
 const sfnMock = mockClient(SFNClient);
 const eventBridgeMock = mockClient(EventBridgeClient);
 const sqsMock = mockClient(SQSClient);
+
+// Mock the shared module
+const mockExecuteWithTaskToken = vi.fn().mockResolvedValue(undefined);
+const mockEmitWorkflowEvent = vi.fn().mockResolvedValue(undefined);
+const mockCreateWorkflowError = vi.fn((code, details) => ({
+  code,
+  ...(details && { details }),
+}));
+const mockCreateLogger = vi.fn(() => vi.fn());
+vi.mock("shared", () => ({
+  executeWithTaskToken: mockExecuteWithTaskToken,
+  emitWorkflowEvent: mockEmitWorkflowEvent,
+  createWorkflowError: mockCreateWorkflowError,
+  createLogger: mockCreateLogger,
+}));
 
 // Mock @elephant-xyz/cli/lib
 const mockCheckTransactionStatus = vi.fn();
@@ -22,6 +37,10 @@ describe("transaction-status-checker handler", () => {
     sfnMock.reset();
     eventBridgeMock.reset();
     sqsMock.reset();
+    mockExecuteWithTaskToken.mockClear();
+    mockEmitWorkflowEvent.mockClear();
+    mockCreateWorkflowError.mockClear();
+    mockCreateLogger.mockClear();
 
     process.env = {
       ...originalEnv,
@@ -78,19 +97,15 @@ describe("transaction-status-checker handler", () => {
       await handler(event);
 
       // Verify IN_PROGRESS and SUCCEEDED events were emitted
-      expect(eventBridgeMock.calls()).toHaveLength(2);
-      const putEventsCall = eventBridgeMock.calls()[0];
-      expect(putEventsCall.args[0].input.Entries[0].Source).toBe(
-        "elephant.workflow",
+      // Verify IN_PROGRESS event was emitted via shared layer
+      expect(mockEmitWorkflowEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: "IN_PROGRESS",
+          phase: "Submit",
+          step: "CheckTransactionStatus",
+          taskToken: "task-token-123",
+        }),
       );
-      expect(putEventsCall.args[0].input.Entries[0].DetailType).toBe(
-        "WorkflowEvent",
-      );
-      const detail = JSON.parse(putEventsCall.args[0].input.Entries[0].Detail);
-      expect(detail.status).toBe("IN_PROGRESS");
-      expect(detail.phase).toBe("Submit");
-      expect(detail.step).toBe("CheckTransactionStatus");
-      expect(detail.taskToken).toBe("task-token-123");
     });
 
     it("should succeed when transaction has succeeded with block number", async () => {
@@ -113,10 +128,11 @@ describe("transaction-status-checker handler", () => {
       });
 
       // Verify task success was sent
-      expect(sfnMock.calls()).toHaveLength(1);
-      const sendTaskSuccessCall = sfnMock.calls()[0];
-      expect(sendTaskSuccessCall.args[0].input.taskToken).toBe(
-        "task-token-success",
+      // Verify task success was sent via shared layer
+      expect(mockExecuteWithTaskToken).toHaveBeenCalledWith(
+        expect.objectContaining({
+          taskToken: "task-token-success",
+        }),
       );
     });
 
@@ -145,17 +161,17 @@ describe("transaction-status-checker handler", () => {
       // Verify checkTransactionStatus was called twice
       expect(mockCheckTransactionStatus).toHaveBeenCalledTimes(2);
 
-      // Verify task success was sent after retry
-      expect(sfnMock.calls()).toHaveLength(1);
-      const sendTaskSuccessCall = sfnMock.calls()[0];
-      expect(sendTaskSuccessCall.args[0].input.taskToken).toBe(
-        "task-token-retry",
+      // Verify task success was sent via shared layer
+      expect(mockExecuteWithTaskToken).toHaveBeenCalledWith(
+        expect.objectContaining({
+          taskToken: "task-token-retry",
+        }),
       );
 
       vi.useRealTimers();
     });
 
-    it("should fail after max retries when transaction remains pending", async () => {
+    it("should retry indefinitely when transaction remains pending", async () => {
       vi.useFakeTimers();
 
       // All calls return pending
@@ -165,26 +181,23 @@ describe("transaction-status-checker handler", () => {
         "../../../../workflow/lambdas/transaction-status-checker/index.mjs"
       );
 
-      const event = createSqsEvent("task-token-max-retries", "0xabc123");
+      const event = createSqsEvent("task-token-retry-indefinite", "0xabc123");
 
       const handlerPromise = handler(event);
 
-      // Fast-forward time to trigger all retries (2 retries = 2 * 5 minutes = 10 minutes)
-      await vi.advanceTimersByTimeAsync(10 * 60 * 1000);
+      // Fast-forward time to trigger several retries (3 retries = 3 * 5 minutes = 15 minutes)
+      await vi.advanceTimersByTimeAsync(15 * 60 * 1000);
 
-      await handlerPromise;
+      // Handler should still be running (retries indefinitely)
+      // Cancel the promise after verifying retries
+      const timeout = setTimeout(() => {
+        handlerPromise.catch(() => {});
+      }, 100);
 
-      // Verify checkTransactionStatus was called maxRetries times (loop runs maxRetries times)
-      expect(mockCheckTransactionStatus).toHaveBeenCalledTimes(2); // maxRetries = 2
+      // Verify checkTransactionStatus was called multiple times (retries indefinitely)
+      expect(mockCheckTransactionStatus).toHaveBeenCalledTimes(4); // 1 initial + 3 retries
 
-      // Verify task failure was sent
-      const sendTaskFailureCalls = sfnMock
-        .calls()
-        .filter(
-          (call) => call.args[0].input.taskToken === "task-token-max-retries",
-        );
-      expect(sendTaskFailureCalls.length).toBeGreaterThan(0);
-
+      clearTimeout(timeout);
       vi.useRealTimers();
     });
 
@@ -207,13 +220,12 @@ describe("transaction-status-checker handler", () => {
 
       await handler(event);
 
-      // Verify task failure was sent (transaction dropped)
-      const sendTaskFailureCalls = sfnMock
-        .calls()
-        .filter(
-          (call) => call.args[0].input.taskToken === "task-token-dropped",
-        );
-      expect(sendTaskFailureCalls.length).toBeGreaterThan(0);
+      // Verify task failure was sent via shared layer (transaction dropped)
+      expect(mockExecuteWithTaskToken).toHaveBeenCalledWith(
+        expect.objectContaining({
+          taskToken: "task-token-dropped",
+        }),
+      );
 
       // Verify transaction was resubmitted to SQS
       expect(sqsMock.calls()).toHaveLength(1);
@@ -248,11 +260,12 @@ describe("transaction-status-checker handler", () => {
 
       vi.useRealTimers();
 
-      // Verify task failure was sent
-      const sendTaskFailureCalls = sfnMock
-        .calls()
-        .filter((call) => call.args[0].input.taskToken === "task-token-failed");
-      expect(sendTaskFailureCalls.length).toBeGreaterThan(0);
+      // Verify task failure was sent via shared layer
+      expect(mockExecuteWithTaskToken).toHaveBeenCalledWith(
+        expect.objectContaining({
+          taskToken: "task-token-failed",
+        }),
+      );
     });
 
     it("should emit SUCCEEDED event on successful check", async () => {
@@ -269,42 +282,44 @@ describe("transaction-status-checker handler", () => {
       await handler(event);
 
       // Should have 2 EventBridge calls: IN_PROGRESS and SUCCEEDED
-      expect(eventBridgeMock.calls()).toHaveLength(2);
-      const succeededCall = eventBridgeMock.calls()[1];
-      const detail = JSON.parse(succeededCall.args[0].input.Entries[0].Detail);
-      expect(detail.status).toBe("SUCCEEDED");
-      expect(detail.phase).toBe("Submit");
-      expect(detail.step).toBe("CheckTransactionStatus");
+      // Should have 2 EventBridge calls: IN_PROGRESS and SUCCEEDED
+      expect(mockEmitWorkflowEvent).toHaveBeenCalledTimes(2);
+      expect(mockEmitWorkflowEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: "SUCCEEDED",
+          phase: "Submit",
+          step: "CheckTransactionStatus",
+        }),
+      );
     });
 
-    it("should emit FAILED event on failure", async () => {
+    it("should retry indefinitely when checkTransactionStatus throws an error", async () => {
       vi.useFakeTimers();
-      // Mock checkTransactionStatus to always throw (will retry maxRetries times)
+      // Mock checkTransactionStatus to always throw (will retry indefinitely)
       mockCheckTransactionStatus.mockRejectedValue(new Error("RPC error"));
 
       const { handler } = await import(
         "../../../../workflow/lambdas/transaction-status-checker/index.mjs"
       );
 
-      const event = createSqsEvent("task-token-failed-event", "0xabc123");
+      const event = createSqsEvent("task-token-error-retry", "0xabc123");
 
       const handlerPromise = handler(event);
 
-      // Advance time for retries: maxRetries=2, so 1 retry before final failure
-      // Each retry waits 5 minutes, so 1 * 5 * 60 * 1000 = 300000ms
-      await vi.advanceTimersByTimeAsync(300000);
+      // Advance time for several retries (3 retries = 3 * 5 minutes = 15 minutes)
+      await vi.advanceTimersByTimeAsync(15 * 60 * 1000);
 
-      await handlerPromise;
+      // Handler should still be running (retries indefinitely)
+      // Cancel the promise after verifying retries
+      const timeout = setTimeout(() => {
+        handlerPromise.catch(() => {});
+      }, 100);
 
+      // Verify checkTransactionStatus was called multiple times (retries indefinitely)
+      expect(mockCheckTransactionStatus).toHaveBeenCalledTimes(4); // 1 initial + 3 retries
+
+      clearTimeout(timeout);
       vi.useRealTimers();
-
-      // Should have 2 EventBridge calls: IN_PROGRESS and FAILED
-      expect(eventBridgeMock.calls()).toHaveLength(2);
-      const failedCall = eventBridgeMock.calls()[1];
-      const detail = JSON.parse(failedCall.args[0].input.Entries[0].Detail);
-      expect(detail.status).toBe("FAILED");
-      expect(detail.errors).toBeDefined();
-      expect(detail.errors.length).toBeGreaterThan(0);
     });
 
     it("should emit FAILED event when transaction is dropped", async () => {
@@ -327,12 +342,19 @@ describe("transaction-status-checker handler", () => {
       await handler(event);
 
       // Should have 2 EventBridge calls: IN_PROGRESS and FAILED
-      expect(eventBridgeMock.calls()).toHaveLength(2);
-      const failedCall = eventBridgeMock.calls()[1];
-      const detail = JSON.parse(failedCall.args[0].input.Entries[0].Detail);
-      expect(detail.status).toBe("FAILED");
-      expect(detail.errors).toBeDefined();
-      expect(detail.errors.length).toBeGreaterThan(0);
+      expect(mockEmitWorkflowEvent).toHaveBeenCalledTimes(2);
+      expect(mockEmitWorkflowEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: "FAILED",
+          phase: "Submit",
+          step: "CheckTransactionStatus",
+          errors: expect.arrayContaining([
+            expect.objectContaining({
+              code: "60003",
+            }),
+          ]),
+        }),
+      );
     });
   });
 
@@ -348,14 +370,15 @@ describe("transaction-status-checker handler", () => {
 
       await handler(event);
 
-      // Verify task failure was sent
-      const sendTaskFailureCalls = sfnMock
-        .calls()
-        .filter((call) => call.args[0].input.taskToken === "task-token-no-rpc");
-      expect(sendTaskFailureCalls.length).toBeGreaterThan(0);
+      // Verify task failure was sent via shared layer
+      expect(mockExecuteWithTaskToken).toHaveBeenCalledWith(
+        expect.objectContaining({
+          taskToken: "task-token-no-rpc",
+        }),
+      );
     });
 
-    it("should fail when RESUBMIT_QUEUE_URL is missing for resubmission", async () => {
+    it("should retry indefinitely when transaction is dropped and no resubmit queue", async () => {
       vi.useFakeTimers();
       delete process.env.RESUBMIT_QUEUE_URL;
 
@@ -369,25 +392,23 @@ describe("transaction-status-checker handler", () => {
 
       const handlerPromise = handler(event);
 
-      // When transaction status is "failed", it throws immediately, but the catch block
-      // may retry once if retries < maxRetries - 1. With maxRetries=2, retries=0, it will retry once.
-      // Each retry waits 5 minutes, so 1 * 5 * 60 * 1000 = 300000ms
-      await vi.advanceTimersByTimeAsync(300000);
+      // Advance time for several retries (3 retries = 3 * 5 minutes = 15 minutes)
+      await vi.advanceTimersByTimeAsync(15 * 60 * 1000);
 
-      await handlerPromise;
+      // Handler should still be running (retries indefinitely when no queue)
+      // Cancel the promise after verifying retries
+      const timeout = setTimeout(() => {
+        handlerPromise.catch(() => {});
+      }, 100);
 
-      vi.useRealTimers();
-
-      // Should still fail (transaction dropped) but without resubmission
-      const sendTaskFailureCalls = sfnMock
-        .calls()
-        .filter(
-          (call) => call.args[0].input.taskToken === "task-token-no-queue",
-        );
-      expect(sendTaskFailureCalls.length).toBeGreaterThan(0);
+      // Verify checkTransactionStatus was called multiple times (retries indefinitely)
+      expect(mockCheckTransactionStatus).toHaveBeenCalledTimes(4); // 1 initial + 3 retries
 
       // Should NOT have called SQS (no queue URL)
       expect(sqsMock.calls()).toHaveLength(0);
+
+      clearTimeout(timeout);
+      vi.useRealTimers();
     });
 
     it("should use default wait minutes when not configured", async () => {
@@ -421,7 +442,8 @@ describe("transaction-status-checker handler", () => {
 
       // Should still succeed
       expect(mockCheckTransactionStatus).toHaveBeenCalled();
-      expect(sfnMock.calls()).toHaveLength(1);
+      // Verify task success was sent via shared layer
+      expect(mockExecuteWithTaskToken).toHaveBeenCalled();
     });
 
     it("should use default max retries when not configured", async () => {
@@ -455,14 +477,15 @@ describe("transaction-status-checker handler", () => {
 
       // Should still succeed
       expect(mockCheckTransactionStatus).toHaveBeenCalled();
-      expect(sfnMock.calls()).toHaveLength(1);
+      // Verify task success was sent via shared layer
+      expect(mockExecuteWithTaskToken).toHaveBeenCalled();
     });
   });
 
   describe("Error handling", () => {
-    it("should handle checkTransactionStatus throwing an error", async () => {
+    it("should retry indefinitely when checkTransactionStatus throws an error", async () => {
       vi.useFakeTimers();
-      // Mock checkTransactionStatus to always throw (will retry maxRetries times)
+      // Mock checkTransactionStatus to always throw (will retry indefinitely)
       mockCheckTransactionStatus.mockRejectedValue(new Error("Network error"));
 
       const { handler } = await import(
@@ -473,19 +496,20 @@ describe("transaction-status-checker handler", () => {
 
       const handlerPromise = handler(event);
 
-      // Advance time for retries: maxRetries=2, so 1 retry before final failure
-      // Each retry waits 5 minutes, so 1 * 5 * 60 * 1000 = 300000ms
-      await vi.advanceTimersByTimeAsync(300000);
+      // Advance time for several retries (3 retries = 3 * 5 minutes = 15 minutes)
+      await vi.advanceTimersByTimeAsync(15 * 60 * 1000);
 
-      await handlerPromise;
+      // Handler should still be running (retries indefinitely)
+      // Cancel the promise after verifying retries
+      const timeout = setTimeout(() => {
+        handlerPromise.catch(() => {});
+      }, 100);
 
+      // Verify checkTransactionStatus was called multiple times (retries indefinitely)
+      expect(mockCheckTransactionStatus).toHaveBeenCalledTimes(4); // 1 initial + 3 retries
+
+      clearTimeout(timeout);
       vi.useRealTimers();
-
-      // Verify task failure was sent
-      const sendTaskFailureCalls = sfnMock
-        .calls()
-        .filter((call) => call.args[0].input.taskToken === "task-token-error");
-      expect(sendTaskFailureCalls.length).toBeGreaterThan(0);
     });
 
     it("should handle missing SQS Records", async () => {
@@ -523,13 +547,12 @@ describe("transaction-status-checker handler", () => {
 
       await handler(event);
 
-      // Verify task failure was sent
-      const sendTaskFailureCalls = sfnMock
-        .calls()
-        .filter(
-          (call) => call.args[0].input.taskToken === "task-token-no-hash",
-        );
-      expect(sendTaskFailureCalls.length).toBeGreaterThan(0);
+      // Verify task failure was sent via shared layer
+      expect(mockExecuteWithTaskToken).toHaveBeenCalledWith(
+        expect.objectContaining({
+          taskToken: "task-token-no-hash",
+        }),
+      );
     });
   });
 });

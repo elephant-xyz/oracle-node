@@ -6,14 +6,11 @@
 
 import { checkGasPrice } from "@elephant-xyz/cli/lib";
 import {
-  SFNClient,
-  SendTaskSuccessCommand,
-  SendTaskFailureCommand,
-} from "@aws-sdk/client-sfn";
-import {
-  EventBridgeClient,
-  PutEventsCommand,
-} from "@aws-sdk/client-eventbridge";
+  executeWithTaskToken,
+  emitWorkflowEvent,
+  createWorkflowError,
+  createLogger,
+} from "shared";
 
 /**
  * @typedef {Object} GasPriceCheckerInput
@@ -29,14 +26,6 @@ import {
  * @property {number} maxGasPriceGwei - Maximum allowed gas price in Gwei
  * @property {number} retries - Number of retries performed
  */
-
-const sfnClient = new SFNClient({
-  region: process.env.AWS_REGION || "us-east-1",
-});
-
-const eventBridgeClient = new EventBridgeClient({
-  region: process.env.AWS_REGION || "us-east-1",
-});
 
 const base = {
   component: "gas-price-checker",
@@ -54,71 +43,6 @@ const base = {
  * @property {Object} [messageAttributes.County]
  * @property {string} [messageAttributes.County.stringValue]
  */
-
-/**
- * Send success callback to Step Functions
- * @param {string} taskToken
- * @param {Object} output
- * @returns {Promise<void>}
- */
-async function sendTaskSuccess(taskToken, output) {
-  try {
-    const cmd = new SendTaskSuccessCommand({
-      taskToken: taskToken,
-      output: JSON.stringify(output),
-    });
-    await sfnClient.send(cmd);
-    console.log(
-      JSON.stringify({
-        ...base,
-        level: "info",
-        msg: "sent_task_success",
-      }),
-    );
-  } catch (err) {
-    console.error({
-      ...base,
-      level: "error",
-      msg: "failed_to_send_task_success",
-      error: err instanceof Error ? err.message : String(err),
-    });
-    throw err;
-  }
-}
-
-/**
- * Send failure callback to Step Functions
- * @param {string} taskToken
- * @param {string} error
- * @param {string} cause
- * @returns {Promise<void>}
- */
-async function sendTaskFailure(taskToken, error, cause) {
-  try {
-    const cmd = new SendTaskFailureCommand({
-      taskToken: taskToken,
-      error: error,
-      cause: cause,
-    });
-    await sfnClient.send(cmd);
-    console.log(
-      JSON.stringify({
-        ...base,
-        level: "info",
-        msg: "sent_task_failure",
-        error: error,
-      }),
-    );
-  } catch (err) {
-    console.error({
-      ...base,
-      level: "error",
-      msg: "failed_to_send_task_failure",
-      error: err instanceof Error ? err.message : String(err),
-    });
-    throw err;
-  }
-}
 
 /**
  * Sleep for specified milliseconds
@@ -230,7 +154,10 @@ async function checkAndWaitForGasPrice(input) {
       );
 
       // Wait and retry forever (only throw if it's a configuration error)
-      if (errorMsg.includes("RPC URL is required") || errorMsg.includes("maxGasPriceGwei must be")) {
+      if (
+        errorMsg.includes("RPC URL is required") ||
+        errorMsg.includes("maxGasPriceGwei must be")
+      ) {
         throw err;
       }
 
@@ -282,37 +209,23 @@ export const handler = async (event) => {
 
       // Emit IN_PROGRESS event to EventBridge when task token is received
       if (taskToken && executionArn) {
-        try {
-          await eventBridgeClient.send(
-            new PutEventsCommand({
-              Entries: [
-                {
-                  Source: "elephant.workflow",
-                  DetailType: "WorkflowEvent",
-                  Detail: JSON.stringify({
-                    executionId: executionArn,
-                    county: county || "unknown",
-                    dataGroupLabel: dataGroupLabel,
-                    status: "IN_PROGRESS",
-                    phase: "Submit",
-                    step: "CheckGasPrice",
-                    taskToken: taskToken,
-                    errors: [],
-                  }),
-                },
-              ],
-            }),
-          );
-        } catch (eventErr) {
-          // Log but don't fail on EventBridge errors
-          console.warn({
-            ...base,
-            level: "warn",
-            msg: "failed_to_emit_in_progress_event",
-            error:
-              eventErr instanceof Error ? eventErr.message : String(eventErr),
-          });
-        }
+        const log = createLogger({
+          component: "gas-price-checker",
+          at: new Date().toISOString(),
+          county: county || "unknown",
+          executionId: executionArn,
+        });
+        await emitWorkflowEvent({
+          executionId: executionArn,
+          county: county || "unknown",
+          dataGroupLabel: dataGroupLabel,
+          status: "IN_PROGRESS",
+          phase: "Submit",
+          step: "CheckGasPrice",
+          taskToken: taskToken,
+          errors: [],
+          log,
+        });
       }
     }
   }
@@ -324,8 +237,31 @@ export const handler = async (event) => {
 
     if (!rpcUrl) {
       const error = "RPC URL is required (ELEPHANT_RPC_URL env var)";
-      if (taskToken) {
-        await sendTaskFailure(taskToken, "ConfigurationError", error);
+      if (taskToken && executionArn) {
+        const errorLog = createLogger({
+          component: "gas-price-checker",
+          at: new Date().toISOString(),
+          county: county || "unknown",
+          executionId: executionArn,
+        });
+        await emitWorkflowEvent({
+          executionId: executionArn,
+          county: county || "unknown",
+          dataGroupLabel: dataGroupLabel,
+          status: "FAILED",
+          phase: "Submit",
+          step: "CheckGasPrice",
+          taskToken: taskToken,
+          errors: [createWorkflowError("60001", { error })],
+          log: errorLog,
+        });
+        await executeWithTaskToken({
+          taskToken,
+          log: errorLog,
+          workerFn: async () => {
+            throw new Error(error);
+          },
+        });
         // Don't throw after sending failure callback - let SQS know Lambda completed
         return;
       }
@@ -334,8 +270,31 @@ export const handler = async (event) => {
 
     if (!maxGasPriceGwei || maxGasPriceGwei <= 0) {
       const error = "maxGasPriceGwei is required (GAS_PRICE_MAX_GWEI env var)";
-      if (taskToken) {
-        await sendTaskFailure(taskToken, "ConfigurationError", error);
+      if (taskToken && executionArn) {
+        const errorLog = createLogger({
+          component: "gas-price-checker",
+          at: new Date().toISOString(),
+          county: county || "unknown",
+          executionId: executionArn,
+        });
+        await emitWorkflowEvent({
+          executionId: executionArn,
+          county: county || "unknown",
+          dataGroupLabel: dataGroupLabel,
+          status: "FAILED",
+          phase: "Submit",
+          step: "CheckGasPrice",
+          taskToken: taskToken,
+          errors: [createWorkflowError("60001", { error })],
+          log: errorLog,
+        });
+        await executeWithTaskToken({
+          taskToken,
+          log: errorLog,
+          workerFn: async () => {
+            throw new Error(error);
+          },
+        });
         // Don't throw after sending failure callback - let SQS know Lambda completed
         return;
       }
@@ -357,44 +316,30 @@ export const handler = async (event) => {
       }),
     );
 
-    // Emit SUCCEEDED event to EventBridge
+    // Emit SUCCEEDED event to EventBridge and send task success
     if (taskToken && executionArn) {
-      try {
-        await eventBridgeClient.send(
-          new PutEventsCommand({
-            Entries: [
-              {
-                Source: "elephant.workflow",
-                DetailType: "WorkflowEvent",
-                Detail: JSON.stringify({
-                  executionId: executionArn,
-                  county: county || "unknown",
-                  dataGroupLabel: dataGroupLabel,
-                  status: "SUCCEEDED",
-                  phase: "Submit",
-                  step: "CheckGasPrice",
-                  taskToken: taskToken,
-                  errors: [],
-                }),
-              },
-            ],
-          }),
-        );
-      } catch (eventErr) {
-        // Log but don't fail on EventBridge errors
-        console.warn({
-          ...base,
-          level: "warn",
-          msg: "failed_to_emit_succeeded_event",
-          error:
-            eventErr instanceof Error ? eventErr.message : String(eventErr),
-        });
-      }
-    }
-
-    // Send success callback to Step Functions if task token is present
-    if (taskToken) {
-      await sendTaskSuccess(taskToken, result);
+      const log = createLogger({
+        component: "gas-price-checker",
+        at: new Date().toISOString(),
+        county: county || "unknown",
+        executionId: executionArn,
+      });
+      await emitWorkflowEvent({
+        executionId: executionArn,
+        county: county || "unknown",
+        dataGroupLabel: dataGroupLabel,
+        status: "SUCCEEDED",
+        phase: "Submit",
+        step: "CheckGasPrice",
+        taskToken: taskToken,
+        errors: [],
+        log,
+      });
+      await executeWithTaskToken({
+        taskToken,
+        log,
+        workerFn: async () => result,
+      });
     }
 
     return result;
@@ -411,75 +356,40 @@ export const handler = async (event) => {
       }),
     );
 
-    // Emit FAILED event to EventBridge
+    // Emit FAILED event to EventBridge and send task failure
     if (taskToken && executionArn) {
-      try {
-        await eventBridgeClient.send(
-          new PutEventsCommand({
-            Entries: [
-              {
-                Source: "elephant.workflow",
-                DetailType: "WorkflowEvent",
-                Detail: JSON.stringify({
-                  executionId: executionArn,
-                  county: county || "unknown",
-                  dataGroupLabel: dataGroupLabel,
-                  status: "FAILED",
-                  phase: "Submit",
-                  step: "CheckGasPrice",
-                  taskToken: taskToken,
-                  errors: [
-                    {
-                      code: "60001",
-                      details: {
-                        error: errMessage,
-                        cause: errCause,
-                      },
-                    },
-                  ],
-                }),
-              },
-            ],
+      const errorLog = createLogger({
+        component: "gas-price-checker",
+        at: new Date().toISOString(),
+        county: county || "unknown",
+        executionId: executionArn,
+      });
+      await emitWorkflowEvent({
+        executionId: executionArn,
+        county: county || "unknown",
+        dataGroupLabel: dataGroupLabel,
+        status: "FAILED",
+        phase: "Submit",
+        step: "CheckGasPrice",
+        taskToken: taskToken,
+        errors: [
+          createWorkflowError("60001", {
+            error: errMessage,
+            cause: errCause,
           }),
-        );
-      } catch (eventErr) {
-        // Log but don't fail on EventBridge errors
-        console.warn({
-          ...base,
-          level: "warn",
-          msg: "failed_to_emit_failed_event",
-          error:
-            eventErr instanceof Error ? eventErr.message : String(eventErr),
-        });
-      }
-    }
-
-    // Send failure callback to Step Functions if task token is present
-    if (taskToken) {
-      try {
-        await sendTaskFailure(
-          taskToken,
-          "GasPriceCheckFailed",
-          errCause || errMessage,
-        );
-        // Don't throw after sending failure callback - let SQS know Lambda completed
-        // The Step Function will handle the failure via the callback
-        return;
-      } catch (callbackErr) {
-        // If sending failure callback fails, log and throw to trigger SQS redelivery
-        console.error(
-          JSON.stringify({
-            ...base,
-            level: "error",
-            msg: "failed_to_send_task_failure_callback",
-            error:
-              callbackErr instanceof Error
-                ? callbackErr.message
-                : String(callbackErr),
-          }),
-        );
-        throw err;
-      }
+        ],
+        log: errorLog,
+      });
+      await executeWithTaskToken({
+        taskToken,
+        log: errorLog,
+        workerFn: async () => {
+          throw err;
+        },
+      });
+      // Don't throw after sending failure callback - let SQS know Lambda completed
+      // The Step Function will handle the failure via the callback
+      return;
     }
 
     // If no task token, throw to trigger SQS redelivery or fail the Lambda

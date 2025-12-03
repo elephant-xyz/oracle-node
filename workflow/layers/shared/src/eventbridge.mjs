@@ -27,6 +27,7 @@ const eventBridgeClient = new EventBridgeClient({});
  * @typedef {object} WorkflowEventDetail
  * @property {string} executionId - Step Functions execution ARN or ID.
  * @property {string} county - County identifier being processed.
+ * @property {string} [dataGroupLabel] - Elephant data group (e.g., `Seed`, `County`).
  * @property {WorkflowStatus} status - Current workflow status.
  * @property {WorkflowPhase} phase - High-level workflow phase.
  * @property {WorkflowStep} step - Granular step within the phase.
@@ -40,6 +41,7 @@ const eventBridgeClient = new EventBridgeClient({});
  * @param {object} params - Event parameters.
  * @param {string} params.executionId - Execution identifier.
  * @param {string} params.county - County name.
+ * @param {string} [params.dataGroupLabel] - Elephant data group (e.g., `Seed`, `County`).
  * @param {WorkflowStatus} params.status - Workflow status.
  * @param {WorkflowPhase} params.phase - Workflow phase.
  * @param {WorkflowStep} params.step - Workflow step.
@@ -51,6 +53,7 @@ const eventBridgeClient = new EventBridgeClient({});
 export async function emitWorkflowEvent({
   executionId,
   county,
+  dataGroupLabel,
   status,
   phase,
   step,
@@ -66,6 +69,10 @@ export async function emitWorkflowEvent({
     phase,
     step,
   };
+
+  if (dataGroupLabel) {
+    detail.dataGroupLabel = dataGroupLabel;
+  }
 
   if (taskToken) {
     detail.taskToken = taskToken;

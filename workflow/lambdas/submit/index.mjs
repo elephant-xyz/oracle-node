@@ -7,28 +7,17 @@ import { submitToContract } from "@elephant-xyz/cli/lib";
 import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
 import { SSMClient, GetParameterCommand } from "@aws-sdk/client-ssm";
 import {
-  SFNClient,
-  SendTaskSuccessCommand,
-  SendTaskFailureCommand,
-} from "@aws-sdk/client-sfn";
-import {
-  EventBridgeClient,
-  PutEventsCommand,
-} from "@aws-sdk/client-eventbridge";
+  executeWithTaskToken,
+  emitWorkflowEvent,
+  createWorkflowError,
+  createLogger,
+} from "shared";
 
 const s3Client = new S3Client({
   region: process.env.AWS_REGION || "us-east-1",
 });
 
 const ssmClient = new SSMClient({
-  region: process.env.AWS_REGION || "us-east-1",
-});
-
-const sfnClient = new SFNClient({
-  region: process.env.AWS_REGION || "us-east-1",
-});
-
-const eventBridgeClient = new EventBridgeClient({
   region: process.env.AWS_REGION || "us-east-1",
 });
 
@@ -212,66 +201,6 @@ async function getGasPriceFromSSM() {
 }
 
 /**
- * Send success callback to Step Functions
- * @param {string} taskToken
- * @param {Object} output
- * @returns {Promise<void>}
- */
-async function sendTaskSuccess(taskToken, output) {
-  try {
-    const cmd = new SendTaskSuccessCommand({
-      taskToken: taskToken,
-      output: JSON.stringify(output),
-    });
-    await sfnClient.send(cmd);
-    console.log({
-      ...base,
-      level: "info",
-      msg: "task_success_sent_to_step_functions",
-    });
-  } catch (err) {
-    console.error({
-      ...base,
-      level: "error",
-      msg: "failed_to_send_task_success",
-      error: err instanceof Error ? err.message : String(err),
-    });
-    throw err;
-  }
-}
-
-/**
- * Send failure callback to Step Functions
- * @param {string} taskToken
- * @param {string} error
- * @param {string} [cause]
- * @returns {Promise<void>}
- */
-async function sendTaskFailure(taskToken, error, cause) {
-  try {
-    const cmd = new SendTaskFailureCommand({
-      taskToken: taskToken,
-      error: error,
-      cause: cause,
-    });
-    await sfnClient.send(cmd);
-    console.log({
-      ...base,
-      level: "info",
-      msg: "task_failure_sent_to_step_functions",
-    });
-  } catch (err) {
-    console.error({
-      ...base,
-      level: "error",
-      msg: "failed_to_send_task_failure",
-      error: err instanceof Error ? err.message : String(err),
-    });
-    throw err;
-  }
-}
-
-/**
  * Submit handler - supports both SQS events and Step Function Task Token invocations
  * - SQS format: { Records: [{ body: string }] }
  * - Step Function format: { taskToken: string, executionArn: string, transactionItems: Object[] }
@@ -292,6 +221,7 @@ export const handler = async (event) => {
   let record; // Store record for use in catch block
   let county = "unknown"; // Store county for use in catch block
   let dataGroupLabel = "County"; // Store dataGroupLabel for use in catch block
+  let log; // Logger for EventBridge events
 
   if (isDirectStepFunctionInvocation) {
     // Invoked directly from Step Functions with Task Token
@@ -299,7 +229,19 @@ export const handler = async (event) => {
       const error =
         "Missing or invalid transactionItems in Step Function payload";
       if (event.taskToken) {
-        await sendTaskFailure(event.taskToken, "InvalidInput", error);
+        const errorLog = createLogger({
+          component: "submit",
+          at: new Date().toISOString(),
+          county: event.county || "unknown",
+          executionId: event.executionArn,
+        });
+        await executeWithTaskToken({
+          taskToken: event.taskToken,
+          log: errorLog,
+          workerFn: async () => {
+            throw new Error(error);
+          },
+        });
       }
       throw new Error(error);
     }
@@ -318,37 +260,23 @@ export const handler = async (event) => {
     if (taskToken && executionArn) {
       county = event.county || "unknown";
       dataGroupLabel = event.dataGroupLabel || "County";
-      try {
-        await eventBridgeClient.send(
-          new PutEventsCommand({
-            Entries: [
-              {
-                Source: "elephant.workflow",
-                DetailType: "WorkflowEvent",
-                Detail: JSON.stringify({
-                  executionId: executionArn,
-                  county: county,
-                  dataGroupLabel: dataGroupLabel,
-                  status: "IN_PROGRESS",
-                  phase: "Submit",
-                  step: "SubmitToBlockchain",
-                  taskToken: taskToken,
-                  errors: [],
-                }),
-              },
-            ],
-          }),
-        );
-      } catch (eventErr) {
-        // Log but don't fail on EventBridge errors
-        console.warn({
-          ...base,
-          level: "warn",
-          msg: "failed_to_emit_in_progress_event",
-          error:
-            eventErr instanceof Error ? eventErr.message : String(eventErr),
-        });
-      }
+      log = createLogger({
+        component: "submit",
+        at: new Date().toISOString(),
+        county: county,
+        executionId: executionArn,
+      });
+      await emitWorkflowEvent({
+        executionId: executionArn,
+        county: county,
+        dataGroupLabel: dataGroupLabel,
+        status: "IN_PROGRESS",
+        phase: "Submit",
+        step: "SubmitToBlockchain",
+        taskToken: taskToken,
+        errors: [],
+        log,
+      });
     }
   } else if (isSqsInvocation) {
     // Invoked from SQS (with optional task token in message attributes for Step Function callback)
@@ -382,37 +310,23 @@ export const handler = async (event) => {
         dataGroupLabel =
           firstRecord.messageAttributes?.DataGroupLabel?.stringValue ||
           "County";
-        try {
-          await eventBridgeClient.send(
-            new PutEventsCommand({
-              Entries: [
-                {
-                  Source: "elephant.workflow",
-                  DetailType: "WorkflowEvent",
-                  Detail: JSON.stringify({
-                    executionId: executionArn,
-                    county: county,
-                    dataGroupLabel: dataGroupLabel,
-                    status: "IN_PROGRESS",
-                    phase: "Submit",
-                    step: "SubmitToBlockchain",
-                    taskToken: taskToken,
-                    errors: [],
-                  }),
-                },
-              ],
-            }),
-          );
-        } catch (eventErr) {
-          // Log but don't fail on EventBridge errors
-          console.warn({
-            ...base,
-            level: "warn",
-            msg: "failed_to_emit_in_progress_event",
-            error:
-              eventErr instanceof Error ? eventErr.message : String(eventErr),
-          });
-        }
+        log = createLogger({
+          component: "submit",
+          at: new Date().toISOString(),
+          county: county,
+          executionId: executionArn,
+        });
+        await emitWorkflowEvent({
+          executionId: executionArn,
+          county: county,
+          dataGroupLabel: dataGroupLabel,
+          status: "IN_PROGRESS",
+          phase: "Submit",
+          step: "SubmitToBlockchain",
+          taskToken: taskToken,
+          errors: [],
+          log,
+        });
       }
     }
 
@@ -441,7 +355,21 @@ export const handler = async (event) => {
   if (!toSubmit.length) {
     const error = "No records to submit";
     if (taskToken) {
-      await sendTaskFailure(taskToken, "EmptyInput", error);
+      const errorLog =
+        log ||
+        createLogger({
+          component: "submit",
+          at: new Date().toISOString(),
+          county,
+          executionId: executionArn,
+        });
+      await executeWithTaskToken({
+        taskToken,
+        log: errorLog,
+        workerFn: async () => {
+          throw new Error(error);
+        },
+      });
     }
     throw new Error(error);
   }
@@ -597,7 +525,21 @@ export const handler = async (event) => {
       const errorMsg =
         "Submit to the blockchain failed" + JSON.stringify(allErrors);
       if (taskToken) {
-        await sendTaskFailure(taskToken, "SubmitFailed", errorMsg);
+        const errorLog =
+          log ||
+          createLogger({
+            component: "submit",
+            at: new Date().toISOString(),
+            county,
+            executionId: executionArn,
+          });
+        await executeWithTaskToken({
+          taskToken,
+          log: errorLog,
+          workerFn: async () => {
+            throw new Error(errorMsg);
+          },
+        });
       }
       throw new Error(errorMsg);
     }
@@ -605,44 +547,35 @@ export const handler = async (event) => {
     const result = { status: "success", submitResults: submitResults };
     console.log({ ...base, level: "info", msg: "completed", result });
 
-    // Emit SUCCEEDED event to EventBridge
-    if (taskToken && executionArn) {
-      try {
-        await eventBridgeClient.send(
-          new PutEventsCommand({
-            Entries: [
-              {
-                Source: "elephant.workflow",
-                DetailType: "WorkflowEvent",
-                Detail: JSON.stringify({
-                  executionId: executionArn,
-                  county: county,
-                  dataGroupLabel: dataGroupLabel,
-                  status: "SUCCEEDED",
-                  phase: "Submit",
-                  step: "SubmitToBlockchain",
-                  taskToken: taskToken,
-                  errors: [],
-                }),
-              },
-            ],
-          }),
-        );
-      } catch (eventErr) {
-        // Log but don't fail on EventBridge errors
-        console.warn({
-          ...base,
-          level: "warn",
-          msg: "failed_to_emit_succeeded_event",
-          error:
-            eventErr instanceof Error ? eventErr.message : String(eventErr),
-        });
-      }
+    // Emit SUCCEEDED event to EventBridge and send task success
+    if (taskToken && executionArn && log) {
+      await emitWorkflowEvent({
+        executionId: executionArn,
+        county: county,
+        dataGroupLabel: dataGroupLabel,
+        status: "SUCCEEDED",
+        phase: "Submit",
+        step: "SubmitToBlockchain",
+        taskToken: taskToken,
+        errors: [],
+        log,
+      });
     }
 
     // Send success callback to Step Functions if task token is present (from SQS or direct invocation)
     if (taskToken) {
-      await sendTaskSuccess(taskToken, result);
+      await executeWithTaskToken({
+        taskToken,
+        log:
+          log ||
+          createLogger({
+            component: "submit",
+            at: new Date().toISOString(),
+            county,
+            executionId: executionArn,
+          }),
+        workerFn: async () => result,
+      });
     }
 
     return result;
@@ -650,52 +583,39 @@ export const handler = async (event) => {
     const errMessage = err instanceof Error ? err.message : String(err);
     const errCause = err instanceof Error ? err.stack : undefined;
 
-    // Emit FAILED event to EventBridge
+    // Emit FAILED event to EventBridge and send task failure
     if (taskToken && executionArn) {
-      try {
-        await eventBridgeClient.send(
-          new PutEventsCommand({
-            Entries: [
-              {
-                Source: "elephant.workflow",
-                DetailType: "WorkflowEvent",
-                Detail: JSON.stringify({
-                  executionId: executionArn,
-                  county: county,
-                  dataGroupLabel: dataGroupLabel,
-                  status: "FAILED",
-                  phase: "Submit",
-                  step: "SubmitToBlockchain",
-                  taskToken: taskToken,
-                  errors: [
-                    {
-                      code: "60002",
-                      details: {
-                        error: errMessage,
-                        cause: errCause,
-                      },
-                    },
-                  ],
-                }),
-              },
-            ],
-          }),
-        );
-      } catch (eventErr) {
-        // Log but don't fail on EventBridge errors
-        console.warn({
-          ...base,
-          level: "warn",
-          msg: "failed_to_emit_failed_event",
-          error:
-            eventErr instanceof Error ? eventErr.message : String(eventErr),
+      const errorLog =
+        log ||
+        createLogger({
+          component: "submit",
+          at: new Date().toISOString(),
+          county,
+          executionId: executionArn,
         });
-      }
-    }
-
-    // If we have a task token and haven't sent failure yet, send it now
-    if (taskToken) {
-      await sendTaskFailure(taskToken, "SubmitError", errCause || errMessage);
+      await emitWorkflowEvent({
+        executionId: executionArn,
+        county: county,
+        dataGroupLabel: dataGroupLabel,
+        status: "FAILED",
+        phase: "Submit",
+        step: "SubmitToBlockchain",
+        taskToken: taskToken,
+        errors: [
+          createWorkflowError("60002", {
+            error: errMessage,
+            cause: errCause,
+          }),
+        ],
+        log: errorLog,
+      });
+      await executeWithTaskToken({
+        taskToken,
+        log: errorLog,
+        workerFn: async () => {
+          throw err;
+        },
+      });
     }
     throw err;
   } finally {

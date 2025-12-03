@@ -7,16 +7,13 @@
  */
 
 import { checkTransactionStatus } from "@elephant-xyz/cli/lib";
-import {
-  SFNClient,
-  SendTaskSuccessCommand,
-  SendTaskFailureCommand,
-} from "@aws-sdk/client-sfn";
-import {
-  EventBridgeClient,
-  PutEventsCommand,
-} from "@aws-sdk/client-eventbridge";
 import { SQSClient, SendMessageCommand } from "@aws-sdk/client-sqs";
+import {
+  executeWithTaskToken,
+  emitWorkflowEvent,
+  createWorkflowError,
+  createLogger,
+} from "shared";
 
 /**
  * @typedef {Object} TransactionStatusResult
@@ -35,14 +32,6 @@ import { SQSClient, SendMessageCommand } from "@aws-sdk/client-sqs";
  * @property {string} [resubmitQueueUrl] - SQS queue URL for resubmission if transaction dropped
  * @property {Object} [originalTransactionItems] - Original transaction items for resubmission
  */
-
-const sfnClient = new SFNClient({
-  region: process.env.AWS_REGION || "us-east-1",
-});
-
-const eventBridgeClient = new EventBridgeClient({
-  region: process.env.AWS_REGION || "us-east-1",
-});
 
 const sqsClient = new SQSClient({
   region: process.env.AWS_REGION || "us-east-1",
@@ -68,138 +57,12 @@ const base = {
  */
 
 /**
- * Send success callback to Step Functions
- * @param {string} taskToken
- * @param {Object} output
- * @returns {Promise<void>}
- */
-async function sendTaskSuccess(taskToken, output) {
-  try {
-    const cmd = new SendTaskSuccessCommand({
-      taskToken: taskToken,
-      output: JSON.stringify(output),
-    });
-    await sfnClient.send(cmd);
-    console.log(
-      JSON.stringify({
-        ...base,
-        level: "info",
-        msg: "sent_task_success",
-      }),
-    );
-  } catch (err) {
-    console.error(
-      JSON.stringify({
-        ...base,
-        level: "error",
-        msg: "failed_to_send_task_success",
-        error: err instanceof Error ? err.message : String(err),
-      }),
-    );
-    throw err;
-  }
-}
-
-/**
- * Send failure callback to Step Functions
- * @param {string} taskToken
- * @param {string} error
- * @param {string} cause
- * @returns {Promise<void>}
- */
-async function sendTaskFailure(taskToken, error, cause) {
-  try {
-    const cmd = new SendTaskFailureCommand({
-      taskToken: taskToken,
-      error: error,
-      cause: cause,
-    });
-    await sfnClient.send(cmd);
-    console.log(
-      JSON.stringify({
-        ...base,
-        level: "info",
-        msg: "sent_task_failure",
-        error: error,
-      }),
-    );
-  } catch (err) {
-    console.error(
-      JSON.stringify({
-        ...base,
-        level: "error",
-        msg: "failed_to_send_task_failure",
-        error: err instanceof Error ? err.message : String(err),
-      }),
-    );
-    throw err;
-  }
-}
-
-/**
  * Sleep for specified milliseconds
  * @param {number} ms - Milliseconds to sleep
  * @returns {Promise<void>}
  */
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-/**
- * Emit EventBridge event
- * @param {Object} params
- * @param {string} params.executionId - Step Function execution ARN
- * @param {string} params.county - County name
- * @param {string} params.status - Event status (IN_PROGRESS, SUCCEEDED, FAILED)
- * @param {string} params.phase - Workflow phase
- * @param {string} params.step - Workflow step
- * @param {string|null} params.taskToken - Task token (null if not from Step Function)
- * @param {Array} params.errors - Array of error objects
- * @returns {Promise<void>}
- */
-async function emitEvent({
-  executionId,
-  county,
-  dataGroupLabel,
-  status,
-  phase,
-  step,
-  taskToken,
-  errors,
-}) {
-  try {
-    await eventBridgeClient.send(
-      new PutEventsCommand({
-        Entries: [
-          {
-            Source: "elephant.workflow",
-            DetailType: "WorkflowEvent",
-            Detail: JSON.stringify({
-              executionId: executionId,
-              county: county || "unknown",
-              dataGroupLabel: dataGroupLabel || "County",
-              status: status,
-              phase: phase,
-              step: step,
-              taskToken: taskToken,
-              errors: errors || [],
-            }),
-          },
-        ],
-      }),
-    );
-  } catch (err) {
-    // Log but don't fail on EventBridge errors
-    console.warn(
-      JSON.stringify({
-        ...base,
-        level: "warn",
-        msg: "failed_to_emit_event",
-        status: status,
-        error: err instanceof Error ? err.message : String(err),
-      }),
-    );
-  }
 }
 
 /**
@@ -368,12 +231,18 @@ async function checkAndWaitForTransactionStatus(input) {
       const errorMsg = err instanceof Error ? err.message : String(err);
 
       // If it's a resubmission error or transaction failed, throw (don't retry)
-      if (errorMsg.includes("resubmitted") || errorMsg.includes("failed on blockchain")) {
+      if (
+        errorMsg.includes("resubmitted") ||
+        errorMsg.includes("failed on blockchain")
+      ) {
         throw err;
       }
 
       // Configuration errors should also throw
-      if (errorMsg.includes("RPC URL is required") || errorMsg.includes("Transaction hash is required")) {
+      if (
+        errorMsg.includes("RPC URL is required") ||
+        errorMsg.includes("Transaction hash is required")
+      ) {
         throw err;
       }
 
@@ -462,7 +331,13 @@ export const handler = async (event) => {
 
       // Emit IN_PROGRESS event to EventBridge when task token is received
       if (taskToken && executionArn) {
-        await emitEvent({
+        const log = createLogger({
+          component: "transaction-status-checker",
+          at: new Date().toISOString(),
+          county: county || "unknown",
+          executionId: executionArn,
+        });
+        await emitWorkflowEvent({
           executionId: executionArn,
           county: county || "unknown",
           dataGroupLabel: dataGroupLabel,
@@ -471,6 +346,7 @@ export const handler = async (event) => {
           step: "CheckTransactionStatus",
           taskToken: taskToken,
           errors: [],
+          log,
         });
       }
     } else {
@@ -499,8 +375,31 @@ export const handler = async (event) => {
 
     if (!rpcUrl) {
       const error = "RPC URL is required (ELEPHANT_RPC_URL env var)";
-      if (taskToken) {
-        await sendTaskFailure(taskToken, "ConfigurationError", error);
+      if (taskToken && executionArn) {
+        const errorLog = createLogger({
+          component: "transaction-status-checker",
+          at: new Date().toISOString(),
+          county: county || "unknown",
+          executionId: executionArn,
+        });
+        await emitWorkflowEvent({
+          executionId: executionArn,
+          county: county || "unknown",
+          dataGroupLabel: dataGroupLabel,
+          status: "FAILED",
+          phase: "Submit",
+          step: "CheckTransactionStatus",
+          taskToken: taskToken,
+          errors: [createWorkflowError("60003", { error })],
+          log: errorLog,
+        });
+        await executeWithTaskToken({
+          taskToken,
+          log: errorLog,
+          workerFn: async () => {
+            throw new Error(error);
+          },
+        });
         return;
       }
       throw new Error(error);
@@ -508,8 +407,31 @@ export const handler = async (event) => {
 
     if (!transactionHash) {
       const error = "Transaction hash is required";
-      if (taskToken) {
-        await sendTaskFailure(taskToken, "InvalidInput", error);
+      if (taskToken && executionArn) {
+        const errorLog = createLogger({
+          component: "transaction-status-checker",
+          at: new Date().toISOString(),
+          county: county || "unknown",
+          executionId: executionArn,
+        });
+        await emitWorkflowEvent({
+          executionId: executionArn,
+          county: county || "unknown",
+          dataGroupLabel: dataGroupLabel,
+          status: "FAILED",
+          phase: "Submit",
+          step: "CheckTransactionStatus",
+          taskToken: taskToken,
+          errors: [createWorkflowError("60003", { error })],
+          log: errorLog,
+        });
+        await executeWithTaskToken({
+          taskToken,
+          log: errorLog,
+          workerFn: async () => {
+            throw new Error(error);
+          },
+        });
         return;
       }
       throw new Error(error);
@@ -532,9 +454,15 @@ export const handler = async (event) => {
       }),
     );
 
-    // Emit SUCCEEDED event to EventBridge
+    // Emit SUCCEEDED event to EventBridge and send task success
     if (taskToken && executionArn) {
-      await emitEvent({
+      const log = createLogger({
+        component: "transaction-status-checker",
+        at: new Date().toISOString(),
+        county: county || "unknown",
+        executionId: executionArn,
+      });
+      await emitWorkflowEvent({
         executionId: executionArn,
         county: county || "unknown",
         dataGroupLabel: dataGroupLabel,
@@ -543,12 +471,13 @@ export const handler = async (event) => {
         step: "CheckTransactionStatus",
         taskToken: taskToken,
         errors: [],
+        log,
       });
-    }
-
-    // Send success callback to Step Functions if task token is present
-    if (taskToken) {
-      await sendTaskSuccess(taskToken, result);
+      await executeWithTaskToken({
+        taskToken,
+        log,
+        workerFn: async () => result,
+      });
     }
 
     return result;
@@ -566,9 +495,15 @@ export const handler = async (event) => {
       }),
     );
 
-    // Emit FAILED event to EventBridge
+    // Emit FAILED event to EventBridge and send task failure
     if (taskToken && executionArn) {
-      await emitEvent({
+      const errorLog = createLogger({
+        component: "transaction-status-checker",
+        at: new Date().toISOString(),
+        county: county || "unknown",
+        executionId: executionArn,
+      });
+      await emitWorkflowEvent({
         executionId: executionArn,
         county: county || "unknown",
         dataGroupLabel: dataGroupLabel,
@@ -577,43 +512,23 @@ export const handler = async (event) => {
         step: "CheckTransactionStatus",
         taskToken: taskToken,
         errors: [
-          {
-            code: "60003",
-            details: {
-              error: errMessage,
-              cause: errCause,
-              transactionHash: transactionHash,
-            },
-          },
-        ],
-      });
-    }
-
-    // Send failure callback to Step Functions if task token is present
-    if (taskToken) {
-      try {
-        await sendTaskFailure(
-          taskToken,
-          "TransactionStatusCheckFailed",
-          errCause || errMessage,
-        );
-        // Don't throw after sending failure callback - let SQS know Lambda completed
-        return;
-      } catch (callbackErr) {
-        // If sending failure callback fails, log and throw to trigger SQS redelivery
-        console.error(
-          JSON.stringify({
-            ...base,
-            level: "error",
-            msg: "failed_to_send_task_failure_callback",
-            error:
-              callbackErr instanceof Error
-                ? callbackErr.message
-                : String(callbackErr),
+          createWorkflowError("60003", {
+            error: errMessage,
+            cause: errCause,
+            transactionHash: transactionHash,
           }),
-        );
-        throw err;
-      }
+        ],
+        log: errorLog,
+      });
+      await executeWithTaskToken({
+        taskToken,
+        log: errorLog,
+        workerFn: async () => {
+          throw err;
+        },
+      });
+      // Don't throw after sending failure callback - let SQS know Lambda completed
+      return;
     }
 
     // If no task token, throw to trigger SQS redelivery or fail the Lambda

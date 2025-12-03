@@ -13,6 +13,21 @@ import {
 const sfnMock = mockClient(SFNClient);
 const eventBridgeMock = mockClient(EventBridgeClient);
 
+// Mock the shared module
+const mockExecuteWithTaskToken = vi.fn().mockResolvedValue(undefined);
+const mockEmitWorkflowEvent = vi.fn().mockResolvedValue(undefined);
+const mockCreateWorkflowError = vi.fn((code, details) => ({
+  code,
+  ...(details && { details }),
+}));
+const mockCreateLogger = vi.fn(() => vi.fn());
+vi.mock("shared", () => ({
+  executeWithTaskToken: mockExecuteWithTaskToken,
+  emitWorkflowEvent: mockEmitWorkflowEvent,
+  createWorkflowError: mockCreateWorkflowError,
+  createLogger: mockCreateLogger,
+}));
+
 // Mock @elephant-xyz/cli/lib
 const mockCheckGasPrice = vi.fn();
 vi.mock("@elephant-xyz/cli/lib", () => ({
@@ -26,6 +41,10 @@ describe("gas-price-checker handler", () => {
     vi.clearAllMocks();
     sfnMock.reset();
     eventBridgeMock.reset();
+    mockExecuteWithTaskToken.mockClear();
+    mockEmitWorkflowEvent.mockClear();
+    mockCreateWorkflowError.mockClear();
+    mockCreateLogger.mockClear();
 
     process.env = {
       ...originalEnv,
@@ -80,19 +99,15 @@ describe("gas-price-checker handler", () => {
       await handler(event);
 
       // Verify IN_PROGRESS and SUCCEEDED events were emitted
-      expect(eventBridgeMock.calls()).toHaveLength(2);
-      const putEventsCall = eventBridgeMock.calls()[0];
-      expect(putEventsCall.args[0].input.Entries[0].Source).toBe(
-        "elephant.workflow",
+      // Verify IN_PROGRESS event was emitted via shared layer
+      expect(mockEmitWorkflowEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: "IN_PROGRESS",
+          phase: "Submit",
+          step: "CheckGasPrice",
+          taskToken: "task-token-123",
+        }),
       );
-      expect(putEventsCall.args[0].input.Entries[0].DetailType).toBe(
-        "WorkflowEvent",
-      );
-      const detail = JSON.parse(putEventsCall.args[0].input.Entries[0].Detail);
-      expect(detail.status).toBe("IN_PROGRESS");
-      expect(detail.phase).toBe("Submit");
-      expect(detail.step).toBe("CheckGasPrice");
-      expect(detail.taskToken).toBe("task-token-123");
     });
 
     it("should succeed when gas price is below threshold", async () => {
@@ -114,10 +129,11 @@ describe("gas-price-checker handler", () => {
       expect(mockCheckGasPrice).toHaveBeenCalled();
 
       // Verify task success was sent
-      expect(sfnMock.calls()).toHaveLength(1);
-      const sendTaskSuccessCall = sfnMock.calls()[0];
-      expect(sendTaskSuccessCall.args[0].input.taskToken).toBe(
-        "task-token-success",
+      // Verify task success was sent via shared layer
+      expect(mockExecuteWithTaskToken).toHaveBeenCalledWith(
+        expect.objectContaining({
+          taskToken: "task-token-success",
+        }),
       );
     });
 
@@ -137,10 +153,11 @@ describe("gas-price-checker handler", () => {
       await handler(event);
 
       // Verify task success was sent
-      expect(sfnMock.calls()).toHaveLength(1);
-      const sendTaskSuccessCall = sfnMock.calls()[0];
-      expect(sendTaskSuccessCall.args[0].input.taskToken).toBe(
-        "task-token-equal",
+      // Verify task success was sent via shared layer
+      expect(mockExecuteWithTaskToken).toHaveBeenCalledWith(
+        expect.objectContaining({
+          taskToken: "task-token-equal",
+        }),
       );
     });
 
@@ -176,16 +193,17 @@ describe("gas-price-checker handler", () => {
       expect(mockCheckGasPrice).toHaveBeenCalledTimes(2);
 
       // Verify task success was sent after retry
-      expect(sfnMock.calls()).toHaveLength(1);
-      const sendTaskSuccessCall = sfnMock.calls()[0];
-      expect(sendTaskSuccessCall.args[0].input.taskToken).toBe(
-        "task-token-retry",
+      // Verify task success was sent via shared layer
+      expect(mockExecuteWithTaskToken).toHaveBeenCalledWith(
+        expect.objectContaining({
+          taskToken: "task-token-retry",
+        }),
       );
 
       vi.useRealTimers();
     });
 
-    it("should fail after max retries when gas price remains too high", async () => {
+    it("should retry indefinitely when gas price remains too high", async () => {
       vi.useFakeTimers();
 
       // All calls return gas price too high (30 Gwei = 30000000000 wei)
@@ -198,27 +216,23 @@ describe("gas-price-checker handler", () => {
         "../../../../workflow/lambdas/gas-price-checker/index.mjs"
       );
 
-      const event = createSqsEvent("task-token-max-retries");
+      const event = createSqsEvent("task-token-retry-indefinite");
 
       const handlerPromise = handler(event);
 
-      // Fast-forward time to trigger all retries (3 retries = 3 * 2 minutes = 6 minutes)
+      // Fast-forward time to trigger several retries (3 retries = 3 * 2 minutes = 6 minutes)
       await vi.advanceTimersByTimeAsync(6 * 60 * 1000);
 
-      await handlerPromise;
+      // Handler should still be running (retries indefinitely)
+      // Cancel the promise after verifying retries
+      const timeout = setTimeout(() => {
+        handlerPromise.catch(() => {});
+      }, 100);
 
-      // Verify checkGasPrice was called maxRetries times (the loop runs maxRetries times)
-      // The loop condition is `while (retries < maxRetries)`, so with maxRetries=3, it runs 3 times
-      expect(mockCheckGasPrice).toHaveBeenCalledTimes(3);
+      // Verify checkGasPrice was called multiple times (retries indefinitely)
+      expect(mockCheckGasPrice).toHaveBeenCalledTimes(4); // 1 initial + 3 retries
 
-      // Verify task failure was sent
-      const sendTaskFailureCalls = sfnMock
-        .calls()
-        .filter(
-          (call) => call.args[0].input.taskToken === "task-token-max-retries",
-        );
-      expect(sendTaskFailureCalls.length).toBeGreaterThan(0);
-
+      clearTimeout(timeout);
       vi.useRealTimers();
     });
 
@@ -237,42 +251,44 @@ describe("gas-price-checker handler", () => {
       await handler(event);
 
       // Should have 2 EventBridge calls: IN_PROGRESS and SUCCEEDED
-      expect(eventBridgeMock.calls()).toHaveLength(2);
-      const succeededCall = eventBridgeMock.calls()[1];
-      const detail = JSON.parse(succeededCall.args[0].input.Entries[0].Detail);
-      expect(detail.status).toBe("SUCCEEDED");
-      expect(detail.phase).toBe("Submit");
-      expect(detail.step).toBe("CheckGasPrice");
+      // Should have 2 EventBridge calls: IN_PROGRESS and SUCCEEDED
+      expect(mockEmitWorkflowEvent).toHaveBeenCalledTimes(2);
+      expect(mockEmitWorkflowEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: "SUCCEEDED",
+          phase: "Submit",
+          step: "CheckGasPrice",
+        }),
+      );
     });
 
-    it("should emit FAILED event on failure", async () => {
+    it("should retry indefinitely when checkGasPrice throws an error", async () => {
       vi.useFakeTimers();
-      // Mock checkGasPrice to always throw (will retry maxRetries times)
+      // Mock checkGasPrice to always throw (will retry indefinitely)
       mockCheckGasPrice.mockRejectedValue(new Error("RPC error"));
 
       const { handler } = await import(
         "../../../../workflow/lambdas/gas-price-checker/index.mjs"
       );
 
-      const event = createSqsEvent("task-token-failed");
+      const event = createSqsEvent("task-token-error-retry");
 
       const handlerPromise = handler(event);
 
-      // Advance time for retries: maxRetries=3, so 2 retries before final failure
-      // Each retry waits 2 minutes, so 2 * 2 * 60 * 1000 = 240000ms
-      await vi.advanceTimersByTimeAsync(240000);
+      // Advance time for several retries (3 retries = 3 * 2 minutes = 6 minutes)
+      await vi.advanceTimersByTimeAsync(6 * 60 * 1000);
 
-      await handlerPromise;
+      // Handler should still be running (retries indefinitely)
+      // Cancel the promise after verifying retries
+      const timeout = setTimeout(() => {
+        handlerPromise.catch(() => {});
+      }, 100);
 
+      // Verify checkGasPrice was called multiple times (retries indefinitely)
+      expect(mockCheckGasPrice).toHaveBeenCalledTimes(4); // 1 initial + 3 retries
+
+      clearTimeout(timeout);
       vi.useRealTimers();
-
-      // Should have 2 EventBridge calls: IN_PROGRESS and FAILED
-      expect(eventBridgeMock.calls()).toHaveLength(2);
-      const failedCall = eventBridgeMock.calls()[1];
-      const detail = JSON.parse(failedCall.args[0].input.Entries[0].Detail);
-      expect(detail.status).toBe("FAILED");
-      expect(detail.errors).toBeDefined();
-      expect(detail.errors.length).toBeGreaterThan(0);
     });
   });
 
@@ -289,10 +305,12 @@ describe("gas-price-checker handler", () => {
       await handler(event);
 
       // Verify task failure was sent
-      const sendTaskFailureCalls = sfnMock
-        .calls()
-        .filter((call) => call.args[0].input.taskToken === "task-token-no-rpc");
-      expect(sendTaskFailureCalls.length).toBeGreaterThan(0);
+      // Verify task failure was sent via shared layer
+      expect(mockExecuteWithTaskToken).toHaveBeenCalledWith(
+        expect.objectContaining({
+          taskToken: "task-token-no-rpc",
+        }),
+      );
     });
 
     it("should fail when GAS_PRICE_MAX_GWEI is missing", async () => {
@@ -307,10 +325,12 @@ describe("gas-price-checker handler", () => {
       await handler(event);
 
       // Verify task failure was sent
-      const sendTaskFailureCalls = sfnMock
-        .calls()
-        .filter((call) => call.args[0].input.taskToken === "task-token-no-max");
-      expect(sendTaskFailureCalls.length).toBeGreaterThan(0);
+      // Verify task failure was sent via shared layer
+      expect(mockExecuteWithTaskToken).toHaveBeenCalledWith(
+        expect.objectContaining({
+          taskToken: "task-token-no-max",
+        }),
+      );
     });
 
     it("should use default wait minutes when not configured", async () => {
@@ -331,7 +351,8 @@ describe("gas-price-checker handler", () => {
 
       // Should still succeed
       expect(mockCheckGasPrice).toHaveBeenCalled();
-      expect(sfnMock.calls()).toHaveLength(1);
+      // Verify task success was sent via shared layer
+      expect(mockExecuteWithTaskToken).toHaveBeenCalled();
     });
 
     it("should use default max retries when not configured", async () => {
@@ -352,14 +373,15 @@ describe("gas-price-checker handler", () => {
 
       // Should still succeed
       expect(mockCheckGasPrice).toHaveBeenCalled();
-      expect(sfnMock.calls()).toHaveLength(1);
+      // Verify task success was sent via shared layer
+      expect(mockExecuteWithTaskToken).toHaveBeenCalled();
     });
   });
 
   describe("Error handling", () => {
-    it("should handle checkGasPrice throwing an error", async () => {
+    it("should retry indefinitely when checkGasPrice throws an error", async () => {
       vi.useFakeTimers();
-      // Mock checkGasPrice to always throw (will retry maxRetries times)
+      // Mock checkGasPrice to always throw (will retry indefinitely)
       mockCheckGasPrice.mockRejectedValue(new Error("Network error"));
 
       const { handler } = await import(
@@ -370,19 +392,20 @@ describe("gas-price-checker handler", () => {
 
       const handlerPromise = handler(event);
 
-      // Advance time for retries: maxRetries=3, so 2 retries before final failure
-      // Each retry waits 2 minutes, so 2 * 2 * 60 * 1000 = 240000ms
-      await vi.advanceTimersByTimeAsync(240000);
+      // Advance time for several retries (3 retries = 3 * 2 minutes = 6 minutes)
+      await vi.advanceTimersByTimeAsync(6 * 60 * 1000);
 
-      await handlerPromise;
+      // Handler should still be running (retries indefinitely)
+      // Cancel the promise after verifying retries
+      const timeout = setTimeout(() => {
+        handlerPromise.catch(() => {});
+      }, 100);
 
+      // Verify checkGasPrice was called multiple times (retries indefinitely)
+      expect(mockCheckGasPrice).toHaveBeenCalledTimes(4); // 1 initial + 3 retries
+
+      clearTimeout(timeout);
       vi.useRealTimers();
-
-      // Verify task failure was sent
-      const sendTaskFailureCalls = sfnMock
-        .calls()
-        .filter((call) => call.args[0].input.taskToken === "task-token-error");
-      expect(sendTaskFailureCalls.length).toBeGreaterThan(0);
     });
 
     it("should handle missing SQS Records", async () => {

@@ -19,6 +19,21 @@ const eventBridgeMock = mockClient(EventBridgeClient);
 const s3Mock = mockClient(S3Client);
 const ssmMock = mockClient(SSMClient);
 
+// Mock the shared module
+const mockExecuteWithTaskToken = vi.fn().mockResolvedValue(undefined);
+const mockEmitWorkflowEvent = vi.fn().mockResolvedValue(undefined);
+const mockCreateWorkflowError = vi.fn((code, details) => ({
+  code,
+  ...(details && { details }),
+}));
+const mockCreateLogger = vi.fn(() => vi.fn());
+vi.mock("shared", () => ({
+  executeWithTaskToken: mockExecuteWithTaskToken,
+  emitWorkflowEvent: mockEmitWorkflowEvent,
+  createWorkflowError: mockCreateWorkflowError,
+  createLogger: mockCreateLogger,
+}));
+
 // Mock @elephant-xyz/cli/lib
 const mockSubmitToContract = vi.fn();
 vi.mock("@elephant-xyz/cli/lib", () => ({
@@ -34,6 +49,10 @@ describe("submit handler", () => {
     eventBridgeMock.reset();
     s3Mock.reset();
     ssmMock.reset();
+    mockExecuteWithTaskToken.mockClear();
+    mockEmitWorkflowEvent.mockClear();
+    mockCreateWorkflowError.mockClear();
+    mockCreateLogger.mockClear();
 
     process.env = {
       ...originalEnv,
@@ -129,20 +148,15 @@ describe("submit handler", () => {
 
       await handler(event);
 
-      // Verify IN_PROGRESS event was emitted (first call)
-      expect(eventBridgeMock.calls().length).toBeGreaterThanOrEqual(1);
-      const putEventsCall = eventBridgeMock.calls()[0];
-      expect(putEventsCall.args[0].input.Entries[0].Source).toBe(
-        "elephant.workflow",
+      // Verify IN_PROGRESS event was emitted via shared layer
+      expect(mockEmitWorkflowEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: "IN_PROGRESS",
+          phase: "Submit",
+          step: "SubmitToBlockchain",
+          taskToken: "task-token-123",
+        }),
       );
-      expect(putEventsCall.args[0].input.Entries[0].DetailType).toBe(
-        "WorkflowEvent",
-      );
-      const detail = JSON.parse(putEventsCall.args[0].input.Entries[0].Detail);
-      expect(detail.status).toBe("IN_PROGRESS");
-      expect(detail.phase).toBe("Submit");
-      expect(detail.step).toBe("SubmitToBlockchain");
-      expect(detail.taskToken).toBe("task-token-123");
     });
 
     it("should submit successfully and send task success", async () => {
@@ -161,11 +175,11 @@ describe("submit handler", () => {
       // Verify submitToContract was called
       expect(mockSubmitToContract).toHaveBeenCalled();
 
-      // Verify task success was sent
-      expect(sfnMock.calls()).toHaveLength(1);
-      const sendTaskSuccessCall = sfnMock.calls()[0];
-      expect(sendTaskSuccessCall.args[0].input.taskToken).toBe(
-        "task-token-success",
+      // Verify task success was sent via shared layer
+      expect(mockExecuteWithTaskToken).toHaveBeenCalledWith(
+        expect.objectContaining({
+          taskToken: "task-token-success",
+        }),
       );
     });
 
@@ -183,12 +197,14 @@ describe("submit handler", () => {
       await handler(event);
 
       // Should have 2 EventBridge calls: IN_PROGRESS and SUCCEEDED
-      expect(eventBridgeMock.calls()).toHaveLength(2);
-      const succeededCall = eventBridgeMock.calls()[1];
-      const detail = JSON.parse(succeededCall.args[0].input.Entries[0].Detail);
-      expect(detail.status).toBe("SUCCEEDED");
-      expect(detail.phase).toBe("Submit");
-      expect(detail.step).toBe("SubmitToBlockchain");
+      expect(mockEmitWorkflowEvent).toHaveBeenCalledTimes(2);
+      expect(mockEmitWorkflowEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: "SUCCEEDED",
+          phase: "Submit",
+          step: "SubmitToBlockchain",
+        }),
+      );
     });
 
     it("should handle submission failure and send task failure", async () => {
@@ -220,11 +236,12 @@ describe("submit handler", () => {
         // Expected to throw
       }
 
-      // Verify task failure was sent
-      const sendTaskFailureCalls = sfnMock
-        .calls()
-        .filter((call) => call.args[0].input.taskToken === "task-token-failed");
-      expect(sendTaskFailureCalls.length).toBeGreaterThan(0);
+      // Verify task failure was sent via shared layer
+      expect(mockExecuteWithTaskToken).toHaveBeenCalledWith(
+        expect.objectContaining({
+          taskToken: "task-token-failed",
+        }),
+      );
     });
 
     it("should emit FAILED event on submission failure", async () => {
@@ -257,12 +274,19 @@ describe("submit handler", () => {
       }
 
       // Should have 2 EventBridge calls: IN_PROGRESS and FAILED
-      expect(eventBridgeMock.calls().length).toBeGreaterThanOrEqual(2);
-      const failedCall = eventBridgeMock.calls()[1];
-      const detail = JSON.parse(failedCall.args[0].input.Entries[0].Detail);
-      expect(detail.status).toBe("FAILED");
-      expect(detail.errors).toBeDefined();
-      expect(detail.errors.length).toBeGreaterThan(0);
+      expect(mockEmitWorkflowEvent).toHaveBeenCalledTimes(2);
+      expect(mockEmitWorkflowEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: "FAILED",
+          phase: "Submit",
+          step: "SubmitToBlockchain",
+          errors: expect.arrayContaining([
+            expect.objectContaining({
+              code: "60002",
+            }),
+          ]),
+        }),
+      );
     });
 
     it("should handle external SQS invocation without task token", async () => {
@@ -286,10 +310,10 @@ describe("submit handler", () => {
       const result = await handler(event);
 
       // Should NOT emit EventBridge events (no task token)
-      expect(eventBridgeMock.calls()).toHaveLength(0);
+      expect(mockEmitWorkflowEvent).not.toHaveBeenCalled();
 
       // Should NOT send Step Function callbacks
-      expect(sfnMock.calls()).toHaveLength(0);
+      expect(mockExecuteWithTaskToken).not.toHaveBeenCalled();
 
       // Should return result
       expect(result).toBeDefined();
@@ -313,11 +337,11 @@ describe("submit handler", () => {
       // Verify submitToContract was called
       expect(mockSubmitToContract).toHaveBeenCalled();
 
-      // Verify task success was sent
-      expect(sfnMock.calls()).toHaveLength(1);
-      const sendTaskSuccessCall = sfnMock.calls()[0];
-      expect(sendTaskSuccessCall.args[0].input.taskToken).toBe(
-        "direct-task-token",
+      // Verify task success was sent via shared layer
+      expect(mockExecuteWithTaskToken).toHaveBeenCalledWith(
+        expect.objectContaining({
+          taskToken: "direct-task-token",
+        }),
       );
     });
 
@@ -341,11 +365,12 @@ describe("submit handler", () => {
         expect(err.message).toContain("Missing or invalid transactionItems");
       }
 
-      // Verify task failure was sent
-      const sendTaskFailureCalls = sfnMock
-        .calls()
-        .filter((call) => call.args[0].input.taskToken === "direct-task-token");
-      expect(sendTaskFailureCalls.length).toBeGreaterThan(0);
+      // Verify task failure was sent via shared layer
+      expect(mockExecuteWithTaskToken).toHaveBeenCalledWith(
+        expect.objectContaining({
+          taskToken: "direct-task-token",
+        }),
+      );
     });
   });
 
@@ -459,10 +484,12 @@ describe("submit handler", () => {
       }
 
       // Verify task failure was sent
-      const sendTaskFailureCalls = sfnMock
-        .calls()
-        .filter((call) => call.args[0].input.taskToken === "task-token-error");
-      expect(sendTaskFailureCalls.length).toBeGreaterThan(0);
+      // Verify task failure was sent via shared layer
+      expect(mockExecuteWithTaskToken).toHaveBeenCalledWith(
+        expect.objectContaining({
+          taskToken: "task-token-error",
+        }),
+      );
     });
 
     it("should handle keystore download failure", async () => {
@@ -479,13 +506,12 @@ describe("submit handler", () => {
       await handler(event);
 
       // Verify task failure was sent
-      const sendTaskFailureCalls = sfnMock
-        .calls()
-        .filter(
-          (call) =>
-            call.args[0].input.taskToken === "task-token-keystore-error",
-        );
-      expect(sendTaskFailureCalls.length).toBeGreaterThan(0);
+      // Verify task failure was sent via shared layer
+      expect(mockExecuteWithTaskToken).toHaveBeenCalledWith(
+        expect.objectContaining({
+          taskToken: "task-token-keystore-error",
+        }),
+      );
     });
   });
 });

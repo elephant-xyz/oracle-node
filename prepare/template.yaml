@@ -1101,45 +1101,6 @@ Resources:
             BatchSize: 100
 
   #####################################################################################################################
-  # Manual Resolution Lambda Function
-  #####################################################################################################################
-
-  ManualResolutionFunction:
-    Type: AWS::Serverless::Function
-    Properties:
-      Runtime: nodejs22.x
-      Architectures:
-        - arm64
-      MemorySize: 256
-      Timeout: 60
-      CodeUri: ../workflow/lambdas/manual-resolution
-      Handler: index.handler
-      Description: "Manually mark failed executions as resolved and optionally retry them"
-      LoggingConfig:
-        LogFormat: JSON
-      Policies:
-        - AWSLambdaBasicExecutionRole
-        - Version: "2012-10-17"
-          Statement:
-            - Effect: Allow
-              Action:
-                - states:DescribeExecution
-                - states:StartExecution
-              Resource: "*"
-            - Effect: Allow
-              Action:
-                - events:PutEvents
-              Resource: "*"
-            - Effect: Allow
-              Action:
-                - sqs:SendMessage
-                - sqs:GetQueueUrl
-              Resource: !GetAtt WorkflowSqsQueue.Arn
-      Environment:
-        Variables:
-          WORKFLOW_SQS_QUEUE_URL: !Ref WorkflowSqsQueue
-
-  #####################################################################################################################
   # GitHub Sync Lambda Function
   #####################################################################################################################
 
@@ -1945,12 +1906,6 @@ Outputs:
   WorkflowEventBridgeLogsUrl:
     Description: URL to view EventBridge workflow events in CloudWatch Logs
     Value: !Sub "https://${AWS::Region}.console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#logsV2:log-groups/log-group/%2Faws%2Fevents%2F${AWS::StackName}-workflow-events"
-  ManualResolutionFunctionName:
-    Description: Name of the Manual Resolution Lambda function (invoke this to mark failed executions as resolved)
-    Value: !Ref ManualResolutionFunction
-  ManualResolutionFunctionArn:
-    Description: ARN of the Manual Resolution Lambda function
-    Value: !GetAtt ManualResolutionFunction.Arn
 
   # Granular Workflow Step Queues
   TransformQueueUrl:
