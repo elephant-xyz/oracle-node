@@ -26,10 +26,9 @@ clean_lambda() {
 clean_lambda "prepare/lambdas/downloader" "Downloader Function"
 clean_lambda "prepare/lambdas/updater" "Updater Function"
 
-# Clean workflow lambdas  
+# Clean workflow lambdas
 clean_lambda "workflow/lambdas/starter" "Workflow Starter Function"
 clean_lambda "workflow/lambdas/pre" "Workflow Pre-processor Function"
-clean_lambda "workflow/lambdas/post" "Workflow Post-processor Function"
 
 echo ""
 echo "🎉 All Lambda packages cleaned successfully!"

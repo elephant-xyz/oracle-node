@@ -29,10 +29,9 @@ build_lambda() {
 build_lambda "prepare/lambdas/downloader" "Downloader Function"
 build_lambda "prepare/lambdas/updater" "Updater Function"
 
-# Build workflow lambdas  
+# Build workflow lambdas
 build_lambda "workflow/lambdas/starter" "Workflow Starter Function"
 build_lambda "workflow/lambdas/pre" "Workflow Pre-processor Function"
-build_lambda "workflow/lambdas/post" "Workflow Post-processor Function"
 
 echo ""
 echo "🎉 All Lambda packages built successfully!"
@@ -42,10 +41,9 @@ echo "--------------"
 
 # Show package sizes
 echo "Downloader:    $(du -sh prepare/lambdas/downloader/node_modules 2>/dev/null | cut -f1)"
-echo "Updater:       $(du -sh prepare/lambdas/updater/node_modules 2>/dev/null | cut -f1)"  
+echo "Updater:       $(du -sh prepare/lambdas/updater/node_modules 2>/dev/null | cut -f1)"
 echo "Starter:       $(du -sh workflow/lambdas/starter/node_modules 2>/dev/null | cut -f1)"
 echo "Pre-processor: $(du -sh workflow/lambdas/pre/node_modules 2>/dev/null | cut -f1)"
-echo "Post-processor:$(du -sh workflow/lambdas/post/node_modules 2>/dev/null | cut -f1)"
 
 echo ""
 echo "💡 Benefits of this optimization:"

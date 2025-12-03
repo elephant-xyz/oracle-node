@@ -1,33 +1,12 @@
 Comment: Elephant Express workflow. Triggered by Starter Lambda with one SQS message payload.
-StartAt: RecordStartedMetric
+StartAt: Preprocess
 States:
-  RecordStartedMetric:
-    Type: Task
-    Resource: arn:aws:states:::aws-sdk:cloudwatch:putMetricData
-    Parameters:
-      Namespace: ElephantWorkflow
-      MetricData:
-        - MetricName: WorkflowExecution
-          Value: 1
-          Unit: Count
-          Timestamp.$: $$.State.EnteredTime
-          Dimensions:
-            - Name: Status
-              Value: Started
-    ResultPath: $.metricResult
-    Next: Preprocess
-    Catch:
-      - ErrorEquals: [States.ALL]
-        ResultPath: $.metricError
-        Next: Preprocess
-
   Preprocess:
     Type: Task
     Resource: arn:aws:states:::lambda:invoke
     Parameters:
       FunctionName: ${WorkflowPreProcessorFunction}
       Payload.$: $.message
-    # Store full Lambda invoke result under $.pre so we can shape it next
     ResultSelector:
       county_prep_input_s3_uri.$: $.Payload.county_prep_input_s3_uri
       output_prefix.$: $.Payload.output_prefix
@@ -49,26 +28,6 @@ States:
     Catch:
       - ErrorEquals: [States.ALL]
         ResultPath: $.error
-        Next: RecordPreprocessFailureMetric
-
-  RecordPreprocessFailureMetric:
-    Type: Task
-    Resource: arn:aws:states:::aws-sdk:cloudwatch:putMetricData
-    Parameters:
-      Namespace: ElephantWorkflow
-      MetricData:
-        - MetricName: WorkflowExecution
-          Value: 1
-          Unit: Count
-          Timestamp.$: $$.State.EnteredTime
-          Dimensions:
-            - Name: Status
-              Value: Failure
-    ResultPath: $.metricResult
-    Next: FailRuntime
-    Catch:
-      - ErrorEquals: [States.ALL]
-        ResultPath: $.metricError
         Next: FailRuntime
 
   BuildRepairParamName:
@@ -160,11 +119,11 @@ States:
             phase: Prepare
             step: Prepare
     ResultPath: $.eventResult
-    Next: Postprocess
+    Next: GenerateExecutionId
     Catch:
       - ErrorEquals: [States.ALL]
         ResultPath: $.eventError
-        Next: Postprocess
+        Next: GenerateExecutionId
 
   EmitPrepareScheduled:
     Type: Task
@@ -220,6 +179,16 @@ States:
       prepareSkipped: false
     ResultPath: $.prepare
     Next: ReportPrepareLambdaSuccess
+    Retry:
+      - ErrorEquals:
+          [
+            Lambda.ServiceException,
+            Lambda.AWSLambdaException,
+            Lambda.SdkClientException,
+          ]
+        IntervalSeconds: 5
+        MaxAttempts: 3
+        BackoffRate: 2
     Catch:
       - ErrorEquals: [States.Timeout]
         ResultPath: $.prepareError
@@ -268,11 +237,11 @@ States:
             step: Prepare
             taskToken.$: $.prepare.taskToken
     ResultPath: $.eventResult
-    Next: Postprocess
+    Next: GenerateExecutionId
     Catch:
       - ErrorEquals: [States.ALL]
         ResultPath: $.eventError
-        Next: Postprocess
+        Next: GenerateExecutionId
 
   EmitPrepareFailed:
     Type: Task
@@ -297,132 +266,504 @@ States:
     Catch:
       - ErrorEquals: [States.ALL]
         ResultPath: $.error
-        Next: RecordPrepareFailureMetric
-
-  RecordPrepareFailureMetric:
-    Type: Task
-    Resource: arn:aws:states:::aws-sdk:cloudwatch:putMetricData
-    Parameters:
-      Namespace: ElephantWorkflow
-      MetricData:
-        - MetricName: WorkflowExecution
-          Value: 1
-          Unit: Count
-          Timestamp.$: $$.State.EnteredTime
-          Dimensions:
-            - Name: Status
-              Value: Failure
-    ResultPath: $.metricResult
-    Next: FailRuntime
-    Catch:
-      - ErrorEquals: [States.ALL]
-        ResultPath: $.metricError
         Next: FailRuntime
 
-  Postprocess:
+  # === GRANULAR POSTPROCESS STEPS ===
+
+  GenerateExecutionId:
+    Type: Pass
+    QueryLanguage: JSONata
+    Comment: "Generate unique execution ID and prepare context for granular steps"
+    Output: >-
+      {%
+        $merge([$states.input, {
+          "executionId": $states.context.Execution.Name,
+          "outputPrefix": $states.input.pre.output_prefix
+        }])
+      %}
+    Next: EmitTransformScheduled
+
+  # === TRANSFORM STEP ===
+
+  EmitTransformScheduled:
     Type: Task
-    Resource: arn:aws:states:::lambda:invoke
+    Resource: arn:aws:states:::events:putEvents
+    Comment: "Emit SCHEDULED event for Transform step"
     Parameters:
-      FunctionName: ${WorkflowPostProcessorFunction}
-      Payload:
-        s3.$: $.message.s3
-        prepare.$: $.prepare
-        seed_output_s3_uri.$: $.pre.seed_output_s3_uri
-        prepareSkipped.$: $.prepare.prepareSkipped
+      Entries:
+        - Source: elephant.workflow
+          DetailType: WorkflowEvent
+          Detail:
+            executionId.$: $.executionId
+            county.$: $.pre.county_name
+            status: SCHEDULED
+            phase: Transform
+            step: Transform
+    ResultPath: $.eventResult
+    Next: Transform
+    Catch:
+      - ErrorEquals: [States.ALL]
+        ResultPath: $.eventError
+        Next: Transform
+
+  Transform:
+    Type: Task
+    Resource: arn:aws:states:::sqs:sendMessage.waitForTaskToken
+    Comment: "Run Transform step via SQS + Lambda worker with task token callback"
+    Parameters:
+      QueueUrl: ${TransformQueueUrl}
+      MessageBody:
+        taskToken.$: $$.Task.Token
+        input:
+          inputS3Uri.$: $.prepare.output_s3_uri
+          county.$: $.pre.county_name
+          outputPrefix.$: $.outputPrefix
+          executionId.$: $.executionId
     ResultSelector:
-      items.$: $.Payload.transactionItems
-      transformedOutputS3Uri.$: $.Payload.transformedOutputS3Uri
-      preparedInputS3Uri.$: $.Payload.preparedInputS3Uri
-      executionId.$: $.Payload.executionId
-      county.$: $.Payload.county
-    ResultPath: $.post
-    Next: CheckTransactionItems
+      transformedOutputS3Uri.$: $.transformedOutputS3Uri
+      county.$: $.county
+      executionId.$: $.executionId
+    ResultPath: $.transform
+    Next: EmitTransformSucceeded
     Retry:
-      - ErrorEquals:
-          [
-            Lambda.ServiceException,
-            Lambda.AWSLambdaException,
-            Lambda.SdkClientException,
-          ]
+      - ErrorEquals: [States.Timeout]
+        IntervalSeconds: 5
+        MaxAttempts: 2
+        BackoffRate: 2
+    Catch:
+      - ErrorEquals: [ScriptsFailedError]
+        Comment: "Transform scripts failed - park for resolution"
+        ResultPath: $.transformError
+        Next: WaitForTransformResolution
+      - ErrorEquals: [States.ALL]
+        ResultPath: $.transformError
+        Next: WaitForTransformResolution
+
+  EmitTransformSucceeded:
+    Type: Task
+    Resource: arn:aws:states:::events:putEvents
+    Comment: "Emit SUCCEEDED event for Transform step"
+    Parameters:
+      Entries:
+        - Source: elephant.workflow
+          DetailType: WorkflowEvent
+          Detail:
+            executionId.$: $.executionId
+            county.$: $.pre.county_name
+            status: SUCCEEDED
+            phase: Transform
+            step: Transform
+    ResultPath: $.eventResult
+    Next: EmitSvlScheduled
+    Catch:
+      - ErrorEquals: [States.ALL]
+        ResultPath: $.eventError
+        Next: EmitSvlScheduled
+
+  WaitForTransformResolution:
+    Type: Task
+    Resource: arn:aws:states:::events:putEvents.waitForTaskToken
+    Comment: "Emit FAILED event and wait for external resolution - retry target is Transform"
+    HeartbeatSeconds: 2592000 # 30 days
+    Parameters:
+      Entries:
+        - Source: elephant.workflow
+          DetailType: WorkflowEvent
+          Detail:
+            executionId.$: $.executionId
+            county.$: $.pre.county_name
+            status: FAILED
+            phase: Transform
+            step: Transform
+            taskToken.$: $$.Task.Token
+            errors:
+              - code: "20001"
+                details:
+                  error.$: States.JsonToString($.transformError)
+    ResultPath: $.resolutionResult
+    Next: Transform
+    Catch:
+      - ErrorEquals: [States.ALL]
+        Comment: "Resolution failed - stay parked and wait again"
+        ResultPath: $.transformError
+        Next: WaitForTransformResolution
+
+  # === SVL (Schema Validation Layer) STEP ===
+
+  EmitSvlScheduled:
+    Type: Task
+    Resource: arn:aws:states:::events:putEvents
+    Comment: "Emit SCHEDULED event for SVL step"
+    Parameters:
+      Entries:
+        - Source: elephant.workflow
+          DetailType: WorkflowEvent
+          Detail:
+            executionId.$: $.executionId
+            county.$: $.pre.county_name
+            status: SCHEDULED
+            phase: SVL
+            step: SVL
+    ResultPath: $.eventResult
+    Next: SVL
+    Catch:
+      - ErrorEquals: [States.ALL]
+        ResultPath: $.eventError
+        Next: SVL
+
+  SVL:
+    Type: Task
+    Resource: arn:aws:states:::sqs:sendMessage.waitForTaskToken
+    Comment: "Run Schema Validation Layer via SQS + Lambda worker"
+    Parameters:
+      QueueUrl: ${SvlQueueUrl}
+      MessageBody:
+        taskToken.$: $$.Task.Token
+        input:
+          transformedOutputS3Uri.$: $.transform.transformedOutputS3Uri
+          county.$: $.pre.county_name
+          outputPrefix.$: $.outputPrefix
+          executionId.$: $.executionId
+          preparedS3Uri.$: $.prepare.output_s3_uri
+          s3.$: $.message.s3
+    ResultSelector:
+      validatedOutputS3Uri.$: $.validatedOutputS3Uri
+      county.$: $.county
+      executionId.$: $.executionId
+      validationPassed.$: $.validationPassed
+      svlErrors.$: $.svlErrors
+    ResultPath: $.svl
+    Next: CheckSvlResult
+    Retry:
+      - ErrorEquals: [States.Timeout]
+        IntervalSeconds: 5
+        MaxAttempts: 2
+        BackoffRate: 2
+    Catch:
+      - ErrorEquals: [SvlFailedError]
+        Comment: "SVL validation failed - park for resolution"
+        ResultPath: $.svlError
+        Next: WaitForSvlExceptionResolution
+      - ErrorEquals: [States.ALL]
+        ResultPath: $.svlError
+        Next: WaitForSvlExceptionResolution
+
+  CheckSvlResult:
+    Type: Choice
+    Comment: "Check if SVL validation passed or failed (errors saved to DynamoDB)"
+    Choices:
+      - Variable: $.svl.validationPassed
+        BooleanEquals: false
+        Next: WaitForSvlValidationResolution
+    Default: EmitSvlSucceeded
+
+  EmitSvlSucceeded:
+    Type: Task
+    Resource: arn:aws:states:::events:putEvents
+    Comment: "Emit SUCCEEDED event for SVL step"
+    Parameters:
+      Entries:
+        - Source: elephant.workflow
+          DetailType: WorkflowEvent
+          Detail:
+            executionId.$: $.executionId
+            county.$: $.pre.county_name
+            status: SUCCEEDED
+            phase: SVL
+            step: SVL
+    ResultPath: $.eventResult
+    Next: EmitHashScheduled
+    Catch:
+      - ErrorEquals: [States.ALL]
+        ResultPath: $.eventError
+        Next: EmitHashScheduled
+
+  WaitForSvlValidationResolution:
+    Type: Task
+    Resource: arn:aws:states:::events:putEvents.waitForTaskToken
+    QueryLanguage: JSONata
+    Comment: "Emit FAILED event with individual validation errors and wait for external resolution - retry target is Transform"
+    HeartbeatSeconds: 2592000 # 30 days
+    Arguments:
+      Entries:
+        - Source: elephant.workflow
+          DetailType: WorkflowEvent
+          Detail:
+            executionId: "{% $states.input.executionId %}"
+            county: "{% $states.input.pre.county_name %}"
+            status: FAILED
+            phase: SVL
+            step: SVL
+            taskToken: "{% $states.context.Task.Token %}"
+            errors: >-
+              {%
+                [$states.input.svl.svlErrors ~> $map(function($e) {
+                  {
+                    "code": "30001",
+                    "details": {
+                      "error_message": $e.error_message,
+                      "error_path": $e.error_path,
+                      "data_group_cid": $e.data_group_cid
+                    }
+                  }
+                })]
+              %}
+    Output: "{% $states.input %}"
+    Next: Transform
+    Catch:
+      - ErrorEquals: [States.ALL]
+        Comment: "Resolution failed - stay parked and wait again"
+        Output: "{% $states.input %}"
+        Next: WaitForSvlValidationResolution
+
+  WaitForSvlExceptionResolution:
+    Type: Task
+    Resource: arn:aws:states:::events:putEvents.waitForTaskToken
+    Comment: "Emit FAILED event for SVL exception and wait for external resolution - retry target is Transform"
+    HeartbeatSeconds: 2592000 # 30 days
+    Parameters:
+      Entries:
+        - Source: elephant.workflow
+          DetailType: WorkflowEvent
+          Detail:
+            executionId.$: $.executionId
+            county.$: $.pre.county_name
+            status: FAILED
+            phase: SVL
+            step: SVL
+            taskToken.$: $$.Task.Token
+            errors:
+              - code: "30002"
+                details:
+                  error.$: States.JsonToString($.svlError)
+    ResultPath: $.resolutionResult
+    Next: Transform
+    Catch:
+      - ErrorEquals: [States.ALL]
+        Comment: "Resolution failed - stay parked and wait again"
+        ResultPath: $.svlError
+        Next: WaitForSvlExceptionResolution
+
+  # === HASH STEP ===
+
+  EmitHashScheduled:
+    Type: Task
+    Resource: arn:aws:states:::events:putEvents
+    Comment: "Emit SCHEDULED event for Hash step"
+    Parameters:
+      Entries:
+        - Source: elephant.workflow
+          DetailType: WorkflowEvent
+          Detail:
+            executionId.$: $.executionId
+            county.$: $.pre.county_name
+            status: SCHEDULED
+            phase: Hash
+            step: Hash
+    ResultPath: $.eventResult
+    Next: Hash
+    Catch:
+      - ErrorEquals: [States.ALL]
+        ResultPath: $.eventError
+        Next: Hash
+
+  Hash:
+    Type: Task
+    Resource: arn:aws:states:::sqs:sendMessage.waitForTaskToken
+    Comment: "Run Hash generation via SQS + Lambda worker"
+    Parameters:
+      QueueUrl: ${HashQueueUrl}
+      MessageBody:
+        taskToken.$: $$.Task.Token
+        input:
+          validatedOutputS3Uri.$: $.transform.transformedOutputS3Uri
+          seedOutputS3Uri.$: $.pre.seed_output_s3_uri
+          county.$: $.pre.county_name
+          outputPrefix.$: $.outputPrefix
+          executionId.$: $.executionId
+    ResultSelector:
+      seedHashZipS3Uri.$: $.seedHashZipS3Uri
+      countyHashZipS3Uri.$: $.countyHashZipS3Uri
+      combinedHashCsvS3Uri.$: $.combinedHashCsvS3Uri
+      county.$: $.county
+      executionId.$: $.executionId
+      propertyCid.$: $.propertyCid
+      transactionItems.$: $.transactionItems
+    ResultPath: $.hash
+    Next: EmitHashSucceeded
+    Retry:
+      - ErrorEquals: [States.Timeout]
         IntervalSeconds: 5
         MaxAttempts: 2
         BackoffRate: 2
     Catch:
       - ErrorEquals: [States.ALL]
-        ResultPath: $.error
-        Next: RecordPostprocessFailureMetric
+        ResultPath: $.hashError
+        Next: WaitForHashResolution
 
-  RecordPostprocessFailureMetric:
+  EmitHashSucceeded:
     Type: Task
-    Resource: arn:aws:states:::aws-sdk:cloudwatch:putMetricData
+    Resource: arn:aws:states:::events:putEvents
+    Comment: "Emit SUCCEEDED event for Hash step"
     Parameters:
-      Namespace: ElephantWorkflow
-      MetricData:
-        - MetricName: WorkflowExecution
-          Value: 1
-          Unit: Count
-          Timestamp.$: $$.State.EnteredTime
-          Dimensions:
-            - Name: Status
-              Value: Failure
-    ResultPath: $.metricResult
-    Next: FailRuntime
+      Entries:
+        - Source: elephant.workflow
+          DetailType: WorkflowEvent
+          Detail:
+            executionId.$: $.executionId
+            county.$: $.pre.county_name
+            status: SUCCEEDED
+            phase: Hash
+            step: Hash
+    ResultPath: $.eventResult
+    Next: EmitUploadScheduled
     Catch:
       - ErrorEquals: [States.ALL]
-        ResultPath: $.metricError
-        Next: FailRuntime
+        ResultPath: $.eventError
+        Next: EmitUploadScheduled
 
-  CheckTransactionItems:
-    Type: Choice
-    Comment: "Skip queue if validation failed (empty transactionItems)"
-    Choices:
-      - Variable: $.post.items[0]
-        IsPresent: false
-        Next: RecordValidationFailureMetric
-    Default: RecordSuccessMetric
-
-  RecordValidationFailureMetric:
+  WaitForHashResolution:
     Type: Task
-    Resource: arn:aws:states:::aws-sdk:cloudwatch:putMetricData
+    Resource: arn:aws:states:::events:putEvents.waitForTaskToken
+    Comment: "Emit FAILED event and wait for external resolution - retry target is Hash"
+    HeartbeatSeconds: 2592000 # 30 days
     Parameters:
-      Namespace: ElephantWorkflow
-      MetricData:
-        - MetricName: WorkflowExecution
-          Value: 1
-          Unit: Count
-          Timestamp.$: $$.State.EnteredTime
-          Dimensions:
-            - Name: Status
-              Value: Failure
-    ResultPath: $.metricResult
-    End: true
+      Entries:
+        - Source: elephant.workflow
+          DetailType: WorkflowEvent
+          Detail:
+            executionId.$: $.executionId
+            county.$: $.pre.county_name
+            status: FAILED
+            phase: Hash
+            step: Hash
+            taskToken.$: $$.Task.Token
+            errors:
+              - code: "40001"
+                details:
+                  error.$: States.JsonToString($.hashError)
+    ResultPath: $.resolutionResult
+    Next: Hash
+    Catch:
+      - ErrorEquals: [States.ALL]
+        Comment: "Resolution failed - stay parked and wait again"
+        ResultPath: $.hashError
+        Next: WaitForHashResolution
 
-  RecordSuccessMetric:
+  # === UPLOAD STEP ===
+
+  EmitUploadScheduled:
     Type: Task
-    Resource: arn:aws:states:::aws-sdk:cloudwatch:putMetricData
+    Resource: arn:aws:states:::events:putEvents
+    Comment: "Emit SCHEDULED event for Upload step"
     Parameters:
-      Namespace: ElephantWorkflow
-      MetricData:
-        - MetricName: WorkflowExecution
-          Value: 1
-          Unit: Count
-          Timestamp.$: $$.State.EnteredTime
-          Dimensions:
-            - Name: Status
-              Value: Success
-    ResultPath: $.metricResult
+      Entries:
+        - Source: elephant.workflow
+          DetailType: WorkflowEvent
+          Detail:
+            executionId.$: $.executionId
+            county.$: $.pre.county_name
+            status: SCHEDULED
+            phase: Upload
+            step: Upload
+    ResultPath: $.eventResult
+    Next: Upload
+    Catch:
+      - ErrorEquals: [States.ALL]
+        ResultPath: $.eventError
+        Next: Upload
+
+  Upload:
+    Type: Task
+    Resource: arn:aws:states:::sqs:sendMessage.waitForTaskToken
+    Comment: "Run Upload to IPFS via SQS + Lambda worker"
+    Parameters:
+      QueueUrl: ${UploadQueueUrl}
+      MessageBody:
+        taskToken.$: $$.Task.Token
+        input:
+          seedHashZipS3Uri.$: $.hash.seedHashZipS3Uri
+          countyHashZipS3Uri.$: $.hash.countyHashZipS3Uri
+          county.$: $.pre.county_name
+          executionId.$: $.executionId
+    ResultSelector:
+      uploadSuccess.$: $.uploadSuccess
+      county.$: $.county
+      executionId.$: $.executionId
+    ResultPath: $.upload
+    Next: EmitUploadSucceeded
+    Retry:
+      - ErrorEquals: [States.Timeout]
+        IntervalSeconds: 5
+        MaxAttempts: 2
+        BackoffRate: 2
+    Catch:
+      - ErrorEquals: [UploadFailedError]
+        Comment: "Upload to IPFS failed - park for resolution"
+        ResultPath: $.uploadError
+        Next: WaitForUploadResolution
+      - ErrorEquals: [States.ALL]
+        ResultPath: $.uploadError
+        Next: WaitForUploadResolution
+
+  EmitUploadSucceeded:
+    Type: Task
+    Resource: arn:aws:states:::events:putEvents
+    Comment: "Emit SUCCEEDED event for Upload step"
+    Parameters:
+      Entries:
+        - Source: elephant.workflow
+          DetailType: WorkflowEvent
+          Detail:
+            executionId.$: $.executionId
+            county.$: $.pre.county_name
+            status: SUCCEEDED
+            phase: Upload
+            step: Upload
+    ResultPath: $.eventResult
     Next: QueueForTheSubmit
     Catch:
       - ErrorEquals: [States.ALL]
-        ResultPath: $.metricError
+        ResultPath: $.eventError
         Next: QueueForTheSubmit
+
+  WaitForUploadResolution:
+    Type: Task
+    Resource: arn:aws:states:::events:putEvents.waitForTaskToken
+    Comment: "Emit FAILED event and wait for external resolution - retry target is Upload"
+    HeartbeatSeconds: 2592000 # 30 days
+    Parameters:
+      Entries:
+        - Source: elephant.workflow
+          DetailType: WorkflowEvent
+          Detail:
+            executionId.$: $.executionId
+            county.$: $.pre.county_name
+            status: FAILED
+            phase: Upload
+            step: Upload
+            taskToken.$: $$.Task.Token
+            errors:
+              - code: "50001"
+                details:
+                  error.$: States.JsonToString($.uploadError)
+    ResultPath: $.resolutionResult
+    Next: Upload
+    Catch:
+      - ErrorEquals: [States.ALL]
+        Comment: "Resolution failed - stay parked and wait again"
+        ResultPath: $.uploadError
+        Next: WaitForUploadResolution
+
+  # === QUEUE FOR SUBMIT ===
 
   QueueForTheSubmit:
     Type: Task
     Resource: arn:aws:states:::sqs:sendMessage
+    Comment: "Queue transaction items for blockchain submission"
     Parameters:
       QueueUrl: ${TransactionsSqsQueueUrl}
-      MessageBody.$: "States.JsonToString($.post.items)"
+      MessageBody.$: States.JsonToString($.hash.transactionItems)
     ResultPath: null
     End: true
 

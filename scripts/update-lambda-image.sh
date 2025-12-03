@@ -11,8 +11,8 @@ err()  { echo -e "${RED}[ERROR]${NC} $*" >&2; }
 
 # Config with defaults that can be overridden
 STACK_NAME="${STACK_NAME:-elephant-oracle-node}"
-LAMBDA_DIR="${LAMBDA_DIR:-workflow/lambdas/post}"
-IMAGE_NAME="${IMAGE_NAME:-post-lambda}"
+LAMBDA_DIR="${LAMBDA_DIR:-workflow/lambdas/mvl}"
+IMAGE_NAME="${IMAGE_NAME:-mvl-lambda}"
 # Default to amd64 builds to match Lambda's architecture unless overridden.
 DOCKER_PLATFORM="${DOCKER_PLATFORM:-linux/amd64}"
 
@@ -66,12 +66,12 @@ push_image_to_ecr() {
 
   # Get Lambda function name from stack outputs
   local function_name
-  function_name=$(get_output "WorkflowPostProcessorFunctionName")
+  function_name=$(get_output "WorkflowMirrorValidatorFunctionName")
 
   if [[ -z "$function_name" || "$function_name" == "None" ]]; then
     err "Lambda function name not found in stack outputs. Deploy the stack first."
     err "Stack name: $STACK_NAME"
-    err "Looking for output key: WorkflowPostProcessorFunctionName"
+    err "Looking for output key: WorkflowMirrorValidatorFunctionName"
     exit 1
   fi
 
@@ -128,7 +128,7 @@ push_image_to_ecr() {
 # Update Lambda function to use the latest image from ECR
 update_lambda_with_latest_image() {
   local repo_uri="${1:-}"
-  local output_key="${2:-WorkflowPostProcessorFunctionName}"
+  local output_key="${2:-WorkflowMirrorValidatorFunctionName}"
 
   info "Updating Lambda function to use latest Docker image"
 

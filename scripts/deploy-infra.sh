@@ -547,14 +547,6 @@ deploy_codebuild_stack() {
     return 0
   fi
 
-  local post_processor_function_name
-  post_processor_function_name=$(get_output "WorkflowPostProcessorFunctionName")
-  if [[ -z "$post_processor_function_name" ]]; then
-    CODEBUILD_DEPLOY_PENDING=1
-    info "Delaying CodeBuild stack deployment until WorkflowPostProcessorFunctionName output is available."
-    return 0
-  fi
-
   local mvl_function_name
   mvl_function_name=$(get_output "WorkflowMirrorValidatorFunctionName")
   if [[ -z "$mvl_function_name" ]]; then
@@ -569,6 +561,29 @@ deploy_codebuild_stack() {
     CODEBUILD_DEPLOY_PENDING=1
     info "Delaying CodeBuild stack deployment until MwaaDeadLetterQueueUrl output is available."
     return 0
+  fi
+
+  local transform_worker_function_name
+  transform_worker_function_name=$(get_output "TransformWorkerFunctionName")
+  if [[ -z "$transform_worker_function_name" ]]; then
+    CODEBUILD_DEPLOY_PENDING=1
+    info "Delaying CodeBuild stack deployment until TransformWorkerFunctionName output is available."
+    return 0
+  fi
+
+  local svl_worker_function_name
+  svl_worker_function_name=$(get_output "SvlWorkerFunctionName")
+  if [[ -z "$svl_worker_function_name" ]]; then
+    CODEBUILD_DEPLOY_PENDING=1
+    info "Delaying CodeBuild stack deployment until SvlWorkerFunctionName output is available."
+    return 0
+  fi
+
+  local output_s3_prefix
+  output_s3_prefix=$(get_output "OutputS3Prefix")
+  if [[ -z "$output_s3_prefix" ]]; then
+    # Fallback: construct from bucket
+    output_s3_prefix="s3://${bucket}/outputs"
   fi
 
   local transform_s3_prefix="${TRANSFORM_S3_PREFIX_VALUE:-}"
@@ -626,7 +641,9 @@ deploy_codebuild_stack() {
     "RuntimeEntryPoint=$entrypoint"
     "ErrorsTableName=$errors_table_name"
     "TransformS3Prefix=$transform_s3_prefix"
-    "PostProcessorFunctionName=$post_processor_function_name"
+    "TransformWorkerFunctionName=$transform_worker_function_name"
+    "SvlWorkerFunctionName=$svl_worker_function_name"
+    "OutputS3Prefix=$output_s3_prefix"
     "MvlFunctionName=$mvl_function_name"
     "OpenAiApiKey=$openai_api_key"
     "TransactionsSqsQueueUrl=$transactions_sqs_queue_url"
@@ -1047,7 +1064,6 @@ main() {
   if (( CODEBUILD_DEPLOY_PENDING == 1 )); then
     deploy_codebuild_stack
   fi
-
 
   bucket=$(get_bucket)
   echo
