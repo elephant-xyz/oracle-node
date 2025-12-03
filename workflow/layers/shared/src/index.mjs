@@ -1,3 +1,5 @@
+import { createHash } from "crypto";
+
 export {
   sendTaskSuccess,
   sendTaskFailure,
@@ -13,6 +15,21 @@ export {
 } from "./s3-utils.mjs";
 
 export { emitWorkflowEvent, createWorkflowError } from "./eventbridge.mjs";
+
+/**
+ * Compute a deterministic error hash from message, path, and county.
+ * This is used to uniquely identify errors across executions.
+ *
+ * @param {string} message - Error message.
+ * @param {string} path - Error path within payload.
+ * @param {string} county - County identifier.
+ * @returns {string} - SHA256 hash string.
+ */
+export function createErrorHash(message, path, county) {
+  return createHash("sha256")
+    .update(`${message}#${path}#${county}`, "utf8")
+    .digest("hex");
+}
 
 /**
  * Ensure required environment variables are present.

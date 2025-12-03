@@ -13,6 +13,9 @@ const mockDownloadS3Object = vi.fn();
 const mockUploadToS3 = vi.fn();
 const mockCreateLogger = vi.fn(() => vi.fn());
 const mockEmitWorkflowEvent = vi.fn();
+const mockCreateErrorHash = vi.fn(
+  (message, path, county) => `hash_${message}_${path}_${county}`,
+);
 vi.mock("shared", () => ({
   executeWithTaskToken: mockExecuteWithTaskToken,
   parseS3Uri: mockParseS3Uri,
@@ -20,6 +23,7 @@ vi.mock("shared", () => ({
   uploadToS3: mockUploadToS3,
   createLogger: mockCreateLogger,
   emitWorkflowEvent: mockEmitWorkflowEvent,
+  createErrorHash: mockCreateErrorHash,
 }));
 
 // Mock @elephant-xyz/cli/lib
@@ -196,7 +200,13 @@ describe("svl-worker handler", () => {
         executionId: "exec-failed",
         validationPassed: false,
         errorsS3Uri: expect.any(String),
-        svlErrors: [{ error_message: "Test error", error_path: "$.field" }],
+        svlErrors: [
+          {
+            error_message: "Test error",
+            error_path: "$.field",
+            error_hash: "hash_Test error_$.field_failed-county",
+          },
+        ],
       });
 
       // Should have uploaded errors to S3
@@ -243,6 +253,7 @@ describe("svl-worker handler", () => {
           error_message: "Test error",
           error_path: "$.field",
           data_group_cid: "bafkreitest123",
+          error_hash: "hash_Test error_$.field_cid-county",
         },
       ]);
     });
@@ -279,7 +290,11 @@ describe("svl-worker handler", () => {
       const workerFn = mockExecuteWithTaskToken.mock.calls[0][0].workerFn;
       const result = await workerFn();
       expect(result.svlErrors).toEqual([
-        { error_message: "Test error", error_path: "$.field" },
+        {
+          error_message: "Test error",
+          error_path: "$.field",
+          error_hash: "hash_Test error_$.field_no-cid-county",
+        },
       ]);
       // Verify data_group_cid is not present as a key
       expect(result.svlErrors[0]).not.toHaveProperty("data_group_cid");
@@ -750,6 +765,98 @@ describe("svl-worker handler", () => {
       // Handler should complete without throwing (cleanup is silent)
       // Should have only 1 emitWorkflowEvent call: IN_PROGRESS
       expect(mockEmitWorkflowEvent).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("Error hash functionality", () => {
+    it("should compute error_hash for each validation error using createErrorHash", async () => {
+      mockValidate.mockImplementation(async ({ cwd }) => {
+        const errorsPath = path.join(cwd, "submit_errors.csv");
+        await fs.writeFile(
+          errorsPath,
+          "error_message,error_path\nError A,$.pathA\nError B,$.pathB",
+        );
+        return { success: false, error: "Validation errors found" };
+      });
+
+      mockParse.mockReturnValue([
+        { error_message: "Error A", error_path: "$.pathA" },
+        { error_message: "Error B", error_path: "$.pathB" },
+      ]);
+
+      const { handler } = await import(
+        "../../../../workflow/lambdas/svl-worker/index.mjs"
+      );
+
+      const event = createSqsEvent("task-token-hash", {
+        transformedOutputS3Uri: "s3://bucket/transformed.zip",
+        county: "hash-county",
+        outputPrefix: "s3://output-bucket/outputs/",
+        executionId: "exec-hash",
+      });
+
+      await handler(event);
+
+      // Verify createErrorHash was called for each error with correct parameters
+      expect(mockCreateErrorHash).toHaveBeenCalledWith(
+        "Error A",
+        "$.pathA",
+        "hash-county",
+      );
+      expect(mockCreateErrorHash).toHaveBeenCalledWith(
+        "Error B",
+        "$.pathB",
+        "hash-county",
+      );
+
+      // Verify the workerFn returns svlErrors with error_hash
+      const workerFn = mockExecuteWithTaskToken.mock.calls[0][0].workerFn;
+      const result = await workerFn();
+      expect(result.svlErrors).toHaveLength(2);
+      expect(result.svlErrors[0]).toHaveProperty("error_hash");
+      expect(result.svlErrors[1]).toHaveProperty("error_hash");
+      expect(result.svlErrors[0].error_hash).toBe(
+        "hash_Error A_$.pathA_hash-county",
+      );
+      expect(result.svlErrors[1].error_hash).toBe(
+        "hash_Error B_$.pathB_hash-county",
+      );
+    });
+
+    it("should generate deterministic error_hash for consistent error identification", async () => {
+      mockValidate.mockImplementation(async ({ cwd }) => {
+        const errorsPath = path.join(cwd, "submit_errors.csv");
+        await fs.writeFile(
+          errorsPath,
+          "error_message,error_path\nDuplicate error,$.same.path",
+        );
+        return { success: false, error: "Validation errors found" };
+      });
+
+      mockParse.mockReturnValue([
+        { error_message: "Duplicate error", error_path: "$.same.path" },
+      ]);
+
+      const { handler } = await import(
+        "../../../../workflow/lambdas/svl-worker/index.mjs"
+      );
+
+      const event = createSqsEvent("task-token-deterministic", {
+        transformedOutputS3Uri: "s3://bucket/transformed.zip",
+        county: "deterministic-county",
+        outputPrefix: "s3://output-bucket/outputs/",
+        executionId: "exec-deterministic",
+      });
+
+      await handler(event);
+
+      const workerFn = mockExecuteWithTaskToken.mock.calls[0][0].workerFn;
+      const result = await workerFn();
+
+      // Verify the hash is deterministic based on message, path, and county
+      expect(result.svlErrors[0].error_hash).toBe(
+        "hash_Duplicate error_$.same.path_deterministic-county",
+      );
     });
   });
 });
