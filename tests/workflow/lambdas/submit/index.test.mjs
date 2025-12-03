@@ -13,8 +13,6 @@ import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
 import { SSMClient, GetParameterCommand } from "@aws-sdk/client-ssm";
 import { promises as fs } from "fs";
 import path from "path";
-import { promises as fs } from "fs";
-import path from "path";
 import os from "os";
 
 const sfnMock = mockClient(SFNClient);
@@ -72,21 +70,17 @@ describe("submit handler", () => {
       const tmpDir = path.dirname(csvFile);
       const statusCsv = path.join(tmpDir, "transaction-status.csv");
       const errorsCsv = path.join(tmpDir, "submit_errors.csv");
-      
+
       // Create transaction-status.csv
       await fs.writeFile(
         statusCsv,
         "status,txHash\nsuccess,0xabc123\n",
-        "utf8"
+        "utf8",
       );
-      
+
       // Create submit_errors.csv (empty for success case)
-      await fs.writeFile(
-        errorsCsv,
-        "error_message,error_path\n",
-        "utf8"
-      );
-      
+      await fs.writeFile(errorsCsv, "error_message,error_path\n", "utf8");
+
       return { success: true };
     });
 
@@ -106,7 +100,10 @@ describe("submit handler", () => {
         body: JSON.stringify(transactionItems),
         messageAttributes: {
           TaskToken: { stringValue: taskToken },
-          ExecutionArn: { stringValue: "arn:aws:states:us-east-1:123456789012:execution:test-exec" },
+          ExecutionArn: {
+            stringValue:
+              "arn:aws:states:us-east-1:123456789012:execution:test-exec",
+          },
           County: { stringValue: "test-county" },
         },
       },
@@ -136,12 +133,16 @@ describe("submit handler", () => {
       // Verify IN_PROGRESS event was emitted (first call)
       expect(eventBridgeMock.calls().length).toBeGreaterThanOrEqual(1);
       const putEventsCall = eventBridgeMock.calls()[0];
-      expect(putEventsCall.args[0].input.Entries[0].Source).toBe("elephant.workflow");
-      expect(putEventsCall.args[0].input.Entries[0].DetailType).toBe("WorkflowEvent");
+      expect(putEventsCall.args[0].input.Entries[0].Source).toBe(
+        "elephant.workflow",
+      );
+      expect(putEventsCall.args[0].input.Entries[0].DetailType).toBe(
+        "WorkflowEvent",
+      );
       const detail = JSON.parse(putEventsCall.args[0].input.Entries[0].Detail);
       expect(detail.status).toBe("IN_PROGRESS");
       expect(detail.phase).toBe("Submit");
-      expect(detail.step).toBe("Submit");
+      expect(detail.step).toBe("SubmitToBlockchain");
       expect(detail.taskToken).toBe("task-token-123");
     });
 
@@ -164,7 +165,9 @@ describe("submit handler", () => {
       // Verify task success was sent
       expect(sfnMock.calls()).toHaveLength(1);
       const sendTaskSuccessCall = sfnMock.calls()[0];
-      expect(sendTaskSuccessCall.args[0].input.taskToken).toBe("task-token-success");
+      expect(sendTaskSuccessCall.args[0].input.taskToken).toBe(
+        "task-token-success",
+      );
     });
 
     it("should emit SUCCEEDED event on successful submission", async () => {
@@ -186,7 +189,7 @@ describe("submit handler", () => {
       const detail = JSON.parse(succeededCall.args[0].input.Entries[0].Detail);
       expect(detail.status).toBe("SUCCEEDED");
       expect(detail.phase).toBe("Submit");
-      expect(detail.step).toBe("Submit");
+      expect(detail.step).toBe("SubmitToBlockchain");
     });
 
     it("should handle submission failure and send task failure", async () => {
@@ -195,11 +198,11 @@ describe("submit handler", () => {
         const tmpDir = path.dirname(csvFile);
         const statusCsv = path.join(tmpDir, "transaction-status.csv");
         const errorsCsv = path.join(tmpDir, "submit_errors.csv");
-        
+
         // Create empty files for error case
         await fs.writeFile(statusCsv, "status,txHash\n", "utf8");
         await fs.writeFile(errorsCsv, "error_message,error_path\n", "utf8");
-        
+
         return { success: false, error: "Submission failed" };
       });
 
@@ -219,9 +222,9 @@ describe("submit handler", () => {
       }
 
       // Verify task failure was sent
-      const sendTaskFailureCalls = sfnMock.calls().filter(
-        (call) => call.args[0].input.taskToken === "task-token-failed",
-      );
+      const sendTaskFailureCalls = sfnMock
+        .calls()
+        .filter((call) => call.args[0].input.taskToken === "task-token-failed");
       expect(sendTaskFailureCalls.length).toBeGreaterThan(0);
     });
 
@@ -231,11 +234,11 @@ describe("submit handler", () => {
         const tmpDir = path.dirname(csvFile);
         const statusCsv = path.join(tmpDir, "transaction-status.csv");
         const errorsCsv = path.join(tmpDir, "submit_errors.csv");
-        
+
         // Create empty files for error case
         await fs.writeFile(statusCsv, "status,txHash\n", "utf8");
         await fs.writeFile(errorsCsv, "error_message,error_path\n", "utf8");
-        
+
         return { success: false, error: "Submission failed" };
       });
 
@@ -314,7 +317,9 @@ describe("submit handler", () => {
       // Verify task success was sent
       expect(sfnMock.calls()).toHaveLength(1);
       const sendTaskSuccessCall = sfnMock.calls()[0];
-      expect(sendTaskSuccessCall.args[0].input.taskToken).toBe("direct-task-token");
+      expect(sendTaskSuccessCall.args[0].input.taskToken).toBe(
+        "direct-task-token",
+      );
     });
 
     it("should handle missing transactionItems in direct invocation", async () => {
@@ -324,7 +329,8 @@ describe("submit handler", () => {
 
       const event = {
         taskToken: "direct-task-token",
-        executionArn: "arn:aws:states:us-east-1:123456789012:execution:test-exec",
+        executionArn:
+          "arn:aws:states:us-east-1:123456789012:execution:test-exec",
         // Missing transactionItems
       };
 
@@ -337,9 +343,9 @@ describe("submit handler", () => {
       }
 
       // Verify task failure was sent
-      const sendTaskFailureCalls = sfnMock.calls().filter(
-        (call) => call.args[0].input.taskToken === "direct-task-token",
-      );
+      const sendTaskFailureCalls = sfnMock
+        .calls()
+        .filter((call) => call.args[0].input.taskToken === "direct-task-token");
       expect(sendTaskFailureCalls.length).toBeGreaterThan(0);
     });
   });
@@ -350,7 +356,7 @@ describe("submit handler", () => {
       // Since we're using keystore mode in tests, SSM won't be called
       // This test verifies the handler works with SSM configured
       // In a real scenario, SSM would be called when using API credentials
-      
+
       // Set up SSM mock (even though it won't be called in keystore mode)
       ssmMock.reset();
       ssmMock.on(GetParameterCommand).resolves({
@@ -381,7 +387,7 @@ describe("submit handler", () => {
       // Since we're using keystore mode in tests, SSM won't be called
       // This test verifies the handler works with EIP-1559 SSM format configured
       // In a real scenario, SSM would be called when using API credentials
-      
+
       // Set up SSM mock (even though it won't be called in keystore mode)
       ssmMock.reset();
       ssmMock.on(GetParameterCommand).resolves({
@@ -454,9 +460,9 @@ describe("submit handler", () => {
       }
 
       // Verify task failure was sent
-      const sendTaskFailureCalls = sfnMock.calls().filter(
-        (call) => call.args[0].input.taskToken === "task-token-error",
-      );
+      const sendTaskFailureCalls = sfnMock
+        .calls()
+        .filter((call) => call.args[0].input.taskToken === "task-token-error");
       expect(sendTaskFailureCalls.length).toBeGreaterThan(0);
     });
 
@@ -474,11 +480,13 @@ describe("submit handler", () => {
       await handler(event);
 
       // Verify task failure was sent
-      const sendTaskFailureCalls = sfnMock.calls().filter(
-        (call) => call.args[0].input.taskToken === "task-token-keystore-error",
-      );
+      const sendTaskFailureCalls = sfnMock
+        .calls()
+        .filter(
+          (call) =>
+            call.args[0].input.taskToken === "task-token-keystore-error",
+        );
       expect(sendTaskFailureCalls.length).toBeGreaterThan(0);
     });
   });
 });
-

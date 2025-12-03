@@ -136,12 +136,7 @@ function sleep(ms) {
  * @returns {Promise<GasPriceCheckerOutput>}
  */
 async function checkAndWaitForGasPrice(input) {
-  const {
-    rpcUrl,
-    maxGasPriceGwei,
-    waitMinutes = 2,
-    maxRetries = 10,
-  } = input;
+  const { rpcUrl, maxGasPriceGwei, waitMinutes = 2, maxRetries = 10 } = input;
 
   if (!rpcUrl) {
     throw new Error("RPC URL is required");
@@ -169,14 +164,18 @@ async function checkAndWaitForGasPrice(input) {
       const gasPriceInfo = await checkGasPrice({ rpcUrl });
 
       // Use EIP-1559 maxFeePerGas if available, otherwise fall back to legacy gasPrice
-      const currentGasPriceGwei =
+      // Note: checkGasPrice returns values in Wei (as strings), so we need to convert to Gwei
+      const currentGasPriceWei =
         gasPriceInfo.eip1559?.maxFeePerGas ||
         gasPriceInfo.legacy?.gasPrice ||
         null;
 
-      if (currentGasPriceGwei === null) {
+      if (currentGasPriceWei === null) {
         throw new Error("Unable to retrieve gas price from RPC");
       }
+
+      // Convert from Wei to Gwei (divide by 1e9)
+      const currentGasPriceGwei = parseFloat(currentGasPriceWei) / 1e9;
 
       console.log(
         JSON.stringify({
@@ -203,7 +202,7 @@ async function checkAndWaitForGasPrice(input) {
       retries++;
       if (retries >= maxRetries) {
         throw new Error(
-          `Gas price ${currentGasPriceGwei} Gwei exceeds maximum ${maxGasPriceGwei} Gwei after ${maxRetries} retries`,
+          `Gas price ${currentGasPriceGwei.toFixed(2)} Gwei exceeds maximum ${maxGasPriceGwei} Gwei after ${maxRetries} retries`,
         );
       }
 
@@ -247,7 +246,9 @@ async function checkAndWaitForGasPrice(input) {
     }
   }
 
-  throw new Error(`Failed to get acceptable gas price after ${maxRetries} retries`);
+  throw new Error(
+    `Failed to get acceptable gas price after ${maxRetries} retries`,
+  );
 }
 
 /**
@@ -258,7 +259,7 @@ async function checkAndWaitForGasPrice(input) {
 export const handler = async (event) => {
   // Check if invoked from SQS (has Records array)
   const isSqsInvocation = !!event.Records && Array.isArray(event.Records);
-  
+
   let taskToken;
   let executionArn;
   let county;
@@ -268,9 +269,9 @@ export const handler = async (event) => {
     if (!event.Records || event.Records.length === 0) {
       throw new Error("Missing SQS Records");
     }
-    
+
     const record = event.Records[0];
-    
+
     // Extract task token from message attributes if present (Step Function mode)
     if (record.messageAttributes?.TaskToken?.stringValue) {
       taskToken = record.messageAttributes.TaskToken.stringValue;
@@ -284,7 +285,7 @@ export const handler = async (event) => {
         county: county,
         hasTaskToken: !!taskToken,
       });
-      
+
       // Emit IN_PROGRESS event to EventBridge when task token is received
       if (taskToken && executionArn) {
         try {
@@ -313,7 +314,8 @@ export const handler = async (event) => {
             ...base,
             level: "warn",
             msg: "failed_to_emit_in_progress_event",
-            error: eventErr instanceof Error ? eventErr.message : String(eventErr),
+            error:
+              eventErr instanceof Error ? eventErr.message : String(eventErr),
           });
         }
       }
@@ -390,7 +392,8 @@ export const handler = async (event) => {
           ...base,
           level: "warn",
           msg: "failed_to_emit_succeeded_event",
-          error: eventErr instanceof Error ? eventErr.message : String(eventErr),
+          error:
+            eventErr instanceof Error ? eventErr.message : String(eventErr),
         });
       }
     }
@@ -404,7 +407,7 @@ export const handler = async (event) => {
   } catch (err) {
     const errMessage = err instanceof Error ? err.message : String(err);
     const errCause = err instanceof Error ? err.stack : undefined;
-    
+
     console.error(
       JSON.stringify({
         ...base,
@@ -450,7 +453,8 @@ export const handler = async (event) => {
           ...base,
           level: "warn",
           msg: "failed_to_emit_failed_event",
-          error: eventErr instanceof Error ? eventErr.message : String(eventErr),
+          error:
+            eventErr instanceof Error ? eventErr.message : String(eventErr),
         });
       }
     }
@@ -458,7 +462,11 @@ export const handler = async (event) => {
     // Send failure callback to Step Functions if task token is present
     if (taskToken) {
       try {
-        await sendTaskFailure(taskToken, "GasPriceCheckFailed", errCause || errMessage);
+        await sendTaskFailure(
+          taskToken,
+          "GasPriceCheckFailed",
+          errCause || errMessage,
+        );
         // Don't throw after sending failure callback - let SQS know Lambda completed
         // The Step Function will handle the failure via the callback
         return;
@@ -469,7 +477,10 @@ export const handler = async (event) => {
             ...base,
             level: "error",
             msg: "failed_to_send_task_failure_callback",
-            error: callbackErr instanceof Error ? callbackErr.message : String(callbackErr),
+            error:
+              callbackErr instanceof Error
+                ? callbackErr.message
+                : String(callbackErr),
           }),
         );
         throw err;
@@ -480,4 +491,3 @@ export const handler = async (event) => {
     throw err;
   }
 };
-

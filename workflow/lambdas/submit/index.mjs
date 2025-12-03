@@ -278,10 +278,10 @@ async function sendTaskFailure(taskToken, error, cause) {
 export const handler = async (event) => {
   // Check if invoked directly from Step Functions (has taskToken in payload)
   const isDirectStepFunctionInvocation = !!event.taskToken;
-  
+
   // Check if invoked from SQS (has Records array)
   const isSqsInvocation = !!event.Records && Array.isArray(event.Records);
-  
+
   let toSubmit;
   let taskToken;
   let executionArn;
@@ -291,7 +291,8 @@ export const handler = async (event) => {
   if (isDirectStepFunctionInvocation) {
     // Invoked directly from Step Functions with Task Token
     if (!event.transactionItems || !Array.isArray(event.transactionItems)) {
-      const error = "Missing or invalid transactionItems in Step Function payload";
+      const error =
+        "Missing or invalid transactionItems in Step Function payload";
       if (event.taskToken) {
         await sendTaskFailure(event.taskToken, "InvalidInput", error);
       }
@@ -307,7 +308,7 @@ export const handler = async (event) => {
       executionArn: executionArn,
       itemCount: toSubmit.length,
     });
-    
+
     // Emit IN_PROGRESS event to EventBridge when invoked directly
     if (taskToken && executionArn) {
       county = event.county || "unknown";
@@ -323,7 +324,7 @@ export const handler = async (event) => {
                   county: county,
                   status: "IN_PROGRESS",
                   phase: "Submit",
-                  step: "Submit",
+                  step: "SubmitToBlockchain",
                   taskToken: taskToken,
                   errors: [],
                 }),
@@ -337,7 +338,8 @@ export const handler = async (event) => {
           ...base,
           level: "warn",
           msg: "failed_to_emit_in_progress_event",
-          error: eventErr instanceof Error ? eventErr.message : String(eventErr),
+          error:
+            eventErr instanceof Error ? eventErr.message : String(eventErr),
         });
       }
     }
@@ -346,12 +348,12 @@ export const handler = async (event) => {
     if (!event.Records || event.Records.length === 0) {
       throw new Error("Missing SQS Records");
     }
-    
+
     record = event.Records[0];
     if (!record.body) {
       throw new Error("Missing SQS record body");
     }
-    
+
     // Extract task token from message attributes if present (Step Function mode)
     if (record.messageAttributes?.TaskToken?.stringValue) {
       taskToken = record.messageAttributes.TaskToken.stringValue;
@@ -363,7 +365,7 @@ export const handler = async (event) => {
         executionArn: executionArn,
         hasTaskToken: !!taskToken,
       });
-      
+
       // Emit IN_PROGRESS event to EventBridge when task token is received
       if (taskToken && executionArn) {
         // Extract county from message attributes or use default
@@ -380,7 +382,7 @@ export const handler = async (event) => {
                     county: county,
                     status: "IN_PROGRESS",
                     phase: "Submit",
-                    step: "Submit",
+                    step: "SubmitToBlockchain",
                     taskToken: taskToken,
                     errors: [],
                   }),
@@ -394,18 +396,21 @@ export const handler = async (event) => {
             ...base,
             level: "warn",
             msg: "failed_to_emit_in_progress_event",
-            error: eventErr instanceof Error ? eventErr.message : String(eventErr),
+            error:
+              eventErr instanceof Error ? eventErr.message : String(eventErr),
           });
         }
       }
     }
-    
+
     // Parse transaction items from SQS message body
     toSubmit = JSON.parse(record.body);
     if (!Array.isArray(toSubmit)) {
-      throw new Error("SQS message body must contain an array of transaction items");
+      throw new Error(
+        "SQS message body must contain an array of transaction items",
+      );
     }
-    
+
     console.log({
       ...base,
       level: "info",
@@ -414,7 +419,9 @@ export const handler = async (event) => {
       hasTaskToken: !!taskToken,
     });
   } else {
-    throw new Error("Invalid event format: must be either Step Function payload or SQS event");
+    throw new Error(
+      "Invalid event format: must be either Step Function payload or SQS event",
+    );
   }
 
   if (!toSubmit.length) {
@@ -573,7 +580,8 @@ export const handler = async (event) => {
       submit_errors: submitErrors,
     });
     if (allErrors.length > 0) {
-      const errorMsg = "Submit to the blockchain failed" + JSON.stringify(allErrors);
+      const errorMsg =
+        "Submit to the blockchain failed" + JSON.stringify(allErrors);
       if (taskToken) {
         await sendTaskFailure(taskToken, "SubmitFailed", errorMsg);
       }
@@ -597,7 +605,7 @@ export const handler = async (event) => {
                   county: county,
                   status: "SUCCEEDED",
                   phase: "Submit",
-                  step: "Submit",
+                  step: "SubmitToBlockchain",
                   taskToken: taskToken,
                   errors: [],
                 }),
@@ -611,7 +619,8 @@ export const handler = async (event) => {
           ...base,
           level: "warn",
           msg: "failed_to_emit_succeeded_event",
-          error: eventErr instanceof Error ? eventErr.message : String(eventErr),
+          error:
+            eventErr instanceof Error ? eventErr.message : String(eventErr),
         });
       }
     }
@@ -640,7 +649,7 @@ export const handler = async (event) => {
                   county: county,
                   status: "FAILED",
                   phase: "Submit",
-                  step: "Submit",
+                  step: "SubmitToBlockchain",
                   taskToken: taskToken,
                   errors: [
                     {
@@ -662,7 +671,8 @@ export const handler = async (event) => {
           ...base,
           level: "warn",
           msg: "failed_to_emit_failed_event",
-          error: eventErr instanceof Error ? eventErr.message : String(eventErr),
+          error:
+            eventErr instanceof Error ? eventErr.message : String(eventErr),
         });
       }
     }

@@ -21,4 +21,3 @@
   "include": ["**/*.mjs"],
   "exclude": ["node_modules"]
 }
-

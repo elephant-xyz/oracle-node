@@ -794,7 +794,7 @@ States:
             county.$: $.pre.county_name
             status: SCHEDULED
             phase: Submit
-            step: Submit
+            step: SubmitToBlockchain
     ResultPath: $.eventResult
     Next: SubmitToBlockchain
     Catch:
@@ -853,7 +853,7 @@ States:
             county.$: $.pre.county_name
             status: SUCCEEDED
             phase: Submit
-            step: Submit
+            step: SubmitToBlockchain
     ResultPath: $.eventResult
     Next: ExtractTransactionHash
     Catch:
@@ -874,7 +874,7 @@ States:
             county.$: $.pre.county_name
             status: FAILED
             phase: Submit
-            step: Submit
+            step: SubmitToBlockchain
             errors:
               - code: "60002"
                 details:
@@ -900,7 +900,7 @@ States:
             county.$: $.pre.county_name
             status: FAILED
             phase: Submit
-            step: Submit
+            step: SubmitToBlockchain
             taskToken.$: $$.Task.Token
             errors:
               - code: "60002"

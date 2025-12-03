@@ -16,10 +16,7 @@ import {
   EventBridgeClient,
   PutEventsCommand,
 } from "@aws-sdk/client-eventbridge";
-import {
-  SQSClient,
-  SendMessageCommand,
-} from "@aws-sdk/client-sqs";
+import { SQSClient, SendMessageCommand } from "@aws-sdk/client-sqs";
 
 /**
  * @typedef {Object} TransactionStatusResult
@@ -161,7 +158,15 @@ function sleep(ms) {
  * @param {Array} params.errors - Array of error objects
  * @returns {Promise<void>}
  */
-async function emitEvent({ executionId, county, status, phase, step, taskToken, errors }) {
+async function emitEvent({
+  executionId,
+  county,
+  status,
+  phase,
+  step,
+  taskToken,
+  errors,
+}) {
   try {
     await eventBridgeClient.send(
       new PutEventsCommand({
@@ -355,7 +360,7 @@ async function checkAndWaitForTransactionStatus(input) {
       await sleep(waitMs);
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
-      
+
       // If it's a resubmission error or final retry, throw
       if (errorMsg.includes("resubmitted") || retries >= maxRetries - 1) {
         throw err;
@@ -438,7 +443,8 @@ export const handler = async (event) => {
             ...base,
             level: "warn",
             msg: "could_not_parse_body_for_resubmission",
-            error: parseErr instanceof Error ? parseErr.message : String(parseErr),
+            error:
+              parseErr instanceof Error ? parseErr.message : String(parseErr),
           }),
         );
       }
@@ -459,7 +465,8 @@ export const handler = async (event) => {
       // SQS invocation without task token - parse body for transaction hash
       const body = JSON.parse(record.body || "{}");
       transactionHash = body.transactionHash || body.transaction_hash;
-      originalTransactionItems = body.transactionItems || body.transaction_items;
+      originalTransactionItems =
+        body.transactionItems || body.transaction_items;
     }
   } else {
     // Direct invocation - extract from event
@@ -467,7 +474,8 @@ export const handler = async (event) => {
     taskToken = event.taskToken;
     executionArn = event.executionArn;
     county = event.county;
-    originalTransactionItems = event.transactionItems || event.transaction_items;
+    originalTransactionItems =
+      event.transactionItems || event.transaction_items;
   }
 
   try {
@@ -589,9 +597,10 @@ export const handler = async (event) => {
             ...base,
             level: "error",
             msg: "failed_to_send_task_failure_callback",
-            error: callbackErr instanceof Error
-              ? callbackErr.message
-              : String(callbackErr),
+            error:
+              callbackErr instanceof Error
+                ? callbackErr.message
+                : String(callbackErr),
           }),
         );
         throw err;
@@ -602,4 +611,3 @@ export const handler = async (event) => {
     throw err;
   }
 };
-
