@@ -164,7 +164,6 @@ describe("shared index utilities", () => {
       expect(shared.buildS3Uri).toBeDefined();
       expect(shared.downloadS3Object).toBeDefined();
       expect(shared.uploadToS3).toBeDefined();
-      expect(shared.uploadContentToS3).toBeDefined();
       expect(shared.s3).toBeDefined();
 
       // EventBridge utilities

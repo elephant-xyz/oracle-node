@@ -88,31 +88,4 @@ export async function uploadToS3(localPath, { bucket, key }, log, contentType) {
   return buildS3Uri(bucket, key);
 }
 
-/**
- * Upload content directly to S3 (without reading from file).
- *
- * @param {Buffer | string} content - Content to upload.
- * @param {{ bucket: string, key: string }} location - Target S3 location.
- * @param {StructuredLogger} log - Structured logger.
- * @param {string} [contentType] - Optional content type.
- * @returns {Promise<string>} - S3 URI of uploaded object.
- */
-export async function uploadContentToS3(
-  content,
-  { bucket, key },
-  log,
-  contentType,
-) {
-  log("info", "upload_s3_content", { bucket, key });
-  await s3.send(
-    new PutObjectCommand({
-      Bucket: bucket,
-      Key: key,
-      Body: content,
-      ContentType: contentType,
-    }),
-  );
-  return buildS3Uri(bucket, key);
-}
-
 export { s3 };

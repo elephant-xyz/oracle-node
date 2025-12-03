@@ -9,7 +9,6 @@ export {
   buildS3Uri,
   downloadS3Object,
   uploadToS3,
-  uploadContentToS3,
   s3,
 } from "./s3-utils.mjs";
 
