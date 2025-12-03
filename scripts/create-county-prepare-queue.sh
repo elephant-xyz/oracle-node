@@ -19,7 +19,9 @@ if [ $# -eq 0 ]; then
     exit 1
 fi
 
-COUNTY_NAME="$1"
+COUNTY_NAME_INPUT="$1"
+# Convert to lowercase for queue name consistency
+COUNTY_NAME=$(echo "$COUNTY_NAME_INPUT" | tr '[:upper:]' '[:lower:]')
 STACK_NAME="${STACK_NAME:-elephant-oracle-node}"
 REGION="${AWS_REGION:-us-east-1}"
 
@@ -30,10 +32,10 @@ BATCH_SIZE=1
 BATCHING_WINDOW=0
 MAX_CONCURRENCY="${MAX_CONCURRENCY:-10}"
 
-# Queue name
+# Queue name (always lowercase)
 QUEUE_NAME="${STACK_NAME}-prepare-queue-${COUNTY_NAME}"
 
-info "Creating county-specific prepare queue for: $COUNTY_NAME"
+info "Creating county-specific prepare queue for: $COUNTY_NAME_INPUT (queue name: $COUNTY_NAME)"
 info "Stack name: $STACK_NAME"
 info "Region: $REGION"
 

@@ -189,9 +189,10 @@ States:
   GetPrepareQueueUrl:
     Type: Task
     Resource: arn:aws:states:::aws-sdk:sqs:getQueueUrl
-    Comment: "Get queue URL by name. Throws Sqs.QueueDoesNotExistException if queue not found."
-    Parameters:
-      QueueName.$: States.Format('${StackName}-prepare-queue-{}', $.pre.county_name)
+    QueryLanguage: JSONata
+    Comment: "Get queue URL by name (lowercase). Throws Sqs.QueueDoesNotExistException if queue not found."
+    Arguments:
+      QueueName: "{% '${StackName}-prepare-queue-' & $lowercase($states.input.pre.county_name) %}"
     ResultPath: $.queue
     Next: Prepare
     Catch:
