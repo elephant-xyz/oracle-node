@@ -22,6 +22,7 @@ import path from "path";
 import { prepare } from "@elephant-xyz/cli/lib";
 import { networkInterfaces } from "os";
 import AdmZip from "adm-zip";
+import { parse as parseCSV } from "csv-parse/sync";
 
 /**
  * Custom error class for Prepare errors with error codes
@@ -155,7 +156,11 @@ function extractCountyFromZip(zip) {
 
     if (inputCsvEntry) {
       const csvContent = zip.readAsText(inputCsvEntry);
-      const rows = parseCSV(csvContent);
+      const rows = parseCSV(csvContent, {
+        columns: true,
+        skip_empty_lines: true,
+        trim: true,
+      });
 
       const firstRow = rows[0];
       if (firstRow) {
@@ -227,67 +232,6 @@ function extractCountyFromZip(zip) {
  */
 
 /**
- * Parses a CSV line respecting quoted fields (handles commas inside quotes)
- * @param {string} line - Single CSV line
- * @returns {string[]} Array of field values
- */
-function parseCSVLine(line) {
-  const values = [];
-  let current = "";
-  let inQuotes = false;
-
-  for (let i = 0; i < line.length; i++) {
-    const char = line[i];
-
-    if (char === '"') {
-      inQuotes = !inQuotes;
-    } else if (char === "," && !inQuotes) {
-      values.push(current.trim().replace(/^"|"$/g, ""));
-      current = "";
-    } else {
-      current += char;
-    }
-  }
-  values.push(current.trim().replace(/^"|"$/g, ""));
-  return values;
-}
-
-/**
- * Parses a CSV and returns array of row objects
- * Handles quoted fields with commas inside them
- * @param {string} csvContent - CSV content as string
- * @returns {Array<{[key: string]: string}>} Array of row objects
- */
-function parseCSV(csvContent) {
-  const lines = csvContent.trim().split("\n");
-  if (lines.length < 2) {
-    return [];
-  }
-
-  const headerLine = lines[0];
-  if (!headerLine) {
-    return [];
-  }
-  const headers = parseCSVLine(headerLine);
-  /** @type {Array<{[key: string]: string}>} */
-  const rows = [];
-
-  for (let i = 1; i < lines.length; i++) {
-    const line = lines[i];
-    if (!line) continue;
-    const values = parseCSVLine(line);
-    /** @type {{[key: string]: string}} */
-    const row = {};
-    headers.forEach((header, index) => {
-      row[header] = values[index] || "";
-    });
-    rows.push(row);
-  }
-
-  return rows;
-}
-
-/**
  * Reads configuration S3 URI from input.csv in the zip file
  * @param {AdmZip} zip - AdmZip instance of the input zip
  * @returns {string | null} Configuration S3 URI or null if not found (no config column)
@@ -318,7 +262,11 @@ function getConfigurationUriFromInputCsv(zip) {
 
   let rows;
   try {
-    rows = parseCSV(csvContent);
+    rows = parseCSV(csvContent, {
+      columns: true,
+      skip_empty_lines: true,
+      trim: true,
+    });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     console.error(`⚠️ Error parsing input.csv: ${errorMessage}`);
