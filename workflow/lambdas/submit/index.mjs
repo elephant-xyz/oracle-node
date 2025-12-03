@@ -11,6 +11,10 @@ import {
   SendTaskSuccessCommand,
   SendTaskFailureCommand,
 } from "@aws-sdk/client-sfn";
+import {
+  EventBridgeClient,
+  PutEventsCommand,
+} from "@aws-sdk/client-eventbridge";
 
 const s3Client = new S3Client({
   region: process.env.AWS_REGION || "us-east-1",
@@ -24,17 +28,33 @@ const sfnClient = new SFNClient({
   region: process.env.AWS_REGION || "us-east-1",
 });
 
+const eventBridgeClient = new EventBridgeClient({
+  region: process.env.AWS_REGION || "us-east-1",
+});
+
 /**
  * @typedef {Object} SubmitOutput
  * @property {string} status - Status of submit
  */
 
 /**
+ * @typedef {Object} SqsRecord
+ * @property {string} body
+ * @property {Object} [messageAttributes]
+ * @property {Object} [messageAttributes.TaskToken]
+ * @property {string} [messageAttributes.TaskToken.stringValue]
+ * @property {Object} [messageAttributes.ExecutionArn]
+ * @property {string} [messageAttributes.ExecutionArn.stringValue]
+ * @property {Object} [messageAttributes.County]
+ * @property {string} [messageAttributes.County.stringValue]
+ */
+
+/**
  * @typedef {Object} SubmitInput
- * @property {{ body: string }[]} [Records] - SQS event format (for backward compatibility)
- * @property {string} [taskToken] - Step Function task token (when invoked from Step Functions)
- * @property {string} [executionArn] - Step Function execution ARN (when invoked from Step Functions)
- * @property {Object[]} [transactionItems] - Transaction items array (when invoked from Step Functions)
+ * @property {SqsRecord[]} [Records] - SQS event format (can contain task token in message attributes)
+ * @property {string} [taskToken] - Step Function task token (when invoked directly from Step Functions)
+ * @property {string} [executionArn] - Step Function execution ARN (when invoked directly from Step Functions)
+ * @property {Object[]} [transactionItems] - Transaction items array (when invoked directly from Step Functions)
  */
 
 /**
@@ -256,11 +276,20 @@ async function sendTaskFailure(taskToken, error, cause) {
  * @returns {Promise<SubmitOutput>}
  */
 export const handler = async (event) => {
-  const isStepFunctionInvocation = !!event.taskToken;
+  // Check if invoked directly from Step Functions (has taskToken in payload)
+  const isDirectStepFunctionInvocation = !!event.taskToken;
+  
+  // Check if invoked from SQS (has Records array)
+  const isSqsInvocation = !!event.Records && Array.isArray(event.Records);
+  
   let toSubmit;
+  let taskToken;
+  let executionArn;
+  let record; // Store record for use in catch block
+  let county = "unknown"; // Store county for use in catch block
 
-  if (isStepFunctionInvocation) {
-    // Invoked from Step Functions with Task Token
+  if (isDirectStepFunctionInvocation) {
+    // Invoked directly from Step Functions with Task Token
     if (!event.transactionItems || !Array.isArray(event.transactionItems)) {
       const error = "Missing or invalid transactionItems in Step Function payload";
       if (event.taskToken) {
@@ -269,23 +298,129 @@ export const handler = async (event) => {
       throw new Error(error);
     }
     toSubmit = event.transactionItems;
+    taskToken = event.taskToken;
+    executionArn = event.executionArn;
     console.log({
       ...base,
       level: "info",
-      msg: "invoked_from_step_functions",
-      executionArn: event.executionArn,
+      msg: "invoked_directly_from_step_functions",
+      executionArn: executionArn,
       itemCount: toSubmit.length,
     });
+    
+    // Emit IN_PROGRESS event to EventBridge when invoked directly
+    if (taskToken && executionArn) {
+      county = event.county || "unknown";
+      try {
+        await eventBridgeClient.send(
+          new PutEventsCommand({
+            Entries: [
+              {
+                Source: "elephant.workflow",
+                DetailType: "WorkflowEvent",
+                Detail: JSON.stringify({
+                  executionId: executionArn,
+                  county: county,
+                  status: "IN_PROGRESS",
+                  phase: "Submit",
+                  step: "Submit",
+                  taskToken: taskToken,
+                  errors: [],
+                }),
+              },
+            ],
+          }),
+        );
+      } catch (eventErr) {
+        // Log but don't fail on EventBridge errors
+        console.warn({
+          ...base,
+          level: "warn",
+          msg: "failed_to_emit_in_progress_event",
+          error: eventErr instanceof Error ? eventErr.message : String(eventErr),
+        });
+      }
+    }
+  } else if (isSqsInvocation) {
+    // Invoked from SQS (with optional task token in message attributes for Step Function callback)
+    if (!event.Records || event.Records.length === 0) {
+      throw new Error("Missing SQS Records");
+    }
+    
+    record = event.Records[0];
+    if (!record.body) {
+      throw new Error("Missing SQS record body");
+    }
+    
+    // Extract task token from message attributes if present (Step Function mode)
+    if (record.messageAttributes?.TaskToken?.stringValue) {
+      taskToken = record.messageAttributes.TaskToken.stringValue;
+      executionArn = record.messageAttributes.ExecutionArn?.stringValue;
+      console.log({
+        ...base,
+        level: "info",
+        msg: "invoked_from_sqs_with_task_token",
+        executionArn: executionArn,
+        hasTaskToken: !!taskToken,
+      });
+      
+      // Emit IN_PROGRESS event to EventBridge when task token is received
+      if (taskToken && executionArn) {
+        // Extract county from message attributes or use default
+        county = record.messageAttributes?.County?.stringValue || "unknown";
+        try {
+          await eventBridgeClient.send(
+            new PutEventsCommand({
+              Entries: [
+                {
+                  Source: "elephant.workflow",
+                  DetailType: "WorkflowEvent",
+                  Detail: JSON.stringify({
+                    executionId: executionArn,
+                    county: county,
+                    status: "IN_PROGRESS",
+                    phase: "Submit",
+                    step: "Submit",
+                    taskToken: taskToken,
+                    errors: [],
+                  }),
+                },
+              ],
+            }),
+          );
+        } catch (eventErr) {
+          // Log but don't fail on EventBridge errors
+          console.warn({
+            ...base,
+            level: "warn",
+            msg: "failed_to_emit_in_progress_event",
+            error: eventErr instanceof Error ? eventErr.message : String(eventErr),
+          });
+        }
+      }
+    }
+    
+    // Parse transaction items from SQS message body
+    toSubmit = JSON.parse(record.body);
+    if (!Array.isArray(toSubmit)) {
+      throw new Error("SQS message body must contain an array of transaction items");
+    }
+    
+    console.log({
+      ...base,
+      level: "info",
+      msg: "invoked_from_sqs",
+      itemCount: toSubmit.length,
+      hasTaskToken: !!taskToken,
+    });
   } else {
-    // Invoked from SQS (backward compatibility)
-    if (!event.Records) throw new Error("Missing SQS Records");
-    toSubmit = event.Records.map((r) => JSON.parse(r.body)).flat();
+    throw new Error("Invalid event format: must be either Step Function payload or SQS event");
   }
 
   if (!toSubmit.length) {
     const error = "No records to submit";
-    if (isStepFunctionInvocation && event.taskToken) {
-      await sendTaskFailure(event.taskToken, "EmptyInput", error);
+    if (taskToken) {
+      await sendTaskFailure(taskToken, "EmptyInput", error);
     }
     throw new Error(error);
   }
@@ -439,8 +574,8 @@ export const handler = async (event) => {
     });
     if (allErrors.length > 0) {
       const errorMsg = "Submit to the blockchain failed" + JSON.stringify(allErrors);
-      if (isStepFunctionInvocation && event.taskToken) {
-        await sendTaskFailure(event.taskToken, "SubmitFailed", errorMsg);
+      if (taskToken) {
+        await sendTaskFailure(taskToken, "SubmitFailed", errorMsg);
       }
       throw new Error(errorMsg);
     }
@@ -448,18 +583,93 @@ export const handler = async (event) => {
     const result = { status: "success", submitResults: submitResults };
     console.log({ ...base, level: "info", msg: "completed", result });
 
-    // Send success callback to Step Functions if invoked with task token
-    if (isStepFunctionInvocation && event.taskToken) {
-      await sendTaskSuccess(event.taskToken, result);
+    // Emit SUCCEEDED event to EventBridge
+    if (taskToken && executionArn) {
+      try {
+        await eventBridgeClient.send(
+          new PutEventsCommand({
+            Entries: [
+              {
+                Source: "elephant.workflow",
+                DetailType: "WorkflowEvent",
+                Detail: JSON.stringify({
+                  executionId: executionArn,
+                  county: county,
+                  status: "SUCCEEDED",
+                  phase: "Submit",
+                  step: "Submit",
+                  taskToken: taskToken,
+                  errors: [],
+                }),
+              },
+            ],
+          }),
+        );
+      } catch (eventErr) {
+        // Log but don't fail on EventBridge errors
+        console.warn({
+          ...base,
+          level: "warn",
+          msg: "failed_to_emit_succeeded_event",
+          error: eventErr instanceof Error ? eventErr.message : String(eventErr),
+        });
+      }
+    }
+
+    // Send success callback to Step Functions if task token is present (from SQS or direct invocation)
+    if (taskToken) {
+      await sendTaskSuccess(taskToken, result);
     }
 
     return result;
   } catch (err) {
+    const errMessage = err instanceof Error ? err.message : String(err);
+    const errCause = err instanceof Error ? err.stack : undefined;
+
+    // Emit FAILED event to EventBridge
+    if (taskToken && executionArn) {
+      try {
+        await eventBridgeClient.send(
+          new PutEventsCommand({
+            Entries: [
+              {
+                Source: "elephant.workflow",
+                DetailType: "WorkflowEvent",
+                Detail: JSON.stringify({
+                  executionId: executionArn,
+                  county: county,
+                  status: "FAILED",
+                  phase: "Submit",
+                  step: "Submit",
+                  taskToken: taskToken,
+                  errors: [
+                    {
+                      code: "SUBMIT_FAILED",
+                      details: {
+                        error: errMessage,
+                        cause: errCause,
+                      },
+                    },
+                  ],
+                }),
+              },
+            ],
+          }),
+        );
+      } catch (eventErr) {
+        // Log but don't fail on EventBridge errors
+        console.warn({
+          ...base,
+          level: "warn",
+          msg: "failed_to_emit_failed_event",
+          error: eventErr instanceof Error ? eventErr.message : String(eventErr),
+        });
+      }
+    }
+
     // If we have a task token and haven't sent failure yet, send it now
-    if (isStepFunctionInvocation && event.taskToken) {
-      const errMessage = err instanceof Error ? err.message : String(err);
-      const errCause = err instanceof Error ? err.stack : undefined;
-      await sendTaskFailure(event.taskToken, "SubmitError", errCause || errMessage);
+    if (taskToken) {
+      await sendTaskFailure(taskToken, "SubmitError", errCause || errMessage);
     }
     throw err;
   } finally {

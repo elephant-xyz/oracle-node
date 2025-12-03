@@ -287,36 +287,392 @@ States:
             - Name: Status
               Value: Success
     ResultPath: $.metricResult
-    Next: QueueForTheSubmit
+    Next: PrepareSubmitInProgressDetail
     Catch:
       - ErrorEquals: [States.ALL]
         ResultPath: $.metricError
-        Next: QueueForTheSubmit
+        Next: PrepareSubmitInProgressDetail
 
-  SubmitToBlockchain:
-    Type: Task
-    Resource: arn:aws:states:::lambda:invoke.waitForTaskToken
+  PrepareSubmitInProgressDetail:
+    Type: Pass
     Parameters:
-      FunctionName: ${SubmitterFunction}
-      Payload:
-        taskToken.$: $$.Task.Token
-        executionArn.$: $$.Execution.Id
-        transactionItems.$: $.post.items
-    TimeoutSeconds: 600
-    HeartbeatSeconds: 60
-    ResultPath: $.submit
-    End: true
+      executionId.$: $$.Execution.Id
+      county.$: $.post.county
+      status: "IN_PROGRESS"
+      phase: "Submit"
+      step: "Submit"
+      taskToken: null
+      errors: []
+    ResultPath: $.eventDetail
+    Next: EmitSubmitInProgress
+
+  EmitSubmitInProgress:
+    Type: Task
+    Resource: arn:aws:states:::aws-sdk:eventbridge:putEvents
+    Parameters:
+      Entries:
+        - Source: elephant.workflow
+          DetailType: WorkflowEvent
+          Detail.$: States.JsonToString($.eventDetail)
+    ResultPath: $.eventResult
+    Next: CheckGasPrice
+    Catch:
+      - ErrorEquals: [States.ALL]
+        ResultPath: $.eventError
+        Next: CheckGasPrice
+
+  CheckGasPrice:
+    Type: Task
+    Resource: arn:aws:states:::sqs:sendMessage.waitForTaskToken
+    Parameters:
+      QueueUrl: ${GasPriceCheckerSqsQueueUrl}
+      MessageBody: "{}"
+      MessageAttributes:
+        TaskToken:
+          DataType: String
+          StringValue.$: $$.Task.Token
+        ExecutionArn:
+          DataType: String
+          StringValue.$: $$.Execution.Id
+        County:
+          DataType: String
+          StringValue.$: $.post.county
+    TimeoutSeconds: 900
+    ResultSelector:
+      taskToken.$: $$.Task.Token
+      result.$: $
+    ResultPath: $.gasPriceCheck
+    Next: PrepareGasPriceCheckSucceededDetail
     Retry:
       - ErrorEquals:
-          - Lambda.ServiceException
-          - Lambda.AWSLambdaException
-          - Lambda.SdkClientException
+          - States.TaskFailed
+          - States.Timeout
         IntervalSeconds: 2
         MaxAttempts: 2
         BackoffRate: 2
     Catch:
       - ErrorEquals: [States.ALL]
+        ResultSelector:
+          taskToken.$: $$.Task.Token
+          error.$: $
+        ResultPath: $.gasPriceError
+        Next: PrepareGasPriceCheckFailedDetail
+
+  PrepareGasPriceCheckSucceededDetail:
+    Type: Pass
+    Parameters:
+      executionId.$: $$.Execution.Id
+      county.$: $.post.county
+      status: "SUCCEEDED"
+      phase: "Submit"
+      step: "CheckGasPrice"
+      taskToken.$: $.gasPriceCheck.taskToken
+      errors: []
+    ResultPath: $.eventDetail
+    Next: EmitGasPriceCheckSucceeded
+
+  EmitGasPriceCheckSucceeded:
+    Type: Task
+    Resource: arn:aws:states:::aws-sdk:eventbridge:putEvents
+    Parameters:
+      Entries:
+        - Source: elephant.workflow
+          DetailType: WorkflowEvent
+          Detail.$: States.JsonToString($.eventDetail)
+    ResultPath: $.eventResult
+    Next: RecordGasPriceCheckSuccessMetric
+    Catch:
+      - ErrorEquals: [States.ALL]
+        ResultPath: $.eventError
+        Next: RecordGasPriceCheckSuccessMetric
+
+  PrepareGasPriceCheckFailedDetail:
+    Type: Pass
+    Parameters:
+      executionId.$: $$.Execution.Id
+      county.$: $.post.county
+      status: "FAILED"
+      phase: "Submit"
+      step: "CheckGasPrice"
+      taskToken.$: $.gasPriceError.taskToken
+      errors:
+        - code: "GAS_PRICE_CHECK_FAILED"
+          details:
+            error: "Gas price check failed"
+    ResultPath: $.eventDetail
+    Next: EmitGasPriceCheckFailed
+
+  EmitGasPriceCheckFailed:
+    Type: Task
+    Resource: arn:aws:states:::aws-sdk:eventbridge:putEvents
+    Parameters:
+      Entries:
+        - Source: elephant.workflow
+          DetailType: WorkflowEvent
+          Detail.$: States.JsonToString($.eventDetail)
+    ResultPath: $.eventResult
+    Next: RecordGasPriceCheckFailureMetric
+    Catch:
+      - ErrorEquals: [States.ALL]
+        ResultPath: $.eventError
+        Next: RecordGasPriceCheckFailureMetric
+
+  RecordGasPriceCheckSuccessMetric:
+    Type: Task
+    Resource: arn:aws:states:::aws-sdk:cloudwatch:putMetricData
+    Parameters:
+      Namespace: ElephantWorkflow
+      MetricData:
+        - MetricName: WorkflowExecution
+          Value: 1
+          Unit: Count
+          Timestamp.$: $$.State.EnteredTime
+          Dimensions:
+            - Name: Status
+              Value: GasPriceCheckSuccess
+    ResultPath: $.metricResult
+    Next: SubmitToBlockchain
+    Catch:
+      - ErrorEquals: [States.ALL]
+        ResultPath: $.metricError
+        Next: SubmitToBlockchain
+
+  RecordGasPriceCheckFailureMetric:
+    Type: Task
+    Resource: arn:aws:states:::aws-sdk:cloudwatch:putMetricData
+    Parameters:
+      Namespace: ElephantWorkflow
+      MetricData:
+        - MetricName: WorkflowExecution
+          Value: 1
+          Unit: Count
+          Timestamp.$: $$.State.EnteredTime
+          Dimensions:
+            - Name: Status
+              Value: GasPriceCheckFailure
+    ResultPath: $.metricResult
+    Next: FailRuntime
+    Catch:
+      - ErrorEquals: [States.ALL]
+        ResultPath: $.metricError
+        Next: FailRuntime
+
+  SubmitToBlockchain:
+    Type: Task
+    Resource: arn:aws:states:::sqs:sendMessage.waitForTaskToken
+    Parameters:
+      QueueUrl: ${TransactionsSqsQueueUrl}
+      MessageBody.$: States.JsonToString($.post.items)
+      MessageAttributes:
+        TaskToken:
+          DataType: String
+          StringValue.$: $$.Task.Token
+        ExecutionArn:
+          DataType: String
+          StringValue.$: $$.Execution.Id
+        County:
+          DataType: String
+          StringValue.$: $.post.county
+    TimeoutSeconds: 600
+    ResultSelector:
+      taskToken.$: $$.Task.Token
+      result.$: $
+    ResultPath: $.submit
+    Next: PrepareSubmitSucceededDetail
+    Retry:
+      - ErrorEquals:
+          - States.TaskFailed
+          - States.Timeout
+        IntervalSeconds: 2
+        MaxAttempts: 2
+        BackoffRate: 2
+    Catch:
+      - ErrorEquals: [States.ALL]
+        ResultSelector:
+          taskToken.$: $$.Task.Token
+          error.$: $
         ResultPath: $.submitError
+        Next: PrepareSubmitFailedDetail
+
+  PrepareSubmitSucceededDetail:
+    Type: Pass
+    Parameters:
+      executionId.$: $$.Execution.Id
+      county.$: $.post.county
+      status: "SUCCEEDED"
+      phase: "Submit"
+      step: "Submit"
+      taskToken.$: $.submit.taskToken
+      errors: []
+    ResultPath: $.eventDetail
+    Next: EmitSubmitSucceeded
+
+  EmitSubmitSucceeded:
+    Type: Task
+    Resource: arn:aws:states:::aws-sdk:eventbridge:putEvents
+    Parameters:
+      Entries:
+        - Source: elephant.workflow
+          DetailType: WorkflowEvent
+          Detail.$: States.JsonToString($.eventDetail)
+    ResultPath: $.eventResult
+    Next: ExtractTransactionHash
+    Catch:
+      - ErrorEquals: [States.ALL]
+        ResultPath: $.eventError
+        Next: ExtractTransactionHash
+
+  ExtractTransactionHash:
+    Type: Pass
+    Parameters:
+      submit.$: $.submit
+      post.$: $.post
+      transactionHash.$: $.submit.submitResults[0].txHash
+      transactionItems.$: $.post.items
+    ResultPath: $.transactionStatus
+    Next: CheckTransactionStatusIfHashExists
+
+  CheckTransactionStatusIfHashExists:
+    Type: Choice
+    Choices:
+      - Variable: $.transactionStatus.transactionHash
+        IsPresent: true
+        Next: PrepareTransactionStatusCheckDetail
+    Default: WorkflowComplete
+
+  PrepareTransactionStatusCheckDetail:
+    Type: Pass
+    Parameters:
+      transactionHash.$: $.transactionStatus.transactionHash
+      transactionItems.$: $.transactionStatus.transactionItems
+    ResultPath: $.transactionStatusCheckInput
+    Next: CheckTransactionStatus
+
+  CheckTransactionStatus:
+    Type: Task
+    Resource: arn:aws:states:::sqs:sendMessage.waitForTaskToken
+    Parameters:
+      QueueUrl: ${TransactionStatusCheckerSqsQueueUrl}
+      MessageBody.$: States.JsonToString($.transactionStatusCheckInput)
+      MessageAttributes:
+        TaskToken:
+          DataType: String
+          StringValue.$: $$.Task.Token
+        ExecutionArn:
+          DataType: String
+          StringValue.$: $$.Execution.Id
+        County:
+          DataType: String
+          StringValue.$: $.post.county
+        TransactionHash:
+          DataType: String
+          StringValue.$: $.transactionStatus.transactionHash
+    TimeoutSeconds: 900 # Match Lambda timeout
+    ResultPath: $.transactionStatusCheck
+    Next: PrepareTransactionStatusSucceededDetail
+    Retry:
+      - ErrorEquals:
+          - States.TaskFailed
+          - States.Timeout
+        IntervalSeconds: 5
+        MaxAttempts: 2
+        BackoffRate: 2
+    Catch:
+      - ErrorEquals: [States.ALL]
+        ResultSelector:
+          taskToken.$: $$.Task.Token
+          error.$: $
+        ResultPath: $.transactionStatusError
+        Next: PrepareTransactionStatusFailedDetail
+
+  PrepareTransactionStatusSucceededDetail:
+    Type: Pass
+    Parameters:
+      executionId.$: $$.Execution.Id
+      county.$: $.post.county
+      status: "SUCCEEDED"
+      phase: "Submit"
+      step: "CheckTransactionStatus"
+      taskToken.$: $.transactionStatusCheck.taskToken
+      errors: []
+    ResultPath: $.eventDetail
+    Next: EmitTransactionStatusSucceeded
+
+  EmitTransactionStatusSucceeded:
+    Type: Task
+    Resource: arn:aws:states:::aws-sdk:eventbridge:putEvents
+    Parameters:
+      Entries:
+        - Source: elephant.workflow
+          DetailType: WorkflowEvent
+          Detail.$: States.JsonToString($.eventDetail)
+    ResultPath: $.eventResult
+    Next: WorkflowComplete
+    Catch:
+      - ErrorEquals: [States.ALL]
+        ResultPath: $.eventError
+        Next: WorkflowComplete
+
+  PrepareTransactionStatusFailedDetail:
+    Type: Pass
+    Parameters:
+      executionId.$: $$.Execution.Id
+      county.$: $.post.county
+      status: "FAILED"
+      phase: "Submit"
+      step: "CheckTransactionStatus"
+      taskToken.$: $.transactionStatusError.taskToken
+      errors:
+        - code: "TRANSACTION_STATUS_CHECK_FAILED"
+          details:
+            error: "Transaction status check failed"
+    ResultPath: $.eventDetail
+    Next: EmitTransactionStatusFailed
+
+  EmitTransactionStatusFailed:
+    Type: Task
+    Resource: arn:aws:states:::aws-sdk:eventbridge:putEvents
+    Parameters:
+      Entries:
+        - Source: elephant.workflow
+          DetailType: WorkflowEvent
+          Detail.$: States.JsonToString($.eventDetail)
+    ResultPath: $.eventResult
+    Next: WorkflowComplete
+    Catch:
+      - ErrorEquals: [States.ALL]
+        ResultPath: $.eventError
+        Next: WorkflowComplete
+
+  PrepareSubmitFailedDetail:
+    Type: Pass
+    Parameters:
+      executionId.$: $$.Execution.Id
+      county.$: $.post.county
+      status: "FAILED"
+      phase: "Submit"
+      step: "Submit"
+      taskToken.$: $.submitError.taskToken
+      errors:
+        - code: "SUBMIT_FAILED"
+          details:
+            error: "Submit to blockchain failed"
+    ResultPath: $.eventDetail
+    Next: EmitSubmitFailed
+
+  EmitSubmitFailed:
+    Type: Task
+    Resource: arn:aws:states:::aws-sdk:eventbridge:putEvents
+    Parameters:
+      Entries:
+        - Source: elephant.workflow
+          DetailType: WorkflowEvent
+          Detail.$: States.JsonToString($.eventDetail)
+    ResultPath: $.eventResult
+    Next: RecordSubmitFailureMetric
+    Catch:
+      - ErrorEquals: [States.ALL]
+        ResultPath: $.eventError
         Next: RecordSubmitFailureMetric
 
   RecordSubmitFailureMetric:
@@ -338,6 +694,9 @@ States:
       - ErrorEquals: [States.ALL]
         ResultPath: $.metricError
         Next: FailRuntime
+
+  WorkflowComplete:
+    Type: Succeed
 
   FailRuntime:
     Type: Fail

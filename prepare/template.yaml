@@ -30,6 +30,26 @@ Parameters:
     Description: RPC URL for blockchain submission
     Type: String
     Default: ""
+  GasPriceMaxGwei:
+    Description: Maximum allowed gas price in Gwei (submission will wait if current price exceeds this)
+    Type: Number
+    Default: 50
+  GasPriceWaitMinutes:
+    Description: Minutes to wait before retrying gas price check if price is too high
+    Type: Number
+    Default: 2
+  GasPriceMaxRetries:
+    Description: Maximum number of retries when waiting for acceptable gas price
+    Type: Number
+    Default: 10
+  TransactionStatusWaitMinutes:
+    Description: Minutes to wait before retrying transaction status check if pending
+    Type: Number
+    Default: 5
+  TransactionStatusMaxRetries:
+    Description: "Maximum number of retries when checking transaction status (must fit within 900s timeout: 2 retries = ~15 min)"
+    Type: Number
+    Default: 2
   ElephantPinataJwt:
     Description: Pinata JWT for uploads
     Type: String
@@ -320,7 +340,7 @@ Resources:
   TransactionsSqsQueue:
     Type: AWS::SQS::Queue
     Properties:
-      VisibilityTimeout: 331
+      VisibilityTimeout: 600
       MessageRetentionPeriod: 1209600
       SqsManagedSseEnabled: true
       RedrivePolicy:
@@ -335,6 +355,52 @@ Resources:
     Properties:
       MessageRetentionPeriod: 1209600
       VisibilityTimeout: 331
+      SqsManagedSseEnabled: true
+      Tags:
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  GasPriceCheckerSqsQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      VisibilityTimeout: 900
+      MessageRetentionPeriod: 1209600
+      SqsManagedSseEnabled: true
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt GasPriceCheckerDeadLetterQueue.Arn
+        maxReceiveCount: 3
+      Tags:
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  GasPriceCheckerDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      MessageRetentionPeriod: 1209600
+      VisibilityTimeout: 900
+      SqsManagedSseEnabled: true
+      Tags:
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  TransactionStatusCheckerSqsQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      VisibilityTimeout: 900 # Match Lambda timeout
+      MessageRetentionPeriod: 1209600
+      SqsManagedSseEnabled: true
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt TransactionStatusCheckerDeadLetterQueue.Arn
+        maxReceiveCount: 3
+      Tags:
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  TransactionStatusCheckerDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      MessageRetentionPeriod: 1209600
+      VisibilityTimeout: 900
       SqsManagedSseEnabled: true
       Tags:
         - Key: Environment
@@ -437,6 +503,100 @@ Resources:
   # Workflow Lambdas (starter -> pre -> prepare -> post)
   #####################################################################################################################
 
+  GasPriceCheckerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Runtime: nodejs22.x
+      Architectures:
+        - arm64
+      MemorySize: 256
+      Timeout: 900
+      EphemeralStorage:
+        Size: 512
+      CodeUri: ../workflow/lambdas/gas-price-checker/
+      Handler: index.handler
+      Description: "Checks gas price and waits if it exceeds configured maximum"
+      LoggingConfig:
+        LogFormat: JSON
+      Policies:
+        - AWSLambdaBasicExecutionRole
+      Environment:
+        Variables:
+          ELEPHANT_RPC_URL: !Ref ElephantRpcUrl
+          GAS_PRICE_MAX_GWEI: !Ref GasPriceMaxGwei
+          GAS_PRICE_WAIT_MINUTES: !Ref GasPriceWaitMinutes
+          GAS_PRICE_MAX_RETRIES: !Ref GasPriceMaxRetries
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - states:SendTaskSuccess
+                - states:SendTaskFailure
+              Resource: "*"
+            - Effect: Allow
+              Action:
+                - events:PutEvents
+              Resource: "*"
+      Events:
+        GasPriceCheck:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt GasPriceCheckerSqsQueue.Arn
+            BatchSize: 1
+            MaximumBatchingWindowInSeconds: 0
+            ScalingConfig:
+              MaximumConcurrency: 2
+
+  TransactionStatusCheckerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Runtime: nodejs22.x
+      Architectures:
+        - arm64
+      MemorySize: 256
+      Timeout: 900 # Maximum Lambda timeout (15 minutes) - allows for ~3 retries at 5 min each
+      EphemeralStorage:
+        Size: 512
+      CodeUri: ../workflow/lambdas/transaction-status-checker/
+      Handler: index.handler
+      Description: "Checks transaction status on blockchain and handles retries/resubmission"
+      LoggingConfig:
+        LogFormat: JSON
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - states:SendTaskSuccess
+                - states:SendTaskFailure
+              Resource: "*"
+            - Effect: Allow
+              Action:
+                - events:PutEvents
+              Resource: "*"
+            - Effect: Allow
+              Action:
+                - sqs:SendMessage
+              Resource: !GetAtt TransactionsSqsQueue.Arn
+      Environment:
+        Variables:
+          ELEPHANT_RPC_URL: !Ref ElephantRpcUrl
+          TRANSACTION_STATUS_WAIT_MINUTES: !Ref TransactionStatusWaitMinutes
+          TRANSACTION_STATUS_MAX_RETRIES: !Ref TransactionStatusMaxRetries
+          RESUBMIT_QUEUE_URL: !Ref TransactionsSqsQueue
+      Events:
+        TransactionStatusCheck:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt TransactionStatusCheckerSqsQueue.Arn
+            BatchSize: 1
+            MaximumBatchingWindowInSeconds: 0
+            ScalingConfig:
+              MaximumConcurrency: 2 # Same as submitter function
+
   SubmitterFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -465,6 +625,10 @@ Resources:
                 - states:SendTaskSuccess
                 - states:SendTaskFailure
               Resource: "*"
+            - Effect: Allow
+              Action:
+                - events:PutEvents
+              Resource: "*"
       Environment:
         Variables:
           ELEPHANT_DOMAIN: !Ref ElephantDomain
@@ -475,6 +639,15 @@ Resources:
           ELEPHANT_KEYSTORE_S3_KEY: !Ref ElephantKeystoreS3Key
           ELEPHANT_KEYSTORE_PASSWORD: !Ref ElephantKeystorePassword
           ENVIRONMENT_BUCKET: !Ref EnvironmentBucket
+      Events:
+        Submit:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt TransactionsSqsQueue.Arn
+            BatchSize: 1
+            MaximumBatchingWindowInSeconds: 0
+            ScalingConfig:
+              MaximumConcurrency: 2
 
   WorkflowStarterFunction:
     Type: AWS::Serverless::Function
@@ -662,6 +835,45 @@ Resources:
             BatchSize: 100
 
   #####################################################################################################################
+  # Manual Resolution Lambda Function
+  #####################################################################################################################
+
+  ManualResolutionFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Runtime: nodejs22.x
+      Architectures:
+        - arm64
+      MemorySize: 256
+      Timeout: 60
+      CodeUri: ../workflow/lambdas/manual-resolution
+      Handler: index.handler
+      Description: "Manually mark failed executions as resolved and optionally retry them"
+      LoggingConfig:
+        LogFormat: JSON
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - states:DescribeExecution
+                - states:StartExecution
+              Resource: "*"
+            - Effect: Allow
+              Action:
+                - events:PutEvents
+              Resource: "*"
+            - Effect: Allow
+              Action:
+                - sqs:SendMessage
+                - sqs:GetQueueUrl
+              Resource: !GetAtt WorkflowSqsQueue.Arn
+      Environment:
+        Variables:
+          WORKFLOW_SQS_QUEUE_URL: !Ref WorkflowSqsQueue
+
+  #####################################################################################################################
   # GitHub Sync Lambda Function
   #####################################################################################################################
 
@@ -726,7 +938,12 @@ Resources:
         DownloaderFunction: !GetAtt DownloaderFunction.Arn
         WorkflowPostProcessorFunction: !GetAtt WorkflowPostProcessorFunction.Arn
         WorkflowMirrorValidatorFunction: !GetAtt WorkflowMirrorValidatorFunction.Arn
+        GasPriceCheckerFunction: !GetAtt GasPriceCheckerFunction.Arn
         SubmitterFunction: !GetAtt SubmitterFunction.Arn
+        TransactionStatusCheckerFunction: !GetAtt TransactionStatusCheckerFunction.Arn
+        GasPriceCheckerSqsQueueUrl: !Ref GasPriceCheckerSqsQueue
+        TransactionsSqsQueueUrl: !Ref TransactionsSqsQueue
+        TransactionStatusCheckerSqsQueueUrl: !Ref TransactionStatusCheckerSqsQueue
         StackName: !Ref AWS::StackName
       Role: !GetAtt ElephantExpressStateMachineRole.Arn
       Logging:
@@ -745,6 +962,49 @@ Resources:
       # Or use: !Sub "/aws/vendedlogs/states/${ElephantExpressStateMachine.Name}"
       LogGroupName: !Sub "/aws/vendedlogs/states/${AWS::StackName}-ElephantExpressStateMachine"
       RetentionInDays: 14
+
+  WorkflowEventBridgeLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/events/${AWS::StackName}-workflow-events"
+      RetentionInDays: 14
+
+  WorkflowEventBridgeRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "${AWS::StackName}-workflow-events-logger"
+      Description: "Logs all elephant.workflow events to CloudWatch Logs"
+      EventPattern:
+        source:
+          - elephant.workflow
+        detail-type:
+          - WorkflowEvent
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt WorkflowEventBridgeLogGroup.Arn
+          Id: "1"
+          RoleArn: !GetAtt WorkflowEventBridgeRuleRole.Arn
+
+  WorkflowEventBridgeRuleRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: PutLogEvents
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !GetAtt WorkflowEventBridgeLogGroup.Arn
 
   ElephantExpressStateMachineRole:
     Type: AWS::IAM::Role
@@ -770,12 +1030,14 @@ Resources:
                   - !GetAtt DownloaderFunction.Arn
                   - !GetAtt WorkflowPostProcessorFunction.Arn
                   - !GetAtt WorkflowMirrorValidatorFunction.Arn
+                  - !GetAtt GasPriceCheckerFunction.Arn
                   - !GetAtt SubmitterFunction.Arn
               - Effect: Allow
                 Action:
                   - sqs:SendMessage
                 Resource:
                   - !GetAtt TransactionsSqsQueue.Arn
+                  - !GetAtt GasPriceCheckerSqsQueue.Arn
               - Effect: Allow
                 Action:
                   - ssm:GetParameter
@@ -795,6 +1057,10 @@ Resources:
                   StringEquals:
                     cloudwatch:namespace:
                       - ElephantWorkflow
+              - Effect: Allow
+                Action:
+                  - events:PutEvents
+                Resource: "*"
               - Effect: Allow
                 Action:
                   - logs:CreateLogDelivery
@@ -988,6 +1254,8 @@ Resources:
                 Resource:
                   - !GetAtt MwaaSqsQueue.Arn
                   - !GetAtt WorkflowSqsQueue.Arn
+                  - !GetAtt GasPriceCheckerSqsQueue.Arn
+                  - !GetAtt TransactionStatusCheckerSqsQueue.Arn
                   # Allow sending to county-specific queues (elephant-workflow-queue-*)
                   - !Sub "arn:aws:sqs:${AWS::Region}:${AWS::AccountId}:elephant-workflow-queue-*"
               - Effect: Allow
@@ -1407,3 +1675,18 @@ Outputs:
   ErrorRecoveryDashboardUrl:
     Description: URL to the ErrorRecovery CloudWatch Dashboard
     Value: !Sub "https://${AWS::Region}.console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#dashboards:name=${AWS::StackName}-ErrorRecovery"
+  WorkflowEventBridgeLogsUrl:
+    Description: URL to view EventBridge workflow events in CloudWatch Logs
+    Value: !Sub "https://${AWS::Region}.console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#logsV2:log-groups/log-group/%2Faws%2Fevents%2F${AWS::StackName}-workflow-events"
+  ManualResolutionFunctionName:
+    Description: Name of the Manual Resolution Lambda function (invoke this to mark failed executions as resolved)
+    Value: !Ref ManualResolutionFunction
+  ManualResolutionFunctionArn:
+    Description: ARN of the Manual Resolution Lambda function
+    Value: !GetAtt ManualResolutionFunction.Arn
+  ManualResolutionFunctionName:
+    Description: Name of the Manual Resolution Lambda function (invoke this to mark failed executions as resolved)
+    Value: !Ref ManualResolutionFunction
+  ManualResolutionFunctionArn:
+    Description: ARN of the Manual Resolution Lambda function
+    Value: !GetAtt ManualResolutionFunction.Arn
