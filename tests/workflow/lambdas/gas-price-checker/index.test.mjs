@@ -257,13 +257,13 @@ describe("gas-price-checker handler", () => {
       const event = createSqsEvent("task-token-failed");
 
       const handlerPromise = handler(event);
-      
+
       // Advance time for retries: maxRetries=3, so 2 retries before final failure
       // Each retry waits 2 minutes, so 2 * 2 * 60 * 1000 = 240000ms
       await vi.advanceTimersByTimeAsync(240000);
-      
+
       await handlerPromise;
-      
+
       vi.useRealTimers();
 
       // Should have 2 EventBridge calls: IN_PROGRESS and FAILED
@@ -369,13 +369,13 @@ describe("gas-price-checker handler", () => {
       const event = createSqsEvent("task-token-error");
 
       const handlerPromise = handler(event);
-      
+
       // Advance time for retries: maxRetries=3, so 2 retries before final failure
       // Each retry waits 2 minutes, so 2 * 2 * 60 * 1000 = 240000ms
       await vi.advanceTimersByTimeAsync(240000);
-      
+
       await handlerPromise;
-      
+
       vi.useRealTimers();
 
       // Verify task failure was sent

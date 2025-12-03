@@ -238,14 +238,14 @@ describe("transaction-status-checker handler", () => {
       const event = createSqsEvent("task-token-failed", "0xabc123");
 
       const handlerPromise = handler(event);
-      
+
       // When transaction status is "failed", it throws immediately, but the catch block
       // may retry once if retries < maxRetries - 1. With maxRetries=2, retries=0, it will retry once.
       // Each retry waits 5 minutes, so 1 * 5 * 60 * 1000 = 300000ms
       await vi.advanceTimersByTimeAsync(300000);
-      
+
       await handlerPromise;
-      
+
       vi.useRealTimers();
 
       // Verify task failure was sent
@@ -289,13 +289,13 @@ describe("transaction-status-checker handler", () => {
       const event = createSqsEvent("task-token-failed-event", "0xabc123");
 
       const handlerPromise = handler(event);
-      
+
       // Advance time for retries: maxRetries=2, so 1 retry before final failure
       // Each retry waits 5 minutes, so 1 * 5 * 60 * 1000 = 300000ms
       await vi.advanceTimersByTimeAsync(300000);
-      
+
       await handlerPromise;
-      
+
       vi.useRealTimers();
 
       // Should have 2 EventBridge calls: IN_PROGRESS and FAILED
@@ -368,14 +368,14 @@ describe("transaction-status-checker handler", () => {
       const event = createSqsEvent("task-token-no-queue", "0xabc123");
 
       const handlerPromise = handler(event);
-      
+
       // When transaction status is "failed", it throws immediately, but the catch block
       // may retry once if retries < maxRetries - 1. With maxRetries=2, retries=0, it will retry once.
       // Each retry waits 5 minutes, so 1 * 5 * 60 * 1000 = 300000ms
       await vi.advanceTimersByTimeAsync(300000);
-      
+
       await handlerPromise;
-      
+
       vi.useRealTimers();
 
       // Should still fail (transaction dropped) but without resubmission
@@ -472,13 +472,13 @@ describe("transaction-status-checker handler", () => {
       const event = createSqsEvent("task-token-error", "0xabc123");
 
       const handlerPromise = handler(event);
-      
+
       // Advance time for retries: maxRetries=2, so 1 retry before final failure
       // Each retry waits 5 minutes, so 1 * 5 * 60 * 1000 = 300000ms
       await vi.advanceTimersByTimeAsync(300000);
-      
+
       await handlerPromise;
-      
+
       vi.useRealTimers();
 
       // Verify task failure was sent

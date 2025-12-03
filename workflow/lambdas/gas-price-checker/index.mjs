@@ -279,7 +279,8 @@ export const handler = async (event) => {
       executionArn = record.messageAttributes.ExecutionArn?.stringValue;
       county = record.messageAttributes.County?.stringValue;
       // @ts-ignore - DataGroupLabel is added in state machine but not in type definition
-      dataGroupLabel = record.messageAttributes?.DataGroupLabel?.stringValue || "County";
+      dataGroupLabel =
+        record.messageAttributes?.DataGroupLabel?.stringValue || "County";
       console.log({
         ...base,
         level: "info",
