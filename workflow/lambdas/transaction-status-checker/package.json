@@ -14,7 +14,7 @@
     "@aws-sdk/client-eventbridge": "^3.0.0",
     "@aws-sdk/client-sfn": "^3.0.0",
     "@aws-sdk/client-sqs": "^3.0.0",
-    "@elephant-xyz/cli": "git+https://github.com/elephant-xyz/elephant-cli.git#check_transaction_status_as_library"
+    "@elephant-xyz/cli": "^1.57.0"
   },
   "devDependencies": {
     "@types/node": "^20.16.3"

@@ -561,7 +561,7 @@ export const handler = async (event) => {
         taskToken: taskToken,
         errors: [
           {
-            code: "TRANSACTION_STATUS_CHECK_FAILED",
+            code: "60003",
             details: {
               error: errMessage,
               cause: errCause,

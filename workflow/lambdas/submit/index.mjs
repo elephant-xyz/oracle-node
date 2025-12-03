@@ -644,7 +644,7 @@ export const handler = async (event) => {
                   taskToken: taskToken,
                   errors: [
                     {
-                      code: "SUBMIT_FAILED",
+                      code: "60002",
                       details: {
                         error: errMessage,
                         cause: errCause,

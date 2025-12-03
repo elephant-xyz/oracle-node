@@ -432,7 +432,7 @@ export const handler = async (event) => {
                   taskToken: taskToken,
                   errors: [
                     {
-                      code: "GAS_PRICE_CHECK_FAILED",
+                      code: "60001",
                       details: {
                         error: errMessage,
                         cause: errCause,
