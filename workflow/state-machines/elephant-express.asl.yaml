@@ -171,6 +171,7 @@ States:
         executionId.$: $$.Execution.Id
         input_s3_uri.$: $.pre.county_prep_input_s3_uri
         output_s3_uri_prefix.$: $.pre.output_prefix
+        browser: true
         county.$: $.pre.county_name
     ResultSelector:
       output_s3_uri.$: $.output_s3_uri
