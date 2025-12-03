@@ -32,7 +32,6 @@ import { SQSClient, SendMessageCommand } from "@aws-sdk/client-sqs";
  * @property {string} transactionHash - Transaction hash to check
  * @property {string} rpcUrl - RPC URL for blockchain
  * @property {number} [waitMinutes] - Minutes to wait before retry if pending (default: 5)
- * @property {number} [maxRetries] - Maximum number of retries (default: 10)
  * @property {string} [resubmitQueueUrl] - SQS queue URL for resubmission if transaction dropped
  * @property {Object} [originalTransactionItems] - Original transaction items for resubmission
  */
@@ -249,7 +248,6 @@ async function checkAndWaitForTransactionStatus(input) {
     transactionHash,
     rpcUrl,
     waitMinutes = 5,
-    maxRetries = 10,
     resubmitQueueUrl,
     originalTransactionItems,
   } = input;
@@ -265,7 +263,8 @@ async function checkAndWaitForTransactionStatus(input) {
   const waitMs = waitMinutes * 60 * 1000;
   let retries = 0;
 
-  while (retries < maxRetries) {
+  // Retry forever until transaction is confirmed or failed
+  while (true) {
     try {
       console.log(
         JSON.stringify({
@@ -300,9 +299,20 @@ async function checkAndWaitForTransactionStatus(input) {
             `Transaction ${transactionHash} was dropped and has been resubmitted for processing`,
           );
         } else {
-          throw new Error(
-            `Transaction ${transactionHash} was dropped (not found on blockchain)`,
+          // If no resubmit queue, wait and retry (transaction might appear later)
+          console.log(
+            JSON.stringify({
+              ...base,
+              level: "warn",
+              msg: "transaction_not_found_waiting",
+              transactionHash: transactionHash,
+              waitMinutes: waitMinutes,
+              retry: retries,
+            }),
           );
+          retries++;
+          await sleep(waitMs);
+          continue;
         }
       }
 
@@ -332,21 +342,15 @@ async function checkAndWaitForTransactionStatus(input) {
         };
       }
 
-      // If transaction failed, throw error
+      // If transaction failed, throw error (this is a final failure, don't retry)
       if (status === "failed") {
         throw new Error(
           `Transaction ${transactionHash} failed on blockchain. Block: ${blockNumber || "N/A"}`,
         );
       }
 
-      // If pending or no block number, wait and retry
+      // If pending or no block number, wait and retry forever
       retries++;
-      if (retries >= maxRetries) {
-        throw new Error(
-          `Transaction ${transactionHash} still pending after ${maxRetries} retries (${waitMinutes} minutes each)`,
-        );
-      }
-
       console.log(
         JSON.stringify({
           ...base,
@@ -363,12 +367,17 @@ async function checkAndWaitForTransactionStatus(input) {
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
 
-      // If it's a resubmission error or final retry, throw
-      if (errorMsg.includes("resubmitted") || retries >= maxRetries - 1) {
+      // If it's a resubmission error or transaction failed, throw (don't retry)
+      if (errorMsg.includes("resubmitted") || errorMsg.includes("failed on blockchain")) {
         throw err;
       }
 
-      // Otherwise wait and retry
+      // Configuration errors should also throw
+      if (errorMsg.includes("RPC URL is required") || errorMsg.includes("Transaction hash is required")) {
+        throw err;
+      }
+
+      // Otherwise wait and retry forever
       console.error(
         JSON.stringify({
           ...base,
@@ -383,10 +392,6 @@ async function checkAndWaitForTransactionStatus(input) {
       await sleep(waitMs);
     }
   }
-
-  throw new Error(
-    `Failed to get transaction status after ${maxRetries} retries`,
-  );
 }
 
 /**
@@ -490,10 +495,6 @@ export const handler = async (event) => {
     const waitMinutes = parseFloat(
       process.env.TRANSACTION_STATUS_WAIT_MINUTES || "5",
     );
-    const maxRetries = parseInt(
-      process.env.TRANSACTION_STATUS_MAX_RETRIES || "10",
-      10,
-    );
     const resubmitQueueUrl = process.env.RESUBMIT_QUEUE_URL;
 
     if (!rpcUrl) {
@@ -518,7 +519,6 @@ export const handler = async (event) => {
       transactionHash: transactionHash,
       rpcUrl: rpcUrl,
       waitMinutes: waitMinutes,
-      maxRetries: maxRetries,
       resubmitQueueUrl: resubmitQueueUrl,
       originalTransactionItems: originalTransactionItems,
     });

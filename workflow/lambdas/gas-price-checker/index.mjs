@@ -20,7 +20,6 @@ import {
  * @property {string} rpcUrl - RPC URL for blockchain
  * @property {number} maxGasPriceGwei - Maximum allowed gas price in Gwei
  * @property {number} [waitMinutes] - Minutes to wait before retry (default: 2)
- * @property {number} [maxRetries] - Maximum number of retries (default: 10)
  */
 
 /**
@@ -136,7 +135,7 @@ function sleep(ms) {
  * @returns {Promise<GasPriceCheckerOutput>}
  */
 async function checkAndWaitForGasPrice(input) {
-  const { rpcUrl, maxGasPriceGwei, waitMinutes = 2, maxRetries = 10 } = input;
+  const { rpcUrl, maxGasPriceGwei, waitMinutes = 2 } = input;
 
   if (!rpcUrl) {
     throw new Error("RPC URL is required");
@@ -149,7 +148,8 @@ async function checkAndWaitForGasPrice(input) {
   const waitMs = waitMinutes * 60 * 1000;
   let retries = 0;
 
-  while (retries < maxRetries) {
+  // Retry forever until gas price is acceptable
+  while (true) {
     try {
       console.log(
         JSON.stringify({
@@ -200,12 +200,6 @@ async function checkAndWaitForGasPrice(input) {
 
       // Gas price is too high, wait and retry
       retries++;
-      if (retries >= maxRetries) {
-        throw new Error(
-          `Gas price ${currentGasPriceGwei.toFixed(2)} Gwei exceeds maximum ${maxGasPriceGwei} Gwei after ${maxRetries} retries`,
-        );
-      }
-
       console.log(
         JSON.stringify({
           ...base,
@@ -235,8 +229,8 @@ async function checkAndWaitForGasPrice(input) {
         }),
       );
 
-      // If it's the last retry, throw the error
-      if (retries >= maxRetries - 1) {
+      // Wait and retry forever (only throw if it's a configuration error)
+      if (errorMsg.includes("RPC URL is required") || errorMsg.includes("maxGasPriceGwei must be")) {
         throw err;
       }
 
@@ -245,10 +239,6 @@ async function checkAndWaitForGasPrice(input) {
       await sleep(waitMs);
     }
   }
-
-  throw new Error(
-    `Failed to get acceptable gas price after ${maxRetries} retries`,
-  );
 }
 
 /**
@@ -331,7 +321,6 @@ export const handler = async (event) => {
     const rpcUrl = process.env.ELEPHANT_RPC_URL;
     const maxGasPriceGwei = parseFloat(process.env.GAS_PRICE_MAX_GWEI || "0");
     const waitMinutes = parseFloat(process.env.GAS_PRICE_WAIT_MINUTES || "2");
-    const maxRetries = parseInt(process.env.GAS_PRICE_MAX_RETRIES || "10", 10);
 
     if (!rpcUrl) {
       const error = "RPC URL is required (ELEPHANT_RPC_URL env var)";
@@ -357,7 +346,6 @@ export const handler = async (event) => {
       rpcUrl,
       maxGasPriceGwei,
       waitMinutes,
-      maxRetries,
     });
 
     console.log(
