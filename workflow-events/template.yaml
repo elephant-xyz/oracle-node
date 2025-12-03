@@ -319,10 +319,10 @@ Resources:
                 "region": "${AWS::Region}",
                 "period": 300,
                 "metrics": [
-                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"PrepareElephantPhase\" Status=\"SCHEDULED\"', 'Sum', 300))", "label": "SCHEDULED", "id": "prep_sched", "color": "#1f77b4"}],
-                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"PrepareElephantPhase\" Status=\"IN_PROGRESS\"', 'Sum', 300))", "label": "IN_PROGRESS", "id": "prep_prog", "color": "#ff7f0e"}],
-                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"PrepareElephantPhase\" Status=\"SUCCEEDED\"', 'Sum', 300))", "label": "SUCCEEDED", "id": "prep_succ", "color": "#2ca02c"}],
-                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"PrepareElephantPhase\" Status=\"FAILED\"', 'Sum', 300))", "label": "FAILED", "id": "prep_fail", "color": "#d62728"}]
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"PrepareElephantPhase\" Status=\"SCHEDULED\"', 'Sum', 300))", "label": "SCHEDULED", "id": "prep_sched", "color": "#1f77b4"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"PrepareElephantPhase\" Status=\"IN_PROGRESS\"', 'Sum', 300))", "label": "IN_PROGRESS", "id": "prep_prog", "color": "#ff7f0e"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"PrepareElephantPhase\" Status=\"SUCCEEDED\"', 'Sum', 300))", "label": "SUCCEEDED", "id": "prep_succ", "color": "#2ca02c"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"PrepareElephantPhase\" Status=\"FAILED\"', 'Sum', 300))", "label": "FAILED", "id": "prep_fail", "color": "#d62728"}]
                 ]
               }
             },
@@ -339,10 +339,10 @@ Resources:
                 "region": "${AWS::Region}",
                 "period": 300,
                 "metrics": [
-                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"TransformElephantPhase\" Status=\"SCHEDULED\"', 'Sum', 300))", "label": "SCHEDULED", "id": "trans_sched", "color": "#1f77b4"}],
-                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"TransformElephantPhase\" Status=\"IN_PROGRESS\"', 'Sum', 300))", "label": "IN_PROGRESS", "id": "trans_prog", "color": "#ff7f0e"}],
-                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"TransformElephantPhase\" Status=\"SUCCEEDED\"', 'Sum', 300))", "label": "SUCCEEDED", "id": "trans_succ", "color": "#2ca02c"}],
-                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"TransformElephantPhase\" Status=\"FAILED\"', 'Sum', 300))", "label": "FAILED", "id": "trans_fail", "color": "#d62728"}]
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"TransformElephantPhase\" Status=\"SCHEDULED\"', 'Sum', 300))", "label": "SCHEDULED", "id": "trans_sched", "color": "#1f77b4"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"TransformElephantPhase\" Status=\"IN_PROGRESS\"', 'Sum', 300))", "label": "IN_PROGRESS", "id": "trans_prog", "color": "#ff7f0e"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"TransformElephantPhase\" Status=\"SUCCEEDED\"', 'Sum', 300))", "label": "SUCCEEDED", "id": "trans_succ", "color": "#2ca02c"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"TransformElephantPhase\" Status=\"FAILED\"', 'Sum', 300))", "label": "FAILED", "id": "trans_fail", "color": "#d62728"}]
                 ]
               }
             },
@@ -359,10 +359,10 @@ Resources:
                 "region": "${AWS::Region}",
                 "period": 300,
                 "metrics": [
-                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"SVLElephantPhase\" Status=\"SCHEDULED\"', 'Sum', 300))", "label": "SCHEDULED", "id": "svl_sched", "color": "#1f77b4"}],
-                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"SVLElephantPhase\" Status=\"IN_PROGRESS\"', 'Sum', 300))", "label": "IN_PROGRESS", "id": "svl_prog", "color": "#ff7f0e"}],
-                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"SVLElephantPhase\" Status=\"SUCCEEDED\"', 'Sum', 300))", "label": "SUCCEEDED", "id": "svl_succ", "color": "#2ca02c"}],
-                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"SVLElephantPhase\" Status=\"FAILED\"', 'Sum', 300))", "label": "FAILED", "id": "svl_fail", "color": "#d62728"}]
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"SVLElephantPhase\" Status=\"SCHEDULED\"', 'Sum', 300))", "label": "SCHEDULED", "id": "svl_sched", "color": "#1f77b4"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"SVLElephantPhase\" Status=\"IN_PROGRESS\"', 'Sum', 300))", "label": "IN_PROGRESS", "id": "svl_prog", "color": "#ff7f0e"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"SVLElephantPhase\" Status=\"SUCCEEDED\"', 'Sum', 300))", "label": "SUCCEEDED", "id": "svl_succ", "color": "#2ca02c"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"SVLElephantPhase\" Status=\"FAILED\"', 'Sum', 300))", "label": "FAILED", "id": "svl_fail", "color": "#d62728"}]
                 ]
               }
             },
@@ -379,10 +379,10 @@ Resources:
                 "region": "${AWS::Region}",
                 "period": 300,
                 "metrics": [
-                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"MVLElephantPhase\" Status=\"SCHEDULED\"', 'Sum', 300))", "label": "SCHEDULED", "id": "mvl_sched", "color": "#1f77b4"}],
-                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"MVLElephantPhase\" Status=\"IN_PROGRESS\"', 'Sum', 300))", "label": "IN_PROGRESS", "id": "mvl_prog", "color": "#ff7f0e"}],
-                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"MVLElephantPhase\" Status=\"SUCCEEDED\"', 'Sum', 300))", "label": "SUCCEEDED", "id": "mvl_succ", "color": "#2ca02c"}],
-                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"MVLElephantPhase\" Status=\"FAILED\"', 'Sum', 300))", "label": "FAILED", "id": "mvl_fail", "color": "#d62728"}]
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"MVLElephantPhase\" Status=\"SCHEDULED\"', 'Sum', 300))", "label": "SCHEDULED", "id": "mvl_sched", "color": "#1f77b4"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"MVLElephantPhase\" Status=\"IN_PROGRESS\"', 'Sum', 300))", "label": "IN_PROGRESS", "id": "mvl_prog", "color": "#ff7f0e"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"MVLElephantPhase\" Status=\"SUCCEEDED\"', 'Sum', 300))", "label": "SUCCEEDED", "id": "mvl_succ", "color": "#2ca02c"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"MVLElephantPhase\" Status=\"FAILED\"', 'Sum', 300))", "label": "FAILED", "id": "mvl_fail", "color": "#d62728"}]
                 ]
               }
             },
@@ -399,10 +399,10 @@ Resources:
                 "region": "${AWS::Region}",
                 "period": 300,
                 "metrics": [
-                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"HashElephantPhase\" Status=\"SCHEDULED\"', 'Sum', 300))", "label": "SCHEDULED", "id": "hash_sched", "color": "#1f77b4"}],
-                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"HashElephantPhase\" Status=\"IN_PROGRESS\"', 'Sum', 300))", "label": "IN_PROGRESS", "id": "hash_prog", "color": "#ff7f0e"}],
-                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"HashElephantPhase\" Status=\"SUCCEEDED\"', 'Sum', 300))", "label": "SUCCEEDED", "id": "hash_succ", "color": "#2ca02c"}],
-                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"HashElephantPhase\" Status=\"FAILED\"', 'Sum', 300))", "label": "FAILED", "id": "hash_fail", "color": "#d62728"}]
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"HashElephantPhase\" Status=\"SCHEDULED\"', 'Sum', 300))", "label": "SCHEDULED", "id": "hash_sched", "color": "#1f77b4"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"HashElephantPhase\" Status=\"IN_PROGRESS\"', 'Sum', 300))", "label": "IN_PROGRESS", "id": "hash_prog", "color": "#ff7f0e"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"HashElephantPhase\" Status=\"SUCCEEDED\"', 'Sum', 300))", "label": "SUCCEEDED", "id": "hash_succ", "color": "#2ca02c"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"HashElephantPhase\" Status=\"FAILED\"', 'Sum', 300))", "label": "FAILED", "id": "hash_fail", "color": "#d62728"}]
                 ]
               }
             },
@@ -419,10 +419,10 @@ Resources:
                 "region": "${AWS::Region}",
                 "period": 300,
                 "metrics": [
-                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"UploadElephantPhase\" Status=\"SCHEDULED\"', 'Sum', 300))", "label": "SCHEDULED", "id": "upload_sched", "color": "#1f77b4"}],
-                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"UploadElephantPhase\" Status=\"IN_PROGRESS\"', 'Sum', 300))", "label": "IN_PROGRESS", "id": "upload_prog", "color": "#ff7f0e"}],
-                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"UploadElephantPhase\" Status=\"SUCCEEDED\"', 'Sum', 300))", "label": "SUCCEEDED", "id": "upload_succ", "color": "#2ca02c"}],
-                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"UploadElephantPhase\" Status=\"FAILED\"', 'Sum', 300))", "label": "FAILED", "id": "upload_fail", "color": "#d62728"}]
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"UploadElephantPhase\" Status=\"SCHEDULED\"', 'Sum', 300))", "label": "SCHEDULED", "id": "upload_sched", "color": "#1f77b4"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"UploadElephantPhase\" Status=\"IN_PROGRESS\"', 'Sum', 300))", "label": "IN_PROGRESS", "id": "upload_prog", "color": "#ff7f0e"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"UploadElephantPhase\" Status=\"SUCCEEDED\"', 'Sum', 300))", "label": "SUCCEEDED", "id": "upload_succ", "color": "#2ca02c"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"UploadElephantPhase\" Status=\"FAILED\"', 'Sum', 300))", "label": "FAILED", "id": "upload_fail", "color": "#d62728"}]
                 ]
               }
             },
@@ -439,10 +439,10 @@ Resources:
                 "region": "${AWS::Region}",
                 "period": 300,
                 "metrics": [
-                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"SubmitElephantPhase\" Status=\"SCHEDULED\"', 'Sum', 300))", "label": "SCHEDULED", "id": "submit_sched", "color": "#1f77b4"}],
-                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"SubmitElephantPhase\" Status=\"IN_PROGRESS\"', 'Sum', 300))", "label": "IN_PROGRESS", "id": "submit_prog", "color": "#ff7f0e"}],
-                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"SubmitElephantPhase\" Status=\"SUCCEEDED\"', 'Sum', 300))", "label": "SUCCEEDED", "id": "submit_succ", "color": "#2ca02c"}],
-                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"SubmitElephantPhase\" Status=\"FAILED\"', 'Sum', 300))", "label": "FAILED", "id": "submit_fail", "color": "#d62728"}]
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"SubmitElephantPhase\" Status=\"SCHEDULED\"', 'Sum', 300))", "label": "SCHEDULED", "id": "submit_sched", "color": "#1f77b4"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"SubmitElephantPhase\" Status=\"IN_PROGRESS\"', 'Sum', 300))", "label": "IN_PROGRESS", "id": "submit_prog", "color": "#ff7f0e"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"SubmitElephantPhase\" Status=\"SUCCEEDED\"', 'Sum', 300))", "label": "SUCCEEDED", "id": "submit_succ", "color": "#2ca02c"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"SubmitElephantPhase\" Status=\"FAILED\"', 'Sum', 300))", "label": "FAILED", "id": "submit_fail", "color": "#d62728"}]
                 ]
               }
             }
