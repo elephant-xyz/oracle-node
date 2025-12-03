@@ -79,8 +79,13 @@ async function emitWorkflowEvent({ executionId, county, status }) {
     console.log(`✅ EventBridge event emitted: ${status}`);
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
-    console.error(`⚠️ Failed to emit EventBridge event [01019]: ${errorMessage}`);
-    throw new PrepareError("01019", `Failed to emit EventBridge event: ${errorMessage}`);
+    console.error(
+      `⚠️ Failed to emit EventBridge event [01019]: ${errorMessage}`,
+    );
+    throw new PrepareError(
+      "01019",
+      `Failed to emit EventBridge event: ${errorMessage}`,
+    );
   }
 }
 
@@ -103,7 +108,10 @@ async function sendTaskSuccess(taskToken, output) {
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     console.error(`❌ Failed to send task success [01017]: ${errorMessage}`);
-    throw new PrepareError("01017", `Failed to send task success: ${errorMessage}`);
+    throw new PrepareError(
+      "01017",
+      `Failed to send task success: ${errorMessage}`,
+    );
   }
 }
 
@@ -128,7 +136,10 @@ async function sendTaskFailure(taskToken, errorCode, cause) {
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     console.error(`❌ Failed to send task failure [01018]: ${errorMessage}`);
-    throw new PrepareError("01018", `Failed to send task failure: ${errorMessage}`);
+    throw new PrepareError(
+      "01018",
+      `Failed to send task failure: ${errorMessage}`,
+    );
   }
 }
 
@@ -194,7 +205,10 @@ function extractCountyFromZip(zip) {
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     console.error(`⚠️ Could not extract county from zip: ${errorMessage}`);
-    throw new PrepareError("01008", `Could not extract county from zip: ${errorMessage}`);
+    throw new PrepareError(
+      "01008",
+      `Could not extract county from zip: ${errorMessage}`,
+    );
   }
   return null;
 }
@@ -276,8 +290,7 @@ function getConfigurationUriFromInputCsv(zip) {
   // Get configuration column from first row (case-insensitive)
   const firstRow = rows[0];
   const configKey = Object.keys(firstRow).find(
-    (k) =>
-      k.toLowerCase() === "configuration" || k.toLowerCase() === "config",
+    (k) => k.toLowerCase() === "configuration" || k.toLowerCase() === "config",
   );
 
   if (configKey && firstRow[configKey] && firstRow[configKey].trim() !== "") {
@@ -315,7 +328,10 @@ async function downloadConfigurationFromS3(s3Client, configS3Uri) {
 
     const configBytes = await response.Body?.transformToByteArray();
     if (!configBytes) {
-      throw new PrepareError("01009", "Failed to download configuration file body");
+      throw new PrepareError(
+        "01009",
+        "Failed to download configuration file body",
+      );
     }
 
     const configContent = new TextDecoder().decode(configBytes);
@@ -726,12 +742,18 @@ const splitS3Uri = (s3Uri) => {
   const match = RE_S3PATH.exec(s3Uri);
 
   if (!match) {
-    throw new PrepareError("01010", `Invalid S3 path format: ${s3Uri}. Expected: s3://bucket/object`);
+    throw new PrepareError(
+      "01010",
+      `Invalid S3 path format: ${s3Uri}. Expected: s3://bucket/object`,
+    );
   }
 
   const [, bucket, key] = match;
   if (!bucket || !key) {
-    throw new PrepareError("01010", `Invalid S3 path format: ${s3Uri}. Expected: s3://bucket/object`);
+    throw new PrepareError(
+      "01010",
+      `Invalid S3 path format: ${s3Uri}. Expected: s3://bucket/object`,
+    );
   }
   return { bucket, key };
 };
@@ -916,7 +938,10 @@ async function processPrepare({
 
           const fileBytes = await response.Body?.transformToByteArray();
           if (!fileBytes) {
-            throw new PrepareError("01013", `Failed to download ${flowType} flow file body`);
+            throw new PrepareError(
+              "01013",
+              `Failed to download ${flowType} flow file body`,
+            );
           }
 
           const filePath = path.join(tempDir, localFileName);
@@ -1075,7 +1100,10 @@ async function processPrepare({
               const value = pair.substring(colonIndex + 1).trim();
 
               if (!key) {
-                throw new PrepareError("01015", `Empty key in parameter: "${pair}"`);
+                throw new PrepareError(
+                  "01015",
+                  `Empty key in parameter: "${pair}"`,
+                );
               }
 
               if (/^\d+$/.test(value)) {
@@ -1319,7 +1347,10 @@ export const handler = async (event) => {
         console.log(`📋 Processing message with executionId: ${executionId}`);
 
         if (!taskToken) {
-          throw new PrepareError("01016", "Missing taskToken in SQS message body");
+          throw new PrepareError(
+            "01016",
+            "Missing taskToken in SQS message body",
+          );
         }
 
         // Emit IN_PROGRESS event to EventBridge
@@ -1350,8 +1381,7 @@ export const handler = async (event) => {
         const errorMessage =
           error instanceof Error ? error.message : String(error);
         // Use error code from PrepareError if available, otherwise default to "01002"
-        const errorCode =
-          error instanceof PrepareError ? error.code : "01002";
+        const errorCode = error instanceof PrepareError ? error.code : "01002";
         console.error(
           `❌ Prepare processing failed [${errorCode}]: ${errorMessage}`,
         );
