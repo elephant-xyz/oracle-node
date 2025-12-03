@@ -264,9 +264,22 @@ Resources:
   WorkflowErrorsDashboard:
     Type: AWS::CloudWatch::Dashboard
     Properties:
-      DashboardName: !Sub "${EnvironmentName}-workflow-errors"
+      DashboardName: elepaht-oracle-node-dashboard
       DashboardBody: !Sub |
         {
+          "variables": [
+            {
+              "type": "property",
+              "property": "County",
+              "inputType": "select",
+              "id": "county",
+              "label": "County",
+              "visible": true,
+              "search": "{Elephant/Workflow,County,Status,Step} MetricName=\"PrepareElephantPhase\"",
+              "populateFrom": "County",
+              "defaultValue": "__FIRST"
+            }
+          ],
           "widgets": [
             {
               "type": "custom",
@@ -303,6 +316,153 @@ Resources:
                   "errorType": "",
                   "limit": 20
                 }
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 10,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "Prepare Phase",
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "stat": "Sum",
+                "period": 300,
+                "metrics": [
+                  ["Elephant/Workflow", "PrepareElephantPhase", "County", "${!county}", "Status", "SCHEDULED", {"label": "SCHEDULED", "color": "#1f77b4"}],
+                  ["...", "IN_PROGRESS", {"label": "IN_PROGRESS", "color": "#ff7f0e"}],
+                  ["...", "SUCCEEDED", {"label": "SUCCEEDED", "color": "#2ca02c"}],
+                  ["...", "FAILED", {"label": "FAILED", "color": "#d62728"}]
+                ]
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12,
+              "y": 10,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "Transform Phase",
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "stat": "Sum",
+                "period": 300,
+                "metrics": [
+                  ["Elephant/Workflow", "TransformElephantPhase", "County", "${!county}", "Status", "SCHEDULED", {"label": "SCHEDULED", "color": "#1f77b4"}],
+                  ["...", "IN_PROGRESS", {"label": "IN_PROGRESS", "color": "#ff7f0e"}],
+                  ["...", "SUCCEEDED", {"label": "SUCCEEDED", "color": "#2ca02c"}],
+                  ["...", "FAILED", {"label": "FAILED", "color": "#d62728"}]
+                ]
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 16,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "SVL Phase",
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "stat": "Sum",
+                "period": 300,
+                "metrics": [
+                  ["Elephant/Workflow", "SVLElephantPhase", "County", "${!county}", "Status", "SCHEDULED", {"label": "SCHEDULED", "color": "#1f77b4"}],
+                  ["...", "IN_PROGRESS", {"label": "IN_PROGRESS", "color": "#ff7f0e"}],
+                  ["...", "SUCCEEDED", {"label": "SUCCEEDED", "color": "#2ca02c"}],
+                  ["...", "FAILED", {"label": "FAILED", "color": "#d62728"}]
+                ]
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12,
+              "y": 16,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "MVL Phase",
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "stat": "Sum",
+                "period": 300,
+                "metrics": [
+                  ["Elephant/Workflow", "MVLElephantPhase", "County", "${!county}", "Status", "SCHEDULED", {"label": "SCHEDULED", "color": "#1f77b4"}],
+                  ["...", "IN_PROGRESS", {"label": "IN_PROGRESS", "color": "#ff7f0e"}],
+                  ["...", "SUCCEEDED", {"label": "SUCCEEDED", "color": "#2ca02c"}],
+                  ["...", "FAILED", {"label": "FAILED", "color": "#d62728"}]
+                ]
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 22,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "Hash Phase",
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "stat": "Sum",
+                "period": 300,
+                "metrics": [
+                  ["Elephant/Workflow", "HashElephantPhase", "County", "${!county}", "Status", "SCHEDULED", {"label": "SCHEDULED", "color": "#1f77b4"}],
+                  ["...", "IN_PROGRESS", {"label": "IN_PROGRESS", "color": "#ff7f0e"}],
+                  ["...", "SUCCEEDED", {"label": "SUCCEEDED", "color": "#2ca02c"}],
+                  ["...", "FAILED", {"label": "FAILED", "color": "#d62728"}]
+                ]
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12,
+              "y": 22,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "Upload Phase",
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "stat": "Sum",
+                "period": 300,
+                "metrics": [
+                  ["Elephant/Workflow", "UploadElephantPhase", "County", "${!county}", "Status", "SCHEDULED", {"label": "SCHEDULED", "color": "#1f77b4"}],
+                  ["...", "IN_PROGRESS", {"label": "IN_PROGRESS", "color": "#ff7f0e"}],
+                  ["...", "SUCCEEDED", {"label": "SUCCEEDED", "color": "#2ca02c"}],
+                  ["...", "FAILED", {"label": "FAILED", "color": "#d62728"}]
+                ]
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 28,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "Submit Phase",
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "stat": "Sum",
+                "period": 300,
+                "metrics": [
+                  ["Elephant/Workflow", "SubmitElephantPhase", "County", "${!county}", "Status", "SCHEDULED", {"label": "SCHEDULED", "color": "#1f77b4"}],
+                  ["...", "IN_PROGRESS", {"label": "IN_PROGRESS", "color": "#ff7f0e"}],
+                  ["...", "SUCCEEDED", {"label": "SUCCEEDED", "color": "#2ca02c"}],
+                  ["...", "FAILED", {"label": "FAILED", "color": "#d62728"}]
+                ]
               }
             }
           ]
