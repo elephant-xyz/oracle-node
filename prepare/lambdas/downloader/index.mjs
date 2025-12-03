@@ -23,6 +23,21 @@ import { prepare } from "@elephant-xyz/cli/lib";
 import { networkInterfaces } from "os";
 import AdmZip from "adm-zip";
 
+/**
+ * Custom error class for Prepare errors with error codes
+ */
+class PrepareError extends Error {
+  /**
+   * @param {string} code - Error code (e.g., "01003")
+   * @param {string} message - Error message
+   */
+  constructor(code, message) {
+    super(message);
+    this.name = "PrepareError";
+    this.code = code;
+  }
+}
+
 const RE_S3PATH = /^s3:\/\/([^/]+)\/(.*)$/i;
 const sfnClient = new SFNClient({});
 const eventBridgeClient = new EventBridgeClient({});
@@ -275,7 +290,8 @@ function parseCSV(csvContent) {
 /**
  * Reads configuration S3 URI from input.csv in the zip file
  * @param {AdmZip} zip - AdmZip instance of the input zip
- * @returns {string | null} Configuration S3 URI or null if not found
+ * @returns {string | null} Configuration S3 URI or null if not found (no config column)
+ * @throws {PrepareError} If input.csv cannot be read or parsed
  */
 function getConfigurationUriFromInputCsv(zip) {
   const zipEntries = zip.getEntries();
@@ -287,46 +303,50 @@ function getConfigurationUriFromInputCsv(zip) {
   );
 
   if (!inputCsvEntry) {
-    console.log("📄 input.csv not found in zip file");
-    return null;
+    console.error("📄 input.csv not found in zip file");
+    throw new PrepareError("01006", "input.csv not found in zip file");
   }
 
+  let csvContent;
   try {
-    const csvContent = zip.readAsText(inputCsvEntry);
-    const rows = parseCSV(csvContent);
-
-    if (rows.length === 0) {
-      console.log("📄 input.csv is empty or has no data rows");
-      return null;
-    }
-
-    // Get configuration column from first row (case-insensitive)
-    const firstRow = rows[0];
-    if (!firstRow) {
-      console.log("📄 No rows found in input.csv");
-      return null;
-    }
-    const configKey = Object.keys(firstRow).find(
-      (k) =>
-        k.toLowerCase() === "configuration" || k.toLowerCase() === "config",
-    );
-
-    if (configKey && firstRow[configKey] && firstRow[configKey].trim() !== "") {
-      const configUri = firstRow[configKey].trim();
-      console.log(`✅ Found configuration URI in input.csv: ${configUri}`);
-      return configUri;
-    }
-
-    console.log(
-      "📄 No 'configuration' column found in input.csv, using environment variables",
-    );
-    return null;
+    csvContent = zip.readAsText(inputCsvEntry);
   } catch (error) {
-    console.error(
-      `⚠️ Error reading input.csv: ${error instanceof Error ? error.message : String(error)}`,
-    );
-    return null;
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error(`⚠️ Error reading input.csv: ${errorMessage}`);
+    throw new PrepareError("01003", `Error reading input.csv: ${errorMessage}`);
   }
+
+  let rows;
+  try {
+    rows = parseCSV(csvContent);
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error(`⚠️ Error parsing input.csv: ${errorMessage}`);
+    throw new PrepareError("01004", `Error parsing input.csv: ${errorMessage}`);
+  }
+
+  if (rows.length === 0) {
+    console.error("📄 input.csv is empty or has no data rows");
+    throw new PrepareError("01005", "input.csv is empty or has no data rows");
+  }
+
+  // Get configuration column from first row (case-insensitive)
+  const firstRow = rows[0];
+  const configKey = Object.keys(firstRow).find(
+    (k) =>
+      k.toLowerCase() === "configuration" || k.toLowerCase() === "config",
+  );
+
+  if (configKey && firstRow[configKey] && firstRow[configKey].trim() !== "") {
+    const configUri = firstRow[configKey].trim();
+    console.log(`✅ Found configuration URI in input.csv: ${configUri}`);
+    return configUri;
+  }
+
+  console.log(
+    "📄 No 'configuration' column found in input.csv, using environment variables",
+  );
+  return null;
 }
 
 /**
@@ -1386,18 +1406,24 @@ export const handler = async (event) => {
       } catch (error) {
         const errorMessage =
           error instanceof Error ? error.message : String(error);
-        console.error(`❌ Prepare processing failed: ${errorMessage}`);
+        // Use error code from PrepareError if available, otherwise default to "01002"
+        const errorCode =
+          error instanceof PrepareError ? error.code : "01002";
+        console.error(
+          `❌ Prepare processing failed [${errorCode}]: ${errorMessage}`,
+        );
 
         // Send failure to Step Functions with taskToken in cause (JSON encoded)
         // State machine can extract taskToken from cause for EventBridge
         if (taskToken) {
           const causePayload = JSON.stringify({
             message: errorMessage,
+            errorCode: errorCode,
             taskToken: taskToken,
             county: county,
             input_s3_uri: messageBody?.input_s3_uri,
           });
-          await sendTaskFailure(taskToken, "01002", causePayload);
+          await sendTaskFailure(taskToken, errorCode, causePayload);
         }
       }
     }
