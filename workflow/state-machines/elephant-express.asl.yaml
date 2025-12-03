@@ -365,11 +365,12 @@ States:
               {%
                 [$states.input.svl.svlErrors ~> $map(function($e) {
                   {
-                    "code": "30001",
+                    "code": "30" & $e.error_hash,
                     "details": {
                       "error_message": $e.error_message,
                       "error_path": $e.error_path,
-                      "data_group_cid": $e.data_group_cid
+                      "data_group_cid": $e.data_group_cid,
+                      "error_hash": $e.error_hash
                     }
                   }
                 })]
@@ -399,7 +400,7 @@ States:
             step: SVL
             taskToken.$: $$.Task.Token
             errors:
-              - code: "30002"
+              - code: "31001"
                 details:
                   error.$: States.JsonToString($.svlError)
     ResultPath: $.resolutionResult

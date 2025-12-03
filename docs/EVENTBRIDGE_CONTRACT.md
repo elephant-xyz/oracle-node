@@ -57,14 +57,28 @@ Emitted on workflow step status changes (success, failure, or parked).
   - Multiple entries in the `errors` array with the **same** `code` are treated as **multiple occurrences of the same error** by the error handler in `workflow-events/lambdas/event-handler/index.ts`.
 - **Format**:
   - Must be a **non-empty string**.
-  - Recommended pattern: a short prefix for the high-level error family followed by a more specific suffix (for example: `01012`, `01013`).
-  - The system derives an internal _error type_ from the **first two characters** of the code for aggregation (for example, codes `01012` and `01013` are both treated as type `01` for metrics).
+  - Pattern: `<phase_prefix><error_identifier>` where:
+    - `<phase_prefix>` is a 2-digit number identifying the workflow phase
+    - `<error_identifier>` is either a static suffix (e.g., `001`) or a dynamic hash
+  - The system derives an internal _error type_ from the **first two characters** of the code for aggregation (for example, codes `20001` and `20002` are both treated as type `20` for metrics).
 - **Stability**:
   - Once defined, a given `code` should **always represent the same error meaning** across time and across executions.
   - Do **not** reuse a code for a different error condition.
 - **Usage in events**:
   - Producers may emit **zero, one, or many** error objects per event.
   - If the same error happens multiple times in a single execution, emit multiple entries with the same `code` (and appropriate `details`); the event handler will **aggregate the occurrences**.
+
+### Error Code Reference
+
+| Code       | Phase     | Description                                                                                                                                                                               |
+| ---------- | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `20001`    | Transform | Generic transform step failure or exception                                                                                                                                               |
+| `30<hash>` | SVL       | Schema validation error. The `<hash>` is a SHA256 hash computed from `error_message#error_path#county`, uniquely identifying each distinct validation error. Example: `30a1b2c3d4e5f6...` |
+| `31001`    | SVL       | SVL runtime exception (non-validation failure)                                                                                                                                            |
+| `40001`    | Hash      | Generic hash step failure or exception                                                                                                                                                    |
+| `50001`    | Upload    | Generic upload step failure or exception                                                                                                                                                  |
+
+> **Note on SVL validation errors (code `30<hash>`)**: Each unique validation error (determined by the combination of error message, error path, and county) receives its own error code. This enables precise tracking and resolution of individual validation issues across executions. The `error_hash` is also included in the `details` object for reference.
 
 ### Phase Values
 
