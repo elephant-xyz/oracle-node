@@ -37,7 +37,9 @@ const eventBridgeClient = new EventBridgeClient({});
  * @returns {Promise<void>}
  */
 async function emitWorkflowEvent({ executionId, county, status, taskToken }) {
-  console.log(`📤 Emitting EventBridge event: status=${status}, county=${county}`);
+  console.log(
+    `📤 Emitting EventBridge event: status=${status}, county=${county}`,
+  );
   try {
     const detail = {
       executionId,
@@ -59,12 +61,12 @@ async function emitWorkflowEvent({ executionId, county, status, taskToken }) {
             Detail: JSON.stringify(detail),
           },
         ],
-      })
+      }),
     );
     console.log(`✅ EventBridge event emitted: ${status}`);
   } catch (error) {
     console.error(
-      `⚠️ Failed to emit EventBridge event: ${error instanceof Error ? error.message : String(error)}`
+      `⚠️ Failed to emit EventBridge event: ${error instanceof Error ? error.message : String(error)}`,
     );
     // Don't throw - EventBridge emission is non-critical
   }
@@ -83,12 +85,12 @@ async function sendTaskSuccess(taskToken, output) {
       new SendTaskSuccessCommand({
         taskToken,
         output: JSON.stringify(output),
-      })
+      }),
     );
     console.log(`✅ Task success sent`);
   } catch (error) {
     console.error(
-      `❌ Failed to send task success: ${error instanceof Error ? error.message : String(error)}`
+      `❌ Failed to send task success: ${error instanceof Error ? error.message : String(error)}`,
     );
     throw error;
   }
@@ -109,12 +111,12 @@ async function sendTaskFailure(taskToken, errorCode, cause) {
         taskToken,
         error: errorCode,
         cause: cause.substring(0, 256), // Max 256 chars
-      })
+      }),
     );
     console.log(`✅ Task failure sent`);
   } catch (error) {
     console.error(
-      `❌ Failed to send task failure: ${error instanceof Error ? error.message : String(error)}`
+      `❌ Failed to send task failure: ${error instanceof Error ? error.message : String(error)}`,
     );
     throw error;
   }
@@ -132,7 +134,9 @@ function extractCountyFromZip(zip) {
 
     // First, try to get county from input.csv
     const inputCsvEntry = zipEntries.find(
-      (entry) => entry.entryName === "input.csv" || entry.entryName.endsWith("/input.csv")
+      (entry) =>
+        entry.entryName === "input.csv" ||
+        entry.entryName.endsWith("/input.csv"),
     );
 
     if (inputCsvEntry) {
@@ -143,10 +147,14 @@ function extractCountyFromZip(zip) {
         const firstRow = rows[0];
         // Look for 'county' column (case-insensitive)
         const countyKey = Object.keys(firstRow).find(
-          k => k.toLowerCase() === 'county'
+          (k) => k.toLowerCase() === "county",
         );
 
-        if (countyKey && firstRow[countyKey] && firstRow[countyKey].trim() !== '') {
+        if (
+          countyKey &&
+          firstRow[countyKey] &&
+          firstRow[countyKey].trim() !== ""
+        ) {
           const county = firstRow[countyKey].trim();
           console.log(`✅ Found county in input.csv: ${county}`);
           return county;
@@ -156,20 +164,22 @@ function extractCountyFromZip(zip) {
 
     // Fallback: try unnormalized_address.json
     const addressEntry = zipEntries.find(
-      (entry) => entry.entryName === "unnormalized_address.json"
+      (entry) => entry.entryName === "unnormalized_address.json",
     );
 
     if (addressEntry) {
       const addressContent = zip.readAsText(addressEntry);
       const addressData = JSON.parse(addressContent);
       if (addressData.county_jurisdiction) {
-        console.log(`✅ Found county in unnormalized_address.json: ${addressData.county_jurisdiction}`);
+        console.log(
+          `✅ Found county in unnormalized_address.json: ${addressData.county_jurisdiction}`,
+        );
         return addressData.county_jurisdiction;
       }
     }
   } catch (error) {
     console.warn(
-      `⚠️ Could not extract county from zip: ${error instanceof Error ? error.message : String(error)}`
+      `⚠️ Could not extract county from zip: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
   return null;
@@ -209,7 +219,7 @@ function extractCountyFromZip(zip) {
  */
 function parseCSVLine(line) {
   const values = [];
-  let current = '';
+  let current = "";
   let inQuotes = false;
 
   for (let i = 0; i < line.length; i++) {
@@ -217,14 +227,14 @@ function parseCSVLine(line) {
 
     if (char === '"') {
       inQuotes = !inQuotes;
-    } else if (char === ',' && !inQuotes) {
-      values.push(current.trim().replace(/^"|"$/g, ''));
-      current = '';
+    } else if (char === "," && !inQuotes) {
+      values.push(current.trim().replace(/^"|"$/g, ""));
+      current = "";
     } else {
       current += char;
     }
   }
-  values.push(current.trim().replace(/^"|"$/g, ''));
+  values.push(current.trim().replace(/^"|"$/g, ""));
   return values;
 }
 
@@ -235,7 +245,7 @@ function parseCSVLine(line) {
  * @returns {Array<{[key: string]: string}>} Array of row objects
  */
 function parseCSV(csvContent) {
-  const lines = csvContent.trim().split('\n');
+  const lines = csvContent.trim().split("\n");
   if (lines.length < 2) {
     return [];
   }
@@ -247,7 +257,7 @@ function parseCSV(csvContent) {
     const values = parseCSVLine(lines[i]);
     const row = {};
     headers.forEach((header, index) => {
-      row[header] = values[index] || '';
+      row[header] = values[index] || "";
     });
     rows.push(row);
   }
@@ -265,7 +275,8 @@ function getConfigurationUriFromInputCsv(zip) {
 
   // Find input.csv in the zip
   const inputCsvEntry = zipEntries.find(
-    (entry) => entry.entryName === "input.csv" || entry.entryName.endsWith("/input.csv")
+    (entry) =>
+      entry.entryName === "input.csv" || entry.entryName.endsWith("/input.csv"),
   );
 
   if (!inputCsvEntry) {
@@ -285,19 +296,24 @@ function getConfigurationUriFromInputCsv(zip) {
     // Get configuration column from first row (case-insensitive)
     const firstRow = rows[0];
     const configKey = Object.keys(firstRow).find(
-      k => k.toLowerCase() === 'configuration' || k.toLowerCase() === 'config'
+      (k) =>
+        k.toLowerCase() === "configuration" || k.toLowerCase() === "config",
     );
 
-    if (configKey && firstRow[configKey] && firstRow[configKey].trim() !== '') {
+    if (configKey && firstRow[configKey] && firstRow[configKey].trim() !== "") {
       const configUri = firstRow[configKey].trim();
       console.log(`✅ Found configuration URI in input.csv: ${configUri}`);
       return configUri;
     }
 
-    console.log("📄 No 'configuration' column found in input.csv, using environment variables");
+    console.log(
+      "📄 No 'configuration' column found in input.csv, using environment variables",
+    );
     return null;
   } catch (error) {
-    console.error(`⚠️ Error reading input.csv: ${error instanceof Error ? error.message : String(error)}`);
+    console.error(
+      `⚠️ Error reading input.csv: ${error instanceof Error ? error.message : String(error)}`,
+    );
     return null;
   }
 }
@@ -320,7 +336,7 @@ async function downloadConfigurationFromS3(s3Client, configS3Uri) {
     console.log(`📥 Downloading configuration from s3://${bucket}/${key}`);
 
     const response = await s3Client.send(
-      new GetObjectCommand({ Bucket: bucket, Key: key })
+      new GetObjectCommand({ Bucket: bucket, Key: key }),
     );
 
     const configBytes = await response.Body?.transformToByteArray();
@@ -331,14 +347,23 @@ async function downloadConfigurationFromS3(s3Client, configS3Uri) {
     const configContent = new TextDecoder().decode(configBytes);
     const config = JSON.parse(configContent);
 
-    console.log(`✅ Configuration loaded from S3 (${Object.keys(config).length} keys):`);
+    console.log(
+      `✅ Configuration loaded from S3 (${Object.keys(config).length} keys):`,
+    );
     // Log keys (redact sensitive values)
     for (const configKey of Object.keys(config)) {
-      if (configKey.includes('KEY') || configKey.includes('JWT') || configKey.includes('TOKEN') || configKey.includes('PASSWORD') || configKey.includes('SECRET')) {
+      if (
+        configKey.includes("KEY") ||
+        configKey.includes("JWT") ||
+        configKey.includes("TOKEN") ||
+        configKey.includes("PASSWORD") ||
+        configKey.includes("SECRET")
+      ) {
         console.log(`   ${configKey}: ***REDACTED***`);
       } else {
         const value = config[configKey];
-        const displayValue = typeof value === 'object' ? JSON.stringify(value) : value;
+        const displayValue =
+          typeof value === "object" ? JSON.stringify(value) : value;
         console.log(`   ${configKey}: ${displayValue}`);
       }
     }
@@ -348,7 +373,9 @@ async function downloadConfigurationFromS3(s3Client, configS3Uri) {
     if (error instanceof Error && error.name === "NoSuchKey") {
       console.error(`❌ Configuration file not found: ${configS3Uri}`);
     } else {
-      console.error(`❌ Failed to download configuration: ${error instanceof Error ? error.message : String(error)}`);
+      console.error(
+        `❌ Failed to download configuration: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
     return null;
   }
@@ -365,20 +392,26 @@ async function downloadConfigurationFromS3(s3Client, configS3Uri) {
 function getConfigValue(baseKey, countyName, s3Config) {
   // Sanitize county name for key lookup (replace spaces with underscores)
   const sanitizedCounty = countyName ? countyName.replace(/ /g, "_") : null;
-  const countySpecificKey = sanitizedCounty ? `${baseKey}_${sanitizedCounty}` : null;
+  const countySpecificKey = sanitizedCounty
+    ? `${baseKey}_${sanitizedCounty}`
+    : null;
 
   // 1. Check S3 config county-specific
-  if (s3Config && countySpecificKey && s3Config[countySpecificKey] !== undefined) {
+  if (
+    s3Config &&
+    countySpecificKey &&
+    s3Config[countySpecificKey] !== undefined
+  ) {
     const value = s3Config[countySpecificKey];
     console.log(`  Using S3 config (county-specific): ${countySpecificKey}`);
-    return typeof value === 'object' ? JSON.stringify(value) : String(value);
+    return typeof value === "object" ? JSON.stringify(value) : String(value);
   }
 
   // 2. Check S3 config general
   if (s3Config && s3Config[baseKey] !== undefined) {
     const value = s3Config[baseKey];
     console.log(`  Using S3 config (general): ${baseKey}`);
-    return typeof value === 'object' ? JSON.stringify(value) : String(value);
+    return typeof value === "object" ? JSON.stringify(value) : String(value);
   }
 
   // 3. Check env var county-specific (backward compatibility)
@@ -773,13 +806,13 @@ async function processPrepare({
       }
     } catch (proxyError) {
       console.error(
-        `⚠️ Failed to get proxy from DynamoDB: ${proxyError instanceof Error ? proxyError.message : String(proxyError)}`
+        `⚠️ Failed to get proxy from DynamoDB: ${proxyError instanceof Error ? proxyError.message : String(proxyError)}`,
       );
       console.log("ℹ️ Proceeding without proxy");
     }
   } else {
     console.log(
-      "ℹ️ Proxy rotation table not configured, proceeding without proxy"
+      "ℹ️ Proxy rotation table not configured, proceeding without proxy",
     );
   }
 
@@ -793,7 +826,7 @@ async function processPrepare({
 
     const inputZip = path.join(tempDir, path.basename(key));
     const getResp = await s3.send(
-      new GetObjectCommand({ Bucket: bucket, Key: key })
+      new GetObjectCommand({ Bucket: bucket, Key: key }),
     );
     const inputBytes = await getResp.Body?.transformToByteArray();
     if (!inputBytes) {
@@ -803,10 +836,10 @@ async function processPrepare({
 
     const s3DownloadDuration = Date.now() - s3DownloadStart;
     console.log(
-      `✅ S3 download completed: ${s3DownloadDuration}ms (${(s3DownloadDuration / 1000).toFixed(2)}s)`
+      `✅ S3 download completed: ${s3DownloadDuration}ms (${(s3DownloadDuration / 1000).toFixed(2)}s)`,
     );
     console.log(
-      `📊 Downloaded ${inputBytes.length} bytes from s3://${bucket}/${key}`
+      `📊 Downloaded ${inputBytes.length} bytes from s3://${bucket}/${key}`,
     );
 
     // Extract county name from unnormalized_address.json
@@ -822,14 +855,16 @@ async function processPrepare({
       }
     } catch (error) {
       console.error(
-        `⚠️ Could not extract county information: ${error instanceof Error ? error.message : String(error)}`
+        `⚠️ Could not extract county information: ${error instanceof Error ? error.message : String(error)}`,
       );
       console.log("Continuing with general configuration...");
     }
 
     // Log that we have county info (EventBridge events are emitted by the state machine)
     if (executionId) {
-      console.log(`📋 Processing for execution: ${executionId}, county: ${countyName || "unknown"}`);
+      console.log(
+        `📋 Processing for execution: ${executionId}, county: ${countyName || "unknown"}`,
+      );
     }
 
     // Load configuration from S3 if specified in input.csv
@@ -842,16 +877,22 @@ async function processPrepare({
         console.log("📦 Loading configuration from S3...");
         s3Config = await downloadConfigurationFromS3(s3, configUri);
         if (s3Config) {
-          console.log("✅ S3 configuration loaded successfully - will prioritize over environment variables");
+          console.log(
+            "✅ S3 configuration loaded successfully - will prioritize over environment variables",
+          );
         } else {
-          console.log("⚠️ Failed to load S3 configuration, falling back to environment variables");
+          console.log(
+            "⚠️ Failed to load S3 configuration, falling back to environment variables",
+          );
         }
       } else {
-        console.log("ℹ️ No configuration URI in input.csv, using environment variables only");
+        console.log(
+          "ℹ️ No configuration URI in input.csv, using environment variables only",
+        );
       }
     } catch (configError) {
       console.error(
-        `⚠️ Error loading S3 configuration: ${configError instanceof Error ? configError.message : String(configError)}`
+        `⚠️ Error loading S3 configuration: ${configError instanceof Error ? configError.message : String(configError)}`,
       );
       console.log("Continuing with environment variables...");
     }
@@ -888,14 +929,14 @@ async function processPrepare({
 
         try {
           console.log(
-            `Checking for ${flowType} flow file: s3://${environmentBucket}/${s3Key}`
+            `Checking for ${flowType} flow file: s3://${environmentBucket}/${s3Key}`,
           );
 
           const response = await s3.send(
             new GetObjectCommand({
               Bucket: environmentBucket,
               Key: s3Key,
-            })
+            }),
           );
 
           const fileBytes = await response.Body?.transformToByteArray();
@@ -908,7 +949,7 @@ async function processPrepare({
           // @ts-ignore
           prepareOptions[optionKey] = filePath;
           console.log(
-            `✓ ${flowType} flow file downloaded and set for county ${countyName}: ${filePath}`
+            `✓ ${flowType} flow file downloaded and set for county ${countyName}: ${filePath}`,
           );
         } catch (downloadError) {
           if (
@@ -916,11 +957,11 @@ async function processPrepare({
             downloadError.name === "NoSuchKey"
           ) {
             console.log(
-              `No ${flowType} flow file found for county ${countyName}, continuing without it`
+              `No ${flowType} flow file found for county ${countyName}, continuing without it`,
             );
           } else {
             console.error(
-              `Failed to download ${flowType} flow file for county ${countyName}: ${downloadError instanceof Error ? downloadError.message : String(downloadError)}`
+              `Failed to download ${flowType} flow file for county ${countyName}: ${downloadError instanceof Error ? downloadError.message : String(downloadError)}`,
             );
           }
         }
@@ -947,16 +988,18 @@ async function processPrepare({
     ];
 
     // Determine useBrowser setting
-    const useBrowserEnv = getEnvWithCountyFallback("ELEPHANT_PREPARE_USE_BROWSER");
+    const useBrowserEnv = getEnvWithCountyFallback(
+      "ELEPHANT_PREPARE_USE_BROWSER",
+    );
     let useBrowser = true;
     if (useBrowserEnv !== undefined) {
       useBrowser = useBrowserEnv === "true";
       console.log(
-        `Setting useBrowser: ${useBrowser} (from environment variable)`
+        `Setting useBrowser: ${useBrowser} (from environment variable)`,
       );
     } else {
       console.log(
-        `Using default useBrowser: ${useBrowser} (no environment variable set)`
+        `Using default useBrowser: ${useBrowser} (no environment variable set)`,
       );
     }
 
@@ -972,7 +1015,7 @@ async function processPrepare({
     console.log("Checking environment variables for prepare flags:");
     if (countyName) {
       console.log(
-        `🏛️ Looking for county-specific configurations for: ${countyName}`
+        `🏛️ Looking for county-specific configurations for: ${countyName}`,
       );
     }
 
@@ -987,11 +1030,13 @@ async function processPrepare({
     }
 
     // Handle continue button selector
-    const continueButtonSelector = getEnvWithCountyFallback("ELEPHANT_PREPARE_CONTINUE_BUTTON");
+    const continueButtonSelector = getEnvWithCountyFallback(
+      "ELEPHANT_PREPARE_CONTINUE_BUTTON",
+    );
     if (continueButtonSelector && continueButtonSelector.trim() !== "") {
       prepareOptions.continueButtonSelector = continueButtonSelector;
       console.log(
-        `✓ Setting continueButtonSelector: ${continueButtonSelector}`
+        `✓ Setting continueButtonSelector: ${continueButtonSelector}`,
       );
     }
 
@@ -1001,24 +1046,28 @@ async function processPrepare({
       "browser",
       "browser-flows",
       "browser-flow.json",
-      "browserFlowFile"
+      "browserFlowFile",
     );
 
     await downloadFlowFile(
       "multi-request",
       "multi-request-flows",
       "multi-request-flow.json",
-      "multiRequestFlowFile"
+      "multiRequestFlowFile",
     );
 
     // Handle browser flow template configuration
-    const browserFlowTemplate = getEnvWithCountyFallback("ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE");
-    let browserFlowParameters = getEnvWithCountyFallback("ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS");
+    const browserFlowTemplate = getEnvWithCountyFallback(
+      "ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE",
+    );
+    let browserFlowParameters = getEnvWithCountyFallback(
+      "ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS",
+    );
 
     if (browserFlowTemplate && browserFlowTemplate.trim() !== "") {
       console.log("Browser flow template configuration detected:");
       console.log(
-        `✓ ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE='${browserFlowTemplate}'`
+        `✓ ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE='${browserFlowTemplate}'`,
       );
 
       if (browserFlowParameters && browserFlowParameters.trim() !== "") {
@@ -1029,16 +1078,20 @@ async function processPrepare({
 
           if (trimmedParams.startsWith("{") && trimmedParams.endsWith("}")) {
             parsedParams = JSON.parse(trimmedParams);
-            console.log(`✓ ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS detected as JSON format`);
+            console.log(
+              `✓ ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS detected as JSON format`,
+            );
           } else {
-            console.log(`✓ ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS detected as key:value format`);
+            console.log(
+              `✓ ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS detected as key:value format`,
+            );
             const pairs = browserFlowParameters.split(",");
 
             for (const pair of pairs) {
               const colonIndex = pair.indexOf(":");
               if (colonIndex === -1) {
                 throw new Error(
-                  `Invalid parameter format: "${pair}" - expected key:value`
+                  `Invalid parameter format: "${pair}" - expected key:value`,
                 );
               }
 
@@ -1067,28 +1120,30 @@ async function processPrepare({
           prepareOptions.browserFlowParameters = JSON.stringify(parsedParams);
           console.log(
             `✓ ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS parsed successfully:`,
-            JSON.stringify(parsedParams, null, 2)
+            JSON.stringify(parsedParams, null, 2),
           );
         } catch (parseError) {
           console.error(
-            `✗ Failed to parse ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS: ${parseError instanceof Error ? parseError.message : String(parseError)}`
+            `✗ Failed to parse ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS: ${parseError instanceof Error ? parseError.message : String(parseError)}`,
           );
           console.error(
-            `Invalid format: ${browserFlowParameters.substring(0, 100)}...`
+            `Invalid format: ${browserFlowParameters.substring(0, 100)}...`,
           );
-          console.error(`Expected format: JSON object or key1:value1,key2:value2`);
+          console.error(
+            `Expected format: JSON object or key1:value1,key2:value2`,
+          );
           console.warn(
-            "Continuing without browser flow configuration due to invalid format"
+            "Continuing without browser flow configuration due to invalid format",
           );
         }
       } else {
         console.log(
-          `✗ ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS not set or empty - browser flow template will not be used`
+          `✗ ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS not set or empty - browser flow template will not be used`,
         );
       }
     } else if (browserFlowParameters && browserFlowParameters.trim() !== "") {
       console.warn(
-        "⚠️ ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS is set but ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE is not - ignoring parameters"
+        "⚠️ ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS is set but ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE is not - ignoring parameters",
       );
     }
 
@@ -1097,7 +1152,7 @@ async function processPrepare({
     const prepareStart = Date.now();
     console.log(
       "Calling prepare() with these options:",
-      JSON.stringify(prepareOptions, null, 2)
+      JSON.stringify(prepareOptions, null, 2),
     );
 
     let prepareDuration;
@@ -1105,10 +1160,10 @@ async function processPrepare({
       await prepare(inputZip, outputZip, prepareOptions);
       prepareDuration = Date.now() - prepareStart;
       console.log(
-        `✅ Prepare function completed: ${prepareDuration}ms (${(prepareDuration / 1000).toFixed(2)}s)`
+        `✅ Prepare function completed: ${prepareDuration}ms (${(prepareDuration / 1000).toFixed(2)}s)`,
       );
       console.log(
-        `🔍 PERFORMANCE: Local=2s, Lambda=${(prepareDuration / 1000).toFixed(1)}s - ${prepareDuration > 3000 ? "⚠️ SLOW" : "✅ OK"}`
+        `🔍 PERFORMANCE: Local=2s, Lambda=${(prepareDuration / 1000).toFixed(1)}s - ${prepareDuration > 3000 ? "⚠️ SLOW" : "✅ OK"}`,
       );
 
       // Update proxy usage as successful
@@ -1117,7 +1172,7 @@ async function processPrepare({
           dynamoClient,
           proxyTableName,
           selectedProxy.proxyId,
-          false
+          false,
         );
       }
     } catch (prepareError) {
@@ -1129,14 +1184,14 @@ async function processPrepare({
           dynamoClient,
           proxyTableName,
           selectedProxy.proxyId,
-          true
+          true,
         );
       }
 
       // Re-throw with enhanced context
       /** @type {EnhancedError} */
       const enhancedError = new Error(
-        `Prepare function failed: ${prepareError instanceof Error ? prepareError.message : String(prepareError)}`
+        `Prepare function failed: ${prepareError instanceof Error ? prepareError.message : String(prepareError)}`,
       );
       enhancedError.originalError =
         prepareError instanceof Error ? prepareError : undefined;
@@ -1160,7 +1215,7 @@ async function processPrepare({
       }
     } catch (csvError) {
       console.warn(
-        `⚠️ Failed to add input.csv to output: ${csvError instanceof Error ? csvError.message : String(csvError)}`
+        `⚠️ Failed to add input.csv to output: ${csvError instanceof Error ? csvError.message : String(csvError)}`,
       );
     }
 
@@ -1191,34 +1246,34 @@ async function processPrepare({
         Bucket: outBucket,
         Key: outKey,
         Body: outputBody,
-      })
+      }),
     );
 
     const s3UploadDuration = Date.now() - s3UploadStart;
     console.log(
-      `✅ S3 upload completed: ${s3UploadDuration}ms (${(s3UploadDuration / 1000).toFixed(2)}s)`
+      `✅ S3 upload completed: ${s3UploadDuration}ms (${(s3UploadDuration / 1000).toFixed(2)}s)`,
     );
     console.log(
-      `📊 Uploaded ${outputBody.length} bytes to s3://${outBucket}/${outKey}`
+      `📊 Uploaded ${outputBody.length} bytes to s3://${outBucket}/${outKey}`,
     );
 
     // Total timing summary
     const totalDuration = Date.now() - startTime;
     console.log(`\n🎯 TIMING SUMMARY:`);
     console.log(
-      `   S3 Download: ${s3DownloadDuration}ms (${(s3DownloadDuration / 1000).toFixed(2)}s)`
+      `   S3 Download: ${s3DownloadDuration}ms (${(s3DownloadDuration / 1000).toFixed(2)}s)`,
     );
     console.log(
-      `   Prepare:     ${prepareDuration}ms (${(prepareDuration / 1000).toFixed(2)}s)`
+      `   Prepare:     ${prepareDuration}ms (${(prepareDuration / 1000).toFixed(2)}s)`,
     );
     console.log(
-      `   S3 Upload:   ${s3UploadDuration}ms (${(s3UploadDuration / 1000).toFixed(2)}s)`
+      `   S3 Upload:   ${s3UploadDuration}ms (${(s3UploadDuration / 1000).toFixed(2)}s)`,
     );
     console.log(
-      `   TOTAL:       ${totalDuration}ms (${(totalDuration / 1000).toFixed(2)}s)`
+      `   TOTAL:       ${totalDuration}ms (${(totalDuration / 1000).toFixed(2)}s)`,
     );
     console.log(
-      `🏁 Prepare processing completed at: ${new Date().toISOString()}\n`
+      `🏁 Prepare processing completed at: ${new Date().toISOString()}\n`,
     );
 
     return { output_s3_uri: `s3://${outBucket}/${outKey}`, county: countyName };
@@ -1228,7 +1283,7 @@ async function processPrepare({
       console.log(`🧹 Cleaned up temporary directory: ${tempDir}`);
     } catch (cleanupError) {
       console.error(
-        `⚠️ Failed to cleanup temp directory ${tempDir}: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`
+        `⚠️ Failed to cleanup temp directory ${tempDir}: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`,
       );
     }
   }
@@ -1245,7 +1300,10 @@ export const handler = async (event) => {
   console.log(`🚀 Lambda handler started at: ${new Date().toISOString()}`);
 
   // Detect if this is an SQS event
-  const isSQSEvent = event.Records && Array.isArray(event.Records) && event.Records[0]?.eventSource === "aws:sqs";
+  const isSQSEvent =
+    event.Records &&
+    Array.isArray(event.Records) &&
+    event.Records[0]?.eventSource === "aws:sqs";
 
   if (isSQSEvent) {
     // Process SQS messages (with task token pattern)
@@ -1292,11 +1350,11 @@ export const handler = async (event) => {
         await sendTaskSuccess(taskToken, {
           output_s3_uri: result.output_s3_uri,
           county,
-          taskToken,  // Include taskToken so state machine can pass to EventBridge
+          taskToken, // Include taskToken so state machine can pass to EventBridge
         });
-
       } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
+        const errorMessage =
+          error instanceof Error ? error.message : String(error);
         console.error(`❌ Prepare processing failed: ${errorMessage}`);
 
         // Send failure to Step Functions with taskToken in cause (JSON encoded)
@@ -1327,31 +1385,31 @@ export const handler = async (event) => {
     console.log(`🔍 Lambda Instance Info:`);
     console.log(`   Function: ${ipInfo.lambdaFunction}`);
     console.log(
-      `   Version: ${process.env.AWS_LAMBDA_FUNCTION_VERSION || "unknown"}`
+      `   Version: ${process.env.AWS_LAMBDA_FUNCTION_VERSION || "unknown"}`,
     );
     console.log(`   Region: ${ipInfo.awsRegion}`);
     console.log(
-      `   Memory: ${process.env.AWS_LAMBDA_FUNCTION_MEMORY_SIZE || "unknown"}MB`
+      `   Memory: ${process.env.AWS_LAMBDA_FUNCTION_MEMORY_SIZE || "unknown"}MB`,
     );
     console.log(`   Runtime: ${process.env.AWS_EXECUTION_ENV || "unknown"}`);
     console.log(`   Request ID: ${process.env.AWS_REQUEST_ID || "unknown"}`);
     console.log(
-      `   Local IPs: ${ipInfo.localIPs.length > 0 ? ipInfo.localIPs.join(", ") : "None found"}`
+      `   Local IPs: ${ipInfo.localIPs.length > 0 ? ipInfo.localIPs.join(", ") : "None found"}`,
     );
     console.log(`   Public IP: ${ipInfo.publicIP || "Not available"}`);
 
     if (ipInfo.publicIP) {
       console.log(
-        `🌍 Network: Lambda has outbound internet access via IP ${ipInfo.publicIP}`
+        `🌍 Network: Lambda has outbound internet access via IP ${ipInfo.publicIP}`,
       );
     } else {
       console.log(
-        `🚫 Network: No public IP detected (may be VPC-only or blocked)`
+        `🚫 Network: No public IP detected (may be VPC-only or blocked)`,
       );
     }
   } catch (error) {
     console.log(
-      `⚠️ Could not get IP information: ${error instanceof Error ? error.message : String(error)}`
+      `⚠️ Could not get IP information: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
 
