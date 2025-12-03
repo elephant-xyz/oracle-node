@@ -121,6 +121,7 @@ Resources:
           WORKFLOW_ERRORS_TABLE_NAME: !Ref WorkflowErrorsTable
       Policies:
         - AWSLambdaBasicExecutionRole
+        - CloudWatchPutMetricPolicy: {}
         - DynamoDBCrudPolicy:
             TableName: !Ref WorkflowErrorsTable
       Events:
@@ -186,6 +187,268 @@ Resources:
         Sourcemap: true
         LogLevel: info
 
+  # CloudWatch Dashboard Widget Lambda Functions
+  DashboardExecutionsWidgetFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${EnvironmentName}-dashboard-executions-widget"
+      Runtime: nodejs22.x
+      Architectures:
+        - arm64
+      Handler: index.handler
+      CodeUri: lambdas/dashboard-executions-widget
+      Layers:
+        - !Ref SharedLayer
+      Description: "CloudWatch custom widget displaying executions with most errors"
+      Environment:
+        Variables:
+          WORKFLOW_ERRORS_TABLE_NAME: !Ref WorkflowErrorsTable
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - DynamoDBReadPolicy:
+            TableName: !Ref WorkflowErrorsTable
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Format: esm
+        OutExtension:
+          - .js=.mjs
+        External:
+          - "@aws-sdk/*"
+          - "@smithy/*"
+          - "shared"
+        Minify: true
+        Target: es2022
+        EntryPoints:
+          - index.ts
+        Sourcemap: true
+        LogLevel: info
+
+  DashboardErrorsWidgetFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${EnvironmentName}-dashboard-errors-widget"
+      Runtime: nodejs22.x
+      Architectures:
+        - arm64
+      Handler: index.handler
+      CodeUri: lambdas/dashboard-errors-widget
+      Layers:
+        - !Ref SharedLayer
+      Description: "CloudWatch custom widget displaying errors with most occurrences"
+      Environment:
+        Variables:
+          WORKFLOW_ERRORS_TABLE_NAME: !Ref WorkflowErrorsTable
+          AWS_ACCOUNT_ID: !Ref AWS::AccountId
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - DynamoDBReadPolicy:
+            TableName: !Ref WorkflowErrorsTable
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Format: esm
+        OutExtension:
+          - .js=.mjs
+        External:
+          - "@aws-sdk/*"
+          - "@smithy/*"
+          - "shared"
+        Minify: true
+        Target: es2022
+        EntryPoints:
+          - index.ts
+        Sourcemap: true
+        LogLevel: info
+
+  # CloudWatch Dashboard with custom widgets for workflow errors
+  WorkflowErrorsDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: elephant-oracle-node-dashboard
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+            {
+              "type": "custom",
+              "x": 0,
+              "y": 0,
+              "width": 12,
+              "height": 10,
+              "properties": {
+                "title": "Executions with Most Errors",
+                "endpoint": "${DashboardExecutionsWidgetFunction.Arn}",
+                "updateOn": {
+                  "refresh": true,
+                  "resize": true
+                },
+                "params": {
+                  "limit": 20
+                }
+              }
+            },
+            {
+              "type": "custom",
+              "x": 12,
+              "y": 0,
+              "width": 12,
+              "height": 10,
+              "properties": {
+                "title": "Errors with Most Occurrences",
+                "endpoint": "${DashboardErrorsWidgetFunction.Arn}",
+                "updateOn": {
+                  "refresh": true,
+                  "resize": true
+                },
+                "params": {
+                  "errorType": "",
+                  "limit": 20
+                }
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 10,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "Prepare Phase",
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "period": 300,
+                "metrics": [
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"PrepareElephantPhase\" Status=\"SCHEDULED\"', 'Sum', 300))", "label": "SCHEDULED", "id": "prep_sched", "color": "#1f77b4"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"PrepareElephantPhase\" Status=\"IN_PROGRESS\"', 'Sum', 300))", "label": "IN_PROGRESS", "id": "prep_prog", "color": "#ff7f0e"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"PrepareElephantPhase\" Status=\"SUCCEEDED\"', 'Sum', 300))", "label": "SUCCEEDED", "id": "prep_succ", "color": "#2ca02c"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"PrepareElephantPhase\" Status=\"FAILED\"', 'Sum', 300))", "label": "FAILED", "id": "prep_fail", "color": "#d62728"}]
+                ]
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12,
+              "y": 10,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "Transform Phase",
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "period": 300,
+                "metrics": [
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"TransformElephantPhase\" Status=\"SCHEDULED\"', 'Sum', 300))", "label": "SCHEDULED", "id": "trans_sched", "color": "#1f77b4"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"TransformElephantPhase\" Status=\"IN_PROGRESS\"', 'Sum', 300))", "label": "IN_PROGRESS", "id": "trans_prog", "color": "#ff7f0e"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"TransformElephantPhase\" Status=\"SUCCEEDED\"', 'Sum', 300))", "label": "SUCCEEDED", "id": "trans_succ", "color": "#2ca02c"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"TransformElephantPhase\" Status=\"FAILED\"', 'Sum', 300))", "label": "FAILED", "id": "trans_fail", "color": "#d62728"}]
+                ]
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 16,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "SVL Phase",
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "period": 300,
+                "metrics": [
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"SVLElephantPhase\" Status=\"SCHEDULED\"', 'Sum', 300))", "label": "SCHEDULED", "id": "svl_sched", "color": "#1f77b4"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"SVLElephantPhase\" Status=\"IN_PROGRESS\"', 'Sum', 300))", "label": "IN_PROGRESS", "id": "svl_prog", "color": "#ff7f0e"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"SVLElephantPhase\" Status=\"SUCCEEDED\"', 'Sum', 300))", "label": "SUCCEEDED", "id": "svl_succ", "color": "#2ca02c"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"SVLElephantPhase\" Status=\"FAILED\"', 'Sum', 300))", "label": "FAILED", "id": "svl_fail", "color": "#d62728"}]
+                ]
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12,
+              "y": 16,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "MVL Phase",
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "period": 300,
+                "metrics": [
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"MVLElephantPhase\" Status=\"SCHEDULED\"', 'Sum', 300))", "label": "SCHEDULED", "id": "mvl_sched", "color": "#1f77b4"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"MVLElephantPhase\" Status=\"IN_PROGRESS\"', 'Sum', 300))", "label": "IN_PROGRESS", "id": "mvl_prog", "color": "#ff7f0e"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"MVLElephantPhase\" Status=\"SUCCEEDED\"', 'Sum', 300))", "label": "SUCCEEDED", "id": "mvl_succ", "color": "#2ca02c"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"MVLElephantPhase\" Status=\"FAILED\"', 'Sum', 300))", "label": "FAILED", "id": "mvl_fail", "color": "#d62728"}]
+                ]
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 22,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "Hash Phase",
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "period": 300,
+                "metrics": [
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"HashElephantPhase\" Status=\"SCHEDULED\"', 'Sum', 300))", "label": "SCHEDULED", "id": "hash_sched", "color": "#1f77b4"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"HashElephantPhase\" Status=\"IN_PROGRESS\"', 'Sum', 300))", "label": "IN_PROGRESS", "id": "hash_prog", "color": "#ff7f0e"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"HashElephantPhase\" Status=\"SUCCEEDED\"', 'Sum', 300))", "label": "SUCCEEDED", "id": "hash_succ", "color": "#2ca02c"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"HashElephantPhase\" Status=\"FAILED\"', 'Sum', 300))", "label": "FAILED", "id": "hash_fail", "color": "#d62728"}]
+                ]
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12,
+              "y": 22,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "Upload Phase",
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "period": 300,
+                "metrics": [
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"UploadElephantPhase\" Status=\"SCHEDULED\"', 'Sum', 300))", "label": "SCHEDULED", "id": "upload_sched", "color": "#1f77b4"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"UploadElephantPhase\" Status=\"IN_PROGRESS\"', 'Sum', 300))", "label": "IN_PROGRESS", "id": "upload_prog", "color": "#ff7f0e"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"UploadElephantPhase\" Status=\"SUCCEEDED\"', 'Sum', 300))", "label": "SUCCEEDED", "id": "upload_succ", "color": "#2ca02c"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"UploadElephantPhase\" Status=\"FAILED\"', 'Sum', 300))", "label": "FAILED", "id": "upload_fail", "color": "#d62728"}]
+                ]
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 28,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "Submit Phase",
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "period": 300,
+                "metrics": [
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"SubmitElephantPhase\" Status=\"SCHEDULED\"', 'Sum', 300))", "label": "SCHEDULED", "id": "submit_sched", "color": "#1f77b4"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"SubmitElephantPhase\" Status=\"IN_PROGRESS\"', 'Sum', 300))", "label": "IN_PROGRESS", "id": "submit_prog", "color": "#ff7f0e"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"SubmitElephantPhase\" Status=\"SUCCEEDED\"', 'Sum', 300))", "label": "SUCCEEDED", "id": "submit_succ", "color": "#2ca02c"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"SubmitElephantPhase\" Status=\"FAILED\"', 'Sum', 300))", "label": "FAILED", "id": "submit_fail", "color": "#d62728"}]
+                ]
+              }
+            }
+          ]
+        }
+
 Outputs:
   WorkflowEventHandlerFunctionName:
     Description: Name of the workflow event handler Lambda function
@@ -208,3 +471,18 @@ Outputs:
   GetExecutionFunctionArn:
     Description: ARN of the get execution Lambda function
     Value: !GetAtt GetExecutionFunction.Arn
+  DashboardExecutionsWidgetFunctionName:
+    Description: Name of the dashboard executions widget Lambda function
+    Value: !Ref DashboardExecutionsWidgetFunction
+  DashboardExecutionsWidgetFunctionArn:
+    Description: ARN of the dashboard executions widget Lambda function
+    Value: !GetAtt DashboardExecutionsWidgetFunction.Arn
+  DashboardErrorsWidgetFunctionName:
+    Description: Name of the dashboard errors widget Lambda function
+    Value: !Ref DashboardErrorsWidgetFunction
+  DashboardErrorsWidgetFunctionArn:
+    Description: ARN of the dashboard errors widget Lambda function
+    Value: !GetAtt DashboardErrorsWidgetFunction.Arn
+  WorkflowErrorsDashboardName:
+    Description: Name of the CloudWatch dashboard for workflow errors
+    Value: !Ref WorkflowErrorsDashboard
