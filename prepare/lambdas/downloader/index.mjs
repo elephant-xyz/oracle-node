@@ -1396,6 +1396,16 @@ export const handler = async (event) => {
             message: truncatedMessage,
           });
           await sendTaskFailure(taskToken, errorCode, causePayload);
+        } else {
+          // No taskToken - can't notify Step Functions
+          // Re-throw to trigger SQS retry/DLQ
+          console.error(
+            `❌ Cannot send task failure - no taskToken available [01020]. SQS will retry.`,
+          );
+          throw new PrepareError(
+            "01020",
+            `Cannot notify Step Functions - no taskToken: ${errorMessage}`,
+          );
         }
       }
     }
