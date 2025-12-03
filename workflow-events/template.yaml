@@ -186,6 +186,127 @@ Resources:
         Sourcemap: true
         LogLevel: info
 
+  # CloudWatch Dashboard Widget Lambda Functions
+  DashboardExecutionsWidgetFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${EnvironmentName}-dashboard-executions-widget"
+      Runtime: nodejs22.x
+      Architectures:
+        - arm64
+      Handler: index.handler
+      CodeUri: lambdas/dashboard-executions-widget
+      Layers:
+        - !Ref SharedLayer
+      Description: "CloudWatch custom widget displaying executions with most errors"
+      Environment:
+        Variables:
+          WORKFLOW_ERRORS_TABLE_NAME: !Ref WorkflowErrorsTable
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - DynamoDBReadPolicy:
+            TableName: !Ref WorkflowErrorsTable
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Format: esm
+        OutExtension:
+          - .js=.mjs
+        External:
+          - "@aws-sdk/*"
+          - "@smithy/*"
+          - "shared"
+        Minify: true
+        Target: es2022
+        EntryPoints:
+          - index.ts
+        Sourcemap: true
+        LogLevel: info
+
+  DashboardErrorsWidgetFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${EnvironmentName}-dashboard-errors-widget"
+      Runtime: nodejs22.x
+      Architectures:
+        - arm64
+      Handler: index.handler
+      CodeUri: lambdas/dashboard-errors-widget
+      Layers:
+        - !Ref SharedLayer
+      Description: "CloudWatch custom widget displaying errors with most occurrences"
+      Environment:
+        Variables:
+          WORKFLOW_ERRORS_TABLE_NAME: !Ref WorkflowErrorsTable
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - DynamoDBReadPolicy:
+            TableName: !Ref WorkflowErrorsTable
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Format: esm
+        OutExtension:
+          - .js=.mjs
+        External:
+          - "@aws-sdk/*"
+          - "@smithy/*"
+          - "shared"
+        Minify: true
+        Target: es2022
+        EntryPoints:
+          - index.ts
+        Sourcemap: true
+        LogLevel: info
+
+  # CloudWatch Dashboard with custom widgets for workflow errors
+  WorkflowErrorsDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Sub "${EnvironmentName}-workflow-errors"
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+            {
+              "type": "custom",
+              "x": 0,
+              "y": 0,
+              "width": 12,
+              "height": 10,
+              "properties": {
+                "title": "Executions with Most Errors",
+                "endpoint": "${DashboardExecutionsWidgetFunction.Arn}",
+                "updateOn": {
+                  "refresh": true,
+                  "resize": true
+                },
+                "params": {
+                  "limit": 20
+                }
+              }
+            },
+            {
+              "type": "custom",
+              "x": 12,
+              "y": 0,
+              "width": 12,
+              "height": 10,
+              "properties": {
+                "title": "Errors with Most Occurrences",
+                "endpoint": "${DashboardErrorsWidgetFunction.Arn}",
+                "updateOn": {
+                  "refresh": true,
+                  "resize": true
+                },
+                "params": {
+                  "errorType": "",
+                  "limit": 20
+                }
+              }
+            }
+          ]
+        }
+
 Outputs:
   WorkflowEventHandlerFunctionName:
     Description: Name of the workflow event handler Lambda function
@@ -208,3 +329,18 @@ Outputs:
   GetExecutionFunctionArn:
     Description: ARN of the get execution Lambda function
     Value: !GetAtt GetExecutionFunction.Arn
+  DashboardExecutionsWidgetFunctionName:
+    Description: Name of the dashboard executions widget Lambda function
+    Value: !Ref DashboardExecutionsWidgetFunction
+  DashboardExecutionsWidgetFunctionArn:
+    Description: ARN of the dashboard executions widget Lambda function
+    Value: !GetAtt DashboardExecutionsWidgetFunction.Arn
+  DashboardErrorsWidgetFunctionName:
+    Description: Name of the dashboard errors widget Lambda function
+    Value: !Ref DashboardErrorsWidgetFunction
+  DashboardErrorsWidgetFunctionArn:
+    Description: ARN of the dashboard errors widget Lambda function
+    Value: !GetAtt DashboardErrorsWidgetFunction.Arn
+  WorkflowErrorsDashboardName:
+    Description: Name of the CloudWatch dashboard for workflow errors
+    Value: !Ref WorkflowErrorsDashboard
