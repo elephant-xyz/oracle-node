@@ -32,6 +32,15 @@ export const handler = async (
       status: event.detail.status,
       step: event.detail.step,
     });
+    console.info(
+      createLogEntry("published_cloudwatch_metric", event, {
+        executionId: event.detail.executionId,
+        county: event.detail.county,
+        status: event.detail.status,
+        phase: event.detail.phase,
+        step: event.detail.step,
+      }),
+    );
 
     const errors = event.detail.errors;
     const hasErrors = errors && errors.length > 0;

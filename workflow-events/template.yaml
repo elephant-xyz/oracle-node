@@ -121,6 +121,7 @@ Resources:
           WORKFLOW_ERRORS_TABLE_NAME: !Ref WorkflowErrorsTable
       Policies:
         - AWSLambdaBasicExecutionRole
+        - CloudWatchPutMetricPolicy: {}
         - DynamoDBCrudPolicy:
             TableName: !Ref WorkflowErrorsTable
       Events:
