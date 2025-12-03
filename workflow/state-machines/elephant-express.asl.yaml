@@ -588,11 +588,11 @@ States:
             phase: Upload
             step: Upload
     ResultPath: $.eventResult
-    Next: QueueForTheSubmit
+    Next: EmitSubmitScheduled
     Catch:
       - ErrorEquals: [States.ALL]
         ResultPath: $.eventError
-        Next: QueueForTheSubmit
+        Next: EmitSubmitScheduled
 
   WaitForUploadResolution:
     Type: Task
@@ -622,17 +622,477 @@ States:
         ResultPath: $.uploadError
         Next: WaitForUploadResolution
 
-  # === QUEUE FOR SUBMIT ===
+  # === SUBMIT PHASE ===
 
-  QueueForTheSubmit:
+  EmitSubmitScheduled:
     Type: Task
-    Resource: arn:aws:states:::sqs:sendMessage
-    Comment: "Queue transaction items for blockchain submission"
+    Resource: arn:aws:states:::events:putEvents
+    Comment: "Emit SCHEDULED event for Submit phase"
+    Parameters:
+      Entries:
+        - Source: elephant.workflow
+          DetailType: WorkflowEvent
+          Detail:
+            executionId.$: $.executionId
+            county.$: $.pre.county_name
+            status: SCHEDULED
+            phase: Submit
+            step: Submit
+    ResultPath: $.eventResult
+    Next: EmitGasPriceCheckScheduled
+    Catch:
+      - ErrorEquals: [States.ALL]
+        ResultPath: $.eventError
+        Next: EmitGasPriceCheckScheduled
+
+  # === GAS PRICE CHECK STEP ===
+
+  EmitGasPriceCheckScheduled:
+    Type: Task
+    Resource: arn:aws:states:::events:putEvents
+    Comment: "Emit SCHEDULED event for Gas Price Check step"
+    Parameters:
+      Entries:
+        - Source: elephant.workflow
+          DetailType: WorkflowEvent
+          Detail:
+            executionId.$: $.executionId
+            county.$: $.pre.county_name
+            status: SCHEDULED
+            phase: Submit
+            step: CheckGasPrice
+    ResultPath: $.eventResult
+    Next: CheckGasPrice
+    Catch:
+      - ErrorEquals: [States.ALL]
+        ResultPath: $.eventError
+        Next: CheckGasPrice
+
+  CheckGasPrice:
+    Type: Task
+    Resource: arn:aws:states:::sqs:sendMessage.waitForTaskToken
+    Comment: "Check gas price before submitting to blockchain"
+    Parameters:
+      QueueUrl: ${GasPriceCheckerSqsQueueUrl}
+      MessageBody: "{}"
+      MessageAttributes:
+        TaskToken:
+          DataType: String
+          StringValue.$: $$.Task.Token
+        ExecutionArn:
+          DataType: String
+          StringValue.$: $$.Execution.Id
+        County:
+          DataType: String
+          StringValue.$: $.pre.county_name
+        DataGroupLabel:
+          DataType: String
+          StringValue: "County"
+    TimeoutSeconds: 900
+    ResultSelector:
+      taskToken.$: $$.Task.Token
+      result.$: $
+    ResultPath: $.gasPriceCheck
+    Next: EmitGasPriceCheckSucceeded
+    Retry:
+      - ErrorEquals:
+          - States.TaskFailed
+          - States.Timeout
+        IntervalSeconds: 2
+        MaxAttempts: 2
+        BackoffRate: 2
+    Catch:
+      - ErrorEquals: [States.ALL]
+        ResultSelector:
+          taskToken.$: $$.Task.Token
+          error.$: $
+        ResultPath: $.gasPriceError
+        Next: EmitGasPriceCheckFailed
+
+  EmitGasPriceCheckSucceeded:
+    Type: Task
+    Resource: arn:aws:states:::events:putEvents
+    Comment: "Emit SUCCEEDED event for Gas Price Check step"
+    Parameters:
+      Entries:
+        - Source: elephant.workflow
+          DetailType: WorkflowEvent
+          Detail:
+            executionId.$: $.executionId
+            county.$: $.pre.county_name
+            status: SUCCEEDED
+            phase: Submit
+            step: CheckGasPrice
+    ResultPath: $.eventResult
+    Next: EmitSubmitToBlockchainScheduled
+    Catch:
+      - ErrorEquals: [States.ALL]
+        ResultPath: $.eventError
+        Next: EmitSubmitToBlockchainScheduled
+
+  EmitGasPriceCheckFailed:
+    Type: Task
+    Resource: arn:aws:states:::events:putEvents
+    Comment: "Emit FAILED event for Gas Price Check step"
+    Parameters:
+      Entries:
+        - Source: elephant.workflow
+          DetailType: WorkflowEvent
+          Detail:
+            executionId.$: $.executionId
+            county.$: $.pre.county_name
+            status: FAILED
+            phase: Submit
+            step: CheckGasPrice
+            errors:
+              - code: "60001"
+                details:
+                  error.$: States.JsonToString($.gasPriceError)
+    ResultPath: $.eventResult
+    Next: WaitForGasPriceCheckResolution
+    Catch:
+      - ErrorEquals: [States.ALL]
+        ResultPath: $.eventError
+        Next: WaitForGasPriceCheckResolution
+
+  WaitForGasPriceCheckResolution:
+    Type: Task
+    Resource: arn:aws:states:::events:putEvents.waitForTaskToken
+    Comment: "Emit FAILED event and wait for external resolution - retry target is CheckGasPrice"
+    HeartbeatSeconds: 2592000 # 30 days
+    Parameters:
+      Entries:
+        - Source: elephant.workflow
+          DetailType: WorkflowEvent
+          Detail:
+            executionId.$: $.executionId
+            county.$: $.pre.county_name
+            status: FAILED
+            phase: Submit
+            step: CheckGasPrice
+            taskToken.$: $$.Task.Token
+            errors:
+              - code: "60001"
+                details:
+                  error.$: States.JsonToString($.gasPriceError)
+    ResultPath: $.resolutionResult
+    Next: CheckGasPrice
+    Catch:
+      - ErrorEquals: [States.ALL]
+        Comment: "Resolution failed - stay parked and wait again"
+        ResultPath: $.gasPriceError
+        Next: WaitForGasPriceCheckResolution
+
+  # === SUBMIT TO BLOCKCHAIN STEP ===
+
+  EmitSubmitToBlockchainScheduled:
+    Type: Task
+    Resource: arn:aws:states:::events:putEvents
+    Comment: "Emit SCHEDULED event for Submit to Blockchain step"
+    Parameters:
+      Entries:
+        - Source: elephant.workflow
+          DetailType: WorkflowEvent
+          Detail:
+            executionId.$: $.executionId
+            county.$: $.pre.county_name
+            status: SCHEDULED
+            phase: Submit
+            step: SubmitToBlockchain
+    ResultPath: $.eventResult
+    Next: SubmitToBlockchain
+    Catch:
+      - ErrorEquals: [States.ALL]
+        ResultPath: $.eventError
+        Next: SubmitToBlockchain
+
+  SubmitToBlockchain:
+    Type: Task
+    Resource: arn:aws:states:::sqs:sendMessage.waitForTaskToken
+    Comment: "Submit transaction items to blockchain"
     Parameters:
       QueueUrl: ${TransactionsSqsQueueUrl}
       MessageBody.$: States.JsonToString($.hash.transactionItems)
-    ResultPath: null
-    End: true
+      MessageAttributes:
+        TaskToken:
+          DataType: String
+          StringValue.$: $$.Task.Token
+        ExecutionArn:
+          DataType: String
+          StringValue.$: $$.Execution.Id
+        County:
+          DataType: String
+          StringValue.$: $.pre.county_name
+        DataGroupLabel:
+          DataType: String
+          StringValue: "County"
+    TimeoutSeconds: 600
+    ResultSelector:
+      taskToken.$: $$.Task.Token
+      result.$: $
+    ResultPath: $.submit
+    Next: EmitSubmitSucceeded
+    Retry:
+      - ErrorEquals:
+          - States.TaskFailed
+          - States.Timeout
+        IntervalSeconds: 2
+        MaxAttempts: 2
+        BackoffRate: 2
+    Catch:
+      - ErrorEquals: [States.ALL]
+        ResultSelector:
+          taskToken.$: $$.Task.Token
+          error.$: $
+        ResultPath: $.submitError
+        Next: EmitSubmitFailed
+
+  EmitSubmitSucceeded:
+    Type: Task
+    Resource: arn:aws:states:::events:putEvents
+    Comment: "Emit SUCCEEDED event for Submit to Blockchain step"
+    Parameters:
+      Entries:
+        - Source: elephant.workflow
+          DetailType: WorkflowEvent
+          Detail:
+            executionId.$: $.executionId
+            county.$: $.pre.county_name
+            status: SUCCEEDED
+            phase: Submit
+            step: SubmitToBlockchain
+    ResultPath: $.eventResult
+    Next: ExtractTransactionHash
+    Catch:
+      - ErrorEquals: [States.ALL]
+        ResultPath: $.eventError
+        Next: ExtractTransactionHash
+
+  EmitSubmitFailed:
+    Type: Task
+    Resource: arn:aws:states:::events:putEvents
+    Comment: "Emit FAILED event for Submit to Blockchain step"
+    Parameters:
+      Entries:
+        - Source: elephant.workflow
+          DetailType: WorkflowEvent
+          Detail:
+            executionId.$: $.executionId
+            county.$: $.pre.county_name
+            status: FAILED
+            phase: Submit
+            step: SubmitToBlockchain
+            errors:
+              - code: "60002"
+                details:
+                  error.$: States.JsonToString($.submitError)
+    ResultPath: $.eventResult
+    Next: WaitForSubmitResolution
+    Catch:
+      - ErrorEquals: [States.ALL]
+        ResultPath: $.eventError
+        Next: WaitForSubmitResolution
+
+  WaitForSubmitResolution:
+    Type: Task
+    Resource: arn:aws:states:::events:putEvents.waitForTaskToken
+    Comment: "Emit FAILED event and wait for external resolution - retry target is SubmitToBlockchain"
+    HeartbeatSeconds: 2592000 # 30 days
+    Parameters:
+      Entries:
+        - Source: elephant.workflow
+          DetailType: WorkflowEvent
+          Detail:
+            executionId.$: $.executionId
+            county.$: $.pre.county_name
+            status: FAILED
+            phase: Submit
+            step: SubmitToBlockchain
+            taskToken.$: $$.Task.Token
+            errors:
+              - code: "60002"
+                details:
+                  error.$: States.JsonToString($.submitError)
+    ResultPath: $.resolutionResult
+    Next: SubmitToBlockchain
+    Catch:
+      - ErrorEquals: [States.ALL]
+        Comment: "Resolution failed - stay parked and wait again"
+        ResultPath: $.submitError
+        Next: WaitForSubmitResolution
+
+  # === TRANSACTION STATUS CHECK STEP ===
+
+  ExtractTransactionHash:
+    Type: Pass
+    Parameters:
+      submit.$: $.submit
+      hash.$: $.hash
+      executionId.$: $.executionId
+      county.$: $.pre.county_name
+      transactionHash.$: $.submit.result.submitResults[0].txHash
+      transactionItems.$: $.hash.transactionItems
+    ResultPath: $.transactionStatus
+    Next: CheckTransactionStatusIfHashExists
+
+  CheckTransactionStatusIfHashExists:
+    Type: Choice
+    Comment: "Only check transaction status if hash exists"
+    Choices:
+      - Variable: $.transactionStatus.transactionHash
+        IsPresent: true
+        Next: EmitTransactionStatusCheckScheduled
+    Default: WorkflowComplete
+
+  EmitTransactionStatusCheckScheduled:
+    Type: Task
+    Resource: arn:aws:states:::events:putEvents
+    Comment: "Emit SCHEDULED event for Transaction Status Check step"
+    Parameters:
+      Entries:
+        - Source: elephant.workflow
+          DetailType: WorkflowEvent
+          Detail:
+            executionId.$: $.executionId
+            county.$: $.pre.county_name
+            status: SCHEDULED
+            phase: Submit
+            step: CheckTransactionStatus
+    ResultPath: $.eventResult
+    Next: PrepareTransactionStatusCheckDetail
+    Catch:
+      - ErrorEquals: [States.ALL]
+        ResultPath: $.eventError
+        Next: PrepareTransactionStatusCheckDetail
+
+  PrepareTransactionStatusCheckDetail:
+    Type: Pass
+    Parameters:
+      transactionHash.$: $.transactionStatus.transactionHash
+      transactionItems.$: $.transactionStatus.transactionItems
+    ResultPath: $.transactionStatusCheckInput
+    Next: CheckTransactionStatus
+
+  CheckTransactionStatus:
+    Type: Task
+    Resource: arn:aws:states:::sqs:sendMessage.waitForTaskToken
+    Comment: "Check transaction status on blockchain"
+    Parameters:
+      QueueUrl: ${TransactionStatusCheckerSqsQueueUrl}
+      MessageBody.$: States.JsonToString($.transactionStatusCheckInput)
+      MessageAttributes:
+        TaskToken:
+          DataType: String
+          StringValue.$: $$.Task.Token
+        ExecutionArn:
+          DataType: String
+          StringValue.$: $$.Execution.Id
+        County:
+          DataType: String
+          StringValue.$: $.pre.county_name
+        DataGroupLabel:
+          DataType: String
+          StringValue: "County"
+        TransactionHash:
+          DataType: String
+          StringValue.$: $.transactionStatus.transactionHash
+    TimeoutSeconds: 900
+    ResultSelector:
+      taskToken.$: $$.Task.Token
+      result.$: $
+    ResultPath: $.transactionStatusCheck
+    Next: EmitTransactionStatusCheckSucceeded
+    Retry:
+      - ErrorEquals:
+          - States.TaskFailed
+          - States.Timeout
+        IntervalSeconds: 5
+        MaxAttempts: 2
+        BackoffRate: 2
+    Catch:
+      - ErrorEquals: [States.ALL]
+        ResultSelector:
+          taskToken.$: $$.Task.Token
+          error.$: $
+        ResultPath: $.transactionStatusError
+        Next: EmitTransactionStatusCheckFailed
+
+  EmitTransactionStatusCheckSucceeded:
+    Type: Task
+    Resource: arn:aws:states:::events:putEvents
+    Comment: "Emit SUCCEEDED event for Transaction Status Check step"
+    Parameters:
+      Entries:
+        - Source: elephant.workflow
+          DetailType: WorkflowEvent
+          Detail:
+            executionId.$: $.executionId
+            county.$: $.pre.county_name
+            status: SUCCEEDED
+            phase: Submit
+            step: CheckTransactionStatus
+    ResultPath: $.eventResult
+    Next: WorkflowComplete
+    Catch:
+      - ErrorEquals: [States.ALL]
+        ResultPath: $.eventError
+        Next: WorkflowComplete
+
+  EmitTransactionStatusCheckFailed:
+    Type: Task
+    Resource: arn:aws:states:::events:putEvents
+    Comment: "Emit FAILED event for Transaction Status Check step"
+    Parameters:
+      Entries:
+        - Source: elephant.workflow
+          DetailType: WorkflowEvent
+          Detail:
+            executionId.$: $.executionId
+            county.$: $.pre.county_name
+            status: FAILED
+            phase: Submit
+            step: CheckTransactionStatus
+            errors:
+              - code: "60003"
+                details:
+                  error.$: States.JsonToString($.transactionStatusError)
+    ResultPath: $.eventResult
+    Next: WaitForTransactionStatusCheckResolution
+    Catch:
+      - ErrorEquals: [States.ALL]
+        ResultPath: $.eventError
+        Next: WaitForTransactionStatusCheckResolution
+
+  WaitForTransactionStatusCheckResolution:
+    Type: Task
+    Resource: arn:aws:states:::events:putEvents.waitForTaskToken
+    Comment: "Emit FAILED event and wait for external resolution - retry target is CheckTransactionStatus"
+    HeartbeatSeconds: 2592000 # 30 days
+    Parameters:
+      Entries:
+        - Source: elephant.workflow
+          DetailType: WorkflowEvent
+          Detail:
+            executionId.$: $.executionId
+            county.$: $.pre.county_name
+            status: FAILED
+            phase: Submit
+            step: CheckTransactionStatus
+            taskToken.$: $$.Task.Token
+            errors:
+              - code: "60003"
+                details:
+                  error.$: States.JsonToString($.transactionStatusError)
+    ResultPath: $.resolutionResult
+    Next: CheckTransactionStatus
+    Catch:
+      - ErrorEquals: [States.ALL]
+        Comment: "Resolution failed - stay parked and wait again"
+        ResultPath: $.transactionStatusError
+        Next: WaitForTransactionStatusCheckResolution
+
+  WorkflowComplete:
+    Type: Succeed
 
   FailRuntime:
     Type: Fail
