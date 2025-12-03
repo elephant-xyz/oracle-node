@@ -92,7 +92,7 @@ describe("downloader lambda - EventBridge integration", () => {
       });
     });
 
-    it("should include taskToken in EventBridge event when provided", async () => {
+    it("should NOT include taskToken in EventBridge event (taskToken is for Step Functions callbacks only)", async () => {
       eventBridgeMock.on(PutEventsCommand).resolves({});
       sfnMock.on(SendTaskFailureCommand).resolves({});
 
@@ -122,13 +122,13 @@ describe("downloader lambda - EventBridge integration", () => {
         // Expected to fail
       }
 
-      // Verify the Detail JSON contains the taskToken
+      // Verify the Detail JSON does NOT contain taskToken
       const calls = eventBridgeMock.commandCalls(PutEventsCommand);
       expect(calls.length).toBeGreaterThan(0);
 
       const firstCall = calls[0];
       const detail = JSON.parse(firstCall.args[0].input.Entries[0].Detail);
-      expect(detail.taskToken).toBe(taskToken);
+      expect(detail.taskToken).toBeUndefined();
     });
 
     it("should include county in EventBridge event", async () => {
@@ -169,8 +169,8 @@ describe("downloader lambda - EventBridge integration", () => {
       expect(detail.step).toBe("Prepare");
     });
 
-    it("should not throw when EventBridge emission fails (non-critical)", async () => {
-      // EventBridge fails but handler should continue
+    it("should throw error with code 01019 when EventBridge emission fails", async () => {
+      // EventBridge fails - handler should throw and report via sendTaskFailure
       eventBridgeMock
         .on(PutEventsCommand)
         .rejects(new Error("EventBridge unavailable"));
@@ -195,14 +195,15 @@ describe("downloader lambda - EventBridge integration", () => {
         ],
       };
 
-      // Should not throw due to EventBridge failure
-      // Will still fail on S3, but that's expected
-      try {
-        await handler(sqsEvent);
-      } catch (e) {
-        // The error should NOT be about EventBridge
-        expect(e.message).not.toContain("EventBridge");
-      }
+      // Handler should catch EventBridge error and send task failure
+      await handler(sqsEvent);
+
+      // Verify SendTaskFailureCommand was called with error code 01019
+      expect(sfnMock).toHaveReceivedCommandWith(SendTaskFailureCommand, {
+        taskToken: "test-task-token",
+        error: "01019",
+        cause: expect.stringContaining("EventBridge"),
+      });
     });
   });
 
@@ -243,7 +244,7 @@ describe("downloader lambda - EventBridge integration", () => {
       });
     });
 
-    it("should include taskToken in failure cause payload for state machine extraction", async () => {
+    it("should include errorCode in failure cause payload", async () => {
       eventBridgeMock.on(PutEventsCommand).resolves({});
       sfnMock.on(SendTaskFailureCommand).resolves({});
       s3Mock.on(GetObjectCommand).rejects(new Error("S3 access denied"));
@@ -275,7 +276,10 @@ describe("downloader lambda - EventBridge integration", () => {
 
       const causeJson = calls[0].args[0].input.cause;
       const cause = JSON.parse(causeJson);
-      expect(cause.taskToken).toBe(taskToken);
+      // taskToken is NOT in cause payload (it's passed separately to sendTaskFailure)
+      expect(cause.taskToken).toBeUndefined();
+      // errorCode should be in the cause
+      expect(cause.errorCode).toBeDefined();
     });
 
     it("should include county in failure cause payload", async () => {
@@ -393,9 +397,8 @@ describe("downloader lambda - EventBridge integration", () => {
   });
 
   describe("SQS event handling", () => {
-    it("should log error when taskToken is missing from SQS message", async () => {
+    it("should throw error with code 01020 when taskToken is missing from SQS message", async () => {
       eventBridgeMock.on(PutEventsCommand).resolves({});
-      const consoleErrorSpy = vi.spyOn(console, "error");
 
       const { handler } = await import(
         "../../../../prepare/lambdas/downloader/index.mjs"
@@ -416,11 +419,16 @@ describe("downloader lambda - EventBridge integration", () => {
         ],
       };
 
-      // Handler returns void for SQS events, errors are logged but not thrown
-      await handler(sqsEvent);
+      // Handler should throw PrepareError with code 01020 when taskToken is missing
+      // This triggers SQS retry/DLQ behavior
+      await expect(handler(sqsEvent)).rejects.toThrow();
 
-      // Verify error was logged (taskToken missing error is caught and logged)
-      expect(consoleErrorSpy).toHaveBeenCalled();
+      try {
+        await handler(sqsEvent);
+      } catch (e) {
+        expect(e.code).toBe("01020");
+        expect(e.message).toContain("no taskToken");
+      }
     });
 
     it("should handle direct invocation (non-SQS) without EventBridge or task token", async () => {
