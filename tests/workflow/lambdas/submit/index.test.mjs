@@ -13,7 +13,6 @@ import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
 import { SSMClient, GetParameterCommand } from "@aws-sdk/client-ssm";
 import { promises as fs } from "fs";
 import path from "path";
-import os from "os";
 
 const sfnMock = mockClient(SFNClient);
 const eventBridgeMock = mockClient(EventBridgeClient);

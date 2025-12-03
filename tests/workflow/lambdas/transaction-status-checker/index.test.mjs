@@ -1,15 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mockClient } from "aws-sdk-client-mock";
-import {
-  SFNClient,
-  SendTaskSuccessCommand,
-  SendTaskFailureCommand,
-} from "@aws-sdk/client-sfn";
-import {
-  EventBridgeClient,
-  PutEventsCommand,
-} from "@aws-sdk/client-eventbridge";
-import { SQSClient, SendMessageCommand } from "@aws-sdk/client-sqs";
+import { SFNClient } from "@aws-sdk/client-sfn";
+import { EventBridgeClient } from "@aws-sdk/client-eventbridge";
+import { SQSClient } from "@aws-sdk/client-sqs";
 
 const sfnMock = mockClient(SFNClient);
 const eventBridgeMock = mockClient(EventBridgeClient);

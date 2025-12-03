@@ -47,6 +47,8 @@ const eventBridgeClient = new EventBridgeClient({
  * @property {string} [messageAttributes.ExecutionArn.stringValue]
  * @property {Object} [messageAttributes.County]
  * @property {string} [messageAttributes.County.stringValue]
+ * @property {Object} [messageAttributes.DataGroupLabel]
+ * @property {string} [messageAttributes.DataGroupLabel.stringValue]
  */
 
 /**
@@ -54,6 +56,8 @@ const eventBridgeClient = new EventBridgeClient({
  * @property {SqsRecord[]} [Records] - SQS event format (can contain task token in message attributes)
  * @property {string} [taskToken] - Step Function task token (when invoked directly from Step Functions)
  * @property {string} [executionArn] - Step Function execution ARN (when invoked directly from Step Functions)
+ * @property {string} [county] - County name (when invoked directly from Step Functions)
+ * @property {string} [dataGroupLabel] - Data group label (when invoked directly from Step Functions)
  * @property {Object[]} [transactionItems] - Transaction items array (when invoked directly from Step Functions)
  */
 
@@ -352,15 +356,16 @@ export const handler = async (event) => {
       throw new Error("Missing SQS Records");
     }
 
-    record = event.Records[0];
-    if (!record.body) {
+    const firstRecord = event.Records[0];
+    if (!firstRecord || !firstRecord.body) {
       throw new Error("Missing SQS record body");
     }
+    record = firstRecord; // Store for use in catch block
 
     // Extract task token from message attributes if present (Step Function mode)
-    if (record.messageAttributes?.TaskToken?.stringValue) {
-      taskToken = record.messageAttributes.TaskToken.stringValue;
-      executionArn = record.messageAttributes.ExecutionArn?.stringValue;
+    if (firstRecord.messageAttributes?.TaskToken?.stringValue) {
+      taskToken = firstRecord.messageAttributes.TaskToken.stringValue;
+      executionArn = firstRecord.messageAttributes.ExecutionArn?.stringValue;
       console.log({
         ...base,
         level: "info",
@@ -372,9 +377,8 @@ export const handler = async (event) => {
       // Emit IN_PROGRESS event to EventBridge when task token is received
       if (taskToken && executionArn) {
         // Extract county and dataGroupLabel from message attributes or use defaults
-        county = record.messageAttributes?.County?.stringValue || "unknown";
-        // @ts-ignore - DataGroupLabel is added in state machine but not in type definition
-        dataGroupLabel = record.messageAttributes?.DataGroupLabel?.stringValue || "County";
+        county = firstRecord.messageAttributes?.County?.stringValue || "unknown";
+        dataGroupLabel = firstRecord.messageAttributes?.DataGroupLabel?.stringValue || "County";
         try {
           await eventBridgeClient.send(
             new PutEventsCommand({
@@ -410,7 +414,8 @@ export const handler = async (event) => {
     }
 
     // Parse transaction items from SQS message body
-    toSubmit = JSON.parse(record.body);
+    // firstRecord is guaranteed to be defined here due to the check above
+    toSubmit = JSON.parse(firstRecord.body);
     if (!Array.isArray(toSubmit)) {
       throw new Error(
         "SQS message body must contain an array of transaction items",
