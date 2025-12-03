@@ -10,6 +10,7 @@ import {
   uploadToS3,
   createLogger,
   emitWorkflowEvent,
+  createErrorHash,
 } from "shared";
 
 /**
@@ -31,6 +32,7 @@ import {
  * @property {string} error_message - Validation error message.
  * @property {string} error_path - JSON path where the error occurred.
  * @property {string} [data_group_cid] - CID of the data group that caused the error.
+ * @property {string} error_hash - Deterministic hash for error identification.
  */
 
 /**
@@ -80,10 +82,12 @@ async function csvToJson(csvPath) {
 /**
  * Normalize raw CSV error rows to a consistent format.
  * Handles both camelCase (errorMessage, errorPath) and snake_case (error_message, error_path) field names.
+ * Computes a deterministic error hash for each error using the same logic as errors.mjs.
  * @param {Record<string, string>[]} rawRows - Raw error rows from CSV
- * @returns {SvlValidationError[]} - Normalized validation errors
+ * @param {string} county - County identifier for hash computation
+ * @returns {SvlValidationError[]} - Normalized validation errors with error hashes
  */
-function normalizeValidationErrors(rawRows) {
+function normalizeValidationErrors(rawRows, county) {
   return rawRows.map((row) => {
     const errorMessage =
       row.errorMessage?.trim() || row.error_message?.trim() || "Unknown error";
@@ -91,11 +95,13 @@ function normalizeValidationErrors(rawRows) {
       row.errorPath?.trim() || row.error_path?.trim() || "unknown";
     const dataGroupCid =
       row.dataGroupCid?.trim() || row.data_group_cid?.trim() || undefined;
+    const errorHash = createErrorHash(errorMessage, errorPath, county);
 
     /** @type {SvlValidationError} */
     const error = {
       error_message: errorMessage,
       error_path: errorPath,
+      error_hash: errorHash,
     };
 
     // Only include data_group_cid if it has a value
@@ -172,7 +178,7 @@ async function runSvl({
 
         if (errorsExist) {
           const submitErrorsRaw = await csvToJson(submitErrorsPath);
-          svlErrors = normalizeValidationErrors(submitErrorsRaw);
+          svlErrors = normalizeValidationErrors(submitErrorsRaw, county);
 
           log("error", "svl_validation_failed", {
             step: "validate",

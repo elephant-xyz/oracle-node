@@ -1,15 +1,14 @@
 {
-  "name": "workflow-events-handler",
+  "name": "dashboard-executions-widget",
   "version": "1.0.0",
   "type": "module",
-  "description": "Lambda function for processing EventBridge WorkflowEvent events",
+  "description": "CloudWatch custom widget for displaying executions with most errors",
   "main": "index.ts",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "typecheck": "tsc --pretty false --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@aws-sdk/client-cloudwatch": "^3.678.0",
     "@aws-sdk/client-dynamodb": "^3.678.0",
     "@aws-sdk/lib-dynamodb": "^3.678.0"
   },
