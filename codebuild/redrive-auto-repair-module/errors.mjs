@@ -1,1 +1,1 @@
-../../workflow/lambdas/post/errors.mjs
+../shared/errors.mjs

@@ -50,6 +50,10 @@ REDRIVE_AUTO_REPAIR_ARCHIVE_NAME="${REDRIVE_AUTO_REPAIR_ARCHIVE_NAME:-redrive-au
 REDRIVE_AUTO_REPAIR_PREFIX="${REDRIVE_AUTO_REPAIR_PREFIX:-codebuild/redrive-auto-repair}"
 REDRIVE_AUTO_REPAIR_UPLOAD_PENDING=0
 
+WORKFLOW_EVENTS_STACK_NAME="${WORKFLOW_EVENTS_STACK_NAME:-workflow-events-stack}"
+WORKFLOW_EVENTS_TEMPLATE="workflow-events/template.yaml"
+DEPLOY_WORKFLOW_EVENTS="${DEPLOY_WORKFLOW_EVENTS:-true}"
+
 mkdir -p "$BUILD_DIR"
 
 check_prereqs() {
@@ -63,6 +67,7 @@ check_prereqs() {
   command -v git >/dev/null || { err "git not found"; exit 1; }
   command -v npm >/dev/null || { err "npm not found"; exit 1; }
   command -v docker >/dev/null || { err "docker not found. Install: https://docs.docker.com/get-docker/"; exit 1; }
+  command -v esbuild >/dev/null || { err "esbuild not found. Install with npm i -g esbuild"; exit 1; }
   [[ -f "$SAM_TEMPLATE" && -f "$STARTUP_SCRIPT" && -f "$PYPROJECT_FILE" ]] || { err "Missing required files"; exit 1; }
   [[ -f "$CODEBUILD_TEMPLATE" ]] || { err "Missing CodeBuild template: $CODEBUILD_TEMPLATE"; exit 1; }
 }
@@ -224,6 +229,7 @@ compute_param_overrides() {
   # Build parameters with simple format
   [[ -n "${WORKFLOW_QUEUE_NAME:-}" ]] && parts+=("WorkflowQueueName=\"$WORKFLOW_QUEUE_NAME\"")
   [[ -n "${WORKFLOW_STARTER_RESERVED_CONCURRENCY:-}" ]] && parts+=("WorkflowStarterReservedConcurrency=\"$WORKFLOW_STARTER_RESERVED_CONCURRENCY\"")
+  [[ -n "${MAX_RUNNING_EXECUTIONS:-}" ]] && parts+=("MaxRunningExecutions=\"$MAX_RUNNING_EXECUTIONS\"")
   [[ -n "${WORKFLOW_STATE_MACHINE_NAME:-}" ]] && parts+=("WorkflowStateMachineName=\"$WORKFLOW_STATE_MACHINE_NAME\"")
 
   # Prepare function flags
@@ -541,14 +547,6 @@ deploy_codebuild_stack() {
     return 0
   fi
 
-  local post_processor_function_name
-  post_processor_function_name=$(get_output "WorkflowPostProcessorFunctionName")
-  if [[ -z "$post_processor_function_name" ]]; then
-    CODEBUILD_DEPLOY_PENDING=1
-    info "Delaying CodeBuild stack deployment until WorkflowPostProcessorFunctionName output is available."
-    return 0
-  fi
-
   local mvl_function_name
   mvl_function_name=$(get_output "WorkflowMirrorValidatorFunctionName")
   if [[ -z "$mvl_function_name" ]]; then
@@ -563,6 +561,29 @@ deploy_codebuild_stack() {
     CODEBUILD_DEPLOY_PENDING=1
     info "Delaying CodeBuild stack deployment until MwaaDeadLetterQueueUrl output is available."
     return 0
+  fi
+
+  local transform_worker_function_name
+  transform_worker_function_name=$(get_output "TransformWorkerFunctionName")
+  if [[ -z "$transform_worker_function_name" ]]; then
+    CODEBUILD_DEPLOY_PENDING=1
+    info "Delaying CodeBuild stack deployment until TransformWorkerFunctionName output is available."
+    return 0
+  fi
+
+  local svl_worker_function_name
+  svl_worker_function_name=$(get_output "SvlWorkerFunctionName")
+  if [[ -z "$svl_worker_function_name" ]]; then
+    CODEBUILD_DEPLOY_PENDING=1
+    info "Delaying CodeBuild stack deployment until SvlWorkerFunctionName output is available."
+    return 0
+  fi
+
+  local output_s3_prefix
+  output_s3_prefix=$(get_output "OutputS3Prefix")
+  if [[ -z "$output_s3_prefix" ]]; then
+    # Fallback: construct from bucket
+    output_s3_prefix="s3://${bucket}/outputs"
   fi
 
   local transform_s3_prefix="${TRANSFORM_S3_PREFIX_VALUE:-}"
@@ -620,7 +641,9 @@ deploy_codebuild_stack() {
     "RuntimeEntryPoint=$entrypoint"
     "ErrorsTableName=$errors_table_name"
     "TransformS3Prefix=$transform_s3_prefix"
-    "PostProcessorFunctionName=$post_processor_function_name"
+    "TransformWorkerFunctionName=$transform_worker_function_name"
+    "SvlWorkerFunctionName=$svl_worker_function_name"
+    "OutputS3Prefix=$output_s3_prefix"
     "MvlFunctionName=$mvl_function_name"
     "OpenAiApiKey=$openai_api_key"
     "TransactionsSqsQueueUrl=$transactions_sqs_queue_url"
@@ -645,6 +668,44 @@ deploy_codebuild_stack() {
     --parameter-overrides "${codebuild_params[@]}"
 
   CODEBUILD_DEPLOY_PENDING=0
+}
+
+deploy_workflow_events_stack() {
+  if [[ "$DEPLOY_WORKFLOW_EVENTS" != "true" ]]; then
+    info "DEPLOY_WORKFLOW_EVENTS flag not set (default: true), skipping workflow-events stack deployment"
+    return 0
+  fi
+
+  if [[ ! -f "$WORKFLOW_EVENTS_TEMPLATE" ]]; then
+    warn "Workflow events template not found at $WORKFLOW_EVENTS_TEMPLATE, skipping deployment."
+    return 0
+  fi
+
+  info "Building and deploying workflow-events stack ($WORKFLOW_EVENTS_STACK_NAME)"
+
+  # Build the workflow-events stack with beta features for TypeScript support
+  sam build \
+    --template-file "$WORKFLOW_EVENTS_TEMPLATE" \
+    --beta-features \
+    --build-dir ".aws-sam/workflow-events" || {
+    err "Failed to build workflow-events stack"
+    return 1
+  }
+
+  # Deploy the workflow-events stack
+  sam deploy \
+    --template-file ".aws-sam/workflow-events/template.yaml" \
+    --stack-name "$WORKFLOW_EVENTS_STACK_NAME" \
+    --capabilities CAPABILITY_IAM \
+    --resolve-s3 \
+    --beta-features \
+    --no-confirm-changeset \
+    --no-fail-on-empty-changeset || {
+    err "Failed to deploy workflow-events stack"
+    return 1
+  }
+
+  info "Workflow-events stack deployed successfully"
 }
 
 # Note: MVL Lambda Docker image is now built and pushed automatically by SAM
@@ -889,6 +950,8 @@ main() {
   check_prereqs
   ensure_lambda_concurrency_quota
 
+  # Deploy workflow-events stack (separate independent stack)
+  deploy_workflow_events_stack
   # Clean up old dashboards before deploying new CloudFormation-managed one
   cleanup_old_dashboards
 

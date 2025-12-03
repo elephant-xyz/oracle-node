@@ -1,0 +1,210 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: SAM template for processing EventBridge WorkflowEvent events with TypeScript Lambda
+
+Parameters:
+  EnvironmentName:
+    Description: An environment name that is prefixed to resource names
+    Type: String
+    Default: MWAAEnvironment
+
+Globals:
+  Function:
+    Timeout: 60
+    MemorySize: 128
+    LoggingConfig:
+      LogFormat: JSON
+
+Resources:
+  # Shared layer containing common code for all lambdas
+  SharedLayer:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      LayerName: !Sub "${EnvironmentName}-workflow-events-shared"
+      Description: Shared utilities for workflow-events lambdas (DynamoDB client, types, keys)
+      ContentUri: layers/shared
+      CompatibleRuntimes:
+        - nodejs22.x
+      CompatibleArchitectures:
+        - arm64
+      RetentionPolicy: Delete
+    Metadata:
+      BuildMethod: makefile
+      BuildArchitecture: arm64
+
+  # DynamoDB table for storing workflow errors with single-table design
+  WorkflowErrorsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "${EnvironmentName}-workflow-errors"
+      BillingMode: PAY_PER_REQUEST
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      AttributeDefinitions:
+        - AttributeName: PK
+          AttributeType: S
+        - AttributeName: SK
+          AttributeType: S
+        - AttributeName: GS1PK
+          AttributeType: S
+        - AttributeName: GS1SK
+          AttributeType: S
+        - AttributeName: GS2PK
+          AttributeType: S
+        - AttributeName: GS2SK
+          AttributeType: S
+        - AttributeName: GS3PK
+          AttributeType: S
+        - AttributeName: GS3SK
+          AttributeType: S
+      KeySchema:
+        - AttributeName: PK
+          KeyType: HASH
+        - AttributeName: SK
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        # GSI1: Error-to-execution lookups (ErrorRecord, ExecutionErrorLink)
+        - IndexName: GS1
+          KeySchema:
+            - AttributeName: GS1PK
+              KeyType: HASH
+            - AttributeName: GS1SK
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+        # GSI2: Count-based sorting for errors (ErrorRecord)
+        - IndexName: GS2
+          KeySchema:
+            - AttributeName: GS2PK
+              KeyType: HASH
+            - AttributeName: GS2SK
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+        # GSI3: Error count sorting (ErrorRecord and FailedExecutionItem)
+        - IndexName: GS3
+          KeySchema:
+            - AttributeName: GS3PK
+              KeyType: HASH
+            - AttributeName: GS3SK
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      Tags:
+        - Key: Environment
+          Value: !Ref EnvironmentName
+  WorkflowEventHandlerDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      MessageRetentionPeriod: 1209600
+      Tags:
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  WorkflowEventHandlerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${EnvironmentName}-workflow-event-handler"
+      Runtime: nodejs22.x
+      Architectures:
+        - arm64
+      Handler: index.handler
+      CodeUri: lambdas/event-handler
+      Layers:
+        - !Ref SharedLayer
+      DeadLetterQueue:
+        TargetArn: !GetAtt WorkflowEventHandlerDeadLetterQueue.Arn
+        Type: SQS
+      Description: "Processes EventBridge WorkflowEvent events from elephant.workflow source"
+      Environment:
+        Variables:
+          WORKFLOW_ERRORS_TABLE_NAME: !Ref WorkflowErrorsTable
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - DynamoDBCrudPolicy:
+            TableName: !Ref WorkflowErrorsTable
+      Events:
+        WorkflowEventRule:
+          Type: EventBridgeRule
+          Properties:
+            Pattern:
+              source:
+                - elephant.workflow
+              detail-type:
+                - WorkflowEvent
+            State: ENABLED
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Format: esm
+        OutExtension:
+          - .js=.mjs
+        External:
+          - "@aws-sdk/*"
+          - "@smithy/*"
+          - "shared"
+        Minify: true
+        Target: es2022
+        EntryPoints:
+          - index.ts
+        Sourcemap: true
+        LogLevel: info
+
+  GetExecutionFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${EnvironmentName}-get-execution"
+      Runtime: nodejs22.x
+      Architectures:
+        - arm64
+      Handler: index.handler
+      CodeUri: lambdas/get-execution
+      Layers:
+        - !Ref SharedLayer
+      Description: "Retrieves executions by error count with optional error type filter"
+      Environment:
+        Variables:
+          WORKFLOW_ERRORS_TABLE_NAME: !Ref WorkflowErrorsTable
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - DynamoDBReadPolicy:
+            TableName: !Ref WorkflowErrorsTable
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Format: esm
+        OutExtension:
+          - .js=.mjs
+        External:
+          - "@aws-sdk/*"
+          - "@smithy/*"
+          - "shared"
+        Minify: true
+        Target: es2022
+        EntryPoints:
+          - index.ts
+        Sourcemap: true
+        LogLevel: info
+
+Outputs:
+  WorkflowEventHandlerFunctionName:
+    Description: Name of the workflow event handler Lambda function
+    Value: !Ref WorkflowEventHandlerFunction
+  WorkflowEventHandlerFunctionArn:
+    Description: ARN of the workflow event handler Lambda function
+    Value: !GetAtt WorkflowEventHandlerFunction.Arn
+  WorkflowEventRuleName:
+    Description: Name of the EventBridge rule that triggers the Lambda
+    Value: !Sub "${EnvironmentName}-workflow-event-rule"
+  WorkflowErrorsTableName:
+    Description: Name of the DynamoDB table for workflow errors
+    Value: !Ref WorkflowErrorsTable
+  WorkflowErrorsTableArn:
+    Description: ARN of the DynamoDB table for workflow errors
+    Value: !GetAtt WorkflowErrorsTable.Arn
+  GetExecutionFunctionName:
+    Description: Name of the get execution Lambda function
+    Value: !Ref GetExecutionFunction
+  GetExecutionFunctionArn:
+    Description: ARN of the get execution Lambda function
+    Value: !GetAtt GetExecutionFunction.Arn

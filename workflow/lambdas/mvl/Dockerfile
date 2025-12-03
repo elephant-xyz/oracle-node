@@ -19,7 +19,7 @@ RUN npm install --omit=dev --force
 
 # Copy application source code
 # This layer is invalidated whenever source code changes
-COPY index.mjs errors.mjs ./
+COPY index.mjs ./
 
 # Set the Lambda handler
 CMD ["index.handler"]

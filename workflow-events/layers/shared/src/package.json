@@ -1,0 +1,15 @@
+{
+  "name": "shared",
+  "version": "1.0.0",
+  "description": "Shared utilities for workflow-events lambdas",
+  "type": "module",
+  "main": "index.mjs",
+  "exports": {
+    "./dynamodb-client": "./dynamodb-client.mjs",
+    "./dynamodb-client.js": "./dynamodb-client.mjs",
+    "./types": "./types.mjs",
+    "./types.js": "./types.mjs",
+    "./keys": "./keys.mjs",
+    "./keys.js": "./keys.mjs"
+  }
+}

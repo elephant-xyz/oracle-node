@@ -23,6 +23,156 @@ import {
 
 const sfn = new SFNClient({});
 
+const MAX_RUNNING_EXECUTIONS = parseInt(
+  process.env.MAX_RUNNING_EXECUTIONS || "1000",
+  10,
+);
+
+/**
+ * Check how many Step Function executions are currently running
+ * @param {string} stateMachineArn
+ * @returns {Promise<number>}
+ */
+async function getRunningExecutionCount(stateMachineArn) {
+  try {
+    const cmd = new ListExecutionsCommand({
+      stateMachineArn: stateMachineArn,
+      statusFilter: "RUNNING",
+      maxResults: MAX_RUNNING_EXECUTIONS,
+    });
+    const resp = await sfn.send(cmd);
+    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
+    return (
+      resp.executions?.filter(
+        (execution) =>
+          execution.startDate && execution.startDate < fiveMinutesAgo,
+      ).length || 0
+    );
+  } catch (err) {
+    console.error(
+      JSON.stringify({
+        component: "starter",
+        level: "error",
+        msg: "failed_to_check_running_executions",
+        error: String(err),
+      }),
+    );
+    // If we can't check, assume we're at limit to be safe
+    return MAX_RUNNING_EXECUTIONS;
+  }
+}
+
+/**
+ * Wait for Step Function execution to complete by polling
+ * @param {string} executionArn
+ * @param {number} maxWaitSeconds - Maximum time to wait in seconds
+ * @param {Object} logBase - Base logging object
+ * @returns {Promise<{status: string, cause?: string, error?: string}>}
+ */
+async function waitForCompletion(executionArn, maxWaitSeconds, logBase) {
+  const startTime = Date.now();
+  const maxWaitMs = maxWaitSeconds * 1000;
+  let pollInterval = 2000; // Start with 2 seconds
+  const maxPollInterval = 10000; // Max 10 seconds between polls
+
+  while (true) {
+    const elapsed = Date.now() - startTime;
+    if (elapsed >= maxWaitMs) {
+      throw new Error(
+        `Step Function execution did not complete within ${maxWaitSeconds} seconds. Execution ARN: ${executionArn}`,
+      );
+    }
+
+    try {
+      const describeCmd = new DescribeExecutionCommand({
+        executionArn: executionArn,
+      });
+      const describeResp = await sfn.send(describeCmd);
+      const status = describeResp.status;
+
+      // If execution completed (success or failure), return
+      if (status === "SUCCEEDED") {
+        console.log(
+          JSON.stringify({
+            ...logBase,
+            level: "info",
+            msg: "execution_completed_successfully",
+            executionArn: executionArn,
+            status: status,
+            durationSeconds: Math.round(elapsed / 1000),
+          }),
+        );
+        return { status: "SUCCEEDED" };
+      }
+
+      if (
+        status === "FAILED" ||
+        status === "TIMED_OUT" ||
+        status === "ABORTED"
+      ) {
+        console.error(
+          JSON.stringify({
+            ...logBase,
+            level: "error",
+            msg: "execution_failed",
+            executionArn: executionArn,
+            status: status,
+            cause: describeResp.cause,
+            error: describeResp.error,
+            durationSeconds: Math.round(elapsed / 1000),
+          }),
+        );
+        return {
+          status: status,
+          cause: describeResp.cause,
+          error: describeResp.error,
+        };
+      }
+
+      // Still running - log progress and continue polling
+      if (status === "RUNNING") {
+        const remainingSeconds = Math.round((maxWaitMs - elapsed) / 1000);
+        if (elapsed % 30000 < pollInterval) {
+          // Log every ~30 seconds
+          console.log(
+            JSON.stringify({
+              ...logBase,
+              level: "info",
+              msg: "execution_running",
+              executionArn: executionArn,
+              elapsedSeconds: Math.round(elapsed / 1000),
+              remainingSeconds: remainingSeconds,
+            }),
+          );
+        }
+        // Exponential backoff for polling (cap at maxPollInterval)
+        await new Promise((resolve) => setTimeout(resolve, pollInterval));
+        pollInterval = Math.min(pollInterval * 1.5, maxPollInterval);
+        continue;
+      }
+
+      // Unknown status
+      throw new Error(`Unexpected execution status: ${status}`);
+    } catch (err) {
+      const errMessage = err instanceof Error ? err.message : String(err);
+      if (errMessage.includes("Step Function execution did not complete")) {
+        throw err;
+      }
+      // Retry on DescribeExecution errors
+      console.warn(
+        JSON.stringify({
+          ...logBase,
+          level: "warn",
+          msg: "describe_execution_error_retrying",
+          executionArn: executionArn,
+          error: String(err),
+        }),
+      );
+      await new Promise((resolve) => setTimeout(resolve, pollInterval));
+    }
+  }
+}
+
 /**
  * Check how many Step Function executions are currently running
  * @param {string} stateMachineArn

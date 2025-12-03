@@ -29,8 +29,14 @@ Parameters:
   TransformS3Prefix:
     Description: S3 URI prefix containing county transform archives
     Type: String
-  PostProcessorFunctionName:
-    Description: Name or ARN of the post-processing Lambda function
+  TransformWorkerFunctionName:
+    Description: Name or ARN of the Transform Worker Lambda function
+    Type: String
+  SvlWorkerFunctionName:
+    Description: Name or ARN of the SVL Worker Lambda function
+    Type: String
+  OutputS3Prefix:
+    Description: S3 prefix for workflow output files
     Type: String
   MvlFunctionName:
     Description: Name or ARN of the Mirror Validation Lambda function
@@ -153,8 +159,10 @@ Resources:
                 Action:
                   - lambda:InvokeFunction
                 Resource:
-                  - !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${PostProcessorFunctionName}"
-                  - !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${PostProcessorFunctionName}:*"
+                  - !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${TransformWorkerFunctionName}"
+                  - !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${TransformWorkerFunctionName}:*"
+                  - !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${SvlWorkerFunctionName}"
+                  - !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${SvlWorkerFunctionName}:*"
                   - !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${MvlFunctionName}"
                   - !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${MvlFunctionName}:*"
         - PolicyName: PrepareRuntimeCodeBuildSQS
@@ -237,9 +245,15 @@ Resources:
           - Name: TRANSFORM_S3_PREFIX
             Type: PLAINTEXT
             Value: !Ref TransformS3Prefix
-          - Name: POST_PROCESSOR_FUNCTION_NAME
+          - Name: TRANSFORM_WORKER_FUNCTION_NAME
             Type: PLAINTEXT
-            Value: !Ref PostProcessorFunctionName
+            Value: !Ref TransformWorkerFunctionName
+          - Name: SVL_WORKER_FUNCTION_NAME
+            Type: PLAINTEXT
+            Value: !Ref SvlWorkerFunctionName
+          - Name: OUTPUT_S3_PREFIX
+            Type: PLAINTEXT
+            Value: !Ref OutputS3Prefix
           - Name: MVL_FUNCTION_NAME
             Type: PLAINTEXT
             Value: !Ref MvlFunctionName

@@ -1,0 +1,15 @@
+{
+  "name": "shared",
+  "version": "1.0.0",
+  "description": "Shared utilities for workflow lambdas",
+  "type": "module",
+  "exports": {
+    ".": "./index.mjs",
+    "./s3-utils": "./s3-utils.mjs",
+    "./s3-utils.mjs": "./s3-utils.mjs",
+    "./task-token": "./task-token.mjs",
+    "./task-token.mjs": "./task-token.mjs",
+    "./eventbridge": "./eventbridge.mjs",
+    "./eventbridge.mjs": "./eventbridge.mjs"
+  }
+}
