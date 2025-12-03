@@ -270,11 +270,6 @@ Resources:
                 - states:SendTaskSuccess
                 - states:SendTaskFailure
               Resource: "*"
-            - Effect: Allow
-              Action:
-                - events:PutEvents
-              Resource:
-                - !Sub "arn:aws:events:${AWS::Region}:${AWS::AccountId}:event-bus/default"
             # Wildcard permission for per-county prepare queues
             - Effect: Allow
               Action:
@@ -1121,11 +1116,6 @@ Resources:
                   - !GetAtt UploadQueue.Arn
                   # Wildcard for per-county prepare queues (created via scripts/create-county-prepare-queue.sh)
                   - !Sub "arn:aws:sqs:${AWS::Region}:${AWS::AccountId}:${AWS::StackName}-prepare-queue-*"
-              - Effect: Allow
-                Action:
-                  - events:PutEvents
-                Resource:
-                  - !Sub "arn:aws:events:${AWS::Region}:${AWS::AccountId}:event-bus/default"
               - Effect: Allow
                 Action:
                   - ssm:GetParameter
