@@ -1386,15 +1386,14 @@ export const handler = async (event) => {
           `❌ Prepare processing failed [${errorCode}]: ${errorMessage}`,
         );
 
-        // Send failure to Step Functions with taskToken in cause (JSON encoded)
-        // State machine can extract taskToken from cause for EventBridge
+        // Send failure to Step Functions
+        // Truncate message to ensure valid JSON within 256 char limit
         if (taskToken) {
+          const truncatedMessage = errorMessage.substring(0, 100);
           const causePayload = JSON.stringify({
-            message: errorMessage,
             errorCode: errorCode,
-            taskToken: taskToken,
             county: county,
-            input_s3_uri: messageBody?.input_s3_uri,
+            message: truncatedMessage,
           });
           await sendTaskFailure(taskToken, errorCode, causePayload);
         }
