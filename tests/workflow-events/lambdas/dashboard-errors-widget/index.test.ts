@@ -603,8 +603,14 @@ describe("dashboard-errors-widget handler", () => {
 
       const result = await handler({});
 
-      expect(result).not.toContain("<cwdb-action");
-      expect(result).not.toContain('<a class="btn">');
+      // Pagination buttons (which call Lambda) should not render
+      expect(result).not.toContain('action="call"');
+      expect(result).not.toContain("Previous");
+      expect(result).not.toContain("Next");
+
+      // Details popup (which uses HTML action) should still render
+      expect(result).toContain('action="html"');
+      expect(result).toContain("Details");
     });
 
     it("should handle invalid cursor gracefully", async () => {

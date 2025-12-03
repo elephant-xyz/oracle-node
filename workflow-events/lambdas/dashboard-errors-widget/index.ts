@@ -139,6 +139,7 @@ limit: 20      # Number of errors to display (default: 20)
 - **Status**: Current error status (failed/maybeSolved/solved)
 - **Latest Execution**: Most recent execution that observed this error
 - **Updated At**: When the error record was last updated
+- **Details**: Click to view formatted JSON error details in a popup
 
 ### Filtering
 
@@ -260,6 +261,45 @@ const formatDate = (isoDate: string): string => {
 };
 
 /**
+ * Formats error details JSON string into a pretty-printed, HTML-escaped string.
+ * If parsing fails, returns the escaped raw string.
+ *
+ * @param errorDetails - JSON-encoded error details string
+ * @returns Formatted and escaped JSON string
+ */
+const formatErrorDetails = (errorDetails: string): string => {
+  try {
+    const parsed = JSON.parse(errorDetails) as Record<string, unknown>;
+    const formatted = JSON.stringify(parsed, null, 2);
+    return escapeHtml(formatted);
+  } catch {
+    // If parsing fails, return the escaped raw string
+    return escapeHtml(errorDetails);
+  }
+};
+
+/**
+ * Generates HTML for the error details popup button.
+ * Uses cwdb-action with action="html" and display="popup".
+ *
+ * @param errorCode - Error code for the popup title
+ * @param errorDetails - JSON-encoded error details string
+ * @returns HTML string for the details button with popup
+ */
+const generateDetailsPopup = (
+  errorCode: string,
+  errorDetails: string,
+): string => {
+  const formattedDetails = formatErrorDetails(errorDetails);
+
+  return `<a class="btn btn-primary">Details</a>
+<cwdb-action action="html" display="popup">
+  <h3>Error Details: ${escapeHtml(errorCode)}</h3>
+  <pre style="background-color: #f5f5f5; padding: 12px; border-radius: 4px; overflow: auto; max-height: 400px;"><code>${formattedDetails}</code></pre>
+</cwdb-action>`;
+};
+
+/**
  * Parameters for generating pagination controls.
  */
 interface PaginationParams {
@@ -377,6 +417,7 @@ const generateHtml = (
         <td>${escapeHtml(err.errorStatus)}</td>
         <td title="${escapeHtml(err.latestExecutionId)}">${escapeHtml(err.latestExecutionId.substring(0, 20))}...</td>
         <td>${formatDate(err.updatedAt)}</td>
+        <td>${generateDetailsPopup(err.errorCode, err.errorDetails)}</td>
       </tr>
     `,
     )
@@ -404,6 +445,7 @@ const generateHtml = (
           <th>Status</th>
           <th>Latest Execution</th>
           <th>Updated At</th>
+          <th>Details</th>
         </tr>
       </thead>
       <tbody>
