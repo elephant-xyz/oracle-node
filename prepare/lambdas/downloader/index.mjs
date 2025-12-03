@@ -41,16 +41,15 @@ async function emitWorkflowEvent({ executionId, county, status, taskToken }) {
     `📤 Emitting EventBridge event: status=${status}, county=${county}`,
   );
   try {
+    /** @type {{ executionId: string; county: string; status: string; phase: string; step: string; taskToken?: string }} */
     const detail = {
       executionId,
       county,
       status,
       phase: "Prepare",
       step: "Prepare",
+      ...(taskToken && { taskToken }),
     };
-    if (taskToken) {
-      detail.taskToken = taskToken;
-    }
 
     await eventBridgeClient.send(
       new PutEventsCommand({
@@ -143,8 +142,8 @@ function extractCountyFromZip(zip) {
       const csvContent = zip.readAsText(inputCsvEntry);
       const rows = parseCSV(csvContent);
 
-      if (rows.length > 0) {
-        const firstRow = rows[0];
+      const firstRow = rows[0];
+      if (firstRow) {
         // Look for 'county' column (case-insensitive)
         const countyKey = Object.keys(firstRow).find(
           (k) => k.toLowerCase() === "county",
@@ -250,11 +249,19 @@ function parseCSV(csvContent) {
     return [];
   }
 
-  const headers = parseCSVLine(lines[0]);
+  const headerLine = lines[0];
+  if (!headerLine) {
+    return [];
+  }
+  const headers = parseCSVLine(headerLine);
+  /** @type {Array<{[key: string]: string}>} */
   const rows = [];
 
   for (let i = 1; i < lines.length; i++) {
-    const values = parseCSVLine(lines[i]);
+    const line = lines[i];
+    if (!line) continue;
+    const values = parseCSVLine(line);
+    /** @type {{[key: string]: string}} */
     const row = {};
     headers.forEach((header, index) => {
       row[header] = values[index] || "";
@@ -295,6 +302,10 @@ function getConfigurationUriFromInputCsv(zip) {
 
     // Get configuration column from first row (case-insensitive)
     const firstRow = rows[0];
+    if (!firstRow) {
+      console.log("📄 No rows found in input.csv");
+      return null;
+    }
     const configKey = Object.keys(firstRow).find(
       (k) =>
         k.toLowerCase() === "configuration" || k.toLowerCase() === "config",
@@ -769,7 +780,7 @@ const splitS3Uri = (s3Uri) => {
  * @param {string} [params.output_s3_uri_prefix] - S3 URI prefix for output files
  * @param {string} [params.executionId] - Step Functions execution ARN
  * @param {string} [params.taskToken] - Task token for SQS callback
- * @returns {Promise<{ output_s3_uri: string }>} Success result
+ * @returns {Promise<{ output_s3_uri: string; county: string | null }>} Success result
  */
 async function processPrepare({
   input_s3_uri,
@@ -817,6 +828,7 @@ async function processPrepare({
   }
 
   const tempDir = await fs.mkdtemp("/tmp/prepare-");
+  /** @type {string | null} */
   let countyName = null;
 
   try {
@@ -1290,26 +1302,45 @@ async function processPrepare({
 }
 
 /**
+ * @typedef {Object} SQSRecord
+ * @property {string} eventSource - Event source (e.g., "aws:sqs")
+ * @property {string} body - Message body as JSON string
+ */
+
+/**
+ * @typedef {Object} SQSEvent
+ * @property {SQSRecord[]} Records - Array of SQS records
+ */
+
+/**
+ * @typedef {Object} DirectInvokeEvent
+ * @property {string} input_s3_uri - S3 URI of input file
+ * @property {string} [output_s3_uri_prefix] - S3 URI prefix for output files
+ */
+
+/**
  * Lambda handler for processing orders and storing receipts in S3.
  * Supports both direct invocation and SQS trigger with task token.
- * @param {Object} event - Input event (direct invoke or SQS event)
- * @returns {Promise<{ output_s3_uri: string } | void>} Success message (direct invoke only)
+ * @param {SQSEvent | DirectInvokeEvent} event - Input event (direct invoke or SQS event)
+ * @returns {Promise<{ output_s3_uri: string; county: string | null } | void>} Success message (direct invoke only)
  */
 export const handler = async (event) => {
   console.log("Event:", JSON.stringify(event, null, 2));
   console.log(`🚀 Lambda handler started at: ${new Date().toISOString()}`);
 
   // Detect if this is an SQS event
+  /** @type {SQSEvent} */
+  const sqsEvent = /** @type {SQSEvent} */ (event);
   const isSQSEvent =
-    event.Records &&
-    Array.isArray(event.Records) &&
-    event.Records[0]?.eventSource === "aws:sqs";
+    sqsEvent.Records &&
+    Array.isArray(sqsEvent.Records) &&
+    sqsEvent.Records[0]?.eventSource === "aws:sqs";
 
   if (isSQSEvent) {
     // Process SQS messages (with task token pattern)
-    console.log(`📬 Processing ${event.Records.length} SQS message(s)`);
+    console.log(`📬 Processing ${sqsEvent.Records.length} SQS message(s)`);
 
-    for (const record of event.Records) {
+    for (const record of sqsEvent.Records) {
       let messageBody;
       let taskToken;
       let executionId;
@@ -1413,8 +1444,10 @@ export const handler = async (event) => {
     );
   }
 
+  /** @type {DirectInvokeEvent} */
+  const directEvent = /** @type {DirectInvokeEvent} */ (event);
   return processPrepare({
-    input_s3_uri: event.input_s3_uri,
-    output_s3_uri_prefix: event.output_s3_uri_prefix,
+    input_s3_uri: directEvent.input_s3_uri,
+    output_s3_uri_prefix: directEvent.output_s3_uri_prefix,
   });
 };
