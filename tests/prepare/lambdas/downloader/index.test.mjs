@@ -9,7 +9,11 @@ import {
   EventBridgeClient,
   PutEventsCommand,
 } from "@aws-sdk/client-eventbridge";
-import { S3Client, GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
+import {
+  S3Client,
+  GetObjectCommand,
+  PutObjectCommand,
+} from "@aws-sdk/client-s3";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 
 const sfnMock = mockClient(SFNClient);
@@ -58,7 +62,8 @@ describe("downloader lambda - EventBridge integration", () => {
             eventSource: "aws:sqs",
             body: JSON.stringify({
               taskToken: "test-task-token-123",
-              executionId: "arn:aws:states:us-east-1:123456789:execution:test:abc123",
+              executionId:
+                "arn:aws:states:us-east-1:123456789:execution:test:abc123",
               county: "Hamilton",
               input_s3_uri: "s3://test-bucket/test-key.zip",
               output_s3_uri_prefix: "s3://test-bucket/output",
@@ -102,7 +107,8 @@ describe("downloader lambda - EventBridge integration", () => {
             eventSource: "aws:sqs",
             body: JSON.stringify({
               taskToken,
-              executionId: "arn:aws:states:us-east-1:123456789:execution:test:abc123",
+              executionId:
+                "arn:aws:states:us-east-1:123456789:execution:test:abc123",
               county: "Hamilton",
               input_s3_uri: "s3://test-bucket/test-key.zip",
             }),
@@ -139,7 +145,8 @@ describe("downloader lambda - EventBridge integration", () => {
             eventSource: "aws:sqs",
             body: JSON.stringify({
               taskToken: "test-task-token",
-              executionId: "arn:aws:states:us-east-1:123456789:execution:test:abc123",
+              executionId:
+                "arn:aws:states:us-east-1:123456789:execution:test:abc123",
               county: "Okeechobee",
               input_s3_uri: "s3://test-bucket/test-key.zip",
             }),
@@ -164,7 +171,9 @@ describe("downloader lambda - EventBridge integration", () => {
 
     it("should not throw when EventBridge emission fails (non-critical)", async () => {
       // EventBridge fails but handler should continue
-      eventBridgeMock.on(PutEventsCommand).rejects(new Error("EventBridge unavailable"));
+      eventBridgeMock
+        .on(PutEventsCommand)
+        .rejects(new Error("EventBridge unavailable"));
       sfnMock.on(SendTaskFailureCommand).resolves({});
 
       const { handler } = await import(
@@ -177,7 +186,8 @@ describe("downloader lambda - EventBridge integration", () => {
             eventSource: "aws:sqs",
             body: JSON.stringify({
               taskToken: "test-task-token",
-              executionId: "arn:aws:states:us-east-1:123456789:execution:test:abc123",
+              executionId:
+                "arn:aws:states:us-east-1:123456789:execution:test:abc123",
               county: "Hamilton",
               input_s3_uri: "s3://test-bucket/test-key.zip",
             }),
@@ -214,7 +224,8 @@ describe("downloader lambda - EventBridge integration", () => {
             eventSource: "aws:sqs",
             body: JSON.stringify({
               taskToken: "test-task-token-failure",
-              executionId: "arn:aws:states:us-east-1:123456789:execution:test:abc123",
+              executionId:
+                "arn:aws:states:us-east-1:123456789:execution:test:abc123",
               county: "Hamilton",
               input_s3_uri: "s3://test-bucket/test-key.zip",
             }),
@@ -248,7 +259,8 @@ describe("downloader lambda - EventBridge integration", () => {
             eventSource: "aws:sqs",
             body: JSON.stringify({
               taskToken,
-              executionId: "arn:aws:states:us-east-1:123456789:execution:test:abc123",
+              executionId:
+                "arn:aws:states:us-east-1:123456789:execution:test:abc123",
               county: "Hamilton",
               input_s3_uri: "s3://test-bucket/test-key.zip",
             }),
@@ -281,7 +293,8 @@ describe("downloader lambda - EventBridge integration", () => {
             eventSource: "aws:sqs",
             body: JSON.stringify({
               taskToken: "test-token",
-              executionId: "arn:aws:states:us-east-1:123456789:execution:test:abc123",
+              executionId:
+                "arn:aws:states:us-east-1:123456789:execution:test:abc123",
               county: "Broward",
               input_s3_uri: "s3://test-bucket/test-key.zip",
             }),
@@ -314,7 +327,8 @@ describe("downloader lambda - EventBridge integration", () => {
             eventSource: "aws:sqs",
             body: JSON.stringify({
               taskToken: "test-token",
-              executionId: "arn:aws:states:us-east-1:123456789:execution:test:abc123",
+              executionId:
+                "arn:aws:states:us-east-1:123456789:execution:test:abc123",
               county: "Hamilton",
               input_s3_uri: "s3://test-bucket/test-key.zip",
             }),
@@ -353,7 +367,8 @@ describe("downloader lambda - EventBridge integration", () => {
             eventSource: "aws:sqs",
             body: JSON.stringify({
               taskToken,
-              executionId: "arn:aws:states:us-east-1:123456789:execution:test:abc123",
+              executionId:
+                "arn:aws:states:us-east-1:123456789:execution:test:abc123",
               county: "Hamilton",
               input_s3_uri: "s3://test-bucket/test-key.zip",
               output_s3_uri_prefix: "s3://test-bucket/output",
@@ -392,7 +407,8 @@ describe("downloader lambda - EventBridge integration", () => {
             eventSource: "aws:sqs",
             body: JSON.stringify({
               // No taskToken
-              executionId: "arn:aws:states:us-east-1:123456789:execution:test:abc123",
+              executionId:
+                "arn:aws:states:us-east-1:123456789:execution:test:abc123",
               county: "Hamilton",
               input_s3_uri: "s3://test-bucket/test-key.zip",
             }),
