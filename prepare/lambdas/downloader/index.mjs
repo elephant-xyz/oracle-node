@@ -1308,7 +1308,7 @@ export const handler = async (event) => {
             county: county,
             input_s3_uri: messageBody?.input_s3_uri,
           });
-          await sendTaskFailure(taskToken, "PREPARE_FAILED", causePayload);
+          await sendTaskFailure(taskToken, "01002", causePayload);
         }
       }
     }

@@ -244,7 +244,7 @@ States:
             step: Prepare
             taskToken.$: $$.Task.Token
             errors:
-              - code: PREPARE_QUEUE_NOT_FOUND
+              - code: "01001"
                 details.$: $.prepareError
     ResultPath: $.queueNotFoundResult
     Next: GetPrepareQueueUrl
@@ -290,7 +290,7 @@ States:
             step: Prepare
             taskToken.$: $$.Task.Token
             errors:
-              - code: PREPARE_FAILED
+              - code: "01002"
                 details.$: $.prepareError
     ResultPath: $.failedResult
     Next: Prepare
