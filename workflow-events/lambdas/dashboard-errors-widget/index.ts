@@ -415,7 +415,7 @@ const generateHtml = (
         <td><code>${escapeHtml(err.errorType)}</code></td>
         <td>${err.totalCount}</td>
         <td>${escapeHtml(err.errorStatus)}</td>
-        <td title="${escapeHtml(err.latestExecutionId)}">${escapeHtml(err.latestExecutionId.substring(0, 20))}...</td>
+        <td>${escapeHtml(err.latestExecutionId)}</td>
         <td>${formatDate(err.updatedAt)}</td>
         <td>${generateDetailsPopup(err.errorCode, err.errorDetails)}</td>
       </tr>

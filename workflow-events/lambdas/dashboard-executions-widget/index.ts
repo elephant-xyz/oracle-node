@@ -143,7 +143,7 @@ const generateHtml = (executions: FailedExecutionItem[]): string => {
     .map(
       (exec) => `
       <tr>
-        <td title="${escapeHtml(exec.executionId)}">${escapeHtml(exec.executionId.substring(0, 36))}...</td>
+        <td title="${escapeHtml(exec.executionId)}">${escapeHtml(exec.executionId)}</td>
         <td>${escapeHtml(exec.county)}</td>
         <td><code>${escapeHtml(exec.errorType)}</code></td>
         <td>${exec.openErrorCount}</td>
