@@ -1,8 +1,9 @@
 import type { EventBridgeEvent } from "aws-lambda";
 import type { WorkflowEventDetail } from "shared/types.js";
 
-import { createLogEntry } from "./log.js";
+import { publishPhaseMetric } from "./cloudwatch.js";
 import { saveErrorRecords } from "./dynamodb.js";
+import { createLogEntry } from "./log.js";
 
 /**
  * Handles EventBridge WorkflowEvent events from elephant.workflow source.
@@ -24,6 +25,13 @@ export const handler = async (
         errorCount: event.detail.errors?.length ?? 0,
       }),
     );
+
+    // Publish CloudWatch metric for the workflow phase
+    await publishPhaseMetric(event.detail.phase, {
+      county: event.detail.county,
+      status: event.detail.status,
+      step: event.detail.step,
+    });
 
     const errors = event.detail.errors;
     const hasErrors = errors && errors.length > 0;
