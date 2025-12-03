@@ -200,15 +200,12 @@ export const handler = async (event) => {
         log,
       });
 
-      // Note: SUCCEEDED event is emitted by the state machine after this step completes
-
       await executeWithTaskToken({
         taskToken,
         log,
         workerFn: async () => result,
       });
     } catch (err) {
-      // Note: FAILED event is emitted by the state machine's WaitForUploadResolution state
       await executeWithTaskToken({
         taskToken,
         log,

@@ -73,12 +73,10 @@ function parseS3Uri(uri) {
   if (!match) {
     throw new Error(`Bad S3 URI: ${uri}`);
   }
-  const bucket = match[1];
-  const key = match[2];
-  if (typeof bucket !== "string" || typeof key !== "string") {
-    throw new Error("S3 URI must be a string");
-  }
-  return { bucket, key };
+  return {
+    bucket: /** @type {string} */ (match[1]),
+    key: /** @type {string} */ (match[2]),
+  };
 }
 
 /**
@@ -103,20 +101,6 @@ async function downloadS3Object({ bucket, key }, destinationPath, log) {
     throw new Error(`Failed to download ${key} from ${bucket}`);
   }
   await fs.writeFile(destinationPath, Buffer.from(bytes));
-}
-
-/**
- * Ensure required environment variables are present.
- *
- * @param {string} name - Environment variable identifier.
- * @returns {string} - Resolved environment variable value.
- */
-function requireEnv(name) {
-  const value = process.env[name];
-  if (!value) {
-    throw new Error(`${name} is required`);
-  }
-  return value;
 }
 
 /**

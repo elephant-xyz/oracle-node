@@ -324,16 +324,12 @@ export const handler = async (event) => {
         log,
       });
 
-      // Note: SUCCEEDED/FAILED events are emitted by the state machine after this step completes
-      // The worker returns svlErrors in the result, which the state machine uses for EventBridge emission
-
       await executeWithTaskToken({
         taskToken,
         log,
         workerFn: async () => result,
       });
     } catch (err) {
-      // Note: FAILED event is emitted by the state machine's WaitForSvlExceptionResolution state
       await executeWithTaskToken({
         taskToken,
         log,

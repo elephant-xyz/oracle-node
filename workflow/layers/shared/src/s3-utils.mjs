@@ -22,12 +22,10 @@ export function parseS3Uri(uri) {
   if (!match) {
     throw new Error(`Bad S3 URI: ${uri}`);
   }
-  const bucket = match[1];
-  const key = match[2];
-  if (typeof bucket !== "string" || typeof key !== "string") {
-    throw new Error("S3 URI must be a string");
-  }
-  return { bucket, key };
+  return {
+    bucket: /** @type {string} */ (match[1]),
+    key: /** @type {string} */ (match[2]),
+  };
 }
 
 /**
