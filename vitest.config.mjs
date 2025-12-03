@@ -1,12 +1,63 @@
 import { defineConfig } from "vitest/config";
+import path from "path";
+import { fileURLToPath } from "url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 import { resolve } from "path";
 
 export default defineConfig({
   resolve: {
-    alias: {
-      // Resolve 'shared/*' imports to the shared-layer source for tests
-      shared: resolve(__dirname, "workflow-events/layers/shared/src"),
-    },
+    alias: [
+      // Force all AWS SDK imports to use the root node_modules copies
+      // This ensures mocking works correctly across workspace packages
+      {
+        find: "@aws-sdk/client-s3",
+        replacement: path.resolve(__dirname, "node_modules/@aws-sdk/client-s3"),
+      },
+      {
+        find: "@aws-sdk/client-eventbridge",
+        replacement: path.resolve(
+          __dirname,
+          "node_modules/@aws-sdk/client-eventbridge",
+        ),
+      },
+      {
+        find: "@aws-sdk/client-sfn",
+        replacement: path.resolve(
+          __dirname,
+          "node_modules/@aws-sdk/client-sfn",
+        ),
+      },
+      {
+        find: "@aws-sdk/client-dynamodb",
+        replacement: path.resolve(
+          __dirname,
+          "node_modules/@aws-sdk/client-dynamodb",
+        ),
+      },
+      {
+        find: "@aws-sdk/lib-dynamodb",
+        replacement: path.resolve(
+          __dirname,
+          "node_modules/@aws-sdk/lib-dynamodb",
+        ),
+      },
+      // Resolve 'shared/*.js' imports for workflow-events lambdas (import from "shared/types.js" etc.)
+      // Maps .js extension to .ts source files for test resolution
+      // Must come before exact 'shared' match to handle subpath imports first
+      {
+        find: /^shared\/(.*)\.js$/,
+        replacement: resolve(
+          __dirname,
+          "workflow-events/layers/shared/src/$1.ts",
+        ),
+      },
+      // Resolve exact 'shared' imports for workflow lambdas (import from "shared")
+      {
+        find: /^shared$/,
+        replacement: resolve(__dirname, "workflow/layers/shared/src/index.mjs"),
+      },
+    ],
   },
   test: {
     globals: true,

@@ -26,7 +26,7 @@ The Lambda expects the EventBridge event detail to conform to the `WorkflowEvent
 
 - **executionId** (`string`): Unique identifier of the workflow execution.
 - **county** (`string`): County identifier for the execution.
-- **status** (`"SUCCEEDED" | "FAILED" | "PARKED" | "IN_PROGRESS" | "SCHEDULED"`): Current workflow step status.
+- **status** (`"SUCCEEDED" | "FAILED" | "IN_PROGRESS" | "SCHEDULED"`): Current workflow step status.
 - **phase** (`string`): Current phase of the workflow.
 - **step** (`string`): Current step within the phase.
 - **taskToken** (`string`, optional): Step Functions task token for callback, if applicable.
