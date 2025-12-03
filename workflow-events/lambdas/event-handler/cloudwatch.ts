@@ -3,28 +3,15 @@ import {
   PutMetricDataCommand,
 } from "@aws-sdk/client-cloudwatch";
 
-/**
- * CloudWatch namespace for Elephant workflow metrics.
- */
 const METRIC_NAMESPACE = "Elephant/Workflow";
 
-/**
- * CloudWatch client singleton for publishing metrics.
- */
 const cloudWatchClient = new CloudWatchClient({});
 
-/**
- * Dimension values for workflow phase metrics.
- */
 interface PhaseMetricDimensions {
-  /** County identifier. */
   county: string;
-  /** Status of the workflow step. */
   status: string;
-  /** Step name within the phase. */
   step: string;
-  /** Data group name. */
-  dataGroupName?: string;
+  dataGroupLabel?: string;
 }
 
 export const publishPhaseMetric = async (
@@ -44,7 +31,7 @@ export const publishPhaseMetric = async (
           { Name: "Step", Value: dimensions.step },
           {
             Name: "DataGroupName",
-            Value: dimensions.dataGroupName ?? "not-set",
+            Value: dimensions.dataGroupLabel ?? "not-set",
           },
         ],
         Unit: "Count",

@@ -30,7 +30,7 @@ export const handler = async (
       county: event.detail.county,
       status: event.detail.status,
       step: event.detail.step,
-      dataGroupName: event.detail.dataGroupName,
+      dataGroupLabel: event.detail.dataGroupLabel,
     });
     console.info(
       createLogEntry("published_cloudwatch_metric", event, {
