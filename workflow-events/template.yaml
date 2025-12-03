@@ -270,15 +270,65 @@ Resources:
         {
           "variables": [
             {
-              "type": "property",
-              "property": "County",
+              "type": "pattern",
+              "pattern": "COUNTY_FILTER",
               "inputType": "select",
-              "id": "county",
+              "id": "countyFilter",
               "label": "County",
               "visible": true,
-              "search": "{Elephant/Workflow,County,Status,Step} MetricName=\"PrepareElephantPhase\"",
-              "populateFrom": "County",
-              "defaultValue": "__FIRST"
+              "defaultValue": "",
+              "values": [
+                {"label": "All Counties", "value": ""},
+                {"label": "Alachua", "value": "County=\\\"alachua\\\""},
+                {"label": "Baker", "value": "County=\\\"baker\\\""},
+                {"label": "Bay", "value": "County=\\\"bay\\\""},
+                {"label": "Bradford", "value": "County=\\\"bradford\\\""},
+                {"label": "Calhoun", "value": "County=\\\"calhoun\\\""},
+                {"label": "Charlotte", "value": "County=\\\"charlotte\\\""},
+                {"label": "Clay", "value": "County=\\\"clay\\\""},
+                {"label": "Collier", "value": "County=\\\"collier\\\""},
+                {"label": "Columbia", "value": "County=\\\"columbia\\\""},
+                {"label": "Dixie", "value": "County=\\\"dixie\\\""},
+                {"label": "Duval", "value": "County=\\\"duval\\\""},
+                {"label": "Escambia", "value": "County=\\\"escambia\\\""},
+                {"label": "Flagler", "value": "County=\\\"flagler\\\""},
+                {"label": "Franklin", "value": "County=\\\"franklin\\\""},
+                {"label": "Gadsden", "value": "County=\\\"gadsden\\\""},
+                {"label": "Gilchrist", "value": "County=\\\"gilchrist\\\""},
+                {"label": "Glades", "value": "County=\\\"glades\\\""},
+                {"label": "Hamilton", "value": "County=\\\"hamilton\\\""},
+                {"label": "Highlands", "value": "County=\\\"highlands\\\""},
+                {"label": "Hillsborough", "value": "County=\\\"hillsborough\\\""},
+                {"label": "Holmes", "value": "County=\\\"holmes\\\""},
+                {"label": "Indian River", "value": "County=\\\"indian_river\\\""},
+                {"label": "Jackson", "value": "County=\\\"jackson\\\""},
+                {"label": "Jefferson", "value": "County=\\\"jefferson\\\""},
+                {"label": "Lafayette", "value": "County=\\\"lafayette\\\""},
+                {"label": "Lake", "value": "County=\\\"lake\\\""},
+                {"label": "Leon", "value": "County=\\\"leon\\\""},
+                {"label": "Levy", "value": "County=\\\"levy\\\""},
+                {"label": "Madison", "value": "County=\\\"madison\\\""},
+                {"label": "Manatee", "value": "County=\\\"manatee\\\""},
+                {"label": "Martin", "value": "County=\\\"martin\\\""},
+                {"label": "Nassau", "value": "County=\\\"nassau\\\""},
+                {"label": "Okaloosa", "value": "County=\\\"okaloosa\\\""},
+                {"label": "Okeechobee", "value": "County=\\\"okeechobee\\\""},
+                {"label": "Palm Beach", "value": "County=\\\"palm_beach\\\""},
+                {"label": "Pasco", "value": "County=\\\"pasco\\\""},
+                {"label": "Pinellas", "value": "County=\\\"pinellas\\\""},
+                {"label": "Polk", "value": "County=\\\"polk\\\""},
+                {"label": "Putnam", "value": "County=\\\"putnam\\\""},
+                {"label": "Santa Rosa", "value": "County=\\\"santa_rosa\\\""},
+                {"label": "Sarasota", "value": "County=\\\"sarasota\\\""},
+                {"label": "Seminole", "value": "County=\\\"seminole\\\""},
+                {"label": "St. Johns", "value": "County=\\\"st_johns\\\""},
+                {"label": "St. Lucie", "value": "County=\\\"st_lucie\\\""},
+                {"label": "Sumter", "value": "County=\\\"sumter\\\""},
+                {"label": "Taylor", "value": "County=\\\"taylor\\\""},
+                {"label": "Union", "value": "County=\\\"union\\\""},
+                {"label": "Volusia", "value": "County=\\\"volusia\\\""},
+                {"label": "Wakulla", "value": "County=\\\"wakulla\\\""}
+              ]
             }
           ],
           "widgets": [
@@ -330,13 +380,12 @@ Resources:
                 "view": "timeSeries",
                 "stacked": false,
                 "region": "${AWS::Region}",
-                "stat": "Sum",
                 "period": 300,
                 "metrics": [
-                  ["Elephant/Workflow", "PrepareElephantPhase", "County", "${!county}", "Status", "SCHEDULED", {"label": "SCHEDULED", "color": "#1f77b4"}],
-                  ["...", "IN_PROGRESS", {"label": "IN_PROGRESS", "color": "#ff7f0e"}],
-                  ["...", "SUCCEEDED", {"label": "SUCCEEDED", "color": "#2ca02c"}],
-                  ["...", "FAILED", {"label": "FAILED", "color": "#d62728"}]
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"PrepareElephantPhase\" Status=\"SCHEDULED\" COUNTY_FILTER', 'Sum', 300))", "label": "SCHEDULED", "id": "prep_sched", "color": "#1f77b4"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"PrepareElephantPhase\" Status=\"IN_PROGRESS\" COUNTY_FILTER', 'Sum', 300))", "label": "IN_PROGRESS", "id": "prep_prog", "color": "#ff7f0e"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"PrepareElephantPhase\" Status=\"SUCCEEDED\" COUNTY_FILTER', 'Sum', 300))", "label": "SUCCEEDED", "id": "prep_succ", "color": "#2ca02c"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"PrepareElephantPhase\" Status=\"FAILED\" COUNTY_FILTER', 'Sum', 300))", "label": "FAILED", "id": "prep_fail", "color": "#d62728"}]
                 ]
               }
             },
@@ -351,13 +400,12 @@ Resources:
                 "view": "timeSeries",
                 "stacked": false,
                 "region": "${AWS::Region}",
-                "stat": "Sum",
                 "period": 300,
                 "metrics": [
-                  ["Elephant/Workflow", "TransformElephantPhase", "County", "${!county}", "Status", "SCHEDULED", {"label": "SCHEDULED", "color": "#1f77b4"}],
-                  ["...", "IN_PROGRESS", {"label": "IN_PROGRESS", "color": "#ff7f0e"}],
-                  ["...", "SUCCEEDED", {"label": "SUCCEEDED", "color": "#2ca02c"}],
-                  ["...", "FAILED", {"label": "FAILED", "color": "#d62728"}]
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"TransformElephantPhase\" Status=\"SCHEDULED\" COUNTY_FILTER', 'Sum', 300))", "label": "SCHEDULED", "id": "trans_sched", "color": "#1f77b4"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"TransformElephantPhase\" Status=\"IN_PROGRESS\" COUNTY_FILTER', 'Sum', 300))", "label": "IN_PROGRESS", "id": "trans_prog", "color": "#ff7f0e"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"TransformElephantPhase\" Status=\"SUCCEEDED\" COUNTY_FILTER', 'Sum', 300))", "label": "SUCCEEDED", "id": "trans_succ", "color": "#2ca02c"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"TransformElephantPhase\" Status=\"FAILED\" COUNTY_FILTER', 'Sum', 300))", "label": "FAILED", "id": "trans_fail", "color": "#d62728"}]
                 ]
               }
             },
@@ -372,13 +420,12 @@ Resources:
                 "view": "timeSeries",
                 "stacked": false,
                 "region": "${AWS::Region}",
-                "stat": "Sum",
                 "period": 300,
                 "metrics": [
-                  ["Elephant/Workflow", "SVLElephantPhase", "County", "${!county}", "Status", "SCHEDULED", {"label": "SCHEDULED", "color": "#1f77b4"}],
-                  ["...", "IN_PROGRESS", {"label": "IN_PROGRESS", "color": "#ff7f0e"}],
-                  ["...", "SUCCEEDED", {"label": "SUCCEEDED", "color": "#2ca02c"}],
-                  ["...", "FAILED", {"label": "FAILED", "color": "#d62728"}]
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"SVLElephantPhase\" Status=\"SCHEDULED\" COUNTY_FILTER', 'Sum', 300))", "label": "SCHEDULED", "id": "svl_sched", "color": "#1f77b4"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"SVLElephantPhase\" Status=\"IN_PROGRESS\" COUNTY_FILTER', 'Sum', 300))", "label": "IN_PROGRESS", "id": "svl_prog", "color": "#ff7f0e"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"SVLElephantPhase\" Status=\"SUCCEEDED\" COUNTY_FILTER', 'Sum', 300))", "label": "SUCCEEDED", "id": "svl_succ", "color": "#2ca02c"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"SVLElephantPhase\" Status=\"FAILED\" COUNTY_FILTER', 'Sum', 300))", "label": "FAILED", "id": "svl_fail", "color": "#d62728"}]
                 ]
               }
             },
@@ -393,13 +440,12 @@ Resources:
                 "view": "timeSeries",
                 "stacked": false,
                 "region": "${AWS::Region}",
-                "stat": "Sum",
                 "period": 300,
                 "metrics": [
-                  ["Elephant/Workflow", "MVLElephantPhase", "County", "${!county}", "Status", "SCHEDULED", {"label": "SCHEDULED", "color": "#1f77b4"}],
-                  ["...", "IN_PROGRESS", {"label": "IN_PROGRESS", "color": "#ff7f0e"}],
-                  ["...", "SUCCEEDED", {"label": "SUCCEEDED", "color": "#2ca02c"}],
-                  ["...", "FAILED", {"label": "FAILED", "color": "#d62728"}]
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"MVLElephantPhase\" Status=\"SCHEDULED\" COUNTY_FILTER', 'Sum', 300))", "label": "SCHEDULED", "id": "mvl_sched", "color": "#1f77b4"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"MVLElephantPhase\" Status=\"IN_PROGRESS\" COUNTY_FILTER', 'Sum', 300))", "label": "IN_PROGRESS", "id": "mvl_prog", "color": "#ff7f0e"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"MVLElephantPhase\" Status=\"SUCCEEDED\" COUNTY_FILTER', 'Sum', 300))", "label": "SUCCEEDED", "id": "mvl_succ", "color": "#2ca02c"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"MVLElephantPhase\" Status=\"FAILED\" COUNTY_FILTER', 'Sum', 300))", "label": "FAILED", "id": "mvl_fail", "color": "#d62728"}]
                 ]
               }
             },
@@ -414,13 +460,12 @@ Resources:
                 "view": "timeSeries",
                 "stacked": false,
                 "region": "${AWS::Region}",
-                "stat": "Sum",
                 "period": 300,
                 "metrics": [
-                  ["Elephant/Workflow", "HashElephantPhase", "County", "${!county}", "Status", "SCHEDULED", {"label": "SCHEDULED", "color": "#1f77b4"}],
-                  ["...", "IN_PROGRESS", {"label": "IN_PROGRESS", "color": "#ff7f0e"}],
-                  ["...", "SUCCEEDED", {"label": "SUCCEEDED", "color": "#2ca02c"}],
-                  ["...", "FAILED", {"label": "FAILED", "color": "#d62728"}]
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"HashElephantPhase\" Status=\"SCHEDULED\" COUNTY_FILTER', 'Sum', 300))", "label": "SCHEDULED", "id": "hash_sched", "color": "#1f77b4"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"HashElephantPhase\" Status=\"IN_PROGRESS\" COUNTY_FILTER', 'Sum', 300))", "label": "IN_PROGRESS", "id": "hash_prog", "color": "#ff7f0e"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"HashElephantPhase\" Status=\"SUCCEEDED\" COUNTY_FILTER', 'Sum', 300))", "label": "SUCCEEDED", "id": "hash_succ", "color": "#2ca02c"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"HashElephantPhase\" Status=\"FAILED\" COUNTY_FILTER', 'Sum', 300))", "label": "FAILED", "id": "hash_fail", "color": "#d62728"}]
                 ]
               }
             },
@@ -435,13 +480,12 @@ Resources:
                 "view": "timeSeries",
                 "stacked": false,
                 "region": "${AWS::Region}",
-                "stat": "Sum",
                 "period": 300,
                 "metrics": [
-                  ["Elephant/Workflow", "UploadElephantPhase", "County", "${!county}", "Status", "SCHEDULED", {"label": "SCHEDULED", "color": "#1f77b4"}],
-                  ["...", "IN_PROGRESS", {"label": "IN_PROGRESS", "color": "#ff7f0e"}],
-                  ["...", "SUCCEEDED", {"label": "SUCCEEDED", "color": "#2ca02c"}],
-                  ["...", "FAILED", {"label": "FAILED", "color": "#d62728"}]
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"UploadElephantPhase\" Status=\"SCHEDULED\" COUNTY_FILTER', 'Sum', 300))", "label": "SCHEDULED", "id": "upload_sched", "color": "#1f77b4"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"UploadElephantPhase\" Status=\"IN_PROGRESS\" COUNTY_FILTER', 'Sum', 300))", "label": "IN_PROGRESS", "id": "upload_prog", "color": "#ff7f0e"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"UploadElephantPhase\" Status=\"SUCCEEDED\" COUNTY_FILTER', 'Sum', 300))", "label": "SUCCEEDED", "id": "upload_succ", "color": "#2ca02c"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"UploadElephantPhase\" Status=\"FAILED\" COUNTY_FILTER', 'Sum', 300))", "label": "FAILED", "id": "upload_fail", "color": "#d62728"}]
                 ]
               }
             },
@@ -456,13 +500,12 @@ Resources:
                 "view": "timeSeries",
                 "stacked": false,
                 "region": "${AWS::Region}",
-                "stat": "Sum",
                 "period": 300,
                 "metrics": [
-                  ["Elephant/Workflow", "SubmitElephantPhase", "County", "${!county}", "Status", "SCHEDULED", {"label": "SCHEDULED", "color": "#1f77b4"}],
-                  ["...", "IN_PROGRESS", {"label": "IN_PROGRESS", "color": "#ff7f0e"}],
-                  ["...", "SUCCEEDED", {"label": "SUCCEEDED", "color": "#2ca02c"}],
-                  ["...", "FAILED", {"label": "FAILED", "color": "#d62728"}]
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"SubmitElephantPhase\" Status=\"SCHEDULED\" COUNTY_FILTER', 'Sum', 300))", "label": "SCHEDULED", "id": "submit_sched", "color": "#1f77b4"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"SubmitElephantPhase\" Status=\"IN_PROGRESS\" COUNTY_FILTER', 'Sum', 300))", "label": "IN_PROGRESS", "id": "submit_prog", "color": "#ff7f0e"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"SubmitElephantPhase\" Status=\"SUCCEEDED\" COUNTY_FILTER', 'Sum', 300))", "label": "SUCCEEDED", "id": "submit_succ", "color": "#2ca02c"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step} MetricName=\"SubmitElephantPhase\" Status=\"FAILED\" COUNTY_FILTER', 'Sum', 300))", "label": "FAILED", "id": "submit_fail", "color": "#d62728"}]
                 ]
               }
             }
