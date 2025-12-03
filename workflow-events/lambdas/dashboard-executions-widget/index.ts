@@ -135,9 +135,7 @@ const formatDate = (isoDate: string): string => {
 const generateHtml = (executions: FailedExecutionItem[]): string => {
   if (executions.length === 0) {
     return `
-      <div style="padding: 20px; text-align: center; color: #888;">
-        <p>No failed executions found.</p>
-      </div>
+      <p>No failed executions found.</p>
     `;
   }
 
@@ -147,10 +145,10 @@ const generateHtml = (executions: FailedExecutionItem[]): string => {
       <tr>
         <td title="${escapeHtml(exec.executionId)}">${escapeHtml(exec.executionId.substring(0, 36))}...</td>
         <td>${escapeHtml(exec.county)}</td>
-        <td><span style="background: #f0f0f0; padding: 2px 6px; border-radius: 3px; font-family: monospace;">${escapeHtml(exec.errorType)}</span></td>
-        <td style="text-align: right; font-weight: bold; color: ${exec.openErrorCount > 5 ? "#d32f2f" : "#1976d2"};">${exec.openErrorCount}</td>
-        <td style="text-align: right;">${exec.totalOccurrences}</td>
-        <td style="color: #666; font-size: 0.9em;">${formatDate(exec.createdAt)}</td>
+        <td><code>${escapeHtml(exec.errorType)}</code></td>
+        <td>${exec.openErrorCount}</td>
+        <td>${exec.totalOccurrences}</td>
+        <td>${formatDate(exec.createdAt)}</td>
       </tr>
     `,
     )
@@ -158,38 +156,18 @@ const generateHtml = (executions: FailedExecutionItem[]): string => {
 
   return `
     <style>
-      .executions-table {
+      table {
         width: 100%;
-        border-collapse: collapse;
-        font-size: 13px;
-      }
-      .executions-table th {
-        background: #f5f5f5;
-        padding: 8px 12px;
-        text-align: left;
-        font-weight: 600;
-        border-bottom: 2px solid #ddd;
-      }
-      .executions-table td {
-        padding: 8px 12px;
-        border-bottom: 1px solid #eee;
-        max-width: 200px;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-      }
-      .executions-table tr:hover {
-        background: #fafafa;
       }
     </style>
-    <table class="executions-table">
+    <table>
       <thead>
         <tr>
           <th>Execution ID</th>
           <th>County</th>
           <th>Error Type</th>
-          <th style="text-align: right;">Open Errors</th>
-          <th style="text-align: right;">Total Occurrences</th>
+          <th>Open Errors</th>
+          <th>Total Occurrences</th>
           <th>Created At</th>
         </tr>
       </thead>
@@ -234,10 +212,8 @@ export const handler = async (
     });
 
     return `
-      <div style="padding: 20px; color: #d32f2f;">
-        <strong>Error loading data:</strong>
-        <p>${escapeHtml(error instanceof Error ? error.message : String(error))}</p>
-      </div>
+      <h3>Error loading data</h3>
+      <p>${escapeHtml(error instanceof Error ? error.message : String(error))}</p>
     `;
   }
 };

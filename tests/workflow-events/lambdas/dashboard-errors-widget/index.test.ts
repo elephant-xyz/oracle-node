@@ -173,7 +173,8 @@ describe("dashboard-errors-widget handler", () => {
 
       const result = await handler({ errorType: "SV" });
 
-      expect(result).toContain("Filter: SV");
+      expect(result).toContain("Filter:");
+      expect(result).toContain("<code>SV</code>");
     });
   });
 
@@ -423,6 +424,258 @@ describe("dashboard-errors-widget handler", () => {
 
       expect(result).toContain("Error loading data");
       expect(result).toContain("WORKFLOW_ERRORS_TABLE_NAME");
+    });
+  });
+
+  describe("pagination", () => {
+    /**
+     * Sets up environment variables required for Lambda ARN construction.
+     */
+    const setupPaginationEnv = (): void => {
+      process.env.AWS_REGION = "us-east-1";
+      process.env.AWS_LAMBDA_FUNCTION_NAME = "test-dashboard-errors-widget";
+      process.env.AWS_ACCOUNT_ID = "123456789012";
+    };
+
+    /**
+     * Creates a mock LastEvaluatedKey for DynamoDB pagination.
+     * @returns DynamoDB key object
+     */
+    const createMockLastEvaluatedKey = (): Record<string, string> => ({
+      PK: "ERROR#01256",
+      SK: "ERROR#01256",
+      GS2PK: "TYPE#ERROR",
+      GS2SK: "COUNT#0000000010#ERROR#01256",
+    });
+
+    it("should render Next button when LastEvaluatedKey is returned", async () => {
+      setupPaginationEnv();
+      const mockErrors = [createMockErrorRecord()];
+      ddbMock.on(QueryCommand).resolves({
+        Items: mockErrors,
+        LastEvaluatedKey: createMockLastEvaluatedKey(),
+      });
+
+      const { handler } = await import(
+        "../../../../workflow-events/lambdas/dashboard-errors-widget/index.js"
+      );
+
+      const result = await handler({});
+
+      expect(result).toContain('<a class="btn btn-primary">Next</a>');
+      expect(result).toContain("<cwdb-action");
+      expect(result).toContain('action="call"');
+      expect(result).toContain(
+        "arn:aws:lambda:us-east-1:123456789012:function:test-dashboard-errors-widget",
+      );
+    });
+
+    it("should not render Next button when no LastEvaluatedKey", async () => {
+      setupPaginationEnv();
+      const mockErrors = [createMockErrorRecord()];
+      ddbMock.on(QueryCommand).resolves({
+        Items: mockErrors,
+        LastEvaluatedKey: undefined,
+      });
+
+      const { handler } = await import(
+        "../../../../workflow-events/lambdas/dashboard-errors-widget/index.js"
+      );
+
+      const result = await handler({});
+
+      expect(result).not.toContain('<a class="btn btn-primary">Next</a>');
+    });
+
+    it("should render Previous button when cursor is provided", async () => {
+      setupPaginationEnv();
+      const mockErrors = [createMockErrorRecord()];
+      const cursor = Buffer.from(
+        JSON.stringify(createMockLastEvaluatedKey()),
+      ).toString("base64");
+
+      ddbMock.on(QueryCommand).resolves({
+        Items: mockErrors,
+        LastEvaluatedKey: undefined,
+      });
+
+      const { handler } = await import(
+        "../../../../workflow-events/lambdas/dashboard-errors-widget/index.js"
+      );
+
+      const result = await handler({ cursor });
+
+      expect(result).toContain('<a class="btn">Previous</a>');
+      expect(result).toContain("<cwdb-action");
+    });
+
+    it("should not render Previous button on first page", async () => {
+      setupPaginationEnv();
+      const mockErrors = [createMockErrorRecord()];
+      ddbMock.on(QueryCommand).resolves({
+        Items: mockErrors,
+        LastEvaluatedKey: undefined,
+      });
+
+      const { handler } = await import(
+        "../../../../workflow-events/lambdas/dashboard-errors-widget/index.js"
+      );
+
+      const result = await handler({});
+
+      expect(result).not.toContain('<a class="btn">Previous</a>');
+    });
+
+    it("should pass ExclusiveStartKey to DynamoDB when cursor is provided", async () => {
+      const mockKey = createMockLastEvaluatedKey();
+      const cursor = Buffer.from(JSON.stringify(mockKey)).toString("base64");
+
+      ddbMock.on(QueryCommand).resolves({ Items: [] });
+
+      const { handler } = await import(
+        "../../../../workflow-events/lambdas/dashboard-errors-widget/index.js"
+      );
+
+      await handler({ cursor });
+
+      const calls = ddbMock.commandCalls(QueryCommand);
+      expect(calls[0].args[0].input.ExclusiveStartKey).toEqual(mockKey);
+    });
+
+    it("should not pass ExclusiveStartKey when no cursor provided", async () => {
+      ddbMock.on(QueryCommand).resolves({ Items: [] });
+
+      const { handler } = await import(
+        "../../../../workflow-events/lambdas/dashboard-errors-widget/index.js"
+      );
+
+      await handler({});
+
+      const calls = ddbMock.commandCalls(QueryCommand);
+      expect(calls[0].args[0].input.ExclusiveStartKey).toBeUndefined();
+    });
+
+    it("should preserve errorType filter in pagination buttons", async () => {
+      setupPaginationEnv();
+      const mockErrors = [createMockErrorRecord()];
+      ddbMock.on(QueryCommand).resolves({
+        Items: mockErrors,
+        LastEvaluatedKey: createMockLastEvaluatedKey(),
+      });
+
+      const { handler } = await import(
+        "../../../../workflow-events/lambdas/dashboard-errors-widget/index.js"
+      );
+
+      const result = await handler({ errorType: "SV" });
+
+      expect(result).toContain('"errorType":"SV"');
+    });
+
+    it("should preserve limit in pagination buttons", async () => {
+      setupPaginationEnv();
+      const mockErrors = [createMockErrorRecord()];
+      ddbMock.on(QueryCommand).resolves({
+        Items: mockErrors,
+        LastEvaluatedKey: createMockLastEvaluatedKey(),
+      });
+
+      const { handler } = await import(
+        "../../../../workflow-events/lambdas/dashboard-errors-widget/index.js"
+      );
+
+      const result = await handler({ limit: 15 });
+
+      expect(result).toContain('"limit":15');
+    });
+
+    it("should not render pagination buttons when Lambda ARN env vars are missing", async () => {
+      // Do not set AWS_REGION, AWS_LAMBDA_FUNCTION_NAME, AWS_ACCOUNT_ID
+      const mockErrors = [createMockErrorRecord()];
+      ddbMock.on(QueryCommand).resolves({
+        Items: mockErrors,
+        LastEvaluatedKey: createMockLastEvaluatedKey(),
+      });
+
+      const { handler } = await import(
+        "../../../../workflow-events/lambdas/dashboard-errors-widget/index.js"
+      );
+
+      const result = await handler({});
+
+      expect(result).not.toContain("<cwdb-action");
+      expect(result).not.toContain('<a class="btn">');
+    });
+
+    it("should handle invalid cursor gracefully", async () => {
+      ddbMock.on(QueryCommand).resolves({ Items: [] });
+
+      const { handler } = await import(
+        "../../../../workflow-events/lambdas/dashboard-errors-widget/index.js"
+      );
+
+      // Invalid base64 cursor
+      const result = await handler({ cursor: "invalid-cursor-not-base64!!!" });
+
+      // Should not throw, just ignore invalid cursor
+      expect(result).toContain("No errors found");
+    });
+
+    it("should include cursor in Next button params", async () => {
+      setupPaginationEnv();
+      const mockErrors = [createMockErrorRecord()];
+      const mockKey = createMockLastEvaluatedKey();
+      ddbMock.on(QueryCommand).resolves({
+        Items: mockErrors,
+        LastEvaluatedKey: mockKey,
+      });
+
+      const { handler } = await import(
+        "../../../../workflow-events/lambdas/dashboard-errors-widget/index.js"
+      );
+
+      const result = await handler({});
+
+      // The next cursor should be base64 encoded
+      const expectedCursor = Buffer.from(JSON.stringify(mockKey)).toString(
+        "base64",
+      );
+      expect(result).toContain(`"cursor":"${expectedCursor}"`);
+    });
+
+    it("should render both Previous and Next buttons when on middle page", async () => {
+      setupPaginationEnv();
+      const mockErrors = [createMockErrorRecord()];
+      const cursor = Buffer.from(
+        JSON.stringify(createMockLastEvaluatedKey()),
+      ).toString("base64");
+
+      ddbMock.on(QueryCommand).resolves({
+        Items: mockErrors,
+        LastEvaluatedKey: createMockLastEvaluatedKey(),
+      });
+
+      const { handler } = await import(
+        "../../../../workflow-events/lambdas/dashboard-errors-widget/index.js"
+      );
+
+      const result = await handler({ cursor });
+
+      expect(result).toContain('<a class="btn">Previous</a>');
+      expect(result).toContain('<a class="btn btn-primary">Next</a>');
+    });
+
+    it("should document pagination in describe output", async () => {
+      const { handler } = await import(
+        "../../../../workflow-events/lambdas/dashboard-errors-widget/index.js"
+      );
+
+      const result = await handler({ describe: true });
+
+      const parsed = JSON.parse(result);
+      expect(parsed.markdown).toContain("Pagination");
+      expect(parsed.markdown).toContain("Previous");
+      expect(parsed.markdown).toContain("Next");
     });
   });
 });

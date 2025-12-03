@@ -238,6 +238,7 @@ Resources:
       Environment:
         Variables:
           WORKFLOW_ERRORS_TABLE_NAME: !Ref WorkflowErrorsTable
+          AWS_ACCOUNT_ID: !Ref AWS::AccountId
       Policies:
         - AWSLambdaBasicExecutionRole
         - DynamoDBReadPolicy:

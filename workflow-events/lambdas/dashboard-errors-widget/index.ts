@@ -4,6 +4,24 @@ import { TABLE_NAME, docClient } from "shared/dynamodb-client.js";
 import { ENTITY_TYPES } from "shared/keys.js";
 
 /**
+ * DynamoDB key structure for pagination cursors.
+ */
+interface DynamoDBKey {
+  /** Partition key value. */
+  [key: string]: string | number;
+}
+
+/**
+ * Result from querying errors with pagination info.
+ */
+interface QueryResult {
+  /** Array of error records. */
+  items: ErrorRecord[];
+  /** Cursor for next page (base64 encoded LastEvaluatedKey). */
+  nextCursor?: string;
+}
+
+/**
  * CloudWatch custom widget event structure.
  */
 interface CloudWatchCustomWidgetEvent {
@@ -33,10 +51,67 @@ interface CloudWatchCustomWidgetEvent {
   errorType?: string;
   /** Number of errors to display. */
   limit?: number;
+  /** Base64 encoded cursor for pagination (from previous page's nextCursor). */
+  cursor?: string;
+  /** Base64 encoded cursor for navigating to previous page. */
+  prevCursor?: string;
 }
 
 /** Default number of errors to display. */
 const DEFAULT_LIMIT = 20;
+
+/** Environment variable for AWS account ID (injected via SAM template). */
+const AWS_ACCOUNT_ID = process.env.AWS_ACCOUNT_ID;
+
+/**
+ * Constructs the Lambda function ARN from environment variables.
+ * Uses AWS_REGION, AWS_LAMBDA_FUNCTION_NAME (Lambda runtime env vars)
+ * and AWS_ACCOUNT_ID (injected via SAM template).
+ *
+ * @returns Lambda function ARN string, or undefined if env vars are missing
+ */
+const getLambdaArn = (): string | undefined => {
+  const region = process.env.AWS_REGION ?? process.env.AWS_DEFAULT_REGION;
+  const functionName = process.env.AWS_LAMBDA_FUNCTION_NAME;
+  const accountId = AWS_ACCOUNT_ID;
+
+  if (!region || !functionName || !accountId) {
+    console.warn("missing-env-vars-for-arn", {
+      region,
+      functionName,
+      accountId,
+    });
+    return undefined;
+  }
+
+  return `arn:aws:lambda:${region}:${accountId}:function:${functionName}`;
+};
+
+/**
+ * Encodes a DynamoDB key to a base64 cursor string.
+ *
+ * @param key - DynamoDB key object
+ * @returns Base64 encoded string
+ */
+const encodeCursor = (key: DynamoDBKey): string => {
+  return Buffer.from(JSON.stringify(key)).toString("base64");
+};
+
+/**
+ * Decodes a base64 cursor string to a DynamoDB key.
+ *
+ * @param cursor - Base64 encoded cursor string
+ * @returns DynamoDB key object, or undefined if invalid
+ */
+const decodeCursor = (cursor: string): DynamoDBKey | undefined => {
+  try {
+    const decoded = Buffer.from(cursor, "base64").toString("utf-8");
+    return JSON.parse(decoded) as DynamoDBKey;
+  } catch {
+    console.warn("invalid-cursor", { cursor });
+    return undefined;
+  }
+};
 
 /**
  * Returns documentation for the widget in markdown format.
@@ -70,7 +145,11 @@ limit: 20      # Number of errors to display (default: 20)
 Set the \`errorType\` parameter to filter errors by type prefix:
 - \`SV\` - SVL errors
 - \`MV\` - MVL errors
-- Leave empty to show all error types`,
+- Leave empty to show all error types
+
+### Pagination
+
+Use the Previous/Next buttons to navigate between pages.`,
   });
 };
 
@@ -80,17 +159,21 @@ Set the \`errorType\` parameter to filter errors by type prefix:
  *
  * @param limit - Maximum number of errors to return
  * @param errorType - Optional error type filter
- * @returns Array of ErrorRecord records
+ * @param cursor - Optional cursor for pagination (base64 encoded ExclusiveStartKey)
+ * @returns QueryResult with items and optional nextCursor
  */
 const queryErrorsWithMostOccurrences = async (
   limit: number,
   errorType?: string,
-): Promise<ErrorRecord[]> => {
+  cursor?: string,
+): Promise<QueryResult> => {
   if (!TABLE_NAME) {
     throw new Error(
       "WORKFLOW_ERRORS_TABLE_NAME environment variable is not set",
     );
   }
+
+  const exclusiveStartKey = cursor ? decodeCursor(cursor) : undefined;
 
   // When filtering by errorType, use GS3 with begins_with on GS3SK
   if (errorType && errorType.trim() !== "") {
@@ -107,15 +190,17 @@ const queryErrorsWithMostOccurrences = async (
       },
       ScanIndexForward: false, // Descending order (most occurrences first)
       Limit: limit,
+      ExclusiveStartKey: exclusiveStartKey,
     });
 
     const response = await docClient.send(command);
 
-    if (!response.Items || response.Items.length === 0) {
-      return [];
-    }
-
-    return response.Items as ErrorRecord[];
+    return {
+      items: (response.Items ?? []) as ErrorRecord[],
+      nextCursor: response.LastEvaluatedKey
+        ? encodeCursor(response.LastEvaluatedKey as DynamoDBKey)
+        : undefined,
+    };
   }
 
   // Without errorType filter, use GS2
@@ -130,15 +215,17 @@ const queryErrorsWithMostOccurrences = async (
     },
     ScanIndexForward: false, // Descending order (most occurrences first)
     Limit: limit,
+    ExclusiveStartKey: exclusiveStartKey,
   });
 
   const response = await docClient.send(command);
 
-  if (!response.Items || response.Items.length === 0) {
-    return [];
-  }
-
-  return response.Items as ErrorRecord[];
+  return {
+    items: (response.Items ?? []) as ErrorRecord[],
+    nextCursor: response.LastEvaluatedKey
+      ? encodeCursor(response.LastEvaluatedKey as DynamoDBKey)
+      : undefined,
+  };
 };
 
 /**
@@ -173,21 +260,71 @@ const formatDate = (isoDate: string): string => {
 };
 
 /**
- * Gets the color for an error status badge.
- *
- * @param status - Error status
- * @returns CSS color string
+ * Parameters for generating pagination controls.
  */
-const getStatusColor = (status: string): string => {
-  switch (status) {
-    case "solved":
-      return "#4caf50";
-    case "maybeSolved":
-      return "#ff9800";
-    case "failed":
-    default:
-      return "#d32f2f";
+interface PaginationParams {
+  /** Lambda ARN for cwdb-action endpoint. */
+  lambdaArn: string;
+  /** Current page cursor (undefined for first page). */
+  currentCursor?: string;
+  /** Cursor for next page. */
+  nextCursor?: string;
+  /** Error type filter to preserve across pages. */
+  errorType?: string;
+  /** Limit to preserve across pages. */
+  limit: number;
+}
+
+/**
+ * Generates pagination controls HTML using cwdb-action.
+ *
+ * @param params - Pagination parameters
+ * @returns HTML string for pagination controls
+ */
+const generatePaginationControls = (params: PaginationParams): string => {
+  const { lambdaArn, currentCursor, nextCursor, errorType, limit } = params;
+
+  const hasPrevious = currentCursor !== undefined;
+  const hasNext = nextCursor !== undefined;
+
+  // Build JSON params for cwdb-action, ensuring proper escaping
+  const buildParams = (cursor?: string, prevCursor?: string): string => {
+    const actionParams: Record<string, string | number | undefined> = {
+      errorType: errorType ?? "",
+      limit,
+      cursor,
+      prevCursor,
+    };
+    // Remove undefined values
+    Object.keys(actionParams).forEach((key) => {
+      if (actionParams[key] === undefined) {
+        delete actionParams[key];
+      }
+    });
+    return JSON.stringify(actionParams);
+  };
+
+  let controls = "<p>";
+
+  // Previous button - goes back to first page (no cursor)
+  if (hasPrevious) {
+    controls += `<a class="btn">Previous</a>
+<cwdb-action action="call" endpoint="${escapeHtml(lambdaArn)}">
+  ${buildParams(undefined, undefined)}
+</cwdb-action> `;
   }
+
+  // Next button
+  if (hasNext) {
+    controls += `<a class="btn btn-primary">Next</a>
+<cwdb-action action="call" endpoint="${escapeHtml(lambdaArn)}">
+  ${buildParams(nextCursor, currentCursor)}
+</cwdb-action>`;
+  }
+
+  controls += "</p>";
+
+  return controls;
 };
 
 /**
@@ -195,80 +332,75 @@ const getStatusColor = (status: string): string => {
  *
  * @param errors - Array of error records to display
  * @param errorTypeFilter - Current error type filter for display
+ * @param currentCursor - Current page cursor
+ * @param nextCursor - Cursor for next page
+ * @param limit - Number of items per page
  * @returns HTML string
  */
 const generateHtml = (
   errors: ErrorRecord[],
   errorTypeFilter?: string,
+  currentCursor?: string,
+  nextCursor?: string,
+  limit: number = DEFAULT_LIMIT,
 ): string => {
+  const lambdaArn = getLambdaArn();
   const filterBadge =
     errorTypeFilter && errorTypeFilter.trim() !== ""
-      ? `<span style="background: #e3f2fd; color: #1565c0; padding: 4px 8px; border-radius: 4px; font-size: 12px; margin-left: 10px;">Filter: ${escapeHtml(errorTypeFilter)}</span>`
+      ? `<p>Filter: <code>${escapeHtml(errorTypeFilter)}</code></p>`
       : "";
 
   if (errors.length === 0) {
-    return `
-      <div style="padding: 20px; text-align: center; color: #888;">
-        ${filterBadge ? `<div style="margin-bottom: 10px;">${filterBadge}</div>` : ""}
-        <p>No errors found${errorTypeFilter ? ` for type "${escapeHtml(errorTypeFilter)}"` : ""}.</p>
-      </div>
-    `;
+    let html = filterBadge;
+    html += `<p>No errors found${errorTypeFilter ? ` for type "${escapeHtml(errorTypeFilter)}"` : ""}.</p>`;
+
+    // Show Previous button if we're on a page beyond the first
+    if (lambdaArn && currentCursor) {
+      html += generatePaginationControls({
+        lambdaArn,
+        currentCursor,
+        nextCursor: undefined,
+        errorType: errorTypeFilter,
+        limit,
+      });
+    }
+    return html;
   }
 
   const rows = errors
     .map(
       (err) => `
       <tr>
-        <td title="${escapeHtml(err.errorCode)}" style="font-family: monospace; font-size: 12px;">${escapeHtml(err.errorCode)}</td>
-        <td><span style="background: #f0f0f0; padding: 2px 6px; border-radius: 3px; font-family: monospace;">${escapeHtml(err.errorType)}</span></td>
-        <td style="text-align: right; font-weight: bold; color: ${err.totalCount > 10 ? "#d32f2f" : "#1976d2"};">${err.totalCount}</td>
-        <td><span style="background: ${getStatusColor(err.errorStatus)}; color: white; padding: 2px 6px; border-radius: 3px; font-size: 11px;">${escapeHtml(err.errorStatus)}</span></td>
-        <td title="${escapeHtml(err.latestExecutionId)}" style="font-size: 11px; color: #666;">${escapeHtml(err.latestExecutionId.substring(0, 20))}...</td>
-        <td style="color: #666; font-size: 0.9em;">${formatDate(err.updatedAt)}</td>
+        <td title="${escapeHtml(err.errorCode)}"><code>${escapeHtml(err.errorCode)}</code></td>
+        <td><code>${escapeHtml(err.errorType)}</code></td>
+        <td>${err.totalCount}</td>
+        <td>${escapeHtml(err.errorStatus)}</td>
+        <td title="${escapeHtml(err.latestExecutionId)}">${escapeHtml(err.latestExecutionId.substring(0, 20))}...</td>
+        <td>${formatDate(err.updatedAt)}</td>
       </tr>
     `,
     )
     .join("");
 
+  // Build pagination controls if Lambda ARN is available
+  const paginationControls = lambdaArn
+    ? generatePaginationControls({
+        lambdaArn,
+        currentCursor,
+        nextCursor,
+        errorType: errorTypeFilter,
+        limit,
+      })
+    : "";
+
   return `
-    <style>
-      .errors-table {
-        width: 100%;
-        border-collapse: collapse;
-        font-size: 13px;
-      }
-      .errors-table th {
-        background: #f5f5f5;
-        padding: 8px 12px;
-        text-align: left;
-        font-weight: 600;
-        border-bottom: 2px solid #ddd;
-      }
-      .errors-table td {
-        padding: 8px 12px;
-        border-bottom: 1px solid #eee;
-        max-width: 200px;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-      }
-      .errors-table tr:hover {
-        background: #fafafa;
-      }
-      .filter-info {
-        margin-bottom: 10px;
-        padding: 8px;
-        background: #f9f9f9;
-        border-radius: 4px;
-      }
-    </style>
-    ${filterBadge ? `<div class="filter-info">${filterBadge}</div>` : ""}
-    <table class="errors-table">
+    ${filterBadge}
+    <table style="width: 100%">
       <thead>
         <tr>
           <th>Error Code</th>
           <th>Type</th>
-          <th style="text-align: right;">Total Count</th>
+          <th>Total Count</th>
           <th>Status</th>
           <th>Latest Execution</th>
           <th>Updated At</th>
@@ -278,6 +410,7 @@ const generateHtml = (
         ${rows}
       </tbody>
     </table>
+    ${paginationControls}
   `;
 };
 
@@ -303,16 +436,29 @@ export const handler = async (
     const params = event.widgetContext?.params ?? {};
     const errorType = event.errorType ?? params.errorType;
     const limit = event.limit ?? params.limit ?? DEFAULT_LIMIT;
+    const cursor = event.cursor;
 
-    const errors = await queryErrorsWithMostOccurrences(limit, errorType);
+    const result = await queryErrorsWithMostOccurrences(
+      limit,
+      errorType,
+      cursor,
+    );
 
     console.info("errors-queried", {
-      count: errors.length,
+      count: result.items.length,
       limit,
       errorType: errorType ?? "none",
+      hasCursor: cursor !== undefined,
+      hasNextCursor: result.nextCursor !== undefined,
     });
 
-    return generateHtml(errors, errorType);
+    return generateHtml(
+      result.items,
+      errorType,
+      cursor,
+      result.nextCursor,
+      limit,
+    );
   } catch (error) {
     console.error("widget-error", {
       error: error instanceof Error ? error.message : String(error),
@@ -320,10 +466,8 @@ export const handler = async (
     });
 
     return `
-      <div style="padding: 20px; color: #d32f2f;">
-        <strong>Error loading data:</strong>
-        <p>${escapeHtml(error instanceof Error ? error.message : String(error))}</p>
-      </div>
+      <h3>Error loading data</h3>
+      <p>${escapeHtml(error instanceof Error ? error.message : String(error))}</p>
     `;
   }
 };
