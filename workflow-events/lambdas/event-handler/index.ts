@@ -26,7 +26,6 @@ export const handler = async (
       }),
     );
 
-    // Publish CloudWatch metric for the workflow phase
     await publishPhaseMetric(event.detail.phase, {
       county: event.detail.county,
       status: event.detail.status,
