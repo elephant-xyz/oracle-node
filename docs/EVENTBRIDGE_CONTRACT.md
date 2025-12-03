@@ -13,6 +13,7 @@ Emitted on workflow step status changes (success, failure, or parked).
   "detail": {
     "executionId": "string",
     "county": "string",
+    "dataGroupLabel": "string",
     "status": "string",
     "phase": "string",
     "step": "string",
@@ -29,15 +30,16 @@ Emitted on workflow step status changes (success, failure, or parked).
 
 ### Field Definitions
 
-| Field         | Type   | Description                                           |
-| ------------- | ------ | ----------------------------------------------------- |
-| `executionId` | string | Step Functions execution ARN                          |
-| `county`      | string | County identifier being processed                     |
-| `status`      | string | Current workflow status (e.g., `SUCCEEDED`, `FAILED`) |
-| `phase`       | string | High-level workflow phase                             |
-| `step`        | string | Granular step within the phase                        |
-| `taskToken`   | string | Step Functions task token for resumption              |
-| `errors`      | array  | List of error objects                                 |
+| Field            | Type   | Description                                                                                        |
+| ---------------- | ------ | -------------------------------------------------------------------------------------------------- |
+| `executionId`    | string | Step Functions execution ARN                                                                       |
+| `county`         | string | County identifier being processed                                                                  |
+| `dataGroupLabel` | string | Elephant data group (e.g., `Seed`, `County`). See [Elephant Lexicon](https://lexicon.elephant.xyz) |
+| `status`         | string | Current workflow status (e.g., `SUCCEEDED`, `FAILED`)                                              |
+| `phase`          | string | High-level workflow phase                                                                          |
+| `step`           | string | Granular step within the phase                                                                     |
+| `taskToken`      | string | Step Functions task token for resumption                                                           |
+| `errors`         | array  | List of error objects                                                                              |
 
 ### Error Object Schema
 
