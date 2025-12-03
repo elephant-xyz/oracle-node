@@ -161,6 +161,7 @@ function sleep(ms) {
 async function emitEvent({
   executionId,
   county,
+  dataGroupLabel,
   status,
   phase,
   step,
@@ -177,6 +178,7 @@ async function emitEvent({
             Detail: JSON.stringify({
               executionId: executionId,
               county: county || "unknown",
+              dataGroupLabel: dataGroupLabel || "County",
               status: status,
               phase: phase,
               step: step,
@@ -399,6 +401,7 @@ export const handler = async (event) => {
   let taskToken;
   let executionArn;
   let county;
+  let dataGroupLabel = "County"; // Default for Submit phase
   let transactionHash;
   let originalTransactionItems;
 
@@ -415,6 +418,8 @@ export const handler = async (event) => {
       taskToken = record.messageAttributes.TaskToken.stringValue;
       executionArn = record.messageAttributes.ExecutionArn?.stringValue;
       county = record.messageAttributes.County?.stringValue;
+      // @ts-ignore - DataGroupLabel is added in state machine but not in type definition
+      dataGroupLabel = record.messageAttributes?.DataGroupLabel?.stringValue || "County";
       transactionHash = record.messageAttributes.TransactionHash?.stringValue;
 
       console.log(
@@ -454,6 +459,7 @@ export const handler = async (event) => {
         await emitEvent({
           executionId: executionArn,
           county: county || "unknown",
+          dataGroupLabel: dataGroupLabel,
           status: "IN_PROGRESS",
           phase: "Submit",
           step: "CheckTransactionStatus",
@@ -530,6 +536,7 @@ export const handler = async (event) => {
       await emitEvent({
         executionId: executionArn,
         county: county || "unknown",
+        dataGroupLabel: dataGroupLabel,
         status: "SUCCEEDED",
         phase: "Submit",
         step: "CheckTransactionStatus",
@@ -563,6 +570,7 @@ export const handler = async (event) => {
       await emitEvent({
         executionId: executionArn,
         county: county || "unknown",
+        dataGroupLabel: dataGroupLabel,
         status: "FAILED",
         phase: "Submit",
         step: "CheckTransactionStatus",

@@ -685,6 +685,9 @@ States:
         County:
           DataType: String
           StringValue.$: $.pre.county_name
+        DataGroupLabel:
+          DataType: String
+          StringValue: "County"
     TimeoutSeconds: 900
     ResultSelector:
       taskToken.$: $$.Task.Token
@@ -820,6 +823,9 @@ States:
         County:
           DataType: String
           StringValue.$: $.pre.county_name
+        DataGroupLabel:
+          DataType: String
+          StringValue: "County"
     TimeoutSeconds: 600
     ResultSelector:
       taskToken.$: $$.Task.Token
@@ -984,6 +990,9 @@ States:
         County:
           DataType: String
           StringValue.$: $.pre.county_name
+        DataGroupLabel:
+          DataType: String
+          StringValue: "County"
         TransactionHash:
           DataType: String
           StringValue.$: $.transactionStatus.transactionHash

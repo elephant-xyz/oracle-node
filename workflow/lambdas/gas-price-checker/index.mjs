@@ -263,6 +263,7 @@ export const handler = async (event) => {
   let taskToken;
   let executionArn;
   let county;
+  let dataGroupLabel = "County"; // Default for Submit phase
 
   if (isSqsInvocation) {
     // Invoked from SQS (with task token in message attributes for Step Function callback)
@@ -277,6 +278,8 @@ export const handler = async (event) => {
       taskToken = record.messageAttributes.TaskToken.stringValue;
       executionArn = record.messageAttributes.ExecutionArn?.stringValue;
       county = record.messageAttributes.County?.stringValue;
+      // @ts-ignore - DataGroupLabel is added in state machine but not in type definition
+      dataGroupLabel = record.messageAttributes?.DataGroupLabel?.stringValue || "County";
       console.log({
         ...base,
         level: "info",
@@ -298,6 +301,7 @@ export const handler = async (event) => {
                   Detail: JSON.stringify({
                     executionId: executionArn,
                     county: county || "unknown",
+                    dataGroupLabel: dataGroupLabel,
                     status: "IN_PROGRESS",
                     phase: "Submit",
                     step: "CheckGasPrice",
@@ -376,6 +380,7 @@ export const handler = async (event) => {
                 Detail: JSON.stringify({
                   executionId: executionArn,
                   county: county || "unknown",
+                  dataGroupLabel: dataGroupLabel,
                   status: "SUCCEEDED",
                   phase: "Submit",
                   step: "CheckGasPrice",
@@ -429,6 +434,7 @@ export const handler = async (event) => {
                 Detail: JSON.stringify({
                   executionId: executionArn,
                   county: county || "unknown",
+                  dataGroupLabel: dataGroupLabel,
                   status: "FAILED",
                   phase: "Submit",
                   step: "CheckGasPrice",

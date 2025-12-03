@@ -287,6 +287,7 @@ export const handler = async (event) => {
   let executionArn;
   let record; // Store record for use in catch block
   let county = "unknown"; // Store county for use in catch block
+  let dataGroupLabel = "County"; // Store dataGroupLabel for use in catch block
 
   if (isDirectStepFunctionInvocation) {
     // Invoked directly from Step Functions with Task Token
@@ -309,29 +310,31 @@ export const handler = async (event) => {
       itemCount: toSubmit.length,
     });
 
-    // Emit IN_PROGRESS event to EventBridge when invoked directly
-    if (taskToken && executionArn) {
-      county = event.county || "unknown";
-      try {
-        await eventBridgeClient.send(
-          new PutEventsCommand({
-            Entries: [
-              {
-                Source: "elephant.workflow",
-                DetailType: "WorkflowEvent",
-                Detail: JSON.stringify({
-                  executionId: executionArn,
-                  county: county,
-                  status: "IN_PROGRESS",
-                  phase: "Submit",
-                  step: "SubmitToBlockchain",
-                  taskToken: taskToken,
-                  errors: [],
-                }),
-              },
-            ],
-          }),
-        );
+      // Emit IN_PROGRESS event to EventBridge when invoked directly
+      if (taskToken && executionArn) {
+        county = event.county || "unknown";
+        dataGroupLabel = event.dataGroupLabel || "County";
+        try {
+          await eventBridgeClient.send(
+            new PutEventsCommand({
+              Entries: [
+                {
+                  Source: "elephant.workflow",
+                  DetailType: "WorkflowEvent",
+                  Detail: JSON.stringify({
+                    executionId: executionArn,
+                    county: county,
+                    dataGroupLabel: dataGroupLabel,
+                    status: "IN_PROGRESS",
+                    phase: "Submit",
+                    step: "SubmitToBlockchain",
+                    taskToken: taskToken,
+                    errors: [],
+                  }),
+                },
+              ],
+            }),
+          );
       } catch (eventErr) {
         // Log but don't fail on EventBridge errors
         console.warn({
@@ -368,8 +371,10 @@ export const handler = async (event) => {
 
       // Emit IN_PROGRESS event to EventBridge when task token is received
       if (taskToken && executionArn) {
-        // Extract county from message attributes or use default
+        // Extract county and dataGroupLabel from message attributes or use defaults
         county = record.messageAttributes?.County?.stringValue || "unknown";
+        // @ts-ignore - DataGroupLabel is added in state machine but not in type definition
+        dataGroupLabel = record.messageAttributes?.DataGroupLabel?.stringValue || "County";
         try {
           await eventBridgeClient.send(
             new PutEventsCommand({
@@ -380,6 +385,7 @@ export const handler = async (event) => {
                   Detail: JSON.stringify({
                     executionId: executionArn,
                     county: county,
+                    dataGroupLabel: dataGroupLabel,
                     status: "IN_PROGRESS",
                     phase: "Submit",
                     step: "SubmitToBlockchain",
@@ -603,6 +609,7 @@ export const handler = async (event) => {
                 Detail: JSON.stringify({
                   executionId: executionArn,
                   county: county,
+                  dataGroupLabel: dataGroupLabel,
                   status: "SUCCEEDED",
                   phase: "Submit",
                   step: "SubmitToBlockchain",
@@ -647,6 +654,7 @@ export const handler = async (event) => {
                 Detail: JSON.stringify({
                   executionId: executionArn,
                   county: county,
+                  dataGroupLabel: dataGroupLabel,
                   status: "FAILED",
                   phase: "Submit",
                   step: "SubmitToBlockchain",
