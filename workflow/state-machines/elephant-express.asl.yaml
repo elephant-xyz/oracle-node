@@ -230,6 +230,7 @@ States:
     Type: Task
     Resource: arn:aws:states:::events:putEvents.waitForTaskToken
     Comment: "Emit FAILED event with taskToken when queue not found. Waits for external retry (e.g., after queue is created)."
+    HeartbeatSeconds: 2592000 # 30 days
     Parameters:
       Entries:
         - Source: elephant.workflow
@@ -277,6 +278,7 @@ States:
     Type: Task
     Resource: arn:aws:states:::events:putEvents.waitForTaskToken
     Comment: "Emit FAILED event with NEW taskToken. Waits for external sendTaskSuccess to resume, then loops back to Prepare."
+    HeartbeatSeconds: 2592000 # 30 days
     Parameters:
       Entries:
         - Source: elephant.workflow
