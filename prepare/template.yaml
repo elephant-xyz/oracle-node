@@ -130,6 +130,25 @@ Globals:
 
 Resources:
   #####################################################################################################################
+  # Shared Layer for Workflow Lambdas
+  #####################################################################################################################
+
+  WorkflowSharedLayer:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      LayerName: !Sub "${EnvironmentName}-workflow-shared"
+      Description: Shared utilities for workflow lambdas (S3, Step Functions task tokens, EventBridge)
+      ContentUri: ../workflow/layers/shared
+      CompatibleRuntimes:
+        - nodejs22.x
+      CompatibleArchitectures:
+        - arm64
+      RetentionPolicy: Delete
+    Metadata:
+      BuildMethod: makefile
+      BuildArchitecture: arm64
+
+  #####################################################################################################################
   # GitHub Token Secret
   #####################################################################################################################
 
@@ -691,6 +710,8 @@ Resources:
         Size: 2048
       CodeUri: ../workflow/lambdas/transform-worker
       Handler: index.handler
+      Layers:
+        - !Ref WorkflowSharedLayer
       Description: "Performs county data transformation"
       LoggingConfig:
         LogFormat: JSON
@@ -732,6 +753,8 @@ Resources:
         Size: 2048
       CodeUri: ../workflow/lambdas/svl-worker
       Handler: index.handler
+      Layers:
+        - !Ref WorkflowSharedLayer
       Description: "Performs schema validation layer checks"
       LoggingConfig:
         LogFormat: JSON
@@ -775,6 +798,8 @@ Resources:
         Size: 2048
       CodeUri: ../workflow/lambdas/hash-worker
       Handler: index.handler
+      Layers:
+        - !Ref WorkflowSharedLayer
       Description: "Generates hash outputs for seed and county data"
       LoggingConfig:
         LogFormat: JSON
@@ -813,6 +838,8 @@ Resources:
         Size: 2048
       CodeUri: ../workflow/lambdas/upload-worker
       Handler: index.handler
+      Layers:
+        - !Ref WorkflowSharedLayer
       Description: "Uploads hash archives to IPFS via Pinata"
       LoggingConfig:
         LogFormat: JSON

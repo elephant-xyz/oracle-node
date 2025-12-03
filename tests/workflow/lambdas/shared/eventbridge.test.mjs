@@ -18,7 +18,7 @@ describe("eventbridge utilities", () => {
       eventBridgeMock.on(PutEventsCommand).resolves({});
 
       const { emitWorkflowEvent } = await import(
-        "../../../../workflow/lambdas/shared/eventbridge.mjs"
+        "../../../../workflow/layers/shared/src/eventbridge.mjs"
       );
 
       await emitWorkflowEvent({
@@ -50,7 +50,7 @@ describe("eventbridge utilities", () => {
       eventBridgeMock.on(PutEventsCommand).resolves({});
 
       const { emitWorkflowEvent } = await import(
-        "../../../../workflow/lambdas/shared/eventbridge.mjs"
+        "../../../../workflow/layers/shared/src/eventbridge.mjs"
       );
 
       await emitWorkflowEvent({
@@ -84,7 +84,7 @@ describe("eventbridge utilities", () => {
       eventBridgeMock.on(PutEventsCommand).resolves({});
 
       const { emitWorkflowEvent } = await import(
-        "../../../../workflow/lambdas/shared/eventbridge.mjs"
+        "../../../../workflow/layers/shared/src/eventbridge.mjs"
       );
 
       const errors = [
@@ -122,7 +122,7 @@ describe("eventbridge utilities", () => {
       eventBridgeMock.on(PutEventsCommand).resolves({});
 
       const { emitWorkflowEvent } = await import(
-        "../../../../workflow/lambdas/shared/eventbridge.mjs"
+        "../../../../workflow/layers/shared/src/eventbridge.mjs"
       );
 
       await emitWorkflowEvent({
@@ -155,7 +155,7 @@ describe("eventbridge utilities", () => {
       eventBridgeMock.on(PutEventsCommand).resolves({});
 
       const { emitWorkflowEvent } = await import(
-        "../../../../workflow/lambdas/shared/eventbridge.mjs"
+        "../../../../workflow/layers/shared/src/eventbridge.mjs"
       );
 
       const log = vi.fn();
@@ -184,7 +184,7 @@ describe("eventbridge utilities", () => {
         .rejects(new Error("EventBridge error"));
 
       const { emitWorkflowEvent } = await import(
-        "../../../../workflow/lambdas/shared/eventbridge.mjs"
+        "../../../../workflow/layers/shared/src/eventbridge.mjs"
       );
 
       const log = vi.fn();
@@ -211,7 +211,7 @@ describe("eventbridge utilities", () => {
       eventBridgeMock.on(PutEventsCommand).rejects("string error");
 
       const { emitWorkflowEvent } = await import(
-        "../../../../workflow/lambdas/shared/eventbridge.mjs"
+        "../../../../workflow/layers/shared/src/eventbridge.mjs"
       );
 
       const log = vi.fn();
@@ -238,7 +238,7 @@ describe("eventbridge utilities", () => {
       eventBridgeMock.on(PutEventsCommand).resolves({});
 
       const { emitWorkflowEvent } = await import(
-        "../../../../workflow/lambdas/shared/eventbridge.mjs"
+        "../../../../workflow/layers/shared/src/eventbridge.mjs"
       );
 
       // Should not throw when log is undefined
@@ -257,7 +257,7 @@ describe("eventbridge utilities", () => {
   describe("createWorkflowError", () => {
     it("should create error with code only", async () => {
       const { createWorkflowError } = await import(
-        "../../../../workflow/lambdas/shared/eventbridge.mjs"
+        "../../../../workflow/layers/shared/src/eventbridge.mjs"
       );
 
       const error = createWorkflowError("TRANSFORM_FAILED");
@@ -267,7 +267,7 @@ describe("eventbridge utilities", () => {
 
     it("should create error with code and details", async () => {
       const { createWorkflowError } = await import(
-        "../../../../workflow/lambdas/shared/eventbridge.mjs"
+        "../../../../workflow/layers/shared/src/eventbridge.mjs"
       );
 
       const error = createWorkflowError("SVL_VALIDATION_ERROR", {
@@ -282,7 +282,7 @@ describe("eventbridge utilities", () => {
 
     it("should not include details key when details is undefined", async () => {
       const { createWorkflowError } = await import(
-        "../../../../workflow/lambdas/shared/eventbridge.mjs"
+        "../../../../workflow/layers/shared/src/eventbridge.mjs"
       );
 
       const error = createWorkflowError("HASH_FAILED", undefined);
@@ -293,7 +293,7 @@ describe("eventbridge utilities", () => {
 
     it("should handle complex details object", async () => {
       const { createWorkflowError } = await import(
-        "../../../../workflow/lambdas/shared/eventbridge.mjs"
+        "../../../../workflow/layers/shared/src/eventbridge.mjs"
       );
 
       const error = createWorkflowError("UPLOAD_FAILED", {

@@ -19,7 +19,7 @@ describe("task-token utilities", () => {
       sfnMock.on(SendTaskSuccessCommand).resolves({});
 
       const { sendTaskSuccess } = await import(
-        "../../../../workflow/lambdas/shared/task-token.mjs"
+        "../../../../workflow/layers/shared/src/task-token.mjs"
       );
 
       await sendTaskSuccess({
@@ -37,7 +37,7 @@ describe("task-token utilities", () => {
       sfnMock.on(SendTaskSuccessCommand).resolves({});
 
       const { sendTaskSuccess } = await import(
-        "../../../../workflow/lambdas/shared/task-token.mjs"
+        "../../../../workflow/layers/shared/src/task-token.mjs"
       );
 
       const complexOutput = {
@@ -64,7 +64,7 @@ describe("task-token utilities", () => {
       sfnMock.on(SendTaskFailureCommand).resolves({});
 
       const { sendTaskFailure } = await import(
-        "../../../../workflow/lambdas/shared/task-token.mjs"
+        "../../../../workflow/layers/shared/src/task-token.mjs"
       );
 
       await sendTaskFailure({
@@ -84,7 +84,7 @@ describe("task-token utilities", () => {
       sfnMock.on(SendTaskFailureCommand).resolves({});
 
       const { sendTaskFailure } = await import(
-        "../../../../workflow/lambdas/shared/task-token.mjs"
+        "../../../../workflow/layers/shared/src/task-token.mjs"
       );
 
       // Create a cause longer than 32KB
@@ -109,7 +109,7 @@ describe("task-token utilities", () => {
       sfnMock.on(SendTaskSuccessCommand).resolves({});
 
       const { executeWithTaskToken } = await import(
-        "../../../../workflow/lambdas/shared/task-token.mjs"
+        "../../../../workflow/layers/shared/src/task-token.mjs"
       );
 
       const log = vi.fn();
@@ -142,7 +142,7 @@ describe("task-token utilities", () => {
       sfnMock.on(SendTaskFailureCommand).resolves({});
 
       const { executeWithTaskToken } = await import(
-        "../../../../workflow/lambdas/shared/task-token.mjs"
+        "../../../../workflow/layers/shared/src/task-token.mjs"
       );
 
       const log = vi.fn();
@@ -173,7 +173,7 @@ describe("task-token utilities", () => {
       sfnMock.on(SendTaskFailureCommand).resolves({});
 
       const { executeWithTaskToken } = await import(
-        "../../../../workflow/lambdas/shared/task-token.mjs"
+        "../../../../workflow/layers/shared/src/task-token.mjs"
       );
 
       const log = vi.fn();
@@ -197,7 +197,7 @@ describe("task-token utilities", () => {
       sfnMock.on(SendTaskFailureCommand).resolves({});
 
       const { executeWithTaskToken } = await import(
-        "../../../../workflow/lambdas/shared/task-token.mjs"
+        "../../../../workflow/layers/shared/src/task-token.mjs"
       );
 
       const log = vi.fn();

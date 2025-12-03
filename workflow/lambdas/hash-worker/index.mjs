@@ -10,7 +10,7 @@ import {
   uploadToS3,
   createLogger,
   emitWorkflowEvent,
-} from "./shared/index.mjs";
+} from "shared";
 
 /**
  * @typedef {object} HashInput

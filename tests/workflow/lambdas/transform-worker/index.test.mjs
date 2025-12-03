@@ -23,17 +23,14 @@ const mockDownloadS3Object = vi.fn();
 const mockUploadToS3 = vi.fn().mockResolvedValue("s3://bucket/output.zip");
 const mockCreateLogger = vi.fn(() => vi.fn());
 const mockEmitWorkflowEvent = vi.fn();
-vi.mock(
-  "../../../../workflow/lambdas/transform-worker/shared/index.mjs",
-  () => ({
-    executeWithTaskToken: mockExecuteWithTaskToken,
-    parseS3Uri: mockParseS3Uri,
-    downloadS3Object: mockDownloadS3Object,
-    uploadToS3: mockUploadToS3,
-    createLogger: mockCreateLogger,
-    emitWorkflowEvent: mockEmitWorkflowEvent,
-  }),
-);
+vi.mock("shared", () => ({
+  executeWithTaskToken: mockExecuteWithTaskToken,
+  parseS3Uri: mockParseS3Uri,
+  downloadS3Object: mockDownloadS3Object,
+  uploadToS3: mockUploadToS3,
+  createLogger: mockCreateLogger,
+  emitWorkflowEvent: mockEmitWorkflowEvent,
+}));
 
 // Mock @elephant-xyz/cli/lib
 const mockTransform = vi.fn();

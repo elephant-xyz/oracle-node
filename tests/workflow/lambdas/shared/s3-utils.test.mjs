@@ -53,7 +53,7 @@ describe("s3-utils", () => {
   describe("parseS3Uri", () => {
     it("should parse valid S3 URI", async () => {
       const { parseS3Uri } = await import(
-        "../../../../workflow/lambdas/shared/s3-utils.mjs"
+        "../../../../workflow/layers/shared/src/s3-utils.mjs"
       );
 
       const result = parseS3Uri("s3://my-bucket/path/to/file.zip");
@@ -66,7 +66,7 @@ describe("s3-utils", () => {
 
     it("should parse S3 URI with simple key", async () => {
       const { parseS3Uri } = await import(
-        "../../../../workflow/lambdas/shared/s3-utils.mjs"
+        "../../../../workflow/layers/shared/src/s3-utils.mjs"
       );
 
       const result = parseS3Uri("s3://bucket/file.txt");
@@ -79,7 +79,7 @@ describe("s3-utils", () => {
 
     it("should parse S3 URI with deeply nested key", async () => {
       const { parseS3Uri } = await import(
-        "../../../../workflow/lambdas/shared/s3-utils.mjs"
+        "../../../../workflow/layers/shared/src/s3-utils.mjs"
       );
 
       const result = parseS3Uri("s3://bucket/a/b/c/d/e/file.zip");
@@ -92,7 +92,7 @@ describe("s3-utils", () => {
 
     it("should throw error for invalid S3 URI", async () => {
       const { parseS3Uri } = await import(
-        "../../../../workflow/lambdas/shared/s3-utils.mjs"
+        "../../../../workflow/layers/shared/src/s3-utils.mjs"
       );
 
       expect(() => parseS3Uri("https://bucket/key")).toThrow("Bad S3 URI");
@@ -100,7 +100,7 @@ describe("s3-utils", () => {
 
     it("should throw error for URI without s3:// prefix", async () => {
       const { parseS3Uri } = await import(
-        "../../../../workflow/lambdas/shared/s3-utils.mjs"
+        "../../../../workflow/layers/shared/src/s3-utils.mjs"
       );
 
       expect(() => parseS3Uri("bucket/key")).toThrow("Bad S3 URI");
@@ -108,7 +108,7 @@ describe("s3-utils", () => {
 
     it("should throw error for malformed URI", async () => {
       const { parseS3Uri } = await import(
-        "../../../../workflow/lambdas/shared/s3-utils.mjs"
+        "../../../../workflow/layers/shared/src/s3-utils.mjs"
       );
 
       expect(() => parseS3Uri("s3://")).toThrow("Bad S3 URI");
@@ -116,7 +116,7 @@ describe("s3-utils", () => {
 
     it("should throw error for URI with only bucket (no key)", async () => {
       const { parseS3Uri } = await import(
-        "../../../../workflow/lambdas/shared/s3-utils.mjs"
+        "../../../../workflow/layers/shared/src/s3-utils.mjs"
       );
 
       // s3://bucket doesn't match the regex since it expects a slash after bucket
@@ -125,7 +125,7 @@ describe("s3-utils", () => {
 
     it("should parse URI with empty key (trailing slash)", async () => {
       const { parseS3Uri } = await import(
-        "../../../../workflow/lambdas/shared/s3-utils.mjs"
+        "../../../../workflow/layers/shared/src/s3-utils.mjs"
       );
 
       // s3://bucket/ has an empty string as key, which the regex captures
@@ -138,7 +138,7 @@ describe("s3-utils", () => {
 
     it("should parse URI with special characters in key", async () => {
       const { parseS3Uri } = await import(
-        "../../../../workflow/lambdas/shared/s3-utils.mjs"
+        "../../../../workflow/layers/shared/src/s3-utils.mjs"
       );
 
       const result = parseS3Uri("s3://bucket/path/to/file with spaces.txt");
@@ -152,7 +152,7 @@ describe("s3-utils", () => {
   describe("buildS3Uri", () => {
     it("should build S3 URI from bucket and key", async () => {
       const { buildS3Uri } = await import(
-        "../../../../workflow/lambdas/shared/s3-utils.mjs"
+        "../../../../workflow/layers/shared/src/s3-utils.mjs"
       );
 
       const result = buildS3Uri("my-bucket", "path/to/file.zip");
@@ -162,7 +162,7 @@ describe("s3-utils", () => {
 
     it("should handle simple key", async () => {
       const { buildS3Uri } = await import(
-        "../../../../workflow/lambdas/shared/s3-utils.mjs"
+        "../../../../workflow/layers/shared/src/s3-utils.mjs"
       );
 
       const result = buildS3Uri("bucket", "file.txt");
@@ -172,7 +172,7 @@ describe("s3-utils", () => {
 
     it("should handle empty key", async () => {
       const { buildS3Uri } = await import(
-        "../../../../workflow/lambdas/shared/s3-utils.mjs"
+        "../../../../workflow/layers/shared/src/s3-utils.mjs"
       );
 
       const result = buildS3Uri("bucket", "");
@@ -192,7 +192,7 @@ describe("s3-utils", () => {
       });
 
       const { downloadS3Object } = await import(
-        "../../../../workflow/lambdas/shared/s3-utils.mjs"
+        "../../../../workflow/layers/shared/src/s3-utils.mjs"
       );
 
       const destinationPath = path.join(tmpDir, "downloaded-file.txt");
@@ -227,7 +227,7 @@ describe("s3-utils", () => {
       });
 
       const { downloadS3Object } = await import(
-        "../../../../workflow/lambdas/shared/s3-utils.mjs"
+        "../../../../workflow/layers/shared/src/s3-utils.mjs"
       );
 
       const destinationPath = path.join(tmpDir, "empty-file.txt");
@@ -252,7 +252,7 @@ describe("s3-utils", () => {
       });
 
       const { downloadS3Object } = await import(
-        "../../../../workflow/lambdas/shared/s3-utils.mjs"
+        "../../../../workflow/layers/shared/src/s3-utils.mjs"
       );
 
       const destinationPath = path.join(tmpDir, "empty-body.txt");
@@ -271,7 +271,7 @@ describe("s3-utils", () => {
       mockSend.mockRejectedValue(new Error("S3 access denied"));
 
       const { downloadS3Object } = await import(
-        "../../../../workflow/lambdas/shared/s3-utils.mjs"
+        "../../../../workflow/layers/shared/src/s3-utils.mjs"
       );
 
       const destinationPath = path.join(tmpDir, "error-file.txt");
@@ -297,7 +297,7 @@ describe("s3-utils", () => {
       });
 
       const { downloadS3Object } = await import(
-        "../../../../workflow/lambdas/shared/s3-utils.mjs"
+        "../../../../workflow/layers/shared/src/s3-utils.mjs"
       );
 
       const destinationPath = path.join(tmpDir, "binary-file.bin");
@@ -319,7 +319,7 @@ describe("s3-utils", () => {
       mockSend.mockResolvedValue({});
 
       const { uploadToS3 } = await import(
-        "../../../../workflow/lambdas/shared/s3-utils.mjs"
+        "../../../../workflow/layers/shared/src/s3-utils.mjs"
       );
 
       // Create a test file
@@ -355,7 +355,7 @@ describe("s3-utils", () => {
       mockSend.mockResolvedValue({});
 
       const { uploadToS3 } = await import(
-        "../../../../workflow/lambdas/shared/s3-utils.mjs"
+        "../../../../workflow/layers/shared/src/s3-utils.mjs"
       );
 
       const localPath = path.join(tmpDir, "upload-json.json");
@@ -382,7 +382,7 @@ describe("s3-utils", () => {
       mockSend.mockRejectedValue(new Error("Upload failed"));
 
       const { uploadToS3 } = await import(
-        "../../../../workflow/lambdas/shared/s3-utils.mjs"
+        "../../../../workflow/layers/shared/src/s3-utils.mjs"
       );
 
       const localPath = path.join(tmpDir, "error-upload.txt");
@@ -401,7 +401,7 @@ describe("s3-utils", () => {
 
     it("should throw error when local file does not exist", async () => {
       const { uploadToS3 } = await import(
-        "../../../../workflow/lambdas/shared/s3-utils.mjs"
+        "../../../../workflow/layers/shared/src/s3-utils.mjs"
       );
 
       const mockLog = vi.fn();
@@ -419,7 +419,7 @@ describe("s3-utils", () => {
       mockSend.mockResolvedValue({});
 
       const { uploadToS3 } = await import(
-        "../../../../workflow/lambdas/shared/s3-utils.mjs"
+        "../../../../workflow/layers/shared/src/s3-utils.mjs"
       );
 
       const binaryContent = Buffer.from([0x89, 0x50, 0x4e, 0x47]); // PNG magic bytes
@@ -446,7 +446,7 @@ describe("s3-utils", () => {
   describe("exported s3 client", () => {
     it("should export the S3 client instance", async () => {
       const { s3 } = await import(
-        "../../../../workflow/lambdas/shared/s3-utils.mjs"
+        "../../../../workflow/layers/shared/src/s3-utils.mjs"
       );
 
       expect(s3).toBeDefined();

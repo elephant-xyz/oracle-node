@@ -20,7 +20,7 @@ describe("shared index utilities", () => {
       process.env.TEST_VAR = "test-value";
 
       const { requireEnv } = await import(
-        "../../../../workflow/lambdas/shared/index.mjs"
+        "../../../../workflow/layers/shared/src/index.mjs"
       );
 
       expect(requireEnv("TEST_VAR")).toBe("test-value");
@@ -30,7 +30,7 @@ describe("shared index utilities", () => {
       delete process.env.MISSING_VAR;
 
       const { requireEnv } = await import(
-        "../../../../workflow/lambdas/shared/index.mjs"
+        "../../../../workflow/layers/shared/src/index.mjs"
       );
 
       expect(() => requireEnv("MISSING_VAR")).toThrow(
@@ -42,7 +42,7 @@ describe("shared index utilities", () => {
       process.env.EMPTY_VAR = "";
 
       const { requireEnv } = await import(
-        "../../../../workflow/lambdas/shared/index.mjs"
+        "../../../../workflow/layers/shared/src/index.mjs"
       );
 
       expect(() => requireEnv("EMPTY_VAR")).toThrow("EMPTY_VAR is required");
@@ -52,7 +52,7 @@ describe("shared index utilities", () => {
   describe("createLogger", () => {
     it("should create logger with base fields", async () => {
       const { createLogger } = await import(
-        "../../../../workflow/lambdas/shared/index.mjs"
+        "../../../../workflow/layers/shared/src/index.mjs"
       );
 
       const log = createLogger({
@@ -73,7 +73,7 @@ describe("shared index utilities", () => {
 
     it("should use console.error for error level", async () => {
       const { createLogger } = await import(
-        "../../../../workflow/lambdas/shared/index.mjs"
+        "../../../../workflow/layers/shared/src/index.mjs"
       );
 
       const log = createLogger({ component: "test" });
@@ -90,7 +90,7 @@ describe("shared index utilities", () => {
 
     it("should use console.log for debug level", async () => {
       const { createLogger } = await import(
-        "../../../../workflow/lambdas/shared/index.mjs"
+        "../../../../workflow/layers/shared/src/index.mjs"
       );
 
       const log = createLogger({ component: "test" });
@@ -106,7 +106,7 @@ describe("shared index utilities", () => {
 
     it("should work without additional details", async () => {
       const { createLogger } = await import(
-        "../../../../workflow/lambdas/shared/index.mjs"
+        "../../../../workflow/layers/shared/src/index.mjs"
       );
 
       const log = createLogger({ component: "test" });
@@ -122,7 +122,7 @@ describe("shared index utilities", () => {
 
     it("should merge base fields with details", async () => {
       const { createLogger } = await import(
-        "../../../../workflow/lambdas/shared/index.mjs"
+        "../../../../workflow/layers/shared/src/index.mjs"
       );
 
       const log = createLogger({
@@ -151,7 +151,7 @@ describe("shared index utilities", () => {
   describe("exports", () => {
     it("should export all shared utilities", async () => {
       const shared = await import(
-        "../../../../workflow/lambdas/shared/index.mjs"
+        "../../../../workflow/layers/shared/src/index.mjs"
       );
 
       // Task token utilities

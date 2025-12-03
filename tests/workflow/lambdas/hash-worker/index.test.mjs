@@ -10,7 +10,7 @@ const mockDownloadS3Object = vi.fn();
 const mockUploadToS3 = vi.fn();
 const mockCreateLogger = vi.fn(() => vi.fn());
 const mockEmitWorkflowEvent = vi.fn();
-vi.mock("../../../../workflow/lambdas/hash-worker/shared/index.mjs", () => ({
+vi.mock("shared", () => ({
   executeWithTaskToken: mockExecuteWithTaskToken,
   parseS3Uri: mockParseS3Uri,
   downloadS3Object: mockDownloadS3Object,

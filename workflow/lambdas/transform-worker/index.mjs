@@ -9,7 +9,7 @@ import {
   uploadToS3,
   createLogger,
   emitWorkflowEvent,
-} from "./shared/index.mjs";
+} from "shared";
 import { createTransformScriptsManager } from "./scripts-manager.mjs";
 import { S3Client } from "@aws-sdk/client-s3";
 

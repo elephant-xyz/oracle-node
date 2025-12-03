@@ -10,7 +10,7 @@ import {
   requireEnv,
   createLogger,
   emitWorkflowEvent,
-} from "./shared/index.mjs";
+} from "shared";
 
 /**
  * @typedef {object} UploadInput
