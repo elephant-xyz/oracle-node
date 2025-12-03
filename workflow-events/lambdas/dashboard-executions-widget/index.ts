@@ -3,37 +3,20 @@ import type { FailedExecutionItem } from "shared/types.js";
 import { TABLE_NAME, docClient } from "shared/dynamodb-client.js";
 import { ENTITY_TYPES } from "shared/keys.js";
 
-/**
- * CloudWatch custom widget event structure.
- */
 interface CloudWatchCustomWidgetEvent {
-  /** If true, return widget documentation in markdown format. */
   describe?: boolean;
-  /** Widget context containing dashboard information. */
   widgetContext?: {
-    /** Dashboard name. */
     dashboardName: string;
-    /** Widget ID. */
     widgetId: string;
-    /** Account ID. */
     accountId: string;
-    /** Widget height in pixels. */
     height: number;
-    /** Widget width in pixels. */
     width: number;
   };
-  /** Custom parameters passed from widget definition. */
   limit?: number;
 }
 
-/** Default number of executions to display. */
 const DEFAULT_LIMIT = 20;
 
-/**
- * Returns documentation for the widget in markdown format.
- *
- * @returns Markdown documentation string
- */
 const getDocumentation = (): string => {
   return JSON.stringify({
     markdown: `## Executions with Most Errors
@@ -57,13 +40,6 @@ limit: 20  # Number of executions to display (default: 20)
   });
 };
 
-/**
- * Queries executions with the most errors using GS1 index.
- * GS1PK = "METRIC#ERRORCOUNT", sorted descending by GS1SK.
- *
- * @param limit - Maximum number of executions to return
- * @returns Array of FailedExecutionItem records
- */
 const queryExecutionsWithMostErrors = async (
   limit: number,
 ): Promise<FailedExecutionItem[]> => {
@@ -80,25 +56,15 @@ const queryExecutionsWithMostErrors = async (
     ExpressionAttributeValues: {
       ":gs1pk": "METRIC#ERRORCOUNT",
     },
-    ScanIndexForward: false, // Descending order (most errors first)
+    ScanIndexForward: false,
     Limit: limit,
   });
 
   const response = await docClient.send(command);
 
-  if (!response.Items || response.Items.length === 0) {
-    return [];
-  }
-
-  return response.Items as FailedExecutionItem[];
+  return (response.Items ?? []) as FailedExecutionItem[];
 };
 
-/**
- * Escapes HTML special characters to prevent XSS.
- *
- * @param str - String to escape
- * @returns Escaped string
- */
 const escapeHtml = (str: string): string => {
   return str
     .replace(/&/g, "&amp;")
@@ -108,12 +74,6 @@ const escapeHtml = (str: string): string => {
     .replace(/'/g, "&#039;");
 };
 
-/**
- * Formats an ISO date string to a human-readable format.
- *
- * @param isoDate - ISO date string
- * @returns Formatted date string
- */
 const formatDate = (isoDate: string): string => {
   const date = new Date(isoDate);
   return date.toLocaleString("en-US", {
@@ -124,12 +84,6 @@ const formatDate = (isoDate: string): string => {
   });
 };
 
-/**
- * Generates HTML table for the widget.
- *
- * @param executions - Array of execution items to display
- * @returns HTML string
- */
 const generateHtml = (executions: FailedExecutionItem[]): string => {
   if (executions.length === 0) {
     return `
@@ -176,19 +130,11 @@ const generateHtml = (executions: FailedExecutionItem[]): string => {
   `;
 };
 
-/**
- * Lambda handler for the CloudWatch custom widget.
- * Displays executions with the most errors.
- *
- * @param event - CloudWatch custom widget event
- * @returns HTML content for the widget
- */
 export const handler = async (
   event: CloudWatchCustomWidgetEvent,
 ): Promise<string> => {
   console.info("dashboard-executions-widget-invoked", { event });
 
-  // Handle describe request for documentation
   if (event.describe) {
     return getDocumentation();
   }
