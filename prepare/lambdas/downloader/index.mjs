@@ -49,22 +49,20 @@ const eventBridgeClient = new EventBridgeClient({});
  * @param {string} params.executionId - Step Functions execution ARN
  * @param {string} params.county - County name
  * @param {string} params.status - Event status (IN_PROGRESS, etc.)
- * @param {string} [params.taskToken] - Optional task token
  * @returns {Promise<void>}
  */
-async function emitWorkflowEvent({ executionId, county, status, taskToken }) {
+async function emitWorkflowEvent({ executionId, county, status }) {
   console.log(
     `📤 Emitting EventBridge event: status=${status}, county=${county}`,
   );
   try {
-    /** @type {{ executionId: string; county: string; status: string; phase: string; step: string; taskToken?: string }} */
+    /** @type {{ executionId: string; county: string; status: string; phase: string; step: string }} */
     const detail = {
       executionId,
       county,
       status,
       phase: "Prepare",
       step: "Prepare",
-      ...(taskToken && { taskToken }),
     };
 
     await eventBridgeClient.send(
@@ -1329,7 +1327,6 @@ export const handler = async (event) => {
           executionId,
           county,
           status: "IN_PROGRESS",
-          taskToken,
         });
 
         const result = await processPrepare({
