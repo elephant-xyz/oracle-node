@@ -34,7 +34,7 @@ export interface WorkflowEventDetail {
 /**
  * Error status for execution-specific errors.
  */
-export type ErrorStatus = "failed" | "maybeSolved" | "solved";
+export type ErrorStatus = "failed" | "maybeSolved" | "solved" | "maybeUnrecoverable";
 
 /**
  * Error record representing an error aggregate in DynamoDB.
@@ -68,7 +68,7 @@ export interface ErrorRecord {
   GS1SK: string;
   /** Global secondary index PK (`TYPE#ERROR`) for reverse lookup. */
   GS2PK: string;
-  /** Global secondary index SK (`COUNT#000010#ERROR#errorCode`) for reverse lookup. */
+  /** Global secondary index SK (`COUNT#{status}#{paddedCount}#ERROR#{errorCode}`) for count-based sorting. */
   GS2SK: string;
   /** Global secondary index partition key (`METRIC#ERRORCOUNT`). */
   GS3PK: string;
@@ -150,10 +150,10 @@ export interface FailedExecutionItem {
   updatedAt: string;
   /** Global secondary index partition key (`METRIC#ERRORCOUNT`). */
   GS1PK: string;
-  /** Global secondary index sort key for the generalized count sort key (`COUNT#000010#EXECUTION#uuid`). */
+  /** Global secondary index sort key (`COUNT#{status}#{paddedCount}#EXECUTION#{executionId}`). */
   GS1SK: string;
   /** Global secondary index partition key (`METRIC#ERRORCOUNT`). */
   GS3PK: string;
-  /** Global secondary index sort key (for example `COUNT#{errorType}#000010#EXECUTION#uuid`). */
+  /** Global secondary index sort key (`COUNT#{errorType}#{status}#{paddedCount}#EXECUTION#{executionId}`). */
   GS3SK: string;
 }

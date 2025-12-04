@@ -707,10 +707,10 @@ describe("event-handler", () => {
       // Find FailedExecutionItem
       const failedExecutionItem = transactItems![0].Update;
 
-      // GS3SK format: COUNT#{errorType}#{paddedCount}#EXECUTION#{executionId}
-      // For 2 unique errors: COUNT#01#0000000002#EXECUTION#exec-gs3-exec-001
+      // GS3SK format: COUNT#{errorType}#{status}#{paddedCount}#EXECUTION#{executionId}
+      // For 2 unique errors: COUNT#01#FAILED#0000000002#EXECUTION#exec-gs3-exec-001
       expect(failedExecutionItem?.ExpressionAttributeValues?.[":gs3sk"]).toBe(
-        "COUNT#01#0000000002#EXECUTION#exec-gs3-exec-001",
+        "COUNT#01#FAILED#0000000002#EXECUTION#exec-gs3-exec-001",
       );
     });
 
@@ -862,9 +862,11 @@ describe("event-handler", () => {
       const sortKeyUpdate = updateCalls.find(
         (call) => call.args[0].input.Key?.PK === "ERROR#12345",
       );
+      // GS2SK format: COUNT#{status}#{paddedCount}#ERROR#{errorCode}
       expect(
         sortKeyUpdate?.args[0].input.ExpressionAttributeValues?.[":gs2sk"],
-      ).toMatch(/^COUNT#\d{10}#ERROR#12345$/);
+      ).toMatch(/^COUNT#FAILED#\d{10}#ERROR#12345$/);
+      // GS3SK format: COUNT#{errorType}#{paddedCount}#ERROR#{errorCode} (no status for errors)
       expect(
         sortKeyUpdate?.args[0].input.ExpressionAttributeValues?.[":gs3sk"],
       ).toMatch(/^COUNT#12#\d{10}#ERROR#12345$/);
@@ -917,12 +919,12 @@ describe("event-handler", () => {
 
       const failedExecutionItem = transactItems![0].Update;
 
-      // GS3: METRIC#ERRORCOUNT -> COUNT#{errorType}#{paddedCount}#EXECUTION#executionId
+      // GS3: METRIC#ERRORCOUNT -> COUNT#{errorType}#{status}#{paddedCount}#EXECUTION#executionId
       expect(failedExecutionItem?.ExpressionAttributeValues?.[":gs3pk"]).toBe(
         "METRIC#ERRORCOUNT",
       );
       expect(failedExecutionItem?.ExpressionAttributeValues?.[":gs3sk"]).toBe(
-        "COUNT#12#0000000002#EXECUTION#exec-gsi-003",
+        "COUNT#12#FAILED#0000000002#EXECUTION#exec-gsi-003",
       );
     });
   });
@@ -1026,7 +1028,8 @@ describe("event-handler", () => {
         },
         UpdateExpression: "SET GS2SK = :gs2sk, GS3SK = :gs3sk",
         ExpressionAttributeValues: {
-          ":gs2sk": "COUNT#0000000042#ERROR#12345",
+          // GS2SK includes status, GS3SK does not
+          ":gs2sk": "COUNT#FAILED#0000000042#ERROR#12345",
           ":gs3sk": "COUNT#12#0000000042#ERROR#12345",
         },
       });

@@ -16,7 +16,13 @@ import type {
   ErrorStatus,
 } from "./types.js";
 import { TABLE_NAME, docClient } from "./dynamodb-client.js";
-import { ENTITY_TYPES, padCount, extractErrorType, createKey } from "./keys.js";
+import {
+  ENTITY_TYPES,
+  padCount,
+  extractErrorType,
+  createKey,
+  DEFAULT_GSI_STATUS,
+} from "./keys.js";
 
 // =============================================================================
 // Helper Functions
@@ -242,10 +248,10 @@ const buildFailedExecutionItemUpdate = (
 } => {
   const tableName = getTableName();
   const pk = createKey("EXECUTION", detail.executionId);
-  // GS1SK format: COUNT#{paddedCount}#EXECUTION#{executionId}
-  const gs1sk = `COUNT#${padCount(stats.uniqueErrorCount)}#EXECUTION#${detail.executionId}`;
-  // GS3SK format: COUNT#{errorType}#{paddedCount}#EXECUTION#{executionId}
-  const gs3sk = `COUNT#${stats.errorType}#${padCount(stats.uniqueErrorCount)}#EXECUTION#${detail.executionId}`;
+  // GS1SK format: COUNT#{status}#{paddedCount}#EXECUTION#{executionId}
+  const gs1sk = `COUNT#${DEFAULT_GSI_STATUS}#${padCount(stats.uniqueErrorCount)}#EXECUTION#${detail.executionId}`;
+  // GS3SK format: COUNT#{errorType}#{status}#{paddedCount}#EXECUTION#{executionId}
+  const gs3sk = `COUNT#${stats.errorType}#${DEFAULT_GSI_STATUS}#${padCount(stats.uniqueErrorCount)}#EXECUTION#${detail.executionId}`;
 
   // Build taskToken clause only when defined
   const taskTokenClause =
@@ -525,10 +531,10 @@ export const updateErrorRecordSortKey = async (
   const tableName = getTableName();
   const pk = createKey("ERROR", errorCode);
   const errorType = extractErrorType(errorCode);
-  // GS2SK format: COUNT#{paddedCount}#ERROR#{errorCode}
-  const gs2sk = `COUNT#${padCount(newCount)}#ERROR#${errorCode}`;
+  // GS2SK format: COUNT#{status}#{paddedCount}#ERROR#{errorCode}
+  const gs2sk = `COUNT#${DEFAULT_GSI_STATUS}#${padCount(newCount)}#ERROR#${errorCode}`;
   // GS3SK format: COUNT#{errorType}#{paddedCount}#ERROR#{errorCode}
-  const gs3sk = `COUNT#${errorType}#${padCount(newCount)}#ERROR#${errorCode}`;
+  const gs3sk = `COUNT#${errorType}#${DEFAULT_GSI_STATUS}#${padCount(newCount)}#ERROR#${errorCode}`;
 
   const command = new UpdateCommand({
     TableName: tableName,
@@ -876,11 +882,12 @@ export const deleteErrorsForExecution = async (
 /**
  * Queries for a failed execution sorted by error count.
  * Uses GS1 when no errorType filter is provided, GS3 when errorType is specified.
+ * Only returns executions with FAILED status.
  *
  * GSI Strategy:
- * - GS1: GS1PK = "METRIC#ERRORCOUNT", GS1SK = "COUNT#{paddedCount}#EXECUTION#{executionId}"
+ * - GS1: GS1PK = "METRIC#ERRORCOUNT", GS1SK = "COUNT#{status}#{paddedCount}#EXECUTION#{executionId}"
  * - GS3: GS3PK = "METRIC#ERRORCOUNT" (FailedExecutionItem only; ErrorRecord uses "METRIC#ERRORCOUNT#ERROR"),
- *        GS3SK = "COUNT#{errorType}#{paddedCount}#EXECUTION#{executionId}"
+ *        GS3SK = "COUNT#{errorType}#{status}#{paddedCount}#EXECUTION#{executionId}"
  *
  * @param input - Query parameters including sortOrder and optional errorType
  * @returns The matching FailedExecutionItem or null if none found
@@ -900,7 +907,7 @@ export const queryExecutionByErrorCount = async (
         "GS3PK = :gs3pk AND begins_with(GS3SK, :gs3skPrefix)",
       ExpressionAttributeValues: {
         ":gs3pk": "METRIC#ERRORCOUNT",
-        ":gs3skPrefix": `COUNT#${errorType}#`,
+        ":gs3skPrefix": `COUNT#${errorType}#${DEFAULT_GSI_STATUS}#`,
       },
       ScanIndexForward: scanIndexForward,
       Limit: 1,
@@ -917,9 +924,11 @@ export const queryExecutionByErrorCount = async (
     const command = new QueryCommand({
       TableName: tableName,
       IndexName: "GS1",
-      KeyConditionExpression: "GS1PK = :gs1pk",
+      KeyConditionExpression:
+        "GS1PK = :gs1pk AND begins_with(GS1SK, :gs1skPrefix)",
       ExpressionAttributeValues: {
         ":gs1pk": "METRIC#ERRORCOUNT",
+        ":gs1skPrefix": `COUNT#${DEFAULT_GSI_STATUS}#`,
       },
       ScanIndexForward: scanIndexForward,
       Limit: 1,
@@ -1230,8 +1239,10 @@ export const batchUpdateExecutionGsiKeys = async (
   const updatePromises = updates.map(
     async ({ executionId, newOpenErrorCount, errorType }) => {
       const pk = createKey("EXECUTION", executionId);
-      const gs1sk = `COUNT#${padCount(newOpenErrorCount)}#EXECUTION#${executionId}`;
-      const gs3sk = `COUNT#${errorType}#${padCount(newOpenErrorCount)}#EXECUTION#${executionId}`;
+      // GS1SK format: COUNT#{status}#{paddedCount}#EXECUTION#{executionId}
+      const gs1sk = `COUNT#${DEFAULT_GSI_STATUS}#${padCount(newOpenErrorCount)}#EXECUTION#${executionId}`;
+      // GS3SK format: COUNT#{errorType}#{status}#{paddedCount}#EXECUTION#{executionId}
+      const gs3sk = `COUNT#${errorType}#${DEFAULT_GSI_STATUS}#${padCount(newOpenErrorCount)}#EXECUTION#${executionId}`;
 
       const command = new UpdateCommand({
         TableName: tableName,
@@ -1480,8 +1491,8 @@ export const batchUpdateErrorRecordGsiKeys = async (
   const updatePromises = updates.map(
     async ({ errorCode, newTotalCount, errorType }) => {
       const pk = createKey("ERROR", errorCode);
-      // GS2SK format: COUNT#{paddedCount}#ERROR#{errorCode}
-      const gs2sk = `COUNT#${padCount(newTotalCount)}#ERROR#${errorCode}`;
+      // GS2SK format: COUNT#{status}#{paddedCount}#ERROR#{errorCode}
+      const gs2sk = `COUNT#${DEFAULT_GSI_STATUS}#${padCount(newTotalCount)}#ERROR#${errorCode}`;
       // GS3SK format: COUNT#{errorType}#{paddedCount}#ERROR#{errorCode}
       const gs3sk = `COUNT#${errorType}#${padCount(newTotalCount)}#ERROR#${errorCode}`;
 
