@@ -34,7 +34,11 @@ export interface WorkflowEventDetail {
 /**
  * Error status for execution-specific errors.
  */
-export type ErrorStatus = "failed" | "maybeSolved" | "solved" | "maybeUnrecoverable";
+export type ErrorStatus =
+  | "failed"
+  | "maybeSolved"
+  | "solved"
+  | "maybeUnrecoverable";
 
 /**
  * Error record representing an error aggregate in DynamoDB.

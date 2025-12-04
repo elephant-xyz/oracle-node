@@ -504,7 +504,8 @@ describe("error-count-handler", () => {
       await handler(event);
 
       const metricCalls = cloudWatchMock.commandCalls(PutMetricDataCommand);
-      const dimensions = metricCalls[0].args[0].input.MetricData?.[0].Dimensions;
+      const dimensions =
+        metricCalls[0].args[0].input.MetricData?.[0].Dimensions;
 
       expect(dimensions).toBeDefined();
       expect(dimensions?.length).toBe(2);
@@ -523,7 +524,12 @@ describe("error-count-handler", () => {
         callCount++;
         if (callCount === 1) {
           return {
-            Attributes: createFailedExecutionItem("exec-001", 0, undefined, "01"),
+            Attributes: createFailedExecutionItem(
+              "exec-001",
+              0,
+              undefined,
+              "01",
+            ),
           };
         }
         return {

@@ -5,6 +5,8 @@ import {
   TransactWriteCommand,
   UpdateCommand,
   BatchGetCommand,
+  QueryCommand,
+  GetCommand,
 } from "@aws-sdk/lib-dynamodb";
 import {
   CloudWatchClient,
@@ -1350,6 +1352,197 @@ describe("event-handler", () => {
       const dimensions = calls[0].args[0].input.MetricData![0].Dimensions;
 
       expect(dimensions).toContainEqual({ Name: "Status", Value: "PARKED" });
+    });
+  });
+
+  describe("markErrorsAsUnrecoverableForExecution", () => {
+    it("should update ErrorRecord status and GSI keys when marking execution as unrecoverable", async () => {
+      // Mock queryExecutionErrorLinks to return a link
+      ddbMock.on(QueryCommand).resolves({
+        Items: [
+          {
+            PK: "EXECUTION#exec-unrecoverable-001",
+            SK: "ERROR#12345",
+            errorCode: "12345",
+            executionId: "exec-unrecoverable-001",
+            entityType: "ExecutionError",
+            occurrences: 1,
+          },
+        ],
+      });
+
+      // Mock getFailedExecutionItem
+      ddbMock.on(GetCommand).callsFake((input) => {
+        const pk = input.Key?.PK as string;
+        if (pk === "EXECUTION#exec-unrecoverable-001") {
+          return {
+            Item: {
+              PK: "EXECUTION#exec-unrecoverable-001",
+              SK: "EXECUTION#exec-unrecoverable-001",
+              executionId: "exec-unrecoverable-001",
+              entityType: "FailedExecution",
+              openErrorCount: 1,
+              errorType: "12",
+            },
+          };
+        }
+        if (pk === "ERROR#12345") {
+          return {
+            Item: {
+              PK: "ERROR#12345",
+              SK: "ERROR#12345",
+              errorCode: "12345",
+              entityType: "Error",
+              totalCount: 5,
+              errorType: "12",
+            },
+          };
+        }
+        return { Item: undefined };
+      });
+
+      ddbMock.on(UpdateCommand).resolves({});
+
+      const { markErrorsAsUnrecoverableForExecution } = await import(
+        "shared/repository.js"
+      );
+
+      const result = await markErrorsAsUnrecoverableForExecution(
+        "exec-unrecoverable-001",
+      );
+
+      expect(result.updatedCount).toBeGreaterThan(0);
+      expect(result.affectedExecutionIds).toContain("exec-unrecoverable-001");
+      expect(result.updatedErrorCodes).toContain("12345");
+
+      // Verify ErrorRecord was updated with maybeUnrecoverable status
+      const updateCalls = ddbMock.commandCalls(UpdateCommand);
+      const errorRecordUpdate = updateCalls.find(
+        (call) => call.args[0].input.Key?.PK === "ERROR#12345",
+      );
+
+      expect(errorRecordUpdate).toBeDefined();
+      expect(
+        errorRecordUpdate?.args[0].input.ExpressionAttributeValues?.[":status"],
+      ).toBe("maybeUnrecoverable");
+      // GS2SK format: COUNT#MAYBEUNRECOVERABLE#{paddedCount}#ERROR#{errorCode}
+      expect(
+        errorRecordUpdate?.args[0].input.ExpressionAttributeValues?.[":gs2sk"],
+      ).toBe("COUNT#MAYBEUNRECOVERABLE#0000000005#ERROR#12345");
+      // GS3SK format: COUNT#{errorType}#MAYBEUNRECOVERABLE#{paddedCount}#ERROR#{errorCode}
+      expect(
+        errorRecordUpdate?.args[0].input.ExpressionAttributeValues?.[":gs3sk"],
+      ).toBe("COUNT#12#MAYBEUNRECOVERABLE#0000000005#ERROR#12345");
+    });
+
+    it("should return empty result when execution has no error links", async () => {
+      ddbMock.on(QueryCommand).resolves({ Items: [] });
+
+      const { markErrorsAsUnrecoverableForExecution } = await import(
+        "shared/repository.js"
+      );
+
+      const result =
+        await markErrorsAsUnrecoverableForExecution("exec-no-errors");
+
+      expect(result.updatedCount).toBe(0);
+      expect(result.affectedExecutionIds).toHaveLength(0);
+      expect(result.updatedErrorCodes).toHaveLength(0);
+    });
+  });
+
+  describe("markErrorAsUnrecoverableFromAllExecutions", () => {
+    it("should update ErrorRecord status and GSI keys when marking error code as unrecoverable", async () => {
+      // Mock queryErrorLinksForErrorCode to return links
+      ddbMock.on(QueryCommand).resolves({
+        Items: [
+          {
+            PK: "EXECUTION#exec-001",
+            SK: "ERROR#99999",
+            errorCode: "99999",
+            executionId: "exec-001",
+            entityType: "ExecutionError",
+            occurrences: 1,
+            GS1PK: "ERROR#99999",
+            GS1SK: "EXECUTION#exec-001",
+          },
+        ],
+      });
+
+      // Mock GetCommand for both execution and error record
+      ddbMock.on(GetCommand).callsFake((input) => {
+        const pk = input.Key?.PK as string;
+        if (pk === "EXECUTION#exec-001") {
+          return {
+            Item: {
+              PK: "EXECUTION#exec-001",
+              SK: "EXECUTION#exec-001",
+              executionId: "exec-001",
+              entityType: "FailedExecution",
+              openErrorCount: 1,
+              errorType: "99",
+            },
+          };
+        }
+        if (pk === "ERROR#99999") {
+          return {
+            Item: {
+              PK: "ERROR#99999",
+              SK: "ERROR#99999",
+              errorCode: "99999",
+              entityType: "Error",
+              totalCount: 3,
+              errorType: "99",
+            },
+          };
+        }
+        return { Item: undefined };
+      });
+
+      ddbMock.on(UpdateCommand).resolves({});
+
+      const { markErrorAsUnrecoverableFromAllExecutions } = await import(
+        "shared/repository.js"
+      );
+
+      const result = await markErrorAsUnrecoverableFromAllExecutions("99999");
+
+      expect(result.updatedCount).toBeGreaterThan(0);
+      expect(result.affectedExecutionIds).toContain("exec-001");
+      expect(result.updatedErrorCodes).toContain("99999");
+
+      // Verify ErrorRecord was updated with maybeUnrecoverable status
+      const updateCalls = ddbMock.commandCalls(UpdateCommand);
+      const errorRecordUpdate = updateCalls.find(
+        (call) => call.args[0].input.Key?.PK === "ERROR#99999",
+      );
+
+      expect(errorRecordUpdate).toBeDefined();
+      expect(
+        errorRecordUpdate?.args[0].input.ExpressionAttributeValues?.[":status"],
+      ).toBe("maybeUnrecoverable");
+      // GS2SK format: COUNT#MAYBEUNRECOVERABLE#{paddedCount}#ERROR#{errorCode}
+      expect(
+        errorRecordUpdate?.args[0].input.ExpressionAttributeValues?.[":gs2sk"],
+      ).toBe("COUNT#MAYBEUNRECOVERABLE#0000000003#ERROR#99999");
+      // GS3SK format: COUNT#{errorType}#MAYBEUNRECOVERABLE#{paddedCount}#ERROR#{errorCode}
+      expect(
+        errorRecordUpdate?.args[0].input.ExpressionAttributeValues?.[":gs3sk"],
+      ).toBe("COUNT#99#MAYBEUNRECOVERABLE#0000000003#ERROR#99999");
+    });
+
+    it("should return empty result when error code has no links", async () => {
+      ddbMock.on(QueryCommand).resolves({ Items: [] });
+
+      const { markErrorAsUnrecoverableFromAllExecutions } = await import(
+        "shared/repository.js"
+      );
+
+      const result = await markErrorAsUnrecoverableFromAllExecutions("00000");
+
+      expect(result.updatedCount).toBe(0);
+      expect(result.affectedExecutionIds).toHaveLength(0);
+      expect(result.updatedErrorCodes).toHaveLength(0);
     });
   });
 });
