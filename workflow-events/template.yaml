@@ -138,6 +138,7 @@ Resources:
               detail-type:
                 - WorkflowEvent
                 - ElephantErrorResolved
+                - ElephantErrorFailedToResolve
             State: ENABLED
     Metadata:
       BuildMethod: esbuild
@@ -531,6 +532,40 @@ Resources:
                   [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"SubmitElephantPhase\" Status=\"FAILED\"', 'Sum', 300))", "label": "FAILED", "id": "submit_fail", "color": "#d62728"}]
                 ]
               }
+            },
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 50,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "Execution Restarted (Total)",
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "period": 300,
+                "metrics": [
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,ErrorType,County} MetricName=\"ExecutionRestarted\"', 'Sum', 300))", "label": "Total Restarted", "id": "restart_total", "color": "#2ca02c"}]
+                ]
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12,
+              "y": 50,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "Execution Restarted by County",
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "period": 300,
+                "metrics": [
+                  [{"expression": "SEARCH('{Elephant/Workflow,ErrorType,County} MetricName=\"ExecutionRestarted\"', 'Sum', 300)", "label": "", "id": "restart_by_county"}]
+                ]
+              }
             }
           ]
         }
@@ -566,6 +601,7 @@ Resources:
           WORKFLOW_ERRORS_TABLE_NAME: !Ref WorkflowErrorsTable
       Policies:
         - AWSLambdaBasicExecutionRole
+        - CloudWatchPutMetricPolicy: {}
         - DynamoDBCrudPolicy:
             TableName: !Ref WorkflowErrorsTable
         - Version: "2012-10-17"
