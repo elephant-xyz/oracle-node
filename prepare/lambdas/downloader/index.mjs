@@ -170,9 +170,7 @@ const PREPARE_ERROR_PATTERNS = [
   // Puppeteer Timeout Errors (10050-10059)
   {
     code: "10050",
-    patterns: [
-      /Waiting for selector/i,
-    ],
+    patterns: [/Waiting for selector/i],
     description: "Selector wait timeout",
   },
   {
