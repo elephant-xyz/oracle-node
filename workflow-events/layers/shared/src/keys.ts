@@ -16,6 +16,12 @@ export const ENTITY_TYPES = {
 export const DEFAULT_GSI_STATUS = "FAILED" as const;
 
 /**
+ * GSI status for errors that failed AI resolution (maybeUnrecoverable).
+ * Used in GSI sort keys to filter items marked as unrecoverable.
+ */
+export const UNRECOVERABLE_GSI_STATUS = "MAYBEUNRECOVERABLE" as const;
+
+/**
  * Converts an ErrorStatus value to uppercase for use in GSI keys.
  * @param status - The error status (e.g., "failed", "maybeSolved", "solved")
  * @returns Uppercase status string for GSI keys (e.g., "FAILED", "MAYBESOLVED", "SOLVED")

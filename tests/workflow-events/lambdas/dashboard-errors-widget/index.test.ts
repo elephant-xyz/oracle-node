@@ -398,6 +398,107 @@ describe("dashboard-errors-widget handler", () => {
         ":gs3skPrefix": "COUNT#MV#FAILED#",
       });
     });
+
+    it("should read status from widgetContext.params", async () => {
+      ddbMock.on(QueryCommand).resolves({ Items: [] });
+
+      const { handler } = await import(
+        "../../../../workflow-events/lambdas/dashboard-errors-widget/index.js"
+      );
+
+      await handler({
+        widgetContext: {
+          dashboardName: "test-dashboard",
+          widgetId: "widget-1",
+          accountId: "123456789012",
+          height: 300,
+          width: 400,
+          params: {
+            status: "MAYBEUNRECOVERABLE",
+          },
+        },
+      });
+
+      const calls = ddbMock.commandCalls(QueryCommand);
+      expect(calls[0].args[0].input.ExpressionAttributeValues).toMatchObject({
+        ":gs2skPrefix": "COUNT#MAYBEUNRECOVERABLE#",
+      });
+    });
+
+    it("should prefer top-level status over widgetContext.params.status", async () => {
+      ddbMock.on(QueryCommand).resolves({ Items: [] });
+
+      const { handler } = await import(
+        "../../../../workflow-events/lambdas/dashboard-errors-widget/index.js"
+      );
+
+      await handler({
+        status: "MAYBEUNRECOVERABLE",
+        widgetContext: {
+          dashboardName: "test-dashboard",
+          widgetId: "widget-1",
+          accountId: "123456789012",
+          height: 300,
+          width: 400,
+          params: {
+            status: "FAILED",
+          },
+        },
+      });
+
+      const calls = ddbMock.commandCalls(QueryCommand);
+      expect(calls[0].args[0].input.ExpressionAttributeValues).toMatchObject({
+        ":gs2skPrefix": "COUNT#MAYBEUNRECOVERABLE#",
+      });
+    });
+  });
+
+  describe("status parameter", () => {
+    it("should default to FAILED status when not provided", async () => {
+      ddbMock.on(QueryCommand).resolves({ Items: [] });
+
+      const { handler } = await import(
+        "../../../../workflow-events/lambdas/dashboard-errors-widget/index.js"
+      );
+
+      await handler({});
+
+      const calls = ddbMock.commandCalls(QueryCommand);
+      expect(calls[0].args[0].input.ExpressionAttributeValues).toMatchObject({
+        ":gs2skPrefix": "COUNT#FAILED#",
+      });
+    });
+
+    it("should query with MAYBEUNRECOVERABLE status when provided", async () => {
+      ddbMock.on(QueryCommand).resolves({ Items: [] });
+
+      const { handler } = await import(
+        "../../../../workflow-events/lambdas/dashboard-errors-widget/index.js"
+      );
+
+      await handler({ status: "MAYBEUNRECOVERABLE" });
+
+      const calls = ddbMock.commandCalls(QueryCommand);
+      expect(calls[0].args[0].input.ExpressionAttributeValues).toMatchObject({
+        ":gs2skPrefix": "COUNT#MAYBEUNRECOVERABLE#",
+      });
+    });
+
+    it("should use status with errorType filter on GS3", async () => {
+      ddbMock.on(QueryCommand).resolves({ Items: [] });
+
+      const { handler } = await import(
+        "../../../../workflow-events/lambdas/dashboard-errors-widget/index.js"
+      );
+
+      await handler({ errorType: "SV", status: "MAYBEUNRECOVERABLE" });
+
+      const calls = ddbMock.commandCalls(QueryCommand);
+      expect(calls[0].args[0].input.IndexName).toBe("GS3");
+      expect(calls[0].args[0].input.ExpressionAttributeValues).toMatchObject({
+        ":gs3skPrefix": "COUNT#SV#MAYBEUNRECOVERABLE#",
+      });
+    });
   });
 
   describe("error handling", () => {
@@ -588,6 +689,23 @@ describe("dashboard-errors-widget handler", () => {
       const result = await handler({ limit: 15 });
 
       expect(result).toContain('"limit":15');
+    });
+
+    it("should preserve status in pagination buttons", async () => {
+      setupPaginationEnv();
+      const mockErrors = [createMockErrorRecord()];
+      ddbMock.on(QueryCommand).resolves({
+        Items: mockErrors,
+        LastEvaluatedKey: createMockLastEvaluatedKey(),
+      });
+
+      const { handler } = await import(
+        "../../../../workflow-events/lambdas/dashboard-errors-widget/index.js"
+      );
+
+      const result = await handler({ status: "MAYBEUNRECOVERABLE" });
+
+      expect(result).toContain('"status":"MAYBEUNRECOVERABLE"');
     });
 
     it("should not render pagination buttons when Lambda ARN env vars are missing", async () => {
