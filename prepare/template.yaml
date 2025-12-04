@@ -934,7 +934,7 @@ Resources:
             Queue: !GetAtt TransformQueue.Arn
             BatchSize: 1
             ScalingConfig:
-              MaximumConcurrency: 10
+              MaximumConcurrency: 100
 
   SvlWorkerFunction:
     Type: AWS::Serverless::Function
@@ -979,7 +979,7 @@ Resources:
             Queue: !GetAtt SvlQueue.Arn
             BatchSize: 1
             ScalingConfig:
-              MaximumConcurrency: 10
+              MaximumConcurrency: 100
 
   HashWorkerFunction:
     Type: AWS::Serverless::Function
@@ -1019,7 +1019,7 @@ Resources:
             Queue: !GetAtt HashQueue.Arn
             BatchSize: 1
             ScalingConfig:
-              MaximumConcurrency: 10
+              MaximumConcurrency: 100
 
   UploadWorkerFunction:
     Type: AWS::Serverless::Function
@@ -1062,7 +1062,7 @@ Resources:
             Queue: !GetAtt UploadQueue.Arn
             BatchSize: 1
             ScalingConfig:
-              MaximumConcurrency: 5
+              MaximumConcurrency: 8
 
   ErrorResolverFunction:
     Type: AWS::Serverless::Function
