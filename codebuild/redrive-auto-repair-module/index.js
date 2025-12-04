@@ -393,9 +393,8 @@ async function main() {
 
     // Store the re-queue start time in SSM Parameter Store so auto-repair can read it
     try {
-      const { SSMClient, PutParameterCommand } = await import(
-        "@aws-sdk/client-ssm"
-      );
+      const { SSMClient, PutParameterCommand } =
+        await import("@aws-sdk/client-ssm");
       const ssmClient = new SSMClient({});
       await ssmClient.send(
         new PutParameterCommand({

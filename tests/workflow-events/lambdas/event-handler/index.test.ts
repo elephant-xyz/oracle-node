@@ -132,9 +132,8 @@ describe("event-handler", () => {
     it("should process event with errors and save to DynamoDB", async () => {
       ddbMock.on(TransactWriteCommand).resolves({});
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/event-handler/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/event-handler/index.js");
 
       const detail = createWorkflowDetail({
         executionId: "exec-integration-001",
@@ -148,9 +147,8 @@ describe("event-handler", () => {
     });
 
     it("should skip DynamoDB save when event has no errors", async () => {
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/event-handler/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/event-handler/index.js");
 
       const detail = createWorkflowDetail({
         executionId: "exec-no-errors-001",
@@ -168,9 +166,8 @@ describe("event-handler", () => {
         .on(TransactWriteCommand)
         .rejects(new Error("DynamoDB transaction failed"));
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/event-handler/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/event-handler/index.js");
 
       const detail = createWorkflowDetail({
         executionId: "exec-error-001",
@@ -186,9 +183,8 @@ describe("event-handler", () => {
     it("should throw error when WORKFLOW_ERRORS_TABLE_NAME is not set", async () => {
       delete process.env.WORKFLOW_ERRORS_TABLE_NAME;
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/event-handler/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/event-handler/index.js");
 
       const detail = createWorkflowDetail({
         errors: [createError("01256")],
@@ -1129,9 +1125,8 @@ describe("event-handler", () => {
     it("should publish phase metric on each event", async () => {
       ddbMock.on(TransactWriteCommand).resolves({});
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/event-handler/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/event-handler/index.js");
 
       const detail = createWorkflowDetail({
         executionId: "exec-metrics-001",
@@ -1151,9 +1146,8 @@ describe("event-handler", () => {
     it("should publish metric with correct name based on phase", async () => {
       ddbMock.on(TransactWriteCommand).resolves({});
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/event-handler/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/event-handler/index.js");
 
       const detail = createWorkflowDetail({
         executionId: "exec-metrics-002",
@@ -1174,9 +1168,8 @@ describe("event-handler", () => {
     it("should publish metric with correct dimensions", async () => {
       ddbMock.on(TransactWriteCommand).resolves({});
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/event-handler/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/event-handler/index.js");
 
       const detail = createWorkflowDetail({
         executionId: "exec-metrics-003",
@@ -1200,9 +1193,8 @@ describe("event-handler", () => {
     });
 
     it("should publish metric with correct namespace", async () => {
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/event-handler/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/event-handler/index.js");
 
       const detail = createWorkflowDetail({
         executionId: "exec-metrics-004",
@@ -1219,9 +1211,8 @@ describe("event-handler", () => {
     });
 
     it("should publish metric with unit Count and value 1", async () => {
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/event-handler/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/event-handler/index.js");
 
       const detail = createWorkflowDetail({
         executionId: "exec-metrics-005",
@@ -1241,9 +1232,8 @@ describe("event-handler", () => {
     it("should publish metric even when event has errors", async () => {
       ddbMock.on(TransactWriteCommand).resolves({});
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/event-handler/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/event-handler/index.js");
 
       const detail = createWorkflowDetail({
         executionId: "exec-metrics-006",
@@ -1267,9 +1257,8 @@ describe("event-handler", () => {
         .on(PutMetricDataCommand)
         .rejects(new Error("CloudWatch error"));
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/event-handler/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/event-handler/index.js");
 
       const detail = createWorkflowDetail({
         executionId: "exec-metrics-error-001",
@@ -1283,9 +1272,8 @@ describe("event-handler", () => {
 
   describe("publishPhaseMetric function", () => {
     it("should publish metric with all required fields", async () => {
-      const { publishPhaseMetric } = await import(
-        "../../../../workflow-events/lambdas/event-handler/cloudwatch.js"
-      );
+      const { publishPhaseMetric } =
+        await import("../../../../workflow-events/lambdas/event-handler/cloudwatch.js");
 
       await publishPhaseMetric("scrape", {
         county: "palm_beach",
@@ -1321,9 +1309,8 @@ describe("event-handler", () => {
     });
 
     it("should construct metric name from phase", async () => {
-      const { publishPhaseMetric } = await import(
-        "../../../../workflow-events/lambdas/event-handler/cloudwatch.js"
-      );
+      const { publishPhaseMetric } =
+        await import("../../../../workflow-events/lambdas/event-handler/cloudwatch.js");
 
       await publishPhaseMetric("transform", {
         county: "broward",
@@ -1338,9 +1325,8 @@ describe("event-handler", () => {
     });
 
     it("should handle different status values", async () => {
-      const { publishPhaseMetric } = await import(
-        "../../../../workflow-events/lambdas/event-handler/cloudwatch.js"
-      );
+      const { publishPhaseMetric } =
+        await import("../../../../workflow-events/lambdas/event-handler/cloudwatch.js");
 
       await publishPhaseMetric("upload", {
         county: "miami_dade",
@@ -1403,9 +1389,8 @@ describe("event-handler", () => {
 
       ddbMock.on(UpdateCommand).resolves({});
 
-      const { markErrorsAsUnrecoverableForExecution } = await import(
-        "shared/repository.js"
-      );
+      const { markErrorsAsUnrecoverableForExecution } =
+        await import("shared/repository.js");
 
       const result = await markErrorsAsUnrecoverableForExecution(
         "exec-unrecoverable-001",
@@ -1438,9 +1423,8 @@ describe("event-handler", () => {
     it("should return empty result when execution has no error links", async () => {
       ddbMock.on(QueryCommand).resolves({ Items: [] });
 
-      const { markErrorsAsUnrecoverableForExecution } = await import(
-        "shared/repository.js"
-      );
+      const { markErrorsAsUnrecoverableForExecution } =
+        await import("shared/repository.js");
 
       const result =
         await markErrorsAsUnrecoverableForExecution("exec-no-errors");
@@ -1501,9 +1485,8 @@ describe("event-handler", () => {
 
       ddbMock.on(UpdateCommand).resolves({});
 
-      const { markErrorAsUnrecoverableFromAllExecutions } = await import(
-        "shared/repository.js"
-      );
+      const { markErrorAsUnrecoverableFromAllExecutions } =
+        await import("shared/repository.js");
 
       const result = await markErrorAsUnrecoverableFromAllExecutions("99999");
 
@@ -1534,9 +1517,8 @@ describe("event-handler", () => {
     it("should return empty result when error code has no links", async () => {
       ddbMock.on(QueryCommand).resolves({ Items: [] });
 
-      const { markErrorAsUnrecoverableFromAllExecutions } = await import(
-        "shared/repository.js"
-      );
+      const { markErrorAsUnrecoverableFromAllExecutions } =
+        await import("shared/repository.js");
 
       const result = await markErrorAsUnrecoverableFromAllExecutions("00000");
 
