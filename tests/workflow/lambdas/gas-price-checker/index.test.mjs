@@ -103,7 +103,7 @@ describe("gas-price-checker handler", () => {
       expect(mockEmitWorkflowEvent).toHaveBeenCalledWith(
         expect.objectContaining({
           status: "IN_PROGRESS",
-          phase: "Submit",
+          phase: "GasPriceCheck",
           step: "CheckGasPrice",
           taskToken: "task-token-123",
         }),
@@ -256,7 +256,7 @@ describe("gas-price-checker handler", () => {
       expect(mockEmitWorkflowEvent).toHaveBeenCalledWith(
         expect.objectContaining({
           status: "SUCCEEDED",
-          phase: "Submit",
+          phase: "GasPriceCheck",
           step: "CheckGasPrice",
         }),
       );
@@ -420,4 +420,110 @@ describe("gas-price-checker handler", () => {
       await expect(handler(event)).rejects.toThrow("Missing SQS Records");
     });
   });
+
+  it("should still call task token even if emitWorkflowEvent fails for IN_PROGRESS", async () => {
+    // Mock emitWorkflowEvent to fail on IN_PROGRESS
+    mockEmitWorkflowEvent.mockRejectedValueOnce(
+      new Error("EventBridge failure"),
+    );
+    // But succeed on SUCCEEDED (if it gets there)
+    mockEmitWorkflowEvent.mockResolvedValue(undefined);
+
+    mockCheckGasPrice.mockResolvedValue({
+      eip1559: { maxFeePerGas: "20000000000" }, // 20 Gwei in wei
+      legacy: { gasPrice: "20000000000" },
+    });
+    mockExecuteWithTaskToken.mockResolvedValue(undefined);
+
+    const { handler } = await import(
+      "../../../../workflow/lambdas/gas-price-checker/index.mjs"
+    );
+
+    const event = createSqsEvent("task-token-eventbridge-fail");
+
+    // Should not throw - EventBridge failure is caught and logged
+    await handler(event);
+
+    // Verify emitWorkflowEvent was attempted
+    expect(mockEmitWorkflowEvent).toHaveBeenCalled();
+
+    // CRITICAL: Verify task token is still called despite EventBridge failure
+    expect(mockExecuteWithTaskToken).toHaveBeenCalledWith(
+      expect.objectContaining({
+        taskToken: "task-token-eventbridge-fail",
+      }),
+    );
+  });
+
+  it("should still call task token even if emitWorkflowEvent fails for SUCCEEDED", async () => {
+    // Mock emitWorkflowEvent to succeed on IN_PROGRESS but fail on SUCCEEDED
+    mockEmitWorkflowEvent
+      .mockResolvedValueOnce(undefined) // IN_PROGRESS succeeds
+      .mockRejectedValueOnce(new Error("EventBridge failure")); // SUCCEEDED fails
+
+    mockCheckGasPrice.mockResolvedValue({
+      eip1559: { maxFeePerGas: "20000000000" }, // 20 Gwei in wei
+      legacy: { gasPrice: "20000000000" },
+    });
+    mockExecuteWithTaskToken.mockResolvedValue(undefined);
+
+    const { handler } = await import(
+      "../../../../workflow/lambdas/gas-price-checker/index.mjs"
+    );
+
+    const event = createSqsEvent("task-token-succeeded-eventbridge-fail");
+
+    // Should not throw - EventBridge failure is caught and logged
+    await handler(event);
+
+    // Verify emitWorkflowEvent was called twice (IN_PROGRESS and SUCCEEDED)
+    expect(mockEmitWorkflowEvent).toHaveBeenCalledTimes(2);
+
+    // CRITICAL: Verify task token is still called despite EventBridge failure on SUCCEEDED
+    expect(mockExecuteWithTaskToken).toHaveBeenCalledWith(
+      expect.objectContaining({
+        taskToken: "task-token-succeeded-eventbridge-fail",
+      }),
+    );
+  });
+
+  it("should still call task token on error even if emitWorkflowEvent fails", async () => {
+    vi.useFakeTimers();
+
+    // Mock emitWorkflowEvent to fail only once (for IN_PROGRESS)
+    mockEmitWorkflowEvent.mockRejectedValueOnce(
+      new Error("EventBridge failure"),
+    );
+    // But succeed on FAILED event (if it gets there)
+    mockEmitWorkflowEvent.mockResolvedValue(undefined);
+
+    // Mock checkGasPrice to fail immediately (configuration error so it throws)
+    mockCheckGasPrice.mockRejectedValue(new Error("RPC URL is required"));
+    mockExecuteWithTaskToken.mockResolvedValue(undefined);
+
+    const { handler } = await import(
+      "../../../../workflow/lambdas/gas-price-checker/index.mjs"
+    );
+
+    const event = createSqsEvent("task-token-error-eventbridge-fail");
+
+    // Should not throw - EventBridge failure is caught, and RPC error triggers immediate failure
+    const handlerPromise = handler(event);
+
+    // Advance timers to allow any async operations
+    await vi.advanceTimersByTimeAsync(100);
+    await handlerPromise;
+
+    // Verify emitWorkflowEvent was attempted
+    expect(mockEmitWorkflowEvent).toHaveBeenCalled();
+
+    // CRITICAL: Verify task token is still called with error despite EventBridge failure
+    expect(mockExecuteWithTaskToken).toHaveBeenCalledWith(
+      expect.objectContaining({
+        taskToken: "task-token-error-eventbridge-fail",
+      }),
+    );
+
+    vi.useRealTimers();
+  }, 10000);
 });

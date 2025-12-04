@@ -659,7 +659,7 @@ States:
             executionId.$: $.executionId
             county.$: $.pre.county_name
             status: SCHEDULED
-            phase: Submit
+            phase: GasPriceCheck
             step: CheckGasPrice
     ResultPath: $.eventResult
     Next: CheckGasPrice
@@ -703,9 +703,6 @@ States:
         BackoffRate: 2
     Catch:
       - ErrorEquals: [States.ALL]
-        ResultSelector:
-          taskToken.$: $$.Task.Token
-          error.$: $
         ResultPath: $.gasPriceError
         Next: EmitGasPriceCheckFailed
 
@@ -721,7 +718,7 @@ States:
             executionId.$: $.executionId
             county.$: $.pre.county_name
             status: SUCCEEDED
-            phase: Submit
+            phase: GasPriceCheck
             step: CheckGasPrice
     ResultPath: $.eventResult
     Next: EmitSubmitToBlockchainScheduled
@@ -742,7 +739,7 @@ States:
             executionId.$: $.executionId
             county.$: $.pre.county_name
             status: FAILED
-            phase: Submit
+            phase: GasPriceCheck
             step: CheckGasPrice
             errors:
               - code: "60001"
@@ -768,7 +765,7 @@ States:
             executionId.$: $.executionId
             county.$: $.pre.county_name
             status: FAILED
-            phase: Submit
+            phase: GasPriceCheck
             step: CheckGasPrice
             taskToken.$: $$.Task.Token
             errors:
@@ -841,9 +838,6 @@ States:
         BackoffRate: 2
     Catch:
       - ErrorEquals: [States.ALL]
-        ResultSelector:
-          taskToken.$: $$.Task.Token
-          error.$: $
         ResultPath: $.submitError
         Next: EmitSubmitFailed
 
@@ -956,7 +950,7 @@ States:
             executionId.$: $.executionId
             county.$: $.pre.county_name
             status: SCHEDULED
-            phase: Submit
+            phase: TransactionStatusCheck
             step: CheckTransactionStatus
     ResultPath: $.eventResult
     Next: PrepareTransactionStatusCheckDetail
@@ -1011,9 +1005,6 @@ States:
         BackoffRate: 2
     Catch:
       - ErrorEquals: [States.ALL]
-        ResultSelector:
-          taskToken.$: $$.Task.Token
-          error.$: $
         ResultPath: $.transactionStatusError
         Next: EmitTransactionStatusCheckFailed
 
@@ -1029,7 +1020,7 @@ States:
             executionId.$: $.executionId
             county.$: $.pre.county_name
             status: SUCCEEDED
-            phase: Submit
+            phase: TransactionStatusCheck
             step: CheckTransactionStatus
     ResultPath: $.eventResult
     Next: WorkflowComplete
@@ -1050,7 +1041,7 @@ States:
             executionId.$: $.executionId
             county.$: $.pre.county_name
             status: FAILED
-            phase: Submit
+            phase: TransactionStatusCheck
             step: CheckTransactionStatus
             errors:
               - code: "60003"
@@ -1076,7 +1067,7 @@ States:
             executionId.$: $.executionId
             county.$: $.pre.county_name
             status: FAILED
-            phase: Submit
+            phase: TransactionStatusCheck
             step: CheckTransactionStatus
             taskToken.$: $$.Task.Token
             errors:

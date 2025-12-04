@@ -101,7 +101,7 @@ describe("transaction-status-checker handler", () => {
       expect(mockEmitWorkflowEvent).toHaveBeenCalledWith(
         expect.objectContaining({
           status: "IN_PROGRESS",
-          phase: "Submit",
+          phase: "TransactionStatusCheck",
           step: "CheckTransactionStatus",
           taskToken: "task-token-123",
         }),
@@ -287,7 +287,7 @@ describe("transaction-status-checker handler", () => {
       expect(mockEmitWorkflowEvent).toHaveBeenCalledWith(
         expect.objectContaining({
           status: "SUCCEEDED",
-          phase: "Submit",
+          phase: "TransactionStatusCheck",
           step: "CheckTransactionStatus",
         }),
       );
@@ -346,7 +346,7 @@ describe("transaction-status-checker handler", () => {
       expect(mockEmitWorkflowEvent).toHaveBeenCalledWith(
         expect.objectContaining({
           status: "FAILED",
-          phase: "Submit",
+          phase: "TransactionStatusCheck",
           step: "CheckTransactionStatus",
           errors: expect.arrayContaining([
             expect.objectContaining({
