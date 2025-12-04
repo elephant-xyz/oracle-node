@@ -119,6 +119,12 @@ export interface ElephantErrorResolvedDetail {
 }
 
 /**
+ * Event detail for ElephantErrorFailedToResolve events.
+ * Same structure as ElephantErrorResolvedDetail - marks errors as maybeUnrecoverable.
+ */
+export type ElephantErrorFailedToResolveDetail = ElephantErrorResolvedDetail;
+
+/**
  * Failed execution item in DynamoDB.
  */
 export interface FailedExecutionItem {
