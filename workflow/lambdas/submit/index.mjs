@@ -524,7 +524,7 @@ export const handler = async (event) => {
     if (allErrors.length > 0) {
       const errorMsg =
         "Submit to the blockchain failed" + JSON.stringify(allErrors);
-      if (taskToken) {
+      if (taskToken && executionArn) {
         const errorLog =
           log ||
           createLogger({
@@ -533,6 +533,30 @@ export const handler = async (event) => {
             county,
             executionId: executionArn,
           });
+        // Emit FAILED event to EventBridge before sending task failure
+        try {
+          await emitWorkflowEvent({
+            executionId: executionArn,
+            county: county,
+            dataGroupLabel: dataGroupLabel,
+            status: "FAILED",
+            phase: "Submit",
+            step: "SubmitToBlockchain",
+            taskToken: taskToken,
+            errors: [
+              createWorkflowError("60002", {
+                error: errorMsg,
+              }),
+            ],
+            log: errorLog,
+          });
+        } catch (eventErr) {
+          errorLog("error", "failed_to_emit_failed_event", {
+            error:
+              eventErr instanceof Error ? eventErr.message : String(eventErr),
+          });
+          // Continue to send task failure even if EventBridge emission fails
+        }
         await executeWithTaskToken({
           taskToken,
           log: errorLog,

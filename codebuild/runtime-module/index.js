@@ -27,7 +27,6 @@ import {
   markErrorsAsMaybeSolved,
   markErrorsAsMaybeUnrecoverable,
   normalizeErrors,
-  queryExecutionWithLeastErrors,
 } from "./errors.mjs";
 
 const DEFAULT_DLQ_URL = process.env.DEFAULT_DLQ_URL;
@@ -161,17 +160,90 @@ function resolveTransformLocation({ countyName, transformPrefixUri }) {
 }
 
 /**
- * Query DynamoDB for the execution with the most errors.
- *
- * @param {string} tableName - DynamoDB table name.
- * @returns {Promise<import("../shared/errors.mjs").FailedExecutionItem | null>} - The execution with most errors, or null if none found.
+ * @typedef {object} GetExecutionLambdaExecution
+ * @property {string} executionId - Identifier of the failed execution.
+ * @property {string} status - Execution status.
+ * @property {string} errorType - Error type (first 2 chars of error code).
+ * @property {string} county - County identifier.
+ * @property {number} totalOccurrences - Total error occurrences.
+ * @property {number} openErrorCount - Count of unique unresolved errors.
+ * @property {number} uniqueErrorCount - Count of unique errors.
+ * @property {string | undefined} taskToken - Task token for Step Functions.
+ * @property {string | undefined} preparedS3Uri - S3 URI of prepared output.
+ * @property {string} createdAt - ISO timestamp when created.
+ * @property {string} updatedAt - ISO timestamp when updated.
  */
-async function getExecutionWithMostErrors(tableName) {
-  console.log(`Querying DynamoDB for execution with least errors...`);
-  return await queryExecutionWithLeastErrors({
-    tableName,
-    documentClient: dynamoClient,
-  });
+
+/**
+ * @typedef {object} GetExecutionLambdaError
+ * @property {string} errorCode - Error code identifier.
+ * @property {string} status - Error status.
+ * @property {number} occurrences - Occurrence count.
+ * @property {string} errorDetails - JSON-encoded error details.
+ * @property {string} executionId - Execution ID.
+ * @property {string} county - County identifier.
+ * @property {string} createdAt - ISO timestamp.
+ * @property {string} updatedAt - ISO timestamp.
+ */
+
+/**
+ * @typedef {object} GetExecutionLambdaResponse
+ * @property {boolean} success - Whether the operation was successful.
+ * @property {GetExecutionLambdaExecution | null} execution - The execution data.
+ * @property {GetExecutionLambdaError[]} errors - Array of errors for the execution.
+ * @property {string | object[] | undefined} error - Error message if failed.
+ */
+
+/**
+ * Invoke the get-execution Lambda to retrieve the execution with least errors.
+ * Uses the new workflow-events service instead of direct DynamoDB query.
+ *
+ * @returns {Promise<{ execution: GetExecutionLambdaExecution | null, errors: GetExecutionLambdaError[] }>}
+ */
+async function getExecutionWithLeastErrors() {
+  const functionName = requireEnv("GET_EXECUTION_LAMBDA_FUNCTION_NAME");
+  console.log(`Invoking get-execution Lambda: ${functionName}...`);
+
+  const response = await lambdaClient.send(
+    new InvokeCommand({
+      FunctionName: functionName,
+      InvocationType: "RequestResponse",
+      Payload: JSON.stringify({
+        sortOrder: "least",
+      }),
+    }),
+  );
+
+  if (response.FunctionError) {
+    const errorPayload = JSON.parse(
+      new TextDecoder().decode(response.Payload ?? new Uint8Array()),
+    );
+    throw new Error(
+      `get-execution Lambda failed: ${errorPayload.errorMessage || errorPayload.errorType || JSON.stringify(errorPayload)}`,
+    );
+  }
+
+  /** @type {GetExecutionLambdaResponse} */
+  const result = JSON.parse(
+    new TextDecoder().decode(response.Payload ?? new Uint8Array()),
+  );
+
+  if (!result.success) {
+    throw new Error(
+      `get-execution Lambda returned error: ${typeof result.error === "string" ? result.error : JSON.stringify(result.error)}`,
+    );
+  }
+
+  console.log(
+    result.execution
+      ? `Found execution ${result.execution.executionId} with ${result.execution.uniqueErrorCount} unique errors and ${result.errors.length} error links`
+      : "No failed executions found",
+  );
+
+  return {
+    execution: result.execution,
+    errors: result.errors,
+  };
 }
 
 /**
@@ -1197,23 +1269,23 @@ function isMvlErrorScenario(errorsS3Uri) {
  * @param {string} params.executionId - Execution identifier.
  * @param {string} params.county - County identifier.
  * @param {string} params.preparedS3Uri - S3 URI of the prepared output.
- * @param {string} params.errorsS3Uri - S3 URI of the errors CSV.
+ * @param {string | null} params.errorsCsvPath - Local path to errors CSV (from Lambda response).
+ * @param {string | null} params.errorsS3Uri - S3 URI of the errors CSV (for retries).
  * @param {string} params.transformPrefix - S3 prefix URI for transforms.
  * @param {string} params.tableName - DynamoDB table name.
- * @param {{ s3Bucket?: string, s3Key?: string } | undefined} params.source - Optional source information.
  * @returns {Promise<{ success: boolean, newErrorsS3Uri?: string }>} - Result of the iteration.
  */
 async function runAutoRepairIteration({
   executionId,
   county,
   preparedS3Uri,
+  errorsCsvPath,
   errorsS3Uri,
   transformPrefix,
   tableName,
-  source,
 }) {
-  // Determine error scenario type at the start
-  const isMvlScenario = isMvlErrorScenario(errorsS3Uri);
+  // Determine error scenario type - for local CSV assume SVL errors (from workflow-events)
+  const isMvlScenario = errorsS3Uri ? isMvlErrorScenario(errorsS3Uri) : false;
   console.log(
     `Processing ${isMvlScenario ? "MVL (mirror validation)" : "schema validation"} errors`,
   );
@@ -1240,8 +1312,31 @@ async function runAutoRepairIteration({
     await extractZip(transformScriptsZip, scriptsDir);
     await installCherio(scriptsDir);
 
-    // Step 2: Parse errors
-    const { errorPath, dataGroupName } = await parseErrorsFromS3(errorsS3Uri);
+    // Step 2: Parse errors - use local CSV if available, otherwise download from S3
+    let errorPath;
+    let dataGroupName;
+
+    if (errorsCsvPath) {
+      // Use local CSV file from Lambda response
+      console.log(`Using local errors CSV: ${errorsCsvPath}`);
+      errorPath = errorsCsvPath;
+      // Extract dataGroupName from the first error if available
+      const errorsArray = await csvToJson(errorPath);
+      if (errorsArray.length > 0 && errorsArray[0].data_group_cid) {
+        dataGroupName = errorsArray[0].data_group_cid;
+      } else {
+        dataGroupName = null;
+      }
+    } else if (errorsS3Uri) {
+      // Download from S3 (for retries with new errors)
+      const result = await parseErrorsFromS3(errorsS3Uri);
+      errorPath = result.errorPath;
+      dataGroupName = result.dataGroupName;
+    } else {
+      throw new Error(
+        "No errors source provided (neither local CSV nor S3 URI)",
+      );
+    }
 
     // Step 3: Invoke Codex to fix errors
     const { scriptsDir: updatedScripts } = await invokeAiForFix(
@@ -1386,6 +1481,38 @@ async function runAutoRepairIteration({
 }
 
 /**
+ * Convert errors from Lambda response to CSV format for AI processing.
+ *
+ * @param {GetExecutionLambdaError[]} errors - Errors from the Lambda response.
+ * @returns {Promise<string>} - Path to the created CSV file.
+ */
+async function createErrorsCsvFromLambdaErrors(errors) {
+  const tmpFile = path.join(os.tmpdir(), `errors_${Date.now()}.csv`);
+
+  // Convert errors to CSV format expected by AI
+  const csvRows = ["error_message,error_path,data_group_cid"];
+
+  for (const error of errors) {
+    try {
+      const details = JSON.parse(error.errorDetails);
+      const errorMessage = (details.error_message || "").replace(/"/g, '""');
+      const errorPath = (details.error_path || "root").replace(/"/g, '""');
+      const dataGroupCid = (details.data_group_cid || "").replace(/"/g, '""');
+      csvRows.push(`"${errorMessage}","${errorPath}","${dataGroupCid}"`);
+    } catch (parseError) {
+      console.warn(
+        `Failed to parse error details for error ${error.errorCode}: ${parseError.message}`,
+      );
+      csvRows.push(`"${error.errorCode}","root",""`);
+    }
+  }
+
+  await fs.writeFile(tmpFile, csvRows.join("\n"), "utf8");
+  console.log(`Created errors CSV at ${tmpFile} with ${errors.length} errors`);
+  return tmpFile;
+}
+
+/**
  * Main auto-repair workflow.
  *
  * @returns {Promise<void>}
@@ -1398,8 +1525,10 @@ async function main() {
     const transformPrefix = requireEnv("TRANSFORM_S3_PREFIX");
     const maxAttempts = 3;
 
-    // Step 1: Get execution with most errors
-    const execution = await getExecutionWithMostErrors(tableName);
+    // Step 1: Get execution with least errors using the get-execution Lambda
+    const { execution, errors: executionErrors } =
+      await getExecutionWithLeastErrors();
+
     if (!execution) {
       console.log("No failed executions found. Exiting.");
       return;
@@ -1410,10 +1539,10 @@ async function main() {
     );
     console.log(`County: ${execution.county}`);
     console.log(`Prepared S3 URI: ${execution.preparedS3Uri}`);
-    console.log(`Errors S3 URI: ${execution.errorsS3Uri}`);
+    console.log(`Error count from Lambda: ${executionErrors.length}`);
 
-    if (!execution.errorsS3Uri) {
-      console.log("No errors S3 URI found. Skipping.");
+    if (executionErrors.length === 0) {
+      console.log("No errors found for execution. Skipping.");
       return;
     }
 
@@ -1422,23 +1551,30 @@ async function main() {
       return;
     }
 
-    let currentErrorsS3Uri = execution.errorsS3Uri;
+    // Create a local CSV file from the Lambda errors for the first attempt
+    let currentErrorsCsvPath =
+      await createErrorsCsvFromLambdaErrors(executionErrors);
+    /** @type {string | null} */
+    let currentErrorsS3Uri = null; // Only set if we get new errors from validation
+
     let attempt = 0;
 
     while (attempt < maxAttempts) {
       attempt++;
       console.log(`\n=== Auto-repair attempt ${attempt}/${maxAttempts} ===`);
-      console.log(`Using errors from: ${currentErrorsS3Uri}`);
+      console.log(
+        `Using errors from: ${currentErrorsS3Uri || currentErrorsCsvPath}`,
+      );
 
       try {
         await runAutoRepairIteration({
           executionId: execution.executionId,
           county: execution.county,
           preparedS3Uri: execution.preparedS3Uri,
+          errorsCsvPath: currentErrorsCsvPath,
           errorsS3Uri: currentErrorsS3Uri,
           transformPrefix,
           tableName,
-          source: execution.source,
         });
 
         console.log("Auto-repair workflow completed successfully!");
@@ -1470,6 +1606,7 @@ async function main() {
           console.log(`Found new errors CSV: ${newErrorsS3Uri}`);
           console.log(`Will retry with new errors...`);
           currentErrorsS3Uri = newErrorsS3Uri;
+          currentErrorsCsvPath = null; // Switch to using S3 URI
         } else {
           if (attempt >= maxAttempts) {
             console.error(
@@ -1486,7 +1623,8 @@ async function main() {
     }
 
     // If we exit the loop without success, handle based on error scenario type
-    const isMvlScenario = isMvlErrorScenario(currentErrorsS3Uri);
+    // Determine scenario based on error type from execution
+    const isMvlScenario = execution.errorType?.startsWith("MV") ?? false;
     // If we exit the loop without success, mark errors as maybeUnrecoverable and send to DLQ
     console.log(
       `Auto-repair exhausted all retries. Marking errors as maybeUnrecoverable...`,
@@ -1494,17 +1632,33 @@ async function main() {
 
     // Mark similar errors as maybeUnrecoverable before sending to DLQ
     try {
+      /** @type {string | null} */
+      let errorsFile = null;
+      let shouldCleanup = false;
+
       if (currentErrorsS3Uri) {
+        // Download errors from S3 if we have an S3 URI (from retry)
         console.log(
           `Downloading errors CSV from ${currentErrorsS3Uri} to mark as maybeUnrecoverable...`,
         );
         const { bucket, key } = parseS3Uri(currentErrorsS3Uri);
-        const tmpFile = path.join(
+        errorsFile = path.join(
           os.tmpdir(),
           `errors_unrecoverable_${Date.now()}.csv`,
         );
-        await downloadS3Object({ bucket, key }, tmpFile);
-        const errorsArray = await csvToJson(tmpFile);
+        await downloadS3Object({ bucket, key }, errorsFile);
+        shouldCleanup = true;
+      } else if (currentErrorsCsvPath) {
+        // Use local CSV file from Lambda errors
+        console.log(
+          `Using local errors CSV from ${currentErrorsCsvPath} to mark as maybeUnrecoverable...`,
+        );
+        errorsFile = currentErrorsCsvPath;
+        shouldCleanup = true; // Cleanup the Lambda-generated file too
+      }
+
+      if (errorsFile) {
+        const errorsArray = await csvToJson(errorsFile);
 
         if (errorsArray.length > 0) {
           const normalizedErrors = normalizeErrors(
@@ -1531,11 +1685,13 @@ async function main() {
         }
 
         // Cleanup temp file
-        await fs.rm(tmpFile, { force: true }).catch(() => {
-          // Ignore cleanup errors
-        });
+        if (shouldCleanup) {
+          await fs.rm(errorsFile, { force: true }).catch(() => {
+            // Ignore cleanup errors
+          });
+        }
       } else {
-        console.log(`No errors S3 URI available to mark as maybeUnrecoverable`);
+        console.log(`No errors available to mark as maybeUnrecoverable`);
       }
     } catch (markError) {
       // Don't block DLQ fallback if marking errors fails
