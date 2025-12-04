@@ -45,127 +45,447 @@ class PrepareError extends Error {
  */
 const PREPARE_ERROR_PATTERNS = [
   // Input Validation Errors (10001-10009)
-  { code: "10001", patterns: [/Invalid proxy format/i], description: "Invalid proxy format" },
-  { code: "10002", patterns: [/multi-request-flow-file.*required|browser-flow-file.*required/i], description: "Missing flow file for CSV mode" },
-  { code: "10003", patterns: [/CSV file is empty/i, /no valid rows/i], description: "Empty CSV file" },
-  { code: "10004", patterns: [/must have a request_identifier column/i], description: "Missing request_identifier column" },
-  { code: "10005", patterns: [/continue-button requires.*use-browser/i], description: "Invalid option combination" },
+  {
+    code: "10001",
+    patterns: [/Invalid proxy format/i],
+    description: "Invalid proxy format",
+  },
+  {
+    code: "10002",
+    patterns: [
+      /multi-request-flow-file.*required|browser-flow-file.*required/i,
+    ],
+    description: "Missing flow file for CSV mode",
+  },
+  {
+    code: "10003",
+    patterns: [/CSV file is empty/i, /no valid rows/i],
+    description: "Empty CSV file",
+  },
+  {
+    code: "10004",
+    patterns: [/must have a request_identifier column/i],
+    description: "Missing request_identifier column",
+  },
+  {
+    code: "10005",
+    patterns: [/continue-button requires.*use-browser/i],
+    description: "Invalid option combination",
+  },
 
   // Missing File Errors (10010-10014)
-  { code: "10010", patterns: [/Neither parcel\.json nor property_seed\.json found/i], description: "Missing parcel file" },
-  { code: "10011", patterns: [/Neither address\.json nor unnormalized_address\.json found/i], description: "Missing address file" },
+  {
+    code: "10010",
+    patterns: [/Neither parcel\.json nor property_seed\.json found/i],
+    description: "Missing parcel file",
+  },
+  {
+    code: "10011",
+    patterns: [/Neither address\.json nor unnormalized_address\.json found/i],
+    description: "Missing address file",
+  },
 
   // Missing Field Errors (10015-10019)
-  { code: "10015", patterns: [/missing source_http_request/i], description: "Missing source_http_request" },
-  { code: "10016", patterns: [/missing request_identifier/i], description: "Missing request_identifier" },
+  {
+    code: "10015",
+    patterns: [/missing source_http_request/i],
+    description: "Missing source_http_request",
+  },
+  {
+    code: "10016",
+    patterns: [/missing request_identifier/i],
+    description: "Missing request_identifier",
+  },
 
   // Workflow/Flow Errors (10020-10029)
-  { code: "10020", patterns: [/Failed to create workflow from template/i], description: "Workflow template creation failed" },
-  { code: "10021", patterns: [/Invalid custom browser flow/i], description: "Invalid browser flow definition" },
-  { code: "10022", patterns: [/Failed to read multi-request flow file/i], description: "Multi-request flow file read error" },
-  { code: "10023", patterns: [/Failed to parse multi-request flow JSON/i], description: "Multi-request flow JSON parse error" },
-  { code: "10024", patterns: [/Multi-request flow must be a JSON object/i], description: "Invalid multi-request flow format" },
+  {
+    code: "10020",
+    patterns: [/Failed to create workflow from template/i],
+    description: "Workflow template creation failed",
+  },
+  {
+    code: "10021",
+    patterns: [/Invalid custom browser flow/i],
+    description: "Invalid browser flow definition",
+  },
+  {
+    code: "10022",
+    patterns: [/Failed to read multi-request flow file/i],
+    description: "Multi-request flow file read error",
+  },
+  {
+    code: "10023",
+    patterns: [/Failed to parse multi-request flow JSON/i],
+    description: "Multi-request flow JSON parse error",
+  },
+  {
+    code: "10024",
+    patterns: [/Multi-request flow must be a JSON object/i],
+    description: "Invalid multi-request flow format",
+  },
 
   // Platform Errors (10030-10034)
-  { code: "10030", patterns: [/Unsupported platform/i], description: "Unsupported platform" },
+  {
+    code: "10030",
+    patterns: [/Unsupported platform/i],
+    description: "Unsupported platform",
+  },
 
   // HTTP/API Errors (10035-10039)
-  { code: "10035", patterns: [/HTTP error \d+/i, /API request.*failed with status/i], description: "HTTP/API error" },
-  { code: "10036", patterns: [/Browser returned error page/i], description: "Browser error page detected" },
+  {
+    code: "10035",
+    patterns: [/HTTP error \d+/i, /API request.*failed with status/i],
+    description: "HTTP/API error",
+  },
+  {
+    code: "10036",
+    patterns: [/Browser returned error page/i],
+    description: "Browser error page detected",
+  },
 
   // Frame/Iframe Errors (10040-10044)
-  { code: "10040", patterns: [/Frame element not found/i], description: "Frame element not found" },
-  { code: "10041", patterns: [/Could not access frame content/i], description: "Frame content inaccessible" },
-  { code: "10042", patterns: [/Failed to get frame/i], description: "Frame retrieval failed" },
+  {
+    code: "10040",
+    patterns: [/Frame element not found/i],
+    description: "Frame element not found",
+  },
+  {
+    code: "10041",
+    patterns: [/Could not access frame content/i],
+    description: "Frame content inaccessible",
+  },
+  {
+    code: "10042",
+    patterns: [/Failed to get frame/i],
+    description: "Frame retrieval failed",
+  },
 
   // Navigation Errors (10045-10049)
-  { code: "10045", patterns: [/Failed to navigate after/i], description: "Navigation retry exhausted" },
+  {
+    code: "10045",
+    patterns: [/Failed to navigate after/i],
+    description: "Navigation retry exhausted",
+  },
 
   // Puppeteer Timeout Errors (10050-10059)
-  { code: "10050", patterns: [/Waiting for selector.*failed.*timeout/i, /Waiting for selector.*timed out/i], description: "Selector wait timeout" },
-  { code: "10051", patterns: [/Navigation timeout/i], description: "Navigation timeout" },
-  { code: "10052", patterns: [/Waiting for navigation failed.*timeout/i], description: "Navigation wait timeout" },
-  { code: "10053", patterns: [/Waiting for function failed.*timeout/i], description: "Function wait timeout" },
-  { code: "10054", patterns: [/waiting for XPath.*failed.*timeout/i], description: "XPath wait timeout" },
+  {
+    code: "10050",
+    patterns: [
+      /Waiting for selector.*failed.*timeout/i,
+      /Waiting for selector.*timed out/i,
+    ],
+    description: "Selector wait timeout",
+  },
+  {
+    code: "10051",
+    patterns: [/Navigation timeout/i],
+    description: "Navigation timeout",
+  },
+  {
+    code: "10052",
+    patterns: [/Waiting for navigation failed.*timeout/i],
+    description: "Navigation wait timeout",
+  },
+  {
+    code: "10053",
+    patterns: [/Waiting for function failed.*timeout/i],
+    description: "Function wait timeout",
+  },
+  {
+    code: "10054",
+    patterns: [/waiting for XPath.*failed.*timeout/i],
+    description: "XPath wait timeout",
+  },
 
   // Puppeteer Context Destruction Errors (10060-10069)
-  { code: "10060", patterns: [/Execution context was destroyed/i], description: "Execution context destroyed" },
-  { code: "10061", patterns: [/Frame was detached/i, /frame was detached/i], description: "Frame detached" },
+  {
+    code: "10060",
+    patterns: [/Execution context was destroyed/i],
+    description: "Execution context destroyed",
+  },
+  {
+    code: "10061",
+    patterns: [/Frame was detached/i, /frame was detached/i],
+    description: "Frame detached",
+  },
   { code: "10062", patterns: [/Target closed/i], description: "Target closed" },
-  { code: "10063", patterns: [/Session closed/i], description: "Session closed" },
-  { code: "10064", patterns: [/Cannot find context with specified id/i], description: "Context not found" },
+  {
+    code: "10063",
+    patterns: [/Session closed/i],
+    description: "Session closed",
+  },
+  {
+    code: "10064",
+    patterns: [/Cannot find context with specified id/i],
+    description: "Context not found",
+  },
 
   // Puppeteer Browser Errors (10070-10079)
-  { code: "10070", patterns: [/Browser closed/i, /Browser has been closed/i], description: "Browser closed" },
-  { code: "10071", patterns: [/Protocol error/i], description: "Protocol error" },
+  {
+    code: "10070",
+    patterns: [/Browser closed/i, /Browser has been closed/i],
+    description: "Browser closed",
+  },
+  {
+    code: "10071",
+    patterns: [/Protocol error/i],
+    description: "Protocol error",
+  },
   { code: "10072", patterns: [/Page crashed/i], description: "Page crashed" },
-  { code: "10073", patterns: [/Browser process exited unexpectedly/i], description: "Browser process exited" },
-  { code: "10074", patterns: [/Failed to launch the browser/i], description: "Browser launch failed" },
-  { code: "10075", patterns: [/Could not find Chrome/i, /Could not find Chromium/i], description: "Chrome/Chromium not found" },
+  {
+    code: "10073",
+    patterns: [/Browser process exited unexpectedly/i],
+    description: "Browser process exited",
+  },
+  {
+    code: "10074",
+    patterns: [/Failed to launch the browser/i],
+    description: "Browser launch failed",
+  },
+  {
+    code: "10075",
+    patterns: [/Could not find Chrome/i, /Could not find Chromium/i],
+    description: "Chrome/Chromium not found",
+  },
 
   // Puppeteer Selector Errors (10080-10089)
-  { code: "10080", patterns: [/Unsupported selector/i], description: "Unsupported selector" },
-  { code: "10081", patterns: [/Unknown pseudo-class/i], description: "Unknown pseudo-class" },
-  { code: "10082", patterns: [/failed to find element matching selector/i], description: "Element not found" },
-  { code: "10083", patterns: [/No node found for selector/i], description: "No node for selector" },
-  { code: "10084", patterns: [/Evaluation failed/i], description: "Evaluation failed" },
+  {
+    code: "10080",
+    patterns: [/Unsupported selector/i],
+    description: "Unsupported selector",
+  },
+  {
+    code: "10081",
+    patterns: [/Unknown pseudo-class/i],
+    description: "Unknown pseudo-class",
+  },
+  {
+    code: "10082",
+    patterns: [/failed to find element matching selector/i],
+    description: "Element not found",
+  },
+  {
+    code: "10083",
+    patterns: [/No node found for selector/i],
+    description: "No node for selector",
+  },
+  {
+    code: "10084",
+    patterns: [/Evaluation failed/i],
+    description: "Evaluation failed",
+  },
 
   // Puppeteer Navigation Network Errors (10090-10099)
-  { code: "10090", patterns: [/net::ERR_ABORTED/i], description: "Request aborted" },
-  { code: "10091", patterns: [/net::ERR_CONNECTION_REFUSED/i], description: "Connection refused" },
-  { code: "10092", patterns: [/net::ERR_CONNECTION_RESET/i, /net::ERR_CONNECTION_CLOSED/i], description: "Connection reset/closed" },
-  { code: "10093", patterns: [/net::ERR_NAME_NOT_RESOLVED/i], description: "DNS resolution failed" },
-  { code: "10094", patterns: [/net::ERR_INTERNET_DISCONNECTED/i], description: "Internet disconnected" },
-  { code: "10095", patterns: [/net::ERR_CERT_/i, /net::ERR_SSL_/i], description: "SSL/Certificate error" },
-  { code: "10096", patterns: [/net::ERR_TOO_MANY_REDIRECTS/i], description: "Too many redirects" },
-  { code: "10097", patterns: [/net::ERR_BLOCKED_BY/i], description: "Request blocked" },
+  {
+    code: "10090",
+    patterns: [/net::ERR_ABORTED/i],
+    description: "Request aborted",
+  },
+  {
+    code: "10091",
+    patterns: [/net::ERR_CONNECTION_REFUSED/i],
+    description: "Connection refused",
+  },
+  {
+    code: "10092",
+    patterns: [/net::ERR_CONNECTION_RESET/i, /net::ERR_CONNECTION_CLOSED/i],
+    description: "Connection reset/closed",
+  },
+  {
+    code: "10093",
+    patterns: [/net::ERR_NAME_NOT_RESOLVED/i],
+    description: "DNS resolution failed",
+  },
+  {
+    code: "10094",
+    patterns: [/net::ERR_INTERNET_DISCONNECTED/i],
+    description: "Internet disconnected",
+  },
+  {
+    code: "10095",
+    patterns: [/net::ERR_CERT_/i, /net::ERR_SSL_/i],
+    description: "SSL/Certificate error",
+  },
+  {
+    code: "10096",
+    patterns: [/net::ERR_TOO_MANY_REDIRECTS/i],
+    description: "Too many redirects",
+  },
+  {
+    code: "10097",
+    patterns: [/net::ERR_BLOCKED_BY/i],
+    description: "Request blocked",
+  },
 
   // Puppeteer Click/Type Errors (10100-10109)
-  { code: "10100", patterns: [/not clickable/i, /not an HTMLElement/i], description: "Element not clickable" },
-  { code: "10101", patterns: [/not visible/i, /not an Element/i], description: "Element not visible" },
-  { code: "10102", patterns: [/Node is detached/i], description: "Node detached" },
-  { code: "10103", patterns: [/display: none/i], description: "Element hidden (display:none)" },
+  {
+    code: "10100",
+    patterns: [/not clickable/i, /not an HTMLElement/i],
+    description: "Element not clickable",
+  },
+  {
+    code: "10101",
+    patterns: [/not visible/i, /not an Element/i],
+    description: "Element not visible",
+  },
+  {
+    code: "10102",
+    patterns: [/Node is detached/i],
+    description: "Node detached",
+  },
+  {
+    code: "10103",
+    patterns: [/display: none/i],
+    description: "Element hidden (display:none)",
+  },
 
   // File System Errors (10110-10119)
-  { code: "10110", patterns: [/ENOENT.*no such file/i], description: "File not found" },
-  { code: "10111", patterns: [/EACCES.*permission denied/i], description: "Permission denied" },
-  { code: "10112", patterns: [/EISDIR.*illegal operation on a directory/i], description: "Illegal directory operation" },
-  { code: "10113", patterns: [/ENOTDIR.*not a directory/i], description: "Not a directory" },
-  { code: "10114", patterns: [/EEXIST.*file already exists/i], description: "File already exists" },
-  { code: "10115", patterns: [/EMFILE.*too many open files/i], description: "Too many open files" },
-  { code: "10116", patterns: [/ENOSPC.*no space left/i], description: "No space left on device" },
+  {
+    code: "10110",
+    patterns: [/ENOENT.*no such file/i],
+    description: "File not found",
+  },
+  {
+    code: "10111",
+    patterns: [/EACCES.*permission denied/i],
+    description: "Permission denied",
+  },
+  {
+    code: "10112",
+    patterns: [/EISDIR.*illegal operation on a directory/i],
+    description: "Illegal directory operation",
+  },
+  {
+    code: "10113",
+    patterns: [/ENOTDIR.*not a directory/i],
+    description: "Not a directory",
+  },
+  {
+    code: "10114",
+    patterns: [/EEXIST.*file already exists/i],
+    description: "File already exists",
+  },
+  {
+    code: "10115",
+    patterns: [/EMFILE.*too many open files/i],
+    description: "Too many open files",
+  },
+  {
+    code: "10116",
+    patterns: [/ENOSPC.*no space left/i],
+    description: "No space left on device",
+  },
 
   // JSON Parsing Errors (10120-10124)
-  { code: "10120", patterns: [/Unexpected token.*JSON/i], description: "JSON unexpected token" },
-  { code: "10121", patterns: [/Unexpected end of JSON/i], description: "JSON unexpected end" },
+  {
+    code: "10120",
+    patterns: [/Unexpected token.*JSON/i],
+    description: "JSON unexpected token",
+  },
+  {
+    code: "10121",
+    patterns: [/Unexpected end of JSON/i],
+    description: "JSON unexpected end",
+  },
   { code: "10122", patterns: [/Invalid JSON/i], description: "Invalid JSON" },
 
   // Network Errors (10125-10134)
-  { code: "10125", patterns: [/UND_ERR_CONNECT_TIMEOUT/i, /ETIMEDOUT/i], description: "Connection timeout" },
-  { code: "10126", patterns: [/UND_ERR_HEADERS_TIMEOUT/i], description: "Headers timeout" },
-  { code: "10127", patterns: [/UND_ERR_BODY_TIMEOUT/i], description: "Body timeout" },
+  {
+    code: "10125",
+    patterns: [/UND_ERR_CONNECT_TIMEOUT/i, /ETIMEDOUT/i],
+    description: "Connection timeout",
+  },
+  {
+    code: "10126",
+    patterns: [/UND_ERR_HEADERS_TIMEOUT/i],
+    description: "Headers timeout",
+  },
+  {
+    code: "10127",
+    patterns: [/UND_ERR_BODY_TIMEOUT/i],
+    description: "Body timeout",
+  },
   { code: "10128", patterns: [/UND_ERR_SOCKET/i], description: "Socket error" },
-  { code: "10129", patterns: [/ECONNREFUSED/i], description: "Connection refused" },
+  {
+    code: "10129",
+    patterns: [/ECONNREFUSED/i],
+    description: "Connection refused",
+  },
   { code: "10130", patterns: [/ECONNRESET/i], description: "Connection reset" },
   { code: "10131", patterns: [/ENOTFOUND/i], description: "Host not found" },
-  { code: "10132", patterns: [/EHOSTUNREACH/i, /ENETUNREACH/i], description: "Host/network unreachable" },
-  { code: "10133", patterns: [/DEPTH_ZERO_SELF_SIGNED_CERT/i, /UNABLE_TO_VERIFY_LEAF_SIGNATURE/i, /CERT_HAS_EXPIRED/i], description: "Certificate error" },
+  {
+    code: "10132",
+    patterns: [/EHOSTUNREACH/i, /ENETUNREACH/i],
+    description: "Host/network unreachable",
+  },
+  {
+    code: "10133",
+    patterns: [
+      /DEPTH_ZERO_SELF_SIGNED_CERT/i,
+      /UNABLE_TO_VERIFY_LEAF_SIGNATURE/i,
+      /CERT_HAS_EXPIRED/i,
+    ],
+    description: "Certificate error",
+  },
 
   // ZIP/Archive Errors (10135-10139)
-  { code: "10135", patterns: [/Invalid.*zip format/i, /unsupported zip format/i], description: "Invalid zip format" },
-  { code: "10136", patterns: [/End of central directory.*not found/i], description: "Corrupted zip (no central directory)" },
-  { code: "10137", patterns: [/Corrupted zip/i], description: "Corrupted zip file" },
-  { code: "10138", patterns: [/Invalid compression method/i], description: "Invalid compression method" },
-  { code: "10139", patterns: [/CRC32 checksum failed/i], description: "Zip checksum failed" },
+  {
+    code: "10135",
+    patterns: [/Invalid.*zip format/i, /unsupported zip format/i],
+    description: "Invalid zip format",
+  },
+  {
+    code: "10136",
+    patterns: [/End of central directory.*not found/i],
+    description: "Corrupted zip (no central directory)",
+  },
+  {
+    code: "10137",
+    patterns: [/Corrupted zip/i],
+    description: "Corrupted zip file",
+  },
+  {
+    code: "10138",
+    patterns: [/Invalid compression method/i],
+    description: "Invalid compression method",
+  },
+  {
+    code: "10139",
+    patterns: [/CRC32 checksum failed/i],
+    description: "Zip checksum failed",
+  },
 
   // Memory Errors (10140-10144)
-  { code: "10140", patterns: [/heap out of memory/i, /Reached heap limit/i, /Out of memory/i], description: "Out of memory" },
+  {
+    code: "10140",
+    patterns: [/heap out of memory/i, /Reached heap limit/i, /Out of memory/i],
+    description: "Out of memory",
+  },
 
   // General JavaScript Errors (10145-10149)
-  { code: "10145", patterns: [/Cannot read propert.*of undefined/i, /Cannot read propert.*of null/i], description: "Property access on null/undefined" },
-  { code: "10146", patterns: [/is not defined/i], description: "Variable not defined" },
-  { code: "10147", patterns: [/is not a function/i], description: "Not a function" },
-  { code: "10148", patterns: [/Maximum call stack size exceeded/i], description: "Stack overflow" },
+  {
+    code: "10145",
+    patterns: [
+      /Cannot read propert.*of undefined/i,
+      /Cannot read propert.*of null/i,
+    ],
+    description: "Property access on null/undefined",
+  },
+  {
+    code: "10146",
+    patterns: [/is not defined/i],
+    description: "Variable not defined",
+  },
+  {
+    code: "10147",
+    patterns: [/is not a function/i],
+    description: "Not a function",
+  },
+  {
+    code: "10148",
+    patterns: [/Maximum call stack size exceeded/i],
+    description: "Stack overflow",
+  },
 ];
 
 /**
@@ -1347,10 +1667,7 @@ async function processPrepare({
       console.error(
         `❌ Prepare function failed [${code}] (${description}): ${errorMessage}`,
       );
-      throw new PrepareError(
-        code,
-        `Prepare function failed: ${errorMessage}`,
-      );
+      throw new PrepareError(code, `Prepare function failed: ${errorMessage}`);
     }
 
     // Add input.csv to the output zip
