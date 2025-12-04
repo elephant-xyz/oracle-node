@@ -9,7 +9,15 @@
  * 4. Query again - both "most" and "least" should return exec-2
  *
  * Usage:
- *   node scripts/e2e-event-handler.mjs
+ *   node scripts/e2e-event-handler.mjs [options]
+ *
+ * Options:
+ *   --keep-data, -k    Do not cleanup test data after the test completes.
+ *                      Use this to verify dashboard widgets show the data.
+ *
+ * Examples:
+ *   node scripts/e2e-event-handler.mjs              # Normal test with cleanup
+ *   node scripts/e2e-event-handler.mjs --keep-data  # Keep data for dashboard verification
  *
  * Prerequisites:
  *   - AWS credentials configured
@@ -40,6 +48,10 @@ const STACK_NAME = "workflow-events-stack";
 const TEST_PREFIX = `e2e-test-${Date.now()}`;
 const EVENT_SOURCE = "elephant.workflow";
 
+// Parse command line arguments
+const args = process.argv.slice(2);
+const KEEP_DATA = args.includes("--keep-data") || args.includes("-k");
+
 // Test data
 const EXEC_1_ID = `${TEST_PREFIX}-exec-1`;
 const EXEC_2_ID = `${TEST_PREFIX}-exec-2`;
@@ -60,6 +72,7 @@ const dynamoDbClient = new DynamoDBClient({ region: REGION });
 
 const log = (msg) => console.log(`[${new Date().toISOString()}] ${msg}`);
 const success = (msg) => console.log(`[${new Date().toISOString()}] ✅ ${msg}`);
+const warn = (msg) => console.warn(`[${new Date().toISOString()}] ⚠️  ${msg}`);
 const error = (msg) => console.error(`[${new Date().toISOString()}] ❌ ${msg}`);
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -384,10 +397,17 @@ async function main() {
     success("All tests passed! 🎉");
     log("=".repeat(60));
   } finally {
-    // Cleanup: Purge test data
-    log("\n🧹 Cleanup: Purging test data...");
-    await purgeTestData(tableName);
-    success("Test data cleaned up");
+    if (KEEP_DATA) {
+      warn("\n⚠️  --keep-data flag set: Test data NOT cleaned up");
+      warn(`Test prefix: ${TEST_PREFIX}`);
+      warn("To manually purge later, delete items with this prefix from DynamoDB");
+      warn("You can now check the dashboard to see the test data.");
+    } else {
+      // Cleanup: Purge test data
+      log("\n🧹 Cleanup: Purging test data...");
+      await purgeTestData(tableName);
+      success("Test data cleaned up");
+    }
   }
 }
 
