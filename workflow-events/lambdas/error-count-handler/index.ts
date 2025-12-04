@@ -1,5 +1,9 @@
 import type { DynamoDBStreamEvent, DynamoDBRecord } from "aws-lambda";
 import { SFNClient, SendTaskSuccessCommand } from "@aws-sdk/client-sfn";
+import {
+  CloudWatchClient,
+  PutMetricDataCommand,
+} from "@aws-sdk/client-cloudwatch";
 import { unmarshall } from "@aws-sdk/util-dynamodb";
 import type { AttributeValue } from "@aws-sdk/client-dynamodb";
 import type { ExecutionErrorLink } from "shared/types.js";
@@ -20,6 +24,9 @@ import type {
 } from "shared/repository.js";
 
 const sfnClient = new SFNClient({});
+const cloudWatchClient = new CloudWatchClient({});
+
+const METRIC_NAMESPACE = "Elephant/Workflow";
 
 /**
  * Preprocessed record containing data extracted from DynamoDB stream event.
@@ -151,6 +158,71 @@ const groupByErrorCode = (
   }
 
   return errorOccurrences;
+};
+
+/**
+ * Dimensions for the execution restarted metric.
+ */
+interface ExecutionRestartedDimensions {
+  /** The error type (first 2 characters of error code). */
+  errorType: string;
+  /** The county identifier. */
+  county: string;
+}
+
+/**
+ * Publishes a CloudWatch metric for each execution that was restarted.
+ * The metric indicates how many executions were restarted as a result
+ * of error resolution.
+ *
+ * @param dimensions - Array of dimension sets, one per restarted execution
+ */
+const publishExecutionRestartedMetrics = async (
+  dimensions: ExecutionRestartedDimensions[],
+): Promise<void> => {
+  if (dimensions.length === 0) {
+    return;
+  }
+
+  const timestamp = new Date();
+
+  // Batch metrics data - CloudWatch allows up to 1000 metrics per request
+  const BATCH_LIMIT = 1000;
+
+  for (let i = 0; i < dimensions.length; i += BATCH_LIMIT) {
+    const batch = dimensions.slice(i, i + BATCH_LIMIT);
+
+    const command = new PutMetricDataCommand({
+      Namespace: METRIC_NAMESPACE,
+      MetricData: batch.map((dim) => ({
+        MetricName: "ExecutionRestarted",
+        Dimensions: [
+          { Name: "ErrorType", Value: dim.errorType },
+          { Name: "County", Value: dim.county },
+        ],
+        Unit: "Count",
+        Value: 1,
+        Timestamp: timestamp,
+      })),
+    });
+
+    try {
+      await cloudWatchClient.send(command);
+      console.info(
+        createLogEntry("published_execution_restarted_metrics", {
+          count: batch.length,
+          batchIndex: Math.floor(i / BATCH_LIMIT),
+        }),
+      );
+    } catch (error) {
+      console.error(
+        createLogEntry("failed_to_publish_execution_restarted_metrics", {
+          error: error instanceof Error ? error.message : String(error),
+          count: batch.length,
+        }),
+      );
+    }
+  }
 };
 
 const sendTaskSuccess = async (
@@ -300,6 +372,19 @@ const processExecutionUpdates = async (
     );
 
     await sendTaskSuccessCallbacks(executionsReachedZero);
+
+    // Publish CloudWatch metrics for restarted executions
+    const metricDimensions: ExecutionRestartedDimensions[] =
+      executionsReachedZero
+        .filter((r) => r.errorType && r.county)
+        .map((r) => ({
+          errorType: r.errorType as string,
+          county: r.county as string,
+        }));
+
+    if (metricDimensions.length > 0) {
+      await publishExecutionRestartedMetrics(metricDimensions);
+    }
 
     const executionIdsToDelete = executionsReachedZero.map(
       (r) => r.executionId,

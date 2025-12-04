@@ -515,6 +515,8 @@ export interface BatchDecrementResultItem {
   taskToken?: string;
   /** The error type for the execution (for GSI key updates). */
   errorType?: string;
+  /** The county identifier for the execution. */
+  county?: string;
   /** Whether the execution item was found. */
   found: boolean;
   /** Error message if the operation failed. */
@@ -1387,6 +1389,7 @@ const decrementOpenErrorCountByAmount = async (
       newOpenErrorCount: item.openErrorCount,
       taskToken: item.taskToken,
       errorType: item.errorType,
+      county: item.county,
       found: true,
     };
   } catch (error) {
