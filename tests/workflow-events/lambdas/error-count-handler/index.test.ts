@@ -6,6 +6,10 @@ import {
   BatchWriteCommand,
 } from "@aws-sdk/lib-dynamodb";
 import { SFNClient, SendTaskSuccessCommand } from "@aws-sdk/client-sfn";
+import {
+  CloudWatchClient,
+  PutMetricDataCommand,
+} from "@aws-sdk/client-cloudwatch";
 import type { DynamoDBStreamEvent, DynamoDBRecord } from "aws-lambda";
 import { marshall } from "@aws-sdk/util-dynamodb";
 import type {
@@ -23,6 +27,11 @@ const ddbMock = mockClient(DynamoDBDocumentClient);
  * Mock the Step Functions client for task success callbacks.
  */
 const sfnMock = mockClient(SFNClient);
+
+/**
+ * Mock the CloudWatch client for metric publishing.
+ */
+const cloudWatchMock = mockClient(CloudWatchClient);
 
 /**
  * Test table name used in all tests.
@@ -168,6 +177,7 @@ describe("error-count-handler", () => {
     vi.resetModules();
     ddbMock.reset();
     sfnMock.reset();
+    cloudWatchMock.reset();
     process.env = {
       ...originalEnv,
       WORKFLOW_ERRORS_TABLE_NAME: TEST_TABLE_NAME,
@@ -414,6 +424,9 @@ describe("error-count-handler", () => {
         .on(SendTaskSuccessCommand)
         .rejects(new Error("Task token expired"));
 
+      // Mock CloudWatch
+      cloudWatchMock.on(PutMetricDataCommand).resolves({});
+
       const { handler } = await import(
         "../../../../workflow-events/lambdas/error-count-handler/index.js"
       );
@@ -427,6 +440,211 @@ describe("error-count-handler", () => {
 
       // Should still have called BatchWriteCommand to delete
       expect(ddbMock).toHaveReceivedCommand(BatchWriteCommand);
+    });
+  });
+
+  describe("CloudWatch metrics", () => {
+    it("should publish ExecutionRestarted metric when execution reaches zero errors", async () => {
+      // Mock decrement to return zero errors
+      ddbMock.on(UpdateCommand).resolves({
+        Attributes: createFailedExecutionItem("exec-001", 0, undefined, "01"),
+      });
+
+      // Mock batch delete
+      ddbMock.on(BatchWriteCommand).resolves({});
+
+      // Mock CloudWatch
+      cloudWatchMock.on(PutMetricDataCommand).resolves({});
+
+      const { handler } = await import(
+        "../../../../workflow-events/lambdas/error-count-handler/index.js"
+      );
+
+      const item = createExecutionErrorLink("exec-001", "01256");
+      const record = createRemoveRecord(item);
+      const event = createStreamEvent([record]);
+
+      await handler(event);
+
+      // Should have called PutMetricDataCommand
+      expect(cloudWatchMock).toHaveReceivedCommand(PutMetricDataCommand);
+
+      const metricCalls = cloudWatchMock.commandCalls(PutMetricDataCommand);
+      expect(metricCalls.length).toBe(1);
+
+      const metricData = metricCalls[0].args[0].input;
+      expect(metricData.Namespace).toBe("Elephant/Workflow");
+      expect(metricData.MetricData).toBeDefined();
+      expect(metricData.MetricData?.length).toBe(1);
+      expect(metricData.MetricData?.[0].MetricName).toBe("ExecutionRestarted");
+      expect(metricData.MetricData?.[0].Value).toBe(1);
+      expect(metricData.MetricData?.[0].Unit).toBe("Count");
+    });
+
+    it("should include errorType and county dimensions in metric", async () => {
+      // Mock decrement to return zero errors
+      ddbMock.on(UpdateCommand).resolves({
+        Attributes: createFailedExecutionItem("exec-001", 0, undefined, "SV"),
+      });
+
+      // Mock batch delete
+      ddbMock.on(BatchWriteCommand).resolves({});
+
+      // Mock CloudWatch
+      cloudWatchMock.on(PutMetricDataCommand).resolves({});
+
+      const { handler } = await import(
+        "../../../../workflow-events/lambdas/error-count-handler/index.js"
+      );
+
+      const item = createExecutionErrorLink("exec-001", "SV256");
+      const record = createRemoveRecord(item);
+      const event = createStreamEvent([record]);
+
+      await handler(event);
+
+      const metricCalls = cloudWatchMock.commandCalls(PutMetricDataCommand);
+      const dimensions = metricCalls[0].args[0].input.MetricData?.[0].Dimensions;
+
+      expect(dimensions).toBeDefined();
+      expect(dimensions?.length).toBe(2);
+
+      const errorTypeDim = dimensions?.find((d) => d.Name === "ErrorType");
+      const countyDim = dimensions?.find((d) => d.Name === "County");
+
+      expect(errorTypeDim?.Value).toBe("SV");
+      expect(countyDim?.Value).toBe("test_county");
+    });
+
+    it("should publish metrics for multiple restarted executions", async () => {
+      // Mock decrements - both executions reach zero
+      let callCount = 0;
+      ddbMock.on(UpdateCommand).callsFake(() => {
+        callCount++;
+        if (callCount === 1) {
+          return {
+            Attributes: createFailedExecutionItem("exec-001", 0, undefined, "01"),
+          };
+        }
+        return {
+          Attributes: createFailedExecutionItem("exec-002", 0, undefined, "02"),
+        };
+      });
+
+      // Mock batch delete
+      ddbMock.on(BatchWriteCommand).resolves({});
+
+      // Mock CloudWatch
+      cloudWatchMock.on(PutMetricDataCommand).resolves({});
+
+      const { handler } = await import(
+        "../../../../workflow-events/lambdas/error-count-handler/index.js"
+      );
+
+      const records = [
+        createRemoveRecord(
+          createExecutionErrorLink("exec-001", "01256"),
+          "event-1",
+        ),
+        createRemoveRecord(
+          createExecutionErrorLink("exec-002", "02001"),
+          "event-2",
+        ),
+      ];
+      const event = createStreamEvent(records);
+
+      await handler(event);
+
+      // Should have published metrics for both executions
+      const metricCalls = cloudWatchMock.commandCalls(PutMetricDataCommand);
+      expect(metricCalls.length).toBe(1);
+
+      const metricData = metricCalls[0].args[0].input.MetricData;
+      expect(metricData?.length).toBe(2);
+    });
+
+    it("should not publish metrics when no executions reach zero errors", async () => {
+      // Mock decrement to return remaining errors
+      ddbMock.on(UpdateCommand).resolves({
+        Attributes: createFailedExecutionItem("exec-001", 2),
+      });
+
+      // Mock CloudWatch
+      cloudWatchMock.on(PutMetricDataCommand).resolves({});
+
+      const { handler } = await import(
+        "../../../../workflow-events/lambdas/error-count-handler/index.js"
+      );
+
+      const item = createExecutionErrorLink("exec-001", "01256");
+      const record = createRemoveRecord(item);
+      const event = createStreamEvent([record]);
+
+      await handler(event);
+
+      // Should NOT have called PutMetricDataCommand
+      expect(cloudWatchMock).not.toHaveReceivedCommand(PutMetricDataCommand);
+    });
+
+    it("should continue processing when CloudWatch metric publishing fails", async () => {
+      // Mock decrement to return zero errors
+      ddbMock.on(UpdateCommand).resolves({
+        Attributes: createFailedExecutionItem("exec-001", 0),
+      });
+
+      // Mock batch delete
+      ddbMock.on(BatchWriteCommand).resolves({});
+
+      // Mock CloudWatch to fail
+      cloudWatchMock
+        .on(PutMetricDataCommand)
+        .rejects(new Error("CloudWatch unavailable"));
+
+      const { handler } = await import(
+        "../../../../workflow-events/lambdas/error-count-handler/index.js"
+      );
+
+      const item = createExecutionErrorLink("exec-001", "01256");
+      const record = createRemoveRecord(item);
+      const event = createStreamEvent([record]);
+
+      // Should not throw
+      await expect(handler(event)).resolves.not.toThrow();
+
+      // Should still have called BatchWriteCommand to delete
+      expect(ddbMock).toHaveReceivedCommand(BatchWriteCommand);
+    });
+
+    it("should skip metrics for executions without county or errorType", async () => {
+      // Mock decrement to return zero errors but without errorType
+      const failedExecWithoutType = createFailedExecutionItem("exec-001", 0);
+      // Explicitly remove errorType and county to simulate missing data
+      const modifiedExec = { ...failedExecWithoutType };
+      delete (modifiedExec as Record<string, unknown>).errorType;
+      delete (modifiedExec as Record<string, unknown>).county;
+
+      ddbMock.on(UpdateCommand).resolves({
+        Attributes: modifiedExec,
+      });
+
+      // Mock batch delete
+      ddbMock.on(BatchWriteCommand).resolves({});
+
+      // Mock CloudWatch
+      cloudWatchMock.on(PutMetricDataCommand).resolves({});
+
+      const { handler } = await import(
+        "../../../../workflow-events/lambdas/error-count-handler/index.js"
+      );
+
+      const item = createExecutionErrorLink("exec-001", "01256");
+      const record = createRemoveRecord(item);
+      const event = createStreamEvent([record]);
+
+      await handler(event);
+
+      // Should NOT have called PutMetricDataCommand since dimensions are missing
+      expect(cloudWatchMock).not.toHaveReceivedCommand(PutMetricDataCommand);
     });
   });
 
@@ -727,6 +945,7 @@ describe("batch repository functions", () => {
   beforeEach(() => {
     vi.resetModules();
     ddbMock.reset();
+    cloudWatchMock.reset();
     process.env = {
       ...originalEnv,
       WORKFLOW_ERRORS_TABLE_NAME: TEST_TABLE_NAME,
@@ -1286,6 +1505,7 @@ describe("error record processing in handler", () => {
     vi.resetModules();
     ddbMock.reset();
     sfnMock.reset();
+    cloudWatchMock.reset();
     process.env = {
       ...originalEnv,
       WORKFLOW_ERRORS_TABLE_NAME: TEST_TABLE_NAME,
