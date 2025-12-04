@@ -1,7 +1,7 @@
 import { QueryCommand } from "@aws-sdk/lib-dynamodb";
 import type { ErrorRecord } from "shared/types.js";
 import { TABLE_NAME, docClient } from "shared/dynamodb-client.js";
-import { ENTITY_TYPES } from "shared/keys.js";
+import { ENTITY_TYPES, DEFAULT_GSI_STATUS } from "shared/keys.js";
 
 interface DynamoDBKey {
   [key: string]: string | number;
@@ -117,7 +117,7 @@ const queryErrorsWithMostOccurrences = async (
       FilterExpression: "entityType = :entityType",
       ExpressionAttributeValues: {
         ":gs3pk": "METRIC#ERRORCOUNT",
-        ":gs3skPrefix": `COUNT#${errorType.trim()}#`,
+        ":gs3skPrefix": `COUNT#${errorType.trim()}#${DEFAULT_GSI_STATUS}#`,
         ":entityType": ENTITY_TYPES.ERROR,
       },
       ScanIndexForward: false,
@@ -138,10 +138,12 @@ const queryErrorsWithMostOccurrences = async (
   const command = new QueryCommand({
     TableName: TABLE_NAME,
     IndexName: "GS2",
-    KeyConditionExpression: "GS2PK = :gs2pk",
+    KeyConditionExpression:
+      "GS2PK = :gs2pk AND begins_with(GS2SK, :gs2skPrefix)",
     FilterExpression: "entityType = :entityType",
     ExpressionAttributeValues: {
       ":gs2pk": "TYPE#ERROR",
+      ":gs2skPrefix": `COUNT#${DEFAULT_GSI_STATUS}#`,
       ":entityType": ENTITY_TYPES.ERROR,
     },
     ScanIndexForward: false,

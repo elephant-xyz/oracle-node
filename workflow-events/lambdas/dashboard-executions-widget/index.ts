@@ -1,7 +1,7 @@
 import { QueryCommand } from "@aws-sdk/lib-dynamodb";
 import type { FailedExecutionItem } from "shared/types.js";
 import { TABLE_NAME, docClient } from "shared/dynamodb-client.js";
-import { ENTITY_TYPES } from "shared/keys.js";
+import { DEFAULT_GSI_STATUS } from "shared/keys.js";
 
 interface CloudWatchCustomWidgetEvent {
   describe?: boolean;
@@ -52,9 +52,11 @@ const queryExecutionsWithMostErrors = async (
   const command = new QueryCommand({
     TableName: TABLE_NAME,
     IndexName: "GS1",
-    KeyConditionExpression: "GS1PK = :gs1pk",
+    KeyConditionExpression:
+      "GS1PK = :gs1pk AND begins_with(GS1SK, :gs1skPrefix)",
     ExpressionAttributeValues: {
       ":gs1pk": "METRIC#ERRORCOUNT",
+      ":gs1skPrefix": `COUNT#${DEFAULT_GSI_STATUS}#`,
     },
     ScanIndexForward: false,
     Limit: limit,
