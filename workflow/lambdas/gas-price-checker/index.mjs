@@ -207,7 +207,7 @@ export const handler = async (event) => {
         hasTaskToken: !!taskToken,
       });
 
-      // Emit IN_PROGRESS event to EventBridge when task token is received
+      // Emit IN_PROGRESS event to EventBridge when task token is received (non-blocking)
       if (taskToken && executionArn) {
         const log = createLogger({
           component: "gas-price-checker",
@@ -215,17 +215,24 @@ export const handler = async (event) => {
           county: county || "unknown",
           executionId: executionArn,
         });
-        await emitWorkflowEvent({
-          executionId: executionArn,
-          county: county || "unknown",
-          dataGroupLabel: dataGroupLabel,
-          status: "IN_PROGRESS",
-          phase: "Submit",
-          step: "CheckGasPrice",
-          taskToken: taskToken,
-          errors: [],
-          log,
-        });
+        try {
+          await emitWorkflowEvent({
+            executionId: executionArn,
+            county: county || "unknown",
+            dataGroupLabel: dataGroupLabel,
+            status: "IN_PROGRESS",
+            phase: "GasPriceCheck",
+            step: "CheckGasPrice",
+            taskToken: taskToken,
+            errors: [],
+            log,
+          });
+        } catch (eventErr) {
+          log("warn", "failed_to_emit_in_progress_event", {
+            error: eventErr instanceof Error ? eventErr.message : String(eventErr),
+          });
+          // Continue processing even if EventBridge emission fails
+        }
       }
     }
   }
@@ -249,7 +256,7 @@ export const handler = async (event) => {
           county: county || "unknown",
           dataGroupLabel: dataGroupLabel,
           status: "FAILED",
-          phase: "Submit",
+          phase: "GasPriceCheck",
           step: "CheckGasPrice",
           taskToken: taskToken,
           errors: [createWorkflowError("60001", { error })],
@@ -282,7 +289,7 @@ export const handler = async (event) => {
           county: county || "unknown",
           dataGroupLabel: dataGroupLabel,
           status: "FAILED",
-          phase: "Submit",
+          phase: "GasPriceCheck",
           step: "CheckGasPrice",
           taskToken: taskToken,
           errors: [createWorkflowError("60001", { error })],
@@ -324,17 +331,26 @@ export const handler = async (event) => {
         county: county || "unknown",
         executionId: executionArn,
       });
-      await emitWorkflowEvent({
-        executionId: executionArn,
-        county: county || "unknown",
-        dataGroupLabel: dataGroupLabel,
-        status: "SUCCEEDED",
-        phase: "Submit",
-        step: "CheckGasPrice",
-        taskToken: taskToken,
-        errors: [],
-        log,
-      });
+      // Emit event (non-blocking - don't fail if this fails)
+      try {
+        await emitWorkflowEvent({
+          executionId: executionArn,
+          county: county || "unknown",
+          dataGroupLabel: dataGroupLabel,
+          status: "SUCCEEDED",
+          phase: "GasPriceCheck",
+          step: "CheckGasPrice",
+          taskToken: taskToken,
+          errors: [],
+          log,
+        });
+      } catch (eventErr) {
+        log("warn", "failed_to_emit_succeeded_event", {
+          error: eventErr instanceof Error ? eventErr.message : String(eventErr),
+        });
+        // Continue to task token callback even if EventBridge emission fails
+      }
+      // Always call task token callback
       await executeWithTaskToken({
         taskToken,
         log,
@@ -364,22 +380,31 @@ export const handler = async (event) => {
         county: county || "unknown",
         executionId: executionArn,
       });
-      await emitWorkflowEvent({
-        executionId: executionArn,
-        county: county || "unknown",
-        dataGroupLabel: dataGroupLabel,
-        status: "FAILED",
-        phase: "Submit",
-        step: "CheckGasPrice",
-        taskToken: taskToken,
-        errors: [
-          createWorkflowError("60001", {
-            error: errMessage,
-            cause: errCause,
-          }),
-        ],
-        log: errorLog,
-      });
+      // Emit event (non-blocking - don't fail if this fails)
+      try {
+        await emitWorkflowEvent({
+          executionId: executionArn,
+          county: county || "unknown",
+          dataGroupLabel: dataGroupLabel,
+          status: "FAILED",
+          phase: "GasPriceCheck",
+          step: "CheckGasPrice",
+          taskToken: taskToken,
+          errors: [
+            createWorkflowError("60001", {
+              error: errMessage,
+              cause: errCause,
+            }),
+          ],
+          log: errorLog,
+        });
+      } catch (eventErr) {
+        errorLog("warn", "failed_to_emit_failed_event", {
+          error: eventErr instanceof Error ? eventErr.message : String(eventErr),
+        });
+        // Continue to task token callback even if EventBridge emission fails
+      }
+      // Always call task token callback
       await executeWithTaskToken({
         taskToken,
         log: errorLog,

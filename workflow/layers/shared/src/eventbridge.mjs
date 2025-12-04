@@ -10,7 +10,7 @@ const eventBridgeClient = new EventBridgeClient({});
  */
 
 /**
- * @typedef {'Prepare' | 'Transform' | 'SVL' | 'MVL' | 'Hash' | 'Upload' | 'Submit'} WorkflowPhase
+ * @typedef {'Prepare' | 'Transform' | 'SVL' | 'MVL' | 'Hash' | 'Upload' | 'Submit' | 'GasPriceCheck' | 'TransactionStatusCheck'} WorkflowPhase
  */
 
 /**
