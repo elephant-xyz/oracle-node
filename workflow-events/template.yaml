@@ -138,6 +138,7 @@ Resources:
               detail-type:
                 - WorkflowEvent
                 - ElephantErrorResolved
+                - ElephantErrorFailedToResolve
             State: ENABLED
     Metadata:
       BuildMethod: esbuild
@@ -535,20 +536,34 @@ Resources:
             {
               "type": "metric",
               "x": 0,
-              "y": 34,
+              "y": 50,
               "width": 12,
               "height": 6,
               "properties": {
-                "title": "Transaction Status Check Phase",
+                "title": "Execution Restarted (Total)",
                 "view": "timeSeries",
                 "stacked": false,
                 "region": "${AWS::Region}",
                 "period": 300,
                 "metrics": [
-                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"TransactionStatusCheckElephantPhase\" Status=\"SCHEDULED\"', 'Sum', 300))", "label": "SCHEDULED", "id": "txstatus_sched", "color": "#1f77b4"}],
-                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"TransactionStatusCheckElephantPhase\" Status=\"IN_PROGRESS\"', 'Sum', 300))", "label": "IN_PROGRESS", "id": "txstatus_prog", "color": "#ff7f0e"}],
-                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"TransactionStatusCheckElephantPhase\" Status=\"SUCCEEDED\"', 'Sum', 300))", "label": "SUCCEEDED", "id": "txstatus_succ", "color": "#2ca02c"}],
-                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"TransactionStatusCheckElephantPhase\" Status=\"FAILED\"', 'Sum', 300))", "label": "FAILED", "id": "txstatus_fail", "color": "#d62728"}]
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,ErrorType,County} MetricName=\"ExecutionRestarted\"', 'Sum', 300))", "label": "Total Restarted", "id": "restart_total", "color": "#2ca02c"}]
+                ]
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12,
+              "y": 50,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "Execution Restarted by County",
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "period": 300,
+                "metrics": [
+                  [{"expression": "SEARCH('{Elephant/Workflow,ErrorType,County} MetricName=\"ExecutionRestarted\"', 'Sum', 300)", "label": "", "id": "restart_by_county"}]
                 ]
               }
             }
@@ -586,6 +601,7 @@ Resources:
           WORKFLOW_ERRORS_TABLE_NAME: !Ref WorkflowErrorsTable
       Policies:
         - AWSLambdaBasicExecutionRole
+        - CloudWatchPutMetricPolicy: {}
         - DynamoDBCrudPolicy:
             TableName: !Ref WorkflowErrorsTable
         - Version: "2012-10-17"

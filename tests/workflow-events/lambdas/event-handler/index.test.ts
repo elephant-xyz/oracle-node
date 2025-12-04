@@ -682,11 +682,11 @@ describe("event-handler", () => {
         (call) => call.args[0].input.Key?.PK === "ERROR#01256",
       );
 
-      // GS3SK format: COUNT#{errorType}#{paddedCount}#ERROR#{errorCode}
-      // For a new error with count 1: COUNT#01#0000000001#ERROR#01256
+      // GS3SK format: COUNT#{errorType}#{status}#{paddedCount}#ERROR#{errorCode}
+      // For a new error with count 1: COUNT#01#FAILED#0000000001#ERROR#01256
       expect(
         sortKeyUpdate?.args[0].input.ExpressionAttributeValues?.[":gs3sk"],
-      ).toMatch(/^COUNT#01#\d{10}#ERROR#01256$/);
+      ).toMatch(/^COUNT#01#FAILED#\d{10}#ERROR#01256$/);
     });
 
     it("should include errorType in GS3SK for FailedExecutionItem with uniform error type", async () => {
@@ -866,10 +866,10 @@ describe("event-handler", () => {
       expect(
         sortKeyUpdate?.args[0].input.ExpressionAttributeValues?.[":gs2sk"],
       ).toMatch(/^COUNT#FAILED#\d{10}#ERROR#12345$/);
-      // GS3SK format: COUNT#{errorType}#{paddedCount}#ERROR#{errorCode} (no status for errors)
+      // GS3SK format: COUNT#{errorType}#{status}#{paddedCount}#ERROR#{errorCode}
       expect(
         sortKeyUpdate?.args[0].input.ExpressionAttributeValues?.[":gs3sk"],
-      ).toMatch(/^COUNT#12#\d{10}#ERROR#12345$/);
+      ).toMatch(/^COUNT#12#FAILED#\d{10}#ERROR#12345$/);
     });
 
     it("should set correct GSI keys for ExecutionErrorLink", async () => {
@@ -1028,9 +1028,9 @@ describe("event-handler", () => {
         },
         UpdateExpression: "SET GS2SK = :gs2sk, GS3SK = :gs3sk",
         ExpressionAttributeValues: {
-          // GS2SK includes status, GS3SK does not
+          // Both GS2SK and GS3SK include status
           ":gs2sk": "COUNT#FAILED#0000000042#ERROR#12345",
-          ":gs3sk": "COUNT#12#0000000042#ERROR#12345",
+          ":gs3sk": "COUNT#12#FAILED#0000000042#ERROR#12345",
         },
       });
     });
