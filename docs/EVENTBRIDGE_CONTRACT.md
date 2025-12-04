@@ -70,15 +70,60 @@ Emitted on workflow step status changes (success, failure, or parked).
 
 ### Error Code Reference
 
-| Code         | Phase     | Description                                                                                                                                                                               |
-| ------------ | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `20<county>` | Transform | Transform step failure or exception. The `<county>` is the county name being processed. Example: `20Cook`                                                                                 |
-| `30<hash>`   | SVL       | Schema validation error. The `<hash>` is a SHA256 hash computed from `error_message#error_path#county`, uniquely identifying each distinct validation error. Example: `30a1b2c3d4e5f6...` |
-| `31001`      | SVL       | SVL runtime exception (non-validation failure)                                                                                                                                            |
-| `40001`      | Hash      | Generic hash step failure or exception                                                                                                                                                    |
-| `50001`      | Upload    | Generic upload step failure or exception                                                                                                                                                  |
+| Code              | Phase     | Description                                                                                                                                                                               |
+| ----------------- | --------- |-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `01xxx<county>`   | Prepare   | Lambda infrastructure error. `01002`=generic, `01003-01006`=input.csv errors, `01008-01015`=S3/config errors, `01016-01020`=taskToken/Step Functions errors. Example: `01002Hamilton`     |
+| `10xxx<county>`   | Prepare   | CLI prepare error. `Example: `10050Broward`                                                                                                                                               |
+| `20<county>`      | Transform | Transform step failure or exception. The `<county>` is the county name being processed. Example: `20Cook`                                                                                 |
+| `30<hash>`        | SVL       | Schema validation error. The `<hash>` is a SHA256 hash computed from `error_message#error_path#county`, uniquely identifying each distinct validation error. Example: `30a1b2c3d4e5f6...` |
+| `31001`           | SVL       | SVL runtime exception (non-validation failure)                                                                                                                                            |
+| `40001`           | Hash      | Generic hash step failure or exception                                                                                                                                                    |
+| `50001`           | Upload    | Generic upload step failure or exception                                                                                                                                                  |
 
-> **Note on SVL validation errors (code `30<hash>`)**: Each unique validation error (determined by the combination of error message, error path, and county) receives its own error code. This enables precise tracking and resolution of individual validation issues across executions. The `error_hash` is also included in the `details` object for reference.
+| Code    | Description                                |
+| ------- | ------------------------------------------ |
+| `01002` | Generic prepare processing error           |
+| `01003` | Error reading input.csv from zip           |
+| `01004` | Error parsing input.csv                    |
+| `01005` | input.csv is empty or has no data rows     |
+| `01006` | input.csv not found in zip file            |
+| `01008` | Could not extract county from zip          |
+| `01009` | Failed to download config file from S3     |
+| `01010` | Invalid S3 path format                     |
+| `01011` | Missing required field: input_s3_uri       |
+| `01012` | Failed to download input object from S3    |
+| `01013` | Failed to download flow file from S3       |
+| `01014` | Invalid browser flow parameter format      |
+| `01015` | Empty key in browser flow parameter        |
+| `01016` | Missing taskToken in SQS message           |
+| `01017` | Failed to send task success                |
+| `01018` | Failed to send task failure                |
+| `01019` | Failed to emit EventBridge event           |
+| `01020` | No taskToken available                     |
+
+#### Prepare Error Codes (`10xxx` - CLI Prepare)
+
+| Range         | Category          | Description                        |
+| ------------- | ----------------- | ---------------------------------- |
+| `10001-10005` | Input Validation  | Proxy, CSV, option errors          |
+| `10010-10016` | Missing File      | Parcel, address, field errors      |
+| `10020-10024` | Workflow/Flow     | Template and flow file errors      |
+| `10030-10036` | Platform/HTTP     | Platform and API errors            |
+| `10040-10045` | Frame/Navigation  | Iframe and navigation errors       |
+| `10050-10054` | Timeout           | Selector, navigation timeouts      |
+| `10060-10064` | Context           | Execution context errors           |
+| `10070-10075` | Browser           | Browser crash/launch errors        |
+| `10080-10084` | Selector          | Element selector errors            |
+| `10090-10097` | Network           | Connection, DNS, SSL errors        |
+| `10100-10103` | Interaction       | Click, type, visibility errors     |
+| `10110-10116` | File System       | ENOENT, EACCES, disk errors        |
+| `10120-10122` | JSON              | JSON parsing errors                |
+| `10125-10133` | Network (undici)  | Timeout, socket, host errors       |
+| `10135-10139` | Archive           | ZIP format and corruption errors   |
+| `10140-10148` | Runtime           | Memory, stack overflow errors      |
+| `10999`       | Unknown           | Unclassified prepare error         |
+
+> **Note**: Prepare error codes are concatenated with the county name (e.g., `01002Hamilton`). See `prepare/lambdas/downloader/index.mjs` for full mapping.
 
 > **Note on Transform errors (code `20<county>`)**: Transform errors include the county name in the error code, enabling county-specific tracking and aggregation of transform failures.
 
