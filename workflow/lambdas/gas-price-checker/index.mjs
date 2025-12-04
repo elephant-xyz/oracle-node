@@ -229,7 +229,8 @@ export const handler = async (event) => {
           });
         } catch (eventErr) {
           log("warn", "failed_to_emit_in_progress_event", {
-            error: eventErr instanceof Error ? eventErr.message : String(eventErr),
+            error:
+              eventErr instanceof Error ? eventErr.message : String(eventErr),
           });
           // Continue processing even if EventBridge emission fails
         }
@@ -346,7 +347,8 @@ export const handler = async (event) => {
         });
       } catch (eventErr) {
         log("warn", "failed_to_emit_succeeded_event", {
-          error: eventErr instanceof Error ? eventErr.message : String(eventErr),
+          error:
+            eventErr instanceof Error ? eventErr.message : String(eventErr),
         });
         // Continue to task token callback even if EventBridge emission fails
       }
@@ -400,7 +402,8 @@ export const handler = async (event) => {
         });
       } catch (eventErr) {
         errorLog("warn", "failed_to_emit_failed_event", {
-          error: eventErr instanceof Error ? eventErr.message : String(eventErr),
+          error:
+            eventErr instanceof Error ? eventErr.message : String(eventErr),
         });
         // Continue to task token callback even if EventBridge emission fails
       }

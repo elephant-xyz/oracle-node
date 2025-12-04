@@ -423,10 +423,12 @@ describe("gas-price-checker handler", () => {
 
   it("should still call task token even if emitWorkflowEvent fails for IN_PROGRESS", async () => {
     // Mock emitWorkflowEvent to fail on IN_PROGRESS
-    mockEmitWorkflowEvent.mockRejectedValueOnce(new Error("EventBridge failure"));
+    mockEmitWorkflowEvent.mockRejectedValueOnce(
+      new Error("EventBridge failure"),
+    );
     // But succeed on SUCCEEDED (if it gets there)
     mockEmitWorkflowEvent.mockResolvedValue(undefined);
-    
+
     mockCheckGasPrice.mockResolvedValue({
       eip1559: { maxFeePerGas: "20000000000" }, // 20 Gwei in wei
       legacy: { gasPrice: "20000000000" },
@@ -458,7 +460,7 @@ describe("gas-price-checker handler", () => {
     mockEmitWorkflowEvent
       .mockResolvedValueOnce(undefined) // IN_PROGRESS succeeds
       .mockRejectedValueOnce(new Error("EventBridge failure")); // SUCCEEDED fails
-    
+
     mockCheckGasPrice.mockResolvedValue({
       eip1559: { maxFeePerGas: "20000000000" }, // 20 Gwei in wei
       legacy: { gasPrice: "20000000000" },
@@ -487,12 +489,14 @@ describe("gas-price-checker handler", () => {
 
   it("should still call task token on error even if emitWorkflowEvent fails", async () => {
     vi.useFakeTimers();
-    
+
     // Mock emitWorkflowEvent to fail only once (for IN_PROGRESS)
-    mockEmitWorkflowEvent.mockRejectedValueOnce(new Error("EventBridge failure"));
+    mockEmitWorkflowEvent.mockRejectedValueOnce(
+      new Error("EventBridge failure"),
+    );
     // But succeed on FAILED event (if it gets there)
     mockEmitWorkflowEvent.mockResolvedValue(undefined);
-    
+
     // Mock checkGasPrice to fail immediately (configuration error so it throws)
     mockCheckGasPrice.mockRejectedValue(new Error("RPC URL is required"));
     mockExecuteWithTaskToken.mockResolvedValue(undefined);
@@ -505,7 +509,7 @@ describe("gas-price-checker handler", () => {
 
     // Should not throw - EventBridge failure is caught, and RPC error triggers immediate failure
     const handlerPromise = handler(event);
-    
+
     // Advance timers to allow any async operations
     await vi.advanceTimersByTimeAsync(100);
     await handlerPromise;
@@ -519,7 +523,7 @@ describe("gas-price-checker handler", () => {
         taskToken: "task-token-error-eventbridge-fail",
       }),
     );
-    
+
     vi.useRealTimers();
   }, 10000);
 });
