@@ -254,6 +254,7 @@ Resources:
       EphemeralStorage:
         Size: 1024
       MemorySize: 768
+      Timeout: 900
       CodeUri: lambdas/downloader
       Handler: index.handler
       Description: "Downloads data (granted full S3 access as requested)"
@@ -284,6 +285,24 @@ Resources:
               Resource:
                 - !GetAtt ProxyRotationTable.Arn
                 - !Sub "${ProxyRotationTable.Arn}/index/*"
+            - Effect: Allow
+              Action:
+                - states:SendTaskSuccess
+                - states:SendTaskFailure
+              Resource: "*"
+            - Effect: Allow
+              Action:
+                - events:PutEvents
+              Resource: "*"
+            # Wildcard permission for per-county prepare queues
+            - Effect: Allow
+              Action:
+                - sqs:ReceiveMessage
+                - sqs:DeleteMessage
+                - sqs:GetQueueAttributes
+              Resource:
+                - !Sub "arn:aws:sqs:${AWS::Region}:${AWS::AccountId}:${AWS::StackName}-prepare-queue-*"
+      # Note: SQS event triggers for prepare queues are created per-county via scripts/create-county-prepare-queue.sh
 
   UpdaterFunction:
     Type: AWS::Serverless::Function
@@ -524,6 +543,9 @@ Resources:
       Tags:
         - Key: Environment
           Value: !Ref EnvironmentName
+
+  # Note: Per-county prepare queues are created dynamically via scripts/create-county-prepare-queue.sh
+  # Queue naming pattern: ${StackName}-prepare-queue-${county_key}
 
   #####################################################################################################################
   # DynamoDB Table for Proxy Rotation
@@ -912,7 +934,7 @@ Resources:
             Queue: !GetAtt TransformQueue.Arn
             BatchSize: 1
             ScalingConfig:
-              MaximumConcurrency: 10
+              MaximumConcurrency: 100
 
   SvlWorkerFunction:
     Type: AWS::Serverless::Function
@@ -957,7 +979,7 @@ Resources:
             Queue: !GetAtt SvlQueue.Arn
             BatchSize: 1
             ScalingConfig:
-              MaximumConcurrency: 10
+              MaximumConcurrency: 100
 
   HashWorkerFunction:
     Type: AWS::Serverless::Function
@@ -997,7 +1019,7 @@ Resources:
             Queue: !GetAtt HashQueue.Arn
             BatchSize: 1
             ScalingConfig:
-              MaximumConcurrency: 10
+              MaximumConcurrency: 100
 
   UploadWorkerFunction:
     Type: AWS::Serverless::Function
@@ -1040,7 +1062,7 @@ Resources:
             Queue: !GetAtt UploadQueue.Arn
             BatchSize: 1
             ScalingConfig:
-              MaximumConcurrency: 5
+              MaximumConcurrency: 8
 
   ErrorResolverFunction:
     Type: AWS::Serverless::Function
@@ -1193,6 +1215,54 @@ Resources:
       LogGroupName: !Sub "/aws/vendedlogs/states/${AWS::StackName}-ElephantExpressStateMachine"
       RetentionInDays: 14
 
+  #####################################################################################################################
+  # EventBridge Workflow Events Logging
+  #####################################################################################################################
+
+  WorkflowEventLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/events/${AWS::StackName}-workflow-events"
+      RetentionInDays: 14
+
+  WorkflowEventLogGroupPolicy:
+    Type: AWS::Logs::ResourcePolicy
+    Properties:
+      PolicyName: !Sub "${AWS::StackName}-eventbridge-logs-policy"
+      PolicyDocument: !Sub |
+        {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "events.amazonaws.com"
+              },
+              "Action": [
+                "logs:CreateLogStream",
+                "logs:PutLogEvents"
+              ],
+              "Resource": "${WorkflowEventLogGroup.Arn}:*"
+            }
+          ]
+        }
+
+  WorkflowEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "${AWS::StackName}-workflow-events-to-logs"
+      Description: "Logs all elephant.workflow events to CloudWatch"
+      EventBusName: default
+      EventPattern:
+        source:
+          - elephant.workflow
+        detail-type:
+          - WorkflowEvent
+      State: ENABLED
+      Targets:
+        - Id: CloudWatchLogs
+          Arn: !GetAtt WorkflowEventLogGroup.Arn
+
   ElephantExpressStateMachineRole:
     Type: AWS::IAM::Role
     Properties:
@@ -1221,6 +1291,7 @@ Resources:
               - Effect: Allow
                 Action:
                   - sqs:SendMessage
+                  - sqs:GetQueueUrl
                 Resource:
                   - !GetAtt TransactionsSqsQueue.Arn
                   - !GetAtt GasPriceCheckerSqsQueue.Arn
@@ -1229,6 +1300,8 @@ Resources:
                   - !GetAtt SvlQueue.Arn
                   - !GetAtt HashQueue.Arn
                   - !GetAtt UploadQueue.Arn
+                  # Wildcard for per-county prepare queues (created via scripts/create-county-prepare-queue.sh)
+                  - !Sub "arn:aws:sqs:${AWS::Region}:${AWS::AccountId}:${AWS::StackName}-prepare-queue-*"
               - Effect: Allow
                 Action:
                   - ssm:GetParameter
@@ -1842,6 +1915,7 @@ Outputs:
   TransactionsDeadLetterQueueArn:
     Description: ARN of the Transactions Dead Letter Queue
     Value: !GetAtt TransactionsDeadLetterQueue.Arn
+  # Note: Per-county prepare queues are created via scripts/create-county-prepare-queue.sh
   ProxyRotationTableName:
     Description: Name of the Proxy Rotation DynamoDB table
     Value: !Ref ProxyRotationTable
@@ -1860,6 +1934,12 @@ Outputs:
   ErrorRecoveryDashboardUrl:
     Description: URL to the ErrorRecovery CloudWatch Dashboard
     Value: !Sub "https://${AWS::Region}.console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#dashboards:name=${AWS::StackName}-ErrorRecovery"
+  WorkflowEventLogGroupName:
+    Description: CloudWatch Log Group for workflow EventBridge events
+    Value: !Ref WorkflowEventLogGroup
+  WorkflowEventLogGroupUrl:
+    Description: URL to view workflow events in CloudWatch Logs
+    Value: !Sub "https://${AWS::Region}.console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#logsV2:log-groups/log-group/$252Faws$252Fevents$252F${AWS::StackName}-workflow-events"
 
   # Granular Workflow Step Queues
   TransformQueueUrl:
