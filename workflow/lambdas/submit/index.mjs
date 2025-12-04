@@ -6,6 +6,12 @@ import { parse } from "csv-parse/sync";
 import { submitToContract } from "@elephant-xyz/cli/lib";
 import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
 import { SSMClient, GetParameterCommand } from "@aws-sdk/client-ssm";
+import {
+  executeWithTaskToken,
+  emitWorkflowEvent,
+  createWorkflowError,
+  createLogger,
+} from "shared";
 
 const s3Client = new S3Client({
   region: process.env.AWS_REGION || "us-east-1",
@@ -21,8 +27,27 @@ const ssmClient = new SSMClient({
  */
 
 /**
+ * @typedef {Object} SqsRecord
+ * @property {string} body
+ * @property {Object} [messageAttributes]
+ * @property {Object} [messageAttributes.TaskToken]
+ * @property {string} [messageAttributes.TaskToken.stringValue]
+ * @property {Object} [messageAttributes.ExecutionArn]
+ * @property {string} [messageAttributes.ExecutionArn.stringValue]
+ * @property {Object} [messageAttributes.County]
+ * @property {string} [messageAttributes.County.stringValue]
+ * @property {Object} [messageAttributes.DataGroupLabel]
+ * @property {string} [messageAttributes.DataGroupLabel.stringValue]
+ */
+
+/**
  * @typedef {Object} SubmitInput
- * @property {{ body: string }[]} Records
+ * @property {SqsRecord[]} [Records] - SQS event format (can contain task token in message attributes)
+ * @property {string} [taskToken] - Step Function task token (when invoked directly from Step Functions)
+ * @property {string} [executionArn] - Step Function execution ARN (when invoked directly from Step Functions)
+ * @property {string} [county] - County name (when invoked directly from Step Functions)
+ * @property {string} [dataGroupLabel] - Data group label (when invoked directly from Step Functions)
+ * @property {Object[]} [transactionItems] - Transaction items array (when invoked directly from Step Functions)
  */
 
 /**
@@ -176,18 +201,178 @@ async function getGasPriceFromSSM() {
 }
 
 /**
- * Build paths and derive prepare input from SQS/S3 event message.
- * - Extracts bucket/key from S3 event in SQS body
- * - Produces output prefix and input path for prepare Lambda
+ * Submit handler - supports both SQS events and Step Function Task Token invocations
+ * - SQS format: { Records: [{ body: string }] }
+ * - Step Function format: { taskToken: string, executionArn: string, transactionItems: Object[] }
  *
- * @param {SubmitInput} event - Original SQS body JSON (already parsed by starter)
+ * @param {SubmitInput} event - Either SQS event or Step Function task token payload
  * @returns {Promise<SubmitOutput>}
  */
 export const handler = async (event) => {
-  if (!event.Records) throw new Error("Missing SQS Records");
+  // Check if invoked directly from Step Functions (has taskToken in payload)
+  const isDirectStepFunctionInvocation = !!event.taskToken;
 
-  const toSubmit = event.Records.map((r) => JSON.parse(r.body)).flat();
-  if (!toSubmit.length) throw new Error("No records to submit");
+  // Check if invoked from SQS (has Records array)
+  const isSqsInvocation = !!event.Records && Array.isArray(event.Records);
+
+  let toSubmit;
+  let taskToken;
+  let executionArn;
+  let record; // Store record for use in catch block
+  let county = "unknown"; // Store county for use in catch block
+  let dataGroupLabel = "County"; // Store dataGroupLabel for use in catch block
+  let log; // Logger for EventBridge events
+
+  if (isDirectStepFunctionInvocation) {
+    // Invoked directly from Step Functions with Task Token
+    if (!event.transactionItems || !Array.isArray(event.transactionItems)) {
+      const error =
+        "Missing or invalid transactionItems in Step Function payload";
+      if (event.taskToken) {
+        const errorLog = createLogger({
+          component: "submit",
+          at: new Date().toISOString(),
+          county: event.county || "unknown",
+          executionId: event.executionArn,
+        });
+        await executeWithTaskToken({
+          taskToken: event.taskToken,
+          log: errorLog,
+          workerFn: async () => {
+            throw new Error(error);
+          },
+        });
+      }
+      throw new Error(error);
+    }
+    toSubmit = event.transactionItems;
+    taskToken = event.taskToken;
+    executionArn = event.executionArn;
+    console.log({
+      ...base,
+      level: "info",
+      msg: "invoked_directly_from_step_functions",
+      executionArn: executionArn,
+      itemCount: toSubmit.length,
+    });
+
+    // Emit IN_PROGRESS event to EventBridge when invoked directly
+    if (taskToken && executionArn) {
+      county = event.county || "unknown";
+      dataGroupLabel = event.dataGroupLabel || "County";
+      log = createLogger({
+        component: "submit",
+        at: new Date().toISOString(),
+        county: county,
+        executionId: executionArn,
+      });
+      await emitWorkflowEvent({
+        executionId: executionArn,
+        county: county,
+        dataGroupLabel: dataGroupLabel,
+        status: "IN_PROGRESS",
+        phase: "Submit",
+        step: "SubmitToBlockchain",
+        taskToken: taskToken,
+        errors: [],
+        log,
+      });
+    }
+  } else if (isSqsInvocation) {
+    // Invoked from SQS (with optional task token in message attributes for Step Function callback)
+    if (!event.Records || event.Records.length === 0) {
+      throw new Error("Missing SQS Records");
+    }
+
+    const firstRecord = event.Records[0];
+    if (!firstRecord || !firstRecord.body) {
+      throw new Error("Missing SQS record body");
+    }
+    record = firstRecord; // Store for use in catch block
+
+    // Extract task token from message attributes if present (Step Function mode)
+    if (firstRecord.messageAttributes?.TaskToken?.stringValue) {
+      taskToken = firstRecord.messageAttributes.TaskToken.stringValue;
+      executionArn = firstRecord.messageAttributes.ExecutionArn?.stringValue;
+      console.log({
+        ...base,
+        level: "info",
+        msg: "invoked_from_sqs_with_task_token",
+        executionArn: executionArn,
+        hasTaskToken: !!taskToken,
+      });
+
+      // Emit IN_PROGRESS event to EventBridge when task token is received
+      if (taskToken && executionArn) {
+        // Extract county and dataGroupLabel from message attributes or use defaults
+        county =
+          firstRecord.messageAttributes?.County?.stringValue || "unknown";
+        dataGroupLabel =
+          firstRecord.messageAttributes?.DataGroupLabel?.stringValue ||
+          "County";
+        log = createLogger({
+          component: "submit",
+          at: new Date().toISOString(),
+          county: county,
+          executionId: executionArn,
+        });
+        await emitWorkflowEvent({
+          executionId: executionArn,
+          county: county,
+          dataGroupLabel: dataGroupLabel,
+          status: "IN_PROGRESS",
+          phase: "Submit",
+          step: "SubmitToBlockchain",
+          taskToken: taskToken,
+          errors: [],
+          log,
+        });
+      }
+    }
+
+    // Parse transaction items from SQS message body
+    // firstRecord is guaranteed to be defined here due to the check above
+    toSubmit = JSON.parse(firstRecord.body);
+    if (!Array.isArray(toSubmit)) {
+      throw new Error(
+        "SQS message body must contain an array of transaction items",
+      );
+    }
+
+    console.log({
+      ...base,
+      level: "info",
+      msg: "invoked_from_sqs",
+      itemCount: toSubmit.length,
+      hasTaskToken: !!taskToken,
+    });
+  } else {
+    throw new Error(
+      "Invalid event format: must be either Step Function payload or SQS event",
+    );
+  }
+
+  if (!toSubmit.length) {
+    const error = "No records to submit";
+    if (taskToken) {
+      const errorLog =
+        log ||
+        createLogger({
+          component: "submit",
+          at: new Date().toISOString(),
+          county,
+          executionId: executionArn,
+        });
+      await executeWithTaskToken({
+        taskToken,
+        log: errorLog,
+        workerFn: async () => {
+          throw new Error(error);
+        },
+      });
+    }
+    throw new Error(error);
+  }
 
   const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "submit-"));
   try {
@@ -337,12 +522,102 @@ export const handler = async (event) => {
       submit_errors: submitErrors,
     });
     if (allErrors.length > 0) {
-      throw new Error(
-        "Submit to the blockchain failed" + JSON.stringify(allErrors),
-      );
+      const errorMsg =
+        "Submit to the blockchain failed" + JSON.stringify(allErrors);
+      if (taskToken) {
+        const errorLog =
+          log ||
+          createLogger({
+            component: "submit",
+            at: new Date().toISOString(),
+            county,
+            executionId: executionArn,
+          });
+        await executeWithTaskToken({
+          taskToken,
+          log: errorLog,
+          workerFn: async () => {
+            throw new Error(errorMsg);
+          },
+        });
+      }
+      throw new Error(errorMsg);
     }
-    console.log({ ...base, level: "info", msg: "completed" });
-    return { status: "success" };
+
+    const result = { status: "success", submitResults: submitResults };
+    console.log({ ...base, level: "info", msg: "completed", result });
+
+    // Emit SUCCEEDED event to EventBridge and send task success
+    if (taskToken && executionArn && log) {
+      await emitWorkflowEvent({
+        executionId: executionArn,
+        county: county,
+        dataGroupLabel: dataGroupLabel,
+        status: "SUCCEEDED",
+        phase: "Submit",
+        step: "SubmitToBlockchain",
+        taskToken: taskToken,
+        errors: [],
+        log,
+      });
+    }
+
+    // Send success callback to Step Functions if task token is present (from SQS or direct invocation)
+    if (taskToken) {
+      await executeWithTaskToken({
+        taskToken,
+        log:
+          log ||
+          createLogger({
+            component: "submit",
+            at: new Date().toISOString(),
+            county,
+            executionId: executionArn,
+          }),
+        workerFn: async () => result,
+      });
+    }
+
+    return result;
+  } catch (err) {
+    const errMessage = err instanceof Error ? err.message : String(err);
+    const errCause = err instanceof Error ? err.stack : undefined;
+
+    // Emit FAILED event to EventBridge and send task failure
+    if (taskToken && executionArn) {
+      const errorLog =
+        log ||
+        createLogger({
+          component: "submit",
+          at: new Date().toISOString(),
+          county,
+          executionId: executionArn,
+        });
+      await emitWorkflowEvent({
+        executionId: executionArn,
+        county: county,
+        dataGroupLabel: dataGroupLabel,
+        status: "FAILED",
+        phase: "Submit",
+        step: "SubmitToBlockchain",
+        taskToken: taskToken,
+        errors: [
+          createWorkflowError("60002", {
+            error: errMessage,
+            cause: errCause,
+          }),
+        ],
+        log: errorLog,
+      });
+      await executeWithTaskToken({
+        taskToken,
+        log: errorLog,
+        workerFn: async () => {
+          throw err;
+        },
+      });
+    }
+    throw err;
   } finally {
     await fs.rm(tmp, { recursive: true, force: true });
   }

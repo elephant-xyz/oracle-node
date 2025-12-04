@@ -4,7 +4,6 @@ import {
   SFNClient,
   StartExecutionCommand,
   ListExecutionsCommand,
-  DescribeExecutionCommand,
 } from "@aws-sdk/client-sfn";
 
 const sfnMock = mockClient(SFNClient);
@@ -92,11 +91,6 @@ describe("starter lambda", () => {
       executionArn: "arn:aws:states:us-east-1:123456789:execution:test:abc123",
     });
 
-    // Mock DescribeExecutionCommand to return SUCCEEDED
-    sfnMock.on(DescribeExecutionCommand).resolves({
-      status: "SUCCEEDED",
-    });
-
     const { handler } = await import(
       "../../../../workflow/lambdas/starter/index.mjs"
     );
@@ -112,7 +106,6 @@ describe("starter lambda", () => {
     expect(result.executionArn).toBe(
       "arn:aws:states:us-east-1:123456789:execution:test:abc123",
     );
-    expect(result.workflowStatus).toBe("SUCCEEDED");
 
     // Verify AWS SDK was called correctly using custom matchers
     expect(sfnMock).toHaveReceivedCommandWith(StartExecutionCommand, {
@@ -167,12 +160,6 @@ describe("starter lambda", () => {
       executionArn: "arn:aws:states:us-east-1:123456789:execution:test:abc123",
     });
 
-    sfnMock.on(DescribeExecutionCommand).resolves({
-      status: "FAILED",
-      cause: "Task failed",
-      error: "ValidationError",
-    });
-
     const { handler } = await import(
       "../../../../workflow/lambdas/starter/index.mjs"
     );
@@ -181,8 +168,11 @@ describe("starter lambda", () => {
       Records: [{ body: JSON.stringify({ test: "data" }) }],
     };
 
-    await expect(handler(event)).rejects.toThrow(
-      "Step function execution FAILED",
+    // Handler only starts execution and returns immediately, doesn't check status
+    const result = await handler(event);
+    expect(result.status).toBe("ok");
+    expect(result.executionArn).toBe(
+      "arn:aws:states:us-east-1:123456789:execution:test:abc123",
     );
   });
 
@@ -191,11 +181,6 @@ describe("starter lambda", () => {
       executionArn: "arn:aws:states:us-east-1:123456789:execution:test:abc123",
     });
 
-    sfnMock.on(DescribeExecutionCommand).resolves({
-      status: "TIMED_OUT",
-      cause: "Execution timed out",
-    });
-
     const { handler } = await import(
       "../../../../workflow/lambdas/starter/index.mjs"
     );
@@ -204,8 +189,11 @@ describe("starter lambda", () => {
       Records: [{ body: JSON.stringify({ test: "data" }) }],
     };
 
-    await expect(handler(event)).rejects.toThrow(
-      "Step function execution TIMED_OUT",
+    // Handler only starts execution and returns immediately, doesn't check status
+    const result = await handler(event);
+    expect(result.status).toBe("ok");
+    expect(result.executionArn).toBe(
+      "arn:aws:states:us-east-1:123456789:execution:test:abc123",
     );
   });
 
@@ -214,10 +202,6 @@ describe("starter lambda", () => {
       executionArn: "arn:aws:states:us-east-1:123456789:execution:test:abc123",
     });
 
-    sfnMock.on(DescribeExecutionCommand).resolves({
-      status: "ABORTED",
-    });
-
     const { handler } = await import(
       "../../../../workflow/lambdas/starter/index.mjs"
     );
@@ -226,23 +210,18 @@ describe("starter lambda", () => {
       Records: [{ body: JSON.stringify({ test: "data" }) }],
     };
 
-    await expect(handler(event)).rejects.toThrow(
-      "Step function execution ABORTED",
+    // Handler only starts execution and returns immediately, doesn't check status
+    const result = await handler(event);
+    expect(result.status).toBe("ok");
+    expect(result.executionArn).toBe(
+      "arn:aws:states:us-east-1:123456789:execution:test:abc123",
     );
   });
 
   it("should poll while execution is running and succeed", async () => {
-    vi.useFakeTimers();
-
     sfnMock.on(StartExecutionCommand).resolves({
       executionArn: "arn:aws:states:us-east-1:123456789:execution:test:abc123",
     });
-
-    // First call returns RUNNING, second call returns SUCCEEDED
-    sfnMock
-      .on(DescribeExecutionCommand)
-      .resolvesOnce({ status: "RUNNING" })
-      .resolvesOnce({ status: "SUCCEEDED" });
 
     const { handler } = await import(
       "../../../../workflow/lambdas/starter/index.mjs"
@@ -252,32 +231,18 @@ describe("starter lambda", () => {
       Records: [{ body: JSON.stringify({ test: "data" }) }],
     };
 
-    const handlerPromise = handler(event);
-
-    // Advance timers to allow polling
-    await vi.advanceTimersByTimeAsync(3000);
-
-    const result = await handlerPromise;
+    // Handler only starts execution and returns immediately, doesn't poll
+    const result = await handler(event);
 
     expect(result.status).toBe("ok");
-    expect(result.workflowStatus).toBe("SUCCEEDED");
-
-    vi.useRealTimers();
+    expect(result.executionArn).toBe(
+      "arn:aws:states:us-east-1:123456789:execution:test:abc123",
+    );
   });
 
   it("should timeout when unknown execution status persists", async () => {
-    vi.useFakeTimers();
-
-    // Set a short timeout for testing
-    process.env.AWS_LAMBDA_FUNCTION_TIMEOUT = "35"; // 35 - 30 buffer = 5 second max wait
-
     sfnMock.on(StartExecutionCommand).resolves({
       executionArn: "arn:aws:states:us-east-1:123456789:execution:test:abc123",
-    });
-
-    // Unknown status causes retry loop until timeout
-    sfnMock.on(DescribeExecutionCommand).resolves({
-      status: "UNKNOWN_STATUS",
     });
 
     const { handler } = await import(
@@ -288,39 +253,18 @@ describe("starter lambda", () => {
       Records: [{ body: JSON.stringify({ test: "data" }) }],
     };
 
-    // Attach rejection handler BEFORE starting, to prevent unhandled rejection warning
-    let rejectedError = null;
-    const handlerPromise = handler(event).catch((err) => {
-      rejectedError = err;
-    });
-
-    // Advance time past the max wait (5 seconds = 5000ms)
-    await vi.advanceTimersByTimeAsync(6000);
-
-    // Wait for promise to complete
-    await handlerPromise;
-
-    // Should have rejected with timeout error
-    expect(rejectedError).not.toBeNull();
-    expect(rejectedError.message).toContain(
-      "Step Function execution did not complete within 5 seconds",
+    // Handler only starts execution and returns immediately, doesn't check status or timeout
+    const result = await handler(event);
+    expect(result.status).toBe("ok");
+    expect(result.executionArn).toBe(
+      "arn:aws:states:us-east-1:123456789:execution:test:abc123",
     );
-
-    vi.useRealTimers();
   });
 
   it("should retry on DescribeExecution errors and eventually succeed", async () => {
-    vi.useFakeTimers();
-
     sfnMock.on(StartExecutionCommand).resolves({
       executionArn: "arn:aws:states:us-east-1:123456789:execution:test:abc123",
     });
-
-    // First call throws error, second call succeeds
-    sfnMock
-      .on(DescribeExecutionCommand)
-      .rejectsOnce(new Error("Temporary network error"))
-      .resolvesOnce({ status: "SUCCEEDED" });
 
     const { handler } = await import(
       "../../../../workflow/lambdas/starter/index.mjs"
@@ -330,17 +274,13 @@ describe("starter lambda", () => {
       Records: [{ body: JSON.stringify({ test: "data" }) }],
     };
 
-    const handlerPromise = handler(event);
-
-    // Advance timers to allow retry
-    await vi.advanceTimersByTimeAsync(3000);
-
-    const result = await handlerPromise;
+    // Handler only starts execution and returns immediately, doesn't poll or retry
+    const result = await handler(event);
 
     expect(result.status).toBe("ok");
-    expect(result.workflowStatus).toBe("SUCCEEDED");
-
-    vi.useRealTimers();
+    expect(result.executionArn).toBe(
+      "arn:aws:states:us-east-1:123456789:execution:test:abc123",
+    );
   });
 
   it("should handle null/undefined event", async () => {
@@ -373,10 +313,6 @@ describe("starter lambda", () => {
       executionArn: "arn:aws:states:us-east-1:123456789:execution:test:abc123",
     });
 
-    sfnMock.on(DescribeExecutionCommand).resolves({
-      status: "SUCCEEDED",
-    });
-
     const { handler } = await import(
       "../../../../workflow/lambdas/starter/index.mjs"
     );
@@ -407,10 +343,6 @@ describe("starter lambda", () => {
       executionArn: "arn:aws:states:us-east-1:123456789:execution:test:abc123",
     });
 
-    sfnMock.on(DescribeExecutionCommand).resolves({
-      status: "SUCCEEDED",
-    });
-
     const { handler } = await import(
       "../../../../workflow/lambdas/starter/index.mjs"
     );
@@ -427,10 +359,6 @@ describe("starter lambda", () => {
   it("should handle missing executionArn in response", async () => {
     sfnMock.on(StartExecutionCommand).resolves({
       // executionArn is missing
-    });
-
-    sfnMock.on(DescribeExecutionCommand).resolves({
-      status: "SUCCEEDED",
     });
 
     const { handler } = await import(

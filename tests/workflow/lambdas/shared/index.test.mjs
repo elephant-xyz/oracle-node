@@ -148,6 +148,85 @@ describe("shared index utilities", () => {
     });
   });
 
+  describe("createErrorHash", () => {
+    it("should compute deterministic SHA256 hash from message, path, and county", async () => {
+      const { createErrorHash } = await import(
+        "../../../../workflow/layers/shared/src/index.mjs"
+      );
+
+      const hash = createErrorHash("Test error", "$.field", "test-county");
+
+      // The hash should be a 64-character hex string (SHA256)
+      expect(hash).toMatch(/^[a-f0-9]{64}$/);
+    });
+
+    it("should produce same hash for identical inputs", async () => {
+      const { createErrorHash } = await import(
+        "../../../../workflow/layers/shared/src/index.mjs"
+      );
+
+      const hash1 = createErrorHash("Error message", "$.path", "county-a");
+      const hash2 = createErrorHash("Error message", "$.path", "county-a");
+
+      expect(hash1).toBe(hash2);
+    });
+
+    it("should produce different hashes for different messages", async () => {
+      const { createErrorHash } = await import(
+        "../../../../workflow/layers/shared/src/index.mjs"
+      );
+
+      const hash1 = createErrorHash("Error A", "$.path", "county");
+      const hash2 = createErrorHash("Error B", "$.path", "county");
+
+      expect(hash1).not.toBe(hash2);
+    });
+
+    it("should produce different hashes for different paths", async () => {
+      const { createErrorHash } = await import(
+        "../../../../workflow/layers/shared/src/index.mjs"
+      );
+
+      const hash1 = createErrorHash("Error", "$.path.a", "county");
+      const hash2 = createErrorHash("Error", "$.path.b", "county");
+
+      expect(hash1).not.toBe(hash2);
+    });
+
+    it("should produce different hashes for different counties", async () => {
+      const { createErrorHash } = await import(
+        "../../../../workflow/layers/shared/src/index.mjs"
+      );
+
+      const hash1 = createErrorHash("Error", "$.path", "county-a");
+      const hash2 = createErrorHash("Error", "$.path", "county-b");
+
+      expect(hash1).not.toBe(hash2);
+    });
+
+    it("should produce same hash as codebuild/shared/errors.mjs implementation", async () => {
+      // This test verifies consistency with the original createErrorHash in errors.mjs
+      // Hash is computed as: sha256("message#path#county")
+      const { createErrorHash } = await import(
+        "../../../../workflow/layers/shared/src/index.mjs"
+      );
+      const { createHash } = await import("crypto");
+
+      const message = "Required field missing";
+      const path = "$.properties[0].address";
+      const county = "orange";
+
+      const sharedHash = createErrorHash(message, path, county);
+
+      // Compute expected hash using the same algorithm
+      const expectedHash = createHash("sha256")
+        .update(`${message}#${path}#${county}`, "utf8")
+        .digest("hex");
+
+      expect(sharedHash).toBe(expectedHash);
+    });
+  });
+
   describe("exports", () => {
     it("should export all shared utilities", async () => {
       const shared = await import(
@@ -173,6 +252,7 @@ describe("shared index utilities", () => {
       // Index utilities
       expect(shared.requireEnv).toBeDefined();
       expect(shared.createLogger).toBeDefined();
+      expect(shared.createErrorHash).toBeDefined();
     });
   });
 });

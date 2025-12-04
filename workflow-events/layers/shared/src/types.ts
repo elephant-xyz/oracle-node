@@ -23,6 +23,8 @@ export interface WorkflowEventDetail {
   phase: string;
   /** Current step within the phase. */
   step: string;
+  /** Data group used for the workflow execution. */
+  dataGroupLabel?: string;
   /** Task token for Step Functions callback (if applicable). */
   taskToken?: string;
   /** S3 URI of the prepared output from the prepare step. */

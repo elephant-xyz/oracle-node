@@ -1,8 +1,8 @@
 {
-  "name": "submit",
+  "name": "transaction-status-checker",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "Checks transaction status on blockchain and handles retries/resubmission",
+  "main": "index.mjs",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "typecheck": "tsc --pretty false --noEmit -p jsconfig.json"
@@ -12,12 +12,9 @@
   "license": "ISC",
   "dependencies": {
     "@aws-sdk/client-eventbridge": "^3.0.0",
-    "@aws-sdk/client-s3": "^3.0.0",
-    "@aws-sdk/client-ssm": "^3.0.0",
     "@aws-sdk/client-sfn": "^3.0.0",
-    "@elephant-xyz/cli": "^1.57.0",
-    "csv-parse": "^6.1.0",
-    "csv-writer": "^1.6.0"
+    "@aws-sdk/client-sqs": "^3.0.0",
+    "@elephant-xyz/cli": "^1.57.0"
   },
   "devDependencies": {
     "@types/node": "^20.16.3"

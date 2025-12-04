@@ -6,6 +6,10 @@ import {
   UpdateCommand,
   BatchGetCommand,
 } from "@aws-sdk/lib-dynamodb";
+import {
+  CloudWatchClient,
+  PutMetricDataCommand,
+} from "@aws-sdk/client-cloudwatch";
 import type { EventBridgeEvent } from "aws-lambda";
 import type { WorkflowEventDetail, WorkflowError } from "shared/types.js";
 
@@ -13,6 +17,11 @@ import type { WorkflowEventDetail, WorkflowError } from "shared/types.js";
  * Mock the DynamoDB Document Client for all tests.
  */
 const ddbMock = mockClient(DynamoDBDocumentClient);
+
+/**
+ * Mock the CloudWatch Client for all tests.
+ */
+const cloudWatchMock = mockClient(CloudWatchClient);
 
 /**
  * Test table name used in all tests.
@@ -81,6 +90,7 @@ describe("event-handler", () => {
   beforeEach(() => {
     vi.resetModules();
     ddbMock.reset();
+    cloudWatchMock.reset();
     errorCountTracker = new Map();
     process.env = {
       ...originalEnv,
@@ -90,6 +100,9 @@ describe("event-handler", () => {
     vi.spyOn(console, "info").mockImplementation(() => {});
     vi.spyOn(console, "debug").mockImplementation(() => {});
     vi.spyOn(console, "error").mockImplementation(() => {});
+
+    // Default mock for CloudWatch PutMetricData
+    cloudWatchMock.on(PutMetricDataCommand).resolves({});
 
     // Default mock for BatchGetCommand - returns totalCount from tracker
     // This simulates reading back the error records after a transaction
@@ -1158,6 +1171,236 @@ describe("event-handler", () => {
       expect(executionErrorLink?.ExpressionAttributeValues?.[":county"]).toBe(
         "broward",
       );
+    });
+  });
+
+  describe("CloudWatch metrics", () => {
+    it("should publish phase metric on each event", async () => {
+      ddbMock.on(TransactWriteCommand).resolves({});
+
+      const { handler } = await import(
+        "../../../../workflow-events/lambdas/event-handler/index.js"
+      );
+
+      const detail = createWorkflowDetail({
+        executionId: "exec-metrics-001",
+        county: "palm_beach",
+        status: "SUCCEEDED",
+        phase: "scrape",
+        step: "login",
+        errors: [],
+      });
+      const event = createMockEvent(detail);
+
+      await handler(event);
+
+      expect(cloudWatchMock).toHaveReceivedCommand(PutMetricDataCommand);
+    });
+
+    it("should publish metric with correct name based on phase", async () => {
+      ddbMock.on(TransactWriteCommand).resolves({});
+
+      const { handler } = await import(
+        "../../../../workflow-events/lambdas/event-handler/index.js"
+      );
+
+      const detail = createWorkflowDetail({
+        executionId: "exec-metrics-002",
+        phase: "transform",
+        errors: [],
+      });
+      const event = createMockEvent(detail);
+
+      await handler(event);
+
+      const calls = cloudWatchMock.commandCalls(PutMetricDataCommand);
+      const metricData = calls[0].args[0].input.MetricData;
+
+      expect(metricData).toHaveLength(1);
+      expect(metricData![0].MetricName).toBe("transformElephantPhase");
+    });
+
+    it("should publish metric with correct dimensions", async () => {
+      ddbMock.on(TransactWriteCommand).resolves({});
+
+      const { handler } = await import(
+        "../../../../workflow-events/lambdas/event-handler/index.js"
+      );
+
+      const detail = createWorkflowDetail({
+        executionId: "exec-metrics-003",
+        county: "broward",
+        status: "FAILED",
+        phase: "upload",
+        step: "submit",
+        errors: [],
+      });
+      const event = createMockEvent(detail);
+
+      await handler(event);
+
+      const calls = cloudWatchMock.commandCalls(PutMetricDataCommand);
+      const metricData = calls[0].args[0].input.MetricData;
+      const dimensions = metricData![0].Dimensions;
+
+      expect(dimensions).toContainEqual({ Name: "County", Value: "broward" });
+      expect(dimensions).toContainEqual({ Name: "Status", Value: "FAILED" });
+      expect(dimensions).toContainEqual({ Name: "Step", Value: "submit" });
+    });
+
+    it("should publish metric with correct namespace", async () => {
+      const { handler } = await import(
+        "../../../../workflow-events/lambdas/event-handler/index.js"
+      );
+
+      const detail = createWorkflowDetail({
+        executionId: "exec-metrics-004",
+        errors: [],
+      });
+      const event = createMockEvent(detail);
+
+      await handler(event);
+
+      const calls = cloudWatchMock.commandCalls(PutMetricDataCommand);
+      const namespace = calls[0].args[0].input.Namespace;
+
+      expect(namespace).toBe("Elephant/Workflow");
+    });
+
+    it("should publish metric with unit Count and value 1", async () => {
+      const { handler } = await import(
+        "../../../../workflow-events/lambdas/event-handler/index.js"
+      );
+
+      const detail = createWorkflowDetail({
+        executionId: "exec-metrics-005",
+        errors: [],
+      });
+      const event = createMockEvent(detail);
+
+      await handler(event);
+
+      const calls = cloudWatchMock.commandCalls(PutMetricDataCommand);
+      const metricData = calls[0].args[0].input.MetricData;
+
+      expect(metricData![0].Unit).toBe("Count");
+      expect(metricData![0].Value).toBe(1);
+    });
+
+    it("should publish metric even when event has errors", async () => {
+      ddbMock.on(TransactWriteCommand).resolves({});
+
+      const { handler } = await import(
+        "../../../../workflow-events/lambdas/event-handler/index.js"
+      );
+
+      const detail = createWorkflowDetail({
+        executionId: "exec-metrics-006",
+        phase: "scrape",
+        errors: [createError("01256")],
+      });
+      const event = createMockEvent(detail);
+
+      await handler(event);
+
+      expect(cloudWatchMock).toHaveReceivedCommand(PutMetricDataCommand);
+
+      const calls = cloudWatchMock.commandCalls(PutMetricDataCommand);
+      expect(calls[0].args[0].input.MetricData![0].MetricName).toBe(
+        "scrapeElephantPhase",
+      );
+    });
+
+    it("should propagate CloudWatch errors to caller", async () => {
+      cloudWatchMock
+        .on(PutMetricDataCommand)
+        .rejects(new Error("CloudWatch error"));
+
+      const { handler } = await import(
+        "../../../../workflow-events/lambdas/event-handler/index.js"
+      );
+
+      const detail = createWorkflowDetail({
+        executionId: "exec-metrics-error-001",
+        errors: [],
+      });
+      const event = createMockEvent(detail);
+
+      await expect(handler(event)).rejects.toThrow("CloudWatch error");
+    });
+  });
+
+  describe("publishPhaseMetric function", () => {
+    it("should publish metric with all required fields", async () => {
+      const { publishPhaseMetric } = await import(
+        "../../../../workflow-events/lambdas/event-handler/cloudwatch.js"
+      );
+
+      await publishPhaseMetric("scrape", {
+        county: "palm_beach",
+        status: "SUCCEEDED",
+        step: "login",
+      });
+
+      expect(cloudWatchMock).toHaveReceivedCommand(PutMetricDataCommand);
+
+      const calls = cloudWatchMock.commandCalls(PutMetricDataCommand);
+      const input = calls[0].args[0].input;
+
+      expect(input.Namespace).toBe("Elephant/Workflow");
+      expect(input.MetricData).toHaveLength(1);
+
+      const metric = input.MetricData![0];
+      expect(metric.MetricName).toBe("scrapeElephantPhase");
+      expect(metric.Unit).toBe("Count");
+      expect(metric.Value).toBe(1);
+      expect(metric.Timestamp).toBeInstanceOf(Date);
+      expect(metric.Dimensions).toContainEqual({
+        Name: "County",
+        Value: "palm_beach",
+      });
+      expect(metric.Dimensions).toContainEqual({
+        Name: "Status",
+        Value: "SUCCEEDED",
+      });
+      expect(metric.Dimensions).toContainEqual({
+        Name: "Step",
+        Value: "login",
+      });
+    });
+
+    it("should construct metric name from phase", async () => {
+      const { publishPhaseMetric } = await import(
+        "../../../../workflow-events/lambdas/event-handler/cloudwatch.js"
+      );
+
+      await publishPhaseMetric("transform", {
+        county: "broward",
+        status: "IN_PROGRESS",
+        step: "parse",
+      });
+
+      const calls = cloudWatchMock.commandCalls(PutMetricDataCommand);
+      const metricName = calls[0].args[0].input.MetricData![0].MetricName;
+
+      expect(metricName).toBe("transformElephantPhase");
+    });
+
+    it("should handle different status values", async () => {
+      const { publishPhaseMetric } = await import(
+        "../../../../workflow-events/lambdas/event-handler/cloudwatch.js"
+      );
+
+      await publishPhaseMetric("upload", {
+        county: "miami_dade",
+        status: "PARKED",
+        step: "submit",
+      });
+
+      const calls = cloudWatchMock.commandCalls(PutMetricDataCommand);
+      const dimensions = calls[0].args[0].input.MetricData![0].Dimensions;
+
+      expect(dimensions).toContainEqual({ Name: "Status", Value: "PARKED" });
     });
   });
 });
