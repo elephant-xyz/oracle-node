@@ -110,18 +110,11 @@ export interface ExecutionErrorLink {
 
 /**
  * Event detail for ElephantErrorResolved events.
- * Used to mark errors as resolved across executions.
  */
 export interface ElephantErrorResolvedDetail {
-  /**
-   * Execution ID - if provided, gets all error codes from this execution
-   * and deletes them from ALL executions that have those errors.
-   */
+  /** Execution ID to resolve all errors for. */
   executionId?: string;
-  /**
-   * Error code - if provided (without executionId), deletes this error
-   * from ALL executions that have it.
-   */
+  /** Error code to resolve from all executions. */
   errorCode?: string;
 }
 
