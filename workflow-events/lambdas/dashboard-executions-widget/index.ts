@@ -1,7 +1,12 @@
 import { QueryCommand } from "@aws-sdk/lib-dynamodb";
 import type { FailedExecutionItem } from "shared/types.js";
 import { TABLE_NAME, docClient } from "shared/dynamodb-client.js";
-import { DEFAULT_GSI_STATUS } from "shared/keys.js";
+import {
+  DEFAULT_GSI_STATUS,
+  UNRECOVERABLE_GSI_STATUS,
+} from "shared/keys.js";
+
+type GsiStatus = typeof DEFAULT_GSI_STATUS | typeof UNRECOVERABLE_GSI_STATUS;
 
 interface CloudWatchCustomWidgetEvent {
   describe?: boolean;
@@ -11,8 +16,13 @@ interface CloudWatchCustomWidgetEvent {
     accountId: string;
     height: number;
     width: number;
+    params?: {
+      limit?: number;
+      status?: GsiStatus;
+    };
   };
   limit?: number;
+  status?: GsiStatus;
 }
 
 const DEFAULT_LIMIT = 20;
@@ -26,7 +36,8 @@ This widget displays workflow executions sorted by their error count (highest fi
 ### Parameters
 
 \`\`\`yaml
-limit: 20  # Number of executions to display (default: 20)
+limit: 20            # Number of executions to display (default: 20)
+status: "FAILED"     # Filter by status: "FAILED" or "MAYBEUNRECOVERABLE"
 \`\`\`
 
 ### Displayed Columns
@@ -36,12 +47,19 @@ limit: 20  # Number of executions to display (default: 20)
 - **Error Type**: First 2 characters of the error code
 - **Open Errors**: Number of unresolved unique errors
 - **Total Occurrences**: Total error occurrences observed
-- **Created At**: When the execution record was created`,
+- **Created At**: When the execution record was created
+
+### Status Filtering
+
+Set the \`status\` parameter to filter executions by resolution status:
+- \`FAILED\` - Executions with errors that are still failing (default)
+- \`MAYBEUNRECOVERABLE\` - Executions with errors that failed AI resolution`,
   });
 };
 
 const queryExecutionsWithMostErrors = async (
   limit: number,
+  status: GsiStatus,
 ): Promise<FailedExecutionItem[]> => {
   if (!TABLE_NAME) {
     throw new Error(
@@ -56,7 +74,7 @@ const queryExecutionsWithMostErrors = async (
       "GS1PK = :gs1pk AND begins_with(GS1SK, :gs1skPrefix)",
     ExpressionAttributeValues: {
       ":gs1pk": "METRIC#ERRORCOUNT",
-      ":gs1skPrefix": `COUNT#${DEFAULT_GSI_STATUS}#`,
+      ":gs1skPrefix": `COUNT#${status}#`,
     },
     ScanIndexForward: false,
     Limit: limit,
@@ -142,12 +160,15 @@ export const handler = async (
   }
 
   try {
-    const limit = event.limit ?? DEFAULT_LIMIT;
-    const executions = await queryExecutionsWithMostErrors(limit);
+    const params = event.widgetContext?.params ?? {};
+    const limit = event.limit ?? params.limit ?? DEFAULT_LIMIT;
+    const status = event.status ?? params.status ?? DEFAULT_GSI_STATUS;
+    const executions = await queryExecutionsWithMostErrors(limit, status);
 
     console.info("executions-queried", {
       count: executions.length,
       limit,
+      status,
     });
 
     return generateHtml(executions);

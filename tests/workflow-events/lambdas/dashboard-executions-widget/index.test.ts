@@ -258,5 +258,117 @@ describe("dashboard-executions-widget handler", () => {
 
       expect(result).toContain("No failed executions found");
     });
+
+    it("should read limit from widgetContext.params", async () => {
+      ddbMock.on(QueryCommand).resolves({ Items: [] });
+
+      const { handler } = await import(
+        "../../../../workflow-events/lambdas/dashboard-executions-widget/index.js"
+      );
+
+      await handler({
+        widgetContext: {
+          dashboardName: "test-dashboard",
+          widgetId: "widget-1",
+          accountId: "123456789012",
+          height: 300,
+          width: 400,
+          params: {
+            limit: 5,
+          },
+        },
+      });
+
+      const calls = ddbMock.commandCalls(QueryCommand);
+      expect(calls[0].args[0].input.Limit).toBe(5);
+    });
+
+    it("should read status from widgetContext.params", async () => {
+      ddbMock.on(QueryCommand).resolves({ Items: [] });
+
+      const { handler } = await import(
+        "../../../../workflow-events/lambdas/dashboard-executions-widget/index.js"
+      );
+
+      await handler({
+        widgetContext: {
+          dashboardName: "test-dashboard",
+          widgetId: "widget-1",
+          accountId: "123456789012",
+          height: 300,
+          width: 400,
+          params: {
+            status: "MAYBEUNRECOVERABLE",
+          },
+        },
+      });
+
+      const calls = ddbMock.commandCalls(QueryCommand);
+      expect(calls[0].args[0].input.ExpressionAttributeValues).toMatchObject({
+        ":gs1skPrefix": "COUNT#MAYBEUNRECOVERABLE#",
+      });
+    });
+
+    it("should prefer top-level params over widgetContext.params", async () => {
+      ddbMock.on(QueryCommand).resolves({ Items: [] });
+
+      const { handler } = await import(
+        "../../../../workflow-events/lambdas/dashboard-executions-widget/index.js"
+      );
+
+      await handler({
+        limit: 15,
+        status: "MAYBEUNRECOVERABLE",
+        widgetContext: {
+          dashboardName: "test-dashboard",
+          widgetId: "widget-1",
+          accountId: "123456789012",
+          height: 300,
+          width: 400,
+          params: {
+            limit: 5,
+            status: "FAILED",
+          },
+        },
+      });
+
+      const calls = ddbMock.commandCalls(QueryCommand);
+      expect(calls[0].args[0].input.Limit).toBe(15);
+      expect(calls[0].args[0].input.ExpressionAttributeValues).toMatchObject({
+        ":gs1skPrefix": "COUNT#MAYBEUNRECOVERABLE#",
+      });
+    });
+  });
+
+  describe("status parameter", () => {
+    it("should default to FAILED status when not provided", async () => {
+      ddbMock.on(QueryCommand).resolves({ Items: [] });
+
+      const { handler } = await import(
+        "../../../../workflow-events/lambdas/dashboard-executions-widget/index.js"
+      );
+
+      await handler({});
+
+      const calls = ddbMock.commandCalls(QueryCommand);
+      expect(calls[0].args[0].input.ExpressionAttributeValues).toMatchObject({
+        ":gs1skPrefix": "COUNT#FAILED#",
+      });
+    });
+
+    it("should query with MAYBEUNRECOVERABLE status when provided", async () => {
+      ddbMock.on(QueryCommand).resolves({ Items: [] });
+
+      const { handler } = await import(
+        "../../../../workflow-events/lambdas/dashboard-executions-widget/index.js"
+      );
+
+      await handler({ status: "MAYBEUNRECOVERABLE" });
+
+      const calls = ddbMock.commandCalls(QueryCommand);
+      expect(calls[0].args[0].input.ExpressionAttributeValues).toMatchObject({
+        ":gs1skPrefix": "COUNT#MAYBEUNRECOVERABLE#",
+      });
+    });
   });
 });
