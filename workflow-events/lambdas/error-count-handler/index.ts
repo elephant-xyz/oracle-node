@@ -480,10 +480,7 @@ export const handler = async (event: DynamoDBStreamEvent): Promise<void> => {
     return;
   }
 
-  // Process execution updates (openErrorCount decrements)
   const executionStats = await processExecutionUpdates(preProcessedRecords);
-
-  // Process error record updates (totalCount decrements)
   const errorRecordStats = await processErrorRecordUpdates(preProcessedRecords);
 
   console.info(

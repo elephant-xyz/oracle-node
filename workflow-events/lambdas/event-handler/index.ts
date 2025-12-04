@@ -116,7 +116,6 @@ const handleElephantErrorResolved = async (
     }),
   );
 
-  // Validate that at least one identifier is provided
   if (!executionId && !errorCode) {
     const errorMessage =
       "ElephantErrorResolved event must contain either executionId or errorCode";
@@ -129,8 +128,6 @@ const handleElephantErrorResolved = async (
   }
 
   if (executionId) {
-    // If executionId is provided, get all error codes for that execution
-    // and delete them from ALL executions
     console.info(
       createLogEntry("resolving_errors_for_execution", event, {
         executionId,
@@ -147,7 +144,6 @@ const handleElephantErrorResolved = async (
       }),
     );
   } else if (errorCode) {
-    // If only errorCode is provided, delete it from ALL executions
     console.info(
       createLogEntry("resolving_error_code", event, {
         errorCode,
