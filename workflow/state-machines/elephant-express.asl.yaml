@@ -277,28 +277,30 @@ States:
   EmitPrepareFailed:
     Type: Task
     Resource: arn:aws:states:::events:putEvents.waitForTaskToken
-    Comment: "Emit FAILED event with NEW taskToken. Waits for external sendTaskSuccess to resume, then loops back to Prepare."
+    QueryLanguage: JSONata
+    Comment: "Emit FAILED event with actual error code from Lambda. Waits for external sendTaskSuccess to resume."
     HeartbeatSeconds: 2592000 # 30 days
-    Parameters:
+    Arguments:
       Entries:
         - Source: elephant.workflow
           DetailType: WorkflowEvent
           Detail:
-            executionId.$: $$.Execution.Id
-            county.$: $.pre.county_name
+            executionId: "{% $states.context.Execution.Id %}"
+            county: "{% $states.input.pre.county_name %}"
             status: FAILED
             phase: Prepare
             step: Prepare
-            taskToken.$: $$.Task.Token
+            taskToken: "{% $states.context.Task.Token %}"
             errors:
-              - code: "01002"
-                details.$: $.prepareError
-    ResultPath: $.failedResult
+              - code: "{% $states.input.prepareError.Error %}"
+                details:
+                  cause: "{% $states.input.prepareError.Cause %}"
+    Output: "{% $merge([$states.input, { 'failedResult': $states.result }]) %}"
     Next: Prepare
     Catch:
       - ErrorEquals: [States.ALL]
         Comment: "EventBridge emit failed - stay parked and wait again"
-        ResultPath: $.error
+        Output: "{% $merge([$states.input, { 'error': $states.errorOutput }]) %}"
         Next: EmitPrepareFailed
 
   # === GRANULAR POSTPROCESS STEPS ===
