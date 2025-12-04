@@ -229,29 +229,30 @@ States:
   WaitForTransformResolution:
     Type: Task
     Resource: arn:aws:states:::events:putEvents.waitForTaskToken
+    QueryLanguage: JSONata
     Comment: "Emit FAILED event and wait for external resolution - retry target is Transform"
     HeartbeatSeconds: 2592000 # 30 days
-    Parameters:
+    Arguments:
       Entries:
         - Source: elephant.workflow
           DetailType: WorkflowEvent
           Detail:
-            executionId.$: $.executionId
-            county.$: $.pre.county_name
+            executionId: "{% $states.input.executionId %}"
+            county: "{% $states.input.pre.county_name %}"
             status: FAILED
             phase: Transform
             step: Transform
-            taskToken.$: $$.Task.Token
+            taskToken: "{% $states.context.Task.Token %}"
             errors:
-              - code: "20001"
+              - code: "{% '20' & $states.input.pre.county_name %}"
                 details:
-                  error.$: States.JsonToString($.transformError)
-    ResultPath: $.resolutionResult
+                  error: "{% $string($states.input.transformError) %}"
+    Output: "{% $states.input %}"
     Next: Transform
     Catch:
       - ErrorEquals: [States.ALL]
         Comment: "Resolution failed - stay parked and wait again"
-        ResultPath: $.transformError
+        Output: "{% $states.input %}"
         Next: WaitForTransformResolution
 
   # === SVL (Schema Validation Layer) STEP ===
