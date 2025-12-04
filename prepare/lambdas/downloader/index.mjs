@@ -173,6 +173,7 @@ const PREPARE_ERROR_PATTERNS = [
     patterns: [
       /Waiting for selector.*failed.*timeout/i,
       /Waiting for selector.*timed out/i,
+      /Waiting for selector.*failed/i,
     ],
     description: "Selector wait timeout",
   },
