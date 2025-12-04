@@ -70,15 +70,17 @@ Emitted on workflow step status changes (success, failure, or parked).
 
 ### Error Code Reference
 
-| Code            | Phase     | Description                                                                                                                                                                               |
-| --------------- | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `01xxx<county>` | Prepare   | Lambda infrastructure error. `01002`=generic, `01003-01006`=input.csv errors, `01008-01015`=S3/config errors, `01016-01020`=taskToken/Step Functions errors. Example: `01002Hamilton`     |
-| `10xxx<county>` | Prepare   | CLI prepare error. `Example: `10050Broward`                                                                                                                                               |
-| `20<county>`    | Transform | Transform step failure or exception. The `<county>` is the county name being processed. Example: `20Cook`                                                                                 |
-| `30<hash>`      | SVL       | Schema validation error. The `<hash>` is a SHA256 hash computed from `error_message#error_path#county`, uniquely identifying each distinct validation error. Example: `30a1b2c3d4e5f6...` |
-| `31001`         | SVL       | SVL runtime exception (non-validation failure)                                                                                                                                            |
-| `40001`         | Hash      | Generic hash step failure or exception                                                                                                                                                    |
-| `50001`         | Upload    | Generic upload step failure or exception                                                                                                                                                  |
+| Code            | Phase      | Description                                                                                                                                                                               |
+| --------------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `00001`         | Preprocess | Preprocess step failure. Used when the initial preprocessing fails before Prepare begins.                                                                                                 |
+| `01001`         | Prepare    | Prepare queue not found. The county-specific SQS queue does not exist.                                                                                                                    |
+| `01xxx<county>` | Prepare    | Lambda infrastructure error. `01002`=generic, `01003-01006`=input.csv errors, `01008-01015`=S3/config errors, `01016-01020`=taskToken/Step Functions errors. Example: `01002Hamilton`     |
+| `10xxx<county>` | Prepare    | CLI prepare error. Example: `10050Broward`                                                                                                                                                |
+| `20<county>`    | Transform  | Transform step failure or exception. The `<county>` is the county name being processed. Example: `20Cook`                                                                                 |
+| `30<hash>`      | SVL        | Schema validation error. The `<hash>` is a SHA256 hash computed from `error_message#error_path#county`, uniquely identifying each distinct validation error. Example: `30a1b2c3d4e5f6...` |
+| `31001`         | SVL        | SVL runtime exception (non-validation failure)                                                                                                                                            |
+| `40001`         | Hash       | Generic hash step failure or exception                                                                                                                                                    |
+| `50001`         | Upload     | Generic upload step failure or exception                                                                                                                                                  |
 
 #### Prepare Error Codes (`10xxx` - CLI Prepare)
 

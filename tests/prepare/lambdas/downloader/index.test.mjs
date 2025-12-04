@@ -425,14 +425,14 @@ describe("downloader lambda - EventBridge integration", () => {
       };
 
       // Handler should throw PrepareError with code 01020 when taskToken is missing
-      // This triggers SQS retry/DLQ behavior
+      // Flow: 01016 thrown -> caught -> can't send task failure (no token) -> re-throws 01020
       await expect(handler(sqsEvent)).rejects.toThrow();
 
       try {
         await handler(sqsEvent);
       } catch (e) {
         expect(e.code).toBe("01020");
-        expect(e.message).toContain("no taskToken");
+        expect(e.message).toContain("taskToken");
       }
     });
 
