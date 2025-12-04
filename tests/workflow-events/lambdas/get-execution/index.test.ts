@@ -38,9 +38,9 @@ const createMockExecution = (
   createdAt: "2025-01-01T00:00:00.000Z",
   updatedAt: "2025-01-01T00:00:00.000Z",
   GS1PK: "METRIC#ERRORCOUNT",
-  GS1SK: "COUNT#0000000003#EXECUTION#exec-001",
+  GS1SK: "COUNT#FAILED#0000000003#EXECUTION#exec-001",
   GS3PK: "METRIC#ERRORCOUNT",
-  GS3SK: "COUNT#01#0000000003#EXECUTION#exec-001",
+  GS3SK: "COUNT#01#FAILED#0000000003#EXECUTION#exec-001",
   ...overrides,
 });
 
@@ -344,8 +344,12 @@ describe("get-execution handler", () => {
       const calls = ddbMock.commandCalls(QueryCommand);
       expect(calls[0].args[0].input.IndexName).toBe("GS1");
       expect(calls[0].args[0].input.KeyConditionExpression).toBe(
-        "GS1PK = :gs1pk",
+        "GS1PK = :gs1pk AND begins_with(GS1SK, :gs1skPrefix)",
       );
+      expect(calls[0].args[0].input.ExpressionAttributeValues).toMatchObject({
+        ":gs1pk": "METRIC#ERRORCOUNT",
+        ":gs1skPrefix": "COUNT#FAILED#",
+      });
     });
 
     it("should use GS3 index when errorType is provided", async () => {
@@ -363,7 +367,8 @@ describe("get-execution handler", () => {
         "GS3PK = :gs3pk AND begins_with(GS3SK, :gs3skPrefix)",
       );
       expect(calls[0].args[0].input.ExpressionAttributeValues).toMatchObject({
-        ":gs3skPrefix": "COUNT#01#",
+        ":gs3pk": "METRIC#ERRORCOUNT",
+        ":gs3skPrefix": "COUNT#01#FAILED#",
       });
     });
 

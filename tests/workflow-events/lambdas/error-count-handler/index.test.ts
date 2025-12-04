@@ -121,9 +121,9 @@ const createFailedExecutionItem = (
   createdAt: new Date().toISOString(),
   updatedAt: new Date().toISOString(),
   GS1PK: "METRIC#ERRORCOUNT",
-  GS1SK: `COUNT#0000000005#EXECUTION#${executionId}`,
+  GS1SK: `COUNT#FAILED#0000000005#EXECUTION#${executionId}`,
   GS3PK: "METRIC#ERRORCOUNT",
-  GS3SK: `COUNT#${errorType}#0000000005#EXECUTION#${executionId}`,
+  GS3SK: `COUNT#${errorType}#FAILED#0000000005#EXECUTION#${executionId}`,
 });
 
 /**
@@ -155,7 +155,7 @@ const createErrorRecord = (
     GS1PK: "TYPE#ERROR",
     GS1SK: `ERROR#${errorCode}`,
     GS2PK: "TYPE#ERROR",
-    GS2SK: `COUNT#0000000005#ERROR#${errorCode}`,
+    GS2SK: `COUNT#FAILED#0000000005#ERROR#${errorCode}`,
     GS3PK: "METRIC#ERRORCOUNT",
     GS3SK: `COUNT#${type}#0000000005#ERROR#${errorCode}`,
   };
@@ -473,12 +473,12 @@ describe("error-count-handler", () => {
         executionGsiUpdateCall?.args[0].input.ExpressionAttributeValues?.[
           ":gs1sk"
         ],
-      ).toMatch(/^COUNT#\d{10}#EXECUTION#exec-001$/);
+      ).toMatch(/^COUNT#FAILED#\d{10}#EXECUTION#exec-001$/);
       expect(
         executionGsiUpdateCall?.args[0].input.ExpressionAttributeValues?.[
           ":gs3sk"
         ],
-      ).toMatch(/^COUNT#01#\d{10}#EXECUTION#exec-001$/);
+      ).toMatch(/^COUNT#01#FAILED#\d{10}#EXECUTION#exec-001$/);
     });
 
     it("should not update GSI keys for executions that reached zero", async () => {
@@ -855,17 +855,17 @@ describe("batch repository functions", () => {
 
       expect(
         call001?.args[0].input.ExpressionAttributeValues?.[":gs1sk"],
-      ).toMatch(/^COUNT#\d{10}#EXECUTION#exec-001$/);
+      ).toMatch(/^COUNT#FAILED#\d{10}#EXECUTION#exec-001$/);
       expect(
         call001?.args[0].input.ExpressionAttributeValues?.[":gs3sk"],
-      ).toMatch(/^COUNT#01#\d{10}#EXECUTION#exec-001$/);
+      ).toMatch(/^COUNT#01#FAILED#\d{10}#EXECUTION#exec-001$/);
 
       expect(
         call002?.args[0].input.ExpressionAttributeValues?.[":gs1sk"],
-      ).toMatch(/^COUNT#\d{10}#EXECUTION#exec-002$/);
+      ).toMatch(/^COUNT#FAILED#\d{10}#EXECUTION#exec-002$/);
       expect(
         call002?.args[0].input.ExpressionAttributeValues?.[":gs3sk"],
-      ).toMatch(/^COUNT#02#\d{10}#EXECUTION#exec-002$/);
+      ).toMatch(/^COUNT#02#FAILED#\d{10}#EXECUTION#exec-002$/);
     });
 
     it("should handle empty input", async () => {
@@ -1165,16 +1165,20 @@ describe("batch repository functions", () => {
         (c) => c.args[0].input.Key?.PK === "ERROR#02001",
       );
 
+      // GS2SK includes FAILED status
       expect(
         call01256?.args[0].input.ExpressionAttributeValues?.[":gs2sk"],
-      ).toMatch(/^COUNT#\d{10}#ERROR#01256$/);
+      ).toMatch(/^COUNT#FAILED#\d{10}#ERROR#01256$/);
+      // GS3SK does not include status for error records
       expect(
         call01256?.args[0].input.ExpressionAttributeValues?.[":gs3sk"],
       ).toMatch(/^COUNT#01#\d{10}#ERROR#01256$/);
 
+      // GS2SK includes FAILED status
       expect(
         call02001?.args[0].input.ExpressionAttributeValues?.[":gs2sk"],
-      ).toMatch(/^COUNT#\d{10}#ERROR#02001$/);
+      ).toMatch(/^COUNT#FAILED#\d{10}#ERROR#02001$/);
+      // GS3SK does not include status for error records
       expect(
         call02001?.args[0].input.ExpressionAttributeValues?.[":gs3sk"],
       ).toMatch(/^COUNT#02#\d{10}#ERROR#02001$/);
@@ -1429,9 +1433,11 @@ describe("error record processing in handler", () => {
           call.args[0].input.UpdateExpression?.includes("GS2SK"),
       );
       expect(gsiUpdateCall).toBeDefined();
+      // GS2SK includes FAILED status
       expect(
         gsiUpdateCall?.args[0].input.ExpressionAttributeValues?.[":gs2sk"],
-      ).toMatch(/^COUNT#\d{10}#ERROR#01256$/);
+      ).toMatch(/^COUNT#FAILED#\d{10}#ERROR#01256$/);
+      // GS3SK does not include status for error records
       expect(
         gsiUpdateCall?.args[0].input.ExpressionAttributeValues?.[":gs3sk"],
       ).toMatch(/^COUNT#01#\d{10}#ERROR#01256$/);
