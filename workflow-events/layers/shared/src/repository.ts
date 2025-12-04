@@ -426,6 +426,8 @@ export interface DeleteErrorLinksResult {
   deletedCount: number;
   /** List of execution IDs affected by the deletion. */
   affectedExecutionIds: string[];
+  /** List of error codes whose ErrorRecord was deleted. */
+  deletedErrorCodes: string[];
 }
 
 /**
@@ -761,6 +763,7 @@ export const deleteExecutionErrorLinks = async (
     return {
       deletedCount: 0,
       affectedExecutionIds: [],
+      deletedErrorCodes: [],
     };
   }
 
@@ -795,29 +798,41 @@ export const deleteExecutionErrorLinks = async (
   return {
     deletedCount: links.length,
     affectedExecutionIds: Array.from(affectedExecutionIds),
+    deletedErrorCodes: [],
   };
 };
 
 /**
- * Deletes all ExecutionErrorLink items for a given error code across all executions.
- * Queries GSI1 to find all links, then batch deletes them.
+ * Deletes all ExecutionErrorLink items for a given error code across all executions,
+ * and also deletes the ErrorRecord itself.
+ * Queries GSI1 to find all links, batch deletes them, then deletes the ErrorRecord.
  *
  * @param errorCode - The error code to delete from all executions
- * @returns Result with deletion count and affected execution IDs
+ * @returns Result with deletion count, affected execution IDs, and deleted error codes
  */
 export const deleteErrorFromAllExecutions = async (
   errorCode: string,
 ): Promise<DeleteErrorLinksResult> => {
   const links = await queryErrorLinksForErrorCode(errorCode);
-  return deleteExecutionErrorLinks(links);
+  const linkResult = await deleteExecutionErrorLinks(links);
+
+  // Also delete the ErrorRecord itself
+  const deletedErrorCodes = await batchDeleteErrorRecords([errorCode]);
+
+  return {
+    deletedCount: linkResult.deletedCount,
+    affectedExecutionIds: linkResult.affectedExecutionIds,
+    deletedErrorCodes,
+  };
 };
 
 /**
  * Deletes all errors for a given execution by finding all error codes
  * associated with that execution and then deleting those errors from ALL executions.
+ * Also deletes the corresponding ErrorRecord items.
  *
  * @param executionId - The execution ID to resolve errors for
- * @returns Result with total deletion count and all affected execution IDs
+ * @returns Result with total deletion count, all affected execution IDs, and deleted error codes
  */
 export const deleteErrorsForExecution = async (
   executionId: string,
@@ -828,6 +843,7 @@ export const deleteErrorsForExecution = async (
     return {
       deletedCount: 0,
       affectedExecutionIds: [],
+      deletedErrorCodes: [],
     };
   }
 
@@ -835,6 +851,7 @@ export const deleteErrorsForExecution = async (
 
   let totalDeleted = 0;
   const allAffectedExecutionIds = new Set<string>();
+  const allDeletedErrorCodes: string[] = [];
 
   for (const errorCode of errorCodes) {
     const result = await deleteErrorFromAllExecutions(errorCode);
@@ -842,11 +859,13 @@ export const deleteErrorsForExecution = async (
     for (const execId of result.affectedExecutionIds) {
       allAffectedExecutionIds.add(execId);
     }
+    allDeletedErrorCodes.push(...result.deletedErrorCodes);
   }
 
   return {
     deletedCount: totalDeleted,
     affectedExecutionIds: Array.from(allAffectedExecutionIds),
+    deletedErrorCodes: allDeletedErrorCodes,
   };
 };
 

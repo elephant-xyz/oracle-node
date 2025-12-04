@@ -141,6 +141,7 @@ const handleElephantErrorResolved = async (
         executionId,
         deletedCount: result.deletedCount,
         affectedExecutionIds: result.affectedExecutionIds,
+        deletedErrorCodes: result.deletedErrorCodes,
       }),
     );
   } else if (errorCode) {
@@ -157,6 +158,7 @@ const handleElephantErrorResolved = async (
         errorCode,
         deletedCount: result.deletedCount,
         affectedExecutionIds: result.affectedExecutionIds,
+        deletedErrorCodes: result.deletedErrorCodes,
       }),
     );
   }
