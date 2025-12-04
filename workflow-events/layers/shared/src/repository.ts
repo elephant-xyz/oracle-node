@@ -453,6 +453,34 @@ export interface BatchDecrementInput {
 }
 
 /**
+ * Input for batch decrementing error record total counts.
+ */
+export interface BatchDecrementErrorRecordInput {
+  /** Error code to decrement. */
+  errorCode: string;
+  /** Amount to decrement by (sum of occurrences from deleted links). */
+  decrementBy: number;
+}
+
+/**
+ * Result item for batch decrement error record operation.
+ */
+export interface BatchDecrementErrorRecordResultItem {
+  /** The error code that was processed. */
+  errorCode: string;
+  /** Whether the decrement operation was successful. */
+  success: boolean;
+  /** The new total count after decrement (-1 if failed). */
+  newTotalCount: number;
+  /** The error type for the error record (for GSI key updates). */
+  errorType?: string;
+  /** Whether the error record was found. */
+  found: boolean;
+  /** Error message if the operation failed. */
+  error?: string;
+}
+
+/**
  * Result item for batch decrement operation.
  */
 export interface BatchDecrementResultItem {
@@ -1304,4 +1332,256 @@ export const batchDeleteFailedExecutionItems = async (
   }
 
   return deletedIds;
+};
+
+// =============================================================================
+// Batch Operations for Error Record Count Handler
+// =============================================================================
+
+/**
+ * Decrements the totalCount for a single error record by a specified amount.
+ * Used internally by batchDecrementErrorRecordCounts.
+ *
+ * @param errorCode - The error code to decrement
+ * @param decrementBy - The amount to decrement by
+ * @returns Result containing the new count and error type
+ */
+const decrementErrorRecordCountByAmount = async (
+  errorCode: string,
+  decrementBy: number,
+): Promise<BatchDecrementErrorRecordResultItem> => {
+  const tableName = getTableName();
+  const pk = createKey("ERROR", errorCode);
+  const now = new Date().toISOString();
+
+  try {
+    const command = new UpdateCommand({
+      TableName: tableName,
+      Key: {
+        PK: pk,
+        SK: pk,
+      },
+      UpdateExpression:
+        "SET totalCount = totalCount - :amount, updatedAt = :now",
+      ConditionExpression:
+        "attribute_exists(PK) AND entityType = :entityType AND totalCount >= :amount",
+      ExpressionAttributeValues: {
+        ":amount": decrementBy,
+        ":now": now,
+        ":entityType": ENTITY_TYPES.ERROR,
+      },
+      ReturnValues: "ALL_NEW",
+    });
+
+    const response = await docClient.send(command);
+    const item = response.Attributes as ErrorRecord | undefined;
+
+    if (!item) {
+      return {
+        errorCode,
+        success: false,
+        newTotalCount: -1,
+        found: false,
+      };
+    }
+
+    return {
+      errorCode,
+      success: true,
+      newTotalCount: item.totalCount,
+      errorType: item.errorType,
+      found: true,
+    };
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      error.name === "ConditionalCheckFailedException"
+    ) {
+      return {
+        errorCode,
+        success: false,
+        newTotalCount: 0,
+        found: false,
+        error: "Condition check failed - item not found or insufficient count",
+      };
+    }
+    return {
+      errorCode,
+      success: false,
+      newTotalCount: -1,
+      found: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+};
+
+/**
+ * Batch decrements totalCount for multiple error records in parallel.
+ * Each error code can have a different decrement amount.
+ * Uses parallel UpdateCommands since DynamoDB doesn't support batch updates.
+ *
+ * @param inputs - Array of error codes and their decrement amounts
+ * @returns Array of results for each error code
+ */
+export const batchDecrementErrorRecordCounts = async (
+  inputs: BatchDecrementErrorRecordInput[],
+): Promise<BatchDecrementErrorRecordResultItem[]> => {
+  if (inputs.length === 0) {
+    return [];
+  }
+
+  const promises = inputs.map(({ errorCode, decrementBy }) =>
+    decrementErrorRecordCountByAmount(errorCode, decrementBy),
+  );
+
+  return Promise.all(promises);
+};
+
+/**
+ * Updates GSI keys (GS2SK, GS3SK) for error records that still have occurrences remaining.
+ * This keeps the sorting by total count accurate after decrements.
+ * Uses parallel UpdateCommands since BatchWriteItem doesn't support attribute updates.
+ *
+ * @param updates - Array of error codes with their new total counts and error types
+ */
+export const batchUpdateErrorRecordGsiKeys = async (
+  updates: Array<{
+    errorCode: string;
+    newTotalCount: number;
+    errorType: string;
+  }>,
+): Promise<void> => {
+  if (updates.length === 0) {
+    return;
+  }
+
+  const tableName = getTableName();
+  const now = new Date().toISOString();
+
+  const updatePromises = updates.map(
+    async ({ errorCode, newTotalCount, errorType }) => {
+      const pk = createKey("ERROR", errorCode);
+      // GS2SK format: COUNT#{paddedCount}#ERROR#{errorCode}
+      const gs2sk = `COUNT#${padCount(newTotalCount)}#ERROR#${errorCode}`;
+      // GS3SK format: COUNT#{errorType}#{paddedCount}#ERROR#{errorCode}
+      const gs3sk = `COUNT#${errorType}#${padCount(newTotalCount)}#ERROR#${errorCode}`;
+
+      const command = new UpdateCommand({
+        TableName: tableName,
+        Key: {
+          PK: pk,
+          SK: pk,
+        },
+        UpdateExpression:
+          "SET GS2SK = :gs2sk, GS3SK = :gs3sk, updatedAt = :now",
+        ConditionExpression: "entityType = :entityType",
+        ExpressionAttributeValues: {
+          ":gs2sk": gs2sk,
+          ":gs3sk": gs3sk,
+          ":now": now,
+          ":entityType": ENTITY_TYPES.ERROR,
+        },
+      });
+
+      try {
+        await docClient.send(command);
+      } catch (error) {
+        console.warn(
+          `Failed to update GSI keys for error ${errorCode}:`,
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+    },
+  );
+
+  await Promise.all(updatePromises);
+};
+
+/**
+ * Batch deletes multiple ErrorRecords using BatchWriteItem.
+ * Handles DynamoDB's 25-item limit per batch and retries unprocessed items.
+ *
+ * @param errorCodes - Array of error codes to delete
+ * @returns Array of error codes that were successfully deleted
+ */
+export const batchDeleteErrorRecords = async (
+  errorCodes: string[],
+): Promise<string[]> => {
+  if (errorCodes.length === 0) {
+    return [];
+  }
+
+  const tableName = getTableName();
+  const deletedCodes: string[] = [];
+  const BATCH_LIMIT = 25;
+
+  for (let i = 0; i < errorCodes.length; i += BATCH_LIMIT) {
+    const batch = errorCodes.slice(i, i + BATCH_LIMIT);
+    const pendingCodes = new Set(batch);
+
+    let deleteRequests = batch.map((errorCode) => {
+      const pk = createKey("ERROR", errorCode);
+      return {
+        DeleteRequest: {
+          Key: {
+            PK: pk,
+            SK: pk,
+          },
+        },
+      };
+    });
+
+    let retryCount = 0;
+    const MAX_RETRIES = 3;
+
+    while (deleteRequests.length > 0 && retryCount < MAX_RETRIES) {
+      const command = new BatchWriteCommand({
+        RequestItems: {
+          [tableName]: deleteRequests,
+        },
+      });
+
+      try {
+        const response = await docClient.send(command);
+        const unprocessed = response.UnprocessedItems?.[tableName];
+
+        if (unprocessed && unprocessed.length > 0) {
+          const unprocessedPks = new Set(
+            unprocessed.map((item) => item.DeleteRequest?.Key?.PK as string),
+          );
+
+          for (const errorCode of pendingCodes) {
+            const pk = createKey("ERROR", errorCode);
+            if (!unprocessedPks.has(pk)) {
+              deletedCodes.push(errorCode);
+              pendingCodes.delete(errorCode);
+            }
+          }
+
+          deleteRequests = unprocessed as typeof deleteRequests;
+          retryCount++;
+          await new Promise((resolve) =>
+            setTimeout(resolve, Math.pow(2, retryCount) * 100),
+          );
+        } else {
+          for (const errorCode of pendingCodes) {
+            deletedCodes.push(errorCode);
+          }
+          pendingCodes.clear();
+          deleteRequests = [];
+        }
+      } catch (error) {
+        console.error(
+          `Batch delete failed for batch starting at index ${i}:`,
+          error instanceof Error ? error.message : String(error),
+        );
+        retryCount++;
+        if (retryCount >= MAX_RETRIES) {
+          console.error(`Max retries reached for batch starting at index ${i}`);
+        }
+      }
+    }
+  }
+
+  return deletedCodes;
 };
