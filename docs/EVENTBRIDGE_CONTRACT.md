@@ -70,15 +70,17 @@ Emitted on workflow step status changes (success, failure, or parked).
 
 ### Error Code Reference
 
-| Code       | Phase     | Description                                                                                                                                                                               |
-| ---------- | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `20001`    | Transform | Generic transform step failure or exception                                                                                                                                               |
-| `30<hash>` | SVL       | Schema validation error. The `<hash>` is a SHA256 hash computed from `error_message#error_path#county`, uniquely identifying each distinct validation error. Example: `30a1b2c3d4e5f6...` |
-| `31001`    | SVL       | SVL runtime exception (non-validation failure)                                                                                                                                            |
-| `40001`    | Hash      | Generic hash step failure or exception                                                                                                                                                    |
-| `50001`    | Upload    | Generic upload step failure or exception                                                                                                                                                  |
+| Code            | Phase     | Description                                                                                                                                                                               |
+| --------------- | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `20<county>`    | Transform | Transform step failure or exception. The `<county>` is the county name being processed. Example: `20Cook`                                                                                |
+| `30<hash>`      | SVL       | Schema validation error. The `<hash>` is a SHA256 hash computed from `error_message#error_path#county`, uniquely identifying each distinct validation error. Example: `30a1b2c3d4e5f6...` |
+| `31001`         | SVL       | SVL runtime exception (non-validation failure)                                                                                                                                            |
+| `40001`         | Hash      | Generic hash step failure or exception                                                                                                                                                    |
+| `50001`         | Upload    | Generic upload step failure or exception                                                                                                                                                  |
 
 > **Note on SVL validation errors (code `30<hash>`)**: Each unique validation error (determined by the combination of error message, error path, and county) receives its own error code. This enables precise tracking and resolution of individual validation issues across executions. The `error_hash` is also included in the `details` object for reference.
+
+> **Note on Transform errors (code `20<county>`)**: Transform errors include the county name in the error code, enabling county-specific tracking and aggregation of transform failures.
 
 ### Phase Values
 
