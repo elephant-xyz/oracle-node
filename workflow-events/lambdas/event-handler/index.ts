@@ -2,6 +2,7 @@ import type { EventBridgeEvent } from "aws-lambda";
 import type {
   WorkflowEventDetail,
   ElephantErrorResolvedDetail,
+  ElephantErrorFailedToResolveDetail,
 } from "shared/types.js";
 
 import { publishPhaseMetric } from "./cloudwatch.js";
@@ -10,17 +11,25 @@ import {
   saveErrorRecords,
   deleteErrorFromAllExecutions,
   deleteErrorsForExecution,
+  markErrorsAsUnrecoverableForExecution,
+  markErrorAsUnrecoverableFromAllExecutions,
 } from "shared/repository.js";
 
 /**
  * Union type for all supported event detail types.
  */
-type SupportedEventDetail = WorkflowEventDetail | ElephantErrorResolvedDetail;
+type SupportedEventDetail =
+  | WorkflowEventDetail
+  | ElephantErrorResolvedDetail
+  | ElephantErrorFailedToResolveDetail;
 
 /**
  * Supported detail types for EventBridge events.
  */
-type SupportedDetailType = "WorkflowEvent" | "ElephantErrorResolved";
+type SupportedDetailType =
+  | "WorkflowEvent"
+  | "ElephantErrorResolved"
+  | "ElephantErrorFailedToResolve";
 
 /**
  * Handles WorkflowEvent events - persists errors to DynamoDB.
@@ -172,6 +181,84 @@ const handleElephantErrorResolved = async (
 };
 
 /**
+ * Handles ElephantErrorFailedToResolve events - marks errors as maybeUnrecoverable in DynamoDB.
+ * If executionId is provided, marks all errors for that execution as unrecoverable.
+ * If only errorCode is provided, marks that error as unrecoverable across ALL executions.
+ * Items marked as maybeUnrecoverable will not be queried by get-execution.
+ *
+ * @param event - EventBridge event containing ElephantErrorFailedToResolveDetail
+ */
+const handleElephantErrorFailedToResolve = async (
+  event: EventBridgeEvent<
+    "ElephantErrorFailedToResolve",
+    ElephantErrorFailedToResolveDetail
+  >,
+): Promise<void> => {
+  const { executionId, errorCode } = event.detail;
+
+  console.info(
+    createLogEntry("received_error_failed_to_resolve_event", event, {
+      executionId: executionId ?? "none",
+      errorCode: errorCode ?? "none",
+    }),
+  );
+
+  if (!executionId && !errorCode) {
+    const errorMessage =
+      "ElephantErrorFailedToResolve event must contain either executionId or errorCode";
+    console.error(
+      createLogEntry("invalid_error_failed_to_resolve_event", event, {
+        error: errorMessage,
+      }),
+    );
+    throw new Error(errorMessage);
+  }
+
+  if (executionId) {
+    console.info(
+      createLogEntry("marking_errors_unrecoverable_for_execution", event, {
+        executionId,
+      }),
+    );
+
+    const result = await markErrorsAsUnrecoverableForExecution(executionId);
+
+    console.info(
+      createLogEntry("errors_marked_unrecoverable_for_execution", event, {
+        executionId,
+        updatedCount: result.updatedCount,
+        affectedExecutionIds: result.affectedExecutionIds,
+        updatedErrorCodes: result.updatedErrorCodes,
+      }),
+    );
+  } else if (errorCode) {
+    console.info(
+      createLogEntry("marking_error_code_unrecoverable", event, {
+        errorCode,
+      }),
+    );
+
+    const result = await markErrorAsUnrecoverableFromAllExecutions(errorCode);
+
+    console.info(
+      createLogEntry("error_code_marked_unrecoverable", event, {
+        errorCode,
+        updatedCount: result.updatedCount,
+        affectedExecutionIds: result.affectedExecutionIds,
+        updatedErrorCodes: result.updatedErrorCodes,
+      }),
+    );
+  }
+
+  console.debug(
+    createLogEntry("error_failed_to_resolve_complete", event, {
+      executionId: executionId ?? "none",
+      errorCode: errorCode ?? "none",
+    }),
+  );
+};
+
+/**
  * Main handler for EventBridge events from elephant.workflow source.
  * Routes events based on detail-type to appropriate handlers:
  * - WorkflowEvent: Persists errors to DynamoDB
@@ -197,6 +284,15 @@ export const handler = async (
           event as EventBridgeEvent<
             "ElephantErrorResolved",
             ElephantErrorResolvedDetail
+          >,
+        );
+        break;
+
+      case "ElephantErrorFailedToResolve":
+        await handleElephantErrorFailedToResolve(
+          event as EventBridgeEvent<
+            "ElephantErrorFailedToResolve",
+            ElephantErrorFailedToResolveDetail
           >,
         );
         break;

@@ -22,6 +22,7 @@ import {
   extractErrorType,
   createKey,
   DEFAULT_GSI_STATUS,
+  toGsiStatus,
 } from "./keys.js";
 
 // =============================================================================
@@ -434,6 +435,18 @@ export interface DeleteErrorLinksResult {
   affectedExecutionIds: string[];
   /** List of error codes whose ErrorRecord was deleted. */
   deletedErrorCodes: string[];
+}
+
+/**
+ * Result of marking errors as unrecoverable.
+ */
+export interface MarkUnrecoverableResult {
+  /** Number of items updated. */
+  updatedCount: number;
+  /** List of execution IDs affected by the update. */
+  affectedExecutionIds: string[];
+  /** List of error codes that were marked as unrecoverable. */
+  updatedErrorCodes: string[];
 }
 
 /**
@@ -872,6 +885,212 @@ export const deleteErrorsForExecution = async (
     deletedCount: totalDeleted,
     affectedExecutionIds: Array.from(allAffectedExecutionIds),
     deletedErrorCodes: allDeletedErrorCodes,
+  };
+};
+
+// =============================================================================
+// Mark Unrecoverable Operations
+// =============================================================================
+
+/**
+ * Status value for marking items as unrecoverable.
+ */
+const UNRECOVERABLE_STATUS: ErrorStatus = "maybeUnrecoverable";
+
+/**
+ * Updates a FailedExecutionItem status to maybeUnrecoverable and updates GSI keys.
+ *
+ * @param executionId - The execution ID to update
+ * @returns Whether the update was successful
+ */
+const updateFailedExecutionToUnrecoverable = async (
+  executionId: string,
+): Promise<boolean> => {
+  const tableName = getTableName();
+  const pk = createKey("EXECUTION", executionId);
+  const now = new Date().toISOString();
+
+  // First get the current execution to read openErrorCount and errorType
+  const execution = await getFailedExecutionItem(executionId);
+  if (!execution) {
+    return false;
+  }
+
+  const gsiStatus = toGsiStatus(UNRECOVERABLE_STATUS);
+  // GS1SK format: COUNT#{status}#{paddedCount}#EXECUTION#{executionId}
+  const gs1sk = `COUNT#${gsiStatus}#${padCount(execution.openErrorCount)}#EXECUTION#${executionId}`;
+  // GS3SK format: COUNT#{errorType}#{status}#{paddedCount}#EXECUTION#{executionId}
+  const gs3sk = `COUNT#${execution.errorType}#${gsiStatus}#${padCount(execution.openErrorCount)}#EXECUTION#${executionId}`;
+
+  try {
+    const command = new UpdateCommand({
+      TableName: tableName,
+      Key: {
+        PK: pk,
+        SK: pk,
+      },
+      UpdateExpression:
+        "SET #status = :status, GS1SK = :gs1sk, GS3SK = :gs3sk, updatedAt = :now",
+      ConditionExpression: "entityType = :entityType",
+      ExpressionAttributeNames: {
+        "#status": "status",
+      },
+      ExpressionAttributeValues: {
+        ":status": UNRECOVERABLE_STATUS,
+        ":gs1sk": gs1sk,
+        ":gs3sk": gs3sk,
+        ":now": now,
+        ":entityType": ENTITY_TYPES.FAILED_EXECUTION,
+      },
+    });
+
+    await docClient.send(command);
+    return true;
+  } catch (error) {
+    // Log all errors and return false for consistent error handling
+    // This prevents partial update failures from breaking the entire operation
+    console.warn(
+      `Failed to update FailedExecutionItem ${executionId}:`,
+      error instanceof Error ? error.message : String(error),
+    );
+    return false;
+  }
+};
+
+/**
+ * Updates multiple ExecutionErrorLink items' status to maybeUnrecoverable.
+ *
+ * @param links - Array of ExecutionErrorLink items to update
+ * @returns Number of successfully updated items
+ */
+const updateExecutionErrorLinksToUnrecoverable = async (
+  links: ExecutionErrorLink[],
+): Promise<number> => {
+  if (links.length === 0) {
+    return 0;
+  }
+
+  const tableName = getTableName();
+  const now = new Date().toISOString();
+  let updatedCount = 0;
+
+  // Update each link individually since BatchWriteItem doesn't support updates
+  const updatePromises = links.map(async (link) => {
+    try {
+      const command = new UpdateCommand({
+        TableName: tableName,
+        Key: {
+          PK: link.PK,
+          SK: link.SK,
+        },
+        UpdateExpression: "SET #status = :status, updatedAt = :now",
+        ConditionExpression: "entityType = :entityType",
+        ExpressionAttributeNames: {
+          "#status": "status",
+        },
+        ExpressionAttributeValues: {
+          ":status": UNRECOVERABLE_STATUS,
+          ":now": now,
+          ":entityType": ENTITY_TYPES.EXECUTION_ERROR,
+        },
+      });
+
+      await docClient.send(command);
+      return true;
+    } catch (error) {
+      console.warn(
+        `Failed to update ExecutionErrorLink ${link.PK}/${link.SK}:`,
+        error instanceof Error ? error.message : String(error),
+      );
+      return false;
+    }
+  });
+
+  const results = await Promise.all(updatePromises);
+  updatedCount = results.filter(Boolean).length;
+
+  return updatedCount;
+};
+
+/**
+ * Marks all errors for a given execution as maybeUnrecoverable.
+ * Updates the FailedExecutionItem and all associated ExecutionErrorLink items.
+ *
+ * @param executionId - The execution ID to mark as unrecoverable
+ * @returns Result with update count and affected items
+ */
+export const markErrorsAsUnrecoverableForExecution = async (
+  executionId: string,
+): Promise<MarkUnrecoverableResult> => {
+  // Get all error links for this execution
+  const executionLinks = await queryExecutionErrorLinks(executionId);
+
+  if (executionLinks.length === 0) {
+    return {
+      updatedCount: 0,
+      affectedExecutionIds: [],
+      updatedErrorCodes: [],
+    };
+  }
+
+  // Update the FailedExecutionItem
+  const executionUpdated =
+    await updateFailedExecutionToUnrecoverable(executionId);
+
+  // Update all ExecutionErrorLink items
+  const linksUpdatedCount =
+    await updateExecutionErrorLinksToUnrecoverable(executionLinks);
+
+  const errorCodes = [...new Set(executionLinks.map((link) => link.errorCode))];
+
+  return {
+    updatedCount: (executionUpdated ? 1 : 0) + linksUpdatedCount,
+    affectedExecutionIds: [executionId],
+    updatedErrorCodes: errorCodes,
+  };
+};
+
+/**
+ * Marks a specific error code as maybeUnrecoverable across all executions.
+ * Updates all ExecutionErrorLink items with that error code and their parent FailedExecutionItem records.
+ *
+ * @param errorCode - The error code to mark as unrecoverable
+ * @returns Result with update count and affected items
+ */
+export const markErrorAsUnrecoverableFromAllExecutions = async (
+  errorCode: string,
+): Promise<MarkUnrecoverableResult> => {
+  // Get all execution links for this error code
+  const links = await queryErrorLinksForErrorCode(errorCode);
+
+  if (links.length === 0) {
+    return {
+      updatedCount: 0,
+      affectedExecutionIds: [],
+      updatedErrorCodes: [],
+    };
+  }
+
+  // Get unique execution IDs
+  const executionIds = [...new Set(links.map((link) => link.executionId))];
+
+  // Update all ExecutionErrorLink items
+  const linksUpdatedCount =
+    await updateExecutionErrorLinksToUnrecoverable(links);
+
+  // Update all affected FailedExecutionItem records
+  let executionsUpdated = 0;
+  for (const execId of executionIds) {
+    const success = await updateFailedExecutionToUnrecoverable(execId);
+    if (success) {
+      executionsUpdated++;
+    }
+  }
+
+  return {
+    updatedCount: executionsUpdated + linksUpdatedCount,
+    affectedExecutionIds: executionIds,
+    updatedErrorCodes: [errorCode],
   };
 };
 
