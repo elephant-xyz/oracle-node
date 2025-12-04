@@ -35,9 +35,9 @@ const createMockErrorRecord = (
   GS1PK: "TYPE#ERROR",
   GS1SK: "ERROR#01256",
   GS2PK: "TYPE#ERROR",
-  GS2SK: "COUNT#0000000010#ERROR#01256",
+  GS2SK: "COUNT#FAILED#0000000010#ERROR#01256",
   GS3PK: "METRIC#ERRORCOUNT",
-  GS3SK: "COUNT#01#0000000010#ERROR#01256",
+  GS3SK: "COUNT#01#FAILED#0000000010#ERROR#01256",
   ...overrides,
 });
 
@@ -191,10 +191,11 @@ describe("dashboard-errors-widget handler", () => {
       const calls = ddbMock.commandCalls(QueryCommand);
       expect(calls[0].args[0].input.IndexName).toBe("GS2");
       expect(calls[0].args[0].input.KeyConditionExpression).toBe(
-        "GS2PK = :gs2pk",
+        "GS2PK = :gs2pk AND begins_with(GS2SK, :gs2skPrefix)",
       );
       expect(calls[0].args[0].input.ExpressionAttributeValues).toMatchObject({
         ":gs2pk": "TYPE#ERROR",
+        ":gs2skPrefix": "COUNT#FAILED#",
       });
     });
 
@@ -273,7 +274,7 @@ describe("dashboard-errors-widget handler", () => {
       );
       expect(calls[0].args[0].input.ExpressionAttributeValues).toMatchObject({
         ":gs3pk": "METRIC#ERRORCOUNT",
-        ":gs3skPrefix": "COUNT#SV#",
+        ":gs3skPrefix": "COUNT#SV#FAILED#",
       });
     });
 
@@ -288,7 +289,7 @@ describe("dashboard-errors-widget handler", () => {
 
       const calls = ddbMock.commandCalls(QueryCommand);
       expect(calls[0].args[0].input.ExpressionAttributeValues).toMatchObject({
-        ":gs3skPrefix": "COUNT#MV#",
+        ":gs3skPrefix": "COUNT#MV#FAILED#",
       });
     });
 
@@ -343,7 +344,7 @@ describe("dashboard-errors-widget handler", () => {
       const calls = ddbMock.commandCalls(QueryCommand);
       expect(calls[0].args[0].input.IndexName).toBe("GS3");
       expect(calls[0].args[0].input.ExpressionAttributeValues).toMatchObject({
-        ":gs3skPrefix": "COUNT#SV#",
+        ":gs3skPrefix": "COUNT#SV#FAILED#",
       });
     });
 
@@ -394,7 +395,7 @@ describe("dashboard-errors-widget handler", () => {
 
       const calls = ddbMock.commandCalls(QueryCommand);
       expect(calls[0].args[0].input.ExpressionAttributeValues).toMatchObject({
-        ":gs3skPrefix": "COUNT#MV#",
+        ":gs3skPrefix": "COUNT#MV#FAILED#",
       });
     });
   });
@@ -445,7 +446,7 @@ describe("dashboard-errors-widget handler", () => {
       PK: "ERROR#01256",
       SK: "ERROR#01256",
       GS2PK: "TYPE#ERROR",
-      GS2SK: "COUNT#0000000010#ERROR#01256",
+      GS2SK: "COUNT#FAILED#0000000010#ERROR#01256",
     });
 
     it("should render Next button when LastEvaluatedKey is returned", async () => {
