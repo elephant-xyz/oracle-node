@@ -198,10 +198,10 @@ describe("downloader lambda - EventBridge integration", () => {
       // Handler should catch EventBridge error and send task failure
       await handler(sqsEvent);
 
-      // Verify SendTaskFailureCommand was called with error code 01019
+      // Verify SendTaskFailureCommand was called with error code 01019 + county
       expect(sfnMock).toHaveReceivedCommandWith(SendTaskFailureCommand, {
         taskToken: "test-task-token",
-        error: "01019",
+        error: "01019Hamilton",
         cause: expect.stringContaining("EventBridge"),
       });
     });
@@ -236,15 +236,15 @@ describe("downloader lambda - EventBridge integration", () => {
 
       await handler(sqsEvent);
 
-      // Verify SendTaskFailureCommand was called with error code 01002
+      // Verify SendTaskFailureCommand was called with error code 01002 + county
       expect(sfnMock).toHaveReceivedCommandWith(SendTaskFailureCommand, {
         taskToken: "test-task-token-failure",
-        error: "01002",
+        error: "01002Hamilton",
         cause: expect.any(String),
       });
     });
 
-    it("should include errorCode in failure cause payload", async () => {
+    it("should include errorCode in error field (concatenated with county)", async () => {
       eventBridgeMock.on(PutEventsCommand).resolves({});
       sfnMock.on(SendTaskFailureCommand).resolves({});
       s3Mock.on(GetObjectCommand).rejects(new Error("S3 access denied"));
@@ -274,15 +274,13 @@ describe("downloader lambda - EventBridge integration", () => {
       const calls = sfnMock.commandCalls(SendTaskFailureCommand);
       expect(calls.length).toBe(1);
 
-      const causeJson = calls[0].args[0].input.cause;
-      const cause = JSON.parse(causeJson);
-      // taskToken is NOT in cause payload (it's passed separately to sendTaskFailure)
-      expect(cause.taskToken).toBeUndefined();
-      // errorCode should be in the cause
-      expect(cause.errorCode).toBeDefined();
+      // Error code is in the error field, concatenated with county
+      const errorField = calls[0].args[0].input.error;
+      expect(errorField).toMatch(/^01002/); // Starts with error code
+      expect(errorField).toContain("Hamilton"); // Contains county
     });
 
-    it("should include county in failure cause payload", async () => {
+    it("should include county in error field (concatenated with error code)", async () => {
       eventBridgeMock.on(PutEventsCommand).resolves({});
       sfnMock.on(SendTaskFailureCommand).resolves({});
       s3Mock.on(GetObjectCommand).rejects(new Error("S3 error"));
@@ -309,8 +307,9 @@ describe("downloader lambda - EventBridge integration", () => {
       await handler(sqsEvent);
 
       const calls = sfnMock.commandCalls(SendTaskFailureCommand);
-      const cause = JSON.parse(calls[0].args[0].input.cause);
-      expect(cause.county).toBe("Broward");
+      // County is appended to the error code in the error field
+      const errorField = calls[0].args[0].input.error;
+      expect(errorField).toContain("Broward");
     });
 
     it("should truncate cause to 256 characters max", async () => {

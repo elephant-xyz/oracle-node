@@ -1849,7 +1849,7 @@ export const handler = async (event) => {
           error instanceof Error ? error.message : String(error);
         // Use error code from PrepareError if available, otherwise default to "01002"
         const errorCode = error instanceof PrepareError ? error.code : "01002";
-        // Format: ERRORCODE+COUNTYNAME (e.g., "10050+Hamilton")
+        // Format: ERRORCODE+COUNTYNAME (e.g., "10050Hamilton")
         const fullErrorCode = `${errorCode}${county}`;
         console.error(
           `❌ Prepare processing failed [${fullErrorCode}]: ${errorMessage}`,

@@ -12,7 +12,7 @@
     "@aws-sdk/client-eventbridge": "^3.879.0",
     "@aws-sdk/client-s3": "^3.879.0",
     "@aws-sdk/client-sfn": "^3.879.0",
-    "@elephant-xyz/cli": "^1.55.2"
+    "@elephant-xyz/cli": "^1.57.0"
   },
   "devDependencies": {
     "@types/node": "^20.16.3"
