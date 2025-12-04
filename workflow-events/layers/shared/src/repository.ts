@@ -362,10 +362,8 @@ const refreshErrorRecordSortKeys = async (
     return;
   }
 
-  // Get current counts for all error codes
   const countMap = await getErrorRecordCounts(errorCodes);
 
-  // Update GS2SK for each error record
   const updatePromises = errorCodes.map((errorCode) => {
     const count = countMap.get(errorCode);
     if (count !== undefined) {
@@ -593,30 +591,23 @@ export const saveErrorRecords = async (
     );
   }
 
-  // DynamoDB transactions are limited to 100 items
-  // For large error sets, we need to batch the transactions
   const TRANSACTION_LIMIT = 100;
   const errorCodes = Array.from(errorOccurrences.keys());
 
   if (transactItems.length <= TRANSACTION_LIMIT) {
-    // Single transaction for small error sets
     const command = new TransactWriteCommand({
       TransactItems: transactItems,
     });
     await docClient.send(command);
   } else {
-    // For large error sets, process FailedExecutionItem first,
-    // then batch the error-related items
     const failedExecutionUpdate = transactItems[0];
     const errorItems = transactItems.slice(1);
 
-    // Update FailedExecutionItem separately
     const failedExecutionCommand = new UpdateCommand(
       failedExecutionUpdate.Update,
     );
     await docClient.send(failedExecutionCommand);
 
-    // Batch error items (ErrorRecord + ExecutionErrorLink pairs)
     for (let i = 0; i < errorItems.length; i += TRANSACTION_LIMIT) {
       const batch = errorItems.slice(i, i + TRANSACTION_LIMIT);
       const batchCommand = new TransactWriteCommand({
@@ -803,7 +794,6 @@ export const deleteErrorFromAllExecutions = async (
 export const deleteErrorsForExecution = async (
   executionId: string,
 ): Promise<DeleteErrorLinksResult> => {
-  // First, get all error codes for this execution
   const executionLinks = await queryExecutionErrorLinks(executionId);
 
   if (executionLinks.length === 0) {
@@ -813,10 +803,8 @@ export const deleteErrorsForExecution = async (
     };
   }
 
-  // Get unique error codes from this execution
   const errorCodes = [...new Set(executionLinks.map((link) => link.errorCode))];
 
-  // For each error code, delete it from ALL executions
   let totalDeleted = 0;
   const allAffectedExecutionIds = new Set<string>();
 
@@ -855,13 +843,9 @@ export const queryExecutionByErrorCount = async (
 ): Promise<FailedExecutionItem | null> => {
   const tableName = getTableName();
   const { sortOrder, errorType } = input;
-  // ScanIndexForward: true = ascending (least errors first), false = descending (most errors first)
   const scanIndexForward = sortOrder === "least";
 
   if (errorType) {
-    // Use GS3 with errorType filter using begins_with on GS3SK
-    // No FilterExpression needed: ErrorRecord uses GS3PK="METRIC#ERRORCOUNT#ERROR",
-    // so only FailedExecutionItem (GS3PK="METRIC#ERRORCOUNT") matches this query
     const command = new QueryCommand({
       TableName: tableName,
       IndexName: "GS3",
@@ -883,9 +867,6 @@ export const queryExecutionByErrorCount = async (
 
     return response.Items[0] as FailedExecutionItem;
   } else {
-    // Use GS1 without errorType filter
-    // No FilterExpression needed: only FailedExecutionItem uses GS1PK="METRIC#ERRORCOUNT"
-    // (ErrorRecord uses GS1PK="TYPE#ERROR", ExecutionErrorLink uses GS1PK="ERROR#{errorCode}")
     const command = new QueryCommand({
       TableName: tableName,
       IndexName: "GS1",
@@ -1134,7 +1115,6 @@ const decrementOpenErrorCountByAmount = async (
       found: true,
     };
   } catch (error) {
-    // ConditionalCheckFailedException means the item doesn't exist or count is insufficient
     if (
       error instanceof Error &&
       error.name === "ConditionalCheckFailedException"
@@ -1172,7 +1152,6 @@ export const batchDecrementOpenErrorCounts = async (
     return [];
   }
 
-  // Execute all decrements in parallel
   const promises = inputs.map(({ executionId, decrementBy }) =>
     decrementOpenErrorCountByAmount(executionId, decrementBy),
   );
@@ -1204,9 +1183,7 @@ export const batchUpdateExecutionGsiKeys = async (
   const updatePromises = updates.map(
     async ({ executionId, newOpenErrorCount, errorType }) => {
       const pk = createKey("EXECUTION", executionId);
-      // GS1SK format: COUNT#{paddedCount}#EXECUTION#{executionId}
       const gs1sk = `COUNT#${padCount(newOpenErrorCount)}#EXECUTION#${executionId}`;
-      // GS3SK format: COUNT#{errorType}#{paddedCount}#EXECUTION#{executionId}
       const gs3sk = `COUNT#${errorType}#${padCount(newOpenErrorCount)}#EXECUTION#${executionId}`;
 
       const command = new UpdateCommand({
@@ -1229,7 +1206,6 @@ export const batchUpdateExecutionGsiKeys = async (
       try {
         await docClient.send(command);
       } catch (error) {
-        // Log but don't throw - GSI update failures are not critical
         console.warn(
           `Failed to update GSI keys for execution ${executionId}:`,
           error instanceof Error ? error.message : String(error),
@@ -1257,14 +1233,10 @@ export const batchDeleteFailedExecutionItems = async (
 
   const tableName = getTableName();
   const deletedIds: string[] = [];
-
-  // BatchWriteItem is limited to 25 items per request
   const BATCH_LIMIT = 25;
 
   for (let i = 0; i < executionIds.length; i += BATCH_LIMIT) {
     const batch = executionIds.slice(i, i + BATCH_LIMIT);
-
-    // Track which execution IDs are still pending deletion
     const pendingIds = new Set(batch);
 
     let deleteRequests = batch.map((executionId) => {
@@ -1294,12 +1266,10 @@ export const batchDeleteFailedExecutionItems = async (
         const unprocessed = response.UnprocessedItems?.[tableName];
 
         if (unprocessed && unprocessed.length > 0) {
-          // Extract unprocessed PKs to identify which items failed
           const unprocessedPks = new Set(
             unprocessed.map((item) => item.DeleteRequest?.Key?.PK as string),
           );
 
-          // Mark successfully deleted items (those not in unprocessed)
           for (const executionId of pendingIds) {
             const pk = createKey("EXECUTION", executionId);
             if (!unprocessedPks.has(pk)) {
@@ -1308,15 +1278,12 @@ export const batchDeleteFailedExecutionItems = async (
             }
           }
 
-          // Retry only unprocessed items
           deleteRequests = unprocessed as typeof deleteRequests;
           retryCount++;
-          // Exponential backoff before retry
           await new Promise((resolve) =>
             setTimeout(resolve, Math.pow(2, retryCount) * 100),
           );
         } else {
-          // All items in this request were processed
           for (const executionId of pendingIds) {
             deletedIds.push(executionId);
           }
