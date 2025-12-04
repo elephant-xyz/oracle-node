@@ -69,7 +69,7 @@ const PREPARE_ERROR_PATTERNS = [
   },
   {
     code: "10005",
-    patterns: [/continue-button requires.*use-browser/i],
+    patterns: [/continue-button requires/i],
     description: "Invalid option combination",
   },
 
@@ -171,9 +171,7 @@ const PREPARE_ERROR_PATTERNS = [
   {
     code: "10050",
     patterns: [
-      /Waiting for selector.*failed.*timeout/i,
-      /Waiting for selector.*timed out/i,
-      /Waiting for selector.*failed/i,
+      /Waiting for selector/i,
     ],
     description: "Selector wait timeout",
   },
@@ -184,17 +182,17 @@ const PREPARE_ERROR_PATTERNS = [
   },
   {
     code: "10052",
-    patterns: [/Waiting for navigation failed.*timeout/i],
+    patterns: [/Waiting for navigation/i],
     description: "Navigation wait timeout",
   },
   {
     code: "10053",
-    patterns: [/Waiting for function failed.*timeout/i],
+    patterns: [/Waiting for function/i],
     description: "Function wait timeout",
   },
   {
     code: "10054",
-    patterns: [/waiting for XPath.*failed.*timeout/i],
+    patterns: [/waiting for XPath/i],
     description: "XPath wait timeout",
   },
 
@@ -523,13 +521,14 @@ async function emitWorkflowEvent({ executionId, county, status }) {
     `📤 Emitting EventBridge event: status=${status}, county=${county}`,
   );
   try {
-    /** @type {{ executionId: string; county: string; status: string; phase: string; step: string }} */
+    /** @type {{ executionId: string; county: string; status: string; phase: string; step: string; dataGroupLabel: string }} */
     const detail = {
       executionId,
       county,
       status,
       phase: "Prepare",
       step: "Prepare",
+      dataGroupLabel: "County",
     };
 
     await eventBridgeClient.send(
@@ -1850,8 +1849,10 @@ export const handler = async (event) => {
           error instanceof Error ? error.message : String(error);
         // Use error code from PrepareError if available, otherwise default to "01002"
         const errorCode = error instanceof PrepareError ? error.code : "01002";
+        // Format: ERRORCODE+COUNTYNAME (e.g., "10050+Hamilton")
+        const fullErrorCode = `${errorCode}${county}`;
         console.error(
-          `❌ Prepare processing failed [${errorCode}]: ${errorMessage}`,
+          `❌ Prepare processing failed [${fullErrorCode}]: ${errorMessage}`,
         );
 
         // Send failure to Step Functions
@@ -1859,11 +1860,9 @@ export const handler = async (event) => {
         if (taskToken) {
           const truncatedMessage = errorMessage.substring(0, 100);
           const causePayload = JSON.stringify({
-            errorCode: errorCode,
-            county: county,
             message: truncatedMessage,
           });
-          await sendTaskFailure(taskToken, errorCode, causePayload);
+          await sendTaskFailure(taskToken, fullErrorCode, causePayload);
         } else {
           // No taskToken - can't notify Step Functions
           // Re-throw to trigger SQS retry/DLQ

@@ -45,6 +45,7 @@ States:
             status: FAILED
             phase: Preprocess
             step: Preprocess
+            dataGroupLabel: County
             taskToken.$: $$.Task.Token
             errors:
               - code: "00001"
@@ -146,6 +147,7 @@ States:
             status: SUCCEEDED
             phase: Prepare
             step: Prepare
+            dataGroupLabel: County
     ResultPath: $.eventResult
     Next: GenerateExecutionId
     Catch:
@@ -166,6 +168,7 @@ States:
             status: SCHEDULED
             phase: Prepare
             step: Prepare
+            dataGroupLabel: County
     ResultPath: $.eventResult
     Next: GetPrepareQueueUrl
     Catch:
@@ -241,6 +244,7 @@ States:
             status: FAILED
             phase: Prepare
             step: Prepare
+            dataGroupLabel: County
             taskToken.$: $$.Task.Token
             errors:
               - code: "01001"
@@ -266,6 +270,7 @@ States:
             status: SUCCEEDED
             phase: Prepare
             step: Prepare
+            dataGroupLabel: County
             taskToken.$: $.prepare.taskToken
     ResultPath: $.eventResult
     Next: GenerateExecutionId
@@ -290,6 +295,7 @@ States:
             status: FAILED
             phase: Prepare
             step: Prepare
+            dataGroupLabel: County
             taskToken: "{% $states.context.Task.Token %}"
             errors:
               - code: "{% $states.input.prepareError.Error %}"
@@ -334,6 +340,7 @@ States:
             status: SCHEDULED
             phase: Transform
             step: Transform
+            dataGroupLabel: County
     ResultPath: $.eventResult
     Next: Transform
     Catch:
@@ -388,6 +395,7 @@ States:
             status: SUCCEEDED
             phase: Transform
             step: Transform
+            dataGroupLabel: County
     ResultPath: $.eventResult
     Next: EmitSvlScheduled
     Catch:
@@ -411,6 +419,7 @@ States:
             status: FAILED
             phase: Transform
             step: Transform
+            dataGroupLabel: County
             taskToken: "{% $states.context.Task.Token %}"
             errors:
               - code: "{% '20' & $states.input.pre.county_name %}"
@@ -440,6 +449,7 @@ States:
             status: SCHEDULED
             phase: SVL
             step: SVL
+            dataGroupLabel: County
     ResultPath: $.eventResult
     Next: SVL
     Catch:
@@ -507,6 +517,7 @@ States:
             status: SUCCEEDED
             phase: SVL
             step: SVL
+            dataGroupLabel: County
     ResultPath: $.eventResult
     Next: EmitHashScheduled
     Catch:
@@ -530,6 +541,7 @@ States:
             status: FAILED
             phase: SVL
             step: SVL
+            dataGroupLabel: County
             taskToken: "{% $states.context.Task.Token %}"
             errors: >-
               {%
@@ -568,6 +580,7 @@ States:
             status: FAILED
             phase: SVL
             step: SVL
+            dataGroupLabel: County
             taskToken.$: $$.Task.Token
             errors:
               - code: "31001"
@@ -597,6 +610,7 @@ States:
             status: SCHEDULED
             phase: Hash
             step: Hash
+            dataGroupLabel: County
     ResultPath: $.eventResult
     Next: Hash
     Catch:
@@ -652,6 +666,7 @@ States:
             status: SUCCEEDED
             phase: Hash
             step: Hash
+            dataGroupLabel: County
     ResultPath: $.eventResult
     Next: EmitUploadScheduled
     Catch:
@@ -674,6 +689,7 @@ States:
             status: FAILED
             phase: Hash
             step: Hash
+            dataGroupLabel: County
             taskToken.$: $$.Task.Token
             errors:
               - code: "40001"
@@ -703,6 +719,7 @@ States:
             status: SCHEDULED
             phase: Upload
             step: Upload
+            dataGroupLabel: County
     ResultPath: $.eventResult
     Next: Upload
     Catch:
@@ -757,6 +774,7 @@ States:
             status: SUCCEEDED
             phase: Upload
             step: Upload
+            dataGroupLabel: County
     ResultPath: $.eventResult
     Next: EmitSubmitScheduled
     Catch:
@@ -779,6 +797,7 @@ States:
             status: FAILED
             phase: Upload
             step: Upload
+            dataGroupLabel: County
             taskToken.$: $$.Task.Token
             errors:
               - code: "50001"
@@ -808,6 +827,7 @@ States:
             status: SCHEDULED
             phase: Submit
             step: Submit
+            dataGroupLabel: County
     ResultPath: $.eventResult
     Next: EmitGasPriceCheckScheduled
     Catch:
@@ -831,6 +851,7 @@ States:
             status: SCHEDULED
             phase: GasPriceCheck
             step: CheckGasPrice
+            dataGroupLabel: County
     ResultPath: $.eventResult
     Next: CheckGasPrice
     Catch:
@@ -890,6 +911,7 @@ States:
             status: SUCCEEDED
             phase: GasPriceCheck
             step: CheckGasPrice
+            dataGroupLabel: County
     ResultPath: $.eventResult
     Next: EmitSubmitToBlockchainScheduled
     Catch:
@@ -911,6 +933,7 @@ States:
             status: FAILED
             phase: GasPriceCheck
             step: CheckGasPrice
+            dataGroupLabel: County
             errors:
               - code: "60001"
                 details:
@@ -937,6 +960,7 @@ States:
             status: FAILED
             phase: GasPriceCheck
             step: CheckGasPrice
+            dataGroupLabel: County
             taskToken.$: $$.Task.Token
             errors:
               - code: "60001"
@@ -966,6 +990,7 @@ States:
             status: SCHEDULED
             phase: Submit
             step: SubmitToBlockchain
+            dataGroupLabel: County
     ResultPath: $.eventResult
     Next: SubmitToBlockchain
     Catch:
@@ -1025,6 +1050,7 @@ States:
             status: SUCCEEDED
             phase: Submit
             step: SubmitToBlockchain
+            dataGroupLabel: County
     ResultPath: $.eventResult
     Next: ExtractTransactionHash
     Catch:
@@ -1046,6 +1072,7 @@ States:
             status: FAILED
             phase: Submit
             step: SubmitToBlockchain
+            dataGroupLabel: County
             errors:
               - code: "60002"
                 details:
@@ -1072,6 +1099,7 @@ States:
             status: FAILED
             phase: Submit
             step: SubmitToBlockchain
+            dataGroupLabel: County
             taskToken.$: $$.Task.Token
             errors:
               - code: "60002"
