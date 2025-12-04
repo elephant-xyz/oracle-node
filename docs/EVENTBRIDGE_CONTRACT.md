@@ -80,27 +80,6 @@ Emitted on workflow step status changes (success, failure, or parked).
 | `40001`         | Hash      | Generic hash step failure or exception                                                                                                                                                    |
 | `50001`         | Upload    | Generic upload step failure or exception                                                                                                                                                  |
 
-| Code    | Description                             |
-| ------- | --------------------------------------- |
-| `01002` | Generic prepare processing error        |
-| `01003` | Error reading input.csv from zip        |
-| `01004` | Error parsing input.csv                 |
-| `01005` | input.csv is empty or has no data rows  |
-| `01006` | input.csv not found in zip file         |
-| `01008` | Could not extract county from zip       |
-| `01009` | Failed to download config file from S3  |
-| `01010` | Invalid S3 path format                  |
-| `01011` | Missing required field: input_s3_uri    |
-| `01012` | Failed to download input object from S3 |
-| `01013` | Failed to download flow file from S3    |
-| `01014` | Invalid browser flow parameter format   |
-| `01015` | Empty key in browser flow parameter     |
-| `01016` | Missing taskToken in SQS message        |
-| `01017` | Failed to send task success             |
-| `01018` | Failed to send task failure             |
-| `01019` | Failed to emit EventBridge event        |
-| `01020` | No taskToken available                  |
-
 #### Prepare Error Codes (`10xxx` - CLI Prepare)
 
 | Range         | Category         | Description                      |
