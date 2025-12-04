@@ -453,26 +453,6 @@ Resources:
               "width": 12,
               "height": 6,
               "properties": {
-                "title": "Transaction Status Check Phase",
-                "view": "timeSeries",
-                "stacked": false,
-                "region": "${AWS::Region}",
-                "period": 300,
-                "metrics": [
-                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"TransactionStatusCheckElephantPhase\" Status=\"SCHEDULED\"', 'Sum', 300))", "label": "SCHEDULED", "id": "txstatus_sched", "color": "#1f77b4"}],
-                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"TransactionStatusCheckElephantPhase\" Status=\"IN_PROGRESS\"', 'Sum', 300))", "label": "IN_PROGRESS", "id": "txstatus_prog", "color": "#ff7f0e"}],
-                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"TransactionStatusCheckElephantPhase\" Status=\"SUCCEEDED\"', 'Sum', 300))", "label": "SUCCEEDED", "id": "txstatus_succ", "color": "#2ca02c"}],
-                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"TransactionStatusCheckElephantPhase\" Status=\"FAILED\"', 'Sum', 300))", "label": "FAILED", "id": "txstatus_fail", "color": "#d62728"}]
-                ]
-              }
-            },
-            {
-              "type": "metric",
-              "x": 0,
-              "y": 34,
-              "width": 12,
-              "height": 6,
-              "properties": {
                 "title": "Submit Phase",
                 "view": "timeSeries",
                 "stacked": false,
@@ -483,6 +463,26 @@ Resources:
                   [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"SubmitElephantPhase\" Status=\"IN_PROGRESS\"', 'Sum', 300))", "label": "IN_PROGRESS", "id": "submit_prog", "color": "#ff7f0e"}],
                   [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"SubmitElephantPhase\" Status=\"SUCCEEDED\"', 'Sum', 300))", "label": "SUCCEEDED", "id": "submit_succ", "color": "#2ca02c"}],
                   [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"SubmitElephantPhase\" Status=\"FAILED\"', 'Sum', 300))", "label": "FAILED", "id": "submit_fail", "color": "#d62728"}]
+                ]
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 34,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "Transaction Status Check Phase",
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "period": 300,
+                "metrics": [
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"TransactionStatusCheckElephantPhase\" Status=\"SCHEDULED\"', 'Sum', 300))", "label": "SCHEDULED", "id": "txstatus_sched", "color": "#1f77b4"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"TransactionStatusCheckElephantPhase\" Status=\"IN_PROGRESS\"', 'Sum', 300))", "label": "IN_PROGRESS", "id": "txstatus_prog", "color": "#ff7f0e"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"TransactionStatusCheckElephantPhase\" Status=\"SUCCEEDED\"', 'Sum', 300))", "label": "SUCCEEDED", "id": "txstatus_succ", "color": "#2ca02c"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"TransactionStatusCheckElephantPhase\" Status=\"FAILED\"', 'Sum', 300))", "label": "FAILED", "id": "txstatus_fail", "color": "#d62728"}]
                 ]
               }
             }
