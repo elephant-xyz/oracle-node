@@ -193,7 +193,7 @@ States:
   Prepare:
     Type: Task
     Resource: arn:aws:states:::sqs:sendMessage.waitForTaskToken
-    TimeoutSeconds: 900
+    TimeoutSeconds: 915
     Comment: "Timeout matches Lambda timeout (15 min). If Lambda times out, Catch handles it."
     Parameters:
       QueueUrl.$: $.queue.QueueUrl
