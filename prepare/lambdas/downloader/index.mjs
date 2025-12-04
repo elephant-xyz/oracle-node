@@ -8,13 +8,678 @@ import {
   QueryCommand,
   UpdateItemCommand,
 } from "@aws-sdk/client-dynamodb";
+import {
+  SFNClient,
+  SendTaskSuccessCommand,
+  SendTaskFailureCommand,
+} from "@aws-sdk/client-sfn";
+import {
+  EventBridgeClient,
+  PutEventsCommand,
+} from "@aws-sdk/client-eventbridge";
 import { promises as fs } from "fs";
 import path from "path";
 import { prepare } from "@elephant-xyz/cli/lib";
 import { networkInterfaces } from "os";
 import AdmZip from "adm-zip";
+import { parse as parseCSV } from "csv-parse/sync";
+
+/**
+ * Custom error class for Prepare errors with error codes
+ */
+class PrepareError extends Error {
+  /**
+   * @param {string} code - Error code (e.g., "01003")
+   * @param {string} message - Error message
+   */
+  constructor(code, message) {
+    super(message);
+    this.name = "PrepareError";
+    this.code = code;
+  }
+}
+
+/**
+ * Error code patterns for prepare function errors (10xxx range)
+ * @type {Array<{code: string, patterns: RegExp[], description: string}>}
+ */
+const PREPARE_ERROR_PATTERNS = [
+  // Input Validation Errors (10001-10009)
+  {
+    code: "10001",
+    patterns: [/Invalid proxy format/i],
+    description: "Invalid proxy format",
+  },
+  {
+    code: "10002",
+    patterns: [
+      /multi-request-flow-file.*required|browser-flow-file.*required/i,
+    ],
+    description: "Missing flow file for CSV mode",
+  },
+  {
+    code: "10003",
+    patterns: [/CSV file is empty/i, /no valid rows/i],
+    description: "Empty CSV file",
+  },
+  {
+    code: "10004",
+    patterns: [/must have a request_identifier column/i],
+    description: "Missing request_identifier column",
+  },
+  {
+    code: "10005",
+    patterns: [/continue-button requires/i],
+    description: "Invalid option combination",
+  },
+
+  // Missing File Errors (10010-10014)
+  {
+    code: "10010",
+    patterns: [/Neither parcel\.json nor property_seed\.json found/i],
+    description: "Missing parcel file",
+  },
+  {
+    code: "10011",
+    patterns: [/Neither address\.json nor unnormalized_address\.json found/i],
+    description: "Missing address file",
+  },
+
+  // Missing Field Errors (10015-10019)
+  {
+    code: "10015",
+    patterns: [/missing source_http_request/i],
+    description: "Missing source_http_request",
+  },
+  {
+    code: "10016",
+    patterns: [/missing request_identifier/i],
+    description: "Missing request_identifier",
+  },
+
+  // Workflow/Flow Errors (10020-10029)
+  {
+    code: "10020",
+    patterns: [/Failed to create workflow from template/i],
+    description: "Workflow template creation failed",
+  },
+  {
+    code: "10021",
+    patterns: [/Invalid custom browser flow/i],
+    description: "Invalid browser flow definition",
+  },
+  {
+    code: "10022",
+    patterns: [/Failed to read multi-request flow file/i],
+    description: "Multi-request flow file read error",
+  },
+  {
+    code: "10023",
+    patterns: [/Failed to parse multi-request flow JSON/i],
+    description: "Multi-request flow JSON parse error",
+  },
+  {
+    code: "10024",
+    patterns: [/Multi-request flow must be a JSON object/i],
+    description: "Invalid multi-request flow format",
+  },
+
+  // Platform Errors (10030-10034)
+  {
+    code: "10030",
+    patterns: [/Unsupported platform/i],
+    description: "Unsupported platform",
+  },
+
+  // HTTP/API Errors (10035-10039)
+  {
+    code: "10035",
+    patterns: [/HTTP error \d+/i, /API request.*failed with status/i],
+    description: "HTTP/API error",
+  },
+  {
+    code: "10036",
+    patterns: [/Browser returned error page/i],
+    description: "Browser error page detected",
+  },
+
+  // Frame/Iframe Errors (10040-10044)
+  {
+    code: "10040",
+    patterns: [/Frame element not found/i],
+    description: "Frame element not found",
+  },
+  {
+    code: "10041",
+    patterns: [/Could not access frame content/i],
+    description: "Frame content inaccessible",
+  },
+  {
+    code: "10042",
+    patterns: [/Failed to get frame/i],
+    description: "Frame retrieval failed",
+  },
+
+  // Navigation Errors (10045-10049)
+  {
+    code: "10045",
+    patterns: [/Failed to navigate after/i],
+    description: "Navigation retry exhausted",
+  },
+
+  // Puppeteer Timeout Errors (10050-10059)
+  {
+    code: "10050",
+    patterns: [/Waiting for selector/i],
+    description: "Selector wait timeout",
+  },
+  {
+    code: "10051",
+    patterns: [/Navigation timeout/i],
+    description: "Navigation timeout",
+  },
+  {
+    code: "10052",
+    patterns: [/Waiting for navigation/i],
+    description: "Navigation wait timeout",
+  },
+  {
+    code: "10053",
+    patterns: [/Waiting for function/i],
+    description: "Function wait timeout",
+  },
+  {
+    code: "10054",
+    patterns: [/waiting for XPath/i],
+    description: "XPath wait timeout",
+  },
+
+  // Puppeteer Context Destruction Errors (10060-10069)
+  {
+    code: "10060",
+    patterns: [/Execution context was destroyed/i],
+    description: "Execution context destroyed",
+  },
+  {
+    code: "10061",
+    patterns: [/Frame was detached/i, /frame was detached/i],
+    description: "Frame detached",
+  },
+  { code: "10062", patterns: [/Target closed/i], description: "Target closed" },
+  {
+    code: "10063",
+    patterns: [/Session closed/i],
+    description: "Session closed",
+  },
+  {
+    code: "10064",
+    patterns: [/Cannot find context with specified id/i],
+    description: "Context not found",
+  },
+
+  // Puppeteer Browser Errors (10070-10079)
+  {
+    code: "10070",
+    patterns: [/Browser closed/i, /Browser has been closed/i],
+    description: "Browser closed",
+  },
+  {
+    code: "10071",
+    patterns: [/Protocol error/i],
+    description: "Protocol error",
+  },
+  { code: "10072", patterns: [/Page crashed/i], description: "Page crashed" },
+  {
+    code: "10073",
+    patterns: [/Browser process exited unexpectedly/i],
+    description: "Browser process exited",
+  },
+  {
+    code: "10074",
+    patterns: [/Failed to launch the browser/i],
+    description: "Browser launch failed",
+  },
+  {
+    code: "10075",
+    patterns: [/Could not find Chrome/i, /Could not find Chromium/i],
+    description: "Chrome/Chromium not found",
+  },
+
+  // Puppeteer Selector Errors (10080-10089)
+  {
+    code: "10080",
+    patterns: [/Unsupported selector/i],
+    description: "Unsupported selector",
+  },
+  {
+    code: "10081",
+    patterns: [/Unknown pseudo-class/i],
+    description: "Unknown pseudo-class",
+  },
+  {
+    code: "10082",
+    patterns: [/failed to find element matching selector/i],
+    description: "Element not found",
+  },
+  {
+    code: "10083",
+    patterns: [/No node found for selector/i],
+    description: "No node for selector",
+  },
+  {
+    code: "10084",
+    patterns: [/Evaluation failed/i],
+    description: "Evaluation failed",
+  },
+
+  // Puppeteer Navigation Network Errors (10090-10099)
+  {
+    code: "10090",
+    patterns: [/net::ERR_ABORTED/i],
+    description: "Request aborted",
+  },
+  {
+    code: "10091",
+    patterns: [/net::ERR_CONNECTION_REFUSED/i],
+    description: "Connection refused",
+  },
+  {
+    code: "10092",
+    patterns: [/net::ERR_CONNECTION_RESET/i, /net::ERR_CONNECTION_CLOSED/i],
+    description: "Connection reset/closed",
+  },
+  {
+    code: "10093",
+    patterns: [/net::ERR_NAME_NOT_RESOLVED/i],
+    description: "DNS resolution failed",
+  },
+  {
+    code: "10094",
+    patterns: [/net::ERR_INTERNET_DISCONNECTED/i],
+    description: "Internet disconnected",
+  },
+  {
+    code: "10095",
+    patterns: [/net::ERR_CERT_/i, /net::ERR_SSL_/i],
+    description: "SSL/Certificate error",
+  },
+  {
+    code: "10096",
+    patterns: [/net::ERR_TOO_MANY_REDIRECTS/i],
+    description: "Too many redirects",
+  },
+  {
+    code: "10097",
+    patterns: [/net::ERR_BLOCKED_BY/i],
+    description: "Request blocked",
+  },
+
+  // Puppeteer Click/Type Errors (10100-10109)
+  {
+    code: "10100",
+    patterns: [/not clickable/i, /not an HTMLElement/i],
+    description: "Element not clickable",
+  },
+  {
+    code: "10101",
+    patterns: [/not visible/i, /not an Element/i],
+    description: "Element not visible",
+  },
+  {
+    code: "10102",
+    patterns: [/Node is detached/i],
+    description: "Node detached",
+  },
+  {
+    code: "10103",
+    patterns: [/display: none/i],
+    description: "Element hidden (display:none)",
+  },
+
+  // File System Errors (10110-10119)
+  {
+    code: "10110",
+    patterns: [/ENOENT.*no such file/i],
+    description: "File not found",
+  },
+  {
+    code: "10111",
+    patterns: [/EACCES.*permission denied/i],
+    description: "Permission denied",
+  },
+  {
+    code: "10112",
+    patterns: [/EISDIR.*illegal operation on a directory/i],
+    description: "Illegal directory operation",
+  },
+  {
+    code: "10113",
+    patterns: [/ENOTDIR.*not a directory/i],
+    description: "Not a directory",
+  },
+  {
+    code: "10114",
+    patterns: [/EEXIST.*file already exists/i],
+    description: "File already exists",
+  },
+  {
+    code: "10115",
+    patterns: [/EMFILE.*too many open files/i],
+    description: "Too many open files",
+  },
+  {
+    code: "10116",
+    patterns: [/ENOSPC.*no space left/i],
+    description: "No space left on device",
+  },
+
+  // JSON Parsing Errors (10120-10124)
+  {
+    code: "10120",
+    patterns: [/Unexpected token.*JSON/i],
+    description: "JSON unexpected token",
+  },
+  {
+    code: "10121",
+    patterns: [/Unexpected end of JSON/i],
+    description: "JSON unexpected end",
+  },
+  { code: "10122", patterns: [/Invalid JSON/i], description: "Invalid JSON" },
+
+  // Network Errors (10125-10134)
+  {
+    code: "10125",
+    patterns: [/UND_ERR_CONNECT_TIMEOUT/i, /ETIMEDOUT/i],
+    description: "Connection timeout",
+  },
+  {
+    code: "10126",
+    patterns: [/UND_ERR_HEADERS_TIMEOUT/i],
+    description: "Headers timeout",
+  },
+  {
+    code: "10127",
+    patterns: [/UND_ERR_BODY_TIMEOUT/i],
+    description: "Body timeout",
+  },
+  { code: "10128", patterns: [/UND_ERR_SOCKET/i], description: "Socket error" },
+  {
+    code: "10129",
+    patterns: [/ECONNREFUSED/i],
+    description: "Connection refused",
+  },
+  { code: "10130", patterns: [/ECONNRESET/i], description: "Connection reset" },
+  { code: "10131", patterns: [/ENOTFOUND/i], description: "Host not found" },
+  {
+    code: "10132",
+    patterns: [/EHOSTUNREACH/i, /ENETUNREACH/i],
+    description: "Host/network unreachable",
+  },
+  {
+    code: "10133",
+    patterns: [
+      /DEPTH_ZERO_SELF_SIGNED_CERT/i,
+      /UNABLE_TO_VERIFY_LEAF_SIGNATURE/i,
+      /CERT_HAS_EXPIRED/i,
+    ],
+    description: "Certificate error",
+  },
+
+  // ZIP/Archive Errors (10135-10139)
+  {
+    code: "10135",
+    patterns: [/Invalid.*zip format/i, /unsupported zip format/i],
+    description: "Invalid zip format",
+  },
+  {
+    code: "10136",
+    patterns: [/End of central directory.*not found/i],
+    description: "Corrupted zip (no central directory)",
+  },
+  {
+    code: "10137",
+    patterns: [/Corrupted zip/i],
+    description: "Corrupted zip file",
+  },
+  {
+    code: "10138",
+    patterns: [/Invalid compression method/i],
+    description: "Invalid compression method",
+  },
+  {
+    code: "10139",
+    patterns: [/CRC32 checksum failed/i],
+    description: "Zip checksum failed",
+  },
+
+  // Memory Errors (10140-10144)
+  {
+    code: "10140",
+    patterns: [/heap out of memory/i, /Reached heap limit/i, /Out of memory/i],
+    description: "Out of memory",
+  },
+
+  // General JavaScript Errors (10145-10149)
+  {
+    code: "10145",
+    patterns: [
+      /Cannot read propert.*of undefined/i,
+      /Cannot read propert.*of null/i,
+    ],
+    description: "Property access on null/undefined",
+  },
+  {
+    code: "10146",
+    patterns: [/is not defined/i],
+    description: "Variable not defined",
+  },
+  {
+    code: "10147",
+    patterns: [/is not a function/i],
+    description: "Not a function",
+  },
+  {
+    code: "10148",
+    patterns: [/Maximum call stack size exceeded/i],
+    description: "Stack overflow",
+  },
+];
+
+/**
+ * Classifies a prepare function error and returns the appropriate error code
+ * @param {string} errorMessage - The error message to classify
+ * @returns {{code: string, description: string}} Error code and description
+ */
+function classifyPrepareError(errorMessage) {
+  for (const errorDef of PREPARE_ERROR_PATTERNS) {
+    for (const pattern of errorDef.patterns) {
+      if (pattern.test(errorMessage)) {
+        return { code: errorDef.code, description: errorDef.description };
+      }
+    }
+  }
+  // Default: unknown prepare error
+  return { code: "10999", description: "Unknown prepare error" };
+}
 
 const RE_S3PATH = /^s3:\/\/([^/]+)\/(.*)$/i;
+const sfnClient = new SFNClient({});
+const eventBridgeClient = new EventBridgeClient({});
+
+/**
+ * Emits a workflow event to EventBridge
+ * @param {Object} params - Event parameters
+ * @param {string} params.executionId - Step Functions execution ARN
+ * @param {string} params.county - County name
+ * @param {string} params.status - Event status (IN_PROGRESS, etc.)
+ * @returns {Promise<void>}
+ */
+async function emitWorkflowEvent({ executionId, county, status }) {
+  console.log(
+    `📤 Emitting EventBridge event: status=${status}, county=${county}`,
+  );
+  try {
+    /** @type {{ executionId: string; county: string; status: string; phase: string; step: string; dataGroupLabel: string }} */
+    const detail = {
+      executionId,
+      county,
+      status,
+      phase: "Prepare",
+      step: "Prepare",
+      dataGroupLabel: "County",
+    };
+
+    await eventBridgeClient.send(
+      new PutEventsCommand({
+        Entries: [
+          {
+            Source: "elephant.workflow",
+            DetailType: "WorkflowEvent",
+            Detail: JSON.stringify(detail),
+          },
+        ],
+      }),
+    );
+    console.log(`✅ EventBridge event emitted: ${status}`);
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error(
+      `⚠️ Failed to emit EventBridge event [01019]: ${errorMessage}`,
+    );
+    throw new PrepareError(
+      "01019",
+      `Failed to emit EventBridge event: ${errorMessage}`,
+    );
+  }
+}
+
+/**
+ * Sends task success to Step Functions
+ * @param {string} taskToken - The task token from SQS message
+ * @param {Object} output - The output to send back to Step Functions
+ * @returns {Promise<void>}
+ */
+async function sendTaskSuccess(taskToken, output) {
+  console.log(`📤 Sending task success to Step Functions...`);
+  try {
+    await sfnClient.send(
+      new SendTaskSuccessCommand({
+        taskToken,
+        output: JSON.stringify(output),
+      }),
+    );
+    console.log(`✅ Task success sent`);
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error(`❌ Failed to send task success [01017]: ${errorMessage}`);
+    throw new PrepareError(
+      "01017",
+      `Failed to send task success: ${errorMessage}`,
+    );
+  }
+}
+
+/**
+ * Sends task failure to Step Functions
+ * @param {string} taskToken - The task token from SQS message
+ * @param {string} errorCode - Error code identifier
+ * @param {string} cause - Error cause description
+ * @returns {Promise<void>}
+ */
+async function sendTaskFailure(taskToken, errorCode, cause) {
+  console.log(`📤 Sending task failure to Step Functions...`);
+  try {
+    await sfnClient.send(
+      new SendTaskFailureCommand({
+        taskToken,
+        error: errorCode,
+        cause: cause.substring(0, 256), // Max 256 chars
+      }),
+    );
+    console.log(`✅ Task failure sent`);
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error(`❌ Failed to send task failure [01018]: ${errorMessage}`);
+    throw new PrepareError(
+      "01018",
+      `Failed to send task failure: ${errorMessage}`,
+    );
+  }
+}
+
+/**
+ * Extracts county name from the input zip's input.csv (county column)
+ * Falls back to unnormalized_address.json if input.csv doesn't have county
+ * @param {AdmZip} zip - AdmZip instance
+ * @returns {string|null} County name or null if not found in any source
+ * @throws {PrepareError} Only on actual parsing/read errors (malformed CSV/JSON),
+ *   NOT when county field is simply missing from valid files
+ */
+function extractCountyFromZip(zip) {
+  // Note: The try-catch below handles parsing errors (malformed CSV/JSON).
+  // If files are valid but don't contain county info, we fall through to return null.
+  try {
+    const zipEntries = zip.getEntries();
+
+    // First, try to get county from input.csv
+    const inputCsvEntry = zipEntries.find(
+      (entry) =>
+        entry.entryName === "input.csv" ||
+        entry.entryName.endsWith("/input.csv"),
+    );
+
+    if (inputCsvEntry) {
+      const csvContent = zip.readAsText(inputCsvEntry);
+      const rows = parseCSV(csvContent, {
+        columns: true,
+        skip_empty_lines: true,
+        trim: true,
+      });
+
+      const firstRow = rows[0];
+      if (firstRow) {
+        // Look for 'county' column (case-insensitive)
+        const countyKey = Object.keys(firstRow).find(
+          (k) => k.toLowerCase() === "county",
+        );
+
+        if (
+          countyKey &&
+          firstRow[countyKey] &&
+          firstRow[countyKey].trim() !== ""
+        ) {
+          const county = firstRow[countyKey].trim();
+          console.log(`✅ Found county in input.csv: ${county}`);
+          return county;
+        }
+      }
+    }
+
+    // Fallback: try unnormalized_address.json
+    const addressEntry = zipEntries.find(
+      (entry) => entry.entryName === "unnormalized_address.json",
+    );
+
+    if (addressEntry) {
+      const addressContent = zip.readAsText(addressEntry);
+      const addressData = JSON.parse(addressContent);
+      if (addressData.county_jurisdiction) {
+        console.log(
+          `✅ Found county in unnormalized_address.json: ${addressData.county_jurisdiction}`,
+        );
+        return addressData.county_jurisdiction;
+      }
+    }
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error(`⚠️ Could not extract county from zip: ${errorMessage}`);
+    throw new PrepareError(
+      "01008",
+      `Could not extract county from zip: ${errorMessage}`,
+    );
+  }
+  return null;
+}
 
 /**
  * @typedef {Object} IPInfo
@@ -42,6 +707,187 @@ const RE_S3PATH = /^s3:\/\/([^/]+)\/(.*)$/i;
  * @property {boolean} locked - Whether the proxy is currently locked by a lambda
  * @property {number} lockedAt - Unix timestamp when the proxy was locked
  */
+
+/**
+ * Reads configuration S3 URI from input.csv in the zip file
+ * @param {AdmZip} zip - AdmZip instance of the input zip
+ * @returns {string | null} Configuration S3 URI or null if not found (no input.csv or no config column)
+ * @throws {PrepareError} If input.csv exists but cannot be read or parsed
+ */
+function getConfigurationUriFromInputCsv(zip) {
+  const zipEntries = zip.getEntries();
+
+  // Find input.csv in the zip
+  const inputCsvEntry = zipEntries.find(
+    (entry) =>
+      entry.entryName === "input.csv" || entry.entryName.endsWith("/input.csv"),
+  );
+
+  if (!inputCsvEntry) {
+    console.log(
+      "📄 input.csv not found in zip file, using environment variables",
+    );
+    return null;
+  }
+
+  let csvContent;
+  try {
+    csvContent = zip.readAsText(inputCsvEntry);
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error(`⚠️ Error reading input.csv: ${errorMessage}`);
+    throw new PrepareError("01003", `Error reading input.csv: ${errorMessage}`);
+  }
+
+  let rows;
+  try {
+    rows = parseCSV(csvContent, {
+      columns: true,
+      skip_empty_lines: true,
+      trim: true,
+    });
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error(`⚠️ Error parsing input.csv: ${errorMessage}`);
+    throw new PrepareError("01004", `Error parsing input.csv: ${errorMessage}`);
+  }
+
+  if (rows.length === 0) {
+    console.error("📄 input.csv is empty or has no data rows");
+    throw new PrepareError("01005", "input.csv is empty or has no data rows");
+  }
+
+  // Get configuration column from first row (case-insensitive)
+  const firstRow = rows[0];
+  const configKey = Object.keys(firstRow).find(
+    (k) => k.toLowerCase() === "configuration" || k.toLowerCase() === "config",
+  );
+
+  if (configKey && firstRow[configKey] && firstRow[configKey].trim() !== "") {
+    const configUri = firstRow[configKey].trim();
+    console.log(`✅ Found configuration URI in input.csv: ${configUri}`);
+    return configUri;
+  }
+
+  console.log(
+    "📄 No 'configuration' column found in input.csv, using environment variables",
+  );
+  return null;
+}
+
+/**
+ * Downloads and parses JSON configuration file from S3
+ * @param {S3Client} s3Client - S3 client instance
+ * @param {string} configS3Uri - S3 URI of configuration file (s3://bucket/key.json)
+ * @returns {Promise<{[key: string]: any} | null>} Configuration object or null on failure
+ */
+async function downloadConfigurationFromS3(s3Client, configS3Uri) {
+  try {
+    const match = RE_S3PATH.exec(configS3Uri);
+    if (!match) {
+      console.error(`❌ Invalid S3 URI format: ${configS3Uri}`);
+      return null;
+    }
+
+    const [, bucket, key] = match;
+    console.log(`📥 Downloading configuration from s3://${bucket}/${key}`);
+
+    const response = await s3Client.send(
+      new GetObjectCommand({ Bucket: bucket, Key: key }),
+    );
+
+    const configBytes = await response.Body?.transformToByteArray();
+    if (!configBytes) {
+      throw new PrepareError(
+        "01009",
+        "Failed to download configuration file body",
+      );
+    }
+
+    const configContent = new TextDecoder().decode(configBytes);
+    const config = JSON.parse(configContent);
+
+    console.log(
+      `✅ Configuration loaded from S3 (${Object.keys(config).length} keys):`,
+    );
+    // Log keys (redact sensitive values)
+    for (const configKey of Object.keys(config)) {
+      if (
+        configKey.includes("KEY") ||
+        configKey.includes("JWT") ||
+        configKey.includes("TOKEN") ||
+        configKey.includes("PASSWORD") ||
+        configKey.includes("SECRET")
+      ) {
+        console.log(`   ${configKey}: ***REDACTED***`);
+      } else {
+        const value = config[configKey];
+        const displayValue =
+          typeof value === "object" ? JSON.stringify(value) : value;
+        console.log(`   ${configKey}: ${displayValue}`);
+      }
+    }
+
+    return config;
+  } catch (error) {
+    if (error instanceof Error && error.name === "NoSuchKey") {
+      console.error(`❌ Configuration file not found: ${configS3Uri}`);
+    } else {
+      console.error(
+        `❌ Failed to download configuration: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    return null;
+  }
+}
+
+/**
+ * Gets a configuration value with S3 config priority, then falls back to environment variables
+ * Priority: S3 config county-specific -> S3 config general -> env var county-specific -> env var general
+ * @param {string} baseKey - Base configuration key (e.g., "ELEPHANT_PREPARE_USE_BROWSER")
+ * @param {string | null} countyName - County name for county-specific lookups
+ * @param {{[key: string]: any} | null} s3Config - Configuration loaded from S3
+ * @returns {string | undefined} Configuration value or undefined if not found
+ */
+function getConfigValue(baseKey, countyName, s3Config) {
+  // Sanitize county name for key lookup (replace spaces with underscores)
+  const sanitizedCounty = countyName ? countyName.replace(/ /g, "_") : null;
+  const countySpecificKey = sanitizedCounty
+    ? `${baseKey}_${sanitizedCounty}`
+    : null;
+
+  // 1. Check S3 config county-specific
+  if (
+    s3Config &&
+    countySpecificKey &&
+    s3Config[countySpecificKey] !== undefined
+  ) {
+    const value = s3Config[countySpecificKey];
+    console.log(`  Using S3 config (county-specific): ${countySpecificKey}`);
+    return typeof value === "object" ? JSON.stringify(value) : String(value);
+  }
+
+  // 2. Check S3 config general
+  if (s3Config && s3Config[baseKey] !== undefined) {
+    const value = s3Config[baseKey];
+    console.log(`  Using S3 config (general): ${baseKey}`);
+    return typeof value === "object" ? JSON.stringify(value) : String(value);
+  }
+
+  // 3. Check env var county-specific (backward compatibility)
+  if (countySpecificKey && process.env[countySpecificKey] !== undefined) {
+    console.log(`  Using env var (county-specific): ${countySpecificKey}`);
+    return process.env[countySpecificKey];
+  }
+
+  // 4. Check env var general (backward compatibility)
+  if (process.env[baseKey] !== undefined) {
+    console.log(`  Using env var (general): ${baseKey}`);
+    return process.env[baseKey];
+  }
+
+  return undefined;
+}
 
 /**
  * Cleans up stale proxy locks that have been held for more than the timeout period
@@ -366,68 +1212,45 @@ const splitS3Uri = (s3Uri) => {
   const match = RE_S3PATH.exec(s3Uri);
 
   if (!match) {
-    throw new Error("S3 path should be like: s3://bucket/object");
+    throw new PrepareError(
+      "01010",
+      `Invalid S3 path format: ${s3Uri}. Expected: s3://bucket/object`,
+    );
   }
 
   const [, bucket, key] = match;
   if (!bucket || !key) {
-    throw new Error("S3 path should be like: s3://bucket/object");
+    throw new PrepareError(
+      "01010",
+      `Invalid S3 path format: ${s3Uri}. Expected: s3://bucket/object`,
+    );
   }
   return { bucket, key };
 };
 
 /**
- * Lambda handler for processing orders and storing receipts in S3.
- * @param {Object} event - Input event containing order details
- * @param {string} event.input_s3_uri - S3 URI of input file
- * @param {string} event.output_s3_uri_prefix - S3 URI prefix for output files
- * @returns {Promise<{ output_s3_uri: string }>} Success message
+ * Processes the prepare step for a single parcel
+ * @param {Object} params - Processing parameters
+ * @param {string} params.input_s3_uri - S3 URI of input file
+ * @param {string} [params.output_s3_uri_prefix] - S3 URI prefix for output files
+ * @param {string} [params.executionId] - Step Functions execution ARN
+ * @param {string} [params.taskToken] - Task token for SQS callback
+ * @returns {Promise<{ output_s3_uri: string; county: string | null }>} Success result
  */
-export const handler = async (event) => {
+async function processPrepare({
+  input_s3_uri,
+  output_s3_uri_prefix,
+  executionId,
+  taskToken,
+}) {
   const startTime = Date.now();
-  console.log("Event:", event);
-  console.log(`🚀 Lambda handler started at: ${new Date().toISOString()}`);
+  console.log(`🚀 Prepare processing started at: ${new Date().toISOString()}`);
 
-  // Log IP address and Lambda environment information
-  console.log("🌐 Getting Lambda IP address information...");
-  try {
-    const ipInfo = await getIPAddresses();
-    console.log(`🔍 Lambda Instance Info:`);
-    console.log(`   Function: ${ipInfo.lambdaFunction}`);
-    console.log(
-      `   Version: ${process.env.AWS_LAMBDA_FUNCTION_VERSION || "unknown"}`,
-    );
-    console.log(`   Region: ${ipInfo.awsRegion}`);
-    console.log(
-      `   Memory: ${process.env.AWS_LAMBDA_FUNCTION_MEMORY_SIZE || "unknown"}MB`,
-    );
-    console.log(`   Runtime: ${process.env.AWS_EXECUTION_ENV || "unknown"}`);
-    console.log(`   Request ID: ${process.env.AWS_REQUEST_ID || "unknown"}`);
-    console.log(
-      `   Local IPs: ${ipInfo.localIPs.length > 0 ? ipInfo.localIPs.join(", ") : "None found"}`,
-    );
-    console.log(`   Public IP: ${ipInfo.publicIP || "Not available"}`);
-
-    // Also log some additional network diagnostics
-    if (ipInfo.publicIP) {
-      console.log(
-        `🌍 Network: Lambda has outbound internet access via IP ${ipInfo.publicIP}`,
-      );
-    } else {
-      console.log(
-        `🚫 Network: No public IP detected (may be VPC-only or blocked)`,
-      );
-    }
-  } catch (error) {
-    console.log(
-      `⚠️ Could not get IP information: ${error instanceof Error ? error.message : String(error)}`,
-    );
+  if (!input_s3_uri) {
+    throw new PrepareError("01011", "Missing required field: input_s3_uri");
   }
 
-  if (!event || !event.input_s3_uri) {
-    throw new Error("Missing required field: input_s3_uri");
-  }
-  const { bucket, key } = splitS3Uri(event.input_s3_uri);
+  const { bucket, key } = splitS3Uri(input_s3_uri);
   console.log("Bucket:", bucket);
   console.log("Key:", key);
   const s3 = new S3Client({});
@@ -460,6 +1283,9 @@ export const handler = async (event) => {
   }
 
   const tempDir = await fs.mkdtemp("/tmp/prepare-");
+  /** @type {string | null} */
+  let countyName = null;
+
   try {
     // S3 Download Phase
     console.log("📥 Starting S3 download...");
@@ -471,7 +1297,7 @@ export const handler = async (event) => {
     );
     const inputBytes = await getResp.Body?.transformToByteArray();
     if (!inputBytes) {
-      throw new Error("Failed to download input object body");
+      throw new PrepareError("01012", "Failed to download input object body");
     }
     await fs.writeFile(inputZip, Buffer.from(inputBytes));
 
@@ -484,34 +1310,15 @@ export const handler = async (event) => {
     );
 
     // Extract county name from unnormalized_address.json
-    let countyName = null;
     console.log("📍 Extracting county information from input...");
 
     try {
-      // Use adm-zip to read the zip file directly without extracting to disk
       const zip = new AdmZip(inputZip);
-      const zipEntries = zip.getEntries();
-
-      // Find unnormalized_address.json in the zip
-      const addressEntry = zipEntries.find(
-        (entry) => entry.entryName === "unnormalized_address.json",
-      );
-
-      if (addressEntry) {
-        // Read the file content directly from zip
-        const addressContent = zip.readAsText(addressEntry);
-        const addressData = JSON.parse(addressContent);
-
-        if (addressData.county_jurisdiction) {
-          countyName = addressData.county_jurisdiction;
-          console.log(`✅ Detected county: ${countyName}`);
-        } else {
-          console.log(
-            "⚠️ No county_jurisdiction found in unnormalized_address.json",
-          );
-        }
+      countyName = extractCountyFromZip(zip);
+      if (countyName) {
+        console.log(`✅ Detected county: ${countyName}`);
       } else {
-        console.log("⚠️ unnormalized_address.json not found in zip file");
+        console.log("⚠️ No county_jurisdiction found");
       }
     } catch (error) {
       console.error(
@@ -520,45 +1327,62 @@ export const handler = async (event) => {
       console.log("Continuing with general configuration...");
     }
 
+    // Log that we have county info (EventBridge events are emitted by the state machine)
+    if (executionId) {
+      console.log(
+        `📋 Processing for execution: ${executionId}, county: ${countyName || "unknown"}`,
+      );
+    }
+
+    // Load configuration from S3 if specified in input.csv
+    /** @type {{[key: string]: any} | null} */
+    let s3Config = null;
+    try {
+      const zip = new AdmZip(inputZip);
+      const configUri = getConfigurationUriFromInputCsv(zip);
+      if (configUri) {
+        console.log("📦 Loading configuration from S3...");
+        s3Config = await downloadConfigurationFromS3(s3, configUri);
+        if (s3Config) {
+          console.log(
+            "✅ S3 configuration loaded successfully - will prioritize over environment variables",
+          );
+        } else {
+          console.log(
+            "⚠️ Failed to load S3 configuration, falling back to environment variables",
+          );
+        }
+      } else {
+        console.log(
+          "ℹ️ No configuration URI in input.csv, using environment variables only",
+        );
+      }
+    } catch (configError) {
+      console.error(
+        `⚠️ Error loading S3 configuration: ${configError instanceof Error ? configError.message : String(configError)}`,
+      );
+      console.log("Continuing with environment variables...");
+    }
+
     const outputZip = path.join(tempDir, "output.zip");
 
     console.log("Building prepare options...");
 
-    // Helper function to get environment variable with county-specific fallback
+    // Helper function to get config value with S3 priority, then env var fallback
     /**
-     * @param {string} baseEnvVar
-     * @param {string | null} countyName
+     * @param {string} baseKey
      * @returns {string | undefined}
      */
-    const getEnvWithCountyFallback = (baseEnvVar, countyName) => {
-      if (countyName) {
-        // Replace spaces with underscores for environment variable names
-        // e.g., "Santa Rosa" becomes "Santa_Rosa"
-        const sanitizedCountyName = countyName.replace(/ /g, "_");
-        const countySpecificVar = `${baseEnvVar}_${sanitizedCountyName}`;
-        if (process.env[countySpecificVar] !== undefined) {
-          console.log(
-            `  Using county-specific: ${countySpecificVar}='${process.env[countySpecificVar]}'`,
-          );
-          return process.env[countySpecificVar];
-        }
-      }
-      if (process.env[baseEnvVar] !== undefined) {
-        console.log(
-          `  Using general: ${baseEnvVar}='${process.env[baseEnvVar]}'`,
-        );
-        return process.env[baseEnvVar];
-      }
-      return undefined;
+    const getEnvWithCountyFallback = (baseKey) => {
+      return getConfigValue(baseKey, countyName, s3Config);
     };
 
     // Helper function to download flow files from S3
     /**
-     * Downloads a flow file from S3 for a specific county
-     * @param {string} flowType - Type of flow (e.g., "browser", "multi-request")
-     * @param {string} s3Prefix - S3 prefix path (e.g., "browser-flows")
-     * @param {string} localFileName - Local filename to save as (e.g., "browser-flow.json")
-     * @param {string} optionKey - Key in prepareOptions to set (e.g., "browserFlowFile")
+     * @param {string} flowType
+     * @param {string} s3Prefix
+     * @param {string} localFileName
+     * @param {string} optionKey
      * @returns {Promise<void>}
      */
     const downloadFlowFile = async (
@@ -584,18 +1408,20 @@ export const handler = async (event) => {
 
           const fileBytes = await response.Body?.transformToByteArray();
           if (!fileBytes) {
-            throw new Error(`Failed to download ${flowType} flow file body`);
+            throw new PrepareError(
+              "01013",
+              `Failed to download ${flowType} flow file body`,
+            );
           }
 
           const filePath = path.join(tempDir, localFileName);
           await fs.writeFile(filePath, Buffer.from(fileBytes));
-          // @ts-ignore - Dynamic key assignment for flow file options
+          // @ts-ignore
           prepareOptions[optionKey] = filePath;
           console.log(
             `✓ ${flowType} flow file downloaded and set for county ${countyName}: ${filePath}`,
           );
         } catch (downloadError) {
-          // File not found or other error - this is not critical, just log it
           if (
             downloadError instanceof Error &&
             downloadError.name === "NoSuchKey"
@@ -611,8 +1437,6 @@ export const handler = async (event) => {
         }
       }
     };
-
-    // Configuration map for prepare flags
 
     /** @type {FlagConfig[]} */
     const flagConfig = [
@@ -633,12 +1457,11 @@ export const handler = async (event) => {
       },
     ];
 
-    // Determine useBrowser setting from environment variable with county-specific fallback
+    // Determine useBrowser setting
     const useBrowserEnv = getEnvWithCountyFallback(
       "ELEPHANT_PREPARE_USE_BROWSER",
-      countyName,
     );
-    let useBrowser = true; // Default to true if not specified
+    let useBrowser = true;
     if (useBrowserEnv !== undefined) {
       useBrowser = useBrowserEnv === "true";
       console.log(
@@ -650,7 +1473,6 @@ export const handler = async (event) => {
       );
     }
 
-    // Build prepare options based on environment variables
     /** @type {{ useBrowser: boolean, noFast?: boolean, noContinue?: boolean, browserFlowTemplate?: string, browserFlowParameters?: string, proxyUrl?: string, ignoreCaptcha?: boolean, continueButtonSelector?: string, browserFlowFile?: string, multiRequestFlowFile?: string }} */
     const prepareOptions = { useBrowser };
 
@@ -668,7 +1490,7 @@ export const handler = async (event) => {
     }
 
     for (const { envVar, optionKey, description } of flagConfig) {
-      const envValue = getEnvWithCountyFallback(envVar, countyName);
+      const envValue = getEnvWithCountyFallback(envVar);
       if (envValue === "true") {
         prepareOptions[optionKey] = true;
         console.log(`✓ Setting ${optionKey}: true (${description})`);
@@ -677,12 +1499,10 @@ export const handler = async (event) => {
       }
     }
 
-    // Handle continue button selector configuration with county-specific lookup
+    // Handle continue button selector
     const continueButtonSelector = getEnvWithCountyFallback(
       "ELEPHANT_PREPARE_CONTINUE_BUTTON",
-      countyName,
     );
-
     if (continueButtonSelector && continueButtonSelector.trim() !== "") {
       prepareOptions.continueButtonSelector = continueButtonSelector;
       console.log(
@@ -690,7 +1510,7 @@ export const handler = async (event) => {
       );
     }
 
-    // Check for browser flow file in S3 (county-specific)
+    // Check for flow files in S3
     const environmentBucket = process.env.ENVIRONMENT_BUCKET;
     await downloadFlowFile(
       "browser",
@@ -699,7 +1519,6 @@ export const handler = async (event) => {
       "browserFlowFile",
     );
 
-    // Check for multi-request flow file in S3 (county-specific)
     await downloadFlowFile(
       "multi-request",
       "multi-request-flows",
@@ -707,14 +1526,12 @@ export const handler = async (event) => {
       "multiRequestFlowFile",
     );
 
-    // Handle browser flow template configuration with county-specific lookup
+    // Handle browser flow template configuration
     const browserFlowTemplate = getEnvWithCountyFallback(
       "ELEPHANT_PREPARE_BROWSER_FLOW_TEMPLATE",
-      countyName,
     );
     let browserFlowParameters = getEnvWithCountyFallback(
       "ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS",
-      countyName,
     );
 
     if (browserFlowTemplate && browserFlowTemplate.trim() !== "") {
@@ -725,43 +1542,55 @@ export const handler = async (event) => {
 
       if (browserFlowParameters && browserFlowParameters.trim() !== "") {
         try {
-          // Parse simple key:value format (e.g., "timeout:30000,retries:3,selector:#main-content")
           /** @type {{ [key: string]: string | number | boolean }} */
-          const parsedParams = {};
-          const pairs = browserFlowParameters.split(",");
+          let parsedParams = {};
+          const trimmedParams = browserFlowParameters.trim();
 
-          for (const pair of pairs) {
-            const colonIndex = pair.indexOf(":");
-            if (colonIndex === -1) {
-              throw new Error(
-                `Invalid parameter format: "${pair}" - expected key:value`,
-              );
-            }
+          if (trimmedParams.startsWith("{") && trimmedParams.endsWith("}")) {
+            parsedParams = JSON.parse(trimmedParams);
+            console.log(
+              `✓ ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS detected as JSON format`,
+            );
+          } else {
+            console.log(
+              `✓ ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS detected as key:value format`,
+            );
+            const pairs = browserFlowParameters.split(",");
 
-            const key = pair.substring(0, colonIndex).trim();
-            const value = pair.substring(colonIndex + 1).trim();
+            for (const pair of pairs) {
+              const colonIndex = pair.indexOf(":");
+              if (colonIndex === -1) {
+                throw new PrepareError(
+                  "01014",
+                  `Invalid parameter format: "${pair}" - expected key:value`,
+                );
+              }
 
-            if (!key) {
-              throw new Error(`Empty key in parameter: "${pair}"`);
-            }
+              const key = pair.substring(0, colonIndex).trim();
+              const value = pair.substring(colonIndex + 1).trim();
 
-            // Try to parse numeric values
-            if (/^\d+$/.test(value)) {
-              parsedParams[key] = parseInt(value, 10);
-            } else if (/^\d+\.\d+$/.test(value)) {
-              parsedParams[key] = parseFloat(value);
-            } else if (value.toLowerCase() === "true") {
-              parsedParams[key] = true;
-            } else if (value.toLowerCase() === "false") {
-              parsedParams[key] = false;
-            } else {
-              // Keep as string
-              parsedParams[key] = value;
+              if (!key) {
+                throw new PrepareError(
+                  "01015",
+                  `Empty key in parameter: "${pair}"`,
+                );
+              }
+
+              if (/^\d+$/.test(value)) {
+                parsedParams[key] = parseInt(value, 10);
+              } else if (/^\d+\.\d+$/.test(value)) {
+                parsedParams[key] = parseFloat(value);
+              } else if (value.toLowerCase() === "true") {
+                parsedParams[key] = true;
+              } else if (value.toLowerCase() === "false") {
+                parsedParams[key] = false;
+              } else {
+                parsedParams[key] = value;
+              }
             }
           }
 
           prepareOptions.browserFlowTemplate = browserFlowTemplate;
-          // Pass as JSON string, not as object
           prepareOptions.browserFlowParameters = JSON.stringify(parsedParams);
           console.log(
             `✓ ELEPHANT_PREPARE_BROWSER_FLOW_PARAMETERS parsed successfully:`,
@@ -774,8 +1603,9 @@ export const handler = async (event) => {
           console.error(
             `Invalid format: ${browserFlowParameters.substring(0, 100)}...`,
           );
-          console.error(`Expected format: key1:value1,key2:value2`);
-          // Continue without browser flow parameters rather than failing
+          console.error(
+            `Expected format: JSON object or key1:value1,key2:value2`,
+          );
           console.warn(
             "Continuing without browser flow configuration due to invalid format",
           );
@@ -791,7 +1621,7 @@ export const handler = async (event) => {
       );
     }
 
-    // Prepare Phase (Main bottleneck)
+    // Prepare Phase
     console.log("🔄 Starting prepare() function...");
     const prepareStart = Date.now();
     console.log(
@@ -800,11 +1630,9 @@ export const handler = async (event) => {
     );
 
     let prepareDuration;
-    let prepareSucceeded = false;
     try {
       await prepare(inputZip, outputZip, prepareOptions);
       prepareDuration = Date.now() - prepareStart;
-      prepareSucceeded = true;
       console.log(
         `✅ Prepare function completed: ${prepareDuration}ms (${(prepareDuration / 1000).toFixed(2)}s)`,
       );
@@ -824,87 +1652,6 @@ export const handler = async (event) => {
     } catch (prepareError) {
       prepareDuration = Date.now() - prepareStart;
 
-      // Gather file system context
-      let inputFileInfo = null;
-      let outputFileInfo = null;
-
-      try {
-        const inputStats = await fs.stat(inputZip);
-        inputFileInfo = {
-          exists: true,
-          size: inputStats.size,
-          path: inputZip,
-        };
-      } catch (statsError) {
-        inputFileInfo = {
-          exists: false,
-          error:
-            statsError instanceof Error
-              ? statsError.message
-              : String(statsError),
-          path: inputZip,
-        };
-      }
-
-      try {
-        const outputStats = await fs.stat(outputZip);
-        outputFileInfo = {
-          exists: true,
-          size: outputStats.size,
-          partiallyCreated: true,
-          path: outputZip,
-        };
-      } catch (outputError) {
-        outputFileInfo = {
-          exists: false,
-          partiallyCreated: false,
-          path: outputZip,
-        };
-      }
-
-      // Structured error log
-      const prepareErrorLog = {
-        timestamp: new Date().toISOString(),
-        level: "ERROR",
-        type: "PREPARE_FUNCTION_ERROR",
-        message: "Prepare function execution failed",
-        error: {
-          name:
-            prepareError instanceof Error
-              ? prepareError.name
-              : String(prepareError),
-          message:
-            prepareError instanceof Error
-              ? prepareError.message
-              : String(prepareError),
-          stack:
-            prepareError instanceof Error
-              ? prepareError.stack
-              : String(prepareError),
-        },
-        execution: {
-          duration: prepareDuration,
-          durationSeconds: (prepareDuration / 1000).toFixed(2),
-          phase: "prepare",
-        },
-        context: {
-          inputS3Uri: event.input_s3_uri,
-          inputFile: inputFileInfo,
-          outputFile: outputFileInfo,
-          options: prepareOptions,
-        },
-        lambda: {
-          function: process.env.AWS_LAMBDA_FUNCTION_NAME,
-          version: process.env.AWS_LAMBDA_FUNCTION_VERSION,
-          requestId: process.env.AWS_REQUEST_ID,
-          region: process.env.AWS_REGION,
-          memorySize: process.env.AWS_LAMBDA_FUNCTION_MEMORY_SIZE,
-        },
-      };
-
-      console.error("❌ PREPARE FUNCTION FAILED");
-      console.error(prepareErrorLog);
-
       // Update proxy usage as failed
       if (selectedProxy && proxyTableName) {
         await updateProxyUsage(
@@ -915,21 +1662,19 @@ export const handler = async (event) => {
         );
       }
 
-      // Re-throw with enhanced context
-      /** @type {EnhancedError} */
-      const enhancedError = new Error(
-        `Prepare function failed: ${prepareError instanceof Error ? prepareError.message : String(prepareError)}`,
+      // Classify the error and throw with appropriate error code
+      const errorMessage =
+        prepareError instanceof Error
+          ? prepareError.message
+          : String(prepareError);
+      const { code, description } = classifyPrepareError(errorMessage);
+      console.error(
+        `❌ Prepare function failed [${code}] (${description}): ${errorMessage}`,
       );
-      enhancedError.originalError =
-        prepareError instanceof Error ? prepareError : undefined;
-      enhancedError.type = "PREPARE_FUNCTION_ERROR";
-      enhancedError.context = prepareErrorLog.context;
-      enhancedError.execution = prepareErrorLog.execution;
-      throw enhancedError;
+      throw new PrepareError(code, `Prepare function failed: ${errorMessage}`);
     }
 
-    // Add input.csv to the output zip if it exists in the input zip
-    // This ensures input.csv is available downstream in the post step
+    // Add input.csv to the output zip
     console.log("📝 Adding input.csv to output zip...");
     try {
       const inputZipReader = new AdmZip(inputZip);
@@ -947,7 +1692,6 @@ export const handler = async (event) => {
       console.warn(
         `⚠️ Failed to add input.csv to output: ${csvError instanceof Error ? csvError.message : String(csvError)}`,
       );
-      // Don't fail the entire process if CSV addition fails
     }
 
     // Check output file size
@@ -957,14 +1701,11 @@ export const handler = async (event) => {
     // Determine upload destination
     let outBucket = bucket;
     let outKey = key;
-    if (event.output_s3_uri_prefix) {
-      const { bucket: outB, key: outPrefix } = splitS3Uri(
-        event.output_s3_uri_prefix,
-      );
+    if (output_s3_uri_prefix) {
+      const { bucket: outB, key: outPrefix } = splitS3Uri(output_s3_uri_prefix);
       outBucket = outB;
       outKey = path.posix.join(outPrefix.replace(/\/$/, ""), "output.zip");
     } else {
-      // Default: write next to input with a suffix
       const dir = path.posix.dirname(key);
       const base = path.posix.basename(key, path.extname(key));
       outKey = path.posix.join(dir, `${base}.prepared.zip`);
@@ -1007,54 +1748,10 @@ export const handler = async (event) => {
       `   TOTAL:       ${totalDuration}ms (${(totalDuration / 1000).toFixed(2)}s)`,
     );
     console.log(
-      `🏁 Lambda handler completed at: ${new Date().toISOString()}\n`,
+      `🏁 Prepare processing completed at: ${new Date().toISOString()}\n`,
     );
 
-    return { output_s3_uri: `s3://${outBucket}/${outKey}` };
-  } catch (lambdaError) {
-    const totalDuration = Date.now() - startTime;
-    if (!(lambdaError instanceof Error)) {
-      throw new Error("Lambda execution failed, but no error was thrown");
-    }
-    /** @type {EnhancedError} */
-    const error = lambdaError;
-
-    // Structured Lambda error log
-    const lambdaErrorLog = {
-      timestamp: new Date().toISOString(),
-      level: "ERROR",
-      type: error.type || "LAMBDA_EXECUTION_ERROR",
-      message: "Lambda execution failed",
-      error: {
-        name: error.name,
-        message: error.message,
-        stack: error.stack,
-      },
-      execution: {
-        totalDuration: totalDuration,
-        totalDurationSeconds: (totalDuration / 1000).toFixed(2),
-        failed: true,
-      },
-      input: {
-        event: event,
-        inputS3Uri: event?.input_s3_uri || null,
-      },
-      context: error.context || null,
-      validationErrors: error.validationErrors || null,
-      lambda: {
-        function: process.env.AWS_LAMBDA_FUNCTION_NAME,
-        version: process.env.AWS_LAMBDA_FUNCTION_VERSION,
-        requestId: process.env.AWS_REQUEST_ID,
-        region: process.env.AWS_REGION,
-        memorySize: process.env.AWS_LAMBDA_FUNCTION_MEMORY_SIZE,
-        runtime: process.env.AWS_EXECUTION_ENV,
-      },
-    };
-
-    console.error("LAMBDA EXECUTION FAILED");
-    console.error(lambdaErrorLog);
-
-    throw lambdaError;
+    return { output_s3_uri: `s3://${outBucket}/${outKey}`, county: countyName };
   } finally {
     try {
       await fs.rm(tempDir, { recursive: true, force: true });
@@ -1065,4 +1762,171 @@ export const handler = async (event) => {
       );
     }
   }
+}
+
+/**
+ * @typedef {Object} SQSRecord
+ * @property {string} eventSource - Event source (e.g., "aws:sqs")
+ * @property {string} body - Message body as JSON string
+ */
+
+/**
+ * @typedef {Object} SQSEvent
+ * @property {SQSRecord[]} Records - Array of SQS records
+ */
+
+/**
+ * @typedef {Object} DirectInvokeEvent
+ * @property {string} input_s3_uri - S3 URI of input file
+ * @property {string} [output_s3_uri_prefix] - S3 URI prefix for output files
+ */
+
+/**
+ * Lambda handler for processing orders and storing receipts in S3.
+ * Supports both direct invocation and SQS trigger with task token.
+ * @param {SQSEvent | DirectInvokeEvent} event - Input event (direct invoke or SQS event)
+ * @returns {Promise<{ output_s3_uri: string; county: string | null } | void>} Success message (direct invoke only)
+ */
+export const handler = async (event) => {
+  console.log("Event:", JSON.stringify(event, null, 2));
+  console.log(`🚀 Lambda handler started at: ${new Date().toISOString()}`);
+
+  // Detect if this is an SQS event
+  /** @type {SQSEvent} */
+  const sqsEvent = /** @type {SQSEvent} */ (event);
+  const isSQSEvent =
+    sqsEvent.Records &&
+    Array.isArray(sqsEvent.Records) &&
+    sqsEvent.Records[0]?.eventSource === "aws:sqs";
+
+  if (isSQSEvent) {
+    // Process SQS messages (with task token pattern)
+    console.log(`📬 Processing ${sqsEvent.Records.length} SQS message(s)`);
+
+    for (const record of sqsEvent.Records) {
+      let messageBody;
+      let taskToken;
+      let executionId;
+      let county = "unknown";
+
+      try {
+        messageBody = JSON.parse(record.body);
+        taskToken = messageBody.taskToken;
+        executionId = messageBody.executionId;
+        county = messageBody.county || "unknown";
+
+        console.log(`📋 Processing message with executionId: ${executionId}`);
+
+        if (!taskToken) {
+          throw new PrepareError(
+            "01016",
+            "Missing taskToken in SQS message body",
+          );
+        }
+
+        // Emit IN_PROGRESS event to EventBridge
+        await emitWorkflowEvent({
+          executionId,
+          county,
+          status: "IN_PROGRESS",
+        });
+
+        const result = await processPrepare({
+          input_s3_uri: messageBody.input_s3_uri,
+          output_s3_uri_prefix: messageBody.output_s3_uri_prefix,
+          executionId,
+          taskToken,
+        });
+
+        county = result.county || county;
+
+        console.log(`✅ Prepare succeeded for county: ${county}`);
+
+        // Send success to Step Functions with taskToken for EventBridge
+        await sendTaskSuccess(taskToken, {
+          output_s3_uri: result.output_s3_uri,
+          county,
+          taskToken, // Include taskToken so state machine can pass to EventBridge
+        });
+      } catch (error) {
+        const errorMessage =
+          error instanceof Error ? error.message : String(error);
+        // Use error code from PrepareError if available, otherwise default to "01002"
+        const errorCode = error instanceof PrepareError ? error.code : "01002";
+        // Format: ERRORCODE+COUNTYNAME (e.g., "10050Hamilton")
+        const fullErrorCode = `${errorCode}${county}`;
+        console.error(
+          `❌ Prepare processing failed [${fullErrorCode}]: ${errorMessage}`,
+        );
+
+        // Send failure to Step Functions
+        // Build cause payload and truncate final JSON to fit 256 char limit
+        // Note: county is already included in fullErrorCode, so not duplicated in cause
+        if (taskToken) {
+          const causePayload = JSON.stringify({
+            message: errorMessage,
+          }).substring(0, 256);
+          await sendTaskFailure(taskToken, fullErrorCode, causePayload);
+        } else {
+          // No taskToken - can't notify Step Functions
+          // Re-throw to trigger SQS retry/DLQ
+          console.error(
+            `❌ Cannot send task failure - no taskToken available [01020]. SQS will retry.`,
+          );
+          throw new PrepareError(
+            "01020",
+            `Cannot notify Step Functions - no taskToken: ${errorMessage}`,
+          );
+        }
+      }
+    }
+
+    // Return void for SQS - acknowledgment is implicit
+    return;
+  }
+
+  // Direct invocation (legacy support)
+  console.log("📞 Processing direct invocation");
+
+  // Log IP address and Lambda environment information
+  console.log("🌐 Getting Lambda IP address information...");
+  try {
+    const ipInfo = await getIPAddresses();
+    console.log(`🔍 Lambda Instance Info:`);
+    console.log(`   Function: ${ipInfo.lambdaFunction}`);
+    console.log(
+      `   Version: ${process.env.AWS_LAMBDA_FUNCTION_VERSION || "unknown"}`,
+    );
+    console.log(`   Region: ${ipInfo.awsRegion}`);
+    console.log(
+      `   Memory: ${process.env.AWS_LAMBDA_FUNCTION_MEMORY_SIZE || "unknown"}MB`,
+    );
+    console.log(`   Runtime: ${process.env.AWS_EXECUTION_ENV || "unknown"}`);
+    console.log(`   Request ID: ${process.env.AWS_REQUEST_ID || "unknown"}`);
+    console.log(
+      `   Local IPs: ${ipInfo.localIPs.length > 0 ? ipInfo.localIPs.join(", ") : "None found"}`,
+    );
+    console.log(`   Public IP: ${ipInfo.publicIP || "Not available"}`);
+
+    if (ipInfo.publicIP) {
+      console.log(
+        `🌍 Network: Lambda has outbound internet access via IP ${ipInfo.publicIP}`,
+      );
+    } else {
+      console.log(
+        `🚫 Network: No public IP detected (may be VPC-only or blocked)`,
+      );
+    }
+  } catch (error) {
+    console.log(
+      `⚠️ Could not get IP information: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+
+  /** @type {DirectInvokeEvent} */
+  const directEvent = /** @type {DirectInvokeEvent} */ (event);
+  return processPrepare({
+    input_s3_uri: directEvent.input_s3_uri,
+    output_s3_uri_prefix: directEvent.output_s3_uri_prefix,
+  });
 };

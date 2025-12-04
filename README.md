@@ -844,6 +844,52 @@ aws lambda update-event-source-mapping \
   --scaling-config "MaximumConcurrency=50"
 ```
 
+### County-Specific Prepare Queue Setup
+
+The Prepare step uses a separate SQS + Lambda worker pattern with task token callbacks. Each county needs its own prepare queue for the state machine to send prepare jobs to.
+
+#### Creating a County-Specific Prepare Queue
+
+Use the `create-county-prepare-queue.sh` script:
+
+```bash
+./scripts/create-county-prepare-queue.sh <county_name>
+```
+
+**Example: Create prepare queue for Okeechobee County**
+
+```bash
+./scripts/create-county-prepare-queue.sh Okeechobee
+```
+
+**With custom concurrency (default: 10):**
+
+```bash
+MAX_CONCURRENCY=5 ./scripts/create-county-prepare-queue.sh Okeechobee
+```
+
+**What the script does:**
+
+1. Creates Prepare Queue: `elephant-oracle-node-prepare-queue-okeechobee`
+   - VisibilityTimeout: 900 seconds (matches Lambda timeout)
+   - MessageRetentionPeriod: 1209600 seconds (14 days)
+   - SSE encryption enabled
+   - No DLQ (uses waitForTaskToken pattern for error handling)
+
+2. Configures Lambda Event Source Mapping
+   - Links queue to DownloaderFunction
+   - BatchSize: 1 (one message per invocation)
+   - MaximumConcurrency: 10 (or custom value)
+
+**How it integrates with the workflow:**
+
+1. State machine looks up queue by county name: `${StackName}-prepare-queue-${lowercase(county)}`
+2. If queue exists, sends prepare job with task token
+3. DownloaderFunction processes the job and calls `SendTaskSuccess` or `SendTaskFailure`
+4. On failure, workflow emits EventBridge event with `taskToken` for external resolution
+
+**Note:** Unlike workflow queues, prepare queues don't use DLQs. The waitForTaskToken pattern allows the workflow to park and wait for external resolution when errors occur.
+
 ### 4) Pause your Airflow DAG
 
 If you also run an Airflow pipeline for the same data, open the Airflow UI and toggle the DAG off (pause) to avoid duplicate processing.
@@ -857,6 +903,10 @@ Helpful docs:
 
 - Processing input and output in Step Functions: https://docs.aws.amazon.com/step-functions/latest/dg/concepts-input-output-filtering.html
 - Monitoring Step Functions: https://docs.aws.amazon.com/step-functions/latest/dg/proddash.html
+
+### EventBridge Integration
+
+The workflow emits events to Amazon EventBridge at each step for monitoring and alerting. See [docs/EVENTBRIDGE_CONTRACT.md](docs/EVENTBRIDGE_CONTRACT.md) for the complete contract.
 
 ### Control concurrency
 

@@ -27,8 +27,37 @@ States:
         BackoffRate: 2
     Catch:
       - ErrorEquals: [States.ALL]
-        ResultPath: $.error
-        Next: FailRuntime
+        ResultPath: $.preprocessError
+        Next: WaitForPreprocessResolution
+
+  WaitForPreprocessResolution:
+    Type: Task
+    Resource: arn:aws:states:::events:putEvents.waitForTaskToken
+    Comment: "Emit FAILED event for Preprocess and wait for external resolution"
+    HeartbeatSeconds: 2592000 # 30 days
+    Parameters:
+      Entries:
+        - Source: elephant.workflow
+          DetailType: WorkflowEvent
+          Detail:
+            executionId.$: $$.Execution.Id
+            county: "unknown"
+            status: FAILED
+            phase: Preprocess
+            step: Preprocess
+            dataGroupLabel: County
+            taskToken.$: $$.Task.Token
+            errors:
+              - code: "00001"
+                details:
+                  error.$: States.JsonToString($.preprocessError)
+    ResultPath: $.resolutionResult
+    Next: Preprocess
+    Catch:
+      - ErrorEquals: [States.ALL]
+        Comment: "EventBridge emit failed - stay parked and wait again"
+        ResultPath: $.preprocessError
+        Next: WaitForPreprocessResolution
 
   BuildRepairParamName:
     Type: Pass
@@ -64,7 +93,7 @@ States:
       - Variable: $.countyRepair.Parameter.Value
         StringEquals: "true"
         Next: BuildHeadParams
-    Default: Prepare
+    Default: EmitPrepareScheduled
 
   BuildHeadParams:
     Type: Pass
@@ -95,7 +124,7 @@ States:
     Catch:
       - ErrorEquals: [States.ALL]
         ResultPath: $.headError
-        Next: Prepare
+        Next: EmitPrepareScheduled
 
   BypassPrepare:
     Type: Pass
@@ -103,22 +132,85 @@ States:
       output_s3_uri.$: $.head.expectedOutputUri
       prepareSkipped: true
     ResultPath: $.prepare
+    Next: EmitBypassPrepareSucceeded
+
+  EmitBypassPrepareSucceeded:
+    Type: Task
+    Resource: arn:aws:states:::events:putEvents
+    Parameters:
+      Entries:
+        - Source: elephant.workflow
+          DetailType: WorkflowEvent
+          Detail:
+            executionId.$: $$.Execution.Id
+            county.$: $.pre.county_name
+            status: SUCCEEDED
+            phase: Prepare
+            step: Prepare
+            dataGroupLabel: County
+    ResultPath: $.eventResult
     Next: GenerateExecutionId
+    Catch:
+      - ErrorEquals: [States.ALL]
+        ResultPath: $.eventError
+        Next: GenerateExecutionId
+
+  EmitPrepareScheduled:
+    Type: Task
+    Resource: arn:aws:states:::events:putEvents
+    Parameters:
+      Entries:
+        - Source: elephant.workflow
+          DetailType: WorkflowEvent
+          Detail:
+            executionId.$: $$.Execution.Id
+            county.$: $.pre.county_name
+            status: SCHEDULED
+            phase: Prepare
+            step: Prepare
+            dataGroupLabel: County
+    ResultPath: $.eventResult
+    Next: GetPrepareQueueUrl
+    Catch:
+      - ErrorEquals: [States.ALL]
+        ResultPath: $.eventError
+        Next: GetPrepareQueueUrl
+
+  GetPrepareQueueUrl:
+    Type: Task
+    Resource: arn:aws:states:::aws-sdk:sqs:getQueueUrl
+    QueryLanguage: JSONata
+    Comment: "Get queue URL by name (lowercase, spaces replaced with hyphens). Throws Sqs.QueueDoesNotExistException if queue not found."
+    Arguments:
+      QueueName: "{% '${StackName}-prepare-queue-' & $replace($lowercase($states.input.pre.county_name), ' ', '-') %}"
+    Output: "{% $merge([$states.input, { 'queue': $states.result }]) %}"
+    Next: Prepare
+    Catch:
+      - ErrorEquals: [Sqs.QueueDoesNotExistException]
+        Output: "{% $merge([$states.input, { 'prepareError': $states.errorOutput }]) %}"
+        Next: EmitPrepareQueueNotFound
 
   Prepare:
     Type: Task
-    Resource: arn:aws:states:::lambda:invoke
+    Resource: arn:aws:states:::sqs:sendMessage.waitForTaskToken
+    TimeoutSeconds: 915
+    Comment: "Timeout matches Lambda timeout (15 min). If Lambda times out, Catch handles it."
     Parameters:
-      FunctionName: ${DownloaderFunction}
-      Payload:
+      QueueUrl.$: $.queue.QueueUrl
+      MessageBody:
+        taskToken.$: $$.Task.Token
+        executionId.$: $$.Execution.Id
         input_s3_uri.$: $.pre.county_prep_input_s3_uri
         output_s3_uri_prefix.$: $.pre.output_prefix
         browser: true
+        county.$: $.pre.county_name
     ResultSelector:
-      output_s3_uri.$: $.Payload.output_s3_uri
+      output_s3_uri.$: $.output_s3_uri
+      county.$: $.county
+      taskToken.$: $.taskToken
       prepareSkipped: false
     ResultPath: $.prepare
-    Next: GenerateExecutionId
+    Next: ReportPrepareLambdaSuccess
     Retry:
       - ErrorEquals:
           [
@@ -130,9 +222,92 @@ States:
         MaxAttempts: 3
         BackoffRate: 2
     Catch:
+      - ErrorEquals: [States.Timeout]
+        ResultPath: $.prepareError
+        Next: EmitPrepareFailed
       - ErrorEquals: [States.ALL]
+        ResultPath: $.prepareError
+        Next: EmitPrepareFailed
+
+  EmitPrepareQueueNotFound:
+    Type: Task
+    Resource: arn:aws:states:::events:putEvents.waitForTaskToken
+    Comment: "Emit FAILED event with taskToken when queue not found. Waits for external retry (e.g., after queue is created)."
+    HeartbeatSeconds: 2592000 # 30 days
+    Parameters:
+      Entries:
+        - Source: elephant.workflow
+          DetailType: WorkflowEvent
+          Detail:
+            executionId.$: $$.Execution.Id
+            county.$: $.pre.county_name
+            status: FAILED
+            phase: Prepare
+            step: Prepare
+            dataGroupLabel: County
+            taskToken.$: $$.Task.Token
+            errors:
+              - code: "01001"
+                details.$: $.prepareError
+    ResultPath: $.queueNotFoundResult
+    Next: GetPrepareQueueUrl
+    Catch:
+      - ErrorEquals: [States.ALL]
+        Comment: "EventBridge emit failed - stay parked and wait again"
         ResultPath: $.error
-        Next: FailRuntime
+        Next: EmitPrepareQueueNotFound
+
+  ReportPrepareLambdaSuccess:
+    Type: Task
+    Resource: arn:aws:states:::events:putEvents
+    Parameters:
+      Entries:
+        - Source: elephant.workflow
+          DetailType: WorkflowEvent
+          Detail:
+            executionId.$: $$.Execution.Id
+            county.$: $.prepare.county
+            status: SUCCEEDED
+            phase: Prepare
+            step: Prepare
+            dataGroupLabel: County
+            taskToken.$: $.prepare.taskToken
+    ResultPath: $.eventResult
+    Next: GenerateExecutionId
+    Catch:
+      - ErrorEquals: [States.ALL]
+        ResultPath: $.eventError
+        Next: GenerateExecutionId
+
+  EmitPrepareFailed:
+    Type: Task
+    Resource: arn:aws:states:::events:putEvents.waitForTaskToken
+    QueryLanguage: JSONata
+    Comment: "Emit FAILED event with actual error code from Lambda. Waits for external sendTaskSuccess to resume."
+    HeartbeatSeconds: 2592000 # 30 days
+    Arguments:
+      Entries:
+        - Source: elephant.workflow
+          DetailType: WorkflowEvent
+          Detail:
+            executionId: "{% $states.context.Execution.Id %}"
+            county: "{% $states.input.pre.county_name %}"
+            status: FAILED
+            phase: Prepare
+            step: Prepare
+            dataGroupLabel: County
+            taskToken: "{% $states.context.Task.Token %}"
+            errors:
+              - code: "{% $states.input.prepareError.Error %}"
+                details:
+                  cause: "{% $states.input.prepareError.Cause %}"
+    Output: "{% $merge([$states.input, { 'failedResult': $states.result }]) %}"
+    Next: Prepare
+    Catch:
+      - ErrorEquals: [States.ALL]
+        Comment: "EventBridge emit failed - stay parked and wait again"
+        Output: "{% $merge([$states.input, { 'error': $states.errorOutput }]) %}"
+        Next: EmitPrepareFailed
 
   # === GRANULAR POSTPROCESS STEPS ===
 
@@ -165,6 +340,7 @@ States:
             status: SCHEDULED
             phase: Transform
             step: Transform
+            dataGroupLabel: County
     ResultPath: $.eventResult
     Next: Transform
     Catch:
@@ -219,6 +395,7 @@ States:
             status: SUCCEEDED
             phase: Transform
             step: Transform
+            dataGroupLabel: County
     ResultPath: $.eventResult
     Next: EmitSvlScheduled
     Catch:
@@ -242,6 +419,7 @@ States:
             status: FAILED
             phase: Transform
             step: Transform
+            dataGroupLabel: County
             taskToken: "{% $states.context.Task.Token %}"
             errors:
               - code: "{% '20' & $states.input.pre.county_name %}"
@@ -271,6 +449,7 @@ States:
             status: SCHEDULED
             phase: SVL
             step: SVL
+            dataGroupLabel: County
     ResultPath: $.eventResult
     Next: SVL
     Catch:
@@ -338,6 +517,7 @@ States:
             status: SUCCEEDED
             phase: SVL
             step: SVL
+            dataGroupLabel: County
     ResultPath: $.eventResult
     Next: EmitHashScheduled
     Catch:
@@ -361,6 +541,7 @@ States:
             status: FAILED
             phase: SVL
             step: SVL
+            dataGroupLabel: County
             taskToken: "{% $states.context.Task.Token %}"
             errors: >-
               {%
@@ -399,6 +580,7 @@ States:
             status: FAILED
             phase: SVL
             step: SVL
+            dataGroupLabel: County
             taskToken.$: $$.Task.Token
             errors:
               - code: "31001"
@@ -428,6 +610,7 @@ States:
             status: SCHEDULED
             phase: Hash
             step: Hash
+            dataGroupLabel: County
     ResultPath: $.eventResult
     Next: Hash
     Catch:
@@ -483,6 +666,7 @@ States:
             status: SUCCEEDED
             phase: Hash
             step: Hash
+            dataGroupLabel: County
     ResultPath: $.eventResult
     Next: EmitUploadScheduled
     Catch:
@@ -505,6 +689,7 @@ States:
             status: FAILED
             phase: Hash
             step: Hash
+            dataGroupLabel: County
             taskToken.$: $$.Task.Token
             errors:
               - code: "40001"
@@ -534,6 +719,7 @@ States:
             status: SCHEDULED
             phase: Upload
             step: Upload
+            dataGroupLabel: County
     ResultPath: $.eventResult
     Next: Upload
     Catch:
@@ -588,6 +774,7 @@ States:
             status: SUCCEEDED
             phase: Upload
             step: Upload
+            dataGroupLabel: County
     ResultPath: $.eventResult
     Next: EmitSubmitScheduled
     Catch:
@@ -610,6 +797,7 @@ States:
             status: FAILED
             phase: Upload
             step: Upload
+            dataGroupLabel: County
             taskToken.$: $$.Task.Token
             errors:
               - code: "50001"
@@ -639,6 +827,7 @@ States:
             status: SCHEDULED
             phase: Submit
             step: Submit
+            dataGroupLabel: County
     ResultPath: $.eventResult
     Next: EmitGasPriceCheckScheduled
     Catch:
@@ -662,6 +851,7 @@ States:
             status: SCHEDULED
             phase: GasPriceCheck
             step: CheckGasPrice
+            dataGroupLabel: County
     ResultPath: $.eventResult
     Next: CheckGasPrice
     Catch:
@@ -721,6 +911,7 @@ States:
             status: SUCCEEDED
             phase: GasPriceCheck
             step: CheckGasPrice
+            dataGroupLabel: County
     ResultPath: $.eventResult
     Next: EmitSubmitToBlockchainScheduled
     Catch:
@@ -742,6 +933,7 @@ States:
             status: FAILED
             phase: GasPriceCheck
             step: CheckGasPrice
+            dataGroupLabel: County
             errors:
               - code: "60001"
                 details:
@@ -768,6 +960,7 @@ States:
             status: FAILED
             phase: GasPriceCheck
             step: CheckGasPrice
+            dataGroupLabel: County
             taskToken.$: $$.Task.Token
             errors:
               - code: "60001"
@@ -797,6 +990,7 @@ States:
             status: SCHEDULED
             phase: Submit
             step: SubmitToBlockchain
+            dataGroupLabel: County
     ResultPath: $.eventResult
     Next: SubmitToBlockchain
     Catch:
@@ -856,6 +1050,7 @@ States:
             status: SUCCEEDED
             phase: Submit
             step: SubmitToBlockchain
+            dataGroupLabel: County
     ResultPath: $.eventResult
     Next: ExtractTransactionHash
     Catch:
@@ -877,6 +1072,7 @@ States:
             status: FAILED
             phase: Submit
             step: SubmitToBlockchain
+            dataGroupLabel: County
             errors:
               - code: "60002"
                 details:
@@ -903,6 +1099,7 @@ States:
             status: FAILED
             phase: Submit
             step: SubmitToBlockchain
+            dataGroupLabel: County
             taskToken.$: $$.Task.Token
             errors:
               - code: "60002"
@@ -1085,8 +1282,3 @@ States:
 
   WorkflowComplete:
     Type: Succeed
-
-  FailRuntime:
-    Type: Fail
-    Error: WorkflowFailed
-    Cause: A task failed. See error field.
