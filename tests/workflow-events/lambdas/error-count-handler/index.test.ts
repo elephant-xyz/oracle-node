@@ -8,7 +8,11 @@ import {
 import { SFNClient, SendTaskSuccessCommand } from "@aws-sdk/client-sfn";
 import type { DynamoDBStreamEvent, DynamoDBRecord } from "aws-lambda";
 import { marshall } from "@aws-sdk/util-dynamodb";
-import type { ExecutionErrorLink, FailedExecutionItem } from "shared/types.js";
+import type {
+  ExecutionErrorLink,
+  FailedExecutionItem,
+  ErrorRecord,
+} from "shared/types.js";
 
 /**
  * Mock the DynamoDB Document Client for all tests.
@@ -30,11 +34,13 @@ const TEST_TABLE_NAME = "test-workflow-errors-table";
  *
  * @param executionId - The execution ID
  * @param errorCode - The error code
+ * @param occurrences - Number of occurrences (default 1)
  * @returns A mock ExecutionErrorLink item
  */
 const createExecutionErrorLink = (
   executionId: string,
   errorCode: string,
+  occurrences: number = 1,
 ): Partial<ExecutionErrorLink> => ({
   PK: `EXECUTION#${executionId}`,
   SK: `ERROR#${errorCode}`,
@@ -43,7 +49,7 @@ const createExecutionErrorLink = (
   executionId,
   county: "test_county",
   status: "failed",
-  occurrences: 1,
+  occurrences,
   errorDetails: "{}",
   createdAt: new Date().toISOString(),
   updatedAt: new Date().toISOString(),
@@ -119,6 +125,41 @@ const createFailedExecutionItem = (
   GS3PK: "METRIC#ERRORCOUNT",
   GS3SK: `COUNT#${errorType}#0000000005#EXECUTION#${executionId}`,
 });
+
+/**
+ * Creates a mock ErrorRecord for update responses.
+ *
+ * @param errorCode - The error code
+ * @param totalCount - The total count after update
+ * @param errorType - Error type (first 2 chars of errorCode)
+ * @returns A mock ErrorRecord
+ */
+const createErrorRecord = (
+  errorCode: string,
+  totalCount: number,
+  errorType?: string,
+): ErrorRecord => {
+  const type = errorType ?? errorCode.substring(0, 2);
+  return {
+    PK: `ERROR#${errorCode}`,
+    SK: `ERROR#${errorCode}`,
+    errorCode,
+    errorType: type,
+    entityType: "Error",
+    errorDetails: "{}",
+    errorStatus: "failed",
+    totalCount,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    latestExecutionId: "exec-001",
+    GS1PK: "TYPE#ERROR",
+    GS1SK: `ERROR#${errorCode}`,
+    GS2PK: "TYPE#ERROR",
+    GS2SK: `COUNT#0000000005#ERROR#${errorCode}`,
+    GS3PK: "METRIC#ERRORCOUNT",
+    GS3SK: `COUNT#${type}#0000000005#ERROR#${errorCode}`,
+  };
+};
 
 describe("error-count-handler", () => {
   const originalEnv = process.env;
@@ -391,9 +432,23 @@ describe("error-count-handler", () => {
 
   describe("GSI key updates", () => {
     it("should update GSI keys for executions with remaining errors", async () => {
-      // Mock decrement to return remaining errors
-      ddbMock.on(UpdateCommand).resolves({
-        Attributes: createFailedExecutionItem("exec-001", 3, undefined, "01"),
+      // Mock decrement to return remaining errors for both execution and error record
+      ddbMock.on(UpdateCommand).callsFake((input) => {
+        const pk = input.Key?.PK as string;
+        if (pk.startsWith("EXECUTION#")) {
+          return {
+            Attributes: createFailedExecutionItem(
+              "exec-001",
+              3,
+              undefined,
+              "01",
+            ),
+          };
+        }
+        if (pk.startsWith("ERROR#")) {
+          return { Attributes: createErrorRecord("01256", 5, "01") };
+        }
+        return {};
       });
 
       const { handler } = await import(
@@ -406,29 +461,37 @@ describe("error-count-handler", () => {
 
       await handler(event);
 
-      // Should have called UpdateCommand twice:
-      // 1. For decrementing openErrorCount
-      // 2. For updating GSI keys
+      // Find the execution GSI update call (contains GS1SK for EXECUTION)
       const updateCalls = ddbMock.commandCalls(UpdateCommand);
-      expect(updateCalls.length).toBe(2);
-
-      // Find the GSI update call (contains GS1SK and GS3SK)
-      const gsiUpdateCall = updateCalls.find((call) =>
-        call.args[0].input.UpdateExpression?.includes("GS1SK"),
+      const executionGsiUpdateCall = updateCalls.find(
+        (call) =>
+          call.args[0].input.Key?.PK === "EXECUTION#exec-001" &&
+          call.args[0].input.UpdateExpression?.includes("GS1SK"),
       );
-      expect(gsiUpdateCall).toBeDefined();
+      expect(executionGsiUpdateCall).toBeDefined();
       expect(
-        gsiUpdateCall?.args[0].input.ExpressionAttributeValues?.[":gs1sk"],
+        executionGsiUpdateCall?.args[0].input.ExpressionAttributeValues?.[
+          ":gs1sk"
+        ],
       ).toMatch(/^COUNT#\d{10}#EXECUTION#exec-001$/);
       expect(
-        gsiUpdateCall?.args[0].input.ExpressionAttributeValues?.[":gs3sk"],
+        executionGsiUpdateCall?.args[0].input.ExpressionAttributeValues?.[
+          ":gs3sk"
+        ],
       ).toMatch(/^COUNT#01#\d{10}#EXECUTION#exec-001$/);
     });
 
     it("should not update GSI keys for executions that reached zero", async () => {
-      // Mock decrement to return zero errors
-      ddbMock.on(UpdateCommand).resolves({
-        Attributes: createFailedExecutionItem("exec-001", 0),
+      // Mock decrement to return zero errors for both execution and error record
+      ddbMock.on(UpdateCommand).callsFake((input) => {
+        const pk = input.Key?.PK as string;
+        if (pk.startsWith("EXECUTION#")) {
+          return { Attributes: createFailedExecutionItem("exec-001", 0) };
+        }
+        if (pk.startsWith("ERROR#")) {
+          return { Attributes: createErrorRecord("01256", 0) };
+        }
+        return {};
       });
 
       // Mock batch delete
@@ -444,14 +507,14 @@ describe("error-count-handler", () => {
 
       await handler(event);
 
-      // Should have called UpdateCommand only once (for decrement, not GSI update)
+      // Should NOT have any GSI update calls for execution (reaches zero = no GSI update)
       const updateCalls = ddbMock.commandCalls(UpdateCommand);
-      expect(updateCalls.length).toBe(1);
-
-      // The single call should be for decrement (no GS1SK in expression)
-      expect(updateCalls[0].args[0].input.UpdateExpression).not.toContain(
-        "GS1SK",
+      const executionGsiUpdateCall = updateCalls.find(
+        (call) =>
+          call.args[0].input.Key?.PK === "EXECUTION#exec-001" &&
+          call.args[0].input.UpdateExpression?.includes("GS1SK"),
       );
+      expect(executionGsiUpdateCall).toBeUndefined();
     });
   });
 
@@ -972,6 +1035,509 @@ describe("batch repository functions", () => {
       expect(deletedIds).toContain("exec-001");
       expect(deletedIds).toContain("exec-002");
       expect(deletedIds).toContain("exec-003");
+    });
+  });
+
+  describe("batchDecrementErrorRecordCounts", () => {
+    it("should decrement multiple error records in parallel", async () => {
+      ddbMock.on(UpdateCommand).callsFake((input) => {
+        const pk = input.Key?.PK as string;
+        const errorCode = pk.replace("ERROR#", "");
+        return {
+          Attributes: createErrorRecord(errorCode, 2),
+        };
+      });
+
+      const { batchDecrementErrorRecordCounts } = await import(
+        "shared/repository.js"
+      );
+
+      const inputs = [
+        { errorCode: "01256", decrementBy: 1 },
+        { errorCode: "01257", decrementBy: 2 },
+        { errorCode: "02001", decrementBy: 3 },
+      ];
+
+      const results = await batchDecrementErrorRecordCounts(inputs);
+
+      expect(results.length).toBe(3);
+      expect(results.every((r) => r.success)).toBe(true);
+      expect(ddbMock.commandCalls(UpdateCommand).length).toBe(3);
+    });
+
+    it("should return correct new counts for each error code", async () => {
+      ddbMock.on(UpdateCommand).callsFake((input) => {
+        const amount = input.ExpressionAttributeValues?.[":amount"] as number;
+        const pk = input.Key?.PK as string;
+        const errorCode = pk.replace("ERROR#", "");
+        return {
+          Attributes: createErrorRecord(errorCode, 10 - amount),
+        };
+      });
+
+      const { batchDecrementErrorRecordCounts } = await import(
+        "shared/repository.js"
+      );
+
+      const inputs = [
+        { errorCode: "01256", decrementBy: 3 },
+        { errorCode: "01257", decrementBy: 5 },
+      ];
+
+      const results = await batchDecrementErrorRecordCounts(inputs);
+
+      const result01256 = results.find((r) => r.errorCode === "01256");
+      const result01257 = results.find((r) => r.errorCode === "01257");
+
+      expect(result01256?.newTotalCount).toBe(7);
+      expect(result01257?.newTotalCount).toBe(5);
+    });
+
+    it("should return empty array for empty input", async () => {
+      const { batchDecrementErrorRecordCounts } = await import(
+        "shared/repository.js"
+      );
+
+      const results = await batchDecrementErrorRecordCounts([]);
+
+      expect(results).toEqual([]);
+      expect(ddbMock).not.toHaveReceivedCommand(UpdateCommand);
+    });
+
+    it("should handle ConditionalCheckFailedException gracefully", async () => {
+      const error = new Error("Condition check failed");
+      error.name = "ConditionalCheckFailedException";
+      ddbMock.on(UpdateCommand).rejects(error);
+
+      const { batchDecrementErrorRecordCounts } = await import(
+        "shared/repository.js"
+      );
+
+      const inputs = [{ errorCode: "01256", decrementBy: 1 }];
+
+      const results = await batchDecrementErrorRecordCounts(inputs);
+
+      expect(results.length).toBe(1);
+      expect(results[0].success).toBe(false);
+      expect(results[0].found).toBe(false);
+    });
+
+    it("should return errorType for successful decrements", async () => {
+      ddbMock.on(UpdateCommand).resolves({
+        Attributes: createErrorRecord("01256", 5, "01"),
+      });
+
+      const { batchDecrementErrorRecordCounts } = await import(
+        "shared/repository.js"
+      );
+
+      const inputs = [{ errorCode: "01256", decrementBy: 1 }];
+
+      const results = await batchDecrementErrorRecordCounts(inputs);
+
+      expect(results[0].errorType).toBe("01");
+    });
+  });
+
+  describe("batchUpdateErrorRecordGsiKeys", () => {
+    it("should update GSI keys for multiple error records", async () => {
+      ddbMock.on(UpdateCommand).resolves({});
+
+      const { batchUpdateErrorRecordGsiKeys } = await import(
+        "shared/repository.js"
+      );
+
+      const updates = [
+        { errorCode: "01256", newTotalCount: 3, errorType: "01" },
+        { errorCode: "02001", newTotalCount: 5, errorType: "02" },
+      ];
+
+      await batchUpdateErrorRecordGsiKeys(updates);
+
+      expect(ddbMock.commandCalls(UpdateCommand).length).toBe(2);
+
+      // Verify GSI key format
+      const calls = ddbMock.commandCalls(UpdateCommand);
+      const call01256 = calls.find(
+        (c) => c.args[0].input.Key?.PK === "ERROR#01256",
+      );
+      const call02001 = calls.find(
+        (c) => c.args[0].input.Key?.PK === "ERROR#02001",
+      );
+
+      expect(
+        call01256?.args[0].input.ExpressionAttributeValues?.[":gs2sk"],
+      ).toMatch(/^COUNT#\d{10}#ERROR#01256$/);
+      expect(
+        call01256?.args[0].input.ExpressionAttributeValues?.[":gs3sk"],
+      ).toMatch(/^COUNT#01#\d{10}#ERROR#01256$/);
+
+      expect(
+        call02001?.args[0].input.ExpressionAttributeValues?.[":gs2sk"],
+      ).toMatch(/^COUNT#\d{10}#ERROR#02001$/);
+      expect(
+        call02001?.args[0].input.ExpressionAttributeValues?.[":gs3sk"],
+      ).toMatch(/^COUNT#02#\d{10}#ERROR#02001$/);
+    });
+
+    it("should handle empty input", async () => {
+      const { batchUpdateErrorRecordGsiKeys } = await import(
+        "shared/repository.js"
+      );
+
+      await batchUpdateErrorRecordGsiKeys([]);
+
+      expect(ddbMock).not.toHaveReceivedCommand(UpdateCommand);
+    });
+
+    it("should continue processing when one update fails", async () => {
+      let callCount = 0;
+      ddbMock.on(UpdateCommand).callsFake(() => {
+        callCount++;
+        if (callCount === 1) {
+          throw new Error("First update failed");
+        }
+        return {};
+      });
+
+      const { batchUpdateErrorRecordGsiKeys } = await import(
+        "shared/repository.js"
+      );
+
+      const updates = [
+        { errorCode: "01256", newTotalCount: 3, errorType: "01" },
+        { errorCode: "02001", newTotalCount: 5, errorType: "02" },
+      ];
+
+      // Should not throw
+      await expect(
+        batchUpdateErrorRecordGsiKeys(updates),
+      ).resolves.not.toThrow();
+
+      // Should have attempted both updates
+      expect(ddbMock.commandCalls(UpdateCommand).length).toBe(2);
+    });
+  });
+
+  describe("batchDeleteErrorRecords", () => {
+    it("should delete multiple error records using BatchWriteCommand", async () => {
+      ddbMock.on(BatchWriteCommand).resolves({});
+
+      const { batchDeleteErrorRecords } = await import("shared/repository.js");
+
+      const errorCodes = ["01256", "01257", "02001"];
+
+      const deletedCodes = await batchDeleteErrorRecords(errorCodes);
+
+      expect(deletedCodes.length).toBe(3);
+      expect(ddbMock).toHaveReceivedCommand(BatchWriteCommand);
+
+      const batchWriteCalls = ddbMock.commandCalls(BatchWriteCommand);
+      const deleteRequests =
+        batchWriteCalls[0].args[0].input.RequestItems?.[TEST_TABLE_NAME];
+      expect(deleteRequests?.length).toBe(3);
+    });
+
+    it("should handle empty input", async () => {
+      const { batchDeleteErrorRecords } = await import("shared/repository.js");
+
+      const deletedCodes = await batchDeleteErrorRecords([]);
+
+      expect(deletedCodes).toEqual([]);
+      expect(ddbMock).not.toHaveReceivedCommand(BatchWriteCommand);
+    });
+
+    it("should batch deletions in groups of 25", async () => {
+      ddbMock.on(BatchWriteCommand).resolves({});
+
+      const { batchDeleteErrorRecords } = await import("shared/repository.js");
+
+      // Create 30 error codes (should result in 2 batches)
+      const errorCodes = Array.from(
+        { length: 30 },
+        (_, i) => `01${String(i).padStart(3, "0")}`,
+      );
+
+      await batchDeleteErrorRecords(errorCodes);
+
+      // Should have called BatchWriteCommand twice (25 + 5)
+      expect(ddbMock.commandCalls(BatchWriteCommand).length).toBe(2);
+
+      const calls = ddbMock.commandCalls(BatchWriteCommand);
+      const firstBatch =
+        calls[0].args[0].input.RequestItems?.[TEST_TABLE_NAME]?.length;
+      const secondBatch =
+        calls[1].args[0].input.RequestItems?.[TEST_TABLE_NAME]?.length;
+
+      expect(firstBatch).toBe(25);
+      expect(secondBatch).toBe(5);
+    });
+  });
+});
+
+describe("error record processing in handler", () => {
+  const originalEnv = process.env;
+
+  beforeEach(() => {
+    vi.resetModules();
+    ddbMock.reset();
+    sfnMock.reset();
+    process.env = {
+      ...originalEnv,
+      WORKFLOW_ERRORS_TABLE_NAME: TEST_TABLE_NAME,
+    };
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    vi.spyOn(console, "debug").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    process.env = originalEnv;
+    vi.restoreAllMocks();
+  });
+
+  describe("error record total count decrement", () => {
+    it("should decrement error record totalCount when ExecutionErrorLink is deleted", async () => {
+      // Mock execution decrement
+      ddbMock.on(UpdateCommand).callsFake((input) => {
+        const pk = input.Key?.PK as string;
+        if (pk.startsWith("EXECUTION#")) {
+          return { Attributes: createFailedExecutionItem("exec-001", 2) };
+        }
+        // Error record decrement
+        if (pk.startsWith("ERROR#")) {
+          return { Attributes: createErrorRecord("01256", 5) };
+        }
+        return {};
+      });
+
+      const { handler } = await import(
+        "../../../../workflow-events/lambdas/error-count-handler/index.js"
+      );
+
+      const item = createExecutionErrorLink("exec-001", "01256", 3);
+      const record = createRemoveRecord(item);
+      const event = createStreamEvent([record]);
+
+      await handler(event);
+
+      // Should have called UpdateCommand for both execution and error record
+      const updateCalls = ddbMock.commandCalls(UpdateCommand);
+
+      // Find execution decrement call
+      const execDecrementCall = updateCalls.find(
+        (call) =>
+          call.args[0].input.Key?.PK === "EXECUTION#exec-001" &&
+          call.args[0].input.UpdateExpression?.includes("openErrorCount"),
+      );
+      expect(execDecrementCall).toBeDefined();
+
+      // Find error record decrement call
+      const errorDecrementCall = updateCalls.find(
+        (call) =>
+          call.args[0].input.Key?.PK === "ERROR#01256" &&
+          call.args[0].input.UpdateExpression?.includes("totalCount"),
+      );
+      expect(errorDecrementCall).toBeDefined();
+      expect(
+        errorDecrementCall?.args[0].input.ExpressionAttributeValues?.[
+          ":amount"
+        ],
+      ).toBe(3); // Should decrement by occurrences value
+    });
+
+    it("should aggregate occurrences for same error code from multiple links", async () => {
+      // Mock execution decrement
+      ddbMock.on(UpdateCommand).callsFake((input) => {
+        const pk = input.Key?.PK as string;
+        if (pk.startsWith("EXECUTION#")) {
+          const execId = pk.replace("EXECUTION#", "");
+          return { Attributes: createFailedExecutionItem(execId, 1) };
+        }
+        // Error record decrement
+        if (pk.startsWith("ERROR#")) {
+          const errorCode = pk.replace("ERROR#", "");
+          return { Attributes: createErrorRecord(errorCode, 5) };
+        }
+        return {};
+      });
+
+      const { handler } = await import(
+        "../../../../workflow-events/lambdas/error-count-handler/index.js"
+      );
+
+      // Two different executions with the same error code
+      const records = [
+        createRemoveRecord(
+          createExecutionErrorLink("exec-001", "01256", 3),
+          "event-1",
+        ),
+        createRemoveRecord(
+          createExecutionErrorLink("exec-002", "01256", 5),
+          "event-2",
+        ),
+      ];
+      const event = createStreamEvent(records);
+
+      await handler(event);
+
+      // Find error record decrement call - should be called once with sum of occurrences
+      const updateCalls = ddbMock.commandCalls(UpdateCommand);
+      const errorDecrementCall = updateCalls.find(
+        (call) =>
+          call.args[0].input.Key?.PK === "ERROR#01256" &&
+          call.args[0].input.UpdateExpression?.includes("totalCount"),
+      );
+      expect(errorDecrementCall).toBeDefined();
+      expect(
+        errorDecrementCall?.args[0].input.ExpressionAttributeValues?.[
+          ":amount"
+        ],
+      ).toBe(8); // 3 + 5
+    });
+
+    it("should update GSI keys for error records with remaining count", async () => {
+      // Mock decrement to return remaining count
+      ddbMock.on(UpdateCommand).callsFake((input) => {
+        const pk = input.Key?.PK as string;
+        if (pk.startsWith("EXECUTION#")) {
+          return { Attributes: createFailedExecutionItem("exec-001", 2) };
+        }
+        if (pk.startsWith("ERROR#")) {
+          return { Attributes: createErrorRecord("01256", 5, "01") };
+        }
+        return {};
+      });
+
+      const { handler } = await import(
+        "../../../../workflow-events/lambdas/error-count-handler/index.js"
+      );
+
+      const item = createExecutionErrorLink("exec-001", "01256", 1);
+      const record = createRemoveRecord(item);
+      const event = createStreamEvent([record]);
+
+      await handler(event);
+
+      // Find GSI update call for error record (contains GS2SK)
+      const updateCalls = ddbMock.commandCalls(UpdateCommand);
+      const gsiUpdateCall = updateCalls.find(
+        (call) =>
+          call.args[0].input.Key?.PK === "ERROR#01256" &&
+          call.args[0].input.UpdateExpression?.includes("GS2SK"),
+      );
+      expect(gsiUpdateCall).toBeDefined();
+      expect(
+        gsiUpdateCall?.args[0].input.ExpressionAttributeValues?.[":gs2sk"],
+      ).toMatch(/^COUNT#\d{10}#ERROR#01256$/);
+      expect(
+        gsiUpdateCall?.args[0].input.ExpressionAttributeValues?.[":gs3sk"],
+      ).toMatch(/^COUNT#01#\d{10}#ERROR#01256$/);
+    });
+
+    it("should delete error record when totalCount reaches zero", async () => {
+      // Mock decrement to return zero count
+      ddbMock.on(UpdateCommand).callsFake((input) => {
+        const pk = input.Key?.PK as string;
+        if (pk.startsWith("EXECUTION#")) {
+          return { Attributes: createFailedExecutionItem("exec-001", 0) };
+        }
+        if (pk.startsWith("ERROR#")) {
+          return { Attributes: createErrorRecord("01256", 0) };
+        }
+        return {};
+      });
+
+      // Mock batch delete
+      ddbMock.on(BatchWriteCommand).resolves({});
+
+      const { handler } = await import(
+        "../../../../workflow-events/lambdas/error-count-handler/index.js"
+      );
+
+      const item = createExecutionErrorLink("exec-001", "01256", 5);
+      const record = createRemoveRecord(item);
+      const event = createStreamEvent([record]);
+
+      await handler(event);
+
+      // Should have called BatchWriteCommand to delete both execution and error record
+      expect(ddbMock).toHaveReceivedCommand(BatchWriteCommand);
+
+      const batchWriteCalls = ddbMock.commandCalls(BatchWriteCommand);
+
+      // Find the delete request for the error record
+      const allDeleteRequests = batchWriteCalls.flatMap(
+        (call) => call.args[0].input.RequestItems?.[TEST_TABLE_NAME] ?? [],
+      );
+
+      const errorDeleteRequest = allDeleteRequests.find(
+        (req) => req.DeleteRequest?.Key?.PK === "ERROR#01256",
+      );
+      expect(errorDeleteRequest).toBeDefined();
+    });
+
+    it("should process multiple different error codes in parallel", async () => {
+      // Mock decrements
+      ddbMock.on(UpdateCommand).callsFake((input) => {
+        const pk = input.Key?.PK as string;
+        if (pk.startsWith("EXECUTION#")) {
+          return { Attributes: createFailedExecutionItem("exec-001", 0) };
+        }
+        if (pk === "ERROR#01256") {
+          return { Attributes: createErrorRecord("01256", 3) };
+        }
+        if (pk === "ERROR#02001") {
+          return { Attributes: createErrorRecord("02001", 5) };
+        }
+        return {};
+      });
+
+      // Mock batch delete
+      ddbMock.on(BatchWriteCommand).resolves({});
+
+      const { handler } = await import(
+        "../../../../workflow-events/lambdas/error-count-handler/index.js"
+      );
+
+      const records = [
+        createRemoveRecord(
+          createExecutionErrorLink("exec-001", "01256", 2),
+          "event-1",
+        ),
+        createRemoveRecord(
+          createExecutionErrorLink("exec-001", "02001", 3),
+          "event-2",
+        ),
+      ];
+      const event = createStreamEvent(records);
+
+      await handler(event);
+
+      // Find error record decrement calls
+      const updateCalls = ddbMock.commandCalls(UpdateCommand);
+
+      const decrement01256 = updateCalls.find(
+        (call) =>
+          call.args[0].input.Key?.PK === "ERROR#01256" &&
+          call.args[0].input.UpdateExpression?.includes("totalCount"),
+      );
+      const decrement02001 = updateCalls.find(
+        (call) =>
+          call.args[0].input.Key?.PK === "ERROR#02001" &&
+          call.args[0].input.UpdateExpression?.includes("totalCount"),
+      );
+
+      expect(decrement01256).toBeDefined();
+      expect(decrement02001).toBeDefined();
+      expect(
+        decrement01256?.args[0].input.ExpressionAttributeValues?.[":amount"],
+      ).toBe(2);
+      expect(
+        decrement02001?.args[0].input.ExpressionAttributeValues?.[":amount"],
+      ).toBe(3);
     });
   });
 });
