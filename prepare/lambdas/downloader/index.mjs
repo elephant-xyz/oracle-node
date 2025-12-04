@@ -611,9 +611,13 @@ async function sendTaskFailure(taskToken, errorCode, cause) {
  * Extracts county name from the input zip's input.csv (county column)
  * Falls back to unnormalized_address.json if input.csv doesn't have county
  * @param {AdmZip} zip - AdmZip instance
- * @returns {string|null} County name or null
+ * @returns {string|null} County name or null if not found in any source
+ * @throws {PrepareError} Only on actual parsing/read errors (malformed CSV/JSON),
+ *   NOT when county field is simply missing from valid files
  */
 function extractCountyFromZip(zip) {
+  // Note: The try-catch below handles parsing errors (malformed CSV/JSON).
+  // If files are valid but don't contain county info, we fall through to return null.
   try {
     const zipEntries = zip.getEntries();
 
@@ -707,8 +711,8 @@ function extractCountyFromZip(zip) {
 /**
  * Reads configuration S3 URI from input.csv in the zip file
  * @param {AdmZip} zip - AdmZip instance of the input zip
- * @returns {string | null} Configuration S3 URI or null if not found (no config column)
- * @throws {PrepareError} If input.csv cannot be read or parsed
+ * @returns {string | null} Configuration S3 URI or null if not found (no input.csv or no config column)
+ * @throws {PrepareError} If input.csv exists but cannot be read or parsed
  */
 function getConfigurationUriFromInputCsv(zip) {
   const zipEntries = zip.getEntries();
@@ -720,8 +724,10 @@ function getConfigurationUriFromInputCsv(zip) {
   );
 
   if (!inputCsvEntry) {
-    console.error("📄 input.csv not found in zip file");
-    throw new PrepareError("01006", "input.csv not found in zip file");
+    console.log(
+      "📄 input.csv not found in zip file, using environment variables",
+    );
+    return null;
   }
 
   let csvContent;
@@ -1854,12 +1860,12 @@ export const handler = async (event) => {
         );
 
         // Send failure to Step Functions
-        // Truncate message to ensure valid JSON within 256 char limit
+        // Build cause payload and truncate final JSON to fit 256 char limit
+        // Note: county is already included in fullErrorCode, so not duplicated in cause
         if (taskToken) {
-          const truncatedMessage = errorMessage.substring(0, 100);
           const causePayload = JSON.stringify({
-            message: truncatedMessage,
-          });
+            message: errorMessage,
+          }).substring(0, 256);
           await sendTaskFailure(taskToken, fullErrorCode, causePayload);
         } else {
           // No taskToken - can't notify Step Functions

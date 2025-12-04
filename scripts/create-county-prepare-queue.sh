@@ -20,8 +20,8 @@ if [ $# -eq 0 ]; then
 fi
 
 COUNTY_NAME_INPUT="$1"
-# Convert to lowercase for queue name consistency
-COUNTY_NAME=$(echo "$COUNTY_NAME_INPUT" | tr '[:upper:]' '[:lower:]')
+# Convert to lowercase and replace spaces with hyphens for valid SQS queue name
+COUNTY_NAME=$(echo "$COUNTY_NAME_INPUT" | tr '[:upper:]' '[:lower:]' | tr ' ' '-')
 STACK_NAME="${STACK_NAME:-elephant-oracle-node}"
 REGION="${AWS_REGION:-us-east-1}"
 

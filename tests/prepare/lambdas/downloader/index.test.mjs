@@ -244,7 +244,7 @@ describe("downloader lambda - EventBridge integration", () => {
       });
     });
 
-    it("should include errorCode in error field (concatenated with county)", async () => {
+    it("should include errorCode concatenated with county in error field", async () => {
       eventBridgeMock.on(PutEventsCommand).resolves({});
       sfnMock.on(SendTaskFailureCommand).resolves({});
       s3Mock.on(GetObjectCommand).rejects(new Error("S3 access denied"));
@@ -274,10 +274,16 @@ describe("downloader lambda - EventBridge integration", () => {
       const calls = sfnMock.commandCalls(SendTaskFailureCommand);
       expect(calls.length).toBe(1);
 
-      // Error code is in the error field, concatenated with county
+      // Error code is in the error field, concatenated with county (e.g., "01002Hamilton")
       const errorField = calls[0].args[0].input.error;
       expect(errorField).toMatch(/^01002/); // Starts with error code
       expect(errorField).toContain("Hamilton"); // Contains county
+
+      // Cause payload should NOT contain redundant errorCode or county (already in error field)
+      const causeJson = calls[0].args[0].input.cause;
+      const cause = JSON.parse(causeJson);
+      expect(cause.errorCode).toBeUndefined();
+      expect(cause.county).toBeUndefined();
     });
 
     it("should include county in error field (concatenated with error code)", async () => {
