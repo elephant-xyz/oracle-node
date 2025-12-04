@@ -36,8 +36,11 @@ vi.mock("@aws-sdk/client-s3", () => {
 
 describe("s3-utils", () => {
   let tmpDir;
+  const originalEnv = process.env;
 
   beforeEach(async () => {
+    // Set AWS region to prevent S3Client from failing during initialization
+    process.env.AWS_REGION = "us-east-1";
     vi.resetModules();
     mockSend.mockReset();
     // Create a temp directory for tests
@@ -45,6 +48,7 @@ describe("s3-utils", () => {
   });
 
   afterEach(async () => {
+    process.env = originalEnv;
     if (tmpDir) {
       await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
     }
