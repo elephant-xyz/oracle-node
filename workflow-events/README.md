@@ -16,7 +16,10 @@ All resources are defined in `template.yaml` as an AWS SAM application.
 `WorkflowEventHandlerFunction` is wired to an EventBridge rule with the following pattern (see `template.yaml`):
 
 - **source**: `elephant.workflow`
-- **detail-type**: `WorkflowEvent`
+- **detail-type**:
+  - `WorkflowEvent`
+  - `ElephantErrorResolved`
+  - `ElephantErrorFailedToResolve`
 
 Only events that match this pattern will trigger the `workflow-event-handler` Lambda.
 
@@ -41,6 +44,45 @@ When `errors` is non-empty, `workflow-event-handler` writes:
 - A failed-execution record (`FailedExecutionItem`)
 
 into the `workflow-errors` DynamoDB table, using several GSIs for analytics and lookups.
+
+### Expected event detail schema (`ElephantErrorResolved` and `ElephantErrorFailedToResolve`)
+
+These events are used to manage the lifecycle of errors in the system. Both share the same schema structure (`ElephantErrorResolvedDetail`).
+
+- **`ElephantErrorResolved`**: Signals that an error (or all errors for an execution) has been successfully resolved. The handler will delete the corresponding error records from the DynamoDB table.
+- **`ElephantErrorFailedToResolve`**: Signals that an automated resolution attempt failed. The handler will mark the corresponding error records as `maybeUnrecoverable` in the DynamoDB table, excluding them from standard error counts.
+
+**Schema:**
+
+The event detail must contain **at least one** of the following fields:
+
+- **executionId** (`string`, optional):
+  - If provided, the action applies to **all errors** associated with this execution ID.
+  - For `ElephantErrorResolved`: All errors for this execution are resolved across ALL executions that share the same error codes.
+  - For `ElephantErrorFailedToResolve`: All errors for this execution are marked as `maybeUnrecoverable`.
+
+- **errorCode** (`string`, optional):
+  - If provided (and `executionId` is absent), the action applies to **this specific error code** across ALL executions.
+  - For `ElephantErrorResolved`: The error code is deleted from all executions.
+  - For `ElephantErrorFailedToResolve`: The error code is marked as `maybeUnrecoverable` for all executions.
+
+**Examples:**
+
+Resolve all errors for a specific execution:
+
+```json
+{
+  "executionId": "arn:aws:states:us-east-1:123456789:execution:my-state-machine:execution-name"
+}
+```
+
+Resolve a specific error code globally:
+
+```json
+{
+  "errorCode": "MV-ERROR-CODE-123"
+}
+```
 
 ---
 

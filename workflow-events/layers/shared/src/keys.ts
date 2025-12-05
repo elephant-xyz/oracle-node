@@ -1,3 +1,5 @@
+import type { ErrorStatus } from "./types.js";
+
 /**
  * Entity type discriminators for single-table design.
  */
@@ -6,6 +8,27 @@ export const ENTITY_TYPES = {
   EXECUTION_ERROR: "ExecutionError",
   FAILED_EXECUTION: "FailedExecution",
 } as const;
+
+/**
+ * Default GSI status for new error records and executions.
+ * Used in GSI sort keys to enable filtering by status.
+ */
+export const DEFAULT_GSI_STATUS = "FAILED" as const;
+
+/**
+ * GSI status for errors that failed AI resolution (maybeUnrecoverable).
+ * Used in GSI sort keys to filter items marked as unrecoverable.
+ */
+export const UNRECOVERABLE_GSI_STATUS = "MAYBEUNRECOVERABLE" as const;
+
+/**
+ * Converts an ErrorStatus value to uppercase for use in GSI keys.
+ * @param status - The error status (e.g., "failed", "maybeSolved", "solved")
+ * @returns Uppercase status string for GSI keys (e.g., "FAILED", "MAYBESOLVED", "SOLVED")
+ */
+export const toGsiStatus = (status: ErrorStatus): string => {
+  return status.toUpperCase();
+};
 
 /**
  * Pads a number with leading zeros for lexicographic sorting.

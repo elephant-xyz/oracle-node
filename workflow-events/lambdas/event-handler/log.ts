@@ -1,9 +1,8 @@
 import type { EventBridgeEvent } from "aws-lambda";
-import type { WorkflowEventDetail } from "shared/types.js";
 
-export const createLogEntry = (
+export const createLogEntry = <TDetailType extends string, TDetail>(
   msg: string,
-  event: EventBridgeEvent<"WorkflowEvent", WorkflowEventDetail>,
+  event: EventBridgeEvent<TDetailType, TDetail>,
   additionalFields?: Record<string, unknown>,
 ): Record<string, unknown> => {
   return {

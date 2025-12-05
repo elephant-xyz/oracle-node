@@ -1,7 +1,13 @@
 import { QueryCommand } from "@aws-sdk/lib-dynamodb";
 import type { ErrorRecord } from "shared/types.js";
 import { TABLE_NAME, docClient } from "shared/dynamodb-client.js";
-import { ENTITY_TYPES } from "shared/keys.js";
+import {
+  ENTITY_TYPES,
+  DEFAULT_GSI_STATUS,
+  UNRECOVERABLE_GSI_STATUS,
+} from "shared/keys.js";
+
+type GsiStatus = typeof DEFAULT_GSI_STATUS | typeof UNRECOVERABLE_GSI_STATUS;
 
 interface DynamoDBKey {
   [key: string]: string | number;
@@ -23,10 +29,12 @@ interface CloudWatchCustomWidgetEvent {
     params?: {
       errorType?: string;
       limit?: number;
+      status?: GsiStatus;
     };
   };
   errorType?: string;
   limit?: number;
+  status?: GsiStatus;
   cursor?: string;
   prevCursor?: string;
 }
@@ -68,8 +76,9 @@ This widget displays error types sorted by their total occurrence count (highest
 ### Parameters
 
 \`\`\`yaml
-errorType: ""  # Filter by error type prefix (e.g., "SV", "MV"). Leave empty for all errors.
-limit: 20      # Number of errors to display (default: 20)
+errorType: ""        # Filter by error type prefix (e.g., "SV", "MV"). Leave empty for all errors.
+status: "FAILED"     # Filter by status: "FAILED" or "MAYBEUNRECOVERABLE"
+limit: 20            # Number of errors to display (default: 20)
 \`\`\`
 
 ### Displayed Columns
@@ -77,7 +86,7 @@ limit: 20      # Number of errors to display (default: 20)
 - **Error Code**: Unique error code identifier
 - **Error Type**: First 2 characters of the error code
 - **Total Count**: Total occurrences across all executions
-- **Status**: Current error status (failed/maybeSolved/solved)
+- **Status**: Current error status (failed/maybeSolved/solved/maybeUnrecoverable)
 - **Latest Execution**: Most recent execution that observed this error
 - **Updated At**: When the error record was last updated
 - **Details**: Click to view formatted JSON error details in a popup
@@ -89,6 +98,10 @@ Set the \`errorType\` parameter to filter errors by type prefix:
 - \`MV\` - MVL errors
 - Leave empty to show all error types
 
+Set the \`status\` parameter to filter errors by resolution status:
+- \`FAILED\` - Errors that are still failing (default)
+- \`MAYBEUNRECOVERABLE\` - Errors that failed AI resolution
+
 ### Pagination
 
 Use the Previous/Next buttons to navigate between pages.`,
@@ -97,6 +110,7 @@ Use the Previous/Next buttons to navigate between pages.`,
 
 const queryErrorsWithMostOccurrences = async (
   limit: number,
+  status: GsiStatus,
   errorType?: string,
   cursor?: string,
 ): Promise<QueryResult> => {
@@ -117,7 +131,7 @@ const queryErrorsWithMostOccurrences = async (
       FilterExpression: "entityType = :entityType",
       ExpressionAttributeValues: {
         ":gs3pk": "METRIC#ERRORCOUNT",
-        ":gs3skPrefix": `COUNT#${errorType.trim()}#`,
+        ":gs3skPrefix": `COUNT#${errorType.trim()}#${status}#`,
         ":entityType": ENTITY_TYPES.ERROR,
       },
       ScanIndexForward: false,
@@ -138,10 +152,12 @@ const queryErrorsWithMostOccurrences = async (
   const command = new QueryCommand({
     TableName: TABLE_NAME,
     IndexName: "GS2",
-    KeyConditionExpression: "GS2PK = :gs2pk",
+    KeyConditionExpression:
+      "GS2PK = :gs2pk AND begins_with(GS2SK, :gs2skPrefix)",
     FilterExpression: "entityType = :entityType",
     ExpressionAttributeValues: {
       ":gs2pk": "TYPE#ERROR",
+      ":gs2skPrefix": `COUNT#${status}#`,
       ":entityType": ENTITY_TYPES.ERROR,
     },
     ScanIndexForward: false,
@@ -206,11 +222,13 @@ interface PaginationParams {
   currentCursor?: string;
   nextCursor?: string;
   errorType?: string;
+  status: GsiStatus;
   limit: number;
 }
 
 const generatePaginationControls = (params: PaginationParams): string => {
-  const { lambdaArn, currentCursor, nextCursor, errorType, limit } = params;
+  const { lambdaArn, currentCursor, nextCursor, errorType, status, limit } =
+    params;
 
   const hasPrevious = currentCursor !== undefined;
   const hasNext = nextCursor !== undefined;
@@ -218,6 +236,7 @@ const generatePaginationControls = (params: PaginationParams): string => {
   const buildParams = (cursor?: string, prevCursor?: string): string => {
     const actionParams: Record<string, string | number | undefined> = {
       errorType: errorType ?? "",
+      status,
       limit,
       cursor,
       prevCursor,
@@ -253,6 +272,7 @@ const generatePaginationControls = (params: PaginationParams): string => {
 
 const generateHtml = (
   errors: ErrorRecord[],
+  status: GsiStatus,
   errorTypeFilter?: string,
   currentCursor?: string,
   nextCursor?: string,
@@ -274,6 +294,7 @@ const generateHtml = (
         currentCursor,
         nextCursor: undefined,
         errorType: errorTypeFilter,
+        status,
         limit,
       });
     }
@@ -302,6 +323,7 @@ const generateHtml = (
         currentCursor,
         nextCursor,
         errorType: errorTypeFilter,
+        status,
         limit,
       })
     : "";
@@ -341,10 +363,12 @@ export const handler = async (
     const params = event.widgetContext?.params ?? {};
     const errorType = event.errorType ?? params.errorType;
     const limit = event.limit ?? params.limit ?? DEFAULT_LIMIT;
+    const status = event.status ?? params.status ?? DEFAULT_GSI_STATUS;
     const cursor = event.cursor;
 
     const result = await queryErrorsWithMostOccurrences(
       limit,
+      status,
       errorType,
       cursor,
     );
@@ -352,6 +376,7 @@ export const handler = async (
     console.info("errors-queried", {
       count: result.items.length,
       limit,
+      status,
       errorType: errorType ?? "none",
       hasCursor: cursor !== undefined,
       hasNextCursor: result.nextCursor !== undefined,
@@ -359,6 +384,7 @@ export const handler = async (
 
     return generateHtml(
       result.items,
+      status,
       errorType,
       cursor,
       result.nextCursor,

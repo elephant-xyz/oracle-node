@@ -6,3 +6,5 @@
 - Run `npm run typecheck` after making any changes to the code
 - Make sure to cover code changes with tests
 - Run `npm run test` to run tests
+- NEVER use `FilterExpression` when working with DynamoDB.
+- Always use aws knowledge MCP to get the docs and best practices when doing any changes related to any AWS services.

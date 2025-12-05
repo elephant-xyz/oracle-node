@@ -10,7 +10,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "typecheck": "npm run typecheck --workspace=prepare/lambdas/downloader && npm run typecheck --workspace=prepare/lambdas/updater && npm run typecheck --workspace=workflow/lambdas/pre && npm run typecheck --workspace=workflow/lambdas/starter && npm run typecheck --workspace=workflow/lambdas/submit && npm run typecheck --workspace=workflow/lambdas/error-resolver && npm run typecheck --workspace=workflow-events/lambdas/event-handler && npm run typecheck --workspace=workflow-events/lambdas/get-execution",
+    "typecheck": "npm run typecheck --workspace=prepare/lambdas/downloader && npm run typecheck --workspace=prepare/lambdas/updater && npm run typecheck --workspace=workflow/lambdas/pre && npm run typecheck --workspace=workflow/lambdas/starter && npm run typecheck --workspace=workflow/lambdas/submit && npm run typecheck --workspace=workflow/lambdas/error-resolver && npm run typecheck --workspace=workflow-events/lambdas/event-handler && npm run typecheck --workspace=workflow-events/lambdas/get-execution && npm run typecheck --workspace=workflow-events/lambdas/error-count-handler",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "install-workspaces": "npm install --workspaces",

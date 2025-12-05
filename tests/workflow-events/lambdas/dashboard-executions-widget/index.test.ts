@@ -34,9 +34,9 @@ const createMockExecution = (
   createdAt: "2025-01-01T00:00:00.000Z",
   updatedAt: "2025-01-01T00:00:00.000Z",
   GS1PK: "METRIC#ERRORCOUNT",
-  GS1SK: "COUNT#0000000003#EXECUTION#exec-001",
+  GS1SK: "COUNT#FAILED#0000000003#EXECUTION#exec-001",
   GS3PK: "METRIC#ERRORCOUNT",
-  GS3SK: "COUNT#01#0000000003#EXECUTION#exec-001",
+  GS3SK: "COUNT#01#FAILED#0000000003#EXECUTION#exec-001",
   ...overrides,
 });
 
@@ -64,9 +64,8 @@ describe("dashboard-executions-widget handler", () => {
 
   describe("describe parameter", () => {
     it("should return markdown documentation when describe is true", async () => {
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/dashboard-executions-widget/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/dashboard-executions-widget/index.js");
 
       const result = await handler({ describe: true });
 
@@ -77,9 +76,8 @@ describe("dashboard-executions-widget handler", () => {
     });
 
     it("should not query DynamoDB when describe is true", async () => {
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/dashboard-executions-widget/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/dashboard-executions-widget/index.js");
 
       await handler({ describe: true });
 
@@ -104,9 +102,8 @@ describe("dashboard-executions-widget handler", () => {
 
       ddbMock.on(QueryCommand).resolves({ Items: mockExecutions });
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/dashboard-executions-widget/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/dashboard-executions-widget/index.js");
 
       const result = await handler({});
 
@@ -122,9 +119,8 @@ describe("dashboard-executions-widget handler", () => {
     it("should return 'no executions found' message when empty", async () => {
       ddbMock.on(QueryCommand).resolves({ Items: [] });
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/dashboard-executions-widget/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/dashboard-executions-widget/index.js");
 
       const result = await handler({});
 
@@ -138,9 +134,8 @@ describe("dashboard-executions-widget handler", () => {
 
       ddbMock.on(QueryCommand).resolves({ Items: [mockExecution] });
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/dashboard-executions-widget/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/dashboard-executions-widget/index.js");
 
       const result = await handler({});
 
@@ -150,31 +145,30 @@ describe("dashboard-executions-widget handler", () => {
   });
 
   describe("DynamoDB query", () => {
-    it("should query GS1 index with METRIC#ERRORCOUNT partition key", async () => {
+    it("should query GS1 index with METRIC#ERRORCOUNT partition key and FAILED status prefix", async () => {
       ddbMock.on(QueryCommand).resolves({ Items: [] });
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/dashboard-executions-widget/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/dashboard-executions-widget/index.js");
 
       await handler({});
 
       const calls = ddbMock.commandCalls(QueryCommand);
       expect(calls[0].args[0].input.IndexName).toBe("GS1");
       expect(calls[0].args[0].input.KeyConditionExpression).toBe(
-        "GS1PK = :gs1pk",
+        "GS1PK = :gs1pk AND begins_with(GS1SK, :gs1skPrefix)",
       );
       expect(calls[0].args[0].input.ExpressionAttributeValues).toMatchObject({
         ":gs1pk": "METRIC#ERRORCOUNT",
+        ":gs1skPrefix": "COUNT#FAILED#",
       });
     });
 
     it("should sort descending (most errors first)", async () => {
       ddbMock.on(QueryCommand).resolves({ Items: [] });
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/dashboard-executions-widget/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/dashboard-executions-widget/index.js");
 
       await handler({});
 
@@ -185,9 +179,8 @@ describe("dashboard-executions-widget handler", () => {
     it("should use default limit of 20", async () => {
       ddbMock.on(QueryCommand).resolves({ Items: [] });
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/dashboard-executions-widget/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/dashboard-executions-widget/index.js");
 
       await handler({});
 
@@ -198,9 +191,8 @@ describe("dashboard-executions-widget handler", () => {
     it("should use custom limit when provided", async () => {
       ddbMock.on(QueryCommand).resolves({ Items: [] });
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/dashboard-executions-widget/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/dashboard-executions-widget/index.js");
 
       await handler({ limit: 10 });
 
@@ -213,9 +205,8 @@ describe("dashboard-executions-widget handler", () => {
     it("should return error HTML when DynamoDB query fails", async () => {
       ddbMock.on(QueryCommand).rejects(new Error("DynamoDB connection error"));
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/dashboard-executions-widget/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/dashboard-executions-widget/index.js");
 
       const result = await handler({});
 
@@ -226,9 +217,8 @@ describe("dashboard-executions-widget handler", () => {
     it("should return error HTML when table name is not set", async () => {
       delete process.env.WORKFLOW_ERRORS_TABLE_NAME;
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/dashboard-executions-widget/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/dashboard-executions-widget/index.js");
 
       const result = await handler({});
 
@@ -241,9 +231,8 @@ describe("dashboard-executions-widget handler", () => {
     it("should work with widget context provided", async () => {
       ddbMock.on(QueryCommand).resolves({ Items: [] });
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/dashboard-executions-widget/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/dashboard-executions-widget/index.js");
 
       const result = await handler({
         widgetContext: {
@@ -256,6 +245,113 @@ describe("dashboard-executions-widget handler", () => {
       });
 
       expect(result).toContain("No failed executions found");
+    });
+
+    it("should read limit from widgetContext.params", async () => {
+      ddbMock.on(QueryCommand).resolves({ Items: [] });
+
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/dashboard-executions-widget/index.js");
+
+      await handler({
+        widgetContext: {
+          dashboardName: "test-dashboard",
+          widgetId: "widget-1",
+          accountId: "123456789012",
+          height: 300,
+          width: 400,
+          params: {
+            limit: 5,
+          },
+        },
+      });
+
+      const calls = ddbMock.commandCalls(QueryCommand);
+      expect(calls[0].args[0].input.Limit).toBe(5);
+    });
+
+    it("should read status from widgetContext.params", async () => {
+      ddbMock.on(QueryCommand).resolves({ Items: [] });
+
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/dashboard-executions-widget/index.js");
+
+      await handler({
+        widgetContext: {
+          dashboardName: "test-dashboard",
+          widgetId: "widget-1",
+          accountId: "123456789012",
+          height: 300,
+          width: 400,
+          params: {
+            status: "MAYBEUNRECOVERABLE",
+          },
+        },
+      });
+
+      const calls = ddbMock.commandCalls(QueryCommand);
+      expect(calls[0].args[0].input.ExpressionAttributeValues).toMatchObject({
+        ":gs1skPrefix": "COUNT#MAYBEUNRECOVERABLE#",
+      });
+    });
+
+    it("should prefer top-level params over widgetContext.params", async () => {
+      ddbMock.on(QueryCommand).resolves({ Items: [] });
+
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/dashboard-executions-widget/index.js");
+
+      await handler({
+        limit: 15,
+        status: "MAYBEUNRECOVERABLE",
+        widgetContext: {
+          dashboardName: "test-dashboard",
+          widgetId: "widget-1",
+          accountId: "123456789012",
+          height: 300,
+          width: 400,
+          params: {
+            limit: 5,
+            status: "FAILED",
+          },
+        },
+      });
+
+      const calls = ddbMock.commandCalls(QueryCommand);
+      expect(calls[0].args[0].input.Limit).toBe(15);
+      expect(calls[0].args[0].input.ExpressionAttributeValues).toMatchObject({
+        ":gs1skPrefix": "COUNT#MAYBEUNRECOVERABLE#",
+      });
+    });
+  });
+
+  describe("status parameter", () => {
+    it("should default to FAILED status when not provided", async () => {
+      ddbMock.on(QueryCommand).resolves({ Items: [] });
+
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/dashboard-executions-widget/index.js");
+
+      await handler({});
+
+      const calls = ddbMock.commandCalls(QueryCommand);
+      expect(calls[0].args[0].input.ExpressionAttributeValues).toMatchObject({
+        ":gs1skPrefix": "COUNT#FAILED#",
+      });
+    });
+
+    it("should query with MAYBEUNRECOVERABLE status when provided", async () => {
+      ddbMock.on(QueryCommand).resolves({ Items: [] });
+
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/dashboard-executions-widget/index.js");
+
+      await handler({ status: "MAYBEUNRECOVERABLE" });
+
+      const calls = ddbMock.commandCalls(QueryCommand);
+      expect(calls[0].args[0].input.ExpressionAttributeValues).toMatchObject({
+        ":gs1skPrefix": "COUNT#MAYBEUNRECOVERABLE#",
+      });
     });
   });
 });
