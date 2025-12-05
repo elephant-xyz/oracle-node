@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mockClient } from "aws-sdk-client-mock";
 import { LambdaClient, InvokeCommand } from "@aws-sdk/client-lambda";
-import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import {
   EventBridgeClient,
   PutEventsCommand,
@@ -11,15 +10,12 @@ import {
   PutMetricDataCommand,
 } from "@aws-sdk/client-cloudwatch";
 import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
-import { SQSClient } from "@aws-sdk/client-sqs";
 
 // Create AWS SDK mocks using aws-sdk-client-mock
 const lambdaMock = mockClient(LambdaClient);
-const dynamoMock = mockClient(DynamoDBDocumentClient);
 const eventBridgeMock = mockClient(EventBridgeClient);
 const cloudWatchMock = mockClient(CloudWatchClient);
 const s3Mock = mockClient(S3Client);
-const sqsMock = mockClient(SQSClient);
 
 // Mock shared eventbridge module
 const mockEmitWorkflowEvent = vi.fn();
@@ -35,19 +31,6 @@ vi.mock("../../../codebuild/runtime-module/shared/eventbridge.mjs", () => ({
   emitErrorResolved: mockEmitErrorResolved,
   emitErrorFailedToResolve: mockEmitErrorFailedToResolve,
   createWorkflowError: mockCreateWorkflowError,
-}));
-
-// Mock errors.mjs module
-const mockDeleteExecution = vi.fn();
-const mockMarkErrorsAsMaybeSolved = vi.fn();
-const mockMarkErrorsAsMaybeUnrecoverable = vi.fn();
-const mockNormalizeErrors = vi.fn();
-
-vi.mock("../../../codebuild/runtime-module/errors.mjs", () => ({
-  deleteExecution: mockDeleteExecution,
-  markErrorsAsMaybeSolved: mockMarkErrorsAsMaybeSolved,
-  markErrorsAsMaybeUnrecoverable: mockMarkErrorsAsMaybeUnrecoverable,
-  normalizeErrors: mockNormalizeErrors,
 }));
 
 // Mock file system operations
@@ -119,15 +102,12 @@ describe("auto-repair runtime module", () => {
 
     // Reset AWS SDK mocks
     lambdaMock.reset();
-    dynamoMock.reset();
     eventBridgeMock.reset();
     cloudWatchMock.reset();
     s3Mock.reset();
-    sqsMock.reset();
 
     process.env = {
       ...originalEnv,
-      ERRORS_TABLE_NAME: "test-workflow-errors",
       TRANSFORM_S3_PREFIX: "s3://test-bucket/transforms",
       TRANSFORM_WORKER_FUNCTION_NAME: "test-transform-worker",
       SVL_WORKER_FUNCTION_NAME: "test-svl-worker",
@@ -147,15 +127,6 @@ describe("auto-repair runtime module", () => {
         data_group_cid: "test-group",
       },
     ]);
-    mockNormalizeErrors.mockReturnValue([
-      {
-        hash: "error-hash-123",
-        message: "missing required property",
-        path: "deed_1.json/deed_type",
-      },
-    ]);
-    mockDeleteExecution.mockResolvedValue(["error-hash-123"]);
-    mockMarkErrorsAsMaybeSolved.mockResolvedValue(undefined);
 
     // Set default mock responses for AWS SDK
     cloudWatchMock.on(PutMetricDataCommand).resolves({});
