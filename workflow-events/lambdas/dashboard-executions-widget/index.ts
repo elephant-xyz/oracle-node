@@ -1,10 +1,7 @@
 import { QueryCommand } from "@aws-sdk/lib-dynamodb";
 import type { FailedExecutionItem } from "shared/types.js";
 import { TABLE_NAME, docClient } from "shared/dynamodb-client.js";
-import {
-  DEFAULT_GSI_STATUS,
-  UNRECOVERABLE_GSI_STATUS,
-} from "shared/keys.js";
+import { DEFAULT_GSI_STATUS, UNRECOVERABLE_GSI_STATUS } from "shared/keys.js";
 
 type GsiStatus = typeof DEFAULT_GSI_STATUS | typeof UNRECOVERABLE_GSI_STATUS;
 

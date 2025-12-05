@@ -1,4 +1,4 @@
-import { DynamoDBClient, AttributeValue } from "@aws-sdk/client-dynamodb";
+import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import {
   DynamoDBDocumentClient,
   UpdateCommand,
@@ -42,9 +42,9 @@ import {
 
 /**
  * @typedef {object} DynamoDBStreamRecordData
- * @property {Record<string, AttributeValue>} [Keys] - Key attributes.
- * @property {Record<string, AttributeValue>} [OldImage] - Previous item state.
- * @property {Record<string, AttributeValue>} [NewImage] - Current item state.
+ * @property {Record<string, import("@aws-sdk/client-dynamodb").AttributeValue>} [Keys] - Key attributes.
+ * @property {Record<string, import("@aws-sdk/client-dynamodb").AttributeValue>} [OldImage] - Previous item state.
+ * @property {Record<string, import("@aws-sdk/client-dynamodb").AttributeValue>} [NewImage] - Current item state.
  */
 
 /**

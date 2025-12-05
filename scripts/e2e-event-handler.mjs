@@ -116,7 +116,9 @@ async function sendEvent(detailType, detail) {
   const response = await eventBridgeClient.send(command);
 
   if (response.FailedEntryCount && response.FailedEntryCount > 0) {
-    throw new Error(`Failed to send event: ${JSON.stringify(response.Entries)}`);
+    throw new Error(
+      `Failed to send event: ${JSON.stringify(response.Entries)}`,
+    );
   }
 
   log(`Sent ${detailType} event`);
@@ -150,67 +152,87 @@ async function invokeGetExecution(functionArn, sortOrder, errorType) {
 
 /**
  * Purge test data from DynamoDB.
+ * Scans for all items where PK or SK contains "e2e-test-" and deletes them.
+ * This removes all test data from previous runs, not just the current test prefix.
  */
-async function purgeTestData(tableName) {
-  log("Purging test data from DynamoDB...");
+async function purgeTestData(tableName, testPrefix = null) {
+  const prefixToMatch = testPrefix || "e2e-test-";
+  log(`Purging test data from DynamoDB (matching "${prefixToMatch}")...`);
 
-  // Query all items with our test prefix in PK
-  const prefixes = ["EXECUTION#", "ERROR#"];
+  const { ScanCommand } = await import("@aws-sdk/client-dynamodb");
   let totalDeleted = 0;
+  let lastEvaluatedKey;
 
-  for (const prefix of prefixes) {
-    let lastEvaluatedKey;
+  // Scan for all items where PK or SK contains the test prefix
+  do {
+    const scanCommand = new ScanCommand({
+      TableName: tableName,
+      FilterExpression:
+        "contains(PK, :testPrefix) OR contains(SK, :testPrefix)",
+      ExpressionAttributeValues: {
+        ":testPrefix": { S: prefixToMatch },
+      },
+      ExclusiveStartKey: lastEvaluatedKey,
+    });
 
-    do {
-      const queryCommand = new QueryCommand({
-        TableName: tableName,
-        KeyConditionExpression: "begins_with(PK, :prefix)",
-        ExpressionAttributeValues: {
-          ":prefix": { S: prefix },
-        },
-        ExclusiveStartKey: lastEvaluatedKey,
-      });
+    const response = await dynamoDbClient.send(scanCommand);
+    const items = response.Items || [];
 
-      // Use Scan instead since Query requires exact PK
-      const { ScanCommand } = await import("@aws-sdk/client-dynamodb");
-      const scanCommand = new ScanCommand({
-        TableName: tableName,
-        FilterExpression: "contains(PK, :testPrefix)",
-        ExpressionAttributeValues: {
-          ":testPrefix": { S: TEST_PREFIX },
-        },
-        ExclusiveStartKey: lastEvaluatedKey,
-      });
-
-      const response = await dynamoDbClient.send(scanCommand);
-      const items = response.Items || [];
-
-      if (items.length > 0) {
-        // Delete items in batches of 25
-        for (let i = 0; i < items.length; i += 25) {
-          const batch = items.slice(i, i + 25);
-          const deleteRequests = batch.map((item) => ({
-            DeleteRequest: {
-              Key: {
-                PK: item.PK,
-                SK: item.SK,
-              },
+    if (items.length > 0) {
+      // Delete items in batches of 25, handling unprocessed items
+      const BATCH_LIMIT = 25;
+      for (let i = 0; i < items.length; i += BATCH_LIMIT) {
+        const batch = items.slice(i, i + BATCH_LIMIT);
+        let deleteRequests = batch.map((item) => ({
+          DeleteRequest: {
+            Key: {
+              PK: item.PK,
+              SK: item.SK,
             },
-          }));
+          },
+        }));
 
+        // Retry unprocessed items up to 3 times
+        let retryCount = 0;
+        const MAX_RETRIES = 3;
+
+        while (deleteRequests.length > 0 && retryCount < MAX_RETRIES) {
           const batchCommand = new BatchWriteItemCommand({
             RequestItems: {
               [tableName]: deleteRequests,
             },
           });
 
-          await dynamoDbClient.send(batchCommand);
-          totalDeleted += batch.length;
+          const batchResponse = await dynamoDbClient.send(batchCommand);
+          const unprocessed = batchResponse.UnprocessedItems?.[tableName];
+
+          if (unprocessed && unprocessed.length > 0) {
+            deleteRequests = unprocessed;
+            retryCount++;
+            // Exponential backoff for retries
+            if (retryCount < MAX_RETRIES) {
+              await sleep(Math.pow(2, retryCount) * 100);
+            }
+          } else {
+            totalDeleted += batch.length;
+            deleteRequests = [];
+          }
+        }
+
+        if (deleteRequests.length > 0) {
+          warn(
+            `Failed to delete ${deleteRequests.length} items after ${MAX_RETRIES} retries`,
+          );
         }
       }
+    }
 
-      lastEvaluatedKey = response.LastEvaluatedKey;
-    } while (lastEvaluatedKey);
+    lastEvaluatedKey = response.LastEvaluatedKey;
+  } while (lastEvaluatedKey);
+
+  // Wait a bit for eventual consistency after deletions
+  if (totalDeleted > 0) {
+    await sleep(1000);
   }
 
   log(`Purged ${totalDeleted} test items`);
@@ -251,7 +273,9 @@ function assertNotNull(value, message) {
 
 function assertNull(value, message) {
   if (value !== null && value !== undefined) {
-    throw new Error(`${message}: expected null, got "${JSON.stringify(value)}"`);
+    throw new Error(
+      `${message}: expected null, got "${JSON.stringify(value)}"`,
+    );
   }
 }
 
@@ -273,16 +297,16 @@ async function main() {
 
   if (!tableName || !getExecutionArn) {
     throw new Error(
-      `Missing required stack outputs. Got: ${JSON.stringify(Object.keys(outputs))}`
+      `Missing required stack outputs. Got: ${JSON.stringify(Object.keys(outputs))}`,
     );
   }
 
   success(`Table: ${tableName}`);
   success(`GetExecution ARN: ${getExecutionArn}`);
 
-  // Step 2: Purge any existing test data
+  // Step 2: Purge any existing test data (all e2e-test-* data)
   log("\n🧹 Step 2: Purging existing test data...");
-  await purgeTestData(tableName);
+  await purgeTestData(tableName, "e2e-test-");
   success("Test data purged");
 
   try {
@@ -290,7 +314,7 @@ async function main() {
     log("\n📤 Step 3: Sending WorkflowEvent for execution 1 (2 errors)...");
     await sendEvent(
       "WorkflowEvent",
-      createWorkflowEvent(EXEC_1_ID, [ERROR_CODE_1, ERROR_CODE_2])
+      createWorkflowEvent(EXEC_1_ID, [ERROR_CODE_1, ERROR_CODE_2]),
     );
     success(`Sent WorkflowEvent for ${EXEC_1_ID} with 2 errors`);
 
@@ -298,7 +322,7 @@ async function main() {
     log("\n📤 Step 4: Sending WorkflowEvent for execution 2 (1 error)...");
     await sendEvent(
       "WorkflowEvent",
-      createWorkflowEvent(EXEC_2_ID, [ERROR_CODE_3])
+      createWorkflowEvent(EXEC_2_ID, [ERROR_CODE_3]),
     );
     success(`Sent WorkflowEvent for ${EXEC_2_ID} with 1 error`);
 
@@ -317,12 +341,12 @@ async function main() {
     assertEqual(
       mostResult.execution.executionId,
       EXEC_1_ID,
-      "Should return execution 1 (most errors)"
+      "Should return execution 1 (most errors)",
     );
     assertEqual(
       mostResult.execution.openErrorCount,
       2,
-      "Execution 1 should have 2 open errors"
+      "Execution 1 should have 2 open errors",
     );
     success(`Verified: execution with most errors is ${EXEC_1_ID}`);
 
@@ -336,12 +360,12 @@ async function main() {
     assertEqual(
       leastResult.execution.executionId,
       EXEC_2_ID,
-      "Should return execution 2 (least errors)"
+      "Should return execution 2 (least errors)",
     );
     assertEqual(
       leastResult.execution.openErrorCount,
       1,
-      "Execution 2 should have 1 open error"
+      "Execution 2 should have 1 open error",
     );
     success(`Verified: execution with least errors is ${EXEC_2_ID}`);
 
@@ -359,7 +383,7 @@ async function main() {
 
     // Step 10: Query get-execution with "most" errors again
     log(
-      "\n🔍 Step 10: Querying execution with MOST errors (after failed-to-resolve)..."
+      "\n🔍 Step 10: Querying execution with MOST errors (after failed-to-resolve)...",
     );
     const mostResult2 = await invokeGetExecution(getExecutionArn, "most");
 
@@ -369,15 +393,15 @@ async function main() {
     assertEqual(
       mostResult2.execution.executionId,
       EXEC_2_ID,
-      "Should return execution 2 (exec-1 is now unrecoverable)"
+      "Should return execution 2 (exec-1 is now unrecoverable)",
     );
     success(
-      `Verified: execution with most errors is now ${EXEC_2_ID} (exec-1 filtered out)`
+      `Verified: execution with most errors is now ${EXEC_2_ID} (exec-1 filtered out)`,
     );
 
     // Step 11: Query get-execution with "least" errors again
     log(
-      "\n🔍 Step 11: Querying execution with LEAST errors (after failed-to-resolve)..."
+      "\n🔍 Step 11: Querying execution with LEAST errors (after failed-to-resolve)...",
     );
     const leastResult2 = await invokeGetExecution(getExecutionArn, "least");
 
@@ -387,10 +411,10 @@ async function main() {
     assertEqual(
       leastResult2.execution.executionId,
       EXEC_2_ID,
-      "Should return execution 2 (only one left with FAILED status)"
+      "Should return execution 2 (only one left with FAILED status)",
     );
     success(
-      `Verified: execution with least errors is ${EXEC_2_ID} (same as most)`
+      `Verified: execution with least errors is ${EXEC_2_ID} (same as most)`,
     );
 
     log("\n" + "=".repeat(60));
@@ -400,12 +424,14 @@ async function main() {
     if (KEEP_DATA) {
       warn("\n⚠️  --keep-data flag set: Test data NOT cleaned up");
       warn(`Test prefix: ${TEST_PREFIX}`);
-      warn("To manually purge later, delete items with this prefix from DynamoDB");
+      warn(
+        "To manually purge later, delete items with this prefix from DynamoDB",
+      );
       warn("You can now check the dashboard to see the test data.");
     } else {
-      // Cleanup: Purge test data
+      // Cleanup: Purge test data (only current test prefix)
       log("\n🧹 Cleanup: Purging test data...");
-      await purgeTestData(tableName);
+      await purgeTestData(tableName, TEST_PREFIX);
       success("Test data cleaned up");
     }
   }

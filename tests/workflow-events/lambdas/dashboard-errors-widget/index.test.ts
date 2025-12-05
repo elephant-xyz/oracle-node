@@ -65,9 +65,8 @@ describe("dashboard-errors-widget handler", () => {
 
   describe("describe parameter", () => {
     it("should return markdown documentation when describe is true", async () => {
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/dashboard-errors-widget/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/dashboard-errors-widget/index.js");
 
       const result = await handler({ describe: true });
 
@@ -79,9 +78,8 @@ describe("dashboard-errors-widget handler", () => {
     });
 
     it("should not query DynamoDB when describe is true", async () => {
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/dashboard-errors-widget/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/dashboard-errors-widget/index.js");
 
       await handler({ describe: true });
 
@@ -98,9 +96,8 @@ describe("dashboard-errors-widget handler", () => {
 
       ddbMock.on(QueryCommand).resolves({ Items: mockErrors });
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/dashboard-errors-widget/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/dashboard-errors-widget/index.js");
 
       const result = await handler({});
 
@@ -115,9 +112,8 @@ describe("dashboard-errors-widget handler", () => {
     it("should return 'no errors found' message when empty", async () => {
       ddbMock.on(QueryCommand).resolves({ Items: [] });
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/dashboard-errors-widget/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/dashboard-errors-widget/index.js");
 
       const result = await handler({});
 
@@ -131,9 +127,8 @@ describe("dashboard-errors-widget handler", () => {
 
       ddbMock.on(QueryCommand).resolves({ Items: [mockError] });
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/dashboard-errors-widget/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/dashboard-errors-widget/index.js");
 
       const result = await handler({});
 
@@ -153,9 +148,8 @@ describe("dashboard-errors-widget handler", () => {
 
       ddbMock.on(QueryCommand).resolves({ Items: mockErrors });
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/dashboard-errors-widget/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/dashboard-errors-widget/index.js");
 
       const result = await handler({});
 
@@ -167,9 +161,8 @@ describe("dashboard-errors-widget handler", () => {
     it("should show filter badge when errorType is specified", async () => {
       ddbMock.on(QueryCommand).resolves({ Items: [] });
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/dashboard-errors-widget/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/dashboard-errors-widget/index.js");
 
       const result = await handler({ errorType: "SV" });
 
@@ -182,9 +175,8 @@ describe("dashboard-errors-widget handler", () => {
     it("should query GS2 index when errorType is not provided", async () => {
       ddbMock.on(QueryCommand).resolves({ Items: [] });
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/dashboard-errors-widget/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/dashboard-errors-widget/index.js");
 
       await handler({});
 
@@ -202,9 +194,8 @@ describe("dashboard-errors-widget handler", () => {
     it("should sort descending (most occurrences first)", async () => {
       ddbMock.on(QueryCommand).resolves({ Items: [] });
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/dashboard-errors-widget/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/dashboard-errors-widget/index.js");
 
       await handler({});
 
@@ -215,9 +206,8 @@ describe("dashboard-errors-widget handler", () => {
     it("should use default limit of 20", async () => {
       ddbMock.on(QueryCommand).resolves({ Items: [] });
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/dashboard-errors-widget/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/dashboard-errors-widget/index.js");
 
       await handler({});
 
@@ -228,9 +218,8 @@ describe("dashboard-errors-widget handler", () => {
     it("should use custom limit when provided", async () => {
       ddbMock.on(QueryCommand).resolves({ Items: [] });
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/dashboard-errors-widget/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/dashboard-errors-widget/index.js");
 
       await handler({ limit: 10 });
 
@@ -241,9 +230,8 @@ describe("dashboard-errors-widget handler", () => {
     it("should filter by Error entity type", async () => {
       ddbMock.on(QueryCommand).resolves({ Items: [] });
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/dashboard-errors-widget/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/dashboard-errors-widget/index.js");
 
       await handler({});
 
@@ -261,9 +249,8 @@ describe("dashboard-errors-widget handler", () => {
     it("should query GS3 index when errorType is provided", async () => {
       ddbMock.on(QueryCommand).resolves({ Items: [] });
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/dashboard-errors-widget/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/dashboard-errors-widget/index.js");
 
       await handler({ errorType: "SV" });
 
@@ -281,9 +268,8 @@ describe("dashboard-errors-widget handler", () => {
     it("should trim errorType whitespace", async () => {
       ddbMock.on(QueryCommand).resolves({ Items: [] });
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/dashboard-errors-widget/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/dashboard-errors-widget/index.js");
 
       await handler({ errorType: "  MV  " });
 
@@ -296,9 +282,8 @@ describe("dashboard-errors-widget handler", () => {
     it("should not use GS3 when errorType is empty string", async () => {
       ddbMock.on(QueryCommand).resolves({ Items: [] });
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/dashboard-errors-widget/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/dashboard-errors-widget/index.js");
 
       await handler({ errorType: "" });
 
@@ -309,9 +294,8 @@ describe("dashboard-errors-widget handler", () => {
     it("should not use GS3 when errorType is whitespace only", async () => {
       ddbMock.on(QueryCommand).resolves({ Items: [] });
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/dashboard-errors-widget/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/dashboard-errors-widget/index.js");
 
       await handler({ errorType: "   " });
 
@@ -324,9 +308,8 @@ describe("dashboard-errors-widget handler", () => {
     it("should read errorType from widgetContext.params", async () => {
       ddbMock.on(QueryCommand).resolves({ Items: [] });
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/dashboard-errors-widget/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/dashboard-errors-widget/index.js");
 
       await handler({
         widgetContext: {
@@ -351,9 +334,8 @@ describe("dashboard-errors-widget handler", () => {
     it("should read limit from widgetContext.params", async () => {
       ddbMock.on(QueryCommand).resolves({ Items: [] });
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/dashboard-errors-widget/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/dashboard-errors-widget/index.js");
 
       await handler({
         widgetContext: {
@@ -375,9 +357,8 @@ describe("dashboard-errors-widget handler", () => {
     it("should prefer top-level params over widgetContext.params", async () => {
       ddbMock.on(QueryCommand).resolves({ Items: [] });
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/dashboard-errors-widget/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/dashboard-errors-widget/index.js");
 
       await handler({
         errorType: "MV",
@@ -402,9 +383,8 @@ describe("dashboard-errors-widget handler", () => {
     it("should read status from widgetContext.params", async () => {
       ddbMock.on(QueryCommand).resolves({ Items: [] });
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/dashboard-errors-widget/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/dashboard-errors-widget/index.js");
 
       await handler({
         widgetContext: {
@@ -428,9 +408,8 @@ describe("dashboard-errors-widget handler", () => {
     it("should prefer top-level status over widgetContext.params.status", async () => {
       ddbMock.on(QueryCommand).resolves({ Items: [] });
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/dashboard-errors-widget/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/dashboard-errors-widget/index.js");
 
       await handler({
         status: "MAYBEUNRECOVERABLE",
@@ -457,9 +436,8 @@ describe("dashboard-errors-widget handler", () => {
     it("should default to FAILED status when not provided", async () => {
       ddbMock.on(QueryCommand).resolves({ Items: [] });
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/dashboard-errors-widget/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/dashboard-errors-widget/index.js");
 
       await handler({});
 
@@ -472,9 +450,8 @@ describe("dashboard-errors-widget handler", () => {
     it("should query with MAYBEUNRECOVERABLE status when provided", async () => {
       ddbMock.on(QueryCommand).resolves({ Items: [] });
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/dashboard-errors-widget/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/dashboard-errors-widget/index.js");
 
       await handler({ status: "MAYBEUNRECOVERABLE" });
 
@@ -487,9 +464,8 @@ describe("dashboard-errors-widget handler", () => {
     it("should use status with errorType filter on GS3", async () => {
       ddbMock.on(QueryCommand).resolves({ Items: [] });
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/dashboard-errors-widget/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/dashboard-errors-widget/index.js");
 
       await handler({ errorType: "SV", status: "MAYBEUNRECOVERABLE" });
 
@@ -505,9 +481,8 @@ describe("dashboard-errors-widget handler", () => {
     it("should return error HTML when DynamoDB query fails", async () => {
       ddbMock.on(QueryCommand).rejects(new Error("DynamoDB connection error"));
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/dashboard-errors-widget/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/dashboard-errors-widget/index.js");
 
       const result = await handler({});
 
@@ -518,9 +493,8 @@ describe("dashboard-errors-widget handler", () => {
     it("should return error HTML when table name is not set", async () => {
       delete process.env.WORKFLOW_ERRORS_TABLE_NAME;
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/dashboard-errors-widget/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/dashboard-errors-widget/index.js");
 
       const result = await handler({});
 
@@ -558,9 +532,8 @@ describe("dashboard-errors-widget handler", () => {
         LastEvaluatedKey: createMockLastEvaluatedKey(),
       });
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/dashboard-errors-widget/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/dashboard-errors-widget/index.js");
 
       const result = await handler({});
 
@@ -580,9 +553,8 @@ describe("dashboard-errors-widget handler", () => {
         LastEvaluatedKey: undefined,
       });
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/dashboard-errors-widget/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/dashboard-errors-widget/index.js");
 
       const result = await handler({});
 
@@ -601,9 +573,8 @@ describe("dashboard-errors-widget handler", () => {
         LastEvaluatedKey: undefined,
       });
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/dashboard-errors-widget/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/dashboard-errors-widget/index.js");
 
       const result = await handler({ cursor });
 
@@ -619,9 +590,8 @@ describe("dashboard-errors-widget handler", () => {
         LastEvaluatedKey: undefined,
       });
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/dashboard-errors-widget/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/dashboard-errors-widget/index.js");
 
       const result = await handler({});
 
@@ -634,9 +604,8 @@ describe("dashboard-errors-widget handler", () => {
 
       ddbMock.on(QueryCommand).resolves({ Items: [] });
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/dashboard-errors-widget/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/dashboard-errors-widget/index.js");
 
       await handler({ cursor });
 
@@ -647,9 +616,8 @@ describe("dashboard-errors-widget handler", () => {
     it("should not pass ExclusiveStartKey when no cursor provided", async () => {
       ddbMock.on(QueryCommand).resolves({ Items: [] });
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/dashboard-errors-widget/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/dashboard-errors-widget/index.js");
 
       await handler({});
 
@@ -665,9 +633,8 @@ describe("dashboard-errors-widget handler", () => {
         LastEvaluatedKey: createMockLastEvaluatedKey(),
       });
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/dashboard-errors-widget/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/dashboard-errors-widget/index.js");
 
       const result = await handler({ errorType: "SV" });
 
@@ -682,9 +649,8 @@ describe("dashboard-errors-widget handler", () => {
         LastEvaluatedKey: createMockLastEvaluatedKey(),
       });
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/dashboard-errors-widget/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/dashboard-errors-widget/index.js");
 
       const result = await handler({ limit: 15 });
 
@@ -699,9 +665,8 @@ describe("dashboard-errors-widget handler", () => {
         LastEvaluatedKey: createMockLastEvaluatedKey(),
       });
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/dashboard-errors-widget/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/dashboard-errors-widget/index.js");
 
       const result = await handler({ status: "MAYBEUNRECOVERABLE" });
 
@@ -716,9 +681,8 @@ describe("dashboard-errors-widget handler", () => {
         LastEvaluatedKey: createMockLastEvaluatedKey(),
       });
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/dashboard-errors-widget/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/dashboard-errors-widget/index.js");
 
       const result = await handler({});
 
@@ -735,9 +699,8 @@ describe("dashboard-errors-widget handler", () => {
     it("should handle invalid cursor gracefully", async () => {
       ddbMock.on(QueryCommand).resolves({ Items: [] });
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/dashboard-errors-widget/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/dashboard-errors-widget/index.js");
 
       // Invalid base64 cursor
       const result = await handler({ cursor: "invalid-cursor-not-base64!!!" });
@@ -755,9 +718,8 @@ describe("dashboard-errors-widget handler", () => {
         LastEvaluatedKey: mockKey,
       });
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/dashboard-errors-widget/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/dashboard-errors-widget/index.js");
 
       const result = await handler({});
 
@@ -780,9 +742,8 @@ describe("dashboard-errors-widget handler", () => {
         LastEvaluatedKey: createMockLastEvaluatedKey(),
       });
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/dashboard-errors-widget/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/dashboard-errors-widget/index.js");
 
       const result = await handler({ cursor });
 
@@ -791,9 +752,8 @@ describe("dashboard-errors-widget handler", () => {
     });
 
     it("should document pagination in describe output", async () => {
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/dashboard-errors-widget/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/dashboard-errors-widget/index.js");
 
       const result = await handler({ describe: true });
 
