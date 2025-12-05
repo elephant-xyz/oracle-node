@@ -81,6 +81,8 @@ Emitted on workflow step status changes (success, failure, or parked).
 | `31001`         | SVL        | SVL runtime exception (non-validation failure)                                                                                                                                            |
 | `40001`         | Hash       | Generic hash step failure or exception                                                                                                                                                    |
 | `50001`         | Upload     | Generic upload step failure or exception                                                                                                                                                  |
+| `70001`         | AutoRepair | Auto-repair failed for MVL errors after max retries                                                                                                                                       |
+| `70002`         | AutoRepair | Auto-repair failed for SVL errors after max retries                                                                                                                                       |
 
 #### Prepare Error Codes (`10xxx` - CLI Prepare)
 
@@ -110,29 +112,31 @@ Emitted on workflow step status changes (success, failure, or parked).
 
 ### Phase Values
 
-| Phase       | Description                      |
-| ----------- | -------------------------------- |
-| `Prepare`   | Input preparation and validation |
-| `Transform` | Data transformation processing   |
-| `SVL`       | Schema Validation Layer          |
-| `MVL`       | Mirror Validation Layer          |
-| `Hash`      | Hashing and fingerprinting       |
-| `Upload`    | IPFS/storage upload              |
-| `Submit`    | Final submission                 |
+| Phase        | Description                      |
+| ------------ | -------------------------------- |
+| `Prepare`    | Input preparation and validation |
+| `Transform`  | Data transformation processing   |
+| `SVL`        | Schema Validation Layer          |
+| `MVL`        | Mirror Validation Layer          |
+| `Hash`       | Hashing and fingerprinting       |
+| `Upload`     | IPFS/storage upload              |
+| `Submit`     | Final submission                 |
+| `AutoRepair` | AI-driven error resolution       |
 
 ### Step Values
 
-| Step                | Phase     | Description                    |
-| ------------------- | --------- | ------------------------------ |
-| `Prepare`           | Prepare   | Data preparation/download      |
-| `EvaluateTransform` | Transform | Evaluation of transform errors |
-| `Transform`         | Transform | Data transformation processing |
-| `SVL`               | SVL       | Schema validation              |
-| `MVL`               | MVL       | Mirror validation              |
-| `EvaluateHash`      | Hash      | Evaluation of hash errors      |
-| `Hash`              | Hash      | Hashing and CID-s calculation  |
-| `EvaluateUpload`    | Upload    | Evaluation of upload errors    |
-| `Upload`            | Upload    | IPFS upload                    |
+| Step                | Phase      | Description                    |
+| ------------------- | ---------- | ------------------------------ |
+| `Prepare`           | Prepare    | Data preparation/download      |
+| `EvaluateTransform` | Transform  | Evaluation of transform errors |
+| `Transform`         | Transform  | Data transformation processing |
+| `SVL`               | SVL        | Schema validation              |
+| `MVL`               | MVL        | Mirror validation              |
+| `EvaluateHash`      | Hash       | Evaluation of hash errors      |
+| `Hash`              | Hash       | Hashing and CID-s calculation  |
+| `EvaluateUpload`    | Upload     | Evaluation of upload errors    |
+| `Upload`            | Upload     | IPFS upload                    |
+| `AutoRepair`        | AutoRepair | AI-driven error resolution     |
 
 > Additional steps will be added as other workflows are integrated.
 
@@ -144,6 +148,62 @@ Emitted on workflow step status changes (success, failure, or parked).
 | `IN_PROGRESS` | Step is currently executing                             |
 | `SUCCEEDED`   | Step completed successfully                             |
 | `FAILED`      | Execution has failed, paused, and requires intervention |
+
+---
+
+## Event Type: `ElephantErrorResolved`
+
+Emitted when errors have been successfully resolved (e.g., by auto-repair).
+
+### Event Structure
+
+```json
+{
+  "source": "elephant.workflow",
+  "detail-type": "ElephantErrorResolved",
+  "detail": {
+    "executionId": "string",
+    "errorCode": "string"
+  }
+}
+```
+
+### Field Definitions
+
+| Field         | Type   | Description                                              |
+| ------------- | ------ | -------------------------------------------------------- |
+| `executionId` | string | Resolves all errors for this execution (optional)        |
+| `errorCode`   | string | Resolves this error code across all executions (optional)|
+
+> **Note**: At least one of `executionId` or `errorCode` must be provided.
+
+---
+
+## Event Type: `ElephantErrorFailedToResolve`
+
+Emitted when error resolution has failed (e.g., auto-repair exhausted retries).
+
+### Event Structure
+
+```json
+{
+  "source": "elephant.workflow",
+  "detail-type": "ElephantErrorFailedToResolve",
+  "detail": {
+    "executionId": "string",
+    "errorCode": "string"
+  }
+}
+```
+
+### Field Definitions
+
+| Field         | Type   | Description                                                        |
+| ------------- | ------ | ------------------------------------------------------------------ |
+| `executionId` | string | Marks all errors for this execution as unrecoverable (optional)    |
+| `errorCode`   | string | Marks this error code as unrecoverable across executions (optional)|
+
+> **Note**: At least one of `executionId` or `errorCode` must be provided. Errors marked as unrecoverable are excluded from future auto-repair attempts.
 
 ---
 
