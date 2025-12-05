@@ -295,6 +295,94 @@ describe("event-handler", () => {
         failedExecutionItem?.ExpressionAttributeValues?.[":taskToken"],
       ).toBe("arn:aws:states:task-token-12345");
     });
+
+    it("should include preparedS3Uri in FailedExecutionItem when provided", async () => {
+      ddbMock.on(TransactWriteCommand).resolves({});
+
+      const { saveErrorRecords } = await import("shared/repository.js");
+
+      const detail = createWorkflowDetail({
+        executionId: "exec-with-prepared-uri-001",
+        preparedS3Uri: "s3://bucket/outputs/12345/output.zip",
+        errors: [createError("01256")],
+      });
+
+      await saveErrorRecords(detail);
+
+      const calls = ddbMock.commandCalls(TransactWriteCommand);
+      const transactItems = calls[0].args[0].input.TransactItems;
+      const failedExecutionItem = transactItems![0].Update;
+
+      expect(
+        failedExecutionItem?.ExpressionAttributeValues?.[":preparedS3Uri"],
+      ).toBe("s3://bucket/outputs/12345/output.zip");
+
+      // Verify it's in the UpdateExpression
+      expect(failedExecutionItem?.UpdateExpression).toContain(
+        "preparedS3Uri = :preparedS3Uri",
+      );
+    });
+
+    it("should not include preparedS3Uri in FailedExecutionItem when not provided", async () => {
+      ddbMock.on(TransactWriteCommand).resolves({});
+
+      const { saveErrorRecords } = await import("shared/repository.js");
+
+      const detail = createWorkflowDetail({
+        executionId: "exec-without-prepared-uri-001",
+        errors: [createError("01256")],
+      });
+
+      await saveErrorRecords(detail);
+
+      const calls = ddbMock.commandCalls(TransactWriteCommand);
+      const transactItems = calls[0].args[0].input.TransactItems;
+      const failedExecutionItem = transactItems![0].Update;
+
+      // Should not have preparedS3Uri in expression attribute values
+      expect(
+        failedExecutionItem?.ExpressionAttributeValues?.[":preparedS3Uri"],
+      ).toBeUndefined();
+
+      // Should not be in the UpdateExpression
+      expect(failedExecutionItem?.UpdateExpression).not.toContain(
+        "preparedS3Uri",
+      );
+    });
+
+    it("should include both taskToken and preparedS3Uri when both are provided", async () => {
+      ddbMock.on(TransactWriteCommand).resolves({});
+
+      const { saveErrorRecords } = await import("shared/repository.js");
+
+      const detail = createWorkflowDetail({
+        executionId: "exec-with-both-001",
+        taskToken: "arn:aws:states:task-token-12345",
+        preparedS3Uri: "s3://bucket/outputs/12345/output.zip",
+        errors: [createError("01256")],
+      });
+
+      await saveErrorRecords(detail);
+
+      const calls = ddbMock.commandCalls(TransactWriteCommand);
+      const transactItems = calls[0].args[0].input.TransactItems;
+      const failedExecutionItem = transactItems![0].Update;
+
+      expect(
+        failedExecutionItem?.ExpressionAttributeValues?.[":taskToken"],
+      ).toBe("arn:aws:states:task-token-12345");
+      expect(
+        failedExecutionItem?.ExpressionAttributeValues?.[":preparedS3Uri"],
+      ).toBe("s3://bucket/outputs/12345/output.zip");
+
+      // Verify both are in the UpdateExpression
+      expect(failedExecutionItem?.UpdateExpression).toContain(
+        "taskToken = :taskToken",
+      );
+      expect(failedExecutionItem?.UpdateExpression).toContain(
+        "preparedS3Uri = :preparedS3Uri",
+      );
+    });
   });
 
   describe("multiple unique errors execution", () => {
