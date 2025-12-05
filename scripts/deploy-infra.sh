@@ -670,6 +670,15 @@ deploy_codebuild_stack() {
     return 0
   fi
 
+  # Get StateMachineArn from main stack
+  local state_machine_arn
+  state_machine_arn=$(get_output "ElephantExpressStateMachineArn")
+  if [[ -z "$state_machine_arn" ]]; then
+    CODEBUILD_DEPLOY_PENDING=1
+    info "Delaying CodeBuild stack deployment until ElephantExpressStateMachineArn output is available."
+    return 0
+  fi
+
   info "Deploying CodeBuild stack ($CODEBUILD_STACK_NAME) using artifacts bucket ${bucket}/${prefix}"
   local -a codebuild_params=(
     "EnvironmentName=$ENVIRONMENT_NAME"
@@ -690,6 +699,7 @@ deploy_codebuild_stack() {
     "WorkflowSqsQueueUrl=$workflow_sqs_queue_url"
     "Concurrency=${CONCURRENCY:-20}"
     "GetExecutionLambdaFunctionName=$get_execution_function_name"
+    "StateMachineArn=$state_machine_arn"
   )
 
   if [[ -n "${MAX_EXECUTIONS_PER_RUN:-}" ]]; then
