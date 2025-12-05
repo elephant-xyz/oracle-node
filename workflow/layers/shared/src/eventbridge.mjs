@@ -14,7 +14,7 @@ const eventBridgeClient = new EventBridgeClient({});
  */
 
 /**
- * @typedef {'EvaluateTransform' | 'Transform' | 'SVL' | 'MVL' | 'EvaluateHash' | 'Hash' | 'EvaluateUpload' | 'Upload' | 'CheckGasPrice' | 'SubmitToBlockchain' | 'CheckTransactionStatus'} WorkflowStep
+ * @typedef {'Prepare' | 'EvaluateTransform' | 'Transform' | 'SVL' | 'MVL' | 'EvaluateHash' | 'Hash' | 'EvaluateUpload' | 'Upload' | 'CheckGasPrice' | 'SubmitToBlockchain' | 'CheckTransactionStatus' | 'AutoRepair'} WorkflowStep
  */
 
 /**
