@@ -170,10 +170,10 @@ Emitted when errors have been successfully resolved (e.g., by auto-repair).
 
 ### Field Definitions
 
-| Field         | Type   | Description                                              |
-| ------------- | ------ | -------------------------------------------------------- |
-| `executionId` | string | Resolves all errors for this execution (optional)        |
-| `errorCode`   | string | Resolves this error code across all executions (optional)|
+| Field         | Type   | Description                                               |
+| ------------- | ------ | --------------------------------------------------------- |
+| `executionId` | string | Resolves all errors for this execution (optional)         |
+| `errorCode`   | string | Resolves this error code across all executions (optional) |
 
 > **Note**: At least one of `executionId` or `errorCode` must be provided.
 
@@ -198,10 +198,10 @@ Emitted when error resolution has failed (e.g., auto-repair exhausted retries).
 
 ### Field Definitions
 
-| Field         | Type   | Description                                                        |
-| ------------- | ------ | ------------------------------------------------------------------ |
-| `executionId` | string | Marks all errors for this execution as unrecoverable (optional)    |
-| `errorCode`   | string | Marks this error code as unrecoverable across executions (optional)|
+| Field         | Type   | Description                                                         |
+| ------------- | ------ | ------------------------------------------------------------------- |
+| `executionId` | string | Marks all errors for this execution as unrecoverable (optional)     |
+| `errorCode`   | string | Marks this error code as unrecoverable across executions (optional) |
 
 > **Note**: At least one of `executionId` or `errorCode` must be provided. Errors marked as unrecoverable are excluded from future auto-repair attempts.
 
