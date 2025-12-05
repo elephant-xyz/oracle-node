@@ -1591,7 +1591,9 @@ async function main() {
         const newErrorsS3Uri = extractErrorsS3Uri(error.message);
 
         if (newErrorsS3Uri) {
-          console.log(`Found new errors from SVL validation: ${newErrorsS3Uri}`);
+          console.log(
+            `Found new errors from SVL validation: ${newErrorsS3Uri}`,
+          );
           console.log(
             `AI will receive these NEW errors for context in next attempt.`,
           );
