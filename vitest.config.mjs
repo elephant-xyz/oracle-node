@@ -42,6 +42,27 @@ export default defineConfig({
           "node_modules/@aws-sdk/lib-dynamodb",
         ),
       },
+      {
+        find: "@aws-sdk/client-lambda",
+        replacement: path.resolve(
+          __dirname,
+          "node_modules/@aws-sdk/client-lambda",
+        ),
+      },
+      {
+        find: "@aws-sdk/client-cloudwatch",
+        replacement: path.resolve(
+          __dirname,
+          "node_modules/@aws-sdk/client-cloudwatch",
+        ),
+      },
+      {
+        find: "@aws-sdk/client-sqs",
+        replacement: path.resolve(
+          __dirname,
+          "node_modules/@aws-sdk/client-sqs",
+        ),
+      },
       // Resolve 'shared/*.js' imports for workflow-events lambdas (import from "shared/types.js" etc.)
       // Maps .js extension to .ts source files for test resolution
       // Must come before exact 'shared' match to handle subpath imports first

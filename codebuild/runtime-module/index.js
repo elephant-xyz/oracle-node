@@ -33,7 +33,7 @@ import {
   createWorkflowError,
   emitErrorResolved,
   emitErrorFailedToResolve,
-} from "./shared/eventbridge.mjs";
+} from "../shared/eventbridge.mjs";
 
 const DEFAULT_DLQ_URL = process.env.DEFAULT_DLQ_URL;
 
@@ -1830,5 +1830,16 @@ async function main() {
   }
 }
 
-// Run main workflow
-main();
+// Export for testing
+export { getExecutionWithLeastErrors, main };
+
+// Run main workflow when executed directly
+const isMainModule =
+  typeof process !== "undefined" &&
+  process.argv[1] &&
+  (process.argv[1].endsWith("index.js") ||
+    process.argv[1].endsWith("runtime-module"));
+
+if (isMainModule) {
+  main();
+}
