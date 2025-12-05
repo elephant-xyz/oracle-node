@@ -1279,6 +1279,7 @@ function isMvlErrorScenario(errorsS3Uri) {
  * @param {string | null} params.errorsS3Uri - S3 URI of the errors CSV (for retries).
  * @param {string} params.transformPrefix - S3 prefix URI for transforms.
  * @param {string} params.tableName - DynamoDB table name.
+ * @param {GetExecutionLambdaError[]} params.executionErrors - Original errors from Lambda response.
  * @returns {Promise<{ success: boolean, newErrorsS3Uri?: string }>} - Result of the iteration.
  */
 async function runAutoRepairIteration({
@@ -1289,6 +1290,7 @@ async function runAutoRepairIteration({
   errorsS3Uri,
   transformPrefix,
   tableName,
+  executionErrors,
 }) {
   // Determine error scenario type - for local CSV assume SVL errors (from workflow-events)
   const isMvlScenario = errorsS3Uri ? isMvlErrorScenario(errorsS3Uri) : false;
@@ -1393,12 +1395,36 @@ async function runAutoRepairIteration({
           documentClient: dynamoClient,
         });
 
-        // Step 7: Emit ElephantErrorResolved event to signal errors are resolved
+        // Step 7: Emit ElephantErrorResolved events to signal errors are resolved
+        // First, resolve by executionId (handles the execution-level cleanup)
         await emitErrorResolved({
           executionId,
         });
 
-        // Step 8: Delete the execution and all its error links since repair succeeded
+        // Also emit for each unique error code for proper metrics and audit trail
+        const uniqueErrorCodes = [
+          ...new Set(executionErrors.map((e) => e.errorCode)),
+        ];
+        console.log(
+          `Emitting ElephantErrorResolved for ${uniqueErrorCodes.length} unique error code(s)...`,
+        );
+        for (const errorCode of uniqueErrorCodes) {
+          await emitErrorResolved({
+            errorCode,
+          });
+        }
+
+        // Step 8: Emit WorkflowEvent with SUCCEEDED status for metrics
+        await emitWorkflowEvent({
+          executionId,
+          county,
+          status: "SUCCEEDED",
+          phase: "AutoRepair",
+          step: "AutoRepair",
+          dataGroupLabel: "County",
+        });
+
+        // Step 9: Delete the execution and all its error links since repair succeeded
         console.log(
           `Deleting execution ${executionId} and all its error links...`,
         );
@@ -1621,6 +1647,7 @@ async function main() {
           errorsS3Uri: currentErrorsS3Uri,
           transformPrefix,
           tableName,
+          executionErrors,
         });
 
         console.log("Auto-repair workflow completed successfully!");
@@ -1749,7 +1776,7 @@ async function main() {
     // Emit WorkflowEvent with FAILED status
     const failureReason =
       attempt >= maxAttempts ? "MaxRetriesExceeded" : "NoErrorsUri";
-    const errorCode = isMvlScenario ? "70001" : "70002"; // 70xxx for AutoRepair phase
+    const workflowErrorCode = isMvlScenario ? "70001" : "70002"; // 70xxx for AutoRepair phase
 
     await emitWorkflowEvent({
       executionId: execution.executionId,
@@ -1759,7 +1786,7 @@ async function main() {
       step: "AutoRepair",
       dataGroupLabel: "County",
       errors: [
-        createWorkflowError(errorCode, {
+        createWorkflowError(workflowErrorCode, {
           errorType: isMvlScenario ? "MVL" : "SVL",
           failureReason,
           attempts: attempt,
