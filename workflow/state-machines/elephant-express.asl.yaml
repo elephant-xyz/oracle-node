@@ -272,7 +272,6 @@ States:
             step: Prepare
             dataGroupLabel: County
             taskToken.$: $.prepare.taskToken
-            preparedS3Uri.$: $.prepare.output_s3_uri
     ResultPath: $.eventResult
     Next: GenerateExecutionId
     Catch:
@@ -422,7 +421,6 @@ States:
             step: Transform
             dataGroupLabel: County
             taskToken: "{% $states.context.Task.Token %}"
-            preparedS3Uri: "{% $states.input.prepare.output_s3_uri %}"
             errors:
               - code: "{% '20' & $states.input.pre.county_name %}"
                 details:
@@ -545,7 +543,6 @@ States:
             step: SVL
             dataGroupLabel: County
             taskToken: "{% $states.context.Task.Token %}"
-            preparedS3Uri: "{% $states.input.prepare.output_s3_uri %}"
             errors: >-
               {%
                 [$states.input.svl.svlErrors ~> $map(function($e) {
@@ -585,7 +582,6 @@ States:
             step: SVL
             dataGroupLabel: County
             taskToken.$: $$.Task.Token
-            preparedS3Uri.$: $.prepare.output_s3_uri
             errors:
               - code: "31001"
                 details:
@@ -695,7 +691,6 @@ States:
             step: Hash
             dataGroupLabel: County
             taskToken.$: $$.Task.Token
-            preparedS3Uri.$: $.prepare.output_s3_uri
             errors:
               - code: "40001"
                 details:
@@ -804,7 +799,6 @@ States:
             step: Upload
             dataGroupLabel: County
             taskToken.$: $$.Task.Token
-            preparedS3Uri.$: $.prepare.output_s3_uri
             errors:
               - code: "50001"
                 details:

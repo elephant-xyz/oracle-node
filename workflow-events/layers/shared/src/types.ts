@@ -27,8 +27,6 @@ export interface WorkflowEventDetail {
   dataGroupLabel?: string;
   /** Task token for Step Functions callback (if applicable). */
   taskToken?: string;
-  /** S3 URI of the prepared output from the prepare step (if applicable). */
-  preparedS3Uri?: string;
   /** Array of errors encountered during execution. */
   errors: WorkflowError[];
 }
@@ -156,8 +154,6 @@ export interface FailedExecutionItem {
   uniqueErrorCount: number;
   /** Task token for Step Functions callback (if applicable). */
   taskToken?: string;
-  /** S3 URI of the prepared output from the prepare step (if applicable). */
-  preparedS3Uri?: string;
   /** ISO timestamp when the execution record was created. */
   createdAt: string;
   /** ISO timestamp when the execution record was updated. */

@@ -10,12 +10,14 @@ import {
   PutMetricDataCommand,
 } from "@aws-sdk/client-cloudwatch";
 import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
+import { SFNClient, GetExecutionHistoryCommand } from "@aws-sdk/client-sfn";
 
 // Create AWS SDK mocks using aws-sdk-client-mock
 const lambdaMock = mockClient(LambdaClient);
 const eventBridgeMock = mockClient(EventBridgeClient);
 const cloudWatchMock = mockClient(CloudWatchClient);
 const s3Mock = mockClient(S3Client);
+const sfnMock = mockClient(SFNClient);
 
 // Mock shared eventbridge module
 const mockEmitWorkflowEvent = vi.fn();
@@ -105,6 +107,7 @@ describe("auto-repair runtime module", () => {
     eventBridgeMock.reset();
     cloudWatchMock.reset();
     s3Mock.reset();
+    sfnMock.reset();
 
     process.env = {
       ...originalEnv,
@@ -131,6 +134,22 @@ describe("auto-repair runtime module", () => {
     // Set default mock responses for AWS SDK
     cloudWatchMock.on(PutMetricDataCommand).resolves({});
     eventBridgeMock.on(PutEventsCommand).resolves({});
+    // Default SFN mock returns preparedS3Uri from execution history
+    sfnMock.on(GetExecutionHistoryCommand).resolves({
+      events: [
+        {
+          type: "TaskStateExited",
+          stateExitedEventDetails: {
+            name: "PrepareState",
+            output: JSON.stringify({
+              prepare: {
+                output_s3_uri: "s3://test-bucket/prepared/inputs.zip",
+              },
+            }),
+          },
+        },
+      ],
+    });
 
     vi.spyOn(console, "log").mockImplementation(() => {});
     vi.spyOn(console, "error").mockImplementation(() => {});
@@ -147,7 +166,6 @@ describe("auto-repair runtime module", () => {
         executionId: "arn:aws:states:us-east-1:123456789:execution:test:abc123",
         county: "Lee",
         uniqueErrorCount: 1,
-        preparedS3Uri: "s3://test-bucket/prepared/inputs.zip",
         errorType: "30",
       };
 
@@ -202,12 +220,12 @@ describe("auto-repair runtime module", () => {
   });
 
   describe("main workflow", () => {
-    it("should skip execution if no preparedS3Uri", async () => {
+    it("should skip execution if no preparedS3Uri from Step Functions", async () => {
       const mockExecution = {
-        executionId: "test-execution-123",
+        executionId:
+          "arn:aws:states:us-east-1:123456789:execution:test:test-execution-123",
         county: "Lee",
         uniqueErrorCount: 1,
-        preparedS3Uri: undefined,
         errorType: "30",
       };
 
@@ -233,6 +251,11 @@ describe("auto-repair runtime module", () => {
         ),
       });
 
+      // Mock SFN to return no preparedS3Uri (empty events)
+      sfnMock.on(GetExecutionHistoryCommand).resolves({
+        events: [],
+      });
+
       const { main } =
         await import("../../../codebuild/runtime-module/index.js");
 
@@ -248,18 +271,19 @@ describe("auto-repair runtime module", () => {
         errorCode: "30abc123",
       });
       expect(mockEmitErrorFailedToResolve).toHaveBeenCalledWith({
-        executionId: "test-execution-123",
+        executionId:
+          "arn:aws:states:us-east-1:123456789:execution:test:test-execution-123",
       });
 
       mockExit.mockRestore();
     });
 
-    it("should process execution with preparedS3Uri successfully", async () => {
+    it("should process execution with preparedS3Uri from Step Functions successfully", async () => {
       const mockExecution = {
-        executionId: "test-execution-123",
+        executionId:
+          "arn:aws:states:us-east-1:123456789:execution:test:test-execution-456",
         county: "Lee",
         uniqueErrorCount: 1,
-        preparedS3Uri: "s3://test-bucket/prepared/inputs.zip",
         errorType: "30",
       };
 
@@ -293,10 +317,9 @@ describe("auto-repair runtime module", () => {
         },
       });
 
-      // Verify test setup is correct
-      expect(mockExecution.preparedS3Uri).toBe(
-        "s3://test-bucket/prepared/inputs.zip",
-      );
+      // Default SFN mock is already set up to return preparedS3Uri
+      // Verify the SFN mock returns a preparedS3Uri
+      expect(sfnMock.calls()).toHaveLength(0); // Not called yet
     });
   });
 

@@ -258,12 +258,6 @@ const buildFailedExecutionItemUpdate = (
   const taskTokenClause =
     detail.taskToken !== undefined ? "taskToken = :taskToken," : "";
 
-  // Build preparedS3Uri clause only when defined
-  const preparedS3UriClause =
-    detail.preparedS3Uri !== undefined && detail.preparedS3Uri !== null
-      ? "preparedS3Uri = :preparedS3Uri,"
-      : "";
-
   const expressionAttributeValues: Record<string, string | number> = {
     ":executionId": detail.executionId,
     ":entityType": ENTITY_TYPES.FAILED_EXECUTION,
@@ -284,10 +278,6 @@ const buildFailedExecutionItemUpdate = (
     expressionAttributeValues[":taskToken"] = detail.taskToken;
   }
 
-  if (detail.preparedS3Uri !== undefined && detail.preparedS3Uri !== null) {
-    expressionAttributeValues[":preparedS3Uri"] = detail.preparedS3Uri;
-  }
-
   return {
     Update: {
       TableName: tableName,
@@ -305,7 +295,6 @@ const buildFailedExecutionItemUpdate = (
             openErrorCount = if_not_exists(openErrorCount, :zero) + :uniqueErrorCount,
             uniqueErrorCount = if_not_exists(uniqueErrorCount, :zero) + :uniqueErrorCount,
             ${taskTokenClause}
-            ${preparedS3UriClause}
             createdAt = if_not_exists(createdAt, :now),
             updatedAt = :now,
             GS1PK = :gs1pk,
@@ -693,10 +682,10 @@ export const saveErrorRecords = async (
 };
 
 /**
- * Updates a FailedExecutionItem with preparedS3Uri and/or taskToken when there are no errors.
- * This is used for SUCCEEDED events (e.g., Prepare success) that need to update these fields.
+ * Updates a FailedExecutionItem with taskToken when there are no errors.
+ * This is used for SUCCEEDED events (e.g., Prepare success) that need to update the taskToken.
  *
- * @param detail - The workflow event detail (may contain preparedS3Uri and/or taskToken)
+ * @param detail - The workflow event detail (may contain taskToken)
  * @returns Whether the update was successful
  */
 export const updateExecutionMetadata = async (
@@ -704,30 +693,14 @@ export const updateExecutionMetadata = async (
 ): Promise<boolean> => {
   getTableName(); // Validate table name is set
 
-  // Only update if preparedS3Uri or taskToken is provided
-  if (detail.preparedS3Uri === undefined && detail.taskToken === undefined) {
+  // Only update if taskToken is provided
+  if (detail.taskToken === undefined) {
     return true; // Nothing to update
   }
 
   const tableName = getTableName();
   const pk = createKey("EXECUTION", detail.executionId);
   const now = new Date().toISOString();
-
-  const updateParts: string[] = ["updatedAt = :now"];
-  const expressionAttributeValues: Record<string, string> = {
-    ":now": now,
-    ":entityType": ENTITY_TYPES.FAILED_EXECUTION,
-  };
-
-  if (detail.preparedS3Uri !== undefined && detail.preparedS3Uri !== null) {
-    updateParts.push("preparedS3Uri = :preparedS3Uri");
-    expressionAttributeValues[":preparedS3Uri"] = detail.preparedS3Uri;
-  }
-
-  if (detail.taskToken !== undefined) {
-    updateParts.push("taskToken = :taskToken");
-    expressionAttributeValues[":taskToken"] = detail.taskToken;
-  }
 
   try {
     const command = new UpdateCommand({
@@ -736,9 +709,13 @@ export const updateExecutionMetadata = async (
         PK: pk,
         SK: pk,
       },
-      UpdateExpression: `SET ${updateParts.join(", ")}`,
+      UpdateExpression: "SET taskToken = :taskToken, updatedAt = :now",
       ConditionExpression: "entityType = :entityType",
-      ExpressionAttributeValues: expressionAttributeValues,
+      ExpressionAttributeValues: {
+        ":taskToken": detail.taskToken,
+        ":now": now,
+        ":entityType": ENTITY_TYPES.FAILED_EXECUTION,
+      },
     });
 
     await docClient.send(command);

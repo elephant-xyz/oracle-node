@@ -9,6 +9,7 @@ import {
   CloudWatchClient,
   PutMetricDataCommand,
 } from "@aws-sdk/client-cloudwatch";
+import { SFNClient, GetExecutionHistoryCommand } from "@aws-sdk/client-sfn";
 import AdmZip from "adm-zip";
 import { exec } from "child_process";
 import { parse } from "csv-parse/sync";
@@ -33,6 +34,9 @@ const lambdaClient = new LambdaClient({});
 const cloudWatchClient = new CloudWatchClient({
   region: process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION,
 });
+const sfnClient = new SFNClient({
+  region: process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION,
+});
 
 /**
  * Ensure required environment variables are present.
@@ -46,6 +50,79 @@ function requireEnv(name) {
     throw new Error(`${name} is required`);
   }
   return value;
+}
+
+/**
+ * Get preparedS3Uri from Step Functions execution history.
+ * Searches the execution history for the Prepare step output which contains
+ * the prepared S3 URI at $.prepare.output_s3_uri.
+ *
+ * @param {string} executionArn - Step Functions execution ARN.
+ * @returns {Promise<string | null>} - The prepared S3 URI or null if not found.
+ */
+async function getPreparedS3UriFromExecution(executionArn) {
+  console.log(
+    `Retrieving preparedS3Uri from Step Functions execution: ${executionArn}`,
+  );
+
+  try {
+    let nextToken;
+    let preparedS3Uri = null;
+
+    // Iterate through execution history pages
+    do {
+      const command = new GetExecutionHistoryCommand({
+        executionArn,
+        maxResults: 100,
+        reverseOrder: false,
+        nextToken,
+      });
+
+      const response = await sfnClient.send(command);
+
+      // Look for states that have prepare.output_s3_uri in their output
+      for (const event of response.events || []) {
+        // Check TaskStateExited or PassStateExited events for the output
+        if (
+          (event.type === "TaskStateExited" ||
+            event.type === "PassStateExited") &&
+          event.stateExitedEventDetails?.output
+        ) {
+          try {
+            const output = JSON.parse(event.stateExitedEventDetails.output);
+
+            // Check if this state's output contains prepare.output_s3_uri
+            if (output.prepare?.output_s3_uri) {
+              preparedS3Uri = output.prepare.output_s3_uri;
+              console.log(
+                `Found preparedS3Uri in state ${event.stateExitedEventDetails.name}: ${preparedS3Uri}`,
+              );
+              // Continue searching in case there's a more recent one
+            }
+          } catch {
+            // Ignore JSON parse errors for outputs that aren't JSON
+          }
+        }
+      }
+
+      nextToken = response.nextToken;
+    } while (nextToken);
+
+    if (preparedS3Uri) {
+      console.log(`Retrieved preparedS3Uri: ${preparedS3Uri}`);
+    } else {
+      console.log("No preparedS3Uri found in execution history");
+    }
+
+    return preparedS3Uri;
+  } catch (error) {
+    console.error(
+      `Failed to retrieve preparedS3Uri from Step Functions: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+    return null;
+  }
 }
 
 /**
@@ -156,7 +233,6 @@ function resolveTransformLocation({ countyName, transformPrefixUri }) {
  * @property {number} openErrorCount - Count of unique unresolved errors.
  * @property {number} uniqueErrorCount - Count of unique errors.
  * @property {string | undefined} taskToken - Task token for Step Functions.
- * @property {string | undefined} preparedS3Uri - S3 URI of prepared output.
  * @property {string} createdAt - ISO timestamp when created.
  * @property {string} updatedAt - ISO timestamp when updated.
  */
@@ -1485,7 +1561,6 @@ async function main() {
       `Found execution ${execution.executionId} with ${execution.uniqueErrorCount} unique errors`,
     );
     console.log(`County: ${execution.county}`);
-    console.log(`Prepared S3 URI: ${execution.preparedS3Uri}`);
     console.log(`Error count from Lambda: ${executionErrors.length}`);
 
     if (executionErrors.length === 0) {
@@ -1493,7 +1568,14 @@ async function main() {
       return;
     }
 
-    if (!execution.preparedS3Uri) {
+    // Get preparedS3Uri from Step Functions execution history
+    // This is the S3 URI of the prepared output from the Prepare step
+    const preparedS3Uri = await getPreparedS3UriFromExecution(
+      execution.executionId,
+    );
+    console.log(`Prepared S3 URI: ${preparedS3Uri}`);
+
+    if (!preparedS3Uri) {
       console.log(
         `No prepared S3 URI found for execution ${execution.executionId}. This execution likely failed before or during the Prepare step. Auto-repair cannot proceed without prepared inputs.`,
       );
@@ -1549,7 +1631,7 @@ async function main() {
         await runAutoRepairIteration({
           executionId: execution.executionId,
           county: execution.county,
-          preparedS3Uri: execution.preparedS3Uri,
+          preparedS3Uri,
           errorsCsvPath: currentErrorsCsvPath,
           errorsS3Uri: currentErrorsS3Uri,
           transformPrefix,

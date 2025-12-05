@@ -48,8 +48,6 @@ export interface ExecutionBusinessData {
   uniqueErrorCount: number;
   /** Task token for Step Functions callback (if applicable). */
   taskToken?: string;
-  /** S3 URI of the prepared output from the prepare step. */
-  preparedS3Uri?: string;
   /** ISO timestamp when the execution record was created. */
   createdAt: string;
   /** ISO timestamp when the execution record was updated. */
@@ -109,7 +107,6 @@ const stripExecutionFields = (
     openErrorCount: item.openErrorCount,
     uniqueErrorCount: item.uniqueErrorCount,
     taskToken: item.taskToken,
-    preparedS3Uri: item.preparedS3Uri,
     createdAt: item.createdAt,
     updatedAt: item.updatedAt,
   };

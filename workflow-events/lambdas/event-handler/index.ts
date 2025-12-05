@@ -97,18 +97,14 @@ const handleWorkflowEvent = async (
       }),
     );
 
-    // Even when there are no errors, we may need to update metadata like preparedS3Uri or taskToken
-    // (e.g., when Prepare succeeds and emits a SUCCEEDED event with preparedS3Uri)
-    if (
-      event.detail.preparedS3Uri !== undefined ||
-      event.detail.taskToken !== undefined
-    ) {
+    // Even when there are no errors, we may need to update metadata like taskToken
+    // (e.g., when Prepare succeeds and emits a SUCCEEDED event with taskToken)
+    if (event.detail.taskToken !== undefined) {
       const updated = await updateExecutionMetadata(event.detail);
       if (updated) {
         console.info(
           createLogEntry("execution_metadata_updated", event, {
             executionId: event.detail.executionId,
-            hasPreparedS3Uri: event.detail.preparedS3Uri !== undefined,
             hasTaskToken: event.detail.taskToken !== undefined,
           }),
         );
