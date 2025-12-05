@@ -28,6 +28,12 @@ import {
   markErrorsAsMaybeUnrecoverable,
   normalizeErrors,
 } from "./errors.mjs";
+import {
+  emitWorkflowEvent,
+  createWorkflowError,
+  emitErrorResolved,
+  emitErrorFailedToResolve,
+} from "./shared/eventbridge.mjs";
 
 const DEFAULT_DLQ_URL = process.env.DEFAULT_DLQ_URL;
 
@@ -1387,7 +1393,12 @@ async function runAutoRepairIteration({
           documentClient: dynamoClient,
         });
 
-        // Step 7: Delete the execution and all its error links since repair succeeded
+        // Step 7: Emit ElephantErrorResolved event to signal errors are resolved
+        await emitErrorResolved({
+          executionId,
+        });
+
+        // Step 8: Delete the execution and all its error links since repair succeeded
         console.log(
           `Deleting execution ${executionId} and all its error links...`,
         );
@@ -1547,7 +1558,42 @@ async function main() {
     }
 
     if (!execution.preparedS3Uri) {
-      console.log("No prepared S3 URI found. Skipping.");
+      console.log(
+        `No prepared S3 URI found for execution ${execution.executionId}. This execution likely failed before or during the Prepare step. Auto-repair cannot proceed without prepared inputs.`,
+      );
+
+      // Mark errors as unrecoverable since auto-repair can't help with executions that failed before Prepare
+      if (executionErrors.length > 0) {
+        const uniqueErrorCodes = [
+          ...new Set(executionErrors.map((e) => e.errorCode)),
+        ];
+        console.log(
+          `Marking ${uniqueErrorCodes.length} error code(s) as unrecoverable since auto-repair cannot process this execution...`,
+        );
+        for (const errorCode of uniqueErrorCodes) {
+          await emitErrorFailedToResolve({
+            errorCode,
+          });
+        }
+      }
+
+      // Also mark the execution itself as unrecoverable
+      await emitErrorFailedToResolve({
+        executionId: execution.executionId,
+      });
+
+      // Delete the execution to prevent re-processing the same execution
+      // (get-execution will keep returning it if we don't delete it)
+      console.log(
+        `Deleting execution ${execution.executionId} since it cannot be processed (missing preparedS3Uri)...`,
+      );
+      await deleteExecution({
+        executionId: execution.executionId,
+        tableName,
+        documentClient: dynamoClient,
+      });
+      console.log(`Execution ${execution.executionId} deleted.`);
+
       return;
     }
 
@@ -1694,28 +1740,52 @@ async function main() {
         console.log(`No errors available to mark as maybeUnrecoverable`);
       }
     } catch (markError) {
-      // Don't block DLQ fallback if marking errors fails
+      // Don't block event emission if marking errors fails
       console.error(
         `Failed to mark errors as maybeUnrecoverable: ${markError.message}`,
       );
     }
 
-    if (isMvlScenario) {
-      // For MVL errors: Never send to DLQ, just delete execution
-      console.log(
-        `Auto-repair exhausted all retries for MVL errors. MVL scenario: Skipping DLQ send.`,
-      );
-    } else {
-      // For schema validation errors: Send to DLQ as before
-      console.log(`Auto-repair exhausted all retries. Sending to DLQ...`);
+    // Emit WorkflowEvent with FAILED status
+    const failureReason =
+      attempt >= maxAttempts ? "MaxRetriesExceeded" : "NoErrorsUri";
+    const errorCode = isMvlScenario ? "70001" : "70002"; // 70xxx for AutoRepair phase
 
-      if (execution.source) {
-        const dlqUrl = await getCountyDlqUrl(execution.county);
-        await sendToDlq(dlqUrl, execution.source);
-        console.log(`Sent original message to DLQ: ${dlqUrl}`);
-      } else {
-        console.error(`Cannot send to DLQ: source information is missing`);
-      }
+    await emitWorkflowEvent({
+      executionId: execution.executionId,
+      county: execution.county,
+      status: "FAILED",
+      phase: "AutoRepair",
+      step: "AutoRepair",
+      dataGroupLabel: "County",
+      errors: [
+        createWorkflowError(errorCode, {
+          errorType: isMvlScenario ? "MVL" : "SVL",
+          failureReason,
+          attempts: attempt,
+          maxAttempts,
+        }),
+      ],
+    });
+
+    // Emit ElephantErrorFailedToResolve to mark errors as maybeUnrecoverable
+    // First, mark all errors for this execution
+    await emitErrorFailedToResolve({
+      executionId: execution.executionId,
+    });
+
+    // Also mark similar errors (same error codes) across all executions
+    // Extract unique error codes from executionErrors
+    const uniqueErrorCodes = [
+      ...new Set(executionErrors.map((e) => e.errorCode)),
+    ];
+    console.log(
+      `Emitting ElephantErrorFailedToResolve for ${uniqueErrorCodes.length} unique error code(s) to mark similar errors across all executions...`,
+    );
+    for (const errorCode of uniqueErrorCodes) {
+      await emitErrorFailedToResolve({
+        errorCode,
+      });
     }
 
     // Delete the execution to prevent re-processing the same unfixable execution
@@ -1735,8 +1805,7 @@ async function main() {
       dimensions: {
         County: execution.county,
         ErrorType: isMvlScenario ? "MVL" : "SVL",
-        FailureReason:
-          attempt >= maxAttempts ? "MaxRetriesExceeded" : "NoErrorsUri",
+        FailureReason: failureReason,
       },
     });
 

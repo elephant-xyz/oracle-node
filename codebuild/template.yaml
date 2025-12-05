@@ -216,6 +216,14 @@ Resources:
                     cloudwatch:namespace:
                       - AutoRepair
                       - ExecutionRestart
+        - PolicyName: PrepareRuntimeCodeBuildEventBridge
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - events:PutEvents
+                Resource: "*"
 
       Tags:
         - Key: Environment

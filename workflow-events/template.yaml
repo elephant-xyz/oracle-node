@@ -90,6 +90,8 @@ Resources:
               KeyType: RANGE
           Projection:
             ProjectionType: ALL
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
       Tags:
         - Key: Environment
           Value: !Ref EnvironmentName
@@ -483,6 +485,26 @@ Resources:
                   [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"TransactionStatusCheckElephantPhase\" Status=\"IN_PROGRESS\"', 'Sum', 300))", "label": "IN_PROGRESS", "id": "txstatus_prog", "color": "#ff7f0e"}],
                   [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"TransactionStatusCheckElephantPhase\" Status=\"SUCCEEDED\"', 'Sum', 300))", "label": "SUCCEEDED", "id": "txstatus_succ", "color": "#2ca02c"}],
                   [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"TransactionStatusCheckElephantPhase\" Status=\"FAILED\"', 'Sum', 300))", "label": "FAILED", "id": "txstatus_fail", "color": "#d62728"}]
+                ]
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12,
+              "y": 34,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "AutoRepair Phase",
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "period": 300,
+                "metrics": [
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"AutoRepairElephantPhase\" Status=\"SCHEDULED\"', 'Sum', 300))", "label": "SCHEDULED", "id": "autorepair_sched", "color": "#1f77b4"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"AutoRepairElephantPhase\" Status=\"IN_PROGRESS\"', 'Sum', 300))", "label": "IN_PROGRESS", "id": "autorepair_prog", "color": "#ff7f0e"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"AutoRepairElephantPhase\" Status=\"SUCCEEDED\"', 'Sum', 300))", "label": "SUCCEEDED", "id": "autorepair_succ", "color": "#2ca02c"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"AutoRepairElephantPhase\" Status=\"FAILED\"', 'Sum', 300))", "label": "FAILED", "id": "autorepair_fail", "color": "#d62728"}]
                 ]
               }
             }

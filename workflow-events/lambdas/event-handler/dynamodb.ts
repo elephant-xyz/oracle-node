@@ -227,6 +227,48 @@ const buildFailedExecutionItemUpdate = (
   // GS3SK format: COUNT#{errorType}#{paddedCount}#EXECUTION#{executionId}
   const gs3sk = `COUNT#${stats.errorType}#${padCount(stats.uniqueErrorCount)}#EXECUTION#${detail.executionId}`;
 
+  // Build UpdateExpression conditionally - only include preparedS3Uri if it's provided
+  const updateExpressionParts = [
+    "SET executionId = :executionId",
+    "entityType = :entityType",
+    "errorType = :errorType",
+    "#status = if_not_exists(#status, :defaultStatus)",
+    "county = :county",
+    "totalOccurrences = if_not_exists(totalOccurrences, :zero) + :totalOccurrences",
+    "openErrorCount = if_not_exists(openErrorCount, :zero) + :uniqueErrorCount",
+    "uniqueErrorCount = if_not_exists(uniqueErrorCount, :zero) + :uniqueErrorCount",
+    "taskToken = :taskToken",
+    "createdAt = if_not_exists(createdAt, :now)",
+    "updatedAt = :now",
+    "GS1PK = :gs1pk",
+    "GS1SK = :gs1sk",
+    "GS3PK = :gs3pk",
+    "GS3SK = :gs3sk",
+  ];
+
+  const expressionAttributeValues: Record<string, string | number | undefined> = {
+    ":executionId": detail.executionId,
+    ":entityType": ENTITY_TYPES.FAILED_EXECUTION,
+    ":errorType": stats.errorType,
+    ":defaultStatus": DEFAULT_ERROR_STATUS,
+    ":county": detail.county,
+    ":zero": 0,
+    ":totalOccurrences": stats.totalOccurrences,
+    ":uniqueErrorCount": stats.uniqueErrorCount,
+    ":taskToken": detail.taskToken,
+    ":now": now,
+    ":gs1pk": "METRIC#ERRORCOUNT",
+    ":gs1sk": gs1sk,
+    ":gs3pk": "METRIC#ERRORCOUNT",
+    ":gs3sk": gs3sk,
+  };
+
+  // Only include preparedS3Uri if it's provided in the event detail
+  if (detail.preparedS3Uri !== undefined && detail.preparedS3Uri !== null) {
+    updateExpressionParts.splice(9, 0, "preparedS3Uri = :preparedS3Uri");
+    expressionAttributeValues[":preparedS3Uri"] = detail.preparedS3Uri;
+  }
+
   return {
     Update: {
       TableName: TABLE_NAME!,
@@ -234,44 +276,11 @@ const buildFailedExecutionItemUpdate = (
         PK: pk,
         SK: pk,
       },
-      UpdateExpression: `
-        SET executionId = :executionId,
-            entityType = :entityType,
-            errorType = :errorType,
-            #status = if_not_exists(#status, :defaultStatus),
-            county = :county,
-            totalOccurrences = if_not_exists(totalOccurrences, :zero) + :totalOccurrences,
-            openErrorCount = if_not_exists(openErrorCount, :zero) + :uniqueErrorCount,
-            uniqueErrorCount = if_not_exists(uniqueErrorCount, :zero) + :uniqueErrorCount,
-            taskToken = :taskToken,
-            preparedS3Uri = :preparedS3Uri,
-            createdAt = if_not_exists(createdAt, :now),
-            updatedAt = :now,
-            GS1PK = :gs1pk,
-            GS1SK = :gs1sk,
-            GS3PK = :gs3pk,
-            GS3SK = :gs3sk
-      `.trim(),
+      UpdateExpression: updateExpressionParts.join(",\n            "),
       ExpressionAttributeNames: {
         "#status": "status",
       },
-      ExpressionAttributeValues: {
-        ":executionId": detail.executionId,
-        ":entityType": ENTITY_TYPES.FAILED_EXECUTION,
-        ":errorType": stats.errorType,
-        ":defaultStatus": DEFAULT_ERROR_STATUS,
-        ":county": detail.county,
-        ":zero": 0,
-        ":totalOccurrences": stats.totalOccurrences,
-        ":uniqueErrorCount": stats.uniqueErrorCount,
-        ":taskToken": detail.taskToken,
-        ":preparedS3Uri": detail.preparedS3Uri,
-        ":now": now,
-        ":gs1pk": "METRIC#ERRORCOUNT",
-        ":gs1sk": gs1sk,
-        ":gs3pk": "METRIC#ERRORCOUNT",
-        ":gs3sk": gs3sk,
-      },
+      ExpressionAttributeValues: expressionAttributeValues,
     },
   };
 };
