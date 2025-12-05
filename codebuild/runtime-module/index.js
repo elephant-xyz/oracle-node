@@ -1563,26 +1563,31 @@ async function main() {
         console.error("County:", execution.county);
         console.error("========================================");
 
+        // Check if we've exhausted all attempts
+        if (attempt >= maxAttempts) {
+          console.error(`Max retries (${maxAttempts}) reached.`);
+          break;
+        }
+
         // Try to extract new errors S3 URI from error message
+        // This is useful when SVL returns a new errors CSV with different/remaining errors
         const newErrorsS3Uri = extractErrorsS3Uri(error.message);
 
-        if (newErrorsS3Uri && attempt < maxAttempts) {
+        if (newErrorsS3Uri) {
           console.log(`Found new errors CSV: ${newErrorsS3Uri}`);
           console.log(`Will retry with new errors...`);
           currentErrorsS3Uri = newErrorsS3Uri;
           currentErrorsCsvPath = null; // Switch to using S3 URI
         } else {
-          if (attempt >= maxAttempts) {
-            console.error(
-              `Max retries (${maxAttempts}) reached. Sending to DLQ.`,
-            );
-          } else {
-            console.error(
-              `No errors URI found in error message. Sending to DLQ.`,
-            );
-          }
-          break;
+          // No new errors URI found - this is expected when SVL validation fails
+          // with the same errors. Continue retrying with the original errors.
+          console.log(
+            `No new errors S3 URI found. Will retry with original errors.`,
+          );
+          // Keep using the current errors (either local CSV or S3 URI from previous attempt)
         }
+
+        console.log(`Proceeding to attempt ${attempt + 1}/${maxAttempts}...`);
       }
     }
 
