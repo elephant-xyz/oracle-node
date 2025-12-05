@@ -117,6 +117,7 @@ describe("auto-repair runtime module", () => {
       OUTPUT_S3_PREFIX: "s3://test-bucket/outputs",
       MVL_FUNCTION_NAME: "test-mvl-function",
       GET_EXECUTION_LAMBDA_FUNCTION_NAME: "test-get-execution",
+      STATE_MACHINE_ARN: "arn:aws:states:us-east-1:123456789:stateMachine:test",
       AWS_REGION: "us-east-1",
     };
 
@@ -163,7 +164,7 @@ describe("auto-repair runtime module", () => {
   describe("getExecutionWithLeastErrors", () => {
     it("should retrieve execution with least errors from Lambda", async () => {
       const mockExecution = {
-        executionId: "arn:aws:states:us-east-1:123456789:execution:test:abc123",
+        executionId: "abc123-uuid-execution-id",
         county: "Lee",
         uniqueErrorCount: 1,
         errorType: "30",
@@ -222,8 +223,7 @@ describe("auto-repair runtime module", () => {
   describe("main workflow", () => {
     it("should skip execution if no preparedS3Uri from Step Functions", async () => {
       const mockExecution = {
-        executionId:
-          "arn:aws:states:us-east-1:123456789:execution:test:test-execution-123",
+        executionId: "test-execution-123-uuid",
         county: "Lee",
         uniqueErrorCount: 1,
         errorType: "30",
@@ -271,8 +271,7 @@ describe("auto-repair runtime module", () => {
         errorCode: "30abc123",
       });
       expect(mockEmitErrorFailedToResolve).toHaveBeenCalledWith({
-        executionId:
-          "arn:aws:states:us-east-1:123456789:execution:test:test-execution-123",
+        executionId: "test-execution-123-uuid",
       });
 
       mockExit.mockRestore();
@@ -280,8 +279,7 @@ describe("auto-repair runtime module", () => {
 
     it("should process execution with preparedS3Uri from Step Functions successfully", async () => {
       const mockExecution = {
-        executionId:
-          "arn:aws:states:us-east-1:123456789:execution:test:test-execution-456",
+        executionId: "test-execution-456-uuid",
         county: "Lee",
         uniqueErrorCount: 1,
         errorType: "30",

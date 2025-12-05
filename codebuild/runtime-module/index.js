@@ -53,6 +53,22 @@ function requireEnv(name) {
 }
 
 /**
+ * Construct a Step Functions execution ARN from the state machine ARN and execution ID.
+ * Converts: arn:aws:states:{region}:{account}:stateMachine:{name}
+ * To: arn:aws:states:{region}:{account}:execution:{name}:{executionId}
+ *
+ * @param {string} stateMachineArn - Step Functions state machine ARN.
+ * @param {string} executionId - Execution ID (UUID portion).
+ * @returns {string} - Full execution ARN.
+ */
+function buildExecutionArn(stateMachineArn, executionId) {
+  // Replace :stateMachine: with :execution: and append the execution ID
+  return (
+    stateMachineArn.replace(":stateMachine:", ":execution:") + ":" + executionId
+  );
+}
+
+/**
  * Get preparedS3Uri from Step Functions execution history.
  * Searches the execution history for the Prepare step output which contains
  * the prepared S3 URI at $.prepare.output_s3_uri.
@@ -1570,9 +1586,12 @@ async function main() {
 
     // Get preparedS3Uri from Step Functions execution history
     // This is the S3 URI of the prepared output from the Prepare step
-    const preparedS3Uri = await getPreparedS3UriFromExecution(
+    const stateMachineArn = requireEnv("STATE_MACHINE_ARN");
+    const executionArn = buildExecutionArn(
+      stateMachineArn,
       execution.executionId,
     );
+    const preparedS3Uri = await getPreparedS3UriFromExecution(executionArn);
     console.log(`Prepared S3 URI: ${preparedS3Uri}`);
 
     if (!preparedS3Uri) {

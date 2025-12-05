@@ -57,6 +57,9 @@ Parameters:
   GetExecutionLambdaFunctionName:
     Description: Name or ARN of the get-execution Lambda function from workflow-events
     Type: String
+  StateMachineArn:
+    Description: ARN of the Step Functions state machine (used to construct execution ARNs)
+    Type: String
   AutoRepairSchedule:
     Description: "Schedule expression for auto-repair CodeBuild execution. For rate expressions, use format like '30 minutes' or '5 minutes' (without 'rate()'). For cron, use full expression like 'cron(0 */2 * * ? *)'. Note: Use singular for 1 (e.g., '1 minute') and plural for >1 (e.g., '5 minutes')."
     Type: String
@@ -224,6 +227,14 @@ Resources:
                 Action:
                   - events:PutEvents
                 Resource: "*"
+        - PolicyName: PrepareRuntimeCodeBuildStepFunctions
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - states:GetExecutionHistory
+                Resource: !Sub "${StateMachineArn}:*"
 
       Tags:
         - Key: Environment
@@ -288,6 +299,9 @@ Resources:
           - Name: GET_EXECUTION_LAMBDA_FUNCTION_NAME
             Type: PLAINTEXT
             Value: !Ref GetExecutionLambdaFunctionName
+          - Name: STATE_MACHINE_ARN
+            Type: PLAINTEXT
+            Value: !Ref StateMachineArn
           - Name: AWS_REGION
             Type: PLAINTEXT
             Value: !Ref AWS::Region
