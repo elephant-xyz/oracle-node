@@ -1169,13 +1169,28 @@ async function invokeTransformAndSvlWorkers({
 
 /**
  * Extract S3 URI from error message.
+ * Matches patterns like:
+ * - "Errors CSV: s3://bucket/key"
+ * - "Submit errors csv: s3://bucket/key"
  *
  * @param {string} errorMessage - Error message to parse.
  * @returns {string | null} - Extracted S3 URI or null if not found.
  */
 function extractErrorsS3Uri(errorMessage) {
-  const match = /Submit errors csv:\s*(s3:\/\/[^\s]+)/.exec(errorMessage);
-  return match ? match[1] : null;
+  // Match various patterns for errors S3 URI in error messages
+  const patterns = [
+    /Errors CSV:\s*(s3:\/\/[^\s]+)/i,
+    /Submit errors csv:\s*(s3:\/\/[^\s]+)/i,
+    /errorsS3Uri['":\s]+(s3:\/\/[^\s'"]+)/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = pattern.exec(errorMessage);
+    if (match) {
+      return match[1];
+    }
+  }
+  return null;
 }
 
 async function installCherio(scriptsDir) {
@@ -1570,24 +1585,34 @@ async function main() {
         }
 
         // Try to extract new errors S3 URI from error message
-        // This is useful when SVL returns a new errors CSV with different/remaining errors
+        // When SVL validation fails, it uploads new errors to S3 and includes the URI in the error message.
+        // These new errors may be different from the original errors (AI might have fixed some, introduced others).
+        // We want to give AI the NEW errors for context in the next attempt.
         const newErrorsS3Uri = extractErrorsS3Uri(error.message);
 
         if (newErrorsS3Uri) {
-          console.log(`Found new errors CSV: ${newErrorsS3Uri}`);
-          console.log(`Will retry with new errors...`);
-          currentErrorsS3Uri = newErrorsS3Uri;
-          currentErrorsCsvPath = null; // Switch to using S3 URI
-        } else {
-          // No new errors URI found - this is expected when SVL validation fails
-          // with the same errors. Continue retrying with the original errors.
+          console.log(`Found new errors from SVL validation: ${newErrorsS3Uri}`);
           console.log(
-            `No new errors S3 URI found. Will retry with original errors.`,
+            `AI will receive these NEW errors for context in next attempt.`,
           );
-          // Keep using the current errors (either local CSV or S3 URI from previous attempt)
+          console.log(
+            `(Original errors from workflow-events will still be used for final resolution tracking)`,
+          );
+          currentErrorsS3Uri = newErrorsS3Uri;
+          currentErrorsCsvPath = null; // Switch to using S3 URI for new errors
+        } else {
+          // No new errors URI found - SVL might have failed without producing an errors file,
+          // or the error format didn't include the S3 URI.
+          // Continue with the current errors (AI will retry fixing the same errors).
+          console.log(
+            `No new errors S3 URI found in error message. Will retry with current errors.`,
+          );
+          console.log(
+            `Current errors source: ${currentErrorsS3Uri || currentErrorsCsvPath}`,
+          );
         }
 
-        console.log(`Proceeding to attempt ${attempt + 1}/${maxAttempts}...`);
+        console.log(`\nProceeding to attempt ${attempt + 1}/${maxAttempts}...`);
       }
     }
 
