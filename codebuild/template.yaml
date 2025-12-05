@@ -234,7 +234,9 @@ Resources:
               - Effect: Allow
                 Action:
                   - states:GetExecutionHistory
-                Resource: !Sub "${StateMachineArn}:*"
+                # Execution ARN format: arn:aws:states:{region}:{account}:execution:{stateMachineName}:{executionId}
+                # We need to match executions, not the stateMachine ARN directly
+                Resource: !Sub "arn:aws:states:${AWS::Region}:${AWS::AccountId}:execution:*"
 
       Tags:
         - Key: Environment
