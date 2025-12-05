@@ -1,7 +1,6 @@
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import {
   DynamoDBDocumentClient,
-  QueryCommand,
   ScanCommand,
   BatchWriteCommand,
 } from "@aws-sdk/lib-dynamodb";
@@ -189,7 +188,7 @@ async function getFailedExecutions(
   maxExecutions = Infinity,
 ) {
   console.log(
-    `Querying DynamoDB for ALL failed executions created before ${beforeTimestamp}...`,
+    `Scanning DynamoDB for ALL failed executions created before ${beforeTimestamp}...`,
   );
 
   /** @type {Array<import("./errors.mjs").FailedExecutionItem>} */
@@ -198,10 +197,8 @@ async function getFailedExecutions(
   let lastEvaluatedKey = undefined;
 
   do {
-    const queryParams = {
+    const scanParams = {
       TableName: tableName,
-      IndexName: "ExecutionErrorCountIndex",
-      KeyConditionExpression: "GS3PK = :pk",
       FilterExpression:
         "#status = :status AND #entityType = :entityType AND createdAt < :beforeTimestamp",
       ExpressionAttributeNames: {
@@ -209,16 +206,14 @@ async function getFailedExecutions(
         "#entityType": "entityType",
       },
       ExpressionAttributeValues: {
-        ":pk": "METRIC#ERRORCOUNT",
         ":status": "failed",
         ":entityType": "FailedExecution",
         ":beforeTimestamp": beforeTimestamp,
       },
-      ScanIndexForward: false,
       ExclusiveStartKey: lastEvaluatedKey,
     };
 
-    const response = await dynamoClient.send(new QueryCommand(queryParams));
+    const response = await dynamoClient.send(new ScanCommand(scanParams));
 
     if (response.Items && response.Items.length > 0) {
       // Filter and deduplicate

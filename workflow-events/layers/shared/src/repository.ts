@@ -681,6 +681,55 @@ export const saveErrorRecords = async (
   };
 };
 
+/**
+ * Updates a FailedExecutionItem with taskToken when there are no errors.
+ * This is used for SUCCEEDED events (e.g., Prepare success) that need to update the taskToken.
+ *
+ * @param detail - The workflow event detail (may contain taskToken)
+ * @returns Whether the update was successful
+ */
+export const updateExecutionMetadata = async (
+  detail: WorkflowEventDetail,
+): Promise<boolean> => {
+  getTableName(); // Validate table name is set
+
+  // Only update if taskToken is provided
+  if (detail.taskToken === undefined) {
+    return true; // Nothing to update
+  }
+
+  const tableName = getTableName();
+  const pk = createKey("EXECUTION", detail.executionId);
+  const now = new Date().toISOString();
+
+  try {
+    const command = new UpdateCommand({
+      TableName: tableName,
+      Key: {
+        PK: pk,
+        SK: pk,
+      },
+      UpdateExpression: "SET taskToken = :taskToken, updatedAt = :now",
+      ConditionExpression: "entityType = :entityType",
+      ExpressionAttributeValues: {
+        ":taskToken": detail.taskToken,
+        ":now": now,
+        ":entityType": ENTITY_TYPES.FAILED_EXECUTION,
+      },
+    });
+
+    await docClient.send(command);
+    return true;
+  } catch (error) {
+    // Log but don't fail - this is a metadata update, not critical
+    console.warn(
+      `Failed to update execution metadata for ${detail.executionId}:`,
+      error instanceof Error ? error.message : String(error),
+    );
+    return false;
+  }
+};
+
 // =============================================================================
 // Execution Error Link Operations
 // =============================================================================

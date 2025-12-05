@@ -1,5 +1,4 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
-import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { InvokeCommand, LambdaClient } from "@aws-sdk/client-lambda";
 import {
   GetObjectCommand,
@@ -7,15 +6,10 @@ import {
   S3Client,
 } from "@aws-sdk/client-s3";
 import {
-  GetQueueUrlCommand,
-  SQSClient,
-  SendMessageCommand,
-} from "@aws-sdk/client-sqs";
-import {
   CloudWatchClient,
   PutMetricDataCommand,
 } from "@aws-sdk/client-cloudwatch";
-import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
+import { SFNClient, GetExecutionHistoryCommand } from "@aws-sdk/client-sfn";
 import AdmZip from "adm-zip";
 import { exec } from "child_process";
 import { parse } from "csv-parse/sync";
@@ -23,14 +17,11 @@ import { promises as fs } from "fs";
 import os from "os";
 import path from "path";
 import {
-  deleteExecution,
-  markErrorsAsMaybeSolved,
-  markErrorsAsMaybeUnrecoverable,
-  normalizeErrors,
-  queryExecutionWithLeastErrors,
-} from "./errors.mjs";
-
-const DEFAULT_DLQ_URL = process.env.DEFAULT_DLQ_URL;
+  emitWorkflowEvent,
+  createWorkflowError,
+  emitErrorResolved,
+  emitErrorFailedToResolve,
+} from "./shared/eventbridge.mjs";
 
 /**
  * @typedef {Pick<Console, "log">} ConsoleLike
@@ -38,13 +29,12 @@ const DEFAULT_DLQ_URL = process.env.DEFAULT_DLQ_URL;
  */
 
 const s3Client = new S3Client({});
-const dynamoClient = DynamoDBDocumentClient.from(new DynamoDBClient({}), {
-  marshallOptions: { removeUndefinedValues: true },
-});
 const lambdaClient = new LambdaClient({});
-const sqsClient = new SQSClient({});
 // Use AWS_REGION from environment if available, otherwise use default
 const cloudWatchClient = new CloudWatchClient({
+  region: process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION,
+});
+const sfnClient = new SFNClient({
   region: process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION,
 });
 
@@ -60,6 +50,95 @@ function requireEnv(name) {
     throw new Error(`${name} is required`);
   }
   return value;
+}
+
+/**
+ * Construct a Step Functions execution ARN from the state machine ARN and execution ID.
+ * Converts: arn:aws:states:{region}:{account}:stateMachine:{name}
+ * To: arn:aws:states:{region}:{account}:execution:{name}:{executionId}
+ *
+ * @param {string} stateMachineArn - Step Functions state machine ARN.
+ * @param {string} executionId - Execution ID (UUID portion).
+ * @returns {string} - Full execution ARN.
+ */
+function buildExecutionArn(stateMachineArn, executionId) {
+  // Replace :stateMachine: with :execution: and append the execution ID
+  return (
+    stateMachineArn.replace(":stateMachine:", ":execution:") + ":" + executionId
+  );
+}
+
+/**
+ * Get preparedS3Uri from Step Functions execution history.
+ * Searches the execution history for the Prepare step output which contains
+ * the prepared S3 URI at $.prepare.output_s3_uri.
+ *
+ * @param {string} executionArn - Step Functions execution ARN.
+ * @returns {Promise<string | null>} - The prepared S3 URI or null if not found.
+ */
+async function getPreparedS3UriFromExecution(executionArn) {
+  console.log(
+    `Retrieving preparedS3Uri from Step Functions execution: ${executionArn}`,
+  );
+
+  try {
+    let nextToken;
+    let preparedS3Uri = null;
+
+    // Iterate through execution history pages
+    do {
+      const command = new GetExecutionHistoryCommand({
+        executionArn,
+        maxResults: 100,
+        reverseOrder: false,
+        nextToken,
+      });
+
+      const response = await sfnClient.send(command);
+
+      // Look for states that have prepare.output_s3_uri in their output
+      for (const event of response.events || []) {
+        // Check TaskStateExited or PassStateExited events for the output
+        if (
+          (event.type === "TaskStateExited" ||
+            event.type === "PassStateExited") &&
+          event.stateExitedEventDetails?.output
+        ) {
+          try {
+            const output = JSON.parse(event.stateExitedEventDetails.output);
+
+            // Check if this state's output contains prepare.output_s3_uri
+            if (output.prepare?.output_s3_uri) {
+              preparedS3Uri = output.prepare.output_s3_uri;
+              console.log(
+                `Found preparedS3Uri in state ${event.stateExitedEventDetails.name}: ${preparedS3Uri}`,
+              );
+              // Continue searching in case there's a more recent one
+            }
+          } catch {
+            // Ignore JSON parse errors for outputs that aren't JSON
+          }
+        }
+      }
+
+      nextToken = response.nextToken;
+    } while (nextToken);
+
+    if (preparedS3Uri) {
+      console.log(`Retrieved preparedS3Uri: ${preparedS3Uri}`);
+    } else {
+      console.log("No preparedS3Uri found in execution history");
+    }
+
+    return preparedS3Uri;
+  } catch (error) {
+    console.error(
+      `Failed to retrieve preparedS3Uri from Step Functions: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+    return null;
+  }
 }
 
 /**
@@ -161,17 +240,89 @@ function resolveTransformLocation({ countyName, transformPrefixUri }) {
 }
 
 /**
- * Query DynamoDB for the execution with the most errors.
- *
- * @param {string} tableName - DynamoDB table name.
- * @returns {Promise<import("../shared/errors.mjs").FailedExecutionItem | null>} - The execution with most errors, or null if none found.
+ * @typedef {object} GetExecutionLambdaExecution
+ * @property {string} executionId - Identifier of the failed execution.
+ * @property {string} status - Execution status.
+ * @property {string} errorType - Error type (first 2 chars of error code).
+ * @property {string} county - County identifier.
+ * @property {number} totalOccurrences - Total error occurrences.
+ * @property {number} openErrorCount - Count of unique unresolved errors.
+ * @property {number} uniqueErrorCount - Count of unique errors.
+ * @property {string | undefined} taskToken - Task token for Step Functions.
+ * @property {string} createdAt - ISO timestamp when created.
+ * @property {string} updatedAt - ISO timestamp when updated.
  */
-async function getExecutionWithMostErrors(tableName) {
-  console.log(`Querying DynamoDB for execution with least errors...`);
-  return await queryExecutionWithLeastErrors({
-    tableName,
-    documentClient: dynamoClient,
-  });
+
+/**
+ * @typedef {object} GetExecutionLambdaError
+ * @property {string} errorCode - Error code identifier.
+ * @property {string} status - Error status.
+ * @property {number} occurrences - Occurrence count.
+ * @property {string} errorDetails - JSON-encoded error details.
+ * @property {string} executionId - Execution ID.
+ * @property {string} county - County identifier.
+ * @property {string} createdAt - ISO timestamp.
+ * @property {string} updatedAt - ISO timestamp.
+ */
+
+/**
+ * @typedef {object} GetExecutionLambdaResponse
+ * @property {boolean} success - Whether the operation was successful.
+ * @property {GetExecutionLambdaExecution | null} execution - The execution data.
+ * @property {GetExecutionLambdaError[]} errors - Array of errors for the execution.
+ * @property {string | object[] | undefined} error - Error message if failed.
+ */
+
+/**
+ * Invoke the get-execution Lambda to retrieve the execution with least errors.
+ * Uses the new workflow-events service instead of direct DynamoDB query.
+ *
+ * @returns {Promise<{ execution: GetExecutionLambdaExecution | null, errors: GetExecutionLambdaError[] }>}
+ */
+async function getExecutionWithLeastErrors() {
+  const functionName = requireEnv("GET_EXECUTION_LAMBDA_FUNCTION_NAME");
+  console.log(`Invoking get-execution Lambda: ${functionName}...`);
+
+  const response = await lambdaClient.send(
+    new InvokeCommand({
+      FunctionName: functionName,
+      InvocationType: "RequestResponse",
+      Payload: JSON.stringify({
+        sortOrder: "least",
+      }),
+    }),
+  );
+
+  if (response.FunctionError) {
+    const errorPayload = JSON.parse(
+      new TextDecoder().decode(response.Payload ?? new Uint8Array()),
+    );
+    throw new Error(
+      `get-execution Lambda failed: ${errorPayload.errorMessage || errorPayload.errorType || JSON.stringify(errorPayload)}`,
+    );
+  }
+
+  /** @type {GetExecutionLambdaResponse} */
+  const result = JSON.parse(
+    new TextDecoder().decode(response.Payload ?? new Uint8Array()),
+  );
+
+  if (!result.success) {
+    throw new Error(
+      `get-execution Lambda returned error: ${typeof result.error === "string" ? result.error : JSON.stringify(result.error)}`,
+    );
+  }
+
+  console.log(
+    result.execution
+      ? `Found execution ${result.execution.executionId} with ${result.execution.uniqueErrorCount} unique errors and ${result.errors.length} error links`
+      : "No failed executions found",
+  );
+
+  return {
+    execution: result.execution,
+    errors: result.errors,
+  };
 }
 
 /**
@@ -998,57 +1149,6 @@ async function restoreOriginalScripts(
 }
 
 /**
- * Get the county-specific DLQ URL by queue name.
- *
- * @param {string} county - County identifier (will be lowercased).
- * @returns {Promise<string>} - DLQ queue URL.
- */
-async function getCountyDlqUrl(county) {
-  const queueName = `elephant-workflow-queue-${county.toLowerCase()}-dlq`;
-  try {
-    const response = await sqsClient.send(
-      new GetQueueUrlCommand({ QueueName: queueName }),
-    );
-    if (!response.QueueUrl) {
-      return DEFAULT_DLQ_URL;
-    }
-    return response.QueueUrl;
-  } catch (error) {
-    console.log(`DLQ queue ${queueName} not found`);
-    return DEFAULT_DLQ_URL;
-  }
-}
-
-/**
- * Send original message to county-specific DLQ.
- *
- * @param {string} dlqUrl - County-specific DLQ URL.
- * @param {Record<string, string | undefined>} source - Source information with s3Bucket and s3Key.
- * @returns {Promise<void>}
- */
-async function sendToDlq(dlqUrl, source) {
-  if (!source.s3Bucket || !source.s3Key) {
-    throw new Error("Cannot send to DLQ: source missing s3Bucket or s3Key");
-  }
-
-  const message = {
-    s3: {
-      bucket: { name: source.s3Bucket },
-      object: { key: source.s3Key },
-    },
-  };
-
-  console.log(`Sending original message to DLQ: ${dlqUrl}`);
-  await sqsClient.send(
-    new SendMessageCommand({
-      QueueUrl: dlqUrl,
-      MessageBody: JSON.stringify(message),
-    }),
-  );
-  console.log("Successfully sent message to DLQ");
-}
-
-/**
  * Invoke transform and SVL workers to verify the fixes work.
  * This replaces the old invokePostProcessingLambda which called the monolithic post lambda.
  *
@@ -1161,13 +1261,28 @@ async function invokeTransformAndSvlWorkers({
 
 /**
  * Extract S3 URI from error message.
+ * Matches patterns like:
+ * - "Errors CSV: s3://bucket/key"
+ * - "Submit errors csv: s3://bucket/key"
  *
  * @param {string} errorMessage - Error message to parse.
  * @returns {string | null} - Extracted S3 URI or null if not found.
  */
 function extractErrorsS3Uri(errorMessage) {
-  const match = /Submit errors csv:\s*(s3:\/\/[^\s]+)/.exec(errorMessage);
-  return match ? match[1] : null;
+  // Match various patterns for errors S3 URI in error messages
+  const patterns = [
+    /Errors CSV:\s*(s3:\/\/[^\s]+)/i,
+    /Submit errors csv:\s*(s3:\/\/[^\s]+)/i,
+    /errorsS3Uri['":\s]+(s3:\/\/[^\s'"]+)/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = pattern.exec(errorMessage);
+    if (match) {
+      return match[1];
+    }
+  }
+  return null;
 }
 
 async function installCherio(scriptsDir) {
@@ -1197,23 +1312,23 @@ function isMvlErrorScenario(errorsS3Uri) {
  * @param {string} params.executionId - Execution identifier.
  * @param {string} params.county - County identifier.
  * @param {string} params.preparedS3Uri - S3 URI of the prepared output.
- * @param {string} params.errorsS3Uri - S3 URI of the errors CSV.
+ * @param {string | null} params.errorsCsvPath - Local path to errors CSV (from Lambda response).
+ * @param {string | null} params.errorsS3Uri - S3 URI of the errors CSV (for retries).
  * @param {string} params.transformPrefix - S3 prefix URI for transforms.
- * @param {string} params.tableName - DynamoDB table name.
- * @param {{ s3Bucket?: string, s3Key?: string } | undefined} params.source - Optional source information.
+ * @param {GetExecutionLambdaError[]} params.executionErrors - Original errors from Lambda response.
  * @returns {Promise<{ success: boolean, newErrorsS3Uri?: string }>} - Result of the iteration.
  */
 async function runAutoRepairIteration({
   executionId,
   county,
   preparedS3Uri,
+  errorsCsvPath,
   errorsS3Uri,
   transformPrefix,
-  tableName,
-  source,
+  executionErrors,
 }) {
-  // Determine error scenario type at the start
-  const isMvlScenario = isMvlErrorScenario(errorsS3Uri);
+  // Determine error scenario type - for local CSV assume SVL errors (from workflow-events)
+  const isMvlScenario = errorsS3Uri ? isMvlErrorScenario(errorsS3Uri) : false;
   console.log(
     `Processing ${isMvlScenario ? "MVL (mirror validation)" : "schema validation"} errors`,
   );
@@ -1240,8 +1355,31 @@ async function runAutoRepairIteration({
     await extractZip(transformScriptsZip, scriptsDir);
     await installCherio(scriptsDir);
 
-    // Step 2: Parse errors
-    const { errorPath, dataGroupName } = await parseErrorsFromS3(errorsS3Uri);
+    // Step 2: Parse errors - use local CSV if available, otherwise download from S3
+    let errorPath;
+    let dataGroupName;
+
+    if (errorsCsvPath) {
+      // Use local CSV file from Lambda response
+      console.log(`Using local errors CSV: ${errorsCsvPath}`);
+      errorPath = errorsCsvPath;
+      // Extract dataGroupName from the first error if available
+      const errorsArray = await csvToJson(errorPath);
+      if (errorsArray.length > 0 && errorsArray[0].data_group_cid) {
+        dataGroupName = errorsArray[0].data_group_cid;
+      } else {
+        dataGroupName = null;
+      }
+    } else if (errorsS3Uri) {
+      // Download from S3 (for retries with new errors)
+      const result = await parseErrorsFromS3(errorsS3Uri);
+      errorPath = result.errorPath;
+      dataGroupName = result.dataGroupName;
+    } else {
+      throw new Error(
+        "No errors source provided (neither local CSV nor S3 URI)",
+      );
+    }
 
     // Step 3: Invoke Codex to fix errors
     const { scriptsDir: updatedScripts } = await invokeAiForFix(
@@ -1279,41 +1417,54 @@ async function runAutoRepairIteration({
       if (resultPayload.validationPassed) {
         console.log(`Validation passed successfully`);
 
-        // Step 6: Mark errors as maybeSolved for other executions that share the same errors
-        const errorsArray = await csvToJson(errorPath);
-        const normalizedErrors = normalizeErrors(errorsArray, county);
-        const errorHashes = normalizedErrors.map((e) => e.hash);
+        // Extract unique error codes for event emission
+        const uniqueErrorCodes = [
+          ...new Set(executionErrors.map((e) => e.errorCode)),
+        ];
+
+        // Step 6: Emit ElephantErrorResolved events to signal errors are resolved
+        // The workflow-events service will handle cleanup (delete execution and error links)
+        // First, resolve by executionId (handles the execution-level cleanup)
         console.log(
-          `Marking ${errorHashes.length} error hash(es) as maybeSolved for other executions...`,
+          `Emitting ElephantErrorResolved for execution ${executionId}...`,
         );
-        await markErrorsAsMaybeSolved({
-          errorHashes,
-          tableName,
-          documentClient: dynamoClient,
+        await emitErrorResolved({
+          executionId,
         });
 
-        // Step 7: Delete the execution and all its error links since repair succeeded
+        // Also emit for each unique error code for proper metrics and audit trail
         console.log(
-          `Deleting execution ${executionId} and all its error links...`,
+          `Emitting ElephantErrorResolved for ${uniqueErrorCodes.length} unique error code(s)...`,
         );
-        const deletedErrorHashes = await deleteExecution({
+        for (const errorCode of uniqueErrorCodes) {
+          await emitErrorResolved({
+            errorCode,
+          });
+        }
+
+        // Step 7: Emit WorkflowEvent with SUCCEEDED status for metrics
+        await emitWorkflowEvent({
           executionId,
-          tableName,
-          documentClient: dynamoClient,
+          county,
+          status: "SUCCEEDED",
+          phase: "AutoRepair",
+          step: "AutoRepair",
+          dataGroupLabel: "County",
         });
-        console.log(
-          `✓ Deleted execution ${executionId} and all associated errors (${deletedErrorHashes.length} error hash(es))`,
-        );
 
         // Publish success metrics
         await publishMetric({
           metricName: "AutoRepairErrorsFixed",
-          value: errorHashes.length,
+          value: uniqueErrorCodes.length,
           dimensions: {
             County: county,
             ErrorType: isMvlScenario ? "MVL" : "SVL",
           },
         });
+
+        console.log(
+          `✓ Auto-repair succeeded for execution ${executionId}. Resolved ${uniqueErrorCodes.length} error code(s).`,
+        );
 
         return { success: true };
       } else {
@@ -1357,24 +1508,8 @@ async function runAutoRepairIteration({
         // Continue with error handling even if restore fails
       }
 
-      // Try to extract new errors S3 URI from error message
-      const newErrorsS3Uri = extractErrorsS3Uri(workerError.message);
-
-      // If worker invocation failed and we can't retry, send to DLQ
-      if (!newErrorsS3Uri && source) {
-        try {
-          const dlqUrl = await getCountyDlqUrl(county);
-          await sendToDlq(dlqUrl, source);
-
-          console.error(
-            `Worker invocation failed. Sent original message to DLQ: ${dlqUrl}`,
-          );
-        } catch (dlqError) {
-          console.error(`Failed to send to DLQ: ${dlqError.message}`);
-        }
-      }
-
       // Re-throw to let the main loop handle retries
+      // The main loop extracts new errors S3 URI from error message and emits failure events via EventBridge
       throw new Error(`Failed to verify fixes: ${workerError.message}`);
     }
   } finally {
@@ -1386,6 +1521,38 @@ async function runAutoRepairIteration({
 }
 
 /**
+ * Convert errors from Lambda response to CSV format for AI processing.
+ *
+ * @param {GetExecutionLambdaError[]} errors - Errors from the Lambda response.
+ * @returns {Promise<string>} - Path to the created CSV file.
+ */
+async function createErrorsCsvFromLambdaErrors(errors) {
+  const tmpFile = path.join(os.tmpdir(), `errors_${Date.now()}.csv`);
+
+  // Convert errors to CSV format expected by AI
+  const csvRows = ["error_message,error_path,data_group_cid"];
+
+  for (const error of errors) {
+    try {
+      const details = JSON.parse(error.errorDetails);
+      const errorMessage = (details.error_message || "").replace(/"/g, '""');
+      const errorPath = (details.error_path || "root").replace(/"/g, '""');
+      const dataGroupCid = (details.data_group_cid || "").replace(/"/g, '""');
+      csvRows.push(`"${errorMessage}","${errorPath}","${dataGroupCid}"`);
+    } catch (parseError) {
+      console.warn(
+        `Failed to parse error details for error ${error.errorCode}: ${parseError.message}`,
+      );
+      csvRows.push(`"${error.errorCode}","root",""`);
+    }
+  }
+
+  await fs.writeFile(tmpFile, csvRows.join("\n"), "utf8");
+  console.log(`Created errors CSV at ${tmpFile} with ${errors.length} errors`);
+  return tmpFile;
+}
+
+/**
  * Main auto-repair workflow.
  *
  * @returns {Promise<void>}
@@ -1394,12 +1561,13 @@ async function main() {
   try {
     console.log("Starting auto-repair workflow...");
 
-    const tableName = requireEnv("ERRORS_TABLE_NAME");
     const transformPrefix = requireEnv("TRANSFORM_S3_PREFIX");
     const maxAttempts = 3;
 
-    // Step 1: Get execution with most errors
-    const execution = await getExecutionWithMostErrors(tableName);
+    // Step 1: Get execution with least errors using the get-execution Lambda
+    const { execution, errors: executionErrors } =
+      await getExecutionWithLeastErrors();
+
     if (!execution) {
       console.log("No failed executions found. Exiting.");
       return;
@@ -1409,36 +1577,84 @@ async function main() {
       `Found execution ${execution.executionId} with ${execution.uniqueErrorCount} unique errors`,
     );
     console.log(`County: ${execution.county}`);
-    console.log(`Prepared S3 URI: ${execution.preparedS3Uri}`);
-    console.log(`Errors S3 URI: ${execution.errorsS3Uri}`);
+    console.log(`Error count from Lambda: ${executionErrors.length}`);
 
-    if (!execution.errorsS3Uri) {
-      console.log("No errors S3 URI found. Skipping.");
+    if (executionErrors.length === 0) {
+      console.log("No errors found for execution. Skipping.");
       return;
     }
 
-    if (!execution.preparedS3Uri) {
-      console.log("No prepared S3 URI found. Skipping.");
+    // Get preparedS3Uri from Step Functions execution history
+    // This is the S3 URI of the prepared output from the Prepare step
+    const stateMachineArn = requireEnv("STATE_MACHINE_ARN");
+    const executionArn = buildExecutionArn(
+      stateMachineArn,
+      execution.executionId,
+    );
+    const preparedS3Uri = await getPreparedS3UriFromExecution(executionArn);
+    console.log(`Prepared S3 URI: ${preparedS3Uri}`);
+
+    if (!preparedS3Uri) {
+      console.log(
+        `No prepared S3 URI found for execution ${execution.executionId}. This execution likely failed before or during the Prepare step. Auto-repair cannot proceed without prepared inputs.`,
+      );
+
+      // Mark errors as unrecoverable since auto-repair can't help with executions that failed before Prepare
+      // The workflow-events service will update the execution status to maybeUnrecoverable,
+      // which changes the GSI keys so get-execution Lambda won't return it anymore.
+      const uniqueErrorCodes = [
+        ...new Set(executionErrors.map((e) => e.errorCode)),
+      ];
+
+      // Mark each error code as unrecoverable
+      console.log(
+        `Emitting ElephantErrorFailedToResolve for ${uniqueErrorCodes.length} error code(s)...`,
+      );
+      for (const errorCode of uniqueErrorCodes) {
+        await emitErrorFailedToResolve({
+          errorCode,
+        });
+      }
+
+      // Mark the execution itself as unrecoverable
+      console.log(
+        `Emitting ElephantErrorFailedToResolve for execution ${execution.executionId}...`,
+      );
+      await emitErrorFailedToResolve({
+        executionId: execution.executionId,
+      });
+
+      console.log(
+        `Execution ${execution.executionId} marked as unrecoverable (missing preparedS3Uri).`,
+      );
+
       return;
     }
 
-    let currentErrorsS3Uri = execution.errorsS3Uri;
+    // Create a local CSV file from the Lambda errors for the first attempt
+    let currentErrorsCsvPath =
+      await createErrorsCsvFromLambdaErrors(executionErrors);
+    /** @type {string | null} */
+    let currentErrorsS3Uri = null; // Only set if we get new errors from validation
+
     let attempt = 0;
 
     while (attempt < maxAttempts) {
       attempt++;
       console.log(`\n=== Auto-repair attempt ${attempt}/${maxAttempts} ===`);
-      console.log(`Using errors from: ${currentErrorsS3Uri}`);
+      console.log(
+        `Using errors from: ${currentErrorsS3Uri || currentErrorsCsvPath}`,
+      );
 
       try {
         await runAutoRepairIteration({
           executionId: execution.executionId,
           county: execution.county,
-          preparedS3Uri: execution.preparedS3Uri,
+          preparedS3Uri,
+          errorsCsvPath: currentErrorsCsvPath,
           errorsS3Uri: currentErrorsS3Uri,
           transformPrefix,
-          tableName,
-          source: execution.source,
+          executionErrors,
         });
 
         console.log("Auto-repair workflow completed successfully!");
@@ -1463,115 +1679,99 @@ async function main() {
         console.error("County:", execution.county);
         console.error("========================================");
 
-        // Try to extract new errors S3 URI from error message
-        const newErrorsS3Uri = extractErrorsS3Uri(error.message);
-
-        if (newErrorsS3Uri && attempt < maxAttempts) {
-          console.log(`Found new errors CSV: ${newErrorsS3Uri}`);
-          console.log(`Will retry with new errors...`);
-          currentErrorsS3Uri = newErrorsS3Uri;
-        } else {
-          if (attempt >= maxAttempts) {
-            console.error(
-              `Max retries (${maxAttempts}) reached. Sending to DLQ.`,
-            );
-          } else {
-            console.error(
-              `No errors URI found in error message. Sending to DLQ.`,
-            );
-          }
+        // Check if we've exhausted all attempts
+        if (attempt >= maxAttempts) {
+          console.error(`Max retries (${maxAttempts}) reached.`);
           break;
         }
-      }
-    }
 
-    // If we exit the loop without success, handle based on error scenario type
-    const isMvlScenario = isMvlErrorScenario(currentErrorsS3Uri);
-    // If we exit the loop without success, mark errors as maybeUnrecoverable and send to DLQ
-    console.log(
-      `Auto-repair exhausted all retries. Marking errors as maybeUnrecoverable...`,
-    );
+        // Try to extract new errors S3 URI from error message
+        // When SVL validation fails, it uploads new errors to S3 and includes the URI in the error message.
+        // These new errors may be different from the original errors (AI might have fixed some, introduced others).
+        // We want to give AI the NEW errors for context in the next attempt.
+        const newErrorsS3Uri = extractErrorsS3Uri(error.message);
 
-    // Mark similar errors as maybeUnrecoverable before sending to DLQ
-    try {
-      if (currentErrorsS3Uri) {
-        console.log(
-          `Downloading errors CSV from ${currentErrorsS3Uri} to mark as maybeUnrecoverable...`,
-        );
-        const { bucket, key } = parseS3Uri(currentErrorsS3Uri);
-        const tmpFile = path.join(
-          os.tmpdir(),
-          `errors_unrecoverable_${Date.now()}.csv`,
-        );
-        await downloadS3Object({ bucket, key }, tmpFile);
-        const errorsArray = await csvToJson(tmpFile);
-
-        if (errorsArray.length > 0) {
-          const normalizedErrors = normalizeErrors(
-            errorsArray,
-            execution.county,
+        if (newErrorsS3Uri) {
+          console.log(
+            `Found new errors from SVL validation: ${newErrorsS3Uri}`,
           );
-          const errorHashes = normalizedErrors.map((e) => e.hash);
-
-          if (errorHashes.length > 0) {
-            console.log(
-              `Marking ${errorHashes.length} error hash(es) as maybeUnrecoverable for other executions...`,
-            );
-            await markErrorsAsMaybeUnrecoverable({
-              errorHashes,
-              tableName,
-              documentClient: dynamoClient,
-            });
-            console.log(`Successfully marked errors as maybeUnrecoverable`);
-          } else {
-            console.log(`No error hashes found to mark as maybeUnrecoverable`);
-          }
+          console.log(
+            `AI will receive these NEW errors for context in next attempt.`,
+          );
+          console.log(
+            `(Original errors from workflow-events will still be used for final resolution tracking)`,
+          );
+          currentErrorsS3Uri = newErrorsS3Uri;
+          currentErrorsCsvPath = null; // Switch to using S3 URI for new errors
         } else {
-          console.log(`No errors found in CSV file`);
+          // No new errors URI found - SVL might have failed without producing an errors file,
+          // or the error format didn't include the S3 URI.
+          // Continue with the current errors (AI will retry fixing the same errors).
+          console.log(
+            `No new errors S3 URI found in error message. Will retry with current errors.`,
+          );
+          console.log(
+            `Current errors source: ${currentErrorsS3Uri || currentErrorsCsvPath}`,
+          );
         }
 
-        // Cleanup temp file
-        await fs.rm(tmpFile, { force: true }).catch(() => {
-          // Ignore cleanup errors
-        });
-      } else {
-        console.log(`No errors S3 URI available to mark as maybeUnrecoverable`);
-      }
-    } catch (markError) {
-      // Don't block DLQ fallback if marking errors fails
-      console.error(
-        `Failed to mark errors as maybeUnrecoverable: ${markError.message}`,
-      );
-    }
-
-    if (isMvlScenario) {
-      // For MVL errors: Never send to DLQ, just delete execution
-      console.log(
-        `Auto-repair exhausted all retries for MVL errors. MVL scenario: Skipping DLQ send.`,
-      );
-    } else {
-      // For schema validation errors: Send to DLQ as before
-      console.log(`Auto-repair exhausted all retries. Sending to DLQ...`);
-
-      if (execution.source) {
-        const dlqUrl = await getCountyDlqUrl(execution.county);
-        await sendToDlq(dlqUrl, execution.source);
-        console.log(`Sent original message to DLQ: ${dlqUrl}`);
-      } else {
-        console.error(`Cannot send to DLQ: source information is missing`);
+        console.log(`\nProceeding to attempt ${attempt + 1}/${maxAttempts}...`);
       }
     }
 
-    // Delete the execution to prevent re-processing the same unfixable execution
+    // If we exit the loop without success, mark errors as maybeUnrecoverable via EventBridge
+    // The workflow-events service will update the execution status to maybeUnrecoverable,
+    // which changes the GSI keys so get-execution Lambda won't return it anymore.
+    const isMvlScenario = execution.errorType?.startsWith("MV") ?? false;
     console.log(
-      `Deleting execution ${execution.executionId} after exhausting retries...`,
+      `Auto-repair exhausted all retries. Emitting failure events...`,
     );
-    await deleteExecution({
+
+    // Emit WorkflowEvent with FAILED status
+    const failureReason =
+      attempt >= maxAttempts ? "MaxRetriesExceeded" : "NoErrorsUri";
+    const workflowErrorCode = isMvlScenario ? "70001" : "70002"; // 70xxx for AutoRepair phase
+
+    await emitWorkflowEvent({
       executionId: execution.executionId,
-      tableName,
-      documentClient: dynamoClient,
+      county: execution.county,
+      status: "FAILED",
+      phase: "AutoRepair",
+      step: "AutoRepair",
+      dataGroupLabel: "County",
+      errors: [
+        createWorkflowError(workflowErrorCode, {
+          errorType: isMvlScenario ? "MVL" : "SVL",
+          failureReason,
+          attempts: attempt,
+          maxAttempts,
+        }),
+      ],
     });
-    console.log(`Execution ${execution.executionId} deleted.`);
+
+    // Emit ElephantErrorFailedToResolve to mark errors as maybeUnrecoverable
+    // The workflow-events service handles updating statuses and GSI keys
+    const uniqueErrorCodes = [
+      ...new Set(executionErrors.map((e) => e.errorCode)),
+    ];
+
+    // Mark the execution itself as unrecoverable
+    console.log(
+      `Emitting ElephantErrorFailedToResolve for execution ${execution.executionId}...`,
+    );
+    await emitErrorFailedToResolve({
+      executionId: execution.executionId,
+    });
+
+    // Also mark each error code as unrecoverable
+    console.log(
+      `Emitting ElephantErrorFailedToResolve for ${uniqueErrorCodes.length} unique error code(s)...`,
+    );
+    for (const errorCode of uniqueErrorCodes) {
+      await emitErrorFailedToResolve({
+        errorCode,
+      });
+    }
 
     // Publish final failure metric before throwing
     await publishMetric({
@@ -1579,10 +1779,13 @@ async function main() {
       dimensions: {
         County: execution.county,
         ErrorType: isMvlScenario ? "MVL" : "SVL",
-        FailureReason:
-          attempt >= maxAttempts ? "MaxRetriesExceeded" : "NoErrorsUri",
+        FailureReason: failureReason,
       },
     });
+
+    console.log(
+      `Execution ${execution.executionId} marked as unrecoverable after ${attempt} attempts.`,
+    );
 
     throw new Error(`Auto-repair failed after ${attempt} attempts`);
   } catch (error) {
@@ -1605,5 +1808,16 @@ async function main() {
   }
 }
 
-// Run main workflow
-main();
+// Export for testing
+export { getExecutionWithLeastErrors, main };
+
+// Run main workflow when executed directly
+const isMainModule =
+  typeof process !== "undefined" &&
+  process.argv[1] &&
+  (process.argv[1].endsWith("index.js") ||
+    process.argv[1].endsWith("runtime-module"));
+
+if (isMainModule) {
+  main();
+}

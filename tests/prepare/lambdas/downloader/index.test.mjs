@@ -166,12 +166,13 @@ describe("downloader lambda - EventBridge integration", () => {
       expect(detail.step).toBe("Prepare");
     });
 
-    it("should throw error with code 01019 when EventBridge emission fails", async () => {
-      // EventBridge fails - handler should throw and report via sendTaskFailure
-      eventBridgeMock
-        .on(PutEventsCommand)
-        .rejects(new Error("EventBridge unavailable"));
+    it("should send task failure with default error code when processing fails after EventBridge emission", async () => {
+      // EventBridge succeeds, but S3 fails - handler should catch and report via sendTaskFailure
+      // Note: EventBridge errors use the default 01002 code (non-PrepareError exceptions)
+      eventBridgeMock.on(PutEventsCommand).resolves({});
       sfnMock.on(SendTaskFailureCommand).resolves({});
+      // S3 will fail - mock returns error
+      s3Mock.on(GetObjectCommand).rejects(new Error("S3 access denied"));
 
       const { handler } =
         await import("../../../../prepare/lambdas/downloader/index.mjs");
@@ -191,14 +192,14 @@ describe("downloader lambda - EventBridge integration", () => {
         ],
       };
 
-      // Handler should catch EventBridge error and send task failure
+      // Handler should catch error and send task failure
       await handler(sqsEvent);
 
-      // Verify SendTaskFailureCommand was called with error code 01019 + county
+      // Verify SendTaskFailureCommand was called with error code 01002 (default) + county
       expect(sfnMock).toHaveReceivedCommandWith(SendTaskFailureCommand, {
         taskToken: "test-task-token",
-        error: "01019Hamilton",
-        cause: expect.stringContaining("EventBridge"),
+        error: "01002Hamilton",
+        cause: expect.stringContaining("S3"),
       });
     });
   });

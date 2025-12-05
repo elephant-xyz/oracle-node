@@ -1122,7 +1122,7 @@ States:
       hash.$: $.hash
       executionId.$: $.executionId
       county.$: $.pre.county_name
-      transactionHash.$: $.submit.result.submitResults[0].txHash
+      transactionHash.$: $.submit.result.submitResults[0].transactionHash
       transactionItems.$: $.hash.transactionItems
     ResultPath: $.transactionStatus
     Next: CheckTransactionStatusIfHashExists
