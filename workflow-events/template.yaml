@@ -90,11 +90,13 @@ Resources:
               KeyType: RANGE
           Projection:
             ProjectionType: ALL
+      # Enable DynamoDB Streams for error resolution processing
       StreamSpecification:
-        StreamViewType: NEW_AND_OLD_IMAGES
+        StreamViewType: OLD_IMAGE
       Tags:
         - Key: Environment
           Value: !Ref EnvironmentName
+
   WorkflowEventHandlerDeadLetterQueue:
     Type: AWS::SQS::Queue
     Properties:
@@ -117,7 +119,7 @@ Resources:
       DeadLetterQueue:
         TargetArn: !GetAtt WorkflowEventHandlerDeadLetterQueue.Arn
         Type: SQS
-      Description: "Processes EventBridge WorkflowEvent events from elephant.workflow source"
+      Description: "Processes EventBridge events from elephant.workflow source (WorkflowEvent and ElephantErrorResolved)"
       Environment:
         Variables:
           WORKFLOW_ERRORS_TABLE_NAME: !Ref WorkflowErrorsTable
@@ -135,6 +137,8 @@ Resources:
                 - elephant.workflow
               detail-type:
                 - WorkflowEvent
+                - ElephantErrorResolved
+                - ElephantErrorFailedToResolve
             State: ENABLED
     Metadata:
       BuildMethod: esbuild
@@ -278,14 +282,15 @@ Resources:
               "width": 12,
               "height": 10,
               "properties": {
-                "title": "Executions with Most Errors",
+                "title": "Failed Executions",
                 "endpoint": "${DashboardExecutionsWidgetFunction.Arn}",
                 "updateOn": {
                   "refresh": true,
                   "resize": true
                 },
                 "params": {
-                  "limit": 20
+                  "limit": 20,
+                  "status": "FAILED"
                 }
               }
             },
@@ -296,7 +301,26 @@ Resources:
               "width": 12,
               "height": 10,
               "properties": {
-                "title": "Errors with Most Occurrences",
+                "title": "Failed to Solve Executions",
+                "endpoint": "${DashboardExecutionsWidgetFunction.Arn}",
+                "updateOn": {
+                  "refresh": true,
+                  "resize": true
+                },
+                "params": {
+                  "limit": 20,
+                  "status": "MAYBEUNRECOVERABLE"
+                }
+              }
+            },
+            {
+              "type": "custom",
+              "x": 0,
+              "y": 10,
+              "width": 12,
+              "height": 10,
+              "properties": {
+                "title": "Failed Errors",
                 "endpoint": "${DashboardErrorsWidgetFunction.Arn}",
                 "updateOn": {
                   "refresh": true,
@@ -304,14 +328,35 @@ Resources:
                 },
                 "params": {
                   "errorType": "",
-                  "limit": 20
+                  "limit": 20,
+                  "status": "FAILED"
+                }
+              }
+            },
+            {
+              "type": "custom",
+              "x": 12,
+              "y": 10,
+              "width": 12,
+              "height": 10,
+              "properties": {
+                "title": "Failed to Solve Errors",
+                "endpoint": "${DashboardErrorsWidgetFunction.Arn}",
+                "updateOn": {
+                  "refresh": true,
+                  "resize": true
+                },
+                "params": {
+                  "errorType": "",
+                  "limit": 20,
+                  "status": "MAYBEUNRECOVERABLE"
                 }
               }
             },
             {
               "type": "metric",
               "x": 0,
-              "y": 10,
+              "y": 20,
               "width": 12,
               "height": 6,
               "properties": {
@@ -331,7 +376,7 @@ Resources:
             {
               "type": "metric",
               "x": 12,
-              "y": 10,
+              "y": 20,
               "width": 12,
               "height": 6,
               "properties": {
@@ -351,7 +396,7 @@ Resources:
             {
               "type": "metric",
               "x": 0,
-              "y": 16,
+              "y": 26,
               "width": 12,
               "height": 6,
               "properties": {
@@ -371,7 +416,7 @@ Resources:
             {
               "type": "metric",
               "x": 12,
-              "y": 16,
+              "y": 26,
               "width": 12,
               "height": 6,
               "properties": {
@@ -391,7 +436,7 @@ Resources:
             {
               "type": "metric",
               "x": 0,
-              "y": 22,
+              "y": 32,
               "width": 12,
               "height": 6,
               "properties": {
@@ -411,7 +456,7 @@ Resources:
             {
               "type": "metric",
               "x": 12,
-              "y": 22,
+              "y": 32,
               "width": 12,
               "height": 6,
               "properties": {
@@ -431,7 +476,7 @@ Resources:
             {
               "type": "metric",
               "x": 0,
-              "y": 28,
+              "y": 38,
               "width": 12,
               "height": 6,
               "properties": {
@@ -451,7 +496,27 @@ Resources:
             {
               "type": "metric",
               "x": 12,
-              "y": 28,
+              "y": 38,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "Transaction Status Check Phase",
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "period": 300,
+                "metrics": [
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"TransactionStatusCheckElephantPhase\" Status=\"SCHEDULED\"', 'Sum', 300))", "label": "SCHEDULED", "id": "txstatus_sched", "color": "#1f77b4"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"TransactionStatusCheckElephantPhase\" Status=\"IN_PROGRESS\"', 'Sum', 300))", "label": "IN_PROGRESS", "id": "txstatus_prog", "color": "#ff7f0e"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"TransactionStatusCheckElephantPhase\" Status=\"SUCCEEDED\"', 'Sum', 300))", "label": "SUCCEEDED", "id": "txstatus_succ", "color": "#2ca02c"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"TransactionStatusCheckElephantPhase\" Status=\"FAILED\"', 'Sum', 300))", "label": "FAILED", "id": "txstatus_fail", "color": "#d62728"}]
+                ]
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 34,
               "width": 12,
               "height": 6,
               "properties": {
@@ -471,20 +536,34 @@ Resources:
             {
               "type": "metric",
               "x": 0,
-              "y": 34,
+              "y": 50,
               "width": 12,
               "height": 6,
               "properties": {
-                "title": "Transaction Status Check Phase",
+                "title": "Execution Restarted (Total)",
                 "view": "timeSeries",
                 "stacked": false,
                 "region": "${AWS::Region}",
                 "period": 300,
                 "metrics": [
-                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"TransactionStatusCheckElephantPhase\" Status=\"SCHEDULED\"', 'Sum', 300))", "label": "SCHEDULED", "id": "txstatus_sched", "color": "#1f77b4"}],
-                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"TransactionStatusCheckElephantPhase\" Status=\"IN_PROGRESS\"', 'Sum', 300))", "label": "IN_PROGRESS", "id": "txstatus_prog", "color": "#ff7f0e"}],
-                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"TransactionStatusCheckElephantPhase\" Status=\"SUCCEEDED\"', 'Sum', 300))", "label": "SUCCEEDED", "id": "txstatus_succ", "color": "#2ca02c"}],
-                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"TransactionStatusCheckElephantPhase\" Status=\"FAILED\"', 'Sum', 300))", "label": "FAILED", "id": "txstatus_fail", "color": "#d62728"}]
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,ErrorType,County} MetricName=\"ExecutionRestarted\"', 'Sum', 300))", "label": "Total Restarted", "id": "restart_total", "color": "#2ca02c"}]
+                ]
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12,
+              "y": 50,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "Execution Restarted by County",
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "period": 300,
+                "metrics": [
+                  [{"expression": "SEARCH('{Elephant/Workflow,ErrorType,County} MetricName=\"ExecutionRestarted\"', 'Sum', 300)", "label": "", "id": "restart_by_county"}]
                 ]
               }
             },
@@ -510,6 +589,74 @@ Resources:
             }
           ]
         }
+
+  # Dead letter queue for error count handler
+  ErrorCountHandlerDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      MessageRetentionPeriod: 1209600
+      Tags:
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  # Lambda function triggered by DynamoDB Streams to manage error counts
+  ErrorCountHandlerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${EnvironmentName}-error-count-handler"
+      Runtime: nodejs22.x
+      Architectures:
+        - arm64
+      Handler: index.handler
+      CodeUri: lambdas/error-count-handler
+      Layers:
+        - !Ref SharedLayer
+      DeadLetterQueue:
+        TargetArn: !GetAtt ErrorCountHandlerDeadLetterQueue.Arn
+        Type: SQS
+      ReservedConcurrentExecutions: 1
+      Description: "Processes DynamoDB Stream events to manage error counts and send task success callbacks"
+      Environment:
+        Variables:
+          WORKFLOW_ERRORS_TABLE_NAME: !Ref WorkflowErrorsTable
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - CloudWatchPutMetricPolicy: {}
+        - DynamoDBCrudPolicy:
+            TableName: !Ref WorkflowErrorsTable
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - states:SendTaskSuccess
+              Resource: "*"
+      Events:
+        DynamoDBStream:
+          Type: DynamoDB
+          Properties:
+            Stream: !GetAtt WorkflowErrorsTable.StreamArn
+            StartingPosition: TRIM_HORIZON
+            BatchSize: 100
+            MaximumBatchingWindowInSeconds: 5
+            FilterCriteria:
+              Filters:
+                - Pattern: '{"eventName": ["REMOVE"]}'
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Format: esm
+        OutExtension:
+          - .js=.mjs
+        External:
+          - "@aws-sdk/*"
+          - "@smithy/*"
+          - "shared"
+        Minify: true
+        Target: es2022
+        EntryPoints:
+          - index.ts
+        Sourcemap: true
+        LogLevel: info
 
 Outputs:
   WorkflowEventHandlerFunctionName:
@@ -548,3 +695,12 @@ Outputs:
   WorkflowErrorsDashboardName:
     Description: Name of the CloudWatch dashboard for workflow errors
     Value: !Ref WorkflowErrorsDashboard
+  ErrorCountHandlerFunctionName:
+    Description: Name of the error count handler Lambda function
+    Value: !Ref ErrorCountHandlerFunction
+  ErrorCountHandlerFunctionArn:
+    Description: ARN of the error count handler Lambda function
+    Value: !GetAtt ErrorCountHandlerFunction.Arn
+  WorkflowErrorsTableStreamArn:
+    Description: ARN of the DynamoDB Stream for workflow errors table
+    Value: !GetAtt WorkflowErrorsTable.StreamArn

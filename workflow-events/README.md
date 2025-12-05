@@ -69,6 +69,7 @@ The event detail must contain **at least one** of the following fields:
 **Examples:**
 
 Resolve all errors for a specific execution:
+
 ```json
 {
   "executionId": "arn:aws:states:us-east-1:123456789:execution:my-state-machine:execution-name"
@@ -76,6 +77,7 @@ Resolve all errors for a specific execution:
 ```
 
 Resolve a specific error code globally:
+
 ```json
 {
   "errorCode": "MV-ERROR-CODE-123"

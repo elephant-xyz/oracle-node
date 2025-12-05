@@ -1015,8 +1015,77 @@ const updateExecutionErrorLinksToUnrecoverable = async (
 };
 
 /**
+ * Updates an ErrorRecord status to maybeUnrecoverable and updates GSI keys.
+ * This ensures the error no longer appears in the default "FAILED" dashboard view.
+ *
+ * @param errorCode - The error code to update
+ * @returns Whether the update was successful
+ */
+const updateErrorRecordToUnrecoverable = async (
+  errorCode: string,
+): Promise<boolean> => {
+  const tableName = getTableName();
+  const pk = createKey("ERROR", errorCode);
+  const now = new Date().toISOString();
+
+  // First get the current error record to read totalCount
+  const getCommand = new GetCommand({
+    TableName: tableName,
+    Key: {
+      PK: pk,
+      SK: pk,
+    },
+  });
+
+  const getResponse = await docClient.send(getCommand);
+  const errorRecord = getResponse.Item as ErrorRecord | undefined;
+
+  if (!errorRecord || errorRecord.entityType !== ENTITY_TYPES.ERROR) {
+    console.warn(`ErrorRecord not found for error code: ${errorCode}`);
+    return false;
+  }
+
+  const gsiStatus = toGsiStatus(UNRECOVERABLE_STATUS);
+  const errorType = extractErrorType(errorCode);
+  // GS2SK format: COUNT#{status}#{paddedCount}#ERROR#{errorCode}
+  const gs2sk = `COUNT#${gsiStatus}#${padCount(errorRecord.totalCount)}#ERROR#${errorCode}`;
+  // GS3SK format: COUNT#{errorType}#{status}#{paddedCount}#ERROR#{errorCode}
+  const gs3sk = `COUNT#${errorType}#${gsiStatus}#${padCount(errorRecord.totalCount)}#ERROR#${errorCode}`;
+
+  try {
+    const command = new UpdateCommand({
+      TableName: tableName,
+      Key: {
+        PK: pk,
+        SK: pk,
+      },
+      UpdateExpression:
+        "SET errorStatus = :status, GS2SK = :gs2sk, GS3SK = :gs3sk, updatedAt = :now",
+      ConditionExpression: "entityType = :entityType",
+      ExpressionAttributeValues: {
+        ":status": UNRECOVERABLE_STATUS,
+        ":gs2sk": gs2sk,
+        ":gs3sk": gs3sk,
+        ":now": now,
+        ":entityType": ENTITY_TYPES.ERROR,
+      },
+    });
+
+    await docClient.send(command);
+    return true;
+  } catch (error) {
+    console.warn(
+      `Failed to update ErrorRecord ${errorCode}:`,
+      error instanceof Error ? error.message : String(error),
+    );
+    return false;
+  }
+};
+
+/**
  * Marks all errors for a given execution as maybeUnrecoverable.
- * Updates the FailedExecutionItem and all associated ExecutionErrorLink items.
+ * Updates the FailedExecutionItem, all associated ExecutionErrorLink items,
+ * and all associated ErrorRecord items.
  *
  * @param executionId - The execution ID to mark as unrecoverable
  * @returns Result with update count and affected items
@@ -1045,8 +1114,16 @@ export const markErrorsAsUnrecoverableForExecution = async (
 
   const errorCodes = [...new Set(executionLinks.map((link) => link.errorCode))];
 
+  // Update all ErrorRecord items so they no longer appear in the default dashboard view
+  const errorRecordUpdatePromises = errorCodes.map((errorCode) =>
+    updateErrorRecordToUnrecoverable(errorCode),
+  );
+  const errorRecordResults = await Promise.all(errorRecordUpdatePromises);
+  const errorRecordsUpdatedCount = errorRecordResults.filter(Boolean).length;
+
   return {
-    updatedCount: (executionUpdated ? 1 : 0) + linksUpdatedCount,
+    updatedCount:
+      (executionUpdated ? 1 : 0) + linksUpdatedCount + errorRecordsUpdatedCount,
     affectedExecutionIds: [executionId],
     updatedErrorCodes: errorCodes,
   };
@@ -1054,7 +1131,8 @@ export const markErrorsAsUnrecoverableForExecution = async (
 
 /**
  * Marks a specific error code as maybeUnrecoverable across all executions.
- * Updates all ExecutionErrorLink items with that error code and their parent FailedExecutionItem records.
+ * Updates all ExecutionErrorLink items with that error code, their parent
+ * FailedExecutionItem records, and the ErrorRecord itself.
  *
  * @param errorCode - The error code to mark as unrecoverable
  * @returns Result with update count and affected items
@@ -1089,8 +1167,12 @@ export const markErrorAsUnrecoverableFromAllExecutions = async (
     }
   }
 
+  // Update the ErrorRecord so it no longer appears in the default dashboard view
+  const errorRecordUpdated = await updateErrorRecordToUnrecoverable(errorCode);
+
   return {
-    updatedCount: executionsUpdated + linksUpdatedCount,
+    updatedCount:
+      executionsUpdated + linksUpdatedCount + (errorRecordUpdated ? 1 : 0),
     affectedExecutionIds: executionIds,
     updatedErrorCodes: [errorCode],
   };

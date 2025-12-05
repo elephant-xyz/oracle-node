@@ -201,9 +201,8 @@ describe("error-count-handler", () => {
         Attributes: createFailedExecutionItem("exec-001", 2),
       });
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/error-count-handler/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/error-count-handler/index.js");
 
       const item = createExecutionErrorLink("exec-001", "01256");
       const record = createRemoveRecord(item);
@@ -216,9 +215,8 @@ describe("error-count-handler", () => {
     });
 
     it("should skip non-REMOVE events", async () => {
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/error-count-handler/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/error-count-handler/index.js");
 
       const record: DynamoDBRecord = {
         eventID: "event-001",
@@ -239,9 +237,8 @@ describe("error-count-handler", () => {
     });
 
     it("should skip records without ExecutionError entity type", async () => {
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/error-count-handler/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/error-count-handler/index.js");
 
       const item = {
         PK: "ERROR#01256",
@@ -273,9 +270,8 @@ describe("error-count-handler", () => {
         Attributes: createFailedExecutionItem("exec-001", 1),
       });
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/error-count-handler/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/error-count-handler/index.js");
 
       // Create 3 removal events for the same execution
       const records = [
@@ -324,9 +320,8 @@ describe("error-count-handler", () => {
       // Mock task success
       sfnMock.on(SendTaskSuccessCommand).resolves({});
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/error-count-handler/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/error-count-handler/index.js");
 
       const records = [
         createRemoveRecord(
@@ -366,9 +361,8 @@ describe("error-count-handler", () => {
       // Mock task success
       sfnMock.on(SendTaskSuccessCommand).resolves({});
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/error-count-handler/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/error-count-handler/index.js");
 
       const item = createExecutionErrorLink("exec-001", "01256");
       const record = createRemoveRecord(item);
@@ -392,9 +386,8 @@ describe("error-count-handler", () => {
       // Mock batch delete
       ddbMock.on(BatchWriteCommand).resolves({});
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/error-count-handler/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/error-count-handler/index.js");
 
       const item = createExecutionErrorLink("exec-001", "01256");
       const record = createRemoveRecord(item);
@@ -427,9 +420,8 @@ describe("error-count-handler", () => {
       // Mock CloudWatch
       cloudWatchMock.on(PutMetricDataCommand).resolves({});
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/error-count-handler/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/error-count-handler/index.js");
 
       const item = createExecutionErrorLink("exec-001", "01256");
       const record = createRemoveRecord(item);
@@ -456,9 +448,8 @@ describe("error-count-handler", () => {
       // Mock CloudWatch
       cloudWatchMock.on(PutMetricDataCommand).resolves({});
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/error-count-handler/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/error-count-handler/index.js");
 
       const item = createExecutionErrorLink("exec-001", "01256");
       const record = createRemoveRecord(item);
@@ -493,9 +484,8 @@ describe("error-count-handler", () => {
       // Mock CloudWatch
       cloudWatchMock.on(PutMetricDataCommand).resolves({});
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/error-count-handler/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/error-count-handler/index.js");
 
       const item = createExecutionErrorLink("exec-001", "SV256");
       const record = createRemoveRecord(item);
@@ -504,7 +494,8 @@ describe("error-count-handler", () => {
       await handler(event);
 
       const metricCalls = cloudWatchMock.commandCalls(PutMetricDataCommand);
-      const dimensions = metricCalls[0].args[0].input.MetricData?.[0].Dimensions;
+      const dimensions =
+        metricCalls[0].args[0].input.MetricData?.[0].Dimensions;
 
       expect(dimensions).toBeDefined();
       expect(dimensions?.length).toBe(2);
@@ -523,7 +514,12 @@ describe("error-count-handler", () => {
         callCount++;
         if (callCount === 1) {
           return {
-            Attributes: createFailedExecutionItem("exec-001", 0, undefined, "01"),
+            Attributes: createFailedExecutionItem(
+              "exec-001",
+              0,
+              undefined,
+              "01",
+            ),
           };
         }
         return {
@@ -537,9 +533,8 @@ describe("error-count-handler", () => {
       // Mock CloudWatch
       cloudWatchMock.on(PutMetricDataCommand).resolves({});
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/error-count-handler/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/error-count-handler/index.js");
 
       const records = [
         createRemoveRecord(
@@ -572,9 +567,8 @@ describe("error-count-handler", () => {
       // Mock CloudWatch
       cloudWatchMock.on(PutMetricDataCommand).resolves({});
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/error-count-handler/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/error-count-handler/index.js");
 
       const item = createExecutionErrorLink("exec-001", "01256");
       const record = createRemoveRecord(item);
@@ -600,9 +594,8 @@ describe("error-count-handler", () => {
         .on(PutMetricDataCommand)
         .rejects(new Error("CloudWatch unavailable"));
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/error-count-handler/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/error-count-handler/index.js");
 
       const item = createExecutionErrorLink("exec-001", "01256");
       const record = createRemoveRecord(item);
@@ -633,9 +626,8 @@ describe("error-count-handler", () => {
       // Mock CloudWatch
       cloudWatchMock.on(PutMetricDataCommand).resolves({});
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/error-count-handler/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/error-count-handler/index.js");
 
       const item = createExecutionErrorLink("exec-001", "01256");
       const record = createRemoveRecord(item);
@@ -669,9 +661,8 @@ describe("error-count-handler", () => {
         return {};
       });
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/error-count-handler/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/error-count-handler/index.js");
 
       const item = createExecutionErrorLink("exec-001", "01256");
       const record = createRemoveRecord(item);
@@ -715,9 +706,8 @@ describe("error-count-handler", () => {
       // Mock batch delete
       ddbMock.on(BatchWriteCommand).resolves({});
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/error-count-handler/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/error-count-handler/index.js");
 
       const item = createExecutionErrorLink("exec-001", "01256");
       const record = createRemoveRecord(item);
@@ -746,9 +736,8 @@ describe("error-count-handler", () => {
       // Mock batch delete
       ddbMock.on(BatchWriteCommand).resolves({});
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/error-count-handler/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/error-count-handler/index.js");
 
       const item = createExecutionErrorLink("exec-001", "01256");
       const record = createRemoveRecord(item);
@@ -783,9 +772,8 @@ describe("error-count-handler", () => {
       // Mock batch delete
       ddbMock.on(BatchWriteCommand).resolves({});
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/error-count-handler/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/error-count-handler/index.js");
 
       const records = [
         createRemoveRecord(
@@ -818,9 +806,8 @@ describe("error-count-handler", () => {
       error.name = "ConditionalCheckFailedException";
       ddbMock.on(UpdateCommand).rejects(error);
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/error-count-handler/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/error-count-handler/index.js");
 
       const item = createExecutionErrorLink("exec-001", "01256");
       const record = createRemoveRecord(item);
@@ -841,9 +828,8 @@ describe("error-count-handler", () => {
         return { Attributes: createFailedExecutionItem("exec-002", 1) };
       });
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/error-count-handler/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/error-count-handler/index.js");
 
       const records = [
         createRemoveRecord(
@@ -869,9 +855,8 @@ describe("error-count-handler", () => {
 
   describe("empty and edge cases", () => {
     it("should handle empty stream event", async () => {
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/error-count-handler/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/error-count-handler/index.js");
 
       const event = createStreamEvent([]);
 
@@ -883,9 +868,8 @@ describe("error-count-handler", () => {
     });
 
     it("should handle records without OldImage", async () => {
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/error-count-handler/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/error-count-handler/index.js");
 
       const record: DynamoDBRecord = {
         eventID: "event-001",
@@ -908,9 +892,8 @@ describe("error-count-handler", () => {
     });
 
     it("should handle records without executionId in OldImage", async () => {
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/error-count-handler/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/error-count-handler/index.js");
 
       const item = {
         PK: "EXECUTION#exec-001",
@@ -971,9 +954,8 @@ describe("batch repository functions", () => {
         };
       });
 
-      const { batchDecrementOpenErrorCounts } = await import(
-        "shared/repository.js"
-      );
+      const { batchDecrementOpenErrorCounts } =
+        await import("shared/repository.js");
 
       const inputs = [
         { executionId: "exec-001", decrementBy: 1 },
@@ -998,9 +980,8 @@ describe("batch repository functions", () => {
         };
       });
 
-      const { batchDecrementOpenErrorCounts } = await import(
-        "shared/repository.js"
-      );
+      const { batchDecrementOpenErrorCounts } =
+        await import("shared/repository.js");
 
       const inputs = [
         { executionId: "exec-001", decrementBy: 1 },
@@ -1017,9 +998,8 @@ describe("batch repository functions", () => {
     });
 
     it("should return empty array for empty input", async () => {
-      const { batchDecrementOpenErrorCounts } = await import(
-        "shared/repository.js"
-      );
+      const { batchDecrementOpenErrorCounts } =
+        await import("shared/repository.js");
 
       const results = await batchDecrementOpenErrorCounts([]);
 
@@ -1032,9 +1012,8 @@ describe("batch repository functions", () => {
       error.name = "ConditionalCheckFailedException";
       ddbMock.on(UpdateCommand).rejects(error);
 
-      const { batchDecrementOpenErrorCounts } = await import(
-        "shared/repository.js"
-      );
+      const { batchDecrementOpenErrorCounts } =
+        await import("shared/repository.js");
 
       const inputs = [{ executionId: "exec-001", decrementBy: 1 }];
 
@@ -1050,9 +1029,8 @@ describe("batch repository functions", () => {
     it("should update GSI keys for multiple executions", async () => {
       ddbMock.on(UpdateCommand).resolves({});
 
-      const { batchUpdateExecutionGsiKeys } = await import(
-        "shared/repository.js"
-      );
+      const { batchUpdateExecutionGsiKeys } =
+        await import("shared/repository.js");
 
       const updates = [
         { executionId: "exec-001", newOpenErrorCount: 3, errorType: "01" },
@@ -1088,9 +1066,8 @@ describe("batch repository functions", () => {
     });
 
     it("should handle empty input", async () => {
-      const { batchUpdateExecutionGsiKeys } = await import(
-        "shared/repository.js"
-      );
+      const { batchUpdateExecutionGsiKeys } =
+        await import("shared/repository.js");
 
       await batchUpdateExecutionGsiKeys([]);
 
@@ -1107,9 +1084,8 @@ describe("batch repository functions", () => {
         return {};
       });
 
-      const { batchUpdateExecutionGsiKeys } = await import(
-        "shared/repository.js"
-      );
+      const { batchUpdateExecutionGsiKeys } =
+        await import("shared/repository.js");
 
       const updates = [
         { executionId: "exec-001", newOpenErrorCount: 3, errorType: "01" },
@@ -1128,9 +1104,8 @@ describe("batch repository functions", () => {
     it("should delete multiple executions using BatchWriteCommand", async () => {
       ddbMock.on(BatchWriteCommand).resolves({});
 
-      const { batchDeleteFailedExecutionItems } = await import(
-        "shared/repository.js"
-      );
+      const { batchDeleteFailedExecutionItems } =
+        await import("shared/repository.js");
 
       const executionIds = ["exec-001", "exec-002", "exec-003"];
 
@@ -1146,9 +1121,8 @@ describe("batch repository functions", () => {
     });
 
     it("should handle empty input", async () => {
-      const { batchDeleteFailedExecutionItems } = await import(
-        "shared/repository.js"
-      );
+      const { batchDeleteFailedExecutionItems } =
+        await import("shared/repository.js");
 
       const deletedIds = await batchDeleteFailedExecutionItems([]);
 
@@ -1159,9 +1133,8 @@ describe("batch repository functions", () => {
     it("should batch deletions in groups of 25", async () => {
       ddbMock.on(BatchWriteCommand).resolves({});
 
-      const { batchDeleteFailedExecutionItems } = await import(
-        "shared/repository.js"
-      );
+      const { batchDeleteFailedExecutionItems } =
+        await import("shared/repository.js");
 
       // Create 30 execution IDs (should result in 2 batches)
       const executionIds = Array.from(
@@ -1205,9 +1178,8 @@ describe("batch repository functions", () => {
         return {};
       });
 
-      const { batchDeleteFailedExecutionItems } = await import(
-        "shared/repository.js"
-      );
+      const { batchDeleteFailedExecutionItems } =
+        await import("shared/repository.js");
 
       const executionIds = ["exec-001", "exec-002", "exec-003"];
 
@@ -1241,9 +1213,8 @@ describe("batch repository functions", () => {
         return {};
       });
 
-      const { batchDeleteFailedExecutionItems } = await import(
-        "shared/repository.js"
-      );
+      const { batchDeleteFailedExecutionItems } =
+        await import("shared/repository.js");
 
       const executionIds = ["exec-001", "exec-002", "exec-003"];
 
@@ -1267,9 +1238,8 @@ describe("batch repository functions", () => {
         };
       });
 
-      const { batchDecrementErrorRecordCounts } = await import(
-        "shared/repository.js"
-      );
+      const { batchDecrementErrorRecordCounts } =
+        await import("shared/repository.js");
 
       const inputs = [
         { errorCode: "01256", decrementBy: 1 },
@@ -1294,9 +1264,8 @@ describe("batch repository functions", () => {
         };
       });
 
-      const { batchDecrementErrorRecordCounts } = await import(
-        "shared/repository.js"
-      );
+      const { batchDecrementErrorRecordCounts } =
+        await import("shared/repository.js");
 
       const inputs = [
         { errorCode: "01256", decrementBy: 3 },
@@ -1313,9 +1282,8 @@ describe("batch repository functions", () => {
     });
 
     it("should return empty array for empty input", async () => {
-      const { batchDecrementErrorRecordCounts } = await import(
-        "shared/repository.js"
-      );
+      const { batchDecrementErrorRecordCounts } =
+        await import("shared/repository.js");
 
       const results = await batchDecrementErrorRecordCounts([]);
 
@@ -1328,9 +1296,8 @@ describe("batch repository functions", () => {
       error.name = "ConditionalCheckFailedException";
       ddbMock.on(UpdateCommand).rejects(error);
 
-      const { batchDecrementErrorRecordCounts } = await import(
-        "shared/repository.js"
-      );
+      const { batchDecrementErrorRecordCounts } =
+        await import("shared/repository.js");
 
       const inputs = [{ errorCode: "01256", decrementBy: 1 }];
 
@@ -1346,9 +1313,8 @@ describe("batch repository functions", () => {
         Attributes: createErrorRecord("01256", 5, "01"),
       });
 
-      const { batchDecrementErrorRecordCounts } = await import(
-        "shared/repository.js"
-      );
+      const { batchDecrementErrorRecordCounts } =
+        await import("shared/repository.js");
 
       const inputs = [{ errorCode: "01256", decrementBy: 1 }];
 
@@ -1362,9 +1328,8 @@ describe("batch repository functions", () => {
     it("should update GSI keys for multiple error records", async () => {
       ddbMock.on(UpdateCommand).resolves({});
 
-      const { batchUpdateErrorRecordGsiKeys } = await import(
-        "shared/repository.js"
-      );
+      const { batchUpdateErrorRecordGsiKeys } =
+        await import("shared/repository.js");
 
       const updates = [
         { errorCode: "01256", newTotalCount: 3, errorType: "01" },
@@ -1404,9 +1369,8 @@ describe("batch repository functions", () => {
     });
 
     it("should handle empty input", async () => {
-      const { batchUpdateErrorRecordGsiKeys } = await import(
-        "shared/repository.js"
-      );
+      const { batchUpdateErrorRecordGsiKeys } =
+        await import("shared/repository.js");
 
       await batchUpdateErrorRecordGsiKeys([]);
 
@@ -1423,9 +1387,8 @@ describe("batch repository functions", () => {
         return {};
       });
 
-      const { batchUpdateErrorRecordGsiKeys } = await import(
-        "shared/repository.js"
-      );
+      const { batchUpdateErrorRecordGsiKeys } =
+        await import("shared/repository.js");
 
       const updates = [
         { errorCode: "01256", newTotalCount: 3, errorType: "01" },
@@ -1537,9 +1500,8 @@ describe("error record processing in handler", () => {
         return {};
       });
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/error-count-handler/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/error-count-handler/index.js");
 
       const item = createExecutionErrorLink("exec-001", "01256", 3);
       const record = createRemoveRecord(item);
@@ -1588,9 +1550,8 @@ describe("error record processing in handler", () => {
         return {};
       });
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/error-count-handler/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/error-count-handler/index.js");
 
       // Two different executions with the same error code
       const records = [
@@ -1635,9 +1596,8 @@ describe("error record processing in handler", () => {
         return {};
       });
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/error-count-handler/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/error-count-handler/index.js");
 
       const item = createExecutionErrorLink("exec-001", "01256", 1);
       const record = createRemoveRecord(item);
@@ -1679,9 +1639,8 @@ describe("error record processing in handler", () => {
       // Mock batch delete
       ddbMock.on(BatchWriteCommand).resolves({});
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/error-count-handler/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/error-count-handler/index.js");
 
       const item = createExecutionErrorLink("exec-001", "01256", 5);
       const record = createRemoveRecord(item);
@@ -1724,9 +1683,8 @@ describe("error record processing in handler", () => {
       // Mock batch delete
       ddbMock.on(BatchWriteCommand).resolves({});
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/error-count-handler/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/error-count-handler/index.js");
 
       const records = [
         createRemoveRecord(
