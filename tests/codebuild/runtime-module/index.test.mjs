@@ -30,7 +30,7 @@ const mockCreateWorkflowError = vi.fn((code, details) => ({
   ...(details && { details }),
 }));
 
-vi.mock("../../../codebuild/shared/eventbridge.mjs", () => ({
+vi.mock("../../../codebuild/runtime-module/shared/eventbridge.mjs", () => ({
   emitWorkflowEvent: mockEmitWorkflowEvent,
   emitErrorResolved: mockEmitErrorResolved,
   emitErrorFailedToResolve: mockEmitErrorFailedToResolve,

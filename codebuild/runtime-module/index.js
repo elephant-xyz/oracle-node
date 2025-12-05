@@ -33,7 +33,7 @@ import {
   createWorkflowError,
   emitErrorResolved,
   emitErrorFailedToResolve,
-} from "../shared/eventbridge.mjs";
+} from "./shared/eventbridge.mjs";
 
 const DEFAULT_DLQ_URL = process.env.DEFAULT_DLQ_URL;
 
