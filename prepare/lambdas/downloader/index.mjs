@@ -13,10 +13,7 @@ import {
   SendTaskSuccessCommand,
   SendTaskFailureCommand,
 } from "@aws-sdk/client-sfn";
-import {
-  emitWorkflowEvent,
-  createWorkflowError,
-} from "shared";
+import { emitWorkflowEvent, createWorkflowError } from "shared";
 import { promises as fs } from "fs";
 import path from "path";
 import { prepare } from "@elephant-xyz/cli/lib";
@@ -125,7 +122,9 @@ const PREPARE_ERROR_PATTERNS = [
   },
   {
     code: "10025",
-    patterns: [/execution no longer exists.*likely aborted|Execution was aborted/i],
+    patterns: [
+      /execution no longer exists.*likely aborted|Execution was aborted/i,
+    ],
     description: "Execution aborted - task token no longer valid",
   },
 
@@ -530,21 +529,21 @@ async function sendTaskSuccess(taskToken, output, executionId, county) {
     console.log(`✅ Task success sent`);
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
-    
+
     // Check if the error is because the task/execution no longer exists (e.g., execution was aborted)
     const isTaskNotFound =
       errorMessage.includes("Provided task does not exist") ||
       errorMessage.includes("Task does not exist") ||
       errorMessage.includes("TaskTimedOut") ||
       errorMessage.includes("InvalidToken");
-    
+
     if (isTaskNotFound) {
       // Execution was likely aborted - this is expected and not an error
       // Log with specific error code for tracking: 10025 = ExecutionAborted
       console.warn(
         `⚠️  Cannot send task success - execution no longer exists (likely aborted) [10025]: ${errorMessage}`,
       );
-      
+
       // Emit EventBridge event for dashboard tracking
       if (executionId && county) {
         try {
@@ -563,7 +562,9 @@ async function sendTaskSuccess(taskToken, output, executionId, county) {
               }),
             ],
           });
-          console.log(`✅ Emitted ABORTED event to EventBridge for execution: ${executionId}`);
+          console.log(
+            `✅ Emitted ABORTED event to EventBridge for execution: ${executionId}`,
+          );
         } catch (eventError) {
           // Don't fail if event emission fails - just log
           console.error(
@@ -571,10 +572,10 @@ async function sendTaskSuccess(taskToken, output, executionId, county) {
           );
         }
       }
-      
+
       return; // Don't throw - execution is already gone, nothing to do
     }
-    
+
     // For other errors, log and throw
     console.error(`❌ Failed to send task success [01017]: ${errorMessage}`);
     throw new PrepareError(
@@ -593,7 +594,13 @@ async function sendTaskSuccess(taskToken, output, executionId, county) {
  * @param {string} [county] - County name for EventBridge events
  * @returns {Promise<void>}
  */
-async function sendTaskFailure(taskToken, errorCode, cause, executionId, county) {
+async function sendTaskFailure(
+  taskToken,
+  errorCode,
+  cause,
+  executionId,
+  county,
+) {
   console.log(`📤 Sending task failure to Step Functions...`);
   try {
     await sfnClient.send(
@@ -606,21 +613,21 @@ async function sendTaskFailure(taskToken, errorCode, cause, executionId, county)
     console.log(`✅ Task failure sent`);
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
-    
+
     // Check if the error is because the task/execution no longer exists (e.g., execution was aborted)
     const isTaskNotFound =
       errorMessage.includes("Provided task does not exist") ||
       errorMessage.includes("Task does not exist") ||
       errorMessage.includes("TaskTimedOut") ||
       errorMessage.includes("InvalidToken");
-    
+
     if (isTaskNotFound) {
       // Execution was likely aborted - this is expected and not an error
       // Log with specific error code for tracking: 10025 = ExecutionAborted
       console.warn(
         `⚠️  Cannot send task failure - execution no longer exists (likely aborted) [10025]: ${errorMessage}`,
       );
-      
+
       // Emit EventBridge event for dashboard tracking
       if (executionId && county) {
         try {
@@ -634,13 +641,16 @@ async function sendTaskFailure(taskToken, errorCode, cause, executionId, county)
             errors: [
               createWorkflowError("10025", {
                 reason: "ExecutionAborted",
-                message: "Execution was aborted before task failure could be reported",
+                message:
+                  "Execution was aborted before task failure could be reported",
                 originalError: errorMessage,
                 attemptedErrorCode: errorCode,
               }),
             ],
           });
-          console.log(`✅ Emitted ABORTED event to EventBridge for execution: ${executionId}`);
+          console.log(
+            `✅ Emitted ABORTED event to EventBridge for execution: ${executionId}`,
+          );
         } catch (eventError) {
           // Don't fail if event emission fails - just log
           console.error(
@@ -648,10 +658,10 @@ async function sendTaskFailure(taskToken, errorCode, cause, executionId, county)
           );
         }
       }
-      
+
       return; // Don't throw - execution is already gone, nothing to do
     }
-    
+
     // For other errors, log and throw
     console.error(`❌ Failed to send task failure [01018]: ${errorMessage}`);
     throw new PrepareError(
@@ -1928,7 +1938,13 @@ export const handler = async (event) => {
           const causePayload = JSON.stringify({
             message: errorMessage,
           }).substring(0, 256);
-          await sendTaskFailure(taskToken, fullErrorCode, causePayload, executionId, county);
+          await sendTaskFailure(
+            taskToken,
+            fullErrorCode,
+            causePayload,
+            executionId,
+            county,
+          );
         } else {
           // No taskToken - can't notify Step Functions
           // Re-throw to trigger SQS retry/DLQ

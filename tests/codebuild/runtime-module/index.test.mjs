@@ -1,12 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mockClient } from "aws-sdk-client-mock";
-import {
-  LambdaClient,
-  InvokeCommand,
-} from "@aws-sdk/client-lambda";
-import {
-  DynamoDBDocumentClient,
-} from "@aws-sdk/lib-dynamodb";
+import { LambdaClient, InvokeCommand } from "@aws-sdk/client-lambda";
+import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import {
   EventBridgeClient,
   PutEventsCommand,
@@ -114,7 +109,11 @@ describe("auto-repair runtime module", () => {
       },
     ]);
     mockNormalizeErrors.mockReturnValue([
-      { hash: "error-hash-123", message: "missing required property", path: "deed_1.json/deed_type" },
+      {
+        hash: "error-hash-123",
+        message: "missing required property",
+        path: "deed_1.json/deed_type",
+      },
     ]);
     mockDeleteExecution.mockResolvedValue(["error-hash-123"]);
     mockMarkErrorsAsMaybeSolved.mockResolvedValue(undefined);
@@ -162,9 +161,8 @@ describe("auto-repair runtime module", () => {
       });
 
       // Import after mocks are set up
-      const { getExecutionWithLeastErrors } = await import(
-        "../../../../codebuild/runtime-module/index.js"
-      );
+      const { getExecutionWithLeastErrors } =
+        await import("../../../../codebuild/runtime-module/index.js");
 
       const result = await getExecutionWithLeastErrors();
 
@@ -181,9 +179,8 @@ describe("auto-repair runtime module", () => {
         ),
       });
 
-      const { getExecutionWithLeastErrors } = await import(
-        "../../../../codebuild/runtime-module/index.js"
-      );
+      const { getExecutionWithLeastErrors } =
+        await import("../../../../codebuild/runtime-module/index.js");
 
       await expect(getExecutionWithLeastErrors()).rejects.toThrow(
         "get-execution Lambda failed",
@@ -227,9 +224,8 @@ describe("auto-repair runtime module", () => {
 
       // Mock the main function - we'll need to export it or test indirectly
       // For now, test the behavior through integration
-      const { main } = await import(
-        "../../../../codebuild/runtime-module/index.js"
-      );
+      const { main } =
+        await import("../../../../codebuild/runtime-module/index.js");
 
       await main();
 
@@ -275,7 +271,10 @@ describe("auto-repair runtime module", () => {
       });
 
       // Mock file operations
-      mockParseS3Uri.mockReturnValue({ bucket: "test-bucket", key: "prepared/inputs.zip" });
+      mockParseS3Uri.mockReturnValue({
+        bucket: "test-bucket",
+        key: "prepared/inputs.zip",
+      });
       mockDownloadS3Object.mockResolvedValue(undefined);
       mockExtractZip.mockResolvedValue(undefined);
       mockInstallCherio.mockResolvedValue(undefined);
@@ -327,7 +326,9 @@ describe("auto-repair runtime module", () => {
         { errorCode: "30abc123" }, // duplicate
       ];
 
-      const uniqueErrorCodes = [...new Set(executionErrors.map((e) => e.errorCode))];
+      const uniqueErrorCodes = [
+        ...new Set(executionErrors.map((e) => e.errorCode)),
+      ];
 
       // Simulate the logic from main function
       for (const errorCode of uniqueErrorCodes) {
@@ -344,4 +345,3 @@ describe("auto-repair runtime module", () => {
     });
   });
 });
-

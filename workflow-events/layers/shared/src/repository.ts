@@ -705,10 +705,7 @@ export const updateExecutionMetadata = async (
   getTableName(); // Validate table name is set
 
   // Only update if preparedS3Uri or taskToken is provided
-  if (
-    detail.preparedS3Uri === undefined &&
-    detail.taskToken === undefined
-  ) {
+  if (detail.preparedS3Uri === undefined && detail.taskToken === undefined) {
     return true; // Nothing to update
   }
 
