@@ -479,34 +479,58 @@ export const handler = async (event) => {
 
     if (!submitResult.success)
       throw new Error(`Submit failed: ${submitResult.error}`);
-    const submitResultsCsv = await fs.readFile(
-      path.join(tmp, "transaction-status.csv"),
-      "utf8",
-    );
+
+    // Read and parse CSV files, ensuring cleanup even if parsing fails
+    const transactionStatusPath = path.join(tmp, "transaction-status.csv");
+    const submitErrorsPath = path.join(tmp, "submit_errors.csv");
 
     /** @type {SubmitResultRow[]} */
-    const submitResults = parse(submitResultsCsv, {
-      columns: true,
-      skip_empty_lines: true,
-      trim: true,
-    });
+    let submitResults;
+    /** @type {SubmitResultRow[]} */
+    let submitErrors;
 
-    console.log({
-      ...base,
-      level: "info",
-      msg: "completed",
-      submit_results: submitResults,
-    });
+    try {
+      // Read and parse transaction-status.csv
+      const submitResultsCsv = await fs.readFile(transactionStatusPath, "utf8");
+      submitResults = parse(submitResultsCsv, {
+        columns: true,
+        skip_empty_lines: true,
+        trim: true,
+      });
 
-    const submitErrrorsCsv = await fs.readFile(
-      path.join(tmp, "submit_errors.csv"),
-      "utf8",
-    );
-    const submitErrors = parse(submitErrrorsCsv, {
-      columns: true,
-      skip_empty_lines: true,
-      trim: true,
-    });
+      console.log({
+        ...base,
+        level: "info",
+        msg: "completed",
+        submit_results: submitResults,
+      });
+
+      // Read and parse submit_errors.csv
+      const submitErrrorsCsv = await fs.readFile(submitErrorsPath, "utf8");
+      submitErrors = parse(submitErrrorsCsv, {
+        columns: true,
+        skip_empty_lines: true,
+        trim: true,
+      });
+    } finally {
+      // Always clean up CSV files to free disk space, even if parsing fails
+      try {
+        await fs.unlink(transactionStatusPath);
+        await fs.unlink(submitErrorsPath);
+      } catch (cleanupError) {
+        // Non-critical, log but continue
+        console.log({
+          ...base,
+          level: "warn",
+          msg: "Failed to cleanup CSV files",
+          error:
+            cleanupError instanceof Error
+              ? cleanupError.message
+              : String(cleanupError),
+        });
+      }
+    }
+
     console.log(`Submit errors type is : ${typeof submitErrors}`);
     const allErrors = [
       ...submitErrors,
