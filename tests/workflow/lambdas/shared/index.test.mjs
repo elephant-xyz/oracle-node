@@ -19,9 +19,8 @@ describe("shared index utilities", () => {
     it("should return environment variable value when present", async () => {
       process.env.TEST_VAR = "test-value";
 
-      const { requireEnv } = await import(
-        "../../../../workflow/layers/shared/src/index.mjs"
-      );
+      const { requireEnv } =
+        await import("../../../../workflow/layers/shared/src/index.mjs");
 
       expect(requireEnv("TEST_VAR")).toBe("test-value");
     });
@@ -29,9 +28,8 @@ describe("shared index utilities", () => {
     it("should throw error when environment variable is missing", async () => {
       delete process.env.MISSING_VAR;
 
-      const { requireEnv } = await import(
-        "../../../../workflow/layers/shared/src/index.mjs"
-      );
+      const { requireEnv } =
+        await import("../../../../workflow/layers/shared/src/index.mjs");
 
       expect(() => requireEnv("MISSING_VAR")).toThrow(
         "MISSING_VAR is required",
@@ -41,9 +39,8 @@ describe("shared index utilities", () => {
     it("should throw error when environment variable is empty string", async () => {
       process.env.EMPTY_VAR = "";
 
-      const { requireEnv } = await import(
-        "../../../../workflow/layers/shared/src/index.mjs"
-      );
+      const { requireEnv } =
+        await import("../../../../workflow/layers/shared/src/index.mjs");
 
       expect(() => requireEnv("EMPTY_VAR")).toThrow("EMPTY_VAR is required");
     });
@@ -51,9 +48,8 @@ describe("shared index utilities", () => {
 
   describe("createLogger", () => {
     it("should create logger with base fields", async () => {
-      const { createLogger } = await import(
-        "../../../../workflow/layers/shared/src/index.mjs"
-      );
+      const { createLogger } =
+        await import("../../../../workflow/layers/shared/src/index.mjs");
 
       const log = createLogger({
         component: "test-component",
@@ -72,9 +68,8 @@ describe("shared index utilities", () => {
     });
 
     it("should use console.error for error level", async () => {
-      const { createLogger } = await import(
-        "../../../../workflow/layers/shared/src/index.mjs"
-      );
+      const { createLogger } =
+        await import("../../../../workflow/layers/shared/src/index.mjs");
 
       const log = createLogger({ component: "test" });
 
@@ -89,9 +84,8 @@ describe("shared index utilities", () => {
     });
 
     it("should use console.log for debug level", async () => {
-      const { createLogger } = await import(
-        "../../../../workflow/layers/shared/src/index.mjs"
-      );
+      const { createLogger } =
+        await import("../../../../workflow/layers/shared/src/index.mjs");
 
       const log = createLogger({ component: "test" });
 
@@ -105,9 +99,8 @@ describe("shared index utilities", () => {
     });
 
     it("should work without additional details", async () => {
-      const { createLogger } = await import(
-        "../../../../workflow/layers/shared/src/index.mjs"
-      );
+      const { createLogger } =
+        await import("../../../../workflow/layers/shared/src/index.mjs");
 
       const log = createLogger({ component: "test" });
 
@@ -121,9 +114,8 @@ describe("shared index utilities", () => {
     });
 
     it("should merge base fields with details", async () => {
-      const { createLogger } = await import(
-        "../../../../workflow/layers/shared/src/index.mjs"
-      );
+      const { createLogger } =
+        await import("../../../../workflow/layers/shared/src/index.mjs");
 
       const log = createLogger({
         component: "worker",
@@ -150,9 +142,8 @@ describe("shared index utilities", () => {
 
   describe("createErrorHash", () => {
     it("should compute deterministic SHA256 hash from message, path, and county", async () => {
-      const { createErrorHash } = await import(
-        "../../../../workflow/layers/shared/src/index.mjs"
-      );
+      const { createErrorHash } =
+        await import("../../../../workflow/layers/shared/src/index.mjs");
 
       const hash = createErrorHash("Test error", "$.field", "test-county");
 
@@ -161,9 +152,8 @@ describe("shared index utilities", () => {
     });
 
     it("should produce same hash for identical inputs", async () => {
-      const { createErrorHash } = await import(
-        "../../../../workflow/layers/shared/src/index.mjs"
-      );
+      const { createErrorHash } =
+        await import("../../../../workflow/layers/shared/src/index.mjs");
 
       const hash1 = createErrorHash("Error message", "$.path", "county-a");
       const hash2 = createErrorHash("Error message", "$.path", "county-a");
@@ -172,9 +162,8 @@ describe("shared index utilities", () => {
     });
 
     it("should produce different hashes for different messages", async () => {
-      const { createErrorHash } = await import(
-        "../../../../workflow/layers/shared/src/index.mjs"
-      );
+      const { createErrorHash } =
+        await import("../../../../workflow/layers/shared/src/index.mjs");
 
       const hash1 = createErrorHash("Error A", "$.path", "county");
       const hash2 = createErrorHash("Error B", "$.path", "county");
@@ -183,9 +172,8 @@ describe("shared index utilities", () => {
     });
 
     it("should produce different hashes for different paths", async () => {
-      const { createErrorHash } = await import(
-        "../../../../workflow/layers/shared/src/index.mjs"
-      );
+      const { createErrorHash } =
+        await import("../../../../workflow/layers/shared/src/index.mjs");
 
       const hash1 = createErrorHash("Error", "$.path.a", "county");
       const hash2 = createErrorHash("Error", "$.path.b", "county");
@@ -194,9 +182,8 @@ describe("shared index utilities", () => {
     });
 
     it("should produce different hashes for different counties", async () => {
-      const { createErrorHash } = await import(
-        "../../../../workflow/layers/shared/src/index.mjs"
-      );
+      const { createErrorHash } =
+        await import("../../../../workflow/layers/shared/src/index.mjs");
 
       const hash1 = createErrorHash("Error", "$.path", "county-a");
       const hash2 = createErrorHash("Error", "$.path", "county-b");
@@ -207,9 +194,8 @@ describe("shared index utilities", () => {
     it("should produce same hash as codebuild/shared/errors.mjs implementation", async () => {
       // This test verifies consistency with the original createErrorHash in errors.mjs
       // Hash is computed as: sha256("message#path#county")
-      const { createErrorHash } = await import(
-        "../../../../workflow/layers/shared/src/index.mjs"
-      );
+      const { createErrorHash } =
+        await import("../../../../workflow/layers/shared/src/index.mjs");
       const { createHash } = await import("crypto");
 
       const message = "Required field missing";
@@ -229,9 +215,8 @@ describe("shared index utilities", () => {
 
   describe("exports", () => {
     it("should export all shared utilities", async () => {
-      const shared = await import(
-        "../../../../workflow/layers/shared/src/index.mjs"
-      );
+      const shared =
+        await import("../../../../workflow/layers/shared/src/index.mjs");
 
       // Task token utilities
       expect(shared.sendTaskSuccess).toBeDefined();

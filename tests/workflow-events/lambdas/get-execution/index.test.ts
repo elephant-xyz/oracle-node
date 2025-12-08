@@ -136,9 +136,8 @@ describe("get-execution handler", () => {
 
   describe("input validation", () => {
     it("should return validation error when sortOrder is missing", async () => {
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/get-execution/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/get-execution/index.js");
 
       const result = await handler({});
 
@@ -159,9 +158,8 @@ describe("get-execution handler", () => {
     });
 
     it("should return validation error when sortOrder is invalid", async () => {
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/get-execution/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/get-execution/index.js");
 
       const result = await handler({ sortOrder: "invalid" });
 
@@ -182,9 +180,8 @@ describe("get-execution handler", () => {
     });
 
     it("should return validation error when errorType is empty string", async () => {
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/get-execution/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/get-execution/index.js");
 
       const result = await handler({ sortOrder: "most", errorType: "" });
 
@@ -206,9 +203,8 @@ describe("get-execution handler", () => {
     it("should accept valid sortOrder 'most'", async () => {
       ddbMock.on(QueryCommand).resolves({ Items: [] });
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/get-execution/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/get-execution/index.js");
 
       const result = await handler({ sortOrder: "most" });
 
@@ -218,9 +214,8 @@ describe("get-execution handler", () => {
     it("should accept valid sortOrder 'least'", async () => {
       ddbMock.on(QueryCommand).resolves({ Items: [] });
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/get-execution/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/get-execution/index.js");
 
       const result = await handler({ sortOrder: "least" });
 
@@ -230,9 +225,8 @@ describe("get-execution handler", () => {
     it("should accept optional errorType when provided", async () => {
       ddbMock.on(QueryCommand).resolves({ Items: [] });
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/get-execution/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/get-execution/index.js");
 
       const result = await handler({ sortOrder: "most", errorType: "01" });
 
@@ -249,9 +243,8 @@ describe("get-execution handler", () => {
         .resolvesOnce({ Items: [mockExecution] })
         .resolvesOnce({ Items: mockErrors });
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/get-execution/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/get-execution/index.js");
 
       const result = await handler({ sortOrder: "most", errorType: "  01  " });
 
@@ -279,9 +272,8 @@ describe("get-execution handler", () => {
         .resolvesOnce({ Items: [mockExecution] })
         .resolvesOnce({ Items: mockErrors });
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/get-execution/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/get-execution/index.js");
 
       const result = await handler({ sortOrder: "most" });
 
@@ -294,9 +286,8 @@ describe("get-execution handler", () => {
     it("should return null execution when none found", async () => {
       ddbMock.on(QueryCommand).resolves({ Items: [] });
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/get-execution/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/get-execution/index.js");
 
       const result = await handler({ sortOrder: "most" });
 
@@ -319,9 +310,8 @@ describe("get-execution handler", () => {
         .resolvesOnce({ Items: [mockExecution] })
         .resolvesOnce({ Items: [] });
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/get-execution/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/get-execution/index.js");
 
       const result = await handler({ sortOrder: "least" });
 
@@ -335,9 +325,8 @@ describe("get-execution handler", () => {
     it("should use GS1 index when errorType is not provided", async () => {
       ddbMock.on(QueryCommand).resolves({ Items: [] });
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/get-execution/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/get-execution/index.js");
 
       await handler({ sortOrder: "most" });
 
@@ -355,9 +344,8 @@ describe("get-execution handler", () => {
     it("should use GS3 index when errorType is provided", async () => {
       ddbMock.on(QueryCommand).resolves({ Items: [] });
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/get-execution/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/get-execution/index.js");
 
       await handler({ sortOrder: "most", errorType: "01" });
 
@@ -375,9 +363,8 @@ describe("get-execution handler", () => {
     it("should not use FilterExpression in GS3 query (partition key separation)", async () => {
       ddbMock.on(QueryCommand).resolves({ Items: [] });
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/get-execution/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/get-execution/index.js");
 
       await handler({ sortOrder: "most", errorType: "01" });
 
@@ -394,9 +381,8 @@ describe("get-execution handler", () => {
     it("should set ScanIndexForward to false for 'most' errors", async () => {
       ddbMock.on(QueryCommand).resolves({ Items: [] });
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/get-execution/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/get-execution/index.js");
 
       await handler({ sortOrder: "most" });
 
@@ -407,9 +393,8 @@ describe("get-execution handler", () => {
     it("should set ScanIndexForward to true for 'least' errors", async () => {
       ddbMock.on(QueryCommand).resolves({ Items: [] });
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/get-execution/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/get-execution/index.js");
 
       await handler({ sortOrder: "least" });
 
@@ -422,9 +407,8 @@ describe("get-execution handler", () => {
     it("should return error response when DynamoDB query fails", async () => {
       ddbMock.on(QueryCommand).rejects(new Error("DynamoDB connection error"));
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/get-execution/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/get-execution/index.js");
 
       const result = await handler({ sortOrder: "most" });
 
@@ -437,9 +421,8 @@ describe("get-execution handler", () => {
     it("should return error response when WORKFLOW_ERRORS_TABLE_NAME is not set", async () => {
       delete process.env.WORKFLOW_ERRORS_TABLE_NAME;
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/get-execution/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/get-execution/index.js");
 
       const result = await handler({ sortOrder: "most" });
 
@@ -460,9 +443,8 @@ describe("get-execution handler", () => {
         .resolvesOnce({ Items: [mockExecution] })
         .rejectsOnce(new Error("Failed to query execution errors"));
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/get-execution/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/get-execution/index.js");
 
       const result = await handler({ sortOrder: "most" });
 
@@ -493,9 +475,8 @@ describe("get-execution handler", () => {
         .resolvesOnce({ Items: [mockExecution] })
         .resolvesOnce({ Items: mockErrors });
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/get-execution/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/get-execution/index.js");
 
       const result = await handler({ sortOrder: "most" });
 
@@ -526,9 +507,8 @@ describe("get-execution handler", () => {
       // so FilterExpression is unnecessary and can cause issues with Limit
       ddbMock.on(QueryCommand).resolves({ Items: [] });
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/get-execution/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/get-execution/index.js");
 
       await handler({ sortOrder: "most" });
 
@@ -544,9 +524,8 @@ describe("get-execution handler", () => {
     it("should limit query to 1 result for execution query", async () => {
       ddbMock.on(QueryCommand).resolves({ Items: [] });
 
-      const { handler } = await import(
-        "../../../../workflow-events/lambdas/get-execution/index.js"
-      );
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/get-execution/index.js");
 
       await handler({ sortOrder: "most" });
 
@@ -580,9 +559,8 @@ describe("get-execution dynamodb functions", () => {
     it("should return null when no items are returned", async () => {
       ddbMock.on(QueryCommand).resolves({ Items: undefined });
 
-      const { queryExecutionByErrorCount } = await import(
-        "shared/repository.js"
-      );
+      const { queryExecutionByErrorCount } =
+        await import("shared/repository.js");
 
       const result = await queryExecutionByErrorCount({
         sortOrder: "most",
@@ -594,9 +572,8 @@ describe("get-execution dynamodb functions", () => {
     it("should return null when Items array is empty", async () => {
       ddbMock.on(QueryCommand).resolves({ Items: [] });
 
-      const { queryExecutionByErrorCount } = await import(
-        "shared/repository.js"
-      );
+      const { queryExecutionByErrorCount } =
+        await import("shared/repository.js");
 
       const result = await queryExecutionByErrorCount({
         sortOrder: "most",
@@ -609,9 +586,8 @@ describe("get-execution dynamodb functions", () => {
       const mockExecution = createMockExecution();
       ddbMock.on(QueryCommand).resolves({ Items: [mockExecution] });
 
-      const { queryExecutionByErrorCount } = await import(
-        "shared/repository.js"
-      );
+      const { queryExecutionByErrorCount } =
+        await import("shared/repository.js");
 
       const result = await queryExecutionByErrorCount({
         sortOrder: "most",
@@ -623,9 +599,8 @@ describe("get-execution dynamodb functions", () => {
     it("should throw error when table name is not set", async () => {
       delete process.env.WORKFLOW_ERRORS_TABLE_NAME;
 
-      const { queryExecutionByErrorCount } = await import(
-        "shared/repository.js"
-      );
+      const { queryExecutionByErrorCount } =
+        await import("shared/repository.js");
 
       await expect(
         queryExecutionByErrorCount({ sortOrder: "most" }),
@@ -639,9 +614,8 @@ describe("get-execution dynamodb functions", () => {
     it("should return empty array when no errors found", async () => {
       ddbMock.on(QueryCommand).resolves({ Items: [] });
 
-      const { queryExecutionErrorLinks: queryExecutionErrors } = await import(
-        "shared/repository.js"
-      );
+      const { queryExecutionErrorLinks: queryExecutionErrors } =
+        await import("shared/repository.js");
 
       const result = await queryExecutionErrors("exec-001");
 
@@ -655,9 +629,8 @@ describe("get-execution dynamodb functions", () => {
       ];
       ddbMock.on(QueryCommand).resolves({ Items: mockErrors });
 
-      const { queryExecutionErrorLinks: queryExecutionErrors } = await import(
-        "shared/repository.js"
-      );
+      const { queryExecutionErrorLinks: queryExecutionErrors } =
+        await import("shared/repository.js");
 
       const result = await queryExecutionErrors("exec-001");
 
@@ -679,9 +652,8 @@ describe("get-execution dynamodb functions", () => {
           LastEvaluatedKey: undefined,
         });
 
-      const { queryExecutionErrorLinks: queryExecutionErrors } = await import(
-        "shared/repository.js"
-      );
+      const { queryExecutionErrorLinks: queryExecutionErrors } =
+        await import("shared/repository.js");
 
       const result = await queryExecutionErrors("exec-001");
 
@@ -696,9 +668,8 @@ describe("get-execution dynamodb functions", () => {
       // (FailedExecutionItem has SK="EXECUTION#{id}" which doesn't match "ERROR#" prefix)
       ddbMock.on(QueryCommand).resolves({ Items: [] });
 
-      const { queryExecutionErrorLinks: queryExecutionErrors } = await import(
-        "shared/repository.js"
-      );
+      const { queryExecutionErrorLinks: queryExecutionErrors } =
+        await import("shared/repository.js");
 
       await queryExecutionErrors("exec-query-test-001");
 
@@ -720,9 +691,8 @@ describe("get-execution dynamodb functions", () => {
     it("should throw error when table name is not set", async () => {
       delete process.env.WORKFLOW_ERRORS_TABLE_NAME;
 
-      const { queryExecutionErrorLinks: queryExecutionErrors } = await import(
-        "shared/repository.js"
-      );
+      const { queryExecutionErrorLinks: queryExecutionErrors } =
+        await import("shared/repository.js");
 
       await expect(queryExecutionErrors("exec-001")).rejects.toThrow(
         "WORKFLOW_ERRORS_TABLE_NAME environment variable is not set",

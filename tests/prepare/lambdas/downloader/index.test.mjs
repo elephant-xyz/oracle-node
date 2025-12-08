@@ -52,9 +52,8 @@ describe("downloader lambda - EventBridge integration", () => {
       eventBridgeMock.on(PutEventsCommand).resolves({});
       sfnMock.on(SendTaskFailureCommand).resolves({});
 
-      const { handler } = await import(
-        "../../../../prepare/lambdas/downloader/index.mjs"
-      );
+      const { handler } =
+        await import("../../../../prepare/lambdas/downloader/index.mjs");
 
       const sqsEvent = {
         Records: [
@@ -96,9 +95,8 @@ describe("downloader lambda - EventBridge integration", () => {
       eventBridgeMock.on(PutEventsCommand).resolves({});
       sfnMock.on(SendTaskFailureCommand).resolves({});
 
-      const { handler } = await import(
-        "../../../../prepare/lambdas/downloader/index.mjs"
-      );
+      const { handler } =
+        await import("../../../../prepare/lambdas/downloader/index.mjs");
 
       const taskToken = "test-task-token-with-special-chars-123";
       const sqsEvent = {
@@ -135,9 +133,8 @@ describe("downloader lambda - EventBridge integration", () => {
       eventBridgeMock.on(PutEventsCommand).resolves({});
       sfnMock.on(SendTaskFailureCommand).resolves({});
 
-      const { handler } = await import(
-        "../../../../prepare/lambdas/downloader/index.mjs"
-      );
+      const { handler } =
+        await import("../../../../prepare/lambdas/downloader/index.mjs");
 
       const sqsEvent = {
         Records: [
@@ -177,9 +174,8 @@ describe("downloader lambda - EventBridge integration", () => {
       // S3 will fail - mock returns error
       s3Mock.on(GetObjectCommand).rejects(new Error("S3 access denied"));
 
-      const { handler } = await import(
-        "../../../../prepare/lambdas/downloader/index.mjs"
-      );
+      const { handler } =
+        await import("../../../../prepare/lambdas/downloader/index.mjs");
 
       const sqsEvent = {
         Records: [
@@ -216,9 +212,8 @@ describe("downloader lambda - EventBridge integration", () => {
       // S3 GetObject will fail, triggering error handling
       s3Mock.on(GetObjectCommand).rejects(new Error("S3 access denied"));
 
-      const { handler } = await import(
-        "../../../../prepare/lambdas/downloader/index.mjs"
-      );
+      const { handler } =
+        await import("../../../../prepare/lambdas/downloader/index.mjs");
 
       const sqsEvent = {
         Records: [
@@ -250,9 +245,8 @@ describe("downloader lambda - EventBridge integration", () => {
       sfnMock.on(SendTaskFailureCommand).resolves({});
       s3Mock.on(GetObjectCommand).rejects(new Error("S3 access denied"));
 
-      const { handler } = await import(
-        "../../../../prepare/lambdas/downloader/index.mjs"
-      );
+      const { handler } =
+        await import("../../../../prepare/lambdas/downloader/index.mjs");
 
       const taskToken = "task-token-for-extraction";
       const sqsEvent = {
@@ -292,9 +286,8 @@ describe("downloader lambda - EventBridge integration", () => {
       sfnMock.on(SendTaskFailureCommand).resolves({});
       s3Mock.on(GetObjectCommand).rejects(new Error("S3 error"));
 
-      const { handler } = await import(
-        "../../../../prepare/lambdas/downloader/index.mjs"
-      );
+      const { handler } =
+        await import("../../../../prepare/lambdas/downloader/index.mjs");
 
       const sqsEvent = {
         Records: [
@@ -327,9 +320,8 @@ describe("downloader lambda - EventBridge integration", () => {
       const longErrorMessage = "A".repeat(500);
       s3Mock.on(GetObjectCommand).rejects(new Error(longErrorMessage));
 
-      const { handler } = await import(
-        "../../../../prepare/lambdas/downloader/index.mjs"
-      );
+      const { handler } =
+        await import("../../../../prepare/lambdas/downloader/index.mjs");
 
       const sqsEvent = {
         Records: [
@@ -366,9 +358,8 @@ describe("downloader lambda - EventBridge integration", () => {
       });
       s3Mock.on(PutObjectCommand).resolves({});
 
-      const { handler } = await import(
-        "../../../../prepare/lambdas/downloader/index.mjs"
-      );
+      const { handler } =
+        await import("../../../../prepare/lambdas/downloader/index.mjs");
 
       const taskToken = "success-task-token";
       const sqsEvent = {
@@ -406,9 +397,8 @@ describe("downloader lambda - EventBridge integration", () => {
     it("should throw error with code 01020 when taskToken is missing from SQS message", async () => {
       eventBridgeMock.on(PutEventsCommand).resolves({});
 
-      const { handler } = await import(
-        "../../../../prepare/lambdas/downloader/index.mjs"
-      );
+      const { handler } =
+        await import("../../../../prepare/lambdas/downloader/index.mjs");
 
       const sqsEvent = {
         Records: [
@@ -447,9 +437,8 @@ describe("downloader lambda - EventBridge integration", () => {
       });
       s3Mock.on(PutObjectCommand).resolves({});
 
-      const { handler } = await import(
-        "../../../../prepare/lambdas/downloader/index.mjs"
-      );
+      const { handler } =
+        await import("../../../../prepare/lambdas/downloader/index.mjs");
 
       const directEvent = {
         input_s3_uri: "s3://test-bucket/test-key.zip",
@@ -473,9 +462,8 @@ describe("downloader lambda - EventBridge integration", () => {
       eventBridgeMock.on(PutEventsCommand).resolves({});
       sfnMock.on(SendTaskFailureCommand).resolves({});
 
-      const { handler } = await import(
-        "../../../../prepare/lambdas/downloader/index.mjs"
-      );
+      const { handler } =
+        await import("../../../../prepare/lambdas/downloader/index.mjs");
 
       // SQS event with eventSource
       const sqsEvent = {
@@ -509,9 +497,8 @@ describe("downloader lambda - EventBridge integration", () => {
       sfnMock.on(SendTaskFailureCommand).resolves({});
       s3Mock.on(GetObjectCommand).rejects(new Error("S3 error"));
 
-      const { handler } = await import(
-        "../../../../prepare/lambdas/downloader/index.mjs"
-      );
+      const { handler } =
+        await import("../../../../prepare/lambdas/downloader/index.mjs");
 
       const sqsEvent = {
         Records: [
@@ -540,9 +527,8 @@ describe("downloader lambda - EventBridge integration", () => {
       sfnMock.on(SendTaskFailureCommand).resolves({});
       s3Mock.on(GetObjectCommand).rejects(new Error("S3 error"));
 
-      const { handler } = await import(
-        "../../../../prepare/lambdas/downloader/index.mjs"
-      );
+      const { handler } =
+        await import("../../../../prepare/lambdas/downloader/index.mjs");
 
       const sqsEvent = {
         Records: [
@@ -570,9 +556,8 @@ describe("downloader lambda - EventBridge integration", () => {
       sfnMock.on(SendTaskFailureCommand).resolves({});
       s3Mock.on(GetObjectCommand).rejects(new Error("S3 error"));
 
-      const { handler } = await import(
-        "../../../../prepare/lambdas/downloader/index.mjs"
-      );
+      const { handler } =
+        await import("../../../../prepare/lambdas/downloader/index.mjs");
 
       // County with mixed case - state machine handles lowercase for queue lookup
       const sqsEvent = {

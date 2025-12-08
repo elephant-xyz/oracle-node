@@ -28,9 +28,8 @@ describe("starter lambda", () => {
     delete process.env.STATE_MACHINE_ARN;
 
     // Dynamic import to get fresh module with updated env
-    const { handler } = await import(
-      "../../../../workflow/lambdas/starter/index.mjs"
-    );
+    const { handler } =
+      await import("../../../../workflow/lambdas/starter/index.mjs");
 
     const event = {
       Records: [{ body: JSON.stringify({ test: "data" }) }],
@@ -42,9 +41,8 @@ describe("starter lambda", () => {
   });
 
   it("should throw error when event has no records", async () => {
-    const { handler } = await import(
-      "../../../../workflow/lambdas/starter/index.mjs"
-    );
+    const { handler } =
+      await import("../../../../workflow/lambdas/starter/index.mjs");
 
     await expect(handler({ Records: [] })).rejects.toThrow(
       "Expect exactly one SQS record per invocation",
@@ -52,9 +50,8 @@ describe("starter lambda", () => {
   });
 
   it("should throw error when event has multiple records", async () => {
-    const { handler } = await import(
-      "../../../../workflow/lambdas/starter/index.mjs"
-    );
+    const { handler } =
+      await import("../../../../workflow/lambdas/starter/index.mjs");
 
     const event = {
       Records: [{ body: "{}" }, { body: "{}" }],
@@ -66,9 +63,8 @@ describe("starter lambda", () => {
   });
 
   it("should throw error when record body is missing", async () => {
-    const { handler } = await import(
-      "../../../../workflow/lambdas/starter/index.mjs"
-    );
+    const { handler } =
+      await import("../../../../workflow/lambdas/starter/index.mjs");
 
     const event = {
       Records: [{}],
@@ -82,9 +78,8 @@ describe("starter lambda", () => {
       executionArn: "arn:aws:states:us-east-1:123456789:execution:test:abc123",
     });
 
-    const { handler } = await import(
-      "../../../../workflow/lambdas/starter/index.mjs"
-    );
+    const { handler } =
+      await import("../../../../workflow/lambdas/starter/index.mjs");
 
     const inputData = { county: "test-county", data: "test-data" };
     const event = {
@@ -110,9 +105,8 @@ describe("starter lambda", () => {
       executionArn: "arn:aws:states:us-east-1:123456789:execution:test:abc123",
     });
 
-    const { handler } = await import(
-      "../../../../workflow/lambdas/starter/index.mjs"
-    );
+    const { handler } =
+      await import("../../../../workflow/lambdas/starter/index.mjs");
 
     const event = {
       Records: [{ body: JSON.stringify({ test: "data" }) }],
@@ -130,9 +124,8 @@ describe("starter lambda", () => {
       .on(StartExecutionCommand)
       .rejects(new Error("Failed to start execution"));
 
-    const { handler } = await import(
-      "../../../../workflow/lambdas/starter/index.mjs"
-    );
+    const { handler } =
+      await import("../../../../workflow/lambdas/starter/index.mjs");
 
     const event = {
       Records: [{ body: JSON.stringify({ test: "data" }) }],
@@ -146,9 +139,8 @@ describe("starter lambda", () => {
       executionArn: "arn:aws:states:us-east-1:123456789:execution:test:abc123",
     });
 
-    const { handler } = await import(
-      "../../../../workflow/lambdas/starter/index.mjs"
-    );
+    const { handler } =
+      await import("../../../../workflow/lambdas/starter/index.mjs");
 
     const event = {
       Records: [{ body: JSON.stringify({ test: "data" }) }],
@@ -167,9 +159,8 @@ describe("starter lambda", () => {
       executionArn: "arn:aws:states:us-east-1:123456789:execution:test:abc123",
     });
 
-    const { handler } = await import(
-      "../../../../workflow/lambdas/starter/index.mjs"
-    );
+    const { handler } =
+      await import("../../../../workflow/lambdas/starter/index.mjs");
 
     const event = {
       Records: [{ body: JSON.stringify({ test: "data" }) }],
@@ -188,9 +179,8 @@ describe("starter lambda", () => {
       executionArn: "arn:aws:states:us-east-1:123456789:execution:test:abc123",
     });
 
-    const { handler } = await import(
-      "../../../../workflow/lambdas/starter/index.mjs"
-    );
+    const { handler } =
+      await import("../../../../workflow/lambdas/starter/index.mjs");
 
     const event = {
       Records: [{ body: JSON.stringify({ test: "data" }) }],
@@ -209,9 +199,8 @@ describe("starter lambda", () => {
       executionArn: "arn:aws:states:us-east-1:123456789:execution:test:abc123",
     });
 
-    const { handler } = await import(
-      "../../../../workflow/lambdas/starter/index.mjs"
-    );
+    const { handler } =
+      await import("../../../../workflow/lambdas/starter/index.mjs");
 
     const event = {
       Records: [{ body: JSON.stringify({ test: "data" }) }],
@@ -231,9 +220,8 @@ describe("starter lambda", () => {
       executionArn: "arn:aws:states:us-east-1:123456789:execution:test:abc123",
     });
 
-    const { handler } = await import(
-      "../../../../workflow/lambdas/starter/index.mjs"
-    );
+    const { handler } =
+      await import("../../../../workflow/lambdas/starter/index.mjs");
 
     const event = {
       Records: [{ body: JSON.stringify({ test: "data" }) }],
@@ -252,9 +240,8 @@ describe("starter lambda", () => {
       executionArn: "arn:aws:states:us-east-1:123456789:execution:test:abc123",
     });
 
-    const { handler } = await import(
-      "../../../../workflow/lambdas/starter/index.mjs"
-    );
+    const { handler } =
+      await import("../../../../workflow/lambdas/starter/index.mjs");
 
     const event = {
       Records: [{ body: JSON.stringify({ test: "data" }) }],
@@ -270,9 +257,8 @@ describe("starter lambda", () => {
   });
 
   it("should handle null/undefined event", async () => {
-    const { handler } = await import(
-      "../../../../workflow/lambdas/starter/index.mjs"
-    );
+    const { handler } =
+      await import("../../../../workflow/lambdas/starter/index.mjs");
 
     await expect(handler(null)).rejects.toThrow(
       "Expect exactly one SQS record per invocation",
@@ -280,9 +266,8 @@ describe("starter lambda", () => {
   });
 
   it("should handle event without Records property", async () => {
-    const { handler } = await import(
-      "../../../../workflow/lambdas/starter/index.mjs"
-    );
+    const { handler } =
+      await import("../../../../workflow/lambdas/starter/index.mjs");
 
     await expect(handler({})).rejects.toThrow(
       "Expect exactly one SQS record per invocation",
@@ -294,9 +279,8 @@ describe("starter lambda", () => {
       executionArn: "arn:aws:states:us-east-1:123456789:execution:test:abc123",
     });
 
-    const { handler } = await import(
-      "../../../../workflow/lambdas/starter/index.mjs"
-    );
+    const { handler } =
+      await import("../../../../workflow/lambdas/starter/index.mjs");
 
     const event = {
       Records: [{ body: JSON.stringify({ test: "data" }) }],
@@ -314,9 +298,8 @@ describe("starter lambda", () => {
       // executionArn is missing
     });
 
-    const { handler } = await import(
-      "../../../../workflow/lambdas/starter/index.mjs"
-    );
+    const { handler } =
+      await import("../../../../workflow/lambdas/starter/index.mjs");
 
     const event = {
       Records: [{ body: JSON.stringify({ test: "data" }) }],
