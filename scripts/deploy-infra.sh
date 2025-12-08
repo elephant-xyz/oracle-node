@@ -439,6 +439,8 @@ package_and_upload_codebuild_runtime() {
   local shared_dir="${project_root}/codebuild/shared"
   if [[ -d "$shared_dir" ]]; then
     info "Including shared directory in package..."
+    # Remove existing shared file/directory if it exists (from runtime-module copy)
+    rm -rf "$temp_package_dir/shared"
     mkdir -p "$temp_package_dir/shared"
     cp -r "$shared_dir"/* "$temp_package_dir/shared/"
   else
@@ -948,65 +950,6 @@ ensure_lambda_concurrency_quota() {
   fi
 }
 
-ensure_stepfunctions_concurrency_quota() {
-  info "Checking Step Functions 'Concurrent executions' service quota"
-  local quota_code="L-3033A538" # Concurrent executions for Standard workflows
-  local current desired="${STEPFUNCTIONS_CONCURRENCY_QUOTA:-5000}" resp req_id status
-
-  # Try to find the quota via list (more reliable)
-  current=$(aws service-quotas list-service-quotas \
-    --service-code states \
-    --query "Quotas[?contains(QuotaName, 'Concurrent') || contains(QuotaName, 'concurrent')].Value | [0]" \
-    --output text 2>/dev/null || true)
-
-  if [[ -z "$current" || "$current" == "None" || "$current" == "null" ]]; then
-    warn "Could not determine Step Functions 'Concurrent executions' quota; skipping quota request"
-    warn "You may need to request manually at: https://console.aws.amazon.com/servicequotas/"
-    return 0
-  fi
-
-  info "Current Step Functions concurrent executions quota: $current"
-
-  # Check if quota needs to be increased
-  local current_int desired_int
-  current_int=${current%%.*}
-  desired_int=${desired%%.*}
-  
-  if [[ "$current_int" =~ ^[0-9]+$ && "$desired_int" =~ ^[0-9]+$ && "$current_int" -lt "$desired_int" ]]; then
-    # Check if there's already a pending request for this quota
-    local existing_request
-    existing_request=$(aws service-quotas list-requested-service-quota-change-history \
-      --service-code states \
-      --query "RequestedQuotas[?Status=='PENDING' || Status=='CASE_OPENED'].RequestId | [0]" \
-      --output text 2>/dev/null || echo "")
-    
-    if [[ -n "$existing_request" && "$existing_request" != "None" ]]; then
-      info "Step Functions quota increase request already pending (Request ID: $existing_request). Skipping new request."
-      return 0
-    fi
-    
-    info "Requesting Step Functions quota increase to ${desired}"
-    resp=$(aws service-quotas request-service-quota-increase \
-      --service-code states \
-      --quota-code "$quota_code" \
-      --desired-value "$desired" 2>/dev/null || true)
-    req_id=$(echo "$resp" | jq -r '.RequestedQuota.RequestId // empty')
-    status=$(echo "$resp" | jq -r '.RequestedQuota.Status // empty')
-    if [[ -n "$req_id" ]]; then
-      info "Submitted Step Functions quota increase request. Request ID: $req_id Status: $status"
-    else
-      # Check if error is because request already exists
-      if echo "$resp" | jq -e '.Error.Code == "ResourceAlreadyExistsException" || .Error.Code == "InvalidResourceStateException"' >/dev/null 2>&1; then
-        info "Step Functions quota increase request already exists or quota already increased. Skipping."
-      else
-        warn "Failed to submit Step Functions quota increase request. Response: $resp"
-        warn "You may need to request manually at: https://console.aws.amazon.com/servicequotas/"
-      fi
-    fi
-  else
-    info "No Step Functions quota increase needed (current quota: $current >= desired: $desired)"
-  fi
-}
 
 handle_pending_keystore_upload() {
   if [[ -n "${KEYSTORE_S3_KEY_PENDING:-}" && -n "${KEYSTORE_FILE_PENDING:-}" ]]; then
@@ -1075,7 +1018,6 @@ cleanup_old_dashboards() {
 main() {
   check_prereqs
   ensure_lambda_concurrency_quota
-  ensure_stepfunctions_concurrency_quota
 
   # Deploy workflow-events stack (separate independent stack)
   deploy_workflow_events_stack
