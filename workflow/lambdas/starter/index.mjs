@@ -1,7 +1,4 @@
-import {
-  SFNClient,
-  StartExecutionCommand,
-} from "@aws-sdk/client-sfn";
+import { SFNClient, StartExecutionCommand } from "@aws-sdk/client-sfn";
 
 /**
  * @typedef {Object} SqsEvent
