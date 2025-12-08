@@ -746,7 +746,7 @@ Resources:
       Runtime: nodejs22.x
       Architectures:
         - arm64
-      MemorySize: 256
+      MemorySize: 512
       Timeout: 300
       EphemeralStorage:
         Size: 1024
@@ -815,7 +815,6 @@ Resources:
             - Effect: Allow
               Action:
                 - states:StartExecution
-                - states:ListExecutions
                 - states:DescribeExecution
               Resource: !GetAtt ElephantExpressStateMachine.Arn
             - Effect: Allow
@@ -825,8 +824,6 @@ Resources:
       Environment:
         Variables:
           STATE_MACHINE_ARN: !GetAtt ElephantExpressStateMachine.Arn
-          MAX_CONCURRENT_EXECUTIONS: !Ref WorkflowStarterReservedConcurrency
-          MAX_RUNNING_EXECUTIONS: !Ref MaxRunningExecutions
       Events:
         SqsEvent:
           Type: SQS

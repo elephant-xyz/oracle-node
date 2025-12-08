@@ -479,10 +479,10 @@ export const handler = async (event) => {
 
     if (!submitResult.success)
       throw new Error(`Submit failed: ${submitResult.error}`);
-    const submitResultsCsv = await fs.readFile(
-      path.join(tmp, "transaction-status.csv"),
-      "utf8",
-    );
+    
+    // Read and parse transaction-status.csv
+    const transactionStatusPath = path.join(tmp, "transaction-status.csv");
+    const submitResultsCsv = await fs.readFile(transactionStatusPath, "utf8");
 
     /** @type {SubmitResultRow[]} */
     const submitResults = parse(submitResultsCsv, {
@@ -498,15 +498,33 @@ export const handler = async (event) => {
       submit_results: submitResults,
     });
 
-    const submitErrrorsCsv = await fs.readFile(
-      path.join(tmp, "submit_errors.csv"),
-      "utf8",
-    );
+    // Read and parse submit_errors.csv
+    const submitErrorsPath = path.join(tmp, "submit_errors.csv");
+    const submitErrrorsCsv = await fs.readFile(submitErrorsPath, "utf8");
     const submitErrors = parse(submitErrrorsCsv, {
       columns: true,
       skip_empty_lines: true,
       trim: true,
     });
+    
+    // Clean up CSV files immediately after reading to free disk space
+    // (Note: The CSV strings will be garbage collected automatically)
+    try {
+      await fs.unlink(transactionStatusPath);
+      await fs.unlink(submitErrorsPath);
+    } catch (cleanupError) {
+      // Non-critical, log but continue
+      console.log({
+        ...base,
+        level: "warn",
+        msg: "Failed to cleanup CSV files",
+        error:
+          cleanupError instanceof Error
+            ? cleanupError.message
+            : String(cleanupError),
+      });
+    }
+    
     console.log(`Submit errors type is : ${typeof submitErrors}`);
     const allErrors = [
       ...submitErrors,
