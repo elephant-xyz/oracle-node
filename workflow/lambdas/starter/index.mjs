@@ -3,7 +3,10 @@
  * Enforces concurrency limits and throws error on failure to trigger SQS DLQ redelivery.
  */
 
-import { SFNClient, StartExecutionCommand } from "@aws-sdk/client-sfn";
+import {
+  SFNClient,
+  StartExecutionCommand,
+} from "@aws-sdk/client-sfn";
 
 /**
  * @typedef {Object} S3EventRecord
@@ -48,7 +51,8 @@ export const handler = async (event) => {
     const parsed = JSON.parse(bodyRaw);
 
     // Start the Standard workflow
-    // Concurrency is controlled by Lambda's ReservedConcurrentExecutions and SQS MaximumConcurrency
+    // Concurrency is controlled by Lambda's ReservedConcurrentExecutions:
+    // This limits how many executions can be STARTED simultaneously, not how many are running
     const cmd = new StartExecutionCommand({
       stateMachineArn: process.env.STATE_MACHINE_ARN,
       input: JSON.stringify({ message: parsed }),
