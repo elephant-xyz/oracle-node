@@ -118,8 +118,6 @@ describe("starter lambda", () => {
       Records: [{ body: JSON.stringify({ test: "data" }) }],
     };
 
-    // Concurrency is now controlled by Lambda's ReservedConcurrentExecutions
-    // No need to check running Step Function executions
     const result = await handler(event);
     expect(result.status).toBe("ok");
     expect(result.executionArn).toBe(
@@ -304,8 +302,6 @@ describe("starter lambda", () => {
       Records: [{ body: JSON.stringify({ test: "data" }) }],
     };
 
-    // Concurrency is controlled by Lambda's ReservedConcurrentExecutions
-    // No need to check running Step Function executions
     const result = await handler(event);
     expect(result.status).toBe("ok");
     expect(result.executionArn).toBe(
