@@ -95,8 +95,9 @@ describe("svl-worker handler", () => {
     it("should emit IN_PROGRESS event at start", async () => {
       mockValidate.mockResolvedValue({ success: true });
 
-      const { handler } =
-        await import("../../../../workflow/lambdas/svl-worker/index.mjs");
+      const { handler } = await import(
+        "../../../../workflow/lambdas/svl-worker/index.mjs"
+      );
 
       const event = createSqsEvent("task-token-123", {
         transformedOutputS3Uri: "s3://bucket/transformed.zip",
@@ -121,8 +122,9 @@ describe("svl-worker handler", () => {
     it("should only emit IN_PROGRESS event when validation passes (SUCCEEDED is emitted by state machine)", async () => {
       mockValidate.mockResolvedValue({ success: true });
 
-      const { handler } =
-        await import("../../../../workflow/lambdas/svl-worker/index.mjs");
+      const { handler } = await import(
+        "../../../../workflow/lambdas/svl-worker/index.mjs"
+      );
 
       const event = createSqsEvent("task-token-success", {
         transformedOutputS3Uri: "s3://bucket/transformed.zip",
@@ -165,8 +167,9 @@ describe("svl-worker handler", () => {
         { error_message: "Test error", error_path: "$.field" },
       ]);
 
-      const { handler } =
-        await import("../../../../workflow/lambdas/svl-worker/index.mjs");
+      const { handler } = await import(
+        "../../../../workflow/lambdas/svl-worker/index.mjs"
+      );
 
       const event = createSqsEvent("task-token-failed", {
         transformedOutputS3Uri: "s3://bucket/transformed.zip",
@@ -229,8 +232,9 @@ describe("svl-worker handler", () => {
         },
       ]);
 
-      const { handler } =
-        await import("../../../../workflow/lambdas/svl-worker/index.mjs");
+      const { handler } = await import(
+        "../../../../workflow/lambdas/svl-worker/index.mjs"
+      );
 
       const event = createSqsEvent("task-token-with-cid", {
         transformedOutputS3Uri: "s3://bucket/transformed.zip",
@@ -269,8 +273,9 @@ describe("svl-worker handler", () => {
         { error_message: "Test error", error_path: "$.field" },
       ]);
 
-      const { handler } =
-        await import("../../../../workflow/lambdas/svl-worker/index.mjs");
+      const { handler } = await import(
+        "../../../../workflow/lambdas/svl-worker/index.mjs"
+      );
 
       const event = createSqsEvent("task-token-no-cid", {
         transformedOutputS3Uri: "s3://bucket/transformed.zip",
@@ -298,8 +303,9 @@ describe("svl-worker handler", () => {
     it("should only emit IN_PROGRESS event on general failure (FAILED is emitted by state machine)", async () => {
       mockValidate.mockRejectedValue(new Error("Validation process crashed"));
 
-      const { handler } =
-        await import("../../../../workflow/lambdas/svl-worker/index.mjs");
+      const { handler } = await import(
+        "../../../../workflow/lambdas/svl-worker/index.mjs"
+      );
 
       const event = createSqsEvent("task-token-error", {
         transformedOutputS3Uri: "s3://bucket/transformed.zip",
@@ -331,8 +337,9 @@ describe("svl-worker handler", () => {
         error: "Schema validation failed",
       });
 
-      const { handler } =
-        await import("../../../../workflow/lambdas/svl-worker/index.mjs");
+      const { handler } = await import(
+        "../../../../workflow/lambdas/svl-worker/index.mjs"
+      );
 
       const event = createSqsEvent("task-token-no-errors-file", {
         transformedOutputS3Uri: "s3://bucket/transformed.zip",
@@ -360,8 +367,9 @@ describe("svl-worker handler", () => {
     it("should call executeWithTaskToken with result on success", async () => {
       mockValidate.mockResolvedValue({ success: true });
 
-      const { handler } =
-        await import("../../../../workflow/lambdas/svl-worker/index.mjs");
+      const { handler } = await import(
+        "../../../../workflow/lambdas/svl-worker/index.mjs"
+      );
 
       const event = createSqsEvent("task-token-result", {
         transformedOutputS3Uri: "s3://bucket/transformed.zip",
@@ -393,8 +401,9 @@ describe("svl-worker handler", () => {
     it("should call executeWithTaskToken with throwing function on failure", async () => {
       mockValidate.mockRejectedValue(new Error("Validation crashed"));
 
-      const { handler } =
-        await import("../../../../workflow/lambdas/svl-worker/index.mjs");
+      const { handler } = await import(
+        "../../../../workflow/lambdas/svl-worker/index.mjs"
+      );
 
       const event = createSqsEvent("task-token-throw", {
         transformedOutputS3Uri: "s3://bucket/transformed.zip",
@@ -419,8 +428,9 @@ describe("svl-worker handler", () => {
     it("should create logger with correct base fields", async () => {
       mockValidate.mockResolvedValue({ success: true });
 
-      const { handler } =
-        await import("../../../../workflow/lambdas/svl-worker/index.mjs");
+      const { handler } = await import(
+        "../../../../workflow/lambdas/svl-worker/index.mjs"
+      );
 
       const event = createSqsEvent("task-token-logger", {
         transformedOutputS3Uri: "s3://bucket/transformed.zip",
@@ -442,8 +452,9 @@ describe("svl-worker handler", () => {
     it("should download transformed output from S3", async () => {
       mockValidate.mockResolvedValue({ success: true });
 
-      const { handler } =
-        await import("../../../../workflow/lambdas/svl-worker/index.mjs");
+      const { handler } = await import(
+        "../../../../workflow/lambdas/svl-worker/index.mjs"
+      );
 
       const event = createSqsEvent("task-token-download", {
         transformedOutputS3Uri: "s3://bucket/transformed.zip",
@@ -461,8 +472,9 @@ describe("svl-worker handler", () => {
     it("should handle multiple SQS records", async () => {
       mockValidate.mockResolvedValue({ success: true });
 
-      const { handler } =
-        await import("../../../../workflow/lambdas/svl-worker/index.mjs");
+      const { handler } = await import(
+        "../../../../workflow/lambdas/svl-worker/index.mjs"
+      );
 
       const event = {
         Records: [
@@ -509,8 +521,9 @@ describe("svl-worker handler", () => {
 
       mockUploadToS3.mockRejectedValue(new Error("S3 upload failed"));
 
-      const { handler } =
-        await import("../../../../workflow/lambdas/svl-worker/index.mjs");
+      const { handler } = await import(
+        "../../../../workflow/lambdas/svl-worker/index.mjs"
+      );
 
       const event = createSqsEvent("task-token-upload-fail", {
         transformedOutputS3Uri: "s3://bucket/transformed.zip",
@@ -536,8 +549,9 @@ describe("svl-worker handler", () => {
     it("should skip EventBridge events in direct invocation mode", async () => {
       mockValidate.mockResolvedValue({ success: true });
 
-      const { handler } =
-        await import("../../../../workflow/lambdas/svl-worker/index.mjs");
+      const { handler } = await import(
+        "../../../../workflow/lambdas/svl-worker/index.mjs"
+      );
 
       const event = createDirectInvocationEvent({
         transformedOutputS3Uri: "s3://bucket/transformed.zip",
@@ -579,8 +593,9 @@ describe("svl-worker handler", () => {
         { error_message: "Test error", error_path: "$.field" },
       ]);
 
-      const { handler } =
-        await import("../../../../workflow/lambdas/svl-worker/index.mjs");
+      const { handler } = await import(
+        "../../../../workflow/lambdas/svl-worker/index.mjs"
+      );
 
       const event = createDirectInvocationEvent({
         transformedOutputS3Uri: "s3://bucket/transformed.zip",
@@ -598,8 +613,9 @@ describe("svl-worker handler", () => {
     it("should create logger with direct invocation context", async () => {
       mockValidate.mockResolvedValue({ success: true });
 
-      const { handler } =
-        await import("../../../../workflow/lambdas/svl-worker/index.mjs");
+      const { handler } = await import(
+        "../../../../workflow/lambdas/svl-worker/index.mjs"
+      );
 
       const event = createDirectInvocationEvent({
         transformedOutputS3Uri: "s3://bucket/transformed.zip",
@@ -625,8 +641,9 @@ describe("svl-worker handler", () => {
         return { success: false, error: "Validation errors found" };
       });
 
-      const { handler } =
-        await import("../../../../workflow/lambdas/svl-worker/index.mjs");
+      const { handler } = await import(
+        "../../../../workflow/lambdas/svl-worker/index.mjs"
+      );
 
       const event = createDirectInvocationEvent({
         transformedOutputS3Uri: "s3://bucket/transformed.zip",
@@ -648,8 +665,9 @@ describe("svl-worker handler", () => {
     it("should throw general errors in direct mode when validation crashes", async () => {
       mockValidate.mockRejectedValue(new Error("Unexpected validation crash"));
 
-      const { handler } =
-        await import("../../../../workflow/lambdas/svl-worker/index.mjs");
+      const { handler } = await import(
+        "../../../../workflow/lambdas/svl-worker/index.mjs"
+      );
 
       const event = createDirectInvocationEvent({
         transformedOutputS3Uri: "s3://bucket/transformed.zip",
@@ -680,8 +698,9 @@ describe("svl-worker handler", () => {
         { error_message: "Error 2", error_path: "$.path2" },
       ]);
 
-      const { handler } =
-        await import("../../../../workflow/lambdas/svl-worker/index.mjs");
+      const { handler } = await import(
+        "../../../../workflow/lambdas/svl-worker/index.mjs"
+      );
 
       const event = createSqsEvent("task-token-csv", {
         transformedOutputS3Uri: "s3://bucket/transformed.zip",
@@ -704,8 +723,9 @@ describe("svl-worker handler", () => {
         // No error message provided
       });
 
-      const { handler } =
-        await import("../../../../workflow/lambdas/svl-worker/index.mjs");
+      const { handler } = await import(
+        "../../../../workflow/lambdas/svl-worker/index.mjs"
+      );
 
       const event = createSqsEvent("task-token-no-msg", {
         transformedOutputS3Uri: "s3://bucket/transformed.zip",
@@ -729,8 +749,9 @@ describe("svl-worker handler", () => {
     it("should clean up temp directory even on error", async () => {
       mockValidate.mockRejectedValue(new Error("Validation crashed"));
 
-      const { handler } =
-        await import("../../../../workflow/lambdas/svl-worker/index.mjs");
+      const { handler } = await import(
+        "../../../../workflow/lambdas/svl-worker/index.mjs"
+      );
 
       const event = createSqsEvent("task-token-cleanup", {
         transformedOutputS3Uri: "s3://bucket/transformed.zip",
@@ -763,8 +784,9 @@ describe("svl-worker handler", () => {
         { error_message: "Error B", error_path: "$.pathB" },
       ]);
 
-      const { handler } =
-        await import("../../../../workflow/lambdas/svl-worker/index.mjs");
+      const { handler } = await import(
+        "../../../../workflow/lambdas/svl-worker/index.mjs"
+      );
 
       const event = createSqsEvent("task-token-hash", {
         transformedOutputS3Uri: "s3://bucket/transformed.zip",
@@ -815,8 +837,9 @@ describe("svl-worker handler", () => {
         { error_message: "Duplicate error", error_path: "$.same.path" },
       ]);
 
-      const { handler } =
-        await import("../../../../workflow/lambdas/svl-worker/index.mjs");
+      const { handler } = await import(
+        "../../../../workflow/lambdas/svl-worker/index.mjs"
+      );
 
       const event = createSqsEvent("task-token-deterministic", {
         transformedOutputS3Uri: "s3://bucket/transformed.zip",

@@ -84,8 +84,9 @@ describe("hash-worker handler", () => {
   it("should emit IN_PROGRESS event at start", async () => {
     mockHash.mockResolvedValue({ success: true });
 
-    const { handler } =
-      await import("../../../../workflow/lambdas/hash-worker/index.mjs");
+    const { handler } = await import(
+      "../../../../workflow/lambdas/hash-worker/index.mjs"
+    );
 
     const event = createSqsEvent("task-token-123", {
       validatedOutputS3Uri: "s3://bucket/validated.zip",
@@ -112,8 +113,9 @@ describe("hash-worker handler", () => {
   it("should only emit IN_PROGRESS event on successful hash generation (SUCCEEDED is emitted by state machine)", async () => {
     mockHash.mockResolvedValue({ success: true });
 
-    const { handler } =
-      await import("../../../../workflow/lambdas/hash-worker/index.mjs");
+    const { handler } = await import(
+      "../../../../workflow/lambdas/hash-worker/index.mjs"
+    );
 
     const event = createSqsEvent("task-token-success", {
       validatedOutputS3Uri: "s3://bucket/validated.zip",
@@ -147,8 +149,9 @@ describe("hash-worker handler", () => {
       error: "Seed hash calculation failed",
     });
 
-    const { handler } =
-      await import("../../../../workflow/lambdas/hash-worker/index.mjs");
+    const { handler } = await import(
+      "../../../../workflow/lambdas/hash-worker/index.mjs"
+    );
 
     const event = createSqsEvent("task-token-seed-fail", {
       validatedOutputS3Uri: "s3://bucket/validated.zip",
@@ -181,8 +184,9 @@ describe("hash-worker handler", () => {
       error: "County hash calculation failed",
     });
 
-    const { handler } =
-      await import("../../../../workflow/lambdas/hash-worker/index.mjs");
+    const { handler } = await import(
+      "../../../../workflow/lambdas/hash-worker/index.mjs"
+    );
 
     const event = createSqsEvent("task-token-county-fail", {
       validatedOutputS3Uri: "s3://bucket/validated.zip",
@@ -211,8 +215,9 @@ describe("hash-worker handler", () => {
   it("should call executeWithTaskToken with result on success", async () => {
     mockHash.mockResolvedValue({ success: true });
 
-    const { handler } =
-      await import("../../../../workflow/lambdas/hash-worker/index.mjs");
+    const { handler } = await import(
+      "../../../../workflow/lambdas/hash-worker/index.mjs"
+    );
 
     const event = createSqsEvent("task-token-result", {
       validatedOutputS3Uri: "s3://bucket/validated.zip",
@@ -237,8 +242,9 @@ describe("hash-worker handler", () => {
       error: "Hash failed",
     });
 
-    const { handler } =
-      await import("../../../../workflow/lambdas/hash-worker/index.mjs");
+    const { handler } = await import(
+      "../../../../workflow/lambdas/hash-worker/index.mjs"
+    );
 
     const event = createSqsEvent("task-token-throw", {
       validatedOutputS3Uri: "s3://bucket/validated.zip",
@@ -264,8 +270,9 @@ describe("hash-worker handler", () => {
   it("should create logger with correct base fields", async () => {
     mockHash.mockResolvedValue({ success: true });
 
-    const { handler } =
-      await import("../../../../workflow/lambdas/hash-worker/index.mjs");
+    const { handler } = await import(
+      "../../../../workflow/lambdas/hash-worker/index.mjs"
+    );
 
     const event = createSqsEvent("task-token-logger", {
       validatedOutputS3Uri: "s3://bucket/validated.zip",
@@ -288,8 +295,9 @@ describe("hash-worker handler", () => {
   it("should download both validated and seed outputs", async () => {
     mockHash.mockResolvedValue({ success: true });
 
-    const { handler } =
-      await import("../../../../workflow/lambdas/hash-worker/index.mjs");
+    const { handler } = await import(
+      "../../../../workflow/lambdas/hash-worker/index.mjs"
+    );
 
     const event = createSqsEvent("task-token-download", {
       validatedOutputS3Uri: "s3://bucket/validated.zip",
@@ -308,8 +316,9 @@ describe("hash-worker handler", () => {
   it("should upload all artifacts to S3", async () => {
     mockHash.mockResolvedValue({ success: true });
 
-    const { handler } =
-      await import("../../../../workflow/lambdas/hash-worker/index.mjs");
+    const { handler } = await import(
+      "../../../../workflow/lambdas/hash-worker/index.mjs"
+    );
 
     const event = createSqsEvent("task-token-upload", {
       validatedOutputS3Uri: "s3://bucket/validated.zip",

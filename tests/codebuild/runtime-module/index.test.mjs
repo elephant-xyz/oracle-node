@@ -193,8 +193,9 @@ describe("auto-repair runtime module", () => {
       });
 
       // Import after mocks are set up
-      const { getExecutionWithLeastErrors } =
-        await import("../../../codebuild/runtime-module/index.js");
+      const { getExecutionWithLeastErrors } = await import(
+        "../../../codebuild/runtime-module/index.js"
+      );
 
       const result = await getExecutionWithLeastErrors();
 
@@ -211,8 +212,9 @@ describe("auto-repair runtime module", () => {
         ),
       });
 
-      const { getExecutionWithLeastErrors } =
-        await import("../../../codebuild/runtime-module/index.js");
+      const { getExecutionWithLeastErrors } = await import(
+        "../../../codebuild/runtime-module/index.js"
+      );
 
       await expect(getExecutionWithLeastErrors()).rejects.toThrow(
         "get-execution Lambda failed",
@@ -256,8 +258,9 @@ describe("auto-repair runtime module", () => {
         events: [],
       });
 
-      const { main } =
-        await import("../../../codebuild/runtime-module/index.js");
+      const { main } = await import(
+        "../../../codebuild/runtime-module/index.js"
+      );
 
       // Mock process.exit to prevent test from exiting
       const mockExit = vi

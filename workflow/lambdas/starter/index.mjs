@@ -3,10 +3,7 @@
  * Enforces concurrency limits and throws error on failure to trigger SQS DLQ redelivery.
  */
 
-import {
-  SFNClient,
-  StartExecutionCommand,
-} from "@aws-sdk/client-sfn";
+import { SFNClient, StartExecutionCommand } from "@aws-sdk/client-sfn";
 
 /**
  * @typedef {Object} S3EventRecord

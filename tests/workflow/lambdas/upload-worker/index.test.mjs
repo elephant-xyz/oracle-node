@@ -99,8 +99,9 @@ describe("upload-worker handler", () => {
   it("should emit IN_PROGRESS event at start", async () => {
     mockUpload.mockResolvedValue({ success: true });
 
-    const { handler } =
-      await import("../../../../workflow/lambdas/upload-worker/index.mjs");
+    const { handler } = await import(
+      "../../../../workflow/lambdas/upload-worker/index.mjs"
+    );
 
     const event = createSqsEvent("task-token-123", {
       seedHashZipS3Uri: "s3://bucket/seed_hash.zip",
@@ -125,8 +126,9 @@ describe("upload-worker handler", () => {
   it("should only emit IN_PROGRESS event on successful upload (SUCCEEDED is emitted by state machine)", async () => {
     mockUpload.mockResolvedValue({ success: true });
 
-    const { handler } =
-      await import("../../../../workflow/lambdas/upload-worker/index.mjs");
+    const { handler } = await import(
+      "../../../../workflow/lambdas/upload-worker/index.mjs"
+    );
 
     const event = createSqsEvent("task-token-success", {
       seedHashZipS3Uri: "s3://bucket/seed_hash.zip",
@@ -160,8 +162,9 @@ describe("upload-worker handler", () => {
       errors: ["Network timeout"],
     });
 
-    const { handler } =
-      await import("../../../../workflow/lambdas/upload-worker/index.mjs");
+    const { handler } = await import(
+      "../../../../workflow/lambdas/upload-worker/index.mjs"
+    );
 
     const event = createSqsEvent("task-token-ipfs-fail", {
       seedHashZipS3Uri: "s3://bucket/seed_hash.zip",
@@ -189,8 +192,9 @@ describe("upload-worker handler", () => {
   it("should only emit IN_PROGRESS event on general failure (FAILED is emitted by state machine)", async () => {
     mockDownloadS3Object.mockRejectedValue(new Error("S3 download failed"));
 
-    const { handler } =
-      await import("../../../../workflow/lambdas/upload-worker/index.mjs");
+    const { handler } = await import(
+      "../../../../workflow/lambdas/upload-worker/index.mjs"
+    );
 
     const event = createSqsEvent("task-token-general-fail", {
       seedHashZipS3Uri: "s3://bucket/seed_hash.zip",
@@ -220,8 +224,9 @@ describe("upload-worker handler", () => {
       throw new Error(`Missing required env: ${name}`);
     });
 
-    const { handler } =
-      await import("../../../../workflow/lambdas/upload-worker/index.mjs");
+    const { handler } = await import(
+      "../../../../workflow/lambdas/upload-worker/index.mjs"
+    );
 
     const event = createSqsEvent("task-token-no-jwt", {
       seedHashZipS3Uri: "s3://bucket/seed_hash.zip",
@@ -245,8 +250,9 @@ describe("upload-worker handler", () => {
   it("should download both hash zips", async () => {
     mockUpload.mockResolvedValue({ success: true });
 
-    const { handler } =
-      await import("../../../../workflow/lambdas/upload-worker/index.mjs");
+    const { handler } = await import(
+      "../../../../workflow/lambdas/upload-worker/index.mjs"
+    );
 
     const event = createSqsEvent("task-token-parallel", {
       seedHashZipS3Uri: "s3://bucket/seed_hash.zip",
@@ -264,8 +270,9 @@ describe("upload-worker handler", () => {
   it("should call executeWithTaskToken with result on success", async () => {
     mockUpload.mockResolvedValue({ success: true });
 
-    const { handler } =
-      await import("../../../../workflow/lambdas/upload-worker/index.mjs");
+    const { handler } = await import(
+      "../../../../workflow/lambdas/upload-worker/index.mjs"
+    );
 
     const event = createSqsEvent("task-token-result", {
       seedHashZipS3Uri: "s3://bucket/seed_hash.zip",
@@ -286,8 +293,9 @@ describe("upload-worker handler", () => {
   it("should pass pinataJwt to upload function", async () => {
     mockUpload.mockResolvedValue({ success: true });
 
-    const { handler } =
-      await import("../../../../workflow/lambdas/upload-worker/index.mjs");
+    const { handler } = await import(
+      "../../../../workflow/lambdas/upload-worker/index.mjs"
+    );
 
     const event = createSqsEvent("task-token-jwt", {
       seedHashZipS3Uri: "s3://bucket/seed_hash.zip",
@@ -308,8 +316,9 @@ describe("upload-worker handler", () => {
   it("should create logger with correct base fields", async () => {
     mockUpload.mockResolvedValue({ success: true });
 
-    const { handler } =
-      await import("../../../../workflow/lambdas/upload-worker/index.mjs");
+    const { handler } = await import(
+      "../../../../workflow/lambdas/upload-worker/index.mjs"
+    );
 
     const event = createSqsEvent("task-token-logger", {
       seedHashZipS3Uri: "s3://bucket/seed_hash.zip",

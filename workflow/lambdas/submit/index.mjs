@@ -479,7 +479,7 @@ export const handler = async (event) => {
 
     if (!submitResult.success)
       throw new Error(`Submit failed: ${submitResult.error}`);
-    
+
     // Read and parse transaction-status.csv
     const transactionStatusPath = path.join(tmp, "transaction-status.csv");
     const submitResultsCsv = await fs.readFile(transactionStatusPath, "utf8");
@@ -506,7 +506,7 @@ export const handler = async (event) => {
       skip_empty_lines: true,
       trim: true,
     });
-    
+
     // Clean up CSV files immediately after reading to free disk space
     // (Note: The CSV strings will be garbage collected automatically)
     try {
@@ -524,7 +524,7 @@ export const handler = async (event) => {
             : String(cleanupError),
       });
     }
-    
+
     console.log(`Submit errors type is : ${typeof submitErrors}`);
     const allErrors = [
       ...submitErrors,

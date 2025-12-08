@@ -88,8 +88,9 @@ describe("transaction-status-checker handler", () => {
         { status: "success", blockNumber: 12345 },
       ]);
 
-      const { handler } =
-        await import("../../../../workflow/lambdas/transaction-status-checker/index.mjs");
+      const { handler } = await import(
+        "../../../../workflow/lambdas/transaction-status-checker/index.mjs"
+      );
 
       const event = createSqsEvent("task-token-123", "0xabc123");
 
@@ -112,8 +113,9 @@ describe("transaction-status-checker handler", () => {
         { status: "success", blockNumber: 12345 },
       ]);
 
-      const { handler } =
-        await import("../../../../workflow/lambdas/transaction-status-checker/index.mjs");
+      const { handler } = await import(
+        "../../../../workflow/lambdas/transaction-status-checker/index.mjs"
+      );
 
       const event = createSqsEvent("task-token-success", "0xabc123");
 
@@ -143,8 +145,9 @@ describe("transaction-status-checker handler", () => {
         .mockResolvedValueOnce([{ status: "pending" }])
         .mockResolvedValueOnce([{ status: "success", blockNumber: 12345 }]);
 
-      const { handler } =
-        await import("../../../../workflow/lambdas/transaction-status-checker/index.mjs");
+      const { handler } = await import(
+        "../../../../workflow/lambdas/transaction-status-checker/index.mjs"
+      );
 
       const event = createSqsEvent("task-token-retry", "0xabc123");
 
@@ -174,8 +177,9 @@ describe("transaction-status-checker handler", () => {
       // All calls return pending
       mockCheckTransactionStatus.mockResolvedValue([{ status: "pending" }]);
 
-      const { handler } =
-        await import("../../../../workflow/lambdas/transaction-status-checker/index.mjs");
+      const { handler } = await import(
+        "../../../../workflow/lambdas/transaction-status-checker/index.mjs"
+      );
 
       const event = createSqsEvent("task-token-retry-indefinite", "0xabc123");
 
@@ -204,8 +208,9 @@ describe("transaction-status-checker handler", () => {
         { dataGroupLabel: "County", dataGroupCid: "bafkrei123" },
       ];
 
-      const { handler } =
-        await import("../../../../workflow/lambdas/transaction-status-checker/index.mjs");
+      const { handler } = await import(
+        "../../../../workflow/lambdas/transaction-status-checker/index.mjs"
+      );
 
       const event = createSqsEvent(
         "task-token-dropped",
@@ -238,8 +243,9 @@ describe("transaction-status-checker handler", () => {
         { status: "failed", error: "Transaction reverted" },
       ]);
 
-      const { handler } =
-        await import("../../../../workflow/lambdas/transaction-status-checker/index.mjs");
+      const { handler } = await import(
+        "../../../../workflow/lambdas/transaction-status-checker/index.mjs"
+      );
 
       const event = createSqsEvent("task-token-failed", "0xabc123");
 
@@ -267,8 +273,9 @@ describe("transaction-status-checker handler", () => {
         { status: "success", blockNumber: 12345 },
       ]);
 
-      const { handler } =
-        await import("../../../../workflow/lambdas/transaction-status-checker/index.mjs");
+      const { handler } = await import(
+        "../../../../workflow/lambdas/transaction-status-checker/index.mjs"
+      );
 
       const event = createSqsEvent("task-token-succeeded", "0xabc123");
 
@@ -291,8 +298,9 @@ describe("transaction-status-checker handler", () => {
       // Mock checkTransactionStatus to always throw (will retry indefinitely)
       mockCheckTransactionStatus.mockRejectedValue(new Error("RPC error"));
 
-      const { handler } =
-        await import("../../../../workflow/lambdas/transaction-status-checker/index.mjs");
+      const { handler } = await import(
+        "../../../../workflow/lambdas/transaction-status-checker/index.mjs"
+      );
 
       const event = createSqsEvent("task-token-error-retry", "0xabc123");
 
@@ -321,8 +329,9 @@ describe("transaction-status-checker handler", () => {
         { dataGroupLabel: "County", dataGroupCid: "bafkrei123" },
       ];
 
-      const { handler } =
-        await import("../../../../workflow/lambdas/transaction-status-checker/index.mjs");
+      const { handler } = await import(
+        "../../../../workflow/lambdas/transaction-status-checker/index.mjs"
+      );
 
       const event = createSqsEvent(
         "task-token-dropped-event",
@@ -353,8 +362,9 @@ describe("transaction-status-checker handler", () => {
     it("should fail when RPC URL is missing", async () => {
       delete process.env.ELEPHANT_RPC_URL;
 
-      const { handler } =
-        await import("../../../../workflow/lambdas/transaction-status-checker/index.mjs");
+      const { handler } = await import(
+        "../../../../workflow/lambdas/transaction-status-checker/index.mjs"
+      );
 
       const event = createSqsEvent("task-token-no-rpc", "0xabc123");
 
@@ -374,8 +384,9 @@ describe("transaction-status-checker handler", () => {
 
       mockCheckTransactionStatus.mockResolvedValue([]); // Dropped transaction
 
-      const { handler } =
-        await import("../../../../workflow/lambdas/transaction-status-checker/index.mjs");
+      const { handler } = await import(
+        "../../../../workflow/lambdas/transaction-status-checker/index.mjs"
+      );
 
       const event = createSqsEvent("task-token-no-queue", "0xabc123");
 
@@ -416,8 +427,9 @@ describe("transaction-status-checker handler", () => {
         { status: "success", blockNumber: 12345 },
       ]);
 
-      const { handler } =
-        await import("../../../../workflow/lambdas/transaction-status-checker/index.mjs");
+      const { handler } = await import(
+        "../../../../workflow/lambdas/transaction-status-checker/index.mjs"
+      );
 
       const event = createSqsEvent("task-token-default-wait", "0xabc123");
 
@@ -450,8 +462,9 @@ describe("transaction-status-checker handler", () => {
         { status: "success", blockNumber: 12345 },
       ]);
 
-      const { handler } =
-        await import("../../../../workflow/lambdas/transaction-status-checker/index.mjs");
+      const { handler } = await import(
+        "../../../../workflow/lambdas/transaction-status-checker/index.mjs"
+      );
 
       const event = createSqsEvent("task-token-default-retries", "0xabc123");
 
@@ -475,8 +488,9 @@ describe("transaction-status-checker handler", () => {
       // Mock checkTransactionStatus to always throw (will retry indefinitely)
       mockCheckTransactionStatus.mockRejectedValue(new Error("Network error"));
 
-      const { handler } =
-        await import("../../../../workflow/lambdas/transaction-status-checker/index.mjs");
+      const { handler } = await import(
+        "../../../../workflow/lambdas/transaction-status-checker/index.mjs"
+      );
 
       const event = createSqsEvent("task-token-error", "0xabc123");
 
@@ -499,8 +513,9 @@ describe("transaction-status-checker handler", () => {
     });
 
     it("should handle missing SQS Records", async () => {
-      const { handler } =
-        await import("../../../../workflow/lambdas/transaction-status-checker/index.mjs");
+      const { handler } = await import(
+        "../../../../workflow/lambdas/transaction-status-checker/index.mjs"
+      );
 
       const event = {
         Records: [],
@@ -510,8 +525,9 @@ describe("transaction-status-checker handler", () => {
     });
 
     it("should handle missing transaction hash in message body", async () => {
-      const { handler } =
-        await import("../../../../workflow/lambdas/transaction-status-checker/index.mjs");
+      const { handler } = await import(
+        "../../../../workflow/lambdas/transaction-status-checker/index.mjs"
+      );
 
       const event = {
         Records: [

@@ -138,8 +138,9 @@ describe("submit handler", () => {
     it("should emit IN_PROGRESS event at start", async () => {
       // Use default mock implementation that creates files
 
-      const { handler } =
-        await import("../../../../workflow/lambdas/submit/index.mjs");
+      const { handler } = await import(
+        "../../../../workflow/lambdas/submit/index.mjs"
+      );
 
       const event = createSqsEvent("task-token-123", [
         { dataGroupLabel: "County", dataGroupCid: "bafkrei123" },
@@ -161,8 +162,9 @@ describe("submit handler", () => {
     it("should submit successfully and send task success", async () => {
       // Use default mock implementation that creates files
 
-      const { handler } =
-        await import("../../../../workflow/lambdas/submit/index.mjs");
+      const { handler } = await import(
+        "../../../../workflow/lambdas/submit/index.mjs"
+      );
 
       const event = createSqsEvent("task-token-success", [
         { dataGroupLabel: "County", dataGroupCid: "bafkrei123" },
@@ -184,8 +186,9 @@ describe("submit handler", () => {
     it("should emit SUCCEEDED event on successful submission", async () => {
       // Use default mock implementation that creates files
 
-      const { handler } =
-        await import("../../../../workflow/lambdas/submit/index.mjs");
+      const { handler } = await import(
+        "../../../../workflow/lambdas/submit/index.mjs"
+      );
 
       const event = createSqsEvent("task-token-succeeded", [
         { dataGroupLabel: "County", dataGroupCid: "bafkrei123" },
@@ -218,8 +221,9 @@ describe("submit handler", () => {
         return { success: false, error: "Submission failed" };
       });
 
-      const { handler } =
-        await import("../../../../workflow/lambdas/submit/index.mjs");
+      const { handler } = await import(
+        "../../../../workflow/lambdas/submit/index.mjs"
+      );
 
       const event = createSqsEvent("task-token-failed", [
         { dataGroupLabel: "County", dataGroupCid: "bafkrei123" },
@@ -254,8 +258,9 @@ describe("submit handler", () => {
         return { success: false, error: "Submission failed" };
       });
 
-      const { handler } =
-        await import("../../../../workflow/lambdas/submit/index.mjs");
+      const { handler } = await import(
+        "../../../../workflow/lambdas/submit/index.mjs"
+      );
 
       const event = createSqsEvent("task-token-failed-event", [
         { dataGroupLabel: "County", dataGroupCid: "bafkrei123" },
@@ -287,8 +292,9 @@ describe("submit handler", () => {
     it("should handle external SQS invocation without task token", async () => {
       // Use default mock implementation that creates files (don't override)
 
-      const { handler } =
-        await import("../../../../workflow/lambdas/submit/index.mjs");
+      const { handler } = await import(
+        "../../../../workflow/lambdas/submit/index.mjs"
+      );
 
       const event = {
         Records: [
@@ -318,8 +324,9 @@ describe("submit handler", () => {
     it("should submit successfully when invoked directly", async () => {
       // Use default mock implementation that creates files
 
-      const { handler } =
-        await import("../../../../workflow/lambdas/submit/index.mjs");
+      const { handler } = await import(
+        "../../../../workflow/lambdas/submit/index.mjs"
+      );
 
       const event = createDirectInvocationEvent([
         { dataGroupLabel: "County", dataGroupCid: "bafkrei123" },
@@ -339,8 +346,9 @@ describe("submit handler", () => {
     });
 
     it("should handle missing transactionItems in direct invocation", async () => {
-      const { handler } =
-        await import("../../../../workflow/lambdas/submit/index.mjs");
+      const { handler } = await import(
+        "../../../../workflow/lambdas/submit/index.mjs"
+      );
 
       const event = {
         taskToken: "direct-task-token",
@@ -381,8 +389,9 @@ describe("submit handler", () => {
 
       // Use default mock implementation that creates files
 
-      const { handler } =
-        await import("../../../../workflow/lambdas/submit/index.mjs");
+      const { handler } = await import(
+        "../../../../workflow/lambdas/submit/index.mjs"
+      );
 
       const event = createSqsEvent("task-token-gas", [
         { dataGroupLabel: "County", dataGroupCid: "bafkrei123" },
@@ -416,8 +425,9 @@ describe("submit handler", () => {
 
       // Use default mock implementation that creates files
 
-      const { handler } =
-        await import("../../../../workflow/lambdas/submit/index.mjs");
+      const { handler } = await import(
+        "../../../../workflow/lambdas/submit/index.mjs"
+      );
 
       const event = createSqsEvent("task-token-eip1559", [
         { dataGroupLabel: "County", dataGroupCid: "bafkrei123" },
@@ -439,8 +449,9 @@ describe("submit handler", () => {
 
       // Use default mock implementation that creates files
 
-      const { handler } =
-        await import("../../../../workflow/lambdas/submit/index.mjs");
+      const { handler } = await import(
+        "../../../../workflow/lambdas/submit/index.mjs"
+      );
 
       const event = createSqsEvent("task-token-no-ssm", [
         { dataGroupLabel: "County", dataGroupCid: "bafkrei123" },
@@ -457,8 +468,9 @@ describe("submit handler", () => {
     it("should handle submitToContract throwing an error", async () => {
       mockSubmitToContract.mockRejectedValue(new Error("Network error"));
 
-      const { handler } =
-        await import("../../../../workflow/lambdas/submit/index.mjs");
+      const { handler } = await import(
+        "../../../../workflow/lambdas/submit/index.mjs"
+      );
 
       const event = createSqsEvent("task-token-error", [
         { dataGroupLabel: "County", dataGroupCid: "bafkrei123" },
@@ -483,8 +495,9 @@ describe("submit handler", () => {
     it("should handle keystore download failure", async () => {
       s3Mock.on(GetObjectCommand).rejects(new Error("S3 access denied"));
 
-      const { handler } =
-        await import("../../../../workflow/lambdas/submit/index.mjs");
+      const { handler } = await import(
+        "../../../../workflow/lambdas/submit/index.mjs"
+      );
 
       const event = createSqsEvent("task-token-keystore-error", [
         { dataGroupLabel: "County", dataGroupCid: "bafkrei123" },

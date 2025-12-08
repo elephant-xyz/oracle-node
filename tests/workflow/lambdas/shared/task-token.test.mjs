@@ -18,8 +18,9 @@ describe("task-token utilities", () => {
     it("should send task success with output", async () => {
       sfnMock.on(SendTaskSuccessCommand).resolves({});
 
-      const { sendTaskSuccess } =
-        await import("../../../../workflow/layers/shared/src/task-token.mjs");
+      const { sendTaskSuccess } = await import(
+        "../../../../workflow/layers/shared/src/task-token.mjs"
+      );
 
       await sendTaskSuccess({
         taskToken: "task-token-123",
@@ -35,8 +36,9 @@ describe("task-token utilities", () => {
     it("should serialize complex output to JSON", async () => {
       sfnMock.on(SendTaskSuccessCommand).resolves({});
 
-      const { sendTaskSuccess } =
-        await import("../../../../workflow/layers/shared/src/task-token.mjs");
+      const { sendTaskSuccess } = await import(
+        "../../../../workflow/layers/shared/src/task-token.mjs"
+      );
 
       const complexOutput = {
         transformedOutputS3Uri: "s3://bucket/output.zip",
@@ -61,8 +63,9 @@ describe("task-token utilities", () => {
     it("should send task failure with error and cause", async () => {
       sfnMock.on(SendTaskFailureCommand).resolves({});
 
-      const { sendTaskFailure } =
-        await import("../../../../workflow/layers/shared/src/task-token.mjs");
+      const { sendTaskFailure } = await import(
+        "../../../../workflow/layers/shared/src/task-token.mjs"
+      );
 
       await sendTaskFailure({
         taskToken: "task-token-456",
@@ -80,8 +83,9 @@ describe("task-token utilities", () => {
     it("should truncate cause to 32KB limit", async () => {
       sfnMock.on(SendTaskFailureCommand).resolves({});
 
-      const { sendTaskFailure } =
-        await import("../../../../workflow/layers/shared/src/task-token.mjs");
+      const { sendTaskFailure } = await import(
+        "../../../../workflow/layers/shared/src/task-token.mjs"
+      );
 
       // Create a cause longer than 32KB
       const longCause = "x".repeat(40000);
@@ -104,8 +108,9 @@ describe("task-token utilities", () => {
     it("should execute worker function and send success on completion", async () => {
       sfnMock.on(SendTaskSuccessCommand).resolves({});
 
-      const { executeWithTaskToken } =
-        await import("../../../../workflow/layers/shared/src/task-token.mjs");
+      const { executeWithTaskToken } = await import(
+        "../../../../workflow/layers/shared/src/task-token.mjs"
+      );
 
       const log = vi.fn();
       const workerFn = vi.fn().mockResolvedValue({
@@ -136,8 +141,9 @@ describe("task-token utilities", () => {
     it("should send failure when worker function throws Error", async () => {
       sfnMock.on(SendTaskFailureCommand).resolves({});
 
-      const { executeWithTaskToken } =
-        await import("../../../../workflow/layers/shared/src/task-token.mjs");
+      const { executeWithTaskToken } = await import(
+        "../../../../workflow/layers/shared/src/task-token.mjs"
+      );
 
       const log = vi.fn();
       const error = new Error("Transform failed");
@@ -166,8 +172,9 @@ describe("task-token utilities", () => {
     it("should handle non-Error thrown values", async () => {
       sfnMock.on(SendTaskFailureCommand).resolves({});
 
-      const { executeWithTaskToken } =
-        await import("../../../../workflow/layers/shared/src/task-token.mjs");
+      const { executeWithTaskToken } = await import(
+        "../../../../workflow/layers/shared/src/task-token.mjs"
+      );
 
       const log = vi.fn();
       const workerFn = vi.fn().mockRejectedValue("string error");
@@ -189,8 +196,9 @@ describe("task-token utilities", () => {
     it("should use error.name from Error object", async () => {
       sfnMock.on(SendTaskFailureCommand).resolves({});
 
-      const { executeWithTaskToken } =
-        await import("../../../../workflow/layers/shared/src/task-token.mjs");
+      const { executeWithTaskToken } = await import(
+        "../../../../workflow/layers/shared/src/task-token.mjs"
+      );
 
       const log = vi.fn();
       const error = new Error("Something went wrong");

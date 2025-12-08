@@ -17,8 +17,9 @@ describe("eventbridge utilities", () => {
     it("should emit event with required fields", async () => {
       eventBridgeMock.on(PutEventsCommand).resolves({});
 
-      const { emitWorkflowEvent } =
-        await import("../../../../workflow/layers/shared/src/eventbridge.mjs");
+      const { emitWorkflowEvent } = await import(
+        "../../../../workflow/layers/shared/src/eventbridge.mjs"
+      );
 
       await emitWorkflowEvent({
         executionId: "exec-123",
@@ -48,8 +49,9 @@ describe("eventbridge utilities", () => {
     it("should include taskToken when provided", async () => {
       eventBridgeMock.on(PutEventsCommand).resolves({});
 
-      const { emitWorkflowEvent } =
-        await import("../../../../workflow/layers/shared/src/eventbridge.mjs");
+      const { emitWorkflowEvent } = await import(
+        "../../../../workflow/layers/shared/src/eventbridge.mjs"
+      );
 
       await emitWorkflowEvent({
         executionId: "exec-123",
@@ -81,8 +83,9 @@ describe("eventbridge utilities", () => {
     it("should include errors when provided", async () => {
       eventBridgeMock.on(PutEventsCommand).resolves({});
 
-      const { emitWorkflowEvent } =
-        await import("../../../../workflow/layers/shared/src/eventbridge.mjs");
+      const { emitWorkflowEvent } = await import(
+        "../../../../workflow/layers/shared/src/eventbridge.mjs"
+      );
 
       const errors = [
         { code: "TRANSFORM_FAILED", details: { message: "Script error" } },
@@ -118,8 +121,9 @@ describe("eventbridge utilities", () => {
     it("should not include errors when array is empty", async () => {
       eventBridgeMock.on(PutEventsCommand).resolves({});
 
-      const { emitWorkflowEvent } =
-        await import("../../../../workflow/layers/shared/src/eventbridge.mjs");
+      const { emitWorkflowEvent } = await import(
+        "../../../../workflow/layers/shared/src/eventbridge.mjs"
+      );
 
       await emitWorkflowEvent({
         executionId: "exec-123",
@@ -150,8 +154,9 @@ describe("eventbridge utilities", () => {
     it("should log success when logger is provided", async () => {
       eventBridgeMock.on(PutEventsCommand).resolves({});
 
-      const { emitWorkflowEvent } =
-        await import("../../../../workflow/layers/shared/src/eventbridge.mjs");
+      const { emitWorkflowEvent } = await import(
+        "../../../../workflow/layers/shared/src/eventbridge.mjs"
+      );
 
       const log = vi.fn();
 
@@ -178,8 +183,9 @@ describe("eventbridge utilities", () => {
         .on(PutEventsCommand)
         .rejects(new Error("EventBridge error"));
 
-      const { emitWorkflowEvent } =
-        await import("../../../../workflow/layers/shared/src/eventbridge.mjs");
+      const { emitWorkflowEvent } = await import(
+        "../../../../workflow/layers/shared/src/eventbridge.mjs"
+      );
 
       const log = vi.fn();
 
@@ -204,8 +210,9 @@ describe("eventbridge utilities", () => {
     it("should handle non-Error exception gracefully", async () => {
       eventBridgeMock.on(PutEventsCommand).rejects("string error");
 
-      const { emitWorkflowEvent } =
-        await import("../../../../workflow/layers/shared/src/eventbridge.mjs");
+      const { emitWorkflowEvent } = await import(
+        "../../../../workflow/layers/shared/src/eventbridge.mjs"
+      );
 
       const log = vi.fn();
 
@@ -230,8 +237,9 @@ describe("eventbridge utilities", () => {
     it("should work without logger provided", async () => {
       eventBridgeMock.on(PutEventsCommand).resolves({});
 
-      const { emitWorkflowEvent } =
-        await import("../../../../workflow/layers/shared/src/eventbridge.mjs");
+      const { emitWorkflowEvent } = await import(
+        "../../../../workflow/layers/shared/src/eventbridge.mjs"
+      );
 
       // Should not throw when log is undefined
       await expect(
@@ -248,8 +256,9 @@ describe("eventbridge utilities", () => {
 
   describe("createWorkflowError", () => {
     it("should create error with code only", async () => {
-      const { createWorkflowError } =
-        await import("../../../../workflow/layers/shared/src/eventbridge.mjs");
+      const { createWorkflowError } = await import(
+        "../../../../workflow/layers/shared/src/eventbridge.mjs"
+      );
 
       const error = createWorkflowError("TRANSFORM_FAILED");
 
@@ -257,8 +266,9 @@ describe("eventbridge utilities", () => {
     });
 
     it("should create error with code and details", async () => {
-      const { createWorkflowError } =
-        await import("../../../../workflow/layers/shared/src/eventbridge.mjs");
+      const { createWorkflowError } = await import(
+        "../../../../workflow/layers/shared/src/eventbridge.mjs"
+      );
 
       const error = createWorkflowError("SVL_VALIDATION_ERROR", {
         errorsS3Uri: "s3://bucket/errors.csv",
@@ -271,8 +281,9 @@ describe("eventbridge utilities", () => {
     });
 
     it("should not include details key when details is undefined", async () => {
-      const { createWorkflowError } =
-        await import("../../../../workflow/layers/shared/src/eventbridge.mjs");
+      const { createWorkflowError } = await import(
+        "../../../../workflow/layers/shared/src/eventbridge.mjs"
+      );
 
       const error = createWorkflowError("HASH_FAILED", undefined);
 
@@ -281,8 +292,9 @@ describe("eventbridge utilities", () => {
     });
 
     it("should handle complex details object", async () => {
-      const { createWorkflowError } =
-        await import("../../../../workflow/layers/shared/src/eventbridge.mjs");
+      const { createWorkflowError } = await import(
+        "../../../../workflow/layers/shared/src/eventbridge.mjs"
+      );
 
       const error = createWorkflowError("UPLOAD_FAILED", {
         message: "Network error",

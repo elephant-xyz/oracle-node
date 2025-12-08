@@ -93,8 +93,9 @@ describe("transform-worker handler", () => {
     mockTransform.mockResolvedValue({ success: true });
     mockExecuteWithTaskToken.mockResolvedValue(undefined);
 
-    const { handler } =
-      await import("../../../../workflow/lambdas/transform-worker/index.mjs");
+    const { handler } = await import(
+      "../../../../workflow/lambdas/transform-worker/index.mjs"
+    );
 
     const event = createSqsEvent("task-token-123", {
       inputS3Uri: "s3://input-bucket/input.zip",
@@ -121,8 +122,9 @@ describe("transform-worker handler", () => {
     mockTransform.mockResolvedValue({ success: true });
     mockExecuteWithTaskToken.mockResolvedValue(undefined);
 
-    const { handler } =
-      await import("../../../../workflow/lambdas/transform-worker/index.mjs");
+    const { handler } = await import(
+      "../../../../workflow/lambdas/transform-worker/index.mjs"
+    );
 
     const event = createSqsEvent("task-token-success", {
       inputS3Uri: "s3://input-bucket/input.zip",
@@ -157,8 +159,9 @@ describe("transform-worker handler", () => {
     });
     mockExecuteWithTaskToken.mockResolvedValue(undefined);
 
-    const { handler } =
-      await import("../../../../workflow/lambdas/transform-worker/index.mjs");
+    const { handler } = await import(
+      "../../../../workflow/lambdas/transform-worker/index.mjs"
+    );
 
     const event = createSqsEvent("task-token-script-fail", {
       inputS3Uri: "s3://input-bucket/input.zip",
@@ -191,8 +194,9 @@ describe("transform-worker handler", () => {
     });
     mockExecuteWithTaskToken.mockResolvedValue(undefined);
 
-    const { handler } =
-      await import("../../../../workflow/lambdas/transform-worker/index.mjs");
+    const { handler } = await import(
+      "../../../../workflow/lambdas/transform-worker/index.mjs"
+    );
 
     const event = createSqsEvent("task-token-general-fail", {
       inputS3Uri: "s3://input-bucket/input.zip",
@@ -221,8 +225,9 @@ describe("transform-worker handler", () => {
     mockTransform.mockResolvedValue({ success: true });
     mockExecuteWithTaskToken.mockResolvedValue(undefined);
 
-    const { handler } =
-      await import("../../../../workflow/lambdas/transform-worker/index.mjs");
+    const { handler } = await import(
+      "../../../../workflow/lambdas/transform-worker/index.mjs"
+    );
 
     const event = createSqsEvent("task-token-result", {
       inputS3Uri: "s3://input-bucket/input.zip",
@@ -247,8 +252,9 @@ describe("transform-worker handler", () => {
     });
     mockExecuteWithTaskToken.mockResolvedValue(undefined);
 
-    const { handler } =
-      await import("../../../../workflow/lambdas/transform-worker/index.mjs");
+    const { handler } = await import(
+      "../../../../workflow/lambdas/transform-worker/index.mjs"
+    );
 
     const event = createSqsEvent("task-token-throw", {
       inputS3Uri: "s3://input-bucket/input.zip",
@@ -274,8 +280,9 @@ describe("transform-worker handler", () => {
     mockTransform.mockResolvedValue({ success: true });
     mockExecuteWithTaskToken.mockResolvedValue(undefined);
 
-    const { handler } =
-      await import("../../../../workflow/lambdas/transform-worker/index.mjs");
+    const { handler } = await import(
+      "../../../../workflow/lambdas/transform-worker/index.mjs"
+    );
 
     const event = createSqsEvent("task-token-logger", {
       inputS3Uri: "s3://input-bucket/input.zip",
@@ -301,8 +308,9 @@ describe("transform-worker handler", () => {
     // executeWithTaskToken is called with the error-throwing workerFn
     mockExecuteWithTaskToken.mockResolvedValue(undefined);
 
-    const { handler } =
-      await import("../../../../workflow/lambdas/transform-worker/index.mjs");
+    const { handler } = await import(
+      "../../../../workflow/lambdas/transform-worker/index.mjs"
+    );
 
     const event = createSqsEvent("task-token-no-prefix", {
       inputS3Uri: "s3://input-bucket/input.zip",
@@ -335,8 +343,9 @@ describe("transform-worker handler", () => {
     mockTransform.mockResolvedValue({ success: true });
     mockUploadToS3.mockResolvedValue("s3://output-bucket/result.zip");
 
-    const { handler } =
-      await import("../../../../workflow/lambdas/transform-worker/index.mjs");
+    const { handler } = await import(
+      "../../../../workflow/lambdas/transform-worker/index.mjs"
+    );
 
     const directEvent = {
       directInvocation: true,
@@ -364,8 +373,9 @@ describe("transform-worker handler", () => {
   it("should create logger with correct fields in direct invocation mode", async () => {
     mockTransform.mockResolvedValue({ success: true });
 
-    const { handler } =
-      await import("../../../../workflow/lambdas/transform-worker/index.mjs");
+    const { handler } = await import(
+      "../../../../workflow/lambdas/transform-worker/index.mjs"
+    );
 
     const directEvent = {
       directInvocation: true,
@@ -394,8 +404,9 @@ describe("transform-worker handler", () => {
       capturedWorkerFn = workerFn;
     });
 
-    const { handler } =
-      await import("../../../../workflow/lambdas/transform-worker/index.mjs");
+    const { handler } = await import(
+      "../../../../workflow/lambdas/transform-worker/index.mjs"
+    );
 
     const event = createSqsEvent("task-token-workerfn", {
       inputS3Uri: "s3://input-bucket/input.zip",
@@ -420,8 +431,9 @@ describe("transform-worker handler", () => {
   it("should throw error in direct invocation mode when TRANSFORM_S3_PREFIX is missing", async () => {
     delete process.env.TRANSFORM_S3_PREFIX;
 
-    const { handler } =
-      await import("../../../../workflow/lambdas/transform-worker/index.mjs");
+    const { handler } = await import(
+      "../../../../workflow/lambdas/transform-worker/index.mjs"
+    );
 
     const directEvent = {
       directInvocation: true,
@@ -445,8 +457,9 @@ describe("transform-worker handler", () => {
     });
     mockExecuteWithTaskToken.mockResolvedValue(undefined);
 
-    const { handler } =
-      await import("../../../../workflow/lambdas/transform-worker/index.mjs");
+    const { handler } = await import(
+      "../../../../workflow/lambdas/transform-worker/index.mjs"
+    );
 
     const event = createSqsEvent("task-token-empty-error", {
       inputS3Uri: "s3://input-bucket/input.zip",
@@ -475,8 +488,9 @@ describe("transform-worker handler", () => {
     });
     mockExecuteWithTaskToken.mockResolvedValue(undefined);
 
-    const { handler } =
-      await import("../../../../workflow/lambdas/transform-worker/index.mjs");
+    const { handler } = await import(
+      "../../../../workflow/lambdas/transform-worker/index.mjs"
+    );
 
     const event = createSqsEvent("task-token-script-empty-error", {
       inputS3Uri: "s3://input-bucket/input.zip",

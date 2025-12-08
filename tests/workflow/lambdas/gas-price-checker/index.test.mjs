@@ -90,8 +90,9 @@ describe("gas-price-checker handler", () => {
         legacy: { gasPrice: "20000000000" },
       });
 
-      const { handler } =
-        await import("../../../../workflow/lambdas/gas-price-checker/index.mjs");
+      const { handler } = await import(
+        "../../../../workflow/lambdas/gas-price-checker/index.mjs"
+      );
 
       const event = createSqsEvent("task-token-123");
 
@@ -116,8 +117,9 @@ describe("gas-price-checker handler", () => {
         legacy: { gasPrice: "20000000000" },
       }); // Below 25 Gwei threshold
 
-      const { handler } =
-        await import("../../../../workflow/lambdas/gas-price-checker/index.mjs");
+      const { handler } = await import(
+        "../../../../workflow/lambdas/gas-price-checker/index.mjs"
+      );
 
       const event = createSqsEvent("task-token-success");
 
@@ -142,8 +144,9 @@ describe("gas-price-checker handler", () => {
         legacy: { gasPrice: "25000000000" },
       }); // Exactly at threshold
 
-      const { handler } =
-        await import("../../../../workflow/lambdas/gas-price-checker/index.mjs");
+      const { handler } = await import(
+        "../../../../workflow/lambdas/gas-price-checker/index.mjs"
+      );
 
       const event = createSqsEvent("task-token-equal");
 
@@ -173,8 +176,9 @@ describe("gas-price-checker handler", () => {
           legacy: { gasPrice: "20000000000" },
         }); // Below threshold
 
-      const { handler } =
-        await import("../../../../workflow/lambdas/gas-price-checker/index.mjs");
+      const { handler } = await import(
+        "../../../../workflow/lambdas/gas-price-checker/index.mjs"
+      );
 
       const event = createSqsEvent("task-token-retry");
 
@@ -208,8 +212,9 @@ describe("gas-price-checker handler", () => {
         legacy: { gasPrice: "30000000000" },
       }); // Always above threshold
 
-      const { handler } =
-        await import("../../../../workflow/lambdas/gas-price-checker/index.mjs");
+      const { handler } = await import(
+        "../../../../workflow/lambdas/gas-price-checker/index.mjs"
+      );
 
       const event = createSqsEvent("task-token-retry-indefinite");
 
@@ -237,8 +242,9 @@ describe("gas-price-checker handler", () => {
         legacy: { gasPrice: "20000000000" },
       });
 
-      const { handler } =
-        await import("../../../../workflow/lambdas/gas-price-checker/index.mjs");
+      const { handler } = await import(
+        "../../../../workflow/lambdas/gas-price-checker/index.mjs"
+      );
 
       const event = createSqsEvent("task-token-succeeded");
 
@@ -261,8 +267,9 @@ describe("gas-price-checker handler", () => {
       // Mock checkGasPrice to always throw (will retry indefinitely)
       mockCheckGasPrice.mockRejectedValue(new Error("RPC error"));
 
-      const { handler } =
-        await import("../../../../workflow/lambdas/gas-price-checker/index.mjs");
+      const { handler } = await import(
+        "../../../../workflow/lambdas/gas-price-checker/index.mjs"
+      );
 
       const event = createSqsEvent("task-token-error-retry");
 
@@ -289,8 +296,9 @@ describe("gas-price-checker handler", () => {
     it("should fail when RPC URL is missing", async () => {
       delete process.env.ELEPHANT_RPC_URL;
 
-      const { handler } =
-        await import("../../../../workflow/lambdas/gas-price-checker/index.mjs");
+      const { handler } = await import(
+        "../../../../workflow/lambdas/gas-price-checker/index.mjs"
+      );
 
       const event = createSqsEvent("task-token-no-rpc");
 
@@ -308,8 +316,9 @@ describe("gas-price-checker handler", () => {
     it("should fail when GAS_PRICE_MAX_GWEI is missing", async () => {
       delete process.env.GAS_PRICE_MAX_GWEI;
 
-      const { handler } =
-        await import("../../../../workflow/lambdas/gas-price-checker/index.mjs");
+      const { handler } = await import(
+        "../../../../workflow/lambdas/gas-price-checker/index.mjs"
+      );
 
       const event = createSqsEvent("task-token-no-max");
 
@@ -332,8 +341,9 @@ describe("gas-price-checker handler", () => {
         legacy: { gasPrice: "20000000000" },
       });
 
-      const { handler } =
-        await import("../../../../workflow/lambdas/gas-price-checker/index.mjs");
+      const { handler } = await import(
+        "../../../../workflow/lambdas/gas-price-checker/index.mjs"
+      );
 
       const event = createSqsEvent("task-token-default-wait");
 
@@ -353,8 +363,9 @@ describe("gas-price-checker handler", () => {
         legacy: { gasPrice: "20000000000" },
       });
 
-      const { handler } =
-        await import("../../../../workflow/lambdas/gas-price-checker/index.mjs");
+      const { handler } = await import(
+        "../../../../workflow/lambdas/gas-price-checker/index.mjs"
+      );
 
       const event = createSqsEvent("task-token-default-retries");
 
@@ -373,8 +384,9 @@ describe("gas-price-checker handler", () => {
       // Mock checkGasPrice to always throw (will retry indefinitely)
       mockCheckGasPrice.mockRejectedValue(new Error("Network error"));
 
-      const { handler } =
-        await import("../../../../workflow/lambdas/gas-price-checker/index.mjs");
+      const { handler } = await import(
+        "../../../../workflow/lambdas/gas-price-checker/index.mjs"
+      );
 
       const event = createSqsEvent("task-token-error");
 
@@ -397,8 +409,9 @@ describe("gas-price-checker handler", () => {
     });
 
     it("should handle missing SQS Records", async () => {
-      const { handler } =
-        await import("../../../../workflow/lambdas/gas-price-checker/index.mjs");
+      const { handler } = await import(
+        "../../../../workflow/lambdas/gas-price-checker/index.mjs"
+      );
 
       const event = {
         Records: [],
@@ -422,8 +435,9 @@ describe("gas-price-checker handler", () => {
     });
     mockExecuteWithTaskToken.mockResolvedValue(undefined);
 
-    const { handler } =
-      await import("../../../../workflow/lambdas/gas-price-checker/index.mjs");
+    const { handler } = await import(
+      "../../../../workflow/lambdas/gas-price-checker/index.mjs"
+    );
 
     const event = createSqsEvent("task-token-eventbridge-fail");
 
@@ -453,8 +467,9 @@ describe("gas-price-checker handler", () => {
     });
     mockExecuteWithTaskToken.mockResolvedValue(undefined);
 
-    const { handler } =
-      await import("../../../../workflow/lambdas/gas-price-checker/index.mjs");
+    const { handler } = await import(
+      "../../../../workflow/lambdas/gas-price-checker/index.mjs"
+    );
 
     const event = createSqsEvent("task-token-succeeded-eventbridge-fail");
 
@@ -486,8 +501,9 @@ describe("gas-price-checker handler", () => {
     mockCheckGasPrice.mockRejectedValue(new Error("RPC URL is required"));
     mockExecuteWithTaskToken.mockResolvedValue(undefined);
 
-    const { handler } =
-      await import("../../../../workflow/lambdas/gas-price-checker/index.mjs");
+    const { handler } = await import(
+      "../../../../workflow/lambdas/gas-price-checker/index.mjs"
+    );
 
     const event = createSqsEvent("task-token-error-eventbridge-fail");
 
