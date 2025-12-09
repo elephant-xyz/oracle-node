@@ -193,7 +193,7 @@ States:
   Prepare:
     Type: Task
     Resource: arn:aws:states:::sqs:sendMessage.waitForTaskToken
-    TimeoutSeconds: 915
+    TimeoutSeconds: 86400 # 24 hours
     Comment: "Timeout matches Lambda timeout (15 min). If Lambda times out, Catch handles it."
     Parameters:
       QueueUrl.$: $.queue.QueueUrl
@@ -879,7 +879,7 @@ States:
         DataGroupLabel:
           DataType: String
           StringValue: "County"
-    TimeoutSeconds: 900
+    TimeoutSeconds: 86400 # 24 hours
     ResultSelector:
       taskToken.$: $$.Task.Token
       result.$: $
@@ -1018,7 +1018,7 @@ States:
         DataGroupLabel:
           DataType: String
           StringValue: "County"
-    TimeoutSeconds: 600
+    TimeoutSeconds: 86400 # 24 hours
     ResultSelector:
       taskToken.$: $$.Task.Token
       result.$: $
@@ -1188,7 +1188,7 @@ States:
         TransactionHash:
           DataType: String
           StringValue.$: $.transactionStatus.transactionHash
-    TimeoutSeconds: 900
+    TimeoutSeconds: 86400 # 24 hours
     ResultSelector:
       taskToken.$: $$.Task.Token
       result.$: $
