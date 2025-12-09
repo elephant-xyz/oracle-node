@@ -194,7 +194,7 @@ States:
     Type: Task
     Resource: arn:aws:states:::sqs:sendMessage.waitForTaskToken
     TimeoutSeconds: 86400 # 24 hours
-    Comment: "Timeout matches Lambda timeout (15 min). If Lambda times out, Catch handles it."
+    Comment: "Send prepare job to SQS queue. Lambda downloads input from S3, runs prepare, uploads output, and calls back with task token."
     Parameters:
       QueueUrl.$: $.queue.QueueUrl
       MessageBody:
