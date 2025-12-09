@@ -1742,11 +1742,7 @@ async function main() {
       }
       return {
         errorCode: err.errorCode,
-        errorDetails: {
-          error_message: parsedDetails.error_message,
-          error_path: parsedDetails.error_path,
-          error_hash: parsedDetails.error_hash,
-        },
+        errorDetails: parsedDetails,
       };
     });
 
