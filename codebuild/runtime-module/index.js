@@ -289,6 +289,7 @@ async function getExecutionWithLeastErrors() {
       InvocationType: "RequestResponse",
       Payload: JSON.stringify({
         sortOrder: "least",
+        errorType: "30",
       }),
     }),
   );
