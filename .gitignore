@@ -374,3 +374,5 @@ transform/**
 
 copy_files_to_s3.py
 purge_dynamodb_table.py
+
+tmp/

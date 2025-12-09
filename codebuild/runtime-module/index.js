@@ -289,6 +289,7 @@ async function getExecutionWithLeastErrors() {
       InvocationType: "RequestResponse",
       Payload: JSON.stringify({
         sortOrder: "least",
+        errorType: "30",
       }),
     }),
   );
@@ -1732,6 +1733,20 @@ async function main() {
       attempt >= maxAttempts ? "MaxRetriesExceeded" : "NoErrorsUri";
     const workflowErrorCode = isMvlScenario ? "70001" : "70002"; // 70xxx for AutoRepair phase
 
+    // Build error_info array with original error details
+    const error_info = executionErrors.map((err) => {
+      let parsedDetails = {};
+      try {
+        parsedDetails = JSON.parse(err.errorDetails);
+      } catch {
+        parsedDetails = {};
+      }
+      return {
+        errorCode: err.errorCode,
+        errorDetails: parsedDetails,
+      };
+    });
+
     await emitWorkflowEvent({
       executionId: execution.executionId,
       county: execution.county,
@@ -1745,6 +1760,7 @@ async function main() {
           failureReason,
           attempts: attempt,
           maxAttempts,
+          error_info,
         }),
       ],
     });
