@@ -182,7 +182,7 @@ States:
     QueryLanguage: JSONata
     Comment: "Get queue URL by name (lowercase, spaces replaced with hyphens). Throws Sqs.QueueDoesNotExistException if queue not found."
     Arguments:
-      QueueName: "{% '${StackName}-prepare-queue-' & $replace($lowercase($states.input.pre.county_name), ' ', '-') %}"
+      QueueName: "{% '${StackName}-prepare-queue-' & $replace($replace($lowercase($states.input.pre.county_name), ' ', '-'), '.', '') %}"
     Output: "{% $merge([$states.input, { 'queue': $states.result }]) %}"
     Next: Prepare
     Catch:
