@@ -1003,7 +1003,6 @@ States:
         DataGroupLabel:
           DataType: String
           StringValue: "County"
-    TimeoutSeconds: 86400 # 24 hours
     ResultSelector:
       taskToken.$: $$.Task.Token
       result.$: $
