@@ -40,7 +40,7 @@ States:
         - Source: elephant.workflow
           DetailType: WorkflowEvent
           Detail:
-            executionId.$: $$.Execution.Id
+            executionId.$: $$.Execution.Name
             county: "unknown"
             status: FAILED
             phase: Preprocess
@@ -142,18 +142,18 @@ States:
         - Source: elephant.workflow
           DetailType: WorkflowEvent
           Detail:
-            executionId.$: $$.Execution.Id
+            executionId.$: $$.Execution.Name
             county.$: $.pre.county_name
             status: SUCCEEDED
             phase: Prepare
             step: Prepare
             dataGroupLabel: County
     ResultPath: $.eventResult
-    Next: GenerateExecutionId
+    Next: EmitTransformScheduled
     Catch:
       - ErrorEquals: [States.ALL]
         ResultPath: $.eventError
-        Next: GenerateExecutionId
+        Next: EmitTransformScheduled
 
   EmitPrepareScheduled:
     Type: Task
@@ -163,7 +163,7 @@ States:
         - Source: elephant.workflow
           DetailType: WorkflowEvent
           Detail:
-            executionId.$: $$.Execution.Id
+            executionId.$: $$.Execution.Name
             county.$: $.pre.county_name
             status: SCHEDULED
             phase: Prepare
@@ -193,13 +193,12 @@ States:
   Prepare:
     Type: Task
     Resource: arn:aws:states:::sqs:sendMessage.waitForTaskToken
-    TimeoutSeconds: 915
-    Comment: "Timeout matches Lambda timeout (15 min). If Lambda times out, Catch handles it."
+    Comment: "Send prepare job to SQS queue. Lambda downloads input from S3, runs prepare, uploads output, and calls back with task token."
     Parameters:
       QueueUrl.$: $.queue.QueueUrl
       MessageBody:
         taskToken.$: $$.Task.Token
-        executionId.$: $$.Execution.Id
+        executionId.$: $$.Execution.Name
         input_s3_uri.$: $.pre.county_prep_input_s3_uri
         output_s3_uri_prefix.$: $.pre.output_prefix
         browser: true
@@ -239,7 +238,7 @@ States:
         - Source: elephant.workflow
           DetailType: WorkflowEvent
           Detail:
-            executionId.$: $$.Execution.Id
+            executionId.$: $$.Execution.Name
             county.$: $.pre.county_name
             status: FAILED
             phase: Prepare
@@ -265,7 +264,7 @@ States:
         - Source: elephant.workflow
           DetailType: WorkflowEvent
           Detail:
-            executionId.$: $$.Execution.Id
+            executionId.$: $$.Execution.Name
             county.$: $.prepare.county
             status: SUCCEEDED
             phase: Prepare
@@ -273,11 +272,11 @@ States:
             dataGroupLabel: County
             taskToken.$: $.prepare.taskToken
     ResultPath: $.eventResult
-    Next: GenerateExecutionId
+    Next: EmitTransformScheduled
     Catch:
       - ErrorEquals: [States.ALL]
         ResultPath: $.eventError
-        Next: GenerateExecutionId
+        Next: EmitTransformScheduled
 
   EmitPrepareFailed:
     Type: Task
@@ -290,7 +289,7 @@ States:
         - Source: elephant.workflow
           DetailType: WorkflowEvent
           Detail:
-            executionId: "{% $states.context.Execution.Id %}"
+            executionId: "{% $states.context.Execution.Name %}"
             county: "{% $states.input.pre.county_name %}"
             status: FAILED
             phase: Prepare
@@ -309,21 +308,6 @@ States:
         Output: "{% $merge([$states.input, { 'error': $states.errorOutput }]) %}"
         Next: EmitPrepareFailed
 
-  # === GRANULAR POSTPROCESS STEPS ===
-
-  GenerateExecutionId:
-    Type: Pass
-    QueryLanguage: JSONata
-    Comment: "Generate unique execution ID and prepare context for granular steps"
-    Output: >-
-      {%
-        $merge([$states.input, {
-          "executionId": $states.context.Execution.Name,
-          "outputPrefix": $states.input.pre.output_prefix
-        }])
-      %}
-    Next: EmitTransformScheduled
-
   # === TRANSFORM STEP ===
 
   EmitTransformScheduled:
@@ -335,7 +319,7 @@ States:
         - Source: elephant.workflow
           DetailType: WorkflowEvent
           Detail:
-            executionId.$: $.executionId
+            executionId.$: $$.Execution.Name
             county.$: $.pre.county_name
             status: SCHEDULED
             phase: Transform
@@ -359,12 +343,12 @@ States:
         input:
           inputS3Uri.$: $.prepare.output_s3_uri
           county.$: $.pre.county_name
-          outputPrefix.$: $.outputPrefix
-          executionId.$: $.executionId
+          outputPrefix.$: $.pre.output_prefix
+          executionId.$: $$.Execution.Name
     ResultSelector:
       transformedOutputS3Uri.$: $.transformedOutputS3Uri
       county.$: $.county
-      executionId.$: $.executionId
+      executionId.$: $$.Execution.Name
     ResultPath: $.transform
     Next: EmitTransformSucceeded
     Retry:
@@ -390,7 +374,7 @@ States:
         - Source: elephant.workflow
           DetailType: WorkflowEvent
           Detail:
-            executionId.$: $.executionId
+            executionId.$: $$.Execution.Name
             county.$: $.pre.county_name
             status: SUCCEEDED
             phase: Transform
@@ -414,7 +398,7 @@ States:
         - Source: elephant.workflow
           DetailType: WorkflowEvent
           Detail:
-            executionId: "{% $states.input.executionId %}"
+            executionId: "{% $states.context.Execution.Name %}"
             county: "{% $states.input.pre.county_name %}"
             status: FAILED
             phase: Transform
@@ -444,7 +428,7 @@ States:
         - Source: elephant.workflow
           DetailType: WorkflowEvent
           Detail:
-            executionId.$: $.executionId
+            executionId.$: $$.Execution.Name
             county.$: $.pre.county_name
             status: SCHEDULED
             phase: SVL
@@ -468,14 +452,14 @@ States:
         input:
           transformedOutputS3Uri.$: $.transform.transformedOutputS3Uri
           county.$: $.pre.county_name
-          outputPrefix.$: $.outputPrefix
-          executionId.$: $.executionId
+          outputPrefix.$: $.pre.output_prefix
+          executionId.$: $$.Execution.Name
           preparedS3Uri.$: $.prepare.output_s3_uri
           s3.$: $.message.s3
     ResultSelector:
       validatedOutputS3Uri.$: $.validatedOutputS3Uri
       county.$: $.county
-      executionId.$: $.executionId
+      executionId.$: $$.Execution.Name
       validationPassed.$: $.validationPassed
       svlErrors.$: $.svlErrors
     ResultPath: $.svl
@@ -512,7 +496,7 @@ States:
         - Source: elephant.workflow
           DetailType: WorkflowEvent
           Detail:
-            executionId.$: $.executionId
+            executionId.$: $$.Execution.Name
             county.$: $.pre.county_name
             status: SUCCEEDED
             phase: SVL
@@ -536,7 +520,7 @@ States:
         - Source: elephant.workflow
           DetailType: WorkflowEvent
           Detail:
-            executionId: "{% $states.input.executionId %}"
+            executionId: "{% $states.context.Execution.Name %}"
             county: "{% $states.input.pre.county_name %}"
             status: FAILED
             phase: SVL
@@ -575,7 +559,7 @@ States:
         - Source: elephant.workflow
           DetailType: WorkflowEvent
           Detail:
-            executionId.$: $.executionId
+            executionId.$: $$.Execution.Name
             county.$: $.pre.county_name
             status: FAILED
             phase: SVL
@@ -605,7 +589,7 @@ States:
         - Source: elephant.workflow
           DetailType: WorkflowEvent
           Detail:
-            executionId.$: $.executionId
+            executionId.$: $$.Execution.Name
             county.$: $.pre.county_name
             status: SCHEDULED
             phase: Hash
@@ -630,14 +614,14 @@ States:
           validatedOutputS3Uri.$: $.transform.transformedOutputS3Uri
           seedOutputS3Uri.$: $.pre.seed_output_s3_uri
           county.$: $.pre.county_name
-          outputPrefix.$: $.outputPrefix
-          executionId.$: $.executionId
+          outputPrefix.$: $.pre.output_prefix
+          executionId.$: $$.Execution.Name
     ResultSelector:
       seedHashZipS3Uri.$: $.seedHashZipS3Uri
       countyHashZipS3Uri.$: $.countyHashZipS3Uri
       combinedHashCsvS3Uri.$: $.combinedHashCsvS3Uri
       county.$: $.county
-      executionId.$: $.executionId
+      executionId.$: $$.Execution.Name
       propertyCid.$: $.propertyCid
       transactionItems.$: $.transactionItems
     ResultPath: $.hash
@@ -661,7 +645,7 @@ States:
         - Source: elephant.workflow
           DetailType: WorkflowEvent
           Detail:
-            executionId.$: $.executionId
+            executionId.$: $$.Execution.Name
             county.$: $.pre.county_name
             status: SUCCEEDED
             phase: Hash
@@ -684,7 +668,7 @@ States:
         - Source: elephant.workflow
           DetailType: WorkflowEvent
           Detail:
-            executionId.$: $.executionId
+            executionId.$: $$.Execution.Name
             county.$: $.pre.county_name
             status: FAILED
             phase: Hash
@@ -714,7 +698,7 @@ States:
         - Source: elephant.workflow
           DetailType: WorkflowEvent
           Detail:
-            executionId.$: $.executionId
+            executionId.$: $$.Execution.Name
             county.$: $.pre.county_name
             status: SCHEDULED
             phase: Upload
@@ -739,11 +723,11 @@ States:
           seedHashZipS3Uri.$: $.hash.seedHashZipS3Uri
           countyHashZipS3Uri.$: $.hash.countyHashZipS3Uri
           county.$: $.pre.county_name
-          executionId.$: $.executionId
+          executionId.$: $$.Execution.Name
     ResultSelector:
       uploadSuccess.$: $.uploadSuccess
       county.$: $.county
-      executionId.$: $.executionId
+      executionId.$: $$.Execution.Name
     ResultPath: $.upload
     Next: EmitUploadSucceeded
     Retry:
@@ -769,7 +753,7 @@ States:
         - Source: elephant.workflow
           DetailType: WorkflowEvent
           Detail:
-            executionId.$: $.executionId
+            executionId.$: $$.Execution.Name
             county.$: $.pre.county_name
             status: SUCCEEDED
             phase: Upload
@@ -792,7 +776,7 @@ States:
         - Source: elephant.workflow
           DetailType: WorkflowEvent
           Detail:
-            executionId.$: $.executionId
+            executionId.$: $$.Execution.Name
             county.$: $.pre.county_name
             status: FAILED
             phase: Upload
@@ -822,7 +806,7 @@ States:
         - Source: elephant.workflow
           DetailType: WorkflowEvent
           Detail:
-            executionId.$: $.executionId
+            executionId.$: $$.Execution.Name
             county.$: $.pre.county_name
             status: SCHEDULED
             phase: Submit
@@ -846,7 +830,7 @@ States:
         - Source: elephant.workflow
           DetailType: WorkflowEvent
           Detail:
-            executionId.$: $.executionId
+            executionId.$: $$.Execution.Name
             county.$: $.pre.county_name
             status: SCHEDULED
             phase: GasPriceCheck
@@ -872,14 +856,13 @@ States:
           StringValue.$: $$.Task.Token
         ExecutionArn:
           DataType: String
-          StringValue.$: $$.Execution.Id
+          StringValue.$: $$.Execution.Name
         County:
           DataType: String
           StringValue.$: $.pre.county_name
         DataGroupLabel:
           DataType: String
           StringValue: "County"
-    TimeoutSeconds: 900
     ResultSelector:
       taskToken.$: $$.Task.Token
       result.$: $
@@ -906,7 +889,7 @@ States:
         - Source: elephant.workflow
           DetailType: WorkflowEvent
           Detail:
-            executionId.$: $.executionId
+            executionId.$: $$.Execution.Name
             county.$: $.pre.county_name
             status: SUCCEEDED
             phase: GasPriceCheck
@@ -928,7 +911,7 @@ States:
         - Source: elephant.workflow
           DetailType: WorkflowEvent
           Detail:
-            executionId.$: $.executionId
+            executionId.$: $$.Execution.Name
             county.$: $.pre.county_name
             status: FAILED
             phase: GasPriceCheck
@@ -955,7 +938,7 @@ States:
         - Source: elephant.workflow
           DetailType: WorkflowEvent
           Detail:
-            executionId.$: $.executionId
+            executionId.$: $$.Execution.Name
             county.$: $.pre.county_name
             status: FAILED
             phase: GasPriceCheck
@@ -985,7 +968,7 @@ States:
         - Source: elephant.workflow
           DetailType: WorkflowEvent
           Detail:
-            executionId.$: $.executionId
+            executionId.$: $$.Execution.Name
             county.$: $.pre.county_name
             status: SCHEDULED
             phase: Submit
@@ -1011,14 +994,13 @@ States:
           StringValue.$: $$.Task.Token
         ExecutionArn:
           DataType: String
-          StringValue.$: $$.Execution.Id
+          StringValue.$: $$.Execution.Name
         County:
           DataType: String
           StringValue.$: $.pre.county_name
         DataGroupLabel:
           DataType: String
           StringValue: "County"
-    TimeoutSeconds: 600
     ResultSelector:
       taskToken.$: $$.Task.Token
       result.$: $
@@ -1045,7 +1027,7 @@ States:
         - Source: elephant.workflow
           DetailType: WorkflowEvent
           Detail:
-            executionId.$: $.executionId
+            executionId.$: $$.Execution.Name
             county.$: $.pre.county_name
             status: SUCCEEDED
             phase: Submit
@@ -1067,7 +1049,7 @@ States:
         - Source: elephant.workflow
           DetailType: WorkflowEvent
           Detail:
-            executionId.$: $.executionId
+            executionId.$: $$.Execution.Name
             county.$: $.pre.county_name
             status: FAILED
             phase: Submit
@@ -1094,7 +1076,7 @@ States:
         - Source: elephant.workflow
           DetailType: WorkflowEvent
           Detail:
-            executionId.$: $.executionId
+            executionId.$: $$.Execution.Name
             county.$: $.pre.county_name
             status: FAILED
             phase: Submit
@@ -1120,7 +1102,7 @@ States:
     Parameters:
       submit.$: $.submit
       hash.$: $.hash
-      executionId.$: $.executionId
+      executionId.$: $$.Execution.Name
       county.$: $.pre.county_name
       transactionHash.$: $.submit.result.submitResults[0].transactionHash
       transactionItems.$: $.hash.transactionItems
@@ -1145,7 +1127,7 @@ States:
         - Source: elephant.workflow
           DetailType: WorkflowEvent
           Detail:
-            executionId.$: $.executionId
+            executionId.$: $$.Execution.Name
             county.$: $.pre.county_name
             status: SCHEDULED
             phase: TransactionStatusCheck
@@ -1178,7 +1160,7 @@ States:
           StringValue.$: $$.Task.Token
         ExecutionArn:
           DataType: String
-          StringValue.$: $$.Execution.Id
+          StringValue.$: $$.Execution.Name
         County:
           DataType: String
           StringValue.$: $.pre.county_name
@@ -1188,7 +1170,6 @@ States:
         TransactionHash:
           DataType: String
           StringValue.$: $.transactionStatus.transactionHash
-    TimeoutSeconds: 900
     ResultSelector:
       taskToken.$: $$.Task.Token
       result.$: $
@@ -1215,7 +1196,7 @@ States:
         - Source: elephant.workflow
           DetailType: WorkflowEvent
           Detail:
-            executionId.$: $.executionId
+            executionId.$: $$.Execution.Name
             county.$: $.pre.county_name
             status: SUCCEEDED
             phase: TransactionStatusCheck
@@ -1236,7 +1217,7 @@ States:
         - Source: elephant.workflow
           DetailType: WorkflowEvent
           Detail:
-            executionId.$: $.executionId
+            executionId.$: $$.Execution.Name
             county.$: $.pre.county_name
             status: FAILED
             phase: TransactionStatusCheck
@@ -1262,7 +1243,7 @@ States:
         - Source: elephant.workflow
           DetailType: WorkflowEvent
           Detail:
-            executionId.$: $.executionId
+            executionId.$: $$.Execution.Name
             county.$: $.pre.county_name
             status: FAILED
             phase: TransactionStatusCheck
