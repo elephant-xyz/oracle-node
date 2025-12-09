@@ -44,8 +44,7 @@ import {
  * @returns {Promise<void>}
  */
 async function uploadHashOutputs({ filesForIpfs, tmpDir, log, pinataJwt }) {
-  log("info", "ipfs_upload_start", { operation: "ipfs_upload" });
-  const uploadStart = Date.now();
+  log("info", "ipfs_upload_start", {});
 
   // Create a temp directory for unzipping
   const extractTempDir = path.join(tmpDir, "ipfs_upload_temp");
@@ -72,26 +71,49 @@ async function uploadHashOutputs({ filesForIpfs, tmpDir, log, pinataJwt }) {
 
     // Upload the combined zip
     log("info", "ipfs_upload_combined_start", {});
-    const uploadResult = await upload({
-      input: combinedZipPath,
-      pinataJwt,
-      cwd: tmpDir,
-    });
-    const totalUploadDuration = Date.now() - uploadStart;
-    log("info", "ipfs_upload_complete", {
-      operation: "ipfs_upload_total",
-      duration_ms: totalUploadDuration,
-      duration_seconds: (totalUploadDuration / 1000).toFixed(2),
-    });
+
+    let uploadResult;
+    try {
+      uploadResult = await upload({
+        input: combinedZipPath,
+        pinataJwt,
+        cwd: tmpDir,
+      });
+    } catch (uploadErr) {
+      // Handle exceptions thrown by upload() (e.g., timeouts, network errors)
+      let errorMessage = "Upload to IPFS failed";
+      if (uploadErr instanceof Error) {
+        if (uploadErr.message && uploadErr.message !== "undefined") {
+          errorMessage = `Upload failed: ${uploadErr.message}`;
+        } else if (uploadErr.name) {
+          errorMessage = `Upload failed: ${uploadErr.name}`;
+        }
+      } else if (uploadErr && String(uploadErr) !== "undefined") {
+        errorMessage = `Upload failed: ${String(uploadErr)}`;
+      }
+
+      const err = new Error(errorMessage);
+      err.name = "UploadFailedError";
+      throw err;
+    }
 
     if (!uploadResult.success) {
-      log("error", "upload_failed", {
-        step: "upload",
-        operation: "ipfs_upload",
-        errorMessage: uploadResult.errorMessage,
-        errors: uploadResult.errors,
-      });
-      const err = new Error(`Upload failed: ${uploadResult.errorMessage}`);
+      // Build error message with fallback if errorMessage is undefined
+      let errorMessage = "Upload to IPFS failed";
+      if (
+        uploadResult.errorMessage &&
+        uploadResult.errorMessage !== "undefined"
+      ) {
+        errorMessage = `Upload failed: ${uploadResult.errorMessage}`;
+      } else if (
+        uploadResult.errors &&
+        Array.isArray(uploadResult.errors) &&
+        uploadResult.errors.length > 0
+      ) {
+        errorMessage = `Upload failed: ${JSON.stringify(uploadResult.errors)}`;
+      }
+
+      const err = new Error(errorMessage);
       err.name = "UploadFailedError";
       throw err;
     }
@@ -147,8 +169,10 @@ async function runUpload({
       county,
       executionId,
     };
+  } catch (err) {
+    // Re-throw the error as-is - it already contains the error message
+    throw err;
   } finally {
-    // Cleanup
     try {
       await fs.rm(tmpDir, { recursive: true, force: true });
     } catch {}
@@ -160,9 +184,10 @@ async function runUpload({
  * Triggered by SQS messages from the Step Functions workflow.
  *
  * @param {import("aws-lambda").SQSEvent} event - SQS event containing messages.
+ * @param {import("aws-lambda").Context} context - Lambda context.
  * @returns {Promise<void>}
  */
-export const handler = async (event) => {
+export const handler = async (event, context) => {
   for (const record of event.Records) {
     /** @type {SQSMessageBody} */
     const messageBody = JSON.parse(record.body);
