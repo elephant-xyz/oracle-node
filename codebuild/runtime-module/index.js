@@ -1732,6 +1732,24 @@ async function main() {
       attempt >= maxAttempts ? "MaxRetriesExceeded" : "NoErrorsUri";
     const workflowErrorCode = isMvlScenario ? "70001" : "70002"; // 70xxx for AutoRepair phase
 
+    // Build error_info array with original error details
+    const error_info = executionErrors.map((err) => {
+      let parsedDetails = {};
+      try {
+        parsedDetails = JSON.parse(err.errorDetails);
+      } catch {
+        parsedDetails = {};
+      }
+      return {
+        errorCode: err.errorCode,
+        errorDetails: {
+          error_message: parsedDetails.error_message,
+          error_path: parsedDetails.error_path,
+          error_hash: parsedDetails.error_hash,
+        },
+      };
+    });
+
     await emitWorkflowEvent({
       executionId: execution.executionId,
       county: execution.county,
@@ -1745,6 +1763,7 @@ async function main() {
           failureReason,
           attempts: attempt,
           maxAttempts,
+          error_info,
         }),
       ],
     });

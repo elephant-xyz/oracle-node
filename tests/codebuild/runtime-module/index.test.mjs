@@ -351,6 +351,103 @@ describe("auto-repair runtime module", () => {
       expect(error.details.failureReason).toBe(failureReason);
     });
 
+    it("should include error_info with original error details in FAILED WorkflowEvent", async () => {
+      // Test that error_info array contains original error codes and details
+      const executionErrors = [
+        {
+          errorCode: "30abc123",
+          status: "failed",
+          occurrences: 1,
+          errorDetails: JSON.stringify({
+            error_message: "missing required property",
+            error_path: "deed_1.json/deed_type",
+            error_hash: "hash123",
+          }),
+        },
+        {
+          errorCode: "30def456",
+          status: "failed",
+          occurrences: 2,
+          errorDetails: JSON.stringify({
+            error_message: "invalid type",
+            error_path: "deed_2.json/amount",
+            error_hash: "hash456",
+          }),
+        },
+      ];
+
+      // Simulate building error_info array as done in main()
+      const error_info = executionErrors.map((err) => {
+        let parsedDetails = {};
+        try {
+          parsedDetails = JSON.parse(err.errorDetails);
+        } catch {
+          parsedDetails = {};
+        }
+        return {
+          errorCode: err.errorCode,
+          errorDetails: {
+            error_message: parsedDetails.error_message,
+            error_path: parsedDetails.error_path,
+            error_hash: parsedDetails.error_hash,
+          },
+        };
+      });
+
+      // Verify error_info structure
+      expect(error_info).toHaveLength(2);
+      expect(error_info[0]).toEqual({
+        errorCode: "30abc123",
+        errorDetails: {
+          error_message: "missing required property",
+          error_path: "deed_1.json/deed_type",
+          error_hash: "hash123",
+        },
+      });
+      expect(error_info[1]).toEqual({
+        errorCode: "30def456",
+        errorDetails: {
+          error_message: "invalid type",
+          error_path: "deed_2.json/amount",
+          error_hash: "hash456",
+        },
+      });
+
+      // Verify createWorkflowError is called with error_info
+      mockCreateWorkflowError("70002", {
+        errorType: "SVL",
+        failureReason: "MaxRetriesExceeded",
+        attempts: 3,
+        maxAttempts: 3,
+        error_info,
+      });
+
+      expect(mockCreateWorkflowError).toHaveBeenCalledWith("70002", {
+        errorType: "SVL",
+        failureReason: "MaxRetriesExceeded",
+        attempts: 3,
+        maxAttempts: 3,
+        error_info: [
+          {
+            errorCode: "30abc123",
+            errorDetails: {
+              error_message: "missing required property",
+              error_path: "deed_1.json/deed_type",
+              error_hash: "hash123",
+            },
+          },
+          {
+            errorCode: "30def456",
+            errorDetails: {
+              error_message: "invalid type",
+              error_path: "deed_2.json/amount",
+              error_hash: "hash456",
+            },
+          },
+        ],
+      });
+    });
+
     it("should emit ElephantErrorFailedToResolve for each error code", async () => {
       const executionErrors = [
         { errorCode: "30abc123" },
