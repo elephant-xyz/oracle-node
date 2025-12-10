@@ -818,13 +818,14 @@ Resources:
                   if [[ -n "${RUNTIME_ARTIFACTS_PREFIX:-}" ]]; then
                     S3_SOURCE="${S3_SOURCE%/}/${RUNTIME_ARTIFACTS_PREFIX}"
                   fi
-                - echo "============================================================"
-                - echo "  GS3 Migration Job"
-                - echo "============================================================"
-                - echo "  Table: ${ERRORS_TABLE_NAME}"
-                - echo "  Dry Run: ${DRY_RUN}"
-                - echo "  Source: ${S3_SOURCE}"
-                - echo "============================================================"
+                - |
+                  echo "============================================================"
+                  echo "  GS3 Migration Job"
+                  echo "============================================================"
+                  echo "  Table: ${ERRORS_TABLE_NAME}"
+                  echo "  Dry Run: ${DRY_RUN}"
+                  echo "  Source: ${S3_SOURCE}"
+                  echo "============================================================"
                 - aws s3 cp "${S3_SOURCE}" "${RUNTIME_DOWNLOAD_DIR}" --recursive --exclude "*" --include "*.zip"
                 - >
                   if ! compgen -G "${RUNTIME_DOWNLOAD_DIR}/*.zip" > /dev/null; then
@@ -855,9 +856,7 @@ Resources:
                 - node "${RUNTIME_ENTRYPOINT}"
             post_build:
               commands:
-                - echo "============================================================"
-                - echo "  GS3 Migration Job Complete"
-                - echo "============================================================"
+                - echo "GS3 Migration Job Complete"
       Tags:
         - Key: Environment
           Value: !Ref EnvironmentName
