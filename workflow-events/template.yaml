@@ -586,6 +586,206 @@ Resources:
                   [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"AutoRepairElephantPhase\" Status=\"FAILED\"', 'Sum', 300))", "label": "FAILED", "id": "autorepair_fail", "color": "#d62728"}]
                 ]
               }
+            },
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 56,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "Prepare Phase - Total Since Beginning",
+                "view": "bar",
+                "region": "${AWS::Region}",
+                "period": 2592000,
+                "stat": "Sum",
+                "metrics": [
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"PrepareElephantPhase\" Status=\"SCHEDULED\"', 'Sum', 2592000))", "label": "SCHEDULED", "id": "prep_sched_total", "color": "#1f77b4"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"PrepareElephantPhase\" Status=\"IN_PROGRESS\"', 'Sum', 2592000))", "label": "IN_PROGRESS", "id": "prep_prog_total", "color": "#ff7f0e"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"PrepareElephantPhase\" Status=\"SUCCEEDED\"', 'Sum', 2592000))", "label": "SUCCEEDED", "id": "prep_succ_total", "color": "#2ca02c"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"PrepareElephantPhase\" Status=\"FAILED\"', 'Sum', 2592000))", "label": "FAILED", "id": "prep_fail_total", "color": "#d62728"}]
+                ]
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12,
+              "y": 56,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "Transform Phase - Total Since Beginning",
+                "view": "bar",
+                "region": "${AWS::Region}",
+                "period": 2592000,
+                "stat": "Sum",
+                "metrics": [
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"TransformElephantPhase\" Status=\"SCHEDULED\"', 'Sum', 2592000))", "label": "SCHEDULED", "id": "trans_sched_total", "color": "#1f77b4"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"TransformElephantPhase\" Status=\"IN_PROGRESS\"', 'Sum', 2592000))", "label": "IN_PROGRESS", "id": "trans_prog_total", "color": "#ff7f0e"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"TransformElephantPhase\" Status=\"SUCCEEDED\"', 'Sum', 2592000))", "label": "SUCCEEDED", "id": "trans_succ_total", "color": "#2ca02c"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"TransformElephantPhase\" Status=\"FAILED\"', 'Sum', 2592000))", "label": "FAILED", "id": "trans_fail_total", "color": "#d62728"}]
+                ]
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 62,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "SVL Phase - Total Since Beginning",
+                "view": "bar",
+                "region": "${AWS::Region}",
+                "period": 2592000,
+                "stat": "Sum",
+                "metrics": [
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"SVLElephantPhase\" Status=\"SCHEDULED\"', 'Sum', 2592000))", "label": "SCHEDULED", "id": "svl_sched_total", "color": "#1f77b4"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"SVLElephantPhase\" Status=\"IN_PROGRESS\"', 'Sum', 2592000))", "label": "IN_PROGRESS", "id": "svl_prog_total", "color": "#ff7f0e"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"SVLElephantPhase\" Status=\"SUCCEEDED\"', 'Sum', 2592000))", "label": "SUCCEEDED", "id": "svl_succ_total", "color": "#2ca02c"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"SVLElephantPhase\" Status=\"FAILED\"', 'Sum', 2592000))", "label": "FAILED", "id": "svl_fail_total", "color": "#d62728"}]
+                ]
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12,
+              "y": 62,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "MVL Phase - Total Since Beginning",
+                "view": "bar",
+                "region": "${AWS::Region}",
+                "period": 2592000,
+                "stat": "Sum",
+                "metrics": [
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"MVLElephantPhase\" Status=\"SCHEDULED\"', 'Sum', 2592000))", "label": "SCHEDULED", "id": "mvl_sched_total", "color": "#1f77b4"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"MVLElephantPhase\" Status=\"IN_PROGRESS\"', 'Sum', 2592000))", "label": "IN_PROGRESS", "id": "mvl_prog_total", "color": "#ff7f0e"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"MVLElephantPhase\" Status=\"SUCCEEDED\"', 'Sum', 2592000))", "label": "SUCCEEDED", "id": "mvl_succ_total", "color": "#2ca02c"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"MVLElephantPhase\" Status=\"FAILED\"', 'Sum', 2592000))", "label": "FAILED", "id": "mvl_fail_total", "color": "#d62728"}]
+                ]
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 68,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "Hash Phase - Total Since Beginning",
+                "view": "bar",
+                "region": "${AWS::Region}",
+                "period": 2592000,
+                "stat": "Sum",
+                "metrics": [
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"HashElephantPhase\" Status=\"SCHEDULED\"', 'Sum', 2592000))", "label": "SCHEDULED", "id": "hash_sched_total", "color": "#1f77b4"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"HashElephantPhase\" Status=\"IN_PROGRESS\"', 'Sum', 2592000))", "label": "IN_PROGRESS", "id": "hash_prog_total", "color": "#ff7f0e"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"HashElephantPhase\" Status=\"SUCCEEDED\"', 'Sum', 2592000))", "label": "SUCCEEDED", "id": "hash_succ_total", "color": "#2ca02c"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"HashElephantPhase\" Status=\"FAILED\"', 'Sum', 2592000))", "label": "FAILED", "id": "hash_fail_total", "color": "#d62728"}]
+                ]
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12,
+              "y": 68,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "Upload Phase - Total Since Beginning",
+                "view": "bar",
+                "region": "${AWS::Region}",
+                "period": 2592000,
+                "stat": "Sum",
+                "metrics": [
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"UploadElephantPhase\" Status=\"SCHEDULED\"', 'Sum', 2592000))", "label": "SCHEDULED", "id": "upload_sched_total", "color": "#1f77b4"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"UploadElephantPhase\" Status=\"IN_PROGRESS\"', 'Sum', 2592000))", "label": "IN_PROGRESS", "id": "upload_prog_total", "color": "#ff7f0e"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"UploadElephantPhase\" Status=\"SUCCEEDED\"', 'Sum', 2592000))", "label": "SUCCEEDED", "id": "upload_succ_total", "color": "#2ca02c"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"UploadElephantPhase\" Status=\"FAILED\"', 'Sum', 2592000))", "label": "FAILED", "id": "upload_fail_total", "color": "#d62728"}]
+                ]
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 74,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "Submit Phase - Total Since Beginning",
+                "view": "bar",
+                "region": "${AWS::Region}",
+                "period": 2592000,
+                "stat": "Sum",
+                "metrics": [
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"SubmitElephantPhase\" Status=\"SCHEDULED\"', 'Sum', 2592000))", "label": "SCHEDULED", "id": "submit_sched_total", "color": "#1f77b4"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"SubmitElephantPhase\" Status=\"IN_PROGRESS\"', 'Sum', 2592000))", "label": "IN_PROGRESS", "id": "submit_prog_total", "color": "#ff7f0e"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"SubmitElephantPhase\" Status=\"SUCCEEDED\"', 'Sum', 2592000))", "label": "SUCCEEDED", "id": "submit_succ_total", "color": "#2ca02c"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"SubmitElephantPhase\" Status=\"FAILED\"', 'Sum', 2592000))", "label": "FAILED", "id": "submit_fail_total", "color": "#d62728"}]
+                ]
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12,
+              "y": 74,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "Gas Price Check Phase - Total Since Beginning",
+                "view": "bar",
+                "region": "${AWS::Region}",
+                "period": 2592000,
+                "stat": "Sum",
+                "metrics": [
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"GasPriceCheckElephantPhase\" Status=\"SCHEDULED\"', 'Sum', 2592000))", "label": "SCHEDULED", "id": "gasprice_sched_total", "color": "#1f77b4"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"GasPriceCheckElephantPhase\" Status=\"IN_PROGRESS\"', 'Sum', 2592000))", "label": "IN_PROGRESS", "id": "gasprice_prog_total", "color": "#ff7f0e"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"GasPriceCheckElephantPhase\" Status=\"SUCCEEDED\"', 'Sum', 2592000))", "label": "SUCCEEDED", "id": "gasprice_succ_total", "color": "#2ca02c"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"GasPriceCheckElephantPhase\" Status=\"FAILED\"', 'Sum', 2592000))", "label": "FAILED", "id": "gasprice_fail_total", "color": "#d62728"}]
+                ]
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 80,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "Transaction Status Check Phase - Total Since Beginning",
+                "view": "bar",
+                "region": "${AWS::Region}",
+                "period": 2592000,
+                "stat": "Sum",
+                "metrics": [
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"TransactionStatusCheckElephantPhase\" Status=\"SCHEDULED\"', 'Sum', 2592000))", "label": "SCHEDULED", "id": "txstatus_sched_total", "color": "#1f77b4"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"TransactionStatusCheckElephantPhase\" Status=\"IN_PROGRESS\"', 'Sum', 2592000))", "label": "IN_PROGRESS", "id": "txstatus_prog_total", "color": "#ff7f0e"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"TransactionStatusCheckElephantPhase\" Status=\"SUCCEEDED\"', 'Sum', 2592000))", "label": "SUCCEEDED", "id": "txstatus_succ_total", "color": "#2ca02c"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"TransactionStatusCheckElephantPhase\" Status=\"FAILED\"', 'Sum', 2592000))", "label": "FAILED", "id": "txstatus_fail_total", "color": "#d62728"}]
+                ]
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12,
+              "y": 80,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "AutoRepair Phase - Total Since Beginning",
+                "view": "bar",
+                "region": "${AWS::Region}",
+                "period": 2592000,
+                "stat": "Sum",
+                "metrics": [
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"AutoRepairElephantPhase\" Status=\"SCHEDULED\"', 'Sum', 2592000))", "label": "SCHEDULED", "id": "autorepair_sched_total", "color": "#1f77b4"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"AutoRepairElephantPhase\" Status=\"IN_PROGRESS\"', 'Sum', 2592000))", "label": "IN_PROGRESS", "id": "autorepair_prog_total", "color": "#ff7f0e"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"AutoRepairElephantPhase\" Status=\"SUCCEEDED\"', 'Sum', 2592000))", "label": "SUCCEEDED", "id": "autorepair_succ_total", "color": "#2ca02c"}],
+                  [{"expression": "SUM(SEARCH('{Elephant/Workflow,County,Status,Step,DataGroupName} MetricName=\"AutoRepairElephantPhase\" Status=\"FAILED\"', 'Sum', 2592000))", "label": "FAILED", "id": "autorepair_fail_total", "color": "#d62728"}]
+                ]
+              }
             }
           ]
         }
