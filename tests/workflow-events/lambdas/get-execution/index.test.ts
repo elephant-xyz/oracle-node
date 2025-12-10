@@ -360,7 +360,9 @@ describe("get-execution handler", () => {
       });
     });
 
-    it("should not use FilterExpression in GS3 query (partition key separation)", async () => {
+    it("should NOT use FilterExpression in GS3 query (partition key separation)", async () => {
+      // GS3PK partition-level separation ensures only FailedExecutionItem records
+      // are returned (ErrorRecord uses GS3PK = "METRIC#ERRORCOUNT#ERROR")
       ddbMock.on(QueryCommand).resolves({ Items: [] });
 
       const { handler } =
@@ -370,7 +372,6 @@ describe("get-execution handler", () => {
 
       const calls = ddbMock.commandCalls(QueryCommand);
       expect(calls[0].args[0].input.FilterExpression).toBeUndefined();
-      // Verify entityType is not in ExpressionAttributeValues for GS3 query
       expect(
         calls[0].args[0].input.ExpressionAttributeValues,
       ).not.toHaveProperty(":entityType");
@@ -521,7 +522,8 @@ describe("get-execution handler", () => {
   });
 
   describe("query limit", () => {
-    it("should limit query to 1 result for execution query", async () => {
+    it("should limit GS1 query to 1 result (no FilterExpression needed)", async () => {
+      // GS1 only contains FailedExecutionItem, so Limit: 1 is safe
       ddbMock.on(QueryCommand).resolves({ Items: [] });
 
       const { handler } =
@@ -530,7 +532,24 @@ describe("get-execution handler", () => {
       await handler({ sortOrder: "most" });
 
       const calls = ddbMock.commandCalls(QueryCommand);
+      expect(calls[0].args[0].input.IndexName).toBe("GS1");
       expect(calls[0].args[0].input.Limit).toBe(1);
+    });
+
+    it("should limit GS3 query to 1 result (partition key separation)", async () => {
+      // GS3PK partition-level separation ensures only FailedExecutionItem records
+      // are returned, so Limit: 1 is safe (no FilterExpression or pagination needed)
+      ddbMock.on(QueryCommand).resolves({ Items: [] });
+
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/get-execution/index.js");
+
+      await handler({ sortOrder: "most", errorType: "01" });
+
+      const calls = ddbMock.commandCalls(QueryCommand);
+      expect(calls[0].args[0].input.IndexName).toBe("GS3");
+      expect(calls[0].args[0].input.Limit).toBe(1);
+      expect(calls[0].args[0].input.ExclusiveStartKey).toBeUndefined();
     });
   });
 });

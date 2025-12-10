@@ -23,6 +23,8 @@ import {
   createKey,
   DEFAULT_GSI_STATUS,
   toGsiStatus,
+  GS3_EXECUTION_PK,
+  GS3_ERROR_PK,
 } from "./keys.js";
 
 // =============================================================================
@@ -151,7 +153,7 @@ const buildErrorRecordUpdate = (
         ":gs1pk": "TYPE#ERROR",
         ":gs1sk": pk,
         ":gs2pk": "TYPE#ERROR",
-        ":gs3pk": "METRIC#ERRORCOUNT",
+        ":gs3pk": GS3_ERROR_PK,
       },
     },
   };
@@ -268,9 +270,9 @@ const buildFailedExecutionItemUpdate = (
     ":totalOccurrences": stats.totalOccurrences,
     ":uniqueErrorCount": stats.uniqueErrorCount,
     ":now": now,
-    ":gs1pk": "METRIC#ERRORCOUNT",
+    ":gs1pk": GS3_EXECUTION_PK,
     ":gs1sk": gs1sk,
-    ":gs3pk": "METRIC#ERRORCOUNT",
+    ":gs3pk": GS3_EXECUTION_PK,
     ":gs3sk": gs3sk,
   };
 
@@ -1241,6 +1243,9 @@ export const markErrorAsUnrecoverableFromAllExecutions = async (
  * - GS3: GS3PK = "METRIC#ERRORCOUNT" (FailedExecutionItem only; ErrorRecord uses "METRIC#ERRORCOUNT#ERROR"),
  *        GS3SK = "COUNT#{errorType}#{status}#{paddedCount}#EXECUTION#{executionId}"
  *
+ * Note: ErrorRecord uses GS3PK = "METRIC#ERRORCOUNT#ERROR" to achieve partition-level
+ * separation from FailedExecutionItem, eliminating the need for FilterExpression.
+ *
  * @param input - Query parameters including sortOrder and optional errorType
  * @returns The matching FailedExecutionItem or null if none found
  */
@@ -1252,13 +1257,16 @@ export const queryExecutionByErrorCount = async (
   const scanIndexForward = sortOrder === "least";
 
   if (errorType) {
+    // Query GS3 with errorType filter
+    // GS3PK partition separation ensures only FailedExecutionItem records are returned
+    // (ErrorRecord uses GS3PK = "METRIC#ERRORCOUNT#ERROR")
     const command = new QueryCommand({
       TableName: tableName,
       IndexName: "GS3",
       KeyConditionExpression:
         "GS3PK = :gs3pk AND begins_with(GS3SK, :gs3skPrefix)",
       ExpressionAttributeValues: {
-        ":gs3pk": "METRIC#ERRORCOUNT",
+        ":gs3pk": GS3_EXECUTION_PK,
         ":gs3skPrefix": `COUNT#${errorType}#${DEFAULT_GSI_STATUS}#`,
       },
       ScanIndexForward: scanIndexForward,
@@ -1279,7 +1287,7 @@ export const queryExecutionByErrorCount = async (
       KeyConditionExpression:
         "GS1PK = :gs1pk AND begins_with(GS1SK, :gs1skPrefix)",
       ExpressionAttributeValues: {
-        ":gs1pk": "METRIC#ERRORCOUNT",
+        ":gs1pk": GS3_EXECUTION_PK,
         ":gs1skPrefix": `COUNT#${DEFAULT_GSI_STATUS}#`,
       },
       ScanIndexForward: scanIndexForward,

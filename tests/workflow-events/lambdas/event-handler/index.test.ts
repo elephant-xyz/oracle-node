@@ -850,9 +850,10 @@ describe("event-handler", () => {
         "TYPE#ERROR",
       );
 
-      // GS3: METRIC#ERRORCOUNT (GS3SK is updated separately via updateErrorRecordSortKey)
+      // GS3: METRIC#ERRORCOUNT#ERROR (separate partition from FailedExecutionItem)
+      // GS3SK is updated separately via updateErrorRecordSortKey
       expect(errorRecord?.ExpressionAttributeValues?.[":gs3pk"]).toBe(
-        "METRIC#ERRORCOUNT",
+        "METRIC#ERRORCOUNT#ERROR",
       );
 
       // GS2SK and GS3SK are set via separate UpdateCommand after the transaction

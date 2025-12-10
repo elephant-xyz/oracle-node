@@ -5,6 +5,7 @@ import {
   ENTITY_TYPES,
   DEFAULT_GSI_STATUS,
   UNRECOVERABLE_GSI_STATUS,
+  GS3_ERROR_PK,
 } from "shared/keys.js";
 
 type GsiStatus = typeof DEFAULT_GSI_STATUS | typeof UNRECOVERABLE_GSI_STATUS;
@@ -123,16 +124,16 @@ const queryErrorsWithMostOccurrences = async (
   const exclusiveStartKey = cursor ? decodeCursor(cursor) : undefined;
 
   if (errorType && errorType.trim() !== "") {
+    // GS3PK partition-level separation ensures only ErrorRecord items are returned
+    // (FailedExecutionItem uses GS3PK = "METRIC#ERRORCOUNT")
     const command = new QueryCommand({
       TableName: TABLE_NAME,
       IndexName: "GS3",
       KeyConditionExpression:
         "GS3PK = :gs3pk AND begins_with(GS3SK, :gs3skPrefix)",
-      FilterExpression: "entityType = :entityType",
       ExpressionAttributeValues: {
-        ":gs3pk": "METRIC#ERRORCOUNT",
+        ":gs3pk": GS3_ERROR_PK,
         ":gs3skPrefix": `COUNT#${errorType.trim()}#${status}#`,
-        ":entityType": ENTITY_TYPES.ERROR,
       },
       ScanIndexForward: false,
       Limit: limit,

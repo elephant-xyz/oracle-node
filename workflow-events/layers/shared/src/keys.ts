@@ -16,6 +16,19 @@ export const ENTITY_TYPES = {
 export const DEFAULT_GSI_STATUS = "FAILED" as const;
 
 /**
+ * GS3 partition key for FailedExecutionItem records.
+ * Used to query executions by error count with optional errorType filter.
+ */
+export const GS3_EXECUTION_PK = "METRIC#ERRORCOUNT" as const;
+
+/**
+ * GS3 partition key for ErrorRecord records.
+ * Separate from GS3_EXECUTION_PK to enable partition-level separation,
+ * avoiding the need for FilterExpression when querying by errorType.
+ */
+export const GS3_ERROR_PK = "METRIC#ERRORCOUNT#ERROR" as const;
+
+/**
  * GSI status for errors that failed AI resolution (maybeUnrecoverable).
  * Used in GSI sort keys to filter items marked as unrecoverable.
  */
