@@ -360,10 +360,9 @@ describe("get-execution handler", () => {
       });
     });
 
-    it("should use FilterExpression in GS3 query to filter by entityType", async () => {
-      // Both ErrorRecord and FailedExecutionItem share GS3PK = "METRIC#ERRORCOUNT"
-      // and GS3SK starting with "COUNT#{errorType}#FAILED#", so we must filter
-      // by entityType to ensure only FailedExecutionItem records are returned.
+    it("should NOT use FilterExpression in GS3 query (partition key separation)", async () => {
+      // GS3PK partition-level separation ensures only FailedExecutionItem records
+      // are returned (ErrorRecord uses GS3PK = "METRIC#ERRORCOUNT#ERROR")
       ddbMock.on(QueryCommand).resolves({ Items: [] });
 
       const { handler } =
@@ -372,13 +371,10 @@ describe("get-execution handler", () => {
       await handler({ sortOrder: "most", errorType: "01" });
 
       const calls = ddbMock.commandCalls(QueryCommand);
-      expect(calls[0].args[0].input.FilterExpression).toBe(
-        "entityType = :entityType",
-      );
-      expect(calls[0].args[0].input.ExpressionAttributeValues).toHaveProperty(
-        ":entityType",
-        "FailedExecution",
-      );
+      expect(calls[0].args[0].input.FilterExpression).toBeUndefined();
+      expect(
+        calls[0].args[0].input.ExpressionAttributeValues,
+      ).not.toHaveProperty(":entityType");
     });
   });
 
@@ -540,9 +536,9 @@ describe("get-execution handler", () => {
       expect(calls[0].args[0].input.Limit).toBe(1);
     });
 
-    it("should use pagination for GS3 query with FilterExpression", async () => {
-      // GS3 contains both ErrorRecord and FailedExecutionItem, so we paginate
-      // until we find a FailedExecutionItem or exhaust the index
+    it("should limit GS3 query to 1 result (partition key separation)", async () => {
+      // GS3PK partition-level separation ensures only FailedExecutionItem records
+      // are returned, so Limit: 1 is safe (no FilterExpression or pagination needed)
       ddbMock.on(QueryCommand).resolves({ Items: [] });
 
       const { handler } =
@@ -552,46 +548,8 @@ describe("get-execution handler", () => {
 
       const calls = ddbMock.commandCalls(QueryCommand);
       expect(calls[0].args[0].input.IndexName).toBe("GS3");
-      expect(calls[0].args[0].input.Limit).toBe(100);
-      // First call should not have ExclusiveStartKey
+      expect(calls[0].args[0].input.Limit).toBe(1);
       expect(calls[0].args[0].input.ExclusiveStartKey).toBeUndefined();
-    });
-
-    it("should paginate GS3 query until FailedExecutionItem is found", async () => {
-      // Simulate: first page returns no items but has more pages,
-      // second page returns a FailedExecutionItem, third call is for error links
-      const mockExecution = createMockExecution({ errorType: "01" });
-
-      ddbMock
-        .on(QueryCommand)
-        .resolvesOnce({
-          Items: [], // First page: no FailedExecutionItem (all filtered out)
-          LastEvaluatedKey: { GS3PK: "METRIC#ERRORCOUNT", GS3SK: "some-key" },
-        })
-        .resolvesOnce({
-          Items: [mockExecution], // Second page: found one
-        })
-        .resolvesOnce({
-          Items: [], // Third call: error links query
-        });
-
-      const { handler } =
-        await import("../../../../workflow-events/lambdas/get-execution/index.js");
-
-      const result = await handler({ sortOrder: "most", errorType: "01" });
-
-      // Should have made 2 GS3 queries + 1 error links query
-      const calls = ddbMock.commandCalls(QueryCommand);
-      expect(calls.length).toBe(3);
-
-      // Second GS3 call should have ExclusiveStartKey
-      expect(calls[1].args[0].input.ExclusiveStartKey).toEqual({
-        GS3PK: "METRIC#ERRORCOUNT",
-        GS3SK: "some-key",
-      });
-
-      expect(result.success).toBe(true);
-      expect(result.execution?.executionId).toBe(mockExecution.executionId);
     });
   });
 });

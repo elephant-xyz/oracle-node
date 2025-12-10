@@ -686,6 +686,183 @@ Resources:
       Tags:
         Environment: !Ref EnvironmentName
 
+  # =============================================================================
+  # GS3 Migration CodeBuild Job
+  # =============================================================================
+  # This job migrates ErrorRecord items to use a separate GS3 partition key
+  # from FailedExecutionItem records. This is a one-time migration that must
+  # be triggered manually.
+  #
+  # Migration Details:
+  # - Before: ErrorRecord GS3PK = "METRIC#ERRORCOUNT"
+  # - After:  ErrorRecord GS3PK = "METRIC#ERRORCOUNT#ERROR"
+  #
+  # The migration is idempotent - running it multiple times is safe.
+  # =============================================================================
+
+  GS3MigrationBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: GS3MigrationCodeBuildLogs
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${EnvironmentName}-gs3-migration"
+                  - !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${EnvironmentName}-gs3-migration:*"
+        - PolicyName: GS3MigrationCodeBuildS3
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                Resource: !If
+                  - HasRuntimeArtifactsPrefix
+                  - !Sub "arn:${AWS::Partition}:s3:::${RuntimeArtifactsBucket}/${RuntimeArtifactsPrefix}*"
+                  - !Sub "arn:${AWS::Partition}:s3:::${RuntimeArtifactsBucket}/*"
+              - Effect: Allow
+                Action:
+                  - s3:ListBucket
+                Resource: !Sub "arn:${AWS::Partition}:s3:::${RuntimeArtifactsBucket}"
+        - PolicyName: GS3MigrationCodeBuildDynamoDB
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:Scan
+                  - dynamodb:UpdateItem
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${ErrorsTableName}"
+                  - !Sub "arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${ErrorsTableName}/index/*"
+      Tags:
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  GS3MigrationCodeBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub "${EnvironmentName}-gs3-migration"
+      Description: "One-time migration to update ErrorRecord GS3PK for partition-level separation. Trigger manually."
+      ServiceRole: !GetAtt GS3MigrationBuildRole.Arn
+      Artifacts:
+        Type: NO_ARTIFACTS
+      TimeoutInMinutes: 120
+      Environment:
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/amazonlinux2-aarch64-standard:3.0-25.03.03
+        Type: ARM_CONTAINER
+        EnvironmentVariables:
+          - Name: RUNTIME_ARTIFACTS_BUCKET
+            Type: PLAINTEXT
+            Value: !Ref RuntimeArtifactsBucket
+          - Name: RUNTIME_ARTIFACTS_PREFIX
+            Type: PLAINTEXT
+            Value: "codebuild/gs3-migration"
+          - Name: RUNTIME_ENTRYPOINT
+            Type: PLAINTEXT
+            Value: index.js
+          - Name: ERRORS_TABLE_NAME
+            Type: PLAINTEXT
+            Value: !Ref ErrorsTableName
+          - Name: DRY_RUN
+            Type: PLAINTEXT
+            Value: "false"
+      LogsConfig:
+        CloudWatchLogs:
+          GroupName: !Sub "/aws/codebuild/${EnvironmentName}-gs3-migration"
+          Status: ENABLED
+      Source:
+        Type: NO_SOURCE
+        BuildSpec: |
+          version: 0.2
+
+          env:
+            shell: bash
+
+          phases:
+            install:
+              runtime-versions:
+                nodejs: 22
+              commands:
+                - echo "Node.js runtime set to version 22."
+            pre_build:
+              commands:
+                - set -euo pipefail
+                - export RUNTIME_DOWNLOAD_DIR="/tmp/runtime-archives"
+                - export RUNTIME_WORK_DIR="/tmp/runtime-workdir"
+                - mkdir -p "${RUNTIME_DOWNLOAD_DIR}" "${RUNTIME_WORK_DIR}"
+                - >
+                  if [[ -z "${RUNTIME_ARTIFACTS_BUCKET:-}" ]]; then
+                    echo "RUNTIME_ARTIFACTS_BUCKET environment variable is required." >&2
+                    exit 1
+                  fi
+                - >
+                  S3_SOURCE="s3://${RUNTIME_ARTIFACTS_BUCKET}"
+                - >
+                  if [[ -n "${RUNTIME_ARTIFACTS_PREFIX:-}" ]]; then
+                    S3_SOURCE="${S3_SOURCE%/}/${RUNTIME_ARTIFACTS_PREFIX}"
+                  fi
+                - echo "============================================================"
+                - echo "  GS3 Migration Job"
+                - echo "============================================================"
+                - echo "  Table: ${ERRORS_TABLE_NAME}"
+                - echo "  Dry Run: ${DRY_RUN}"
+                - echo "  Source: ${S3_SOURCE}"
+                - echo "============================================================"
+                - aws s3 cp "${S3_SOURCE}" "${RUNTIME_DOWNLOAD_DIR}" --recursive --exclude "*" --include "*.zip"
+                - >
+                  if ! compgen -G "${RUNTIME_DOWNLOAD_DIR}/*.zip" > /dev/null; then
+                    echo "No runtime zip archives found at ${S3_SOURCE}" >&2
+                    exit 1
+                  fi
+                - |
+                  for archive in "${RUNTIME_DOWNLOAD_DIR}"/*.zip; do
+                    echo "Unpacking ${archive}..."
+                    unzip -qo "${archive}" -d "${RUNTIME_WORK_DIR}"
+                  done
+                - |
+                  echo $(ls -1 "${RUNTIME_WORK_DIR}")
+                  cd "${RUNTIME_WORK_DIR}" && npm install
+            build:
+              commands:
+                - cd "${RUNTIME_WORK_DIR}"
+                - >
+                  if [[ -z "${RUNTIME_ENTRYPOINT:-}" ]]; then
+                    echo "RUNTIME_ENTRYPOINT environment variable is required." >&2
+                    exit 1
+                  fi
+                - >
+                  if [[ ! -f "${RUNTIME_ENTRYPOINT}" ]]; then
+                    echo "Entry point ${RUNTIME_ENTRYPOINT} not found after extraction." >&2
+                    exit 1
+                  fi
+                - node "${RUNTIME_ENTRYPOINT}"
+            post_build:
+              commands:
+                - echo "============================================================"
+                - echo "  GS3 Migration Job Complete"
+                - echo "============================================================"
+      Tags:
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
 Outputs:
   PrepareRuntimeCodeBuildProjectName:
     Description: Name of the CodeBuild project that prepares runtime assets
@@ -714,3 +891,9 @@ Outputs:
   RedriveAutoRepairCodeBuildSchedulerFunctionArn:
     Description: ARN of the Lambda function that schedules redrive auto repair CodeBuild executions
     Value: !GetAtt RedriveAutoRepairCodeBuildSchedulerFunction.Arn
+  GS3MigrationCodeBuildProjectName:
+    Description: Name of the CodeBuild project for GS3 partition key migration (manual trigger only)
+    Value: !Ref GS3MigrationCodeBuildProject
+  GS3MigrationCodeBuildProjectArn:
+    Description: ARN of the CodeBuild project for GS3 partition key migration
+    Value: !GetAtt GS3MigrationCodeBuildProject.Arn
