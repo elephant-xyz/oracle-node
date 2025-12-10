@@ -50,6 +50,11 @@ REDRIVE_AUTO_REPAIR_ARCHIVE_NAME="${REDRIVE_AUTO_REPAIR_ARCHIVE_NAME:-redrive-au
 REDRIVE_AUTO_REPAIR_PREFIX="${REDRIVE_AUTO_REPAIR_PREFIX:-codebuild/redrive-auto-repair}"
 REDRIVE_AUTO_REPAIR_UPLOAD_PENDING=0
 
+GS3_MIGRATION_MODULE_DIR="codebuild/gs3-migration"
+GS3_MIGRATION_ARCHIVE_NAME="${GS3_MIGRATION_ARCHIVE_NAME:-gs3-migration.zip}"
+GS3_MIGRATION_PREFIX="${GS3_MIGRATION_PREFIX:-codebuild/gs3-migration}"
+GS3_MIGRATION_UPLOAD_PENDING=0
+
 WORKFLOW_EVENTS_STACK_NAME="${WORKFLOW_EVENTS_STACK_NAME:-workflow-events-stack}"
 WORKFLOW_EVENTS_TEMPLATE="workflow-events/template.yaml"
 DEPLOY_WORKFLOW_EVENTS="${DEPLOY_WORKFLOW_EVENTS:-true}"
@@ -532,6 +537,65 @@ package_and_upload_redrive_auto_repair() {
 
   REDRIVE_AUTO_REPAIR_UPLOAD_PENDING=0
   info "Uploaded redrive auto repair module to s3://${bucket}/${s3_key}"
+}
+
+package_and_upload_gs3_migration() {
+  if [[ ! -d "$GS3_MIGRATION_MODULE_DIR" ]]; then
+    warn "GS3 migration module directory ($GS3_MIGRATION_MODULE_DIR) not found, skipping upload."
+    return 0
+  fi
+
+  local bucket="${CODEBUILD_RUNTIME_BUCKET:-}"
+  if [[ -z "$bucket" ]]; then
+    bucket=$(get_bucket)
+  fi
+
+  if [[ -z "$bucket" ]]; then
+    GS3_MIGRATION_UPLOAD_PENDING=1
+    info "Delaying GS3 migration module upload until environment bucket exists."
+    return 0
+  fi
+
+  local prefix="${GS3_MIGRATION_PREFIX%/}"
+  prefix="${prefix#/}"
+  local dist_dir="codebuild/dist"
+  mkdir -p "$dist_dir"
+
+  local archive_path="${dist_dir}/${GS3_MIGRATION_ARCHIVE_NAME}"
+  rm -f "$archive_path"
+
+  info "Installing GS3 migration module production dependencies"
+  (
+    cd "$GS3_MIGRATION_MODULE_DIR"
+    npm ci --omit=dev >/dev/null
+  ) || {
+    err "Failed to install GS3 migration module dependencies."
+    exit 1
+  }
+
+  info "Packaging GS3 migration module"
+  (
+    cd "$GS3_MIGRATION_MODULE_DIR"
+    zip -r "../dist/${GS3_MIGRATION_ARCHIVE_NAME}" . >/dev/null
+  ) || {
+    err "Failed to package GS3 migration module."
+    exit 1
+  }
+
+  local s3_key
+  if [[ -n "$prefix" ]]; then
+    s3_key="${prefix}/${GS3_MIGRATION_ARCHIVE_NAME}"
+  else
+    s3_key="${GS3_MIGRATION_ARCHIVE_NAME}"
+  fi
+
+  aws s3 cp "$archive_path" "s3://${bucket}/${s3_key}" >/dev/null || {
+    err "Failed to upload GS3 migration module to s3://${bucket}/${s3_key}"
+    exit 1
+  }
+
+  GS3_MIGRATION_UPLOAD_PENDING=0
+  info "Uploaded GS3 migration module to s3://${bucket}/${s3_key}"
 }
 
 deploy_codebuild_stack() {
@@ -1039,6 +1103,7 @@ main() {
   upload_static_parts_to_s3
   package_and_upload_codebuild_runtime
   package_and_upload_redrive_auto_repair
+  package_and_upload_gs3_migration
   deploy_codebuild_stack
 
   # Handle TransformS3Prefix parameter
@@ -1117,6 +1182,11 @@ main() {
   # Upload static parts if pending
   if (( STATIC_PARTS_UPLOAD_PENDING == 1 )); then
     upload_static_parts_to_s3
+  fi
+
+  # Upload GS3 migration module if pending
+  if (( GS3_MIGRATION_UPLOAD_PENDING == 1 )); then
+    package_and_upload_gs3_migration
   fi
 
   handle_pending_keystore_upload
