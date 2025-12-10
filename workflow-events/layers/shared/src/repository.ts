@@ -1252,26 +1252,45 @@ export const queryExecutionByErrorCount = async (
   const scanIndexForward = sortOrder === "least";
 
   if (errorType) {
-    const command = new QueryCommand({
-      TableName: tableName,
-      IndexName: "GS3",
-      KeyConditionExpression:
-        "GS3PK = :gs3pk AND begins_with(GS3SK, :gs3skPrefix)",
-      ExpressionAttributeValues: {
-        ":gs3pk": "METRIC#ERRORCOUNT",
-        ":gs3skPrefix": `COUNT#${errorType}#${DEFAULT_GSI_STATUS}#`,
-      },
-      ScanIndexForward: scanIndexForward,
-      Limit: 1,
-    });
+    // Query GS3 with errorType filter
+    // Note: Both ErrorRecord and FailedExecutionItem share GS3PK = "METRIC#ERRORCOUNT"
+    // and have GS3SK starting with "COUNT#{errorType}#FAILED#", so we must filter
+    // by entityType to ensure we only get FailedExecutionItem records.
+    // FilterExpression is applied AFTER DynamoDB reads items, so we paginate
+    // until we find a matching FailedExecutionItem or exhaust the index.
+    let lastEvaluatedKey: Record<string, unknown> | undefined;
 
-    const response = await docClient.send(command);
+    do {
+      const command = new QueryCommand({
+        TableName: tableName,
+        IndexName: "GS3",
+        KeyConditionExpression:
+          "GS3PK = :gs3pk AND begins_with(GS3SK, :gs3skPrefix)",
+        FilterExpression: "entityType = :entityType",
+        ExpressionAttributeValues: {
+          ":gs3pk": "METRIC#ERRORCOUNT",
+          ":gs3skPrefix": `COUNT#${errorType}#${DEFAULT_GSI_STATUS}#`,
+          ":entityType": ENTITY_TYPES.FAILED_EXECUTION,
+        },
+        ScanIndexForward: scanIndexForward,
+        Limit: 100, // Process in batches to limit memory usage
+        ExclusiveStartKey: lastEvaluatedKey,
+      });
 
-    if (!response.Items || response.Items.length === 0) {
-      return null;
-    }
+      const response = await docClient.send(command);
 
-    return response.Items[0] as FailedExecutionItem;
+      // If we found at least one FailedExecutionItem, return it
+      if (response.Items && response.Items.length > 0) {
+        return response.Items[0] as FailedExecutionItem;
+      }
+
+      lastEvaluatedKey = response.LastEvaluatedKey as
+        | Record<string, unknown>
+        | undefined;
+    } while (lastEvaluatedKey);
+
+    // No FailedExecutionItem found after exhausting all pages
+    return null;
   } else {
     const command = new QueryCommand({
       TableName: tableName,
