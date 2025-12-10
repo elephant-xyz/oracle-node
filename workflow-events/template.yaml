@@ -169,6 +169,7 @@ Resources:
       Layers:
         - !Ref SharedLayer
       Description: "Retrieves executions by error count with optional error type filter"
+      Timeout: 180
       Environment:
         Variables:
           WORKFLOW_ERRORS_TABLE_NAME: !Ref WorkflowErrorsTable
