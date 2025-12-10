@@ -14,7 +14,10 @@
  * This migration is idempotent - running it multiple times is safe.
  */
 
-import { DynamoDBClient, ConditionalCheckFailedException } from "@aws-sdk/client-dynamodb";
+import {
+  DynamoDBClient,
+  ConditionalCheckFailedException,
+} from "@aws-sdk/client-dynamodb";
 import {
   DynamoDBDocumentClient,
   ScanCommand,
@@ -37,13 +40,34 @@ const dynamoClient = DynamoDBDocumentClient.from(new DynamoDBClient({}), {
  */
 const log = {
   info: (message, data = {}) => {
-    console.log(JSON.stringify({ level: "INFO", message, ...data, timestamp: new Date().toISOString() }));
+    console.log(
+      JSON.stringify({
+        level: "INFO",
+        message,
+        ...data,
+        timestamp: new Date().toISOString(),
+      }),
+    );
   },
   warn: (message, data = {}) => {
-    console.warn(JSON.stringify({ level: "WARN", message, ...data, timestamp: new Date().toISOString() }));
+    console.warn(
+      JSON.stringify({
+        level: "WARN",
+        message,
+        ...data,
+        timestamp: new Date().toISOString(),
+      }),
+    );
   },
   error: (message, data = {}) => {
-    console.error(JSON.stringify({ level: "ERROR", message, ...data, timestamp: new Date().toISOString() }));
+    console.error(
+      JSON.stringify({
+        level: "ERROR",
+        message,
+        ...data,
+        timestamp: new Date().toISOString(),
+      }),
+    );
   },
   summary: (title, data) => {
     console.log("\n" + "=".repeat(60));
@@ -77,7 +101,9 @@ async function* scanErrorRecordsToMigrate(tableName) {
 
   do {
     pageNumber++;
-    log.info(`Scanning page ${pageNumber}...`, { lastEvaluatedKey: !!lastEvaluatedKey });
+    log.info(`Scanning page ${pageNumber}...`, {
+      lastEvaluatedKey: !!lastEvaluatedKey,
+    });
 
     const command = new ScanCommand({
       TableName: tableName,
@@ -93,10 +119,13 @@ async function* scanErrorRecordsToMigrate(tableName) {
     const response = await dynamoClient.send(command);
 
     if (response.Items && response.Items.length > 0) {
-      log.info(`Page ${pageNumber}: Found ${response.Items.length} ErrorRecord items to migrate`, {
-        scannedCount: response.ScannedCount,
-        itemCount: response.Items.length,
-      });
+      log.info(
+        `Page ${pageNumber}: Found ${response.Items.length} ErrorRecord items to migrate`,
+        {
+          scannedCount: response.ScannedCount,
+          itemCount: response.Items.length,
+        },
+      );
       yield* response.Items;
     } else {
       log.info(`Page ${pageNumber}: No items to migrate on this page`, {
@@ -145,7 +174,7 @@ async function updateErrorRecordGS3PK(tableName, item) {
  */
 async function processBatch(tableName, items) {
   const results = await Promise.all(
-    items.map((item) => updateErrorRecordGS3PK(tableName, item))
+    items.map((item) => updateErrorRecordGS3PK(tableName, item)),
   );
 
   const successful = results.filter((r) => r.success && !r.alreadyMigrated);
@@ -175,9 +204,12 @@ async function verifyMigration(tableName) {
   const response = await dynamoClient.send(scanCommand);
 
   if (response.Items && response.Items.length > 0) {
-    log.warn(`Found ${response.Items.length} ErrorRecord items still with old GS3PK`, {
-      sampleErrorCodes: response.Items.slice(0, 5).map((i) => i.errorCode),
-    });
+    log.warn(
+      `Found ${response.Items.length} ErrorRecord items still with old GS3PK`,
+      {
+        sampleErrorCodes: response.Items.slice(0, 5).map((i) => i.errorCode),
+      },
+    );
     return false;
   }
 
@@ -195,7 +227,9 @@ async function verifyMigration(tableName) {
   const verifyResponse = await dynamoClient.send(verifyCommand);
   const migratedCount = verifyResponse.Items?.length || 0;
 
-  log.info(`Verification: Found ${migratedCount} ErrorRecord items with new GS3PK`);
+  log.info(
+    `Verification: Found ${migratedCount} ErrorRecord items with new GS3PK`,
+  );
   return true;
 }
 
@@ -239,12 +273,18 @@ async function runMigration() {
       batchNumber++;
 
       if (dryRun) {
-        log.info(`[DRY RUN] Batch ${batchNumber}: Would migrate ${batch.length} items`, {
-          sampleErrorCodes: batch.slice(0, 3).map((i) => i.errorCode),
-        });
+        log.info(
+          `[DRY RUN] Batch ${batchNumber}: Would migrate ${batch.length} items`,
+          {
+            sampleErrorCodes: batch.slice(0, 3).map((i) => i.errorCode),
+          },
+        );
         totalMigrated += batch.length;
       } else {
-        const { successful, alreadyMigrated, failed } = await processBatch(tableName, batch);
+        const { successful, alreadyMigrated, failed } = await processBatch(
+          tableName,
+          batch,
+        );
         totalMigrated += successful.length;
         totalAlreadyMigrated += alreadyMigrated.length;
         totalFailed += failed.length;
@@ -259,7 +299,9 @@ async function runMigration() {
 
         if (failed.length > 0) {
           log.error(`Batch ${batchNumber} had ${failed.length} failures`, {
-            errors: failed.slice(0, 5).map((f) => ({ errorCode: f.errorCode, error: f.error })),
+            errors: failed
+              .slice(0, 5)
+              .map((f) => ({ errorCode: f.errorCode, error: f.error })),
           });
         }
       }
@@ -273,10 +315,15 @@ async function runMigration() {
     batchNumber++;
 
     if (dryRun) {
-      log.info(`[DRY RUN] Final batch ${batchNumber}: Would migrate ${batch.length} items`);
+      log.info(
+        `[DRY RUN] Final batch ${batchNumber}: Would migrate ${batch.length} items`,
+      );
       totalMigrated += batch.length;
     } else {
-      const { successful, alreadyMigrated, failed } = await processBatch(tableName, batch);
+      const { successful, alreadyMigrated, failed } = await processBatch(
+        tableName,
+        batch,
+      );
       totalMigrated += successful.length;
       totalAlreadyMigrated += alreadyMigrated.length;
       totalFailed += failed.length;
@@ -300,7 +347,7 @@ async function runMigration() {
 
   // Final summary
   log.summary("Migration Complete", {
-    "Duration": `${duration} seconds`,
+    Duration: `${duration} seconds`,
     "Total Scanned": totalScanned,
     "Total Migrated": totalMigrated,
     "Already Migrated (skipped)": totalAlreadyMigrated,
@@ -332,6 +379,9 @@ async function runMigration() {
 
 // Run migration
 runMigration().catch((error) => {
-  log.error("Migration failed with unhandled error", { error: error.message, stack: error.stack });
+  log.error("Migration failed with unhandled error", {
+    error: error.message,
+    stack: error.stack,
+  });
   process.exit(1);
 });
