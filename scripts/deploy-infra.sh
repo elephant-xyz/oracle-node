@@ -622,11 +622,15 @@ deploy_codebuild_stack() {
   fi
 
   # Get required stack outputs
+  # Get errors table from workflow-events stack (not the legacy ErrorsTable from main stack)
   local errors_table_name
-  errors_table_name=$(get_output "ErrorsTableName")
+  errors_table_name=$(aws cloudformation describe-stacks \
+    --stack-name "$WORKFLOW_EVENTS_STACK_NAME" \
+    --query 'Stacks[0].Outputs[?OutputKey==`WorkflowErrorsTableName`].OutputValue' \
+    --output text 2>/dev/null || echo "")
   if [[ -z "$errors_table_name" ]]; then
     CODEBUILD_DEPLOY_PENDING=1
-    info "Delaying CodeBuild stack deployment until ErrorsTableName output is available."
+    info "Delaying CodeBuild stack deployment until WorkflowErrorsTableName output is available from workflow-events stack."
     return 0
   fi
 
