@@ -732,10 +732,9 @@ Resources:
                 Action:
                   - s3:GetObject
                   - s3:GetObjectVersion
-                Resource: !If
-                  - HasRuntimeArtifactsPrefix
-                  - !Sub "arn:${AWS::Partition}:s3:::${RuntimeArtifactsBucket}/${RuntimeArtifactsPrefix}*"
-                  - !Sub "arn:${AWS::Partition}:s3:::${RuntimeArtifactsBucket}/*"
+                Resource:
+                  # GS3 migration artifacts are stored at codebuild/gs3-migration/
+                  - !Sub "arn:${AWS::Partition}:s3:::${RuntimeArtifactsBucket}/codebuild/gs3-migration/*"
               - Effect: Allow
                 Action:
                   - s3:ListBucket

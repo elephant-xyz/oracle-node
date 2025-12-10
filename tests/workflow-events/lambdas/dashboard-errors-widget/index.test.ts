@@ -36,7 +36,7 @@ const createMockErrorRecord = (
   GS1SK: "ERROR#01256",
   GS2PK: "TYPE#ERROR",
   GS2SK: "COUNT#FAILED#0000000010#ERROR#01256",
-  GS3PK: "METRIC#ERRORCOUNT",
+  GS3PK: "METRIC#ERRORCOUNT#ERROR",
   GS3SK: "COUNT#01#FAILED#0000000010#ERROR#01256",
   ...overrides,
 });
@@ -260,9 +260,27 @@ describe("dashboard-errors-widget handler", () => {
         "GS3PK = :gs3pk AND begins_with(GS3SK, :gs3skPrefix)",
       );
       expect(calls[0].args[0].input.ExpressionAttributeValues).toMatchObject({
-        ":gs3pk": "METRIC#ERRORCOUNT",
+        ":gs3pk": "METRIC#ERRORCOUNT#ERROR",
         ":gs3skPrefix": "COUNT#SV#FAILED#",
       });
+    });
+
+    it("should NOT use FilterExpression in GS3 query (partition key separation)", async () => {
+      // GS3PK partition-level separation ensures only ErrorRecord items are returned
+      // (FailedExecutionItem uses GS3PK = "METRIC#ERRORCOUNT")
+      ddbMock.on(QueryCommand).resolves({ Items: [] });
+
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/dashboard-errors-widget/index.js");
+
+      await handler({ errorType: "SV" });
+
+      const calls = ddbMock.commandCalls(QueryCommand);
+      expect(calls[0].args[0].input.IndexName).toBe("GS3");
+      expect(calls[0].args[0].input.FilterExpression).toBeUndefined();
+      expect(
+        calls[0].args[0].input.ExpressionAttributeValues,
+      ).not.toHaveProperty(":entityType");
     });
 
     it("should trim errorType whitespace", async () => {
