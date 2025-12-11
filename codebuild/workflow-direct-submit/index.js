@@ -452,7 +452,7 @@ async function drainQueue(queueUrl, queueName, stateMachineArn) {
     "Total Batches": batchNumber,
     "Processed (executions started)": totalProcessed,
     "Skipped (had ExecutionArn)": totalSkipped,
-    "Failed": totalFailed,
+    Failed: totalFailed,
     "Total Messages Seen": totalProcessed + totalSkipped + totalFailed,
   });
 
