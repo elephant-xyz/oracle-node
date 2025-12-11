@@ -1983,6 +1983,18 @@ Outputs:
   TransactionsDeadLetterQueueArn:
     Description: ARN of the Transactions Dead Letter Queue
     Value: !GetAtt TransactionsDeadLetterQueue.Arn
+  GasPriceCheckerSqsQueueUrl:
+    Description: URL of the Gas Price Checker SQS Queue
+    Value: !Ref GasPriceCheckerSqsQueue
+  GasPriceCheckerSqsQueueArn:
+    Description: ARN of the Gas Price Checker SQS Queue
+    Value: !GetAtt GasPriceCheckerSqsQueue.Arn
+  GasPriceCheckerDeadLetterQueueUrl:
+    Description: URL of the Gas Price Checker Dead Letter Queue
+    Value: !Ref GasPriceCheckerDeadLetterQueue
+  GasPriceCheckerDeadLetterQueueArn:
+    Description: ARN of the Gas Price Checker Dead Letter Queue
+    Value: !GetAtt GasPriceCheckerDeadLetterQueue.Arn
   # Note: Per-county prepare queues are created via scripts/create-county-prepare-queue.sh
   ProxyRotationTableName:
     Description: Name of the Proxy Rotation DynamoDB table
