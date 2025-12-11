@@ -1,9 +1,8 @@
 /**
- * Workflow Direct Submit - Queue Drainer
+ * Workflow Direct Submit - Queue Mover
  *
  * This CodeBuild job drains messages from the transactions queues (main and DLQ)
- * and starts workflow executions in "direct submit" mode, bypassing all mining
- * operations (prepare, transform, svl, hash, upload).
+ * and moves them to the workflow queue for processing via the "direct submit" mode.
  *
  * Message filtering:
  * - Only processes messages WITHOUT message attributes (ExecutionArn)
@@ -11,24 +10,24 @@
  *
  * For each valid message:
  * 1. Parse the message body as JSON (array of transaction items)
- * 2. Start a workflow execution with the direct-submit input format
- * 3. Delete the message from the queue only after successful execution start
+ * 2. Construct the direct-submit input format
+ * 3. Send the message to the workflow queue
+ * 4. Delete the original message from the source queue
  */
 
 import {
   SQSClient,
   ReceiveMessageCommand,
   DeleteMessageCommand,
+  SendMessageCommand,
   GetQueueAttributesCommand,
 } from "@aws-sdk/client-sqs";
-import { SFNClient, StartExecutionCommand } from "@aws-sdk/client-sfn";
 
-// Initialize AWS clients
+// Initialize AWS client
 const sqsClient = new SQSClient({});
-const sfnClient = new SFNClient({});
 
 // Configuration
-const MAX_CONCURRENT_EXECUTIONS = 10;
+const MAX_CONCURRENT_MOVES = 10;
 const VISIBILITY_TIMEOUT_SECONDS = 300; // 5 minutes
 const MAX_RECEIVE_COUNT = 10; // Max messages per SQS receive call
 const RETRY_DELAYS_MS = [1000, 2000, 4000]; // Exponential backoff for retries
@@ -61,10 +60,10 @@ const log = {
       console.error(`[${timestamp}] ERROR: ${message}`);
     }
   },
-  progress: (processed, skipped, failed, total) => {
+  progress: (moved, skipped, failed, total) => {
     const timestamp = new Date().toISOString();
     console.log(
-      `[${timestamp}] PROGRESS: Processed=${processed}, Skipped=${skipped}, Failed=${failed}, Total=${total}`,
+      `[${timestamp}] PROGRESS: Moved=${moved}, Skipped=${skipped}, Failed=${failed}, Total=${total}`,
     );
   },
   summary: (title, data) => {
@@ -124,16 +123,6 @@ async function getApproximateMessageCount(queueUrl) {
 }
 
 /**
- * Generate a unique execution name
- * @returns {string} - Unique execution name
- */
-function generateExecutionName() {
-  const timestamp = Date.now();
-  const random = Math.random().toString(36).substring(2, 8);
-  return `direct-submit-${timestamp}-${random}`;
-}
-
-/**
  * Check if a message should be processed (no ExecutionArn attribute)
  * @param {import("@aws-sdk/client-sqs").Message} message - SQS message
  * @returns {boolean} - True if message should be processed
@@ -184,16 +173,12 @@ function parseAndValidateMessageBody(body) {
 }
 
 /**
- * Start a workflow execution with retry logic
- * @param {string} stateMachineArn - Step Functions state machine ARN
- * @param {Array<object>} transactionItems - Transaction items from queue message
- * @returns {Promise<{ success: boolean, executionArn?: string, error?: string }>}
+ * Build the direct-submit message body for the workflow queue
+ * @param {Array<object>} transactionItems - Transaction items from the original message
+ * @returns {string} - JSON string for the workflow queue message
  */
-async function startWorkflowExecution(stateMachineArn, transactionItems) {
-  const executionName = generateExecutionName();
-
-  // Build the direct-submit input format
-  const input = {
+function buildWorkflowMessage(transactionItems) {
+  const workflowInput = {
     pre: {
       county_name: "UNKNOWN",
     },
@@ -201,18 +186,26 @@ async function startWorkflowExecution(stateMachineArn, transactionItems) {
       transactionItems: transactionItems,
     },
   };
+  return JSON.stringify({ message: workflowInput });
+}
 
+/**
+ * Send a message to the workflow queue with retry logic
+ * @param {string} workflowQueueUrl - Workflow queue URL
+ * @param {string} messageBody - Message body to send
+ * @returns {Promise<{ success: boolean, messageId?: string, error?: string }>}
+ */
+async function sendToWorkflowQueue(workflowQueueUrl, messageBody) {
   for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
     try {
-      const response = await sfnClient.send(
-        new StartExecutionCommand({
-          stateMachineArn,
-          name: executionName,
-          input: JSON.stringify(input),
+      const response = await sqsClient.send(
+        new SendMessageCommand({
+          QueueUrl: workflowQueueUrl,
+          MessageBody: messageBody,
         }),
       );
 
-      return { success: true, executionArn: response.executionArn };
+      return { success: true, messageId: response.MessageId };
     } catch (error) {
       const isRetryable =
         error.name === "ThrottlingException" ||
@@ -224,7 +217,7 @@ async function startWorkflowExecution(stateMachineArn, transactionItems) {
       if (isRetryable && attempt < RETRY_DELAYS_MS.length) {
         const delay = RETRY_DELAYS_MS[attempt];
         log.warn(
-          `Retryable error starting execution (attempt ${attempt + 1}/${RETRY_DELAYS_MS.length + 1}): ${error.message}. Retrying in ${delay}ms...`,
+          `Retryable error sending message (attempt ${attempt + 1}/${RETRY_DELAYS_MS.length + 1}): ${error.message}. Retrying in ${delay}ms...`,
         );
         await sleep(delay);
         continue;
@@ -271,20 +264,20 @@ async function deleteMessage(queueUrl, receiptHandle) {
 
 /**
  * Process a batch of messages concurrently
- * @param {string} queueUrl - SQS queue URL
- * @param {string} stateMachineArn - Step Functions state machine ARN
+ * @param {string} sourceQueueUrl - Source SQS queue URL
+ * @param {string} workflowQueueUrl - Workflow queue URL
  * @param {Array<import("@aws-sdk/client-sqs").Message>} messages - Messages to process
- * @returns {Promise<{ processed: number, skipped: number, failed: number }>}
+ * @returns {Promise<{ moved: number, skipped: number, failed: number }>}
  */
-async function processBatch(queueUrl, stateMachineArn, messages) {
-  let processed = 0;
+async function processBatch(sourceQueueUrl, workflowQueueUrl, messages) {
+  let moved = 0;
   let skipped = 0;
   let failed = 0;
 
   // Process messages concurrently with limit
   const chunks = [];
-  for (let i = 0; i < messages.length; i += MAX_CONCURRENT_EXECUTIONS) {
-    chunks.push(messages.slice(i, i + MAX_CONCURRENT_EXECUTIONS));
+  for (let i = 0; i < messages.length; i += MAX_CONCURRENT_MOVES) {
+    chunks.push(messages.slice(i, i + MAX_CONCURRENT_MOVES));
   }
 
   for (const chunk of chunks) {
@@ -292,9 +285,6 @@ async function processBatch(queueUrl, stateMachineArn, messages) {
       chunk.map(async (message) => {
         // Check if message should be processed
         if (!shouldProcessMessage(message)) {
-          log.info("Skipping message with ExecutionArn attribute", {
-            messageId: message.MessageId,
-          });
           return { status: "skipped", messageId: message.MessageId };
         }
 
@@ -311,44 +301,52 @@ async function processBatch(queueUrl, stateMachineArn, messages) {
           };
         }
 
-        // Start workflow execution
-        const execResult = await startWorkflowExecution(
-          stateMachineArn,
+        // Build the workflow message
+        const workflowMessage = buildWorkflowMessage(
           parseResult.transactionItems,
         );
 
-        if (!execResult.success) {
-          log.error(`Failed to start execution: ${execResult.error}`, {
+        // Send to workflow queue
+        const sendResult = await sendToWorkflowQueue(
+          workflowQueueUrl,
+          workflowMessage,
+        );
+
+        if (!sendResult.success) {
+          log.error(`Failed to send to workflow queue: ${sendResult.error}`, {
             messageId: message.MessageId,
           });
           return {
             status: "failed",
             messageId: message.MessageId,
-            error: execResult.error,
+            error: sendResult.error,
           };
         }
 
-        log.info(`Started execution: ${execResult.executionArn}`, {
-          messageId: message.MessageId,
+        log.info(`Moved message to workflow queue`, {
+          sourceMessageId: message.MessageId,
+          targetMessageId: sendResult.messageId,
           transactionCount: parseResult.transactionItems.length,
         });
 
-        // Delete message from queue after successful start
-        const deleted = await deleteMessage(queueUrl, message.ReceiptHandle);
+        // Delete message from source queue after successful send
+        const deleted = await deleteMessage(
+          sourceQueueUrl,
+          message.ReceiptHandle,
+        );
         if (!deleted) {
           log.warn(
-            "Execution started but failed to delete message from queue",
+            "Message sent to workflow queue but failed to delete from source",
             {
               messageId: message.MessageId,
-              executionArn: execResult.executionArn,
             },
           );
         }
 
         return {
-          status: "processed",
+          status: "moved",
           messageId: message.MessageId,
-          executionArn: execResult.executionArn,
+          targetMessageId: sendResult.messageId,
         };
       }),
     );
@@ -357,7 +355,7 @@ async function processBatch(queueUrl, stateMachineArn, messages) {
     for (const result of results) {
       if (result.status === "fulfilled") {
         const value = result.value;
-        if (value.status === "processed") processed++;
+        if (value.status === "moved") moved++;
         else if (value.status === "skipped") skipped++;
         else if (value.status === "failed") failed++;
       } else {
@@ -367,23 +365,23 @@ async function processBatch(queueUrl, stateMachineArn, messages) {
     }
   }
 
-  return { processed, skipped, failed };
+  return { moved, skipped, failed };
 }
 
 /**
  * Drain a single queue
- * @param {string} queueUrl - SQS queue URL
+ * @param {string} sourceQueueUrl - Source SQS queue URL
  * @param {string} queueName - Queue name for logging
- * @param {string} stateMachineArn - Step Functions state machine ARN
- * @returns {Promise<{ processed: number, skipped: number, failed: number }>}
+ * @param {string} workflowQueueUrl - Workflow queue URL
+ * @returns {Promise<{ moved: number, skipped: number, failed: number }>}
  */
-async function drainQueue(queueUrl, queueName, stateMachineArn) {
+async function drainQueue(sourceQueueUrl, queueName, workflowQueueUrl) {
   log.info(`Starting to drain queue: ${queueName}`);
 
-  const initialCount = await getApproximateMessageCount(queueUrl);
+  const initialCount = await getApproximateMessageCount(sourceQueueUrl);
   log.info(`Approximate messages in ${queueName}: ${initialCount}`);
 
-  let totalProcessed = 0;
+  let totalMoved = 0;
   let totalSkipped = 0;
   let totalFailed = 0;
   let emptyReceiveCount = 0;
@@ -394,7 +392,7 @@ async function drainQueue(queueUrl, queueName, stateMachineArn) {
     // Receive messages from queue
     const receiveResponse = await sqsClient.send(
       new ReceiveMessageCommand({
-        QueueUrl: queueUrl,
+        QueueUrl: sourceQueueUrl,
         MaxNumberOfMessages: MAX_RECEIVE_COUNT,
         VisibilityTimeout: VISIBILITY_TIMEOUT_SECONDS,
         MessageAttributeNames: ["All"],
@@ -423,25 +421,29 @@ async function drainQueue(queueUrl, queueName, stateMachineArn) {
     const messagesWithoutExecArn = messages.length - messagesWithExecArn;
 
     log.info(
-      `Batch #${batchNumber}: Received ${messages.length} messages (${messagesWithoutExecArn} to process, ${messagesWithExecArn} with ExecutionArn to skip)`,
+      `Batch #${batchNumber}: Received ${messages.length} messages (${messagesWithoutExecArn} to move, ${messagesWithExecArn} with ExecutionArn to skip)`,
     );
 
     // Process the batch
-    const batchResult = await processBatch(queueUrl, stateMachineArn, messages);
+    const batchResult = await processBatch(
+      sourceQueueUrl,
+      workflowQueueUrl,
+      messages,
+    );
 
-    totalProcessed += batchResult.processed;
+    totalMoved += batchResult.moved;
     totalSkipped += batchResult.skipped;
     totalFailed += batchResult.failed;
 
     // Log progress with running totals
     log.info(
-      `Batch #${batchNumber} complete: +${batchResult.processed} processed, +${batchResult.skipped} skipped, +${batchResult.failed} failed`,
+      `Batch #${batchNumber} complete: +${batchResult.moved} moved, +${batchResult.skipped} skipped, +${batchResult.failed} failed`,
     );
     log.progress(
-      totalProcessed,
+      totalMoved,
       totalSkipped,
       totalFailed,
-      totalProcessed + totalSkipped + totalFailed,
+      totalMoved + totalSkipped + totalFailed,
     );
 
     // Small delay between batches to avoid overwhelming the APIs
@@ -450,14 +452,14 @@ async function drainQueue(queueUrl, queueName, stateMachineArn) {
 
   log.summary(`Queue Drain Complete: ${queueName}`, {
     "Total Batches": batchNumber,
-    "Processed (executions started)": totalProcessed,
+    "Moved (to workflow queue)": totalMoved,
     "Skipped (had ExecutionArn)": totalSkipped,
     Failed: totalFailed,
-    "Total Messages Seen": totalProcessed + totalSkipped + totalFailed,
+    "Total Messages Seen": totalMoved + totalSkipped + totalFailed,
   });
 
   return {
-    processed: totalProcessed,
+    moved: totalMoved,
     skipped: totalSkipped,
     failed: totalFailed,
   };
@@ -473,32 +475,32 @@ async function main() {
     // Get required environment variables
     const transactionsQueueUrl = requireEnv("TRANSACTIONS_QUEUE_URL");
     const transactionsDlqUrl = requireEnv("TRANSACTIONS_DLQ_URL");
-    const stateMachineArn = requireEnv("STATE_MACHINE_ARN");
+    const workflowQueueUrl = requireEnv("WORKFLOW_QUEUE_URL");
 
     // Optional: process only specific queue
     const processOnlyDlq = process.env.PROCESS_ONLY_DLQ === "true";
     const processOnlyMain = process.env.PROCESS_ONLY_MAIN === "true";
 
-    log.summary("Workflow Direct Submit - Queue Drainer", {
+    log.summary("Workflow Direct Submit - Queue Mover", {
       "Transactions Queue URL": transactionsQueueUrl,
       "Transactions DLQ URL": transactionsDlqUrl,
-      "State Machine ARN": stateMachineArn,
-      "Max Concurrent Executions": MAX_CONCURRENT_EXECUTIONS,
+      "Workflow Queue URL": workflowQueueUrl,
+      "Max Concurrent Moves": MAX_CONCURRENT_MOVES,
       "Visibility Timeout": `${VISIBILITY_TIMEOUT_SECONDS} seconds`,
       "Process Only DLQ": processOnlyDlq,
       "Process Only Main": processOnlyMain,
       "Start Time": new Date().toISOString(),
     });
 
-    let mainQueueResult = { processed: 0, skipped: 0, failed: 0 };
-    let dlqResult = { processed: 0, skipped: 0, failed: 0 };
+    let mainQueueResult = { moved: 0, skipped: 0, failed: 0 };
+    let dlqResult = { moved: 0, skipped: 0, failed: 0 };
 
     // Process main queue (unless processOnlyDlq is set)
     if (!processOnlyDlq) {
       mainQueueResult = await drainQueue(
         transactionsQueueUrl,
         "Transactions Queue (Main)",
-        stateMachineArn,
+        workflowQueueUrl,
       );
     }
 
@@ -507,29 +509,29 @@ async function main() {
       dlqResult = await drainQueue(
         transactionsDlqUrl,
         "Transactions Queue (DLQ)",
-        stateMachineArn,
+        workflowQueueUrl,
       );
     }
 
     // Calculate totals
-    const totalProcessed = mainQueueResult.processed + dlqResult.processed;
+    const totalMoved = mainQueueResult.moved + dlqResult.moved;
     const totalSkipped = mainQueueResult.skipped + dlqResult.skipped;
     const totalFailed = mainQueueResult.failed + dlqResult.failed;
 
     const duration = ((Date.now() - startTime) / 1000).toFixed(2);
 
-    log.summary("Queue Draining Complete", {
+    log.summary("Queue Moving Complete", {
       Duration: `${duration} seconds`,
-      "Main Queue - Processed": mainQueueResult.processed,
+      "Main Queue - Moved": mainQueueResult.moved,
       "Main Queue - Skipped": mainQueueResult.skipped,
       "Main Queue - Failed": mainQueueResult.failed,
-      "DLQ - Processed": dlqResult.processed,
+      "DLQ - Moved": dlqResult.moved,
       "DLQ - Skipped": dlqResult.skipped,
       "DLQ - Failed": dlqResult.failed,
-      "Total Processed": totalProcessed,
+      "Total Moved": totalMoved,
       "Total Skipped": totalSkipped,
       "Total Failed": totalFailed,
-      "Total Messages": totalProcessed + totalSkipped + totalFailed,
+      "Total Messages": totalMoved + totalSkipped + totalFailed,
     });
 
     // Exit with error if there were failures

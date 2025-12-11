@@ -3,12 +3,25 @@ StartAt: CheckDirectSubmit
 States:
   CheckDirectSubmit:
     Type: Choice
-    Comment: "Skip to Submit phase if transactionItems provided directly (direct submit mode)"
+    Comment: "Check if this is a direct-submit execution (transactionItems provided in message)"
     Choices:
-      - Variable: $.hash.transactionItems
+      - Variable: $.message.hash.transactionItems
         IsPresent: true
-        Next: EmitSubmitScheduled
+        Next: PrepareDirectSubmitInput
     Default: Preprocess
+
+  PrepareDirectSubmitInput:
+    Type: Pass
+    QueryLanguage: JSONata
+    Comment: "Restructure direct-submit input from { message: { pre, hash } } to { pre, hash } at root level"
+    Output: >-
+      {%
+        {
+          "pre": $states.input.message.pre,
+          "hash": $states.input.message.hash
+        }
+      %}
+    Next: EmitSubmitScheduled
 
   Preprocess:
     Type: Task

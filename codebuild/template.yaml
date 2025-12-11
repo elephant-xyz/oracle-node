@@ -868,14 +868,15 @@ Resources:
   # Workflow Direct Submit CodeBuild Job
   # =============================================================================
   # This job drains messages from the transactions queues (main and DLQ) and
-  # starts workflow executions in "direct submit" mode, bypassing all mining
-  # operations (prepare, transform, svl, hash, upload).
+  # moves them to the workflow queue for processing in "direct submit" mode,
+  # bypassing all mining operations (prepare, transform, svl, hash, upload).
   #
   # Usage:
   # - Triggered manually via AWS Console or CLI
-  # - Reads TRANSACTIONS_QUEUE_URL and TRANSACTIONS_DLQ_URL from environment
+  # - Reads TRANSACTIONS_QUEUE_URL, TRANSACTIONS_DLQ_URL, and WORKFLOW_QUEUE_URL
   # - Only processes messages WITHOUT ExecutionArn attribute
   # - Messages WITH ExecutionArn are left in queue (belong to running workflows)
+  # - Moves filtered messages to workflow queue in direct-submit format
   # =============================================================================
 
   WorkflowDirectSubmitBuildRole:
@@ -929,15 +930,16 @@ Resources:
                   - sqs:GetQueueUrl
                 Resource:
                   - !Sub "arn:${AWS::Partition}:sqs:${AWS::Region}:${AWS::AccountId}:*"
-        - PolicyName: WorkflowDirectSubmitCodeBuildStepFunctions
+        - PolicyName: WorkflowDirectSubmitCodeBuildSQSSend
           PolicyDocument:
             Version: "2012-10-17"
             Statement:
               - Effect: Allow
                 Action:
-                  - states:StartExecution
+                  - sqs:SendMessage
                 Resource:
-                  - !Ref StateMachineArn
+                  # Allow sending to workflow queue (derived from URL)
+                  - !Sub "arn:${AWS::Partition}:sqs:${AWS::Region}:${AWS::AccountId}:*"
       Tags:
         - Key: Environment
           Value: !Ref EnvironmentName
@@ -946,7 +948,7 @@ Resources:
     Type: AWS::CodeBuild::Project
     Properties:
       Name: !Sub "${EnvironmentName}-workflow-direct-submit"
-      Description: "Drains transactions queues and starts workflow executions in direct-submit mode. Trigger manually."
+      Description: "Drains transactions queues and moves messages to workflow queue for direct-submit processing. Trigger manually."
       ServiceRole: !GetAtt WorkflowDirectSubmitBuildRole.Arn
       Artifacts:
         Type: NO_ARTIFACTS
@@ -971,9 +973,9 @@ Resources:
           - Name: TRANSACTIONS_DLQ_URL
             Type: PLAINTEXT
             Value: !Ref TransactionsDeadLetterQueueUrl
-          - Name: STATE_MACHINE_ARN
+          - Name: WORKFLOW_QUEUE_URL
             Type: PLAINTEXT
-            Value: !Ref StateMachineArn
+            Value: !Ref WorkflowSqsQueueUrl
           - Name: PROCESS_ONLY_DLQ
             Type: PLAINTEXT
             Value: "false"
@@ -1021,7 +1023,7 @@ Resources:
                   echo "============================================================"
                   echo "  Transactions Queue URL: ${TRANSACTIONS_QUEUE_URL}"
                   echo "  Transactions DLQ URL: ${TRANSACTIONS_DLQ_URL}"
-                  echo "  State Machine ARN: ${STATE_MACHINE_ARN}"
+                  echo "  Workflow Queue URL: ${WORKFLOW_QUEUE_URL}"
                   echo "  Process Only DLQ: ${PROCESS_ONLY_DLQ}"
                   echo "  Process Only Main: ${PROCESS_ONLY_MAIN}"
                   echo "  Source: ${S3_SOURCE}"
