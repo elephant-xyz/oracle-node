@@ -55,6 +55,11 @@ GS3_MIGRATION_ARCHIVE_NAME="${GS3_MIGRATION_ARCHIVE_NAME:-gs3-migration.zip}"
 GS3_MIGRATION_PREFIX="${GS3_MIGRATION_PREFIX:-codebuild/gs3-migration}"
 GS3_MIGRATION_UPLOAD_PENDING=0
 
+WORKFLOW_DIRECT_SUBMIT_MODULE_DIR="codebuild/workflow-direct-submit"
+WORKFLOW_DIRECT_SUBMIT_ARCHIVE_NAME="${WORKFLOW_DIRECT_SUBMIT_ARCHIVE_NAME:-workflow-direct-submit.zip}"
+WORKFLOW_DIRECT_SUBMIT_PREFIX="${WORKFLOW_DIRECT_SUBMIT_PREFIX:-codebuild/workflow-direct-submit}"
+WORKFLOW_DIRECT_SUBMIT_UPLOAD_PENDING=0
+
 WORKFLOW_EVENTS_STACK_NAME="${WORKFLOW_EVENTS_STACK_NAME:-workflow-events-stack}"
 WORKFLOW_EVENTS_TEMPLATE="workflow-events/template.yaml"
 DEPLOY_WORKFLOW_EVENTS="${DEPLOY_WORKFLOW_EVENTS:-true}"
@@ -598,6 +603,65 @@ package_and_upload_gs3_migration() {
   info "Uploaded GS3 migration module to s3://${bucket}/${s3_key}"
 }
 
+package_and_upload_workflow_direct_submit() {
+  if [[ ! -d "$WORKFLOW_DIRECT_SUBMIT_MODULE_DIR" ]]; then
+    warn "Workflow direct submit module directory ($WORKFLOW_DIRECT_SUBMIT_MODULE_DIR) not found, skipping upload."
+    return 0
+  fi
+
+  local bucket="${CODEBUILD_RUNTIME_BUCKET:-}"
+  if [[ -z "$bucket" ]]; then
+    bucket=$(get_bucket)
+  fi
+
+  if [[ -z "$bucket" ]]; then
+    WORKFLOW_DIRECT_SUBMIT_UPLOAD_PENDING=1
+    info "Delaying workflow direct submit module upload until environment bucket exists."
+    return 0
+  fi
+
+  local prefix="${WORKFLOW_DIRECT_SUBMIT_PREFIX%/}"
+  prefix="${prefix#/}"
+  local dist_dir="codebuild/dist"
+  mkdir -p "$dist_dir"
+
+  local archive_path="${dist_dir}/${WORKFLOW_DIRECT_SUBMIT_ARCHIVE_NAME}"
+  rm -f "$archive_path"
+
+  info "Installing workflow direct submit module production dependencies"
+  (
+    cd "$WORKFLOW_DIRECT_SUBMIT_MODULE_DIR"
+    npm ci --omit=dev >/dev/null
+  ) || {
+    err "Failed to install workflow direct submit module dependencies."
+    exit 1
+  }
+
+  info "Packaging workflow direct submit module"
+  (
+    cd "$WORKFLOW_DIRECT_SUBMIT_MODULE_DIR"
+    zip -r "../dist/${WORKFLOW_DIRECT_SUBMIT_ARCHIVE_NAME}" . >/dev/null
+  ) || {
+    err "Failed to package workflow direct submit module."
+    exit 1
+  }
+
+  local s3_key
+  if [[ -n "$prefix" ]]; then
+    s3_key="${prefix}/${WORKFLOW_DIRECT_SUBMIT_ARCHIVE_NAME}"
+  else
+    s3_key="${WORKFLOW_DIRECT_SUBMIT_ARCHIVE_NAME}"
+  fi
+
+  aws s3 cp "$archive_path" "s3://${bucket}/${s3_key}" >/dev/null || {
+    err "Failed to upload workflow direct submit module to s3://${bucket}/${s3_key}"
+    exit 1
+  }
+
+  WORKFLOW_DIRECT_SUBMIT_UPLOAD_PENDING=0
+  info "Uploaded workflow direct submit module to s3://${bucket}/${s3_key}"
+}
+
 deploy_codebuild_stack() {
 
   local openai_api_key="${OPENAI_API_KEY:-}"
@@ -639,6 +703,14 @@ deploy_codebuild_stack() {
   if [[ -z "$transactions_sqs_queue_url" ]]; then
     CODEBUILD_DEPLOY_PENDING=1
     info "Delaying CodeBuild stack deployment until TransactionsSqsQueueUrl output is available."
+    return 0
+  fi
+
+  local transactions_dlq_url
+  transactions_dlq_url=$(get_output "TransactionsDeadLetterQueueUrl")
+  if [[ -z "$transactions_dlq_url" ]]; then
+    CODEBUILD_DEPLOY_PENDING=1
+    info "Delaying CodeBuild stack deployment until TransactionsDeadLetterQueueUrl output is available."
     return 0
   fi
 
@@ -763,6 +835,7 @@ deploy_codebuild_stack() {
     "MvlFunctionName=$mvl_function_name"
     "OpenAiApiKey=$openai_api_key"
     "TransactionsSqsQueueUrl=$transactions_sqs_queue_url"
+    "TransactionsDeadLetterQueueUrl=$transactions_dlq_url"
     "DefaultDlqUrl=$default_dlq_url"
     "OutputBaseUri=$output_base_uri"
     "EnableAutoRepair=${ENABLE_AUTO_REPAIR:-false}"
@@ -1108,6 +1181,7 @@ main() {
   package_and_upload_codebuild_runtime
   package_and_upload_redrive_auto_repair
   package_and_upload_gs3_migration
+  package_and_upload_workflow_direct_submit
   deploy_codebuild_stack
 
   # Handle TransformS3Prefix parameter
@@ -1191,6 +1265,11 @@ main() {
   # Upload GS3 migration module if pending
   if (( GS3_MIGRATION_UPLOAD_PENDING == 1 )); then
     package_and_upload_gs3_migration
+  fi
+
+  # Upload workflow direct submit module if pending
+  if (( WORKFLOW_DIRECT_SUBMIT_UPLOAD_PENDING == 1 )); then
+    package_and_upload_workflow_direct_submit
   fi
 
   handle_pending_keystore_upload

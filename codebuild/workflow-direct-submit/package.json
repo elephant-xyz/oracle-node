@@ -1,0 +1,12 @@
+{
+  "name": "@elephant-xyz/workflow-direct-submit",
+  "version": "1.0.0",
+  "description": "CodeBuild job to drain transactions queues and move messages to workflow queue for direct-submit processing",
+  "type": "module",
+  "main": "index.js",
+  "license": "UNLICENSED",
+  "private": true,
+  "dependencies": {
+    "@aws-sdk/client-sqs": "^3.0.0"
+  }
+}
