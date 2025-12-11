@@ -1836,6 +1836,77 @@ Resources:
           }
         }
 
+  SqsMessageCounterFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Runtime: nodejs22.x
+      Architectures:
+        - arm64
+      MemorySize: 256
+      Timeout: 60
+      CodeUri: ../workflow/lambdas/sqs-message-counter/
+      Handler: index.handler
+      Description: "Counts messages in SQS queues (Transactions and Gas Price, main + DLQ)"
+      LoggingConfig:
+        LogFormat: JSON
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - cloudformation:DescribeStacks
+              Resource: !Sub "arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${AWS::StackName}/*"
+            - Effect: Allow
+              Action:
+                - sqs:GetQueueAttributes
+                - sqs:GetQueueUrl
+                - sqs:ListQueues
+              Resource: "*"
+            - Effect: Allow
+              Action:
+                - sts:GetCallerIdentity
+              Resource: "*"
+            - Effect: Allow
+              Action:
+                - secretsmanager:GetSecretValue
+                - secretsmanager:DescribeSecret
+              Resource:
+                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${AWS::StackName}/google-sheets/config-*"
+                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:spreadsheet-api/google-credentials-*"
+            - Effect: Allow
+              Action:
+                - cloudwatch:GetMetricStatistics
+                - cloudwatch:ListMetrics
+              Resource: "*"
+      Environment:
+        Variables:
+          STACK_NAME: !Ref AWS::StackName
+      Events:
+        DailySchedule1:
+          Type: Schedule
+          Properties:
+            Name: !Sub "${AWS::StackName}-sqs-message-counter-8am"
+            Description: "Trigger SQS message counter at 8:00 AM UTC daily"
+            Schedule: "cron(0 8 * * ? *)"
+            Enabled: true
+        DailySchedule2:
+          Type: Schedule
+          Properties:
+            Name: !Sub "${AWS::StackName}-sqs-message-counter-4pm"
+            Description: "Trigger SQS message counter at 4:00 PM UTC daily"
+            Schedule: "cron(0 16 * * ? *)"
+            Enabled: true
+        DailySchedule3:
+          Type: Schedule
+          Properties:
+            Name: !Sub "${AWS::StackName}-sqs-message-counter-midnight"
+            Description: "Trigger SQS message counter at midnight UTC daily"
+            Schedule: "cron(0 0 * * ? *)"
+            Enabled: true
+      Tags:
+        Function: SqsMessageCounter
+
 Outputs:
   DownloaderFunctionName:
     Description: Name of the downloader Lambda function
@@ -1992,3 +2063,9 @@ Outputs:
   OutputS3Prefix:
     Description: S3 prefix for workflow output files
     Value: !Sub "s3://${EnvironmentBucket}/outputs"
+  SqsMessageCounterFunctionArn:
+    Description: ARN of the SQS Message Counter Lambda function
+    Value: !GetAtt SqsMessageCounterFunction.Arn
+  SqsMessageCounterFunctionName:
+    Description: Name of the SQS Message Counter Lambda function
+    Value: !Ref SqsMessageCounterFunction
