@@ -99,8 +99,7 @@ async function getQueueUrl(
     // Last fallback: construct URL manually
     return `https://sqs.${region}.amazonaws.com/${accountId}/${queueNamePattern}`;
   } catch (error) {
-    const errorMessage =
-      error instanceof Error ? error.message : String(error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
     throw new Error(
       `Failed to get queue URL for ${outputKey}: ${errorMessage}`,
     );
@@ -128,8 +127,7 @@ async function getQueueMessageCount(queueUrl, queueName) {
     );
     return count;
   } catch (error) {
-    const errorMessage =
-      error instanceof Error ? error.message : String(error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
     console.error(
       JSON.stringify({
         level: "error",
@@ -172,8 +170,7 @@ async function getQueueMessageCounts(queueUrl) {
       ),
     };
   } catch (error) {
-    const errorMessage =
-      error instanceof Error ? error.message : String(error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
     console.error(
       JSON.stringify({
         level: "error",
@@ -248,8 +245,7 @@ async function countWorkflowQueueMessages() {
 
     return totalMessages;
   } catch (error) {
-    const errorMessage =
-      error instanceof Error ? error.message : String(error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
     console.error(
       JSON.stringify({
         level: "error",
@@ -306,13 +302,9 @@ async function getGoogleSheetsConfig(stackName) {
 
       // Extract config (support both formats)
       const sheetId =
-        secretData.sheetId ||
-        secretData.sheet_id ||
-        secretData.SHEET_ID;
+        secretData.sheetId || secretData.sheet_id || secretData.SHEET_ID;
       const tabName =
-        secretData.tabName ||
-        secretData.tab_name ||
-        secretData.TAB_NAME;
+        secretData.tabName || secretData.tab_name || secretData.TAB_NAME;
       const credentials =
         secretData.credentials || secretData.credential || secretData;
 
@@ -416,7 +408,7 @@ async function findOrCreateDateColumn(
     });
 
     const headerRow = response.data.values?.[0] || [];
-    
+
     // Look for column with exact name "YYYY-MM-DD (suffix)"
     const dateColumnHeader = `${dateColumn} (${suffix})`;
     const dateColumnIndex = headerRow.findIndex((header) => {
@@ -433,11 +425,14 @@ async function findOrCreateDateColumn(
     // Column doesn't exist, find where to insert it
     // Look for the rightmost column that starts with the same date (e.g., "2025-12-11")
     let insertColumnIndex = 4; // Default: after Account ID column (column C)
-    
+
     // Find the rightmost column with the same date prefix
     for (let i = headerRow.length - 1; i >= 0; i--) {
       const headerStr = String(headerRow[i] || "").trim();
-      if (headerStr.startsWith(`${dateColumn} `) || headerStr.startsWith(`${dateColumn}(`)) {
+      if (
+        headerStr.startsWith(`${dateColumn} `) ||
+        headerStr.startsWith(`${dateColumn}(`)
+      ) {
         // Found a column with the same date, insert right after it
         insertColumnIndex = i + 2; // i is 0-based, so +1 for 1-based, +1 more to insert after
         break;
@@ -486,8 +481,7 @@ async function findOrCreateDateColumn(
 
     return insertColumnIndex;
   } catch (error) {
-    const errorMessage =
-      error instanceof Error ? error.message : String(error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
     throw new Error(`Failed to find or create date column: ${errorMessage}`);
   }
 }
@@ -519,8 +513,7 @@ async function findAccountIdRow(sheets, sheetId, tabName, accountId) {
 
     return -1; // Not found
   } catch (error) {
-    const errorMessage =
-      error instanceof Error ? error.message : String(error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
     throw new Error(`Failed to find account ID row: ${errorMessage}`);
   }
 }
@@ -539,19 +532,17 @@ async function getMetricSum(metricName, status, startTime, endTime) {
   try {
     // Use 30-day period (2592000 seconds) to match dashboard
     const period = 2592000; // 30 days in seconds
-    
+
     // First, list all metrics with this metricName and Status
     const listCommand = new ListMetricsCommand({
       Namespace: "Elephant/Workflow",
       MetricName: metricName,
-      Dimensions: [
-        { Name: "Status", Value: status },
-      ],
+      Dimensions: [{ Name: "Status", Value: status }],
     });
 
     const listResponse = await cloudWatchClient.send(listCommand);
     const metrics = listResponse.Metrics || [];
-    
+
     console.log(
       JSON.stringify({
         level: "info",
@@ -589,10 +580,13 @@ async function getMetricSum(metricName, status, startTime, endTime) {
         });
 
         const statsResponse = await cloudWatchClient.send(statsCommand);
-        const sum = statsResponse.Datapoints?.reduce((s, dp) => s + (dp.Sum || 0), 0) || 0;
+        const sum =
+          statsResponse.Datapoints?.reduce((s, dp) => s + (dp.Sum || 0), 0) ||
+          0;
         return sum;
       } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
+        const errorMessage =
+          error instanceof Error ? error.message : String(error);
         console.warn(
           JSON.stringify({
             level: "warn",
@@ -608,7 +602,7 @@ async function getMetricSum(metricName, status, startTime, endTime) {
 
     const results = await Promise.all(queryPromises);
     total = results.reduce((sum, val) => sum + val, 0);
-    
+
     console.log(
       JSON.stringify({
         level: "info",
@@ -620,7 +614,7 @@ async function getMetricSum(metricName, status, startTime, endTime) {
         period: period,
       }),
     );
-    
+
     return Math.round(total);
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
@@ -662,10 +656,28 @@ async function calculateInProgressCount() {
   // Exclude: AutoRepair, GasPriceCheck, Submit, TransactionStatusCheck
 
   // Prepare: IN_PROGRESS - SUCCEEDED - FAILED (sum over 30 days)
-  const prepareInProgress = await getMetricSum("PrepareElephantPhase", "IN_PROGRESS", startTime, endTime);
-  const prepareSucceeded = await getMetricSum("PrepareElephantPhase", "SUCCEEDED", startTime, endTime);
-  const prepareFailed = await getMetricSum("PrepareElephantPhase", "FAILED", startTime, endTime);
-  const prepareCount = Math.max(0, prepareInProgress - prepareSucceeded - prepareFailed);
+  const prepareInProgress = await getMetricSum(
+    "PrepareElephantPhase",
+    "IN_PROGRESS",
+    startTime,
+    endTime,
+  );
+  const prepareSucceeded = await getMetricSum(
+    "PrepareElephantPhase",
+    "SUCCEEDED",
+    startTime,
+    endTime,
+  );
+  const prepareFailed = await getMetricSum(
+    "PrepareElephantPhase",
+    "FAILED",
+    startTime,
+    endTime,
+  );
+  const prepareCount = Math.max(
+    0,
+    prepareInProgress - prepareSucceeded - prepareFailed,
+  );
   totalInProgress += prepareCount;
 
   console.log(
@@ -680,10 +692,28 @@ async function calculateInProgressCount() {
   );
 
   // Transform: IN_PROGRESS - SUCCEEDED - FAILED (sum over 30 days)
-  const transformInProgress = await getMetricSum("TransformElephantPhase", "IN_PROGRESS", startTime, endTime);
-  const transformSucceeded = await getMetricSum("TransformElephantPhase", "SUCCEEDED", startTime, endTime);
-  const transformFailed = await getMetricSum("TransformElephantPhase", "FAILED", startTime, endTime);
-  const transformCount = Math.max(0, transformInProgress - transformSucceeded - transformFailed);
+  const transformInProgress = await getMetricSum(
+    "TransformElephantPhase",
+    "IN_PROGRESS",
+    startTime,
+    endTime,
+  );
+  const transformSucceeded = await getMetricSum(
+    "TransformElephantPhase",
+    "SUCCEEDED",
+    startTime,
+    endTime,
+  );
+  const transformFailed = await getMetricSum(
+    "TransformElephantPhase",
+    "FAILED",
+    startTime,
+    endTime,
+  );
+  const transformCount = Math.max(
+    0,
+    transformInProgress - transformSucceeded - transformFailed,
+  );
   totalInProgress += transformCount;
 
   console.log(
@@ -698,8 +728,18 @@ async function calculateInProgressCount() {
   );
 
   // SVL: IN_PROGRESS - SUCCEEDED (no FAILED deduction)
-  const svlInProgress = await getMetricSum("SVLElephantPhase", "IN_PROGRESS", startTime, endTime);
-  const svlSucceeded = await getMetricSum("SVLElephantPhase", "SUCCEEDED", startTime, endTime);
+  const svlInProgress = await getMetricSum(
+    "SVLElephantPhase",
+    "IN_PROGRESS",
+    startTime,
+    endTime,
+  );
+  const svlSucceeded = await getMetricSum(
+    "SVLElephantPhase",
+    "SUCCEEDED",
+    startTime,
+    endTime,
+  );
   const svlCount = Math.max(0, svlInProgress - svlSucceeded);
   totalInProgress += svlCount;
 
@@ -714,8 +754,18 @@ async function calculateInProgressCount() {
   );
 
   // MVL: IN_PROGRESS - SUCCEEDED (no FAILED deduction)
-  const mvlInProgress = await getMetricSum("MVLElephantPhase", "IN_PROGRESS", startTime, endTime);
-  const mvlSucceeded = await getMetricSum("MVLElephantPhase", "SUCCEEDED", startTime, endTime);
+  const mvlInProgress = await getMetricSum(
+    "MVLElephantPhase",
+    "IN_PROGRESS",
+    startTime,
+    endTime,
+  );
+  const mvlSucceeded = await getMetricSum(
+    "MVLElephantPhase",
+    "SUCCEEDED",
+    startTime,
+    endTime,
+  );
   const mvlCount = Math.max(0, mvlInProgress - mvlSucceeded);
   totalInProgress += mvlCount;
 
@@ -730,10 +780,28 @@ async function calculateInProgressCount() {
   );
 
   // Upload: IN_PROGRESS - SUCCEEDED - FAILED (sum over 30 days)
-  const uploadInProgress = await getMetricSum("UploadElephantPhase", "IN_PROGRESS", startTime, endTime);
-  const uploadSucceeded = await getMetricSum("UploadElephantPhase", "SUCCEEDED", startTime, endTime);
-  const uploadFailed = await getMetricSum("UploadElephantPhase", "FAILED", startTime, endTime);
-  const uploadCount = Math.max(0, uploadInProgress - uploadSucceeded - uploadFailed);
+  const uploadInProgress = await getMetricSum(
+    "UploadElephantPhase",
+    "IN_PROGRESS",
+    startTime,
+    endTime,
+  );
+  const uploadSucceeded = await getMetricSum(
+    "UploadElephantPhase",
+    "SUCCEEDED",
+    startTime,
+    endTime,
+  );
+  const uploadFailed = await getMetricSum(
+    "UploadElephantPhase",
+    "FAILED",
+    startTime,
+    endTime,
+  );
+  const uploadCount = Math.max(
+    0,
+    uploadInProgress - uploadSucceeded - uploadFailed,
+  );
   totalInProgress += uploadCount;
 
   console.log(
@@ -748,9 +816,24 @@ async function calculateInProgressCount() {
   );
 
   // Hash: IN_PROGRESS - SUCCEEDED - FAILED (sum over 30 days)
-  const hashInProgress = await getMetricSum("HashElephantPhase", "IN_PROGRESS", startTime, endTime);
-  const hashSucceeded = await getMetricSum("HashElephantPhase", "SUCCEEDED", startTime, endTime);
-  const hashFailed = await getMetricSum("HashElephantPhase", "FAILED", startTime, endTime);
+  const hashInProgress = await getMetricSum(
+    "HashElephantPhase",
+    "IN_PROGRESS",
+    startTime,
+    endTime,
+  );
+  const hashSucceeded = await getMetricSum(
+    "HashElephantPhase",
+    "SUCCEEDED",
+    startTime,
+    endTime,
+  );
+  const hashFailed = await getMetricSum(
+    "HashElephantPhase",
+    "FAILED",
+    startTime,
+    endTime,
+  );
   const hashCount = Math.max(0, hashInProgress - hashSucceeded - hashFailed);
   totalInProgress += hashCount;
 
@@ -804,13 +887,43 @@ async function calculateReadyToMintFailedCount() {
   );
 
   // Sum FAILED metrics for: Prepare, Transform, Upload, Hash, AutoRepair
-  const prepareFailed = await getMetricSum("PrepareElephantPhase", "FAILED", startTime, endTime);
-  const transformFailed = await getMetricSum("TransformElephantPhase", "FAILED", startTime, endTime);
-  const uploadFailed = await getMetricSum("UploadElephantPhase", "FAILED", startTime, endTime);
-  const hashFailed = await getMetricSum("HashElephantPhase", "FAILED", startTime, endTime);
-  const autoRepairFailed = await getMetricSum("AutoRepairElephantPhase", "FAILED", startTime, endTime);
+  const prepareFailed = await getMetricSum(
+    "PrepareElephantPhase",
+    "FAILED",
+    startTime,
+    endTime,
+  );
+  const transformFailed = await getMetricSum(
+    "TransformElephantPhase",
+    "FAILED",
+    startTime,
+    endTime,
+  );
+  const uploadFailed = await getMetricSum(
+    "UploadElephantPhase",
+    "FAILED",
+    startTime,
+    endTime,
+  );
+  const hashFailed = await getMetricSum(
+    "HashElephantPhase",
+    "FAILED",
+    startTime,
+    endTime,
+  );
+  const autoRepairFailed = await getMetricSum(
+    "AutoRepairElephantPhase",
+    "FAILED",
+    startTime,
+    endTime,
+  );
 
-  const totalFailed = prepareFailed + transformFailed + uploadFailed + hashFailed + autoRepairFailed;
+  const totalFailed =
+    prepareFailed +
+    transformFailed +
+    uploadFailed +
+    hashFailed +
+    autoRepairFailed;
 
   console.log(
     JSON.stringify({
@@ -855,7 +968,8 @@ async function updateGoogleSheet(
       JSON.stringify({
         level: "info",
         msg: "google_sheets_config_not_found",
-        reason: "Secrets Manager secret not found, skipping Google Sheets update",
+        reason:
+          "Secrets Manager secret not found, skipping Google Sheets update",
       }),
     );
     return;
@@ -895,7 +1009,9 @@ async function updateGoogleSheet(
       dateColumn,
       "ready to be minted",
     );
-    const readyToMintColumnLetter = String.fromCharCode(64 + readyToMintColumnIndex);
+    const readyToMintColumnLetter = String.fromCharCode(
+      64 + readyToMintColumnIndex,
+    );
 
     await sheets.spreadsheets.values.update({
       spreadsheetId: config.sheetId,
@@ -987,8 +1103,7 @@ async function updateGoogleSheet(
       }),
     );
   } catch (error) {
-    const errorMessage =
-      error instanceof Error ? error.message : String(error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
     console.error(
       JSON.stringify({
         level: "error",
@@ -1013,7 +1128,8 @@ export const handler = async (event = {}) => {
   };
 
   try {
-    const stackName = event.stackName || process.env.STACK_NAME || "elephant-oracle-node";
+    const stackName =
+      event.stackName || process.env.STACK_NAME || "elephant-oracle-node";
     const region = process.env.AWS_REGION || "us-east-1";
 
     console.log(
@@ -1199,4 +1315,3 @@ export const handler = async (event = {}) => {
     throw error;
   }
 };
-

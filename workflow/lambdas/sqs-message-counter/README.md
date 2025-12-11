@@ -126,10 +126,12 @@ The script will auto-detect the CloudFormation stack name. You can also specify 
 #### Secret Configuration
 
 **Secret Name Options** (tried in order):
+
 1. `{STACK_NAME}/google-sheets/config` (e.g., `elephant-oracle-node/google-sheets/config`)
 2. `spreadsheet-api/google-credentials` (default fallback)
 
 **Secret Value Format** (JSON):
+
 ```json
 {
   "sheetId": "1abc123def456ghi789",
@@ -189,6 +191,7 @@ The Lambda expects a Google Sheet with:
 2. **Column D+**: Date columns with specific formats
 
 The Lambda will:
+
 - Find or create date columns for today's date with the following formats:
   - `YYYY-MM-DD (ready to be minted)` - SQS message counts (Transactions + Gas Price queues)
   - `YYYY-MM-DD (waiting for mining)` - Workflow queue message counts
@@ -201,9 +204,9 @@ The Lambda will:
 ### Example Sheet Structure
 
 | (A) | (B) | (C) Account ID | (D) 2025-12-10 (ready to be minted) | (E) 2025-12-10 (waiting for mining) | (F) 2025-12-10 (in progress) | (G) 2025-12-10 (failed) |
-|-----|-----|----------------|--------------------------------------|-----------------------------------|----------------------------|-------------------------|
-| ... | ... | 564827068047   | 115                                  | 25                                | 42                         | 8                       |
-| ... | ... | 582360921509   | 50                                   | 12                                | 18                         | 3                       |
+| --- | --- | -------------- | ----------------------------------- | ----------------------------------- | ---------------------------- | ----------------------- |
+| ... | ... | 564827068047   | 115                                 | 25                                  | 42                           | 8                       |
+| ... | ... | 582360921509   | 50                                  | 12                                  | 18                           | 3                       |
 
 ## Error Handling
 
@@ -230,26 +233,32 @@ npm run test:local
 ## Troubleshooting
 
 ### "Permission denied" when updating sheet
+
 - Make sure you shared the Google Sheet with the service account email
 - Verify the service account has "Editor" permissions
 
 ### "Sheet not found"
+
 - Verify the Sheet ID is correct (check the URL)
 - Make sure the sheet is accessible (not in a restricted folder)
 
 ### "Tab not found"
+
 - Verify the tab name matches exactly (case-sensitive)
 - Check for extra spaces in the tab name
 
 ### "Invalid credentials"
+
 - Verify the JSON file is valid: `jq . your-credentials.json`
 - Make sure the service account key hasn't been deleted from Google Cloud Console
 
 ### "Account ID not found in sheet"
+
 - Make sure the Account ID is in column C
 - Verify the Account ID matches exactly (no extra spaces)
 
 ### CloudWatch metrics returning 0
+
 - Verify the Lambda has `cloudwatch:ListMetrics` and `cloudwatch:GetMetricStatistics` permissions
 - Check that metrics are being published to the `Elephant/Workflow` namespace
 - Ensure the time range (30 days) contains metric data
