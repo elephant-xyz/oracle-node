@@ -1,6 +1,28 @@
 Comment: Elephant Express workflow. Triggered by Starter Lambda with one SQS message payload.
-StartAt: Preprocess
+StartAt: CheckDirectSubmit
 States:
+  CheckDirectSubmit:
+    Type: Choice
+    Comment: "Check if this is a direct-submit execution (transactionItems provided in message)"
+    Choices:
+      - Variable: $.message.hash.transactionItems
+        IsPresent: true
+        Next: PrepareDirectSubmitInput
+    Default: Preprocess
+
+  PrepareDirectSubmitInput:
+    Type: Pass
+    QueryLanguage: JSONata
+    Comment: "Restructure direct-submit input from { message: { pre, hash } } to { pre, hash } at root level"
+    Output: >-
+      {%
+        {
+          "pre": $states.input.message.pre,
+          "hash": $states.input.message.hash
+        }
+      %}
+    Next: EmitSubmitScheduled
+
   Preprocess:
     Type: Task
     Resource: arn:aws:states:::lambda:invoke
