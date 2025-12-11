@@ -16,7 +16,6 @@ import {
 import {
   CloudWatchClient,
   GetMetricStatisticsCommand,
-  GetMetricDataCommand,
   ListMetricsCommand,
 } from "@aws-sdk/client-cloudwatch";
 import { google } from "googleapis";
