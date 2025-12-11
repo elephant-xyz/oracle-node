@@ -186,7 +186,7 @@ function buildWorkflowMessage(transactionItems) {
       transactionItems: transactionItems,
     },
   };
-  return JSON.stringify({ message: workflowInput });
+  return JSON.stringify(workflowInput);
 }
 
 /**
