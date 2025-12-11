@@ -168,7 +168,11 @@ async function getGasPriceFromSSM() {
         }
 
         // If we found any params (EIP-1559 or gasBuffer), return them
-        if (result.maxFeePerGas || result.maxPriorityFeePerGas || result.gasBuffer) {
+        if (
+          result.maxFeePerGas ||
+          result.maxPriorityFeePerGas ||
+          result.gasBuffer
+        ) {
           console.log({
             component: "submit",
             level: "info",
