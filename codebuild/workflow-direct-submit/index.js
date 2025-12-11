@@ -18,7 +18,7 @@
 import {
   SQSClient,
   ReceiveMessageCommand,
-  DeleteMessageCommand,
+  DeleteMessageBatchCommand,
   SendMessageCommand,
   GetQueueAttributesCommand,
 } from "@aws-sdk/client-sqs";
@@ -231,35 +231,61 @@ async function sendToWorkflowQueue(workflowQueueUrl, messageBody) {
 }
 
 /**
- * Delete a message from SQS with retry logic
+ * Delete messages from SQS in batch with retry logic
  * @param {string} queueUrl - SQS queue URL
- * @param {string} receiptHandle - Message receipt handle
- * @returns {Promise<boolean>} - True if deleted successfully
+ * @param {Array<{id: string, receiptHandle: string}>} messages - Messages to delete (id and receiptHandle)
+ * @returns {Promise<{successful: string[], failed: string[]}>} - IDs of successfully and failed deletions
  */
-async function deleteMessage(queueUrl, receiptHandle) {
+async function deleteMessageBatch(queueUrl, messages) {
+  if (messages.length === 0) {
+    return { successful: [], failed: [] };
+  }
+
+  // SQS DeleteMessageBatch supports up to 10 messages per call
+  const entries = messages.map((msg) => ({
+    Id: msg.id,
+    ReceiptHandle: msg.receiptHandle,
+  }));
+
   for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
     try {
-      await sqsClient.send(
-        new DeleteMessageCommand({
+      const response = await sqsClient.send(
+        new DeleteMessageBatchCommand({
           QueueUrl: queueUrl,
-          ReceiptHandle: receiptHandle,
+          Entries: entries,
         }),
       );
-      return true;
+
+      const successful = (response.Successful || []).map((s) => s.Id);
+      const failed = (response.Failed || []).map((f) => f.Id);
+
+      if (failed.length > 0) {
+        log.warn(
+          `Batch delete partial failure: ${failed.length} messages failed`,
+          {
+            failedIds: failed,
+            failures: response.Failed,
+          },
+        );
+      }
+
+      return { successful, failed };
     } catch (error) {
       if (attempt < RETRY_DELAYS_MS.length) {
         const delay = RETRY_DELAYS_MS[attempt];
         log.warn(
-          `Retryable error deleting message (attempt ${attempt + 1}): ${error.message}. Retrying in ${delay}ms...`,
+          `Retryable error in batch delete (attempt ${attempt + 1}): ${error.message}. Retrying in ${delay}ms...`,
         );
         await sleep(delay);
         continue;
       }
-      log.error(`Failed to delete message after all retries: ${error.message}`);
-      return false;
+      log.error(
+        `Failed to batch delete messages after all retries: ${error.message}`,
+      );
+      return { successful: [], failed: messages.map((m) => m.id) };
     }
   }
-  return false;
+  return { successful: [], failed: messages.map((m) => m.id) };
 }
 
 /**
@@ -273,6 +299,9 @@ async function processBatch(sourceQueueUrl, workflowQueueUrl, messages) {
   let moved = 0;
   let skipped = 0;
   let failed = 0;
+
+  // Track messages that were successfully sent and need to be deleted
+  const messagesToDelete = [];
 
   // Process messages concurrently with limit
   const chunks = [];
@@ -329,38 +358,52 @@ async function processBatch(sourceQueueUrl, workflowQueueUrl, messages) {
           transactionCount: parseResult.transactionItems.length,
         });
 
-        // Delete message from source queue after successful send
-        const deleted = await deleteMessage(
-          sourceQueueUrl,
-          message.ReceiptHandle,
-        );
-        if (!deleted) {
-          log.warn(
-            "Message sent to workflow queue but failed to delete from source",
-            {
-              messageId: message.MessageId,
-            },
-          );
-        }
-
         return {
           status: "moved",
           messageId: message.MessageId,
+          receiptHandle: message.ReceiptHandle,
           targetMessageId: sendResult.messageId,
         };
       }),
     );
 
-    // Count results
+    // Count results and collect messages to delete
     for (const result of results) {
       if (result.status === "fulfilled") {
         const value = result.value;
-        if (value.status === "moved") moved++;
-        else if (value.status === "skipped") skipped++;
-        else if (value.status === "failed") failed++;
+        if (value.status === "moved") {
+          moved++;
+          messagesToDelete.push({
+            id: value.messageId,
+            receiptHandle: value.receiptHandle,
+          });
+        } else if (value.status === "skipped") {
+          skipped++;
+        } else if (value.status === "failed") {
+          failed++;
+        }
       } else {
         failed++;
         log.error(`Unexpected error processing message: ${result.reason}`);
+      }
+    }
+  }
+
+  // Batch delete all successfully moved messages (up to 10 per API call)
+  if (messagesToDelete.length > 0) {
+    // Split into chunks of 10 (SQS batch limit)
+    for (let i = 0; i < messagesToDelete.length; i += 10) {
+      const deleteChunk = messagesToDelete.slice(i, i + 10);
+      const deleteResult = await deleteMessageBatch(
+        sourceQueueUrl,
+        deleteChunk,
+      );
+
+      if (deleteResult.failed.length > 0) {
+        log.warn(
+          `${deleteResult.failed.length} messages sent to workflow queue but failed to delete from source`,
+          { failedIds: deleteResult.failed },
+        );
       }
     }
   }
