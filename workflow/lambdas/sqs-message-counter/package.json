@@ -1,0 +1,23 @@
+{
+  "name": "sqs-message-counter-lambda",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Lambda function for counting SQS messages",
+  "main": "index.mjs",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "test:local": "node test-local.mjs",
+    "typecheck": "tsc --pretty false --noEmit -p jsconfig.json"
+  },
+  "dependencies": {
+    "@aws-sdk/client-cloudformation": "^3.879.0",
+    "@aws-sdk/client-cloudwatch": "^3.879.0",
+    "@aws-sdk/client-secrets-manager": "^3.879.0",
+    "@aws-sdk/client-sqs": "^3.879.0",
+    "@aws-sdk/client-sts": "^3.879.0",
+    "googleapis": "^144.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.26"
+  }
+}
