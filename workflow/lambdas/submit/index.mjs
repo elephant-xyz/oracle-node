@@ -107,11 +107,13 @@ async function downloadKeystoreFromS3(bucket, key, targetPath) {
  * Get gas price configuration from AWS SSM Parameter Store
  * Used only for self-custodial oracles (keystore mode) to allow dynamic gas price configuration
  *
- * Supports two formats for backward compatibility:
+ * Supports multiple formats for backward compatibility:
  * 1. Simple string: "25" (legacy - sets gasPrice=25 Gwei, elephant-cli calculates priority fee)
  * 2. JSON object: {"maxFeePerGas":"30","maxPriorityFeePerGas":"5"} (EIP-1559 - full control)
+ * 3. JSON object with gasBuffer: {"maxFeePerGas":"30","maxPriorityFeePerGas":"5","gasBuffer":"25"}
+ * 4. JSON object with only gasBuffer: {"gasBuffer":"25"} (can be set independently)
  *
- * @returns {Promise<{gasPrice?: string, maxFeePerGas?: string, maxPriorityFeePerGas?: string} | undefined>}
+ * @returns {Promise<{gasPrice?: string, maxFeePerGas?: string, maxPriorityFeePerGas?: string, gasBuffer?: string} | undefined>}
  */
 async function getGasPriceFromSSM() {
   try {
@@ -144,13 +146,13 @@ async function getGasPriceFromSSM() {
       return undefined;
     }
 
-    // Try to parse as JSON first (EIP-1559 format)
+    // Try to parse as JSON first (EIP-1559 format or with gasBuffer)
     try {
       const parsed = JSON.parse(paramValue);
 
       // Validate it's an object with expected fields
       if (typeof parsed === "object" && parsed !== null) {
-        /** @type {{maxFeePerGas?: string, maxPriorityFeePerGas?: string}} */
+        /** @type {{maxFeePerGas?: string, maxPriorityFeePerGas?: string, gasBuffer?: string}} */
         const result = {};
 
         if (parsed.maxFeePerGas) {
@@ -161,12 +163,16 @@ async function getGasPriceFromSSM() {
           result.maxPriorityFeePerGas = String(parsed.maxPriorityFeePerGas);
         }
 
-        // If we found EIP-1559 params, return them
-        if (result.maxFeePerGas || result.maxPriorityFeePerGas) {
+        if (parsed.gasBuffer) {
+          result.gasBuffer = String(parsed.gasBuffer);
+        }
+
+        // If we found any params (EIP-1559 or gasBuffer), return them
+        if (result.maxFeePerGas || result.maxPriorityFeePerGas || result.gasBuffer) {
           console.log({
             component: "submit",
             level: "info",
-            msg: "Successfully retrieved EIP-1559 gas configuration from SSM",
+            msg: "Successfully retrieved gas configuration from SSM",
             config: result,
             at: new Date().toISOString(),
           });
@@ -465,6 +471,10 @@ export const handler = async (event) => {
       if (!process.env.ELEPHANT_RPC_URL)
         throw new Error("ELEPHANT_RPC_URL is required");
 
+      // Fetch gas buffer configuration from SSM Parameter Store for API mode
+      const gasPriceConfig = await getGasPriceFromSSM();
+      const gasBuffer = gasPriceConfig?.gasBuffer;
+
       submitResult = await submitToContract({
         csvFile: csvFilePath,
         domain: process.env.ELEPHANT_DOMAIN,
@@ -474,6 +484,8 @@ export const handler = async (event) => {
         rpcUrl: process.env.ELEPHANT_RPC_URL,
         cwd: tmp,
         // Note: Gas price is not passed in API mode - Elephant manages it
+        // But gas buffer can be set independently
+        ...(gasBuffer ? { gasBuffer } : {}),
       });
     }
 

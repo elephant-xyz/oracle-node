@@ -21,6 +21,7 @@ Options:
     --max-fee <gwei>            Set maxFeePerGas (EIP-1559 format)
     --priority-fee <gwei>       Set maxPriorityFeePerGas (EIP-1559 format, requires --max-fee)
     --gas-price <gwei>          Set legacy gas price (cannot be used with --max-fee)
+    --gas-buffer <percent>      Set gas buffer percentage (can be used independently or with gas price)
     --auto                      Use automatic gas price detection
     --view                      View current gas price configuration
     --history                   View gas price configuration history
@@ -32,6 +33,15 @@ Examples:
 
     # Set legacy gas price
     $0 --gas-price 50
+
+    # Set gas buffer only (can be used independently)
+    $0 --gas-buffer 25
+
+    # Set EIP-1559 gas price with gas buffer
+    $0 --max-fee 50 --priority-fee 2 --gas-buffer 25
+
+    # Set legacy gas price with gas buffer
+    $0 --gas-price 50 --gas-buffer 25
 
     # Use automatic gas price detection
     $0 --auto
@@ -47,8 +57,10 @@ Environment Variables:
 
 Notes:
     - Gas prices are specified in Gwei (1 Gwei = 0.000000001 ETH)
-    - This configuration only affects keystore mode (self-custodial) oracles
-    - API mode oracles use gas prices managed by Elephant
+    - Gas buffer is specified as a percentage (e.g., 25 means 25%)
+    - Gas price configuration only affects keystore mode (self-custodial) oracles
+    - Gas buffer can be used in both keystore mode and API mode
+    - API mode oracles use gas prices managed by Elephant, but gas buffer can be set independently
     - Changes take effect on the next Lambda execution (no redeployment needed)
 
 Typical Gas Price Values:
@@ -103,14 +115,35 @@ validate_number() {
     fi
 }
 
+# Get current parameter value as JSON object (if exists)
+get_current_config() {
+    local current_value
+    if current_value=$(aws ssm get-parameter --name "$PARAMETER_NAME" --output json 2>/dev/null | jq -r '.Parameter.Value'); then
+        # Try to parse as JSON
+        if echo "$current_value" | jq . >/dev/null 2>&1; then
+            echo "$current_value"
+        else
+            # Legacy format - convert to JSON with gasPrice field
+            jq -n --arg gasPrice "$current_value" '{gasPrice: $gasPrice}'
+        fi
+    else
+        # Parameter doesn't exist
+        echo "{}"
+    fi
+}
+
 # Set EIP-1559 gas price
 set_eip1559_gas_price() {
     local max_fee="$1"
     local priority_fee="$2"
+    local gas_buffer="$3"
 
     info "Setting EIP-1559 gas price configuration"
     info "maxFeePerGas: ${max_fee} Gwei"
     info "maxPriorityFeePerGas: ${priority_fee} Gwei"
+    if [[ -n "$gas_buffer" ]]; then
+        info "gasBuffer: ${gas_buffer}%"
+    fi
 
     # Validate maxPriorityFeePerGas is not greater than maxFeePerGas
     if (( $(echo "$priority_fee > $max_fee" | bc -l) )); then
@@ -118,11 +151,22 @@ set_eip1559_gas_price() {
         return 1
     fi
 
+    local current_config
+    current_config=$(get_current_config)
+
     local value
-    value=$(jq -n \
-        --arg maxFee "$max_fee" \
-        --arg priorityFee "$priority_fee" \
-        '{maxFeePerGas: $maxFee, maxPriorityFeePerGas: $priorityFee}' | jq -c .)
+    if [[ -n "$gas_buffer" ]]; then
+        value=$(echo "$current_config" | jq -c \
+            --arg maxFee "$max_fee" \
+            --arg priorityFee "$priority_fee" \
+            --arg gasBuffer "$gas_buffer" \
+            '. + {maxFeePerGas: $maxFee, maxPriorityFeePerGas: $priorityFee, gasBuffer: $gasBuffer}')
+    else
+        value=$(echo "$current_config" | jq -c \
+            --arg maxFee "$max_fee" \
+            --arg priorityFee "$priority_fee" \
+            '. + {maxFeePerGas: $maxFee, maxPriorityFeePerGas: $priorityFee}')
+    fi
 
     if aws ssm put-parameter \
         --name "$PARAMETER_NAME" \
@@ -146,25 +190,94 @@ set_eip1559_gas_price() {
 # Set legacy gas price
 set_legacy_gas_price() {
     local gas_price="$1"
+    local gas_buffer="$2"
 
     info "Setting legacy gas price configuration"
     info "gasPrice: ${gas_price} Gwei"
+    if [[ -n "$gas_buffer" ]]; then
+        info "gasBuffer: ${gas_buffer}%"
+    fi
+
+    # If gas buffer is provided, we need to use JSON format
+    if [[ -n "$gas_buffer" ]]; then
+        local current_config
+        current_config=$(get_current_config)
+
+        local value
+        value=$(echo "$current_config" | jq -c \
+            --arg gasPrice "$gas_price" \
+            --arg gasBuffer "$gas_buffer" \
+            '. + {gasPrice: $gasPrice, gasBuffer: $gasBuffer}')
+
+        if aws ssm put-parameter \
+            --name "$PARAMETER_NAME" \
+            --type "String" \
+            --value "$value" \
+            --overwrite \
+            --output json >/dev/null; then
+
+            info "✅ Gas price configuration updated successfully"
+            info "Parameter: $PARAMETER_NAME"
+            info "Value: $value"
+            echo ""
+            info "Changes will take effect on the next Lambda execution"
+            return 0
+        else
+            err "❌ Failed to update gas price configuration"
+            return 1
+        fi
+    else
+        # No gas buffer - use simple string format for backward compatibility
+        if aws ssm put-parameter \
+            --name "$PARAMETER_NAME" \
+            --type "String" \
+            --value "$gas_price" \
+            --overwrite \
+            --output json >/dev/null; then
+
+            info "✅ Gas price configuration updated successfully"
+            info "Parameter: $PARAMETER_NAME"
+            info "Value: $gas_price Gwei"
+            echo ""
+            info "Changes will take effect on the next Lambda execution"
+            return 0
+        else
+            err "❌ Failed to update gas price configuration"
+            return 1
+        fi
+    fi
+}
+
+# Set gas buffer only
+set_gas_buffer_only() {
+    local gas_buffer="$1"
+
+    info "Setting gas buffer configuration"
+    info "gasBuffer: ${gas_buffer}%"
+
+    local current_config
+    current_config=$(get_current_config)
+
+    local value
+    value=$(echo "$current_config" | jq -c \
+        --arg gasBuffer "$gas_buffer" \
+        '. + {gasBuffer: $gasBuffer}')
 
     if aws ssm put-parameter \
         --name "$PARAMETER_NAME" \
         --type "String" \
-        --value "$gas_price" \
+        --value "$value" \
         --overwrite \
         --output json >/dev/null; then
 
-        info "✅ Gas price configuration updated successfully"
+        info "✅ Gas buffer configuration updated successfully"
         info "Parameter: $PARAMETER_NAME"
-        info "Value: $gas_price Gwei"
+        info "Value: $value"
         echo ""
         info "Changes will take effect on the next Lambda execution"
         return 0
     else
-        err "❌ Failed to update gas price configuration"
+        err "❌ Failed to update gas buffer configuration"
         return 1
     fi
 }
@@ -197,6 +310,7 @@ main() {
     local max_fee=""
     local priority_fee=""
     local gas_price=""
+    local gas_buffer=""
     local auto_mode=false
     local view_mode=false
     local history_mode=false
@@ -229,6 +343,15 @@ main() {
                     exit 1
                 fi
                 gas_price="$2"
+                shift 2
+                ;;
+            --gas-buffer)
+                if [[ -z "$2" || "$2" =~ ^-- ]]; then
+                    err "--gas-buffer requires a value"
+                    usage
+                    exit 1
+                fi
+                gas_buffer="$2"
                 shift 2
                 ;;
             --auto)
@@ -274,14 +397,25 @@ main() {
         exit $?
     fi
 
-    # Validate mutually exclusive options
+    # Validate gas buffer if provided
+    if [[ -n "$gas_buffer" ]]; then
+        validate_number "$gas_buffer" "--gas-buffer" || exit 1
+    fi
+
+    # Handle gas buffer only mode
+    if [[ -z "$max_fee" && -z "$gas_price" && "$auto_mode" != "true" && -n "$gas_buffer" ]]; then
+        set_gas_buffer_only "$gas_buffer"
+        exit $?
+    fi
+
+    # Validate mutually exclusive options for gas price
     local mode_count=0
     [[ -n "$max_fee" ]] && ((mode_count++))
     [[ -n "$gas_price" ]] && ((mode_count++))
     [[ "$auto_mode" == "true" ]] && ((mode_count++))
 
-    if [[ $mode_count -eq 0 ]]; then
-        err "Must specify one of: --max-fee, --gas-price, --auto, --view, or --history"
+    if [[ $mode_count -eq 0 && -z "$gas_buffer" ]]; then
+        err "Must specify one of: --max-fee, --gas-price, --gas-buffer, --auto, --view, or --history"
         usage
         exit 1
     fi
@@ -295,6 +429,12 @@ main() {
 
     # Handle auto mode
     if [[ "$auto_mode" == "true" ]]; then
+        if [[ -n "$gas_buffer" ]]; then
+            err "--gas-buffer cannot be used with --auto"
+            err "Gas buffer is only supported with explicit gas price settings"
+            usage
+            exit 1
+        fi
         set_auto_gas_price
         exit $?
     fi
@@ -311,7 +451,7 @@ main() {
         validate_number "$max_fee" "--max-fee" || exit 1
         validate_number "$priority_fee" "--priority-fee" || exit 1
 
-        set_eip1559_gas_price "$max_fee" "$priority_fee"
+        set_eip1559_gas_price "$max_fee" "$priority_fee" "$gas_buffer"
         exit $?
     fi
 
@@ -326,7 +466,7 @@ main() {
 
         validate_number "$gas_price" "--gas-price" || exit 1
 
-        set_legacy_gas_price "$gas_price"
+        set_legacy_gas_price "$gas_price" "$gas_buffer"
         exit $?
     fi
 }
