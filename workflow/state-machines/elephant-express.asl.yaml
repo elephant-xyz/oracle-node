@@ -1,6 +1,15 @@
 Comment: Elephant Express workflow. Triggered by Starter Lambda with one SQS message payload.
-StartAt: Preprocess
+StartAt: CheckDirectSubmit
 States:
+  CheckDirectSubmit:
+    Type: Choice
+    Comment: "Skip to Submit phase if transactionItems provided directly (direct submit mode)"
+    Choices:
+      - Variable: $.hash.transactionItems
+        IsPresent: true
+        Next: EmitSubmitScheduled
+    Default: Preprocess
+
   Preprocess:
     Type: Task
     Resource: arn:aws:states:::lambda:invoke
