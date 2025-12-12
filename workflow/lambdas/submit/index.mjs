@@ -11,6 +11,7 @@ import {
   emitWorkflowEvent,
   createWorkflowError,
   createLogger,
+  sendTaskFailure,
 } from "shared";
 
 const s3Client = new S3Client({
@@ -83,7 +84,7 @@ async function downloadKeystoreFromS3(bucket, key, targetPath) {
         const chunks = [];
         stream.on(
           "data",
-          /** @param {Buffer} chunk */ (chunk) => chunks.push(chunk),
+          /** @param {Buffer} chunk */(chunk) => chunks.push(chunk),
         );
         stream.on("error", reject);
         stream.on("end", () =>
@@ -219,57 +220,41 @@ async function getGasPriceFromSSM() {
  * @returns {Promise<SubmitOutput>}
  */
 export const handler = async (event) => {
-  // Check if invoked directly from Step Functions (has taskToken in payload)
-  const isDirectStepFunctionInvocation = !!event.taskToken;
-
-  // Check if invoked from SQS (has Records array)
-  const isSqsInvocation = !!event.Records && Array.isArray(event.Records);
 
   let toSubmit;
   let taskToken;
   let executionArn;
-  let record; // Store record for use in catch block
   let county = "unknown"; // Store county for use in catch block
   let dataGroupLabel = "County"; // Store dataGroupLabel for use in catch block
   let log; // Logger for EventBridge events
 
-  if (isDirectStepFunctionInvocation) {
-    // Invoked directly from Step Functions with Task Token
-    if (!event.transactionItems || !Array.isArray(event.transactionItems)) {
-      const error =
-        "Missing or invalid transactionItems in Step Function payload";
-      if (event.taskToken) {
-        const errorLog = createLogger({
-          component: "submit",
-          at: new Date().toISOString(),
-          county: event.county || "unknown",
-          executionId: event.executionArn,
-        });
-        await executeWithTaskToken({
-          taskToken: event.taskToken,
-          log: errorLog,
-          workerFn: async () => {
-            throw new Error(error);
-          },
-        });
-      }
-      throw new Error(error);
-    }
-    toSubmit = event.transactionItems;
-    taskToken = event.taskToken;
-    executionArn = event.executionArn;
+
+  if (!event.Records || event.Records.length === 0) {
+    throw new Error("Missing SQS Records");
+  }
+
+  const firstRecord = event.Records[0];
+  if (!firstRecord || !firstRecord.body) {
+    throw new Error("Missing SQS record body");
+  }
+
+  if (firstRecord.messageAttributes?.TaskToken?.stringValue) {
+    taskToken = firstRecord.messageAttributes.TaskToken.stringValue;
+    executionArn = firstRecord.messageAttributes.ExecutionArn?.stringValue;
     console.log({
       ...base,
       level: "info",
-      msg: "invoked_directly_from_step_functions",
+      msg: "invoked_from_sqs_with_task_token",
       executionArn: executionArn,
-      itemCount: toSubmit.length,
+      hasTaskToken: !!taskToken,
     });
 
-    // Emit IN_PROGRESS event to EventBridge when invoked directly
     if (taskToken && executionArn) {
-      county = event.county || "unknown";
-      dataGroupLabel = event.dataGroupLabel || "County";
+      county =
+        firstRecord.messageAttributes?.County?.stringValue || "unknown";
+      dataGroupLabel =
+        firstRecord.messageAttributes?.DataGroupLabel?.stringValue ||
+        "County";
       log = createLogger({
         component: "submit",
         at: new Date().toISOString(),
@@ -288,100 +273,29 @@ export const handler = async (event) => {
         log,
       });
     }
-  } else if (isSqsInvocation) {
-    // Invoked from SQS (with optional task token in message attributes for Step Function callback)
-    if (!event.Records || event.Records.length === 0) {
-      throw new Error("Missing SQS Records");
-    }
+  }
 
-    const firstRecord = event.Records[0];
-    if (!firstRecord || !firstRecord.body) {
-      throw new Error("Missing SQS record body");
-    }
-    record = firstRecord; // Store for use in catch block
-
-    // Extract task token from message attributes if present (Step Function mode)
-    if (firstRecord.messageAttributes?.TaskToken?.stringValue) {
-      taskToken = firstRecord.messageAttributes.TaskToken.stringValue;
-      executionArn = firstRecord.messageAttributes.ExecutionArn?.stringValue;
-      console.log({
-        ...base,
-        level: "info",
-        msg: "invoked_from_sqs_with_task_token",
-        executionArn: executionArn,
-        hasTaskToken: !!taskToken,
-      });
-
-      // Emit IN_PROGRESS event to EventBridge when task token is received
-      if (taskToken && executionArn) {
-        // Extract county and dataGroupLabel from message attributes or use defaults
-        county =
-          firstRecord.messageAttributes?.County?.stringValue || "unknown";
-        dataGroupLabel =
-          firstRecord.messageAttributes?.DataGroupLabel?.stringValue ||
-          "County";
-        log = createLogger({
-          component: "submit",
-          at: new Date().toISOString(),
-          county: county,
-          executionId: executionArn,
-        });
-        await emitWorkflowEvent({
-          executionId: executionArn,
-          county: county,
-          dataGroupLabel: dataGroupLabel,
-          status: "IN_PROGRESS",
-          phase: "Submit",
-          step: "SubmitToBlockchain",
-          taskToken: taskToken,
-          errors: [],
-          log,
-        });
-      }
-    }
-
-    // Parse transaction items from SQS message body
-    // firstRecord is guaranteed to be defined here due to the check above
-    toSubmit = JSON.parse(firstRecord.body);
-    if (!Array.isArray(toSubmit)) {
-      throw new Error(
-        "SQS message body must contain an array of transaction items",
-      );
-    }
-
-    console.log({
-      ...base,
-      level: "info",
-      msg: "invoked_from_sqs",
-      itemCount: toSubmit.length,
-      hasTaskToken: !!taskToken,
-    });
-  } else {
+  toSubmit = JSON.parse(firstRecord.body);
+  if (!Array.isArray(toSubmit)) {
     throw new Error(
-      "Invalid event format: must be either Step Function payload or SQS event",
+      "SQS message body must contain an array of transaction items",
     );
   }
+
+  console.log({
+    ...base,
+    level: "info",
+    msg: "invoked_from_sqs",
+    itemCount: toSubmit.length,
+    hasTaskToken: !!taskToken,
+  });
 
   if (!toSubmit.length) {
     const error = "No records to submit";
     if (taskToken) {
-      const errorLog =
-        log ||
-        createLogger({
-          component: "submit",
-          at: new Date().toISOString(),
-          county,
-          executionId: executionArn,
-        });
-      await executeWithTaskToken({
-        taskToken,
-        log: errorLog,
-        workerFn: async () => {
-          throw new Error(error);
-        },
-      });
+      await sendTaskFailure({ taskToken, error: "NoRecords", cause: "Empty message submitted" })
     }
-    throw new Error(error);
+    console.error({ ...base, level: "error", msg: error })
   }
 
   const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "submit-"));
@@ -398,7 +312,6 @@ export const handler = async (event) => {
     if (!process.env.ELEPHANT_RPC_URL)
       throw new Error("ELEPHANT_RPC_URL is required");
 
-    // Check if we're using keystore mode
     if (process.env.ELEPHANT_KEYSTORE_S3_KEY) {
       console.log({
         ...base,
@@ -412,10 +325,8 @@ export const handler = async (event) => {
       if (!process.env.ELEPHANT_KEYSTORE_PASSWORD)
         throw new Error("ELEPHANT_KEYSTORE_PASSWORD is required");
 
-      // Fetch gas price configuration from SSM Parameter Store for self-custodial oracles
       const gasPriceConfig = await getGasPriceFromSSM();
 
-      // Download keystore from S3 with unique filename to avoid conflicts
       const keystorePath = path.resolve(
         tmp,
         `keystore-${Date.now()}-${Math.random().toString(36).substring(7)}.json`,
@@ -437,7 +348,6 @@ export const handler = async (event) => {
           ...(gasPriceConfig || {}),
         });
       } finally {
-        // Clean up keystore file immediately after use for security
         try {
           await fs.unlink(keystorePath);
           console.log({
@@ -551,7 +461,7 @@ export const handler = async (event) => {
     const allErrors = [
       ...submitErrors,
       ...submitResults.filter(
-        /** @param {SubmitResultRow} row */ (row) => row.status === "failed",
+        /** @param {SubmitResultRow} row */(row) => row.status === "failed",
       ),
     ];
 
