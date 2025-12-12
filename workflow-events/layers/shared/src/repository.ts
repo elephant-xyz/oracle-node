@@ -570,8 +570,63 @@ export const updateErrorRecordSortKey = async (
 };
 
 /**
+ * Checks which error codes already have ExecutionErrorLink records for the given execution.
+ * Used to determine which errors are new vs already recorded (for idempotency).
+ *
+ * @param executionId - The execution ID to check
+ * @param errorCodes - Array of error codes to check
+ * @returns Set of error codes that already have links for this execution
+ */
+const checkExistingErrorLinks = async (
+  executionId: string,
+  errorCodes: string[],
+): Promise<Set<string>> => {
+  const tableName = getTableName();
+  const existingCodes = new Set<string>();
+
+  if (errorCodes.length === 0) {
+    return existingCodes;
+  }
+
+  // BatchGetItem is limited to 100 items per request
+  const BATCH_LIMIT = 100;
+
+  for (let i = 0; i < errorCodes.length; i += BATCH_LIMIT) {
+    const batch = errorCodes.slice(i, i + BATCH_LIMIT);
+    const keys = batch.map((errorCode) => ({
+      PK: createKey("EXECUTION", executionId),
+      SK: createKey("ERROR", errorCode),
+    }));
+
+    const command = new BatchGetCommand({
+      RequestItems: {
+        [tableName]: {
+          Keys: keys,
+          ProjectionExpression: "errorCode",
+        },
+      },
+    });
+
+    const response = await docClient.send(command);
+    const items = response.Responses?.[tableName] ?? [];
+
+    for (const item of items) {
+      const errorCode = item.errorCode as string;
+      existingCodes.add(errorCode);
+    }
+  }
+
+  return existingCodes;
+};
+
+/**
  * Saves workflow errors to DynamoDB using transactional writes.
  * Creates or updates ErrorRecord, ExecutionErrorLink, and FailedExecutionItem.
+ *
+ * IMPORTANT: This function is designed to be idempotent. If the same event is
+ * processed multiple times (e.g., due to EventBridge retries after Lambda timeout),
+ * it will only count NEW errors that don't already have ExecutionErrorLink records.
+ * This prevents inflated error counts from duplicate event processing.
  *
  * @param detail - The workflow event detail containing errors
  * @returns Result of the save operation
@@ -594,20 +649,63 @@ export const saveErrorRecords = async (
 
   const now = new Date().toISOString();
   const errorOccurrences = countErrorOccurrences(errors);
+  const allErrorCodes = Array.from(errorOccurrences.keys());
+
+  // Check which errors already exist for this execution (idempotency check)
+  // This handles the case where EventBridge retries an event after Lambda timeout
+  const existingErrorCodes = await checkExistingErrorLinks(
+    detail.executionId,
+    allErrorCodes,
+  );
+
+  // Filter to only new errors that don't already have links
+  const newErrorCodes = allErrorCodes.filter(
+    (code) => !existingErrorCodes.has(code),
+  );
+
+  // If all errors already exist, this is a duplicate event - skip processing
+  if (newErrorCodes.length === 0) {
+    console.info(
+      `All ${allErrorCodes.length} errors already exist for execution ${detail.executionId}, skipping duplicate event`,
+    );
+    return {
+      success: true,
+      uniqueErrorCount: 0,
+      totalOccurrences: 0,
+      errorCodes: [],
+    };
+  }
+
+  // Log if we detected partial duplicate processing
+  if (existingErrorCodes.size > 0) {
+    console.warn(
+      `Detected ${existingErrorCodes.size} existing errors for execution ${detail.executionId}, ` +
+        `only processing ${newErrorCodes.length} new errors (idempotency protection)`,
+    );
+  }
+
+  // Calculate statistics for NEW errors only
+  let newTotalOccurrences = 0;
+  for (const errorCode of newErrorCodes) {
+    const data = errorOccurrences.get(errorCode);
+    if (data) {
+      newTotalOccurrences += data.count;
+    }
+  }
 
   // Determine error type for the execution (first 2 characters of error code)
   // All errors within one invocation should have the same type
   const firstErrorCode = errorOccurrences.keys().next().value as string;
   const executionErrorType = extractErrorType(firstErrorCode);
 
-  // Calculate statistics
+  // Calculate statistics for new errors only
   const stats: ExecutionErrorStats = {
-    totalOccurrences: errors.length,
-    uniqueErrorCount: errorOccurrences.size,
+    totalOccurrences: newTotalOccurrences,
+    uniqueErrorCount: newErrorCodes.length,
     errorType: executionErrorType,
   };
 
-  // Build transaction items for each unique error
+  // Build transaction items for each unique NEW error
   const transactItems: Array<{
     Update: {
       TableName: string;
@@ -618,11 +716,15 @@ export const saveErrorRecords = async (
     };
   }> = [];
 
-  // Add FailedExecutionItem update (one per execution)
+  // Add FailedExecutionItem update (one per execution) - counts only NEW errors
   transactItems.push(buildFailedExecutionItemUpdate(detail, stats, now));
 
-  // Add ErrorRecord and ExecutionErrorLink updates for each unique error
-  for (const [errorCode, { count, details }] of errorOccurrences) {
+  // Add ErrorRecord and ExecutionErrorLink updates for each unique NEW error
+  for (const errorCode of newErrorCodes) {
+    const data = errorOccurrences.get(errorCode);
+    if (!data) continue;
+
+    const { count, details } = data;
     transactItems.push(
       buildErrorRecordUpdate(
         errorCode,
@@ -645,7 +747,6 @@ export const saveErrorRecords = async (
   }
 
   const TRANSACTION_LIMIT = 100;
-  const errorCodes = Array.from(errorOccurrences.keys());
 
   if (transactItems.length <= TRANSACTION_LIMIT) {
     const command = new TransactWriteCommand({
@@ -673,13 +774,13 @@ export const saveErrorRecords = async (
   // After the transaction, refresh GS2SK with the actual totalCount values.
   // This is done separately because totalCount uses atomic increment,
   // so we need to read the updated values before setting GS2SK.
-  await refreshErrorRecordSortKeys(errorCodes);
+  await refreshErrorRecordSortKeys(newErrorCodes);
 
   return {
     success: true,
     uniqueErrorCount: stats.uniqueErrorCount,
     totalOccurrences: stats.totalOccurrences,
-    errorCodes,
+    errorCodes: newErrorCodes,
   };
 };
 
