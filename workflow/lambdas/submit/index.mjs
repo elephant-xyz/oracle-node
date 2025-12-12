@@ -188,7 +188,10 @@ function classifyBlockchainError(errorMessage) {
     }
   }
   // Default: unknown blockchain error
-  return { code: SubmitErrorCodes.UNKNOWN, description: "Unknown blockchain error" };
+  return {
+    code: SubmitErrorCodes.UNKNOWN,
+    description: "Unknown blockchain error",
+  };
 }
 
 /**
@@ -206,7 +209,10 @@ function classifySubmitErrors(errorRows) {
   }
 
   // Get the first error row and classify it
-  const firstRow = /** @type {{errorMessage?: string, error_message?: string, error?: string}} */ (errorRows[0]);
+  const firstRow =
+    /** @type {{errorMessage?: string, error_message?: string, error?: string}} */ (
+      errorRows[0]
+    );
   const errorMessage = resolveErrorMessage(firstRow);
 
   if (!errorMessage) {
@@ -242,37 +248,76 @@ function classifyGeneralError(error) {
 
   // Check for specific known error patterns
   if (errorMessage.includes("ENVIRONMENT_BUCKET")) {
-    return { code: SubmitErrorCodes.MISSING_ENVIRONMENT_BUCKET, description: "Missing ENVIRONMENT_BUCKET" };
+    return {
+      code: SubmitErrorCodes.MISSING_ENVIRONMENT_BUCKET,
+      description: "Missing ENVIRONMENT_BUCKET",
+    };
   }
   if (errorMessage.includes("ELEPHANT_KEYSTORE_S3_KEY")) {
-    return { code: SubmitErrorCodes.MISSING_KEYSTORE_S3_KEY, description: "Missing ELEPHANT_KEYSTORE_S3_KEY" };
+    return {
+      code: SubmitErrorCodes.MISSING_KEYSTORE_S3_KEY,
+      description: "Missing ELEPHANT_KEYSTORE_S3_KEY",
+    };
   }
   if (errorMessage.includes("ELEPHANT_KEYSTORE_PASSWORD")) {
-    return { code: SubmitErrorCodes.MISSING_KEYSTORE_PASSWORD, description: "Missing ELEPHANT_KEYSTORE_PASSWORD" };
+    return {
+      code: SubmitErrorCodes.MISSING_KEYSTORE_PASSWORD,
+      description: "Missing ELEPHANT_KEYSTORE_PASSWORD",
+    };
   }
   if (errorMessage.includes("ELEPHANT_DOMAIN")) {
-    return { code: SubmitErrorCodes.MISSING_DOMAIN, description: "Missing ELEPHANT_DOMAIN" };
+    return {
+      code: SubmitErrorCodes.MISSING_DOMAIN,
+      description: "Missing ELEPHANT_DOMAIN",
+    };
   }
   if (errorMessage.includes("ELEPHANT_API_KEY")) {
-    return { code: SubmitErrorCodes.MISSING_API_KEY, description: "Missing ELEPHANT_API_KEY" };
+    return {
+      code: SubmitErrorCodes.MISSING_API_KEY,
+      description: "Missing ELEPHANT_API_KEY",
+    };
   }
   if (errorMessage.includes("ELEPHANT_ORACLE_KEY_ID")) {
-    return { code: SubmitErrorCodes.MISSING_ORACLE_KEY_ID, description: "Missing ELEPHANT_ORACLE_KEY_ID" };
+    return {
+      code: SubmitErrorCodes.MISSING_ORACLE_KEY_ID,
+      description: "Missing ELEPHANT_ORACLE_KEY_ID",
+    };
   }
   if (errorMessage.includes("ELEPHANT_FROM_ADDRESS")) {
-    return { code: SubmitErrorCodes.MISSING_FROM_ADDRESS, description: "Missing ELEPHANT_FROM_ADDRESS" };
+    return {
+      code: SubmitErrorCodes.MISSING_FROM_ADDRESS,
+      description: "Missing ELEPHANT_FROM_ADDRESS",
+    };
   }
   if (errorMessage.includes("ELEPHANT_RPC_URL")) {
-    return { code: SubmitErrorCodes.MISSING_RPC_URL, description: "Missing ELEPHANT_RPC_URL" };
+    return {
+      code: SubmitErrorCodes.MISSING_RPC_URL,
+      description: "Missing ELEPHANT_RPC_URL",
+    };
   }
-  if (errorMessage.includes("download keystore") && errorMessage.includes("body not found")) {
-    return { code: SubmitErrorCodes.KEYSTORE_BODY_NOT_FOUND, description: "Keystore body not found in S3" };
+  if (
+    errorMessage.includes("download keystore") &&
+    errorMessage.includes("body not found")
+  ) {
+    return {
+      code: SubmitErrorCodes.KEYSTORE_BODY_NOT_FOUND,
+      description: "Keystore body not found in S3",
+    };
   }
-  if (errorMessage.includes("download keystore") || errorMessage.includes("Failed to download keystore")) {
-    return { code: SubmitErrorCodes.S3_DOWNLOAD_FAILED, description: "S3 download failed" };
+  if (
+    errorMessage.includes("download keystore") ||
+    errorMessage.includes("Failed to download keystore")
+  ) {
+    return {
+      code: SubmitErrorCodes.S3_DOWNLOAD_FAILED,
+      description: "S3 download failed",
+    };
   }
 
-  return { code: SubmitErrorCodes.UNKNOWN, description: "Unknown submit error" };
+  return {
+    code: SubmitErrorCodes.UNKNOWN,
+    description: "Unknown submit error",
+  };
 }
 
 /**
@@ -373,7 +418,7 @@ async function downloadKeystoreFromS3(bucket, key, targetPath) {
         const chunks = [];
         stream.on(
           "data",
-          /** @param {Buffer} chunk */(chunk) => chunks.push(chunk),
+          /** @param {Buffer} chunk */ (chunk) => chunks.push(chunk),
         );
         stream.on("error", reject);
         stream.on("end", () =>
@@ -516,13 +561,22 @@ async function getGasPriceFromSSM() {
  */
 function validateKeystoreEnvVars() {
   if (!process.env.ENVIRONMENT_BUCKET) {
-    throw new SubmitError(SubmitErrorCodes.MISSING_ENVIRONMENT_BUCKET, "ENVIRONMENT_BUCKET is required");
+    throw new SubmitError(
+      SubmitErrorCodes.MISSING_ENVIRONMENT_BUCKET,
+      "ENVIRONMENT_BUCKET is required",
+    );
   }
   if (!process.env.ELEPHANT_KEYSTORE_S3_KEY) {
-    throw new SubmitError(SubmitErrorCodes.MISSING_KEYSTORE_S3_KEY, "ELEPHANT_KEYSTORE_S3_KEY is required");
+    throw new SubmitError(
+      SubmitErrorCodes.MISSING_KEYSTORE_S3_KEY,
+      "ELEPHANT_KEYSTORE_S3_KEY is required",
+    );
   }
   if (!process.env.ELEPHANT_KEYSTORE_PASSWORD) {
-    throw new SubmitError(SubmitErrorCodes.MISSING_KEYSTORE_PASSWORD, "ELEPHANT_KEYSTORE_PASSWORD is required");
+    throw new SubmitError(
+      SubmitErrorCodes.MISSING_KEYSTORE_PASSWORD,
+      "ELEPHANT_KEYSTORE_PASSWORD is required",
+    );
   }
 }
 
@@ -533,16 +587,28 @@ function validateKeystoreEnvVars() {
  */
 function validateApiEnvVars() {
   if (!process.env.ELEPHANT_DOMAIN) {
-    throw new SubmitError(SubmitErrorCodes.MISSING_DOMAIN, "ELEPHANT_DOMAIN is required");
+    throw new SubmitError(
+      SubmitErrorCodes.MISSING_DOMAIN,
+      "ELEPHANT_DOMAIN is required",
+    );
   }
   if (!process.env.ELEPHANT_API_KEY) {
-    throw new SubmitError(SubmitErrorCodes.MISSING_API_KEY, "ELEPHANT_API_KEY is required");
+    throw new SubmitError(
+      SubmitErrorCodes.MISSING_API_KEY,
+      "ELEPHANT_API_KEY is required",
+    );
   }
   if (!process.env.ELEPHANT_ORACLE_KEY_ID) {
-    throw new SubmitError(SubmitErrorCodes.MISSING_ORACLE_KEY_ID, "ELEPHANT_ORACLE_KEY_ID is required");
+    throw new SubmitError(
+      SubmitErrorCodes.MISSING_ORACLE_KEY_ID,
+      "ELEPHANT_ORACLE_KEY_ID is required",
+    );
   }
   if (!process.env.ELEPHANT_FROM_ADDRESS) {
-    throw new SubmitError(SubmitErrorCodes.MISSING_FROM_ADDRESS, "ELEPHANT_FROM_ADDRESS is required");
+    throw new SubmitError(
+      SubmitErrorCodes.MISSING_FROM_ADDRESS,
+      "ELEPHANT_FROM_ADDRESS is required",
+    );
   }
 }
 
@@ -571,8 +637,8 @@ async function submitWithKeystore({ csvFilePath, tempDir, itemCount }) {
   );
 
   await downloadKeystoreFromS3(
-    /** @type {string} */(process.env.ENVIRONMENT_BUCKET),
-    /** @type {string} */(process.env.ELEPHANT_KEYSTORE_S3_KEY),
+    /** @type {string} */ (process.env.ENVIRONMENT_BUCKET),
+    /** @type {string} */ (process.env.ELEPHANT_KEYSTORE_S3_KEY),
     keystorePath,
   );
 
@@ -654,9 +720,7 @@ async function submitWithApi({ csvFilePath, tempDir, itemCount }) {
 async function submitToBlockchain(params) {
   const isKeystoreMode = Boolean(process.env.ELEPHANT_KEYSTORE_S3_KEY);
 
-  return isKeystoreMode
-    ? submitWithKeystore(params)
-    : submitWithApi(params);
+  return isKeystoreMode ? submitWithKeystore(params) : submitWithApi(params);
 }
 
 /**
@@ -800,7 +864,12 @@ async function sendSuccessToAllMessages(messages, result) {
  * @param {string} [errorCode] - Error code for classification
  * @returns {Promise<void>}
  */
-async function sendFailureToAllMessages(messages, errorMessage, errorCause, errorCode) {
+async function sendFailureToAllMessages(
+  messages,
+  errorMessage,
+  errorCause,
+  errorCode,
+) {
   const code = errorCode || SubmitErrorCodes.UNKNOWN;
 
   const failurePromises = messages.map(async (msg) => {
@@ -948,7 +1017,10 @@ export const handler = async (event) => {
     await writer.writeRecords(aggregatedItems);
 
     if (!process.env.ELEPHANT_RPC_URL) {
-      throw new SubmitError(SubmitErrorCodes.MISSING_RPC_URL, "ELEPHANT_RPC_URL is required");
+      throw new SubmitError(
+        SubmitErrorCodes.MISSING_RPC_URL,
+        "ELEPHANT_RPC_URL is required",
+      );
     }
 
     const submitResult = await submitToBlockchain({
@@ -973,7 +1045,12 @@ export const handler = async (event) => {
       });
 
       // Send failure to all valid messages with classified error code
-      await sendFailureToAllMessages(validMessages, errorMsg, undefined, errorCode);
+      await sendFailureToAllMessages(
+        validMessages,
+        errorMsg,
+        undefined,
+        errorCode,
+      );
 
       // Add all valid messages to batch failures since blockchain submission failed
       for (const msg of validMessages) {
@@ -1037,13 +1114,14 @@ export const handler = async (event) => {
     const allErrors = [
       ...submitErrors,
       ...submitResults.filter(
-        /** @param {SubmitResultRow} row */(row) => row.status === "failed",
+        /** @param {SubmitResultRow} row */ (row) => row.status === "failed",
       ),
     ];
 
     if (allErrors.length > 0) {
       // Classify the blockchain error from the CSV rows
-      const { code: errorCode, message: classifiedMessage } = classifySubmitErrors(allErrors);
+      const { code: errorCode, message: classifiedMessage } =
+        classifySubmitErrors(allErrors);
       const errorMsg =
         "Submit to the blockchain failed: " + JSON.stringify(allErrors);
 
@@ -1057,7 +1135,12 @@ export const handler = async (event) => {
       });
 
       // Send failure to all valid messages with classified error code
-      await sendFailureToAllMessages(validMessages, errorMsg, undefined, errorCode);
+      await sendFailureToAllMessages(
+        validMessages,
+        errorMsg,
+        undefined,
+        errorCode,
+      );
 
       // Add all valid messages to batch failures
       for (const msg of validMessages) {
@@ -1110,7 +1193,12 @@ export const handler = async (event) => {
     });
 
     // Send failure to all valid messages with classified error code
-    await sendFailureToAllMessages(validMessages, errMessage, errCause, errorCode);
+    await sendFailureToAllMessages(
+      validMessages,
+      errMessage,
+      errCause,
+      errorCode,
+    );
 
     // Add all valid messages to batch failures
     for (const msg of validMessages) {

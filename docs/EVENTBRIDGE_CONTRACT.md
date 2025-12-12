@@ -70,26 +70,26 @@ Emitted on workflow step status changes (success, failure, or parked).
 
 ### Error Code Reference
 
-| Code            | Phase      | Description                                                                                                                                                                               |
-| --------------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `00001`         | Preprocess | Preprocess step failure. Used when the initial preprocessing fails before Prepare begins.                                                                                                 |
-| `01001`         | Prepare    | Prepare queue not found. The county-specific SQS queue does not exist.                                                                                                                    |
-| `01xxx<county>` | Prepare    | Lambda infrastructure error. `01002`=generic, `01003-01006`=input.csv errors, `01008-01015`=S3/config errors, `01016-01020`=taskToken/Step Functions errors. Example: `01002Hamilton`     |
-| `10xxx<county>` | Prepare    | CLI prepare error. Example: `10050Broward`                                                                                                                                                |
-| `20<county>`    | Transform  | Transform step failure or exception. The `<county>` is the county name being processed. Example: `20Cook`                                                                                 |
-| `30<hash>`      | SVL        | Schema validation error. The `<hash>` is a SHA256 hash computed from `error_message#error_path#county`, uniquely identifying each distinct validation error. Example: `30a1b2c3d4e5f6...` |
-| `31001`         | SVL        | SVL runtime exception (non-validation failure)                                                                                                                                            |
-| `40001`         | Hash       | Generic hash step failure or exception                                                                                                                                                    |
-| `50001`         | Upload     | Generic upload step failure or exception                                                                                                                                                  |
-| `60001`         | GasPriceCheck | Gas price check step failure                                                                                                                                                            |
-| `601xx`         | Submit     | Message parsing errors (missing body, invalid format, empty items, JSON parse errors)                                                                                                     |
-| `602xx`         | Submit     | Environment configuration errors (missing required env vars for keystore/API mode)                                                                                                        |
-| `603xx`         | Submit     | S3/Keystore errors (download failures)                                                                                                                                                    |
-| `604xx`         | Submit     | Blockchain/Contract errors (nonce, gas, RPC, transaction errors from submit_errors.csv)                                                                                                   |
-| `605xx`         | Submit     | File I/O errors (CSV read/write failures)                                                                                                                                                 |
-| `60999`         | Submit     | Unknown/unclassified submit error                                                                                                                                                         |
-| `70001`         | AutoRepair | Auto-repair failed for MVL errors after max retries                                                                                                                                       |
-| `70002`         | AutoRepair | Auto-repair failed for SVL errors after max retries                                                                                                                                       |
+| Code            | Phase         | Description                                                                                                                                                                               |
+| --------------- | ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `00001`         | Preprocess    | Preprocess step failure. Used when the initial preprocessing fails before Prepare begins.                                                                                                 |
+| `01001`         | Prepare       | Prepare queue not found. The county-specific SQS queue does not exist.                                                                                                                    |
+| `01xxx<county>` | Prepare       | Lambda infrastructure error. `01002`=generic, `01003-01006`=input.csv errors, `01008-01015`=S3/config errors, `01016-01020`=taskToken/Step Functions errors. Example: `01002Hamilton`     |
+| `10xxx<county>` | Prepare       | CLI prepare error. Example: `10050Broward`                                                                                                                                                |
+| `20<county>`    | Transform     | Transform step failure or exception. The `<county>` is the county name being processed. Example: `20Cook`                                                                                 |
+| `30<hash>`      | SVL           | Schema validation error. The `<hash>` is a SHA256 hash computed from `error_message#error_path#county`, uniquely identifying each distinct validation error. Example: `30a1b2c3d4e5f6...` |
+| `31001`         | SVL           | SVL runtime exception (non-validation failure)                                                                                                                                            |
+| `40001`         | Hash          | Generic hash step failure or exception                                                                                                                                                    |
+| `50001`         | Upload        | Generic upload step failure or exception                                                                                                                                                  |
+| `60001`         | GasPriceCheck | Gas price check step failure                                                                                                                                                              |
+| `601xx`         | Submit        | Message parsing errors (missing body, invalid format, empty items, JSON parse errors)                                                                                                     |
+| `602xx`         | Submit        | Environment configuration errors (missing required env vars for keystore/API mode)                                                                                                        |
+| `603xx`         | Submit        | S3/Keystore errors (download failures)                                                                                                                                                    |
+| `604xx`         | Submit        | Blockchain/Contract errors (nonce, gas, RPC, transaction errors from submit_errors.csv)                                                                                                   |
+| `605xx`         | Submit        | File I/O errors (CSV read/write failures)                                                                                                                                                 |
+| `60999`         | Submit        | Unknown/unclassified submit error                                                                                                                                                         |
+| `70001`         | AutoRepair    | Auto-repair failed for MVL errors after max retries                                                                                                                                       |
+| `70002`         | AutoRepair    | Auto-repair failed for SVL errors after max retries                                                                                                                                       |
 
 #### Prepare Error Codes (`10xxx` - CLI Prepare)
 
@@ -119,39 +119,39 @@ Emitted on workflow step status changes (success, failure, or parked).
 
 #### Submit Error Codes (`60xxx` - Blockchain Submit)
 
-| Code    | Category              | Description                                           |
-| ------- | --------------------- | ----------------------------------------------------- |
-| `60001` | GasPriceCheck         | Gas price check step failure                          |
-| `60101` | Message Parsing       | Missing SQS record body                               |
-| `60102` | Message Parsing       | Invalid message body format (not JSON array)          |
-| `60103` | Message Parsing       | Empty transaction items array                         |
-| `60104` | Message Parsing       | JSON parse error                                      |
-| `60201` | Environment Config    | Missing ENVIRONMENT_BUCKET                            |
-| `60202` | Environment Config    | Missing ELEPHANT_KEYSTORE_S3_KEY                      |
-| `60203` | Environment Config    | Missing ELEPHANT_KEYSTORE_PASSWORD                    |
-| `60204` | Environment Config    | Missing ELEPHANT_DOMAIN                               |
-| `60205` | Environment Config    | Missing ELEPHANT_API_KEY                              |
-| `60206` | Environment Config    | Missing ELEPHANT_ORACLE_KEY_ID                        |
-| `60207` | Environment Config    | Missing ELEPHANT_FROM_ADDRESS                         |
-| `60208` | Environment Config    | Missing ELEPHANT_RPC_URL                              |
-| `60301` | S3/Keystore           | Keystore body not found in S3                         |
-| `60302` | S3/Keystore           | S3 download failed                                    |
-| `60401` | Blockchain/Contract   | Nonce already used (`already known`)                  |
-| `60402` | Blockchain/Contract   | Nonce too low                                         |
-| `60403` | Blockchain/Contract   | Insufficient funds                                    |
-| `60404` | Blockchain/Contract   | Gas estimation failed (`gas required exceeds`)        |
-| `60405` | Blockchain/Contract   | Transaction underpriced                               |
-| `60406` | Blockchain/Contract   | Execution reverted                                    |
-| `60407` | Blockchain/Contract   | Invalid transaction                                   |
-| `60408` | Blockchain/Contract   | RPC connection error (`ECONNREFUSED`, `ETIMEDOUT`)    |
-| `60409` | Blockchain/Contract   | RPC timeout                                           |
-| `60410` | Blockchain/Contract   | Invalid parameters                                    |
-| `60411` | Blockchain/Contract   | Contract error                                        |
-| `60412` | Blockchain/Contract   | Submit CLI returned failure status                    |
-| `60501` | File I/O              | CSV write failed                                      |
-| `60502` | File I/O              | Transaction status CSV read failed                    |
-| `60503` | File I/O              | Submit errors CSV read failed                         |
-| `60999` | Unknown               | Unknown/unclassified submit error                     |
+| Code    | Category            | Description                                        |
+| ------- | ------------------- | -------------------------------------------------- |
+| `60001` | GasPriceCheck       | Gas price check step failure                       |
+| `60101` | Message Parsing     | Missing SQS record body                            |
+| `60102` | Message Parsing     | Invalid message body format (not JSON array)       |
+| `60103` | Message Parsing     | Empty transaction items array                      |
+| `60104` | Message Parsing     | JSON parse error                                   |
+| `60201` | Environment Config  | Missing ENVIRONMENT_BUCKET                         |
+| `60202` | Environment Config  | Missing ELEPHANT_KEYSTORE_S3_KEY                   |
+| `60203` | Environment Config  | Missing ELEPHANT_KEYSTORE_PASSWORD                 |
+| `60204` | Environment Config  | Missing ELEPHANT_DOMAIN                            |
+| `60205` | Environment Config  | Missing ELEPHANT_API_KEY                           |
+| `60206` | Environment Config  | Missing ELEPHANT_ORACLE_KEY_ID                     |
+| `60207` | Environment Config  | Missing ELEPHANT_FROM_ADDRESS                      |
+| `60208` | Environment Config  | Missing ELEPHANT_RPC_URL                           |
+| `60301` | S3/Keystore         | Keystore body not found in S3                      |
+| `60302` | S3/Keystore         | S3 download failed                                 |
+| `60401` | Blockchain/Contract | Nonce already used (`already known`)               |
+| `60402` | Blockchain/Contract | Nonce too low                                      |
+| `60403` | Blockchain/Contract | Insufficient funds                                 |
+| `60404` | Blockchain/Contract | Gas estimation failed (`gas required exceeds`)     |
+| `60405` | Blockchain/Contract | Transaction underpriced                            |
+| `60406` | Blockchain/Contract | Execution reverted                                 |
+| `60407` | Blockchain/Contract | Invalid transaction                                |
+| `60408` | Blockchain/Contract | RPC connection error (`ECONNREFUSED`, `ETIMEDOUT`) |
+| `60409` | Blockchain/Contract | RPC timeout                                        |
+| `60410` | Blockchain/Contract | Invalid parameters                                 |
+| `60411` | Blockchain/Contract | Contract error                                     |
+| `60412` | Blockchain/Contract | Submit CLI returned failure status                 |
+| `60501` | File I/O            | CSV write failed                                   |
+| `60502` | File I/O            | Transaction status CSV read failed                 |
+| `60503` | File I/O            | Submit errors CSV read failed                      |
+| `60999` | Unknown             | Unknown/unclassified submit error                  |
 
 > **Note**: Blockchain/Contract errors (604xx) are classified from the `errorMessage` column in `submit_errors.csv`, which contains JSON-serialized EVM RPC responses. The classification uses regex pattern matching. See `workflow/lambdas/submit/index.mjs` for full mapping.
 
