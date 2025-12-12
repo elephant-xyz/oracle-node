@@ -107,8 +107,7 @@ async function* scanFailedExecutionItems(tableName) {
 
     const command = new ScanCommand({
       TableName: tableName,
-      FilterExpression:
-        "entityType = :entityType AND openErrorCount > :zero",
+      FilterExpression: "entityType = :entityType AND openErrorCount > :zero",
       ExpressionAttributeValues: {
         ":entityType": ENTITY_TYPE_FAILED_EXECUTION,
         ":zero": 0,
@@ -195,7 +194,10 @@ async function deleteOrphanedExecution(tableName, item) {
 async function checkExecution(tableName, item) {
   const { executionId, county, openErrorCount, uniqueErrorCount } = item;
 
-  const errorLinkCount = await countErrorLinksForExecution(tableName, executionId);
+  const errorLinkCount = await countErrorLinksForExecution(
+    tableName,
+    executionId,
+  );
 
   return {
     item,
@@ -247,8 +249,7 @@ async function verifyCleanup(tableName) {
   // and verify they all have error links
   const scanCommand = new ScanCommand({
     TableName: tableName,
-    FilterExpression:
-      "entityType = :entityType AND openErrorCount > :zero",
+    FilterExpression: "entityType = :entityType AND openErrorCount > :zero",
     ExpressionAttributeValues: {
       ":entityType": ENTITY_TYPE_FAILED_EXECUTION,
       ":zero": 0,
@@ -259,7 +260,9 @@ async function verifyCleanup(tableName) {
   const response = await dynamoClient.send(scanCommand);
 
   if (!response.Items || response.Items.length === 0) {
-    log.info("Verification: No FailedExecutionItem records with openErrorCount > 0 found");
+    log.info(
+      "Verification: No FailedExecutionItem records with openErrorCount > 0 found",
+    );
     return true;
   }
 
@@ -338,9 +341,12 @@ async function runCleanup() {
       totalValid += valid.length;
 
       if (orphaned.length > 0) {
-        log.info(`Batch ${batchNumber}: Found ${orphaned.length} orphaned executions`, {
-          orphanedExecutionIds: orphaned.map((r) => r.executionId),
-        });
+        log.info(
+          `Batch ${batchNumber}: Found ${orphaned.length} orphaned executions`,
+          {
+            orphanedExecutionIds: orphaned.map((r) => r.executionId),
+          },
+        );
 
         // Store details for summary
         orphanedDetails.push(
@@ -370,15 +376,20 @@ async function runCleanup() {
           });
 
           if (failed.length > 0) {
-            log.error(`Batch ${batchNumber} had ${failed.length} deletion failures`, {
-              errors: failed.slice(0, 5).map((f) => ({
-                executionId: f.executionId,
-                error: f.error,
-              })),
-            });
+            log.error(
+              `Batch ${batchNumber} had ${failed.length} deletion failures`,
+              {
+                errors: failed.slice(0, 5).map((f) => ({
+                  executionId: f.executionId,
+                  error: f.error,
+                })),
+              },
+            );
           }
         } else {
-          log.info(`[DRY RUN] Batch ${batchNumber}: Would delete ${orphaned.length} orphaned executions`);
+          log.info(
+            `[DRY RUN] Batch ${batchNumber}: Would delete ${orphaned.length} orphaned executions`,
+          );
           totalDeleted += orphaned.length;
         }
       } else {
@@ -400,9 +411,12 @@ async function runCleanup() {
     totalValid += valid.length;
 
     if (orphaned.length > 0) {
-      log.info(`Final batch ${batchNumber}: Found ${orphaned.length} orphaned executions`, {
-        orphanedExecutionIds: orphaned.map((r) => r.executionId),
-      });
+      log.info(
+        `Final batch ${batchNumber}: Found ${orphaned.length} orphaned executions`,
+        {
+          orphanedExecutionIds: orphaned.map((r) => r.executionId),
+        },
+      );
 
       orphanedDetails.push(
         ...orphaned.map((r) => ({
@@ -429,7 +443,9 @@ async function runCleanup() {
           failed: failed.length,
         });
       } else {
-        log.info(`[DRY RUN] Final batch ${batchNumber}: Would delete ${orphaned.length} orphaned executions`);
+        log.info(
+          `[DRY RUN] Final batch ${batchNumber}: Would delete ${orphaned.length} orphaned executions`,
+        );
         totalDeleted += orphaned.length;
       }
     }
