@@ -9,8 +9,9 @@ import { SSMClient, GetParameterCommand } from "@aws-sdk/client-ssm";
 import {
   executeWithTaskToken,
   emitWorkflowEvent,
-  createWorkflowError,
   createLogger,
+  sendTaskFailure,
+  sendTaskSuccess,
 } from "shared";
 
 const s3Client = new S3Client({
@@ -22,12 +23,315 @@ const ssmClient = new SSMClient({
 });
 
 /**
+ * Custom error class for Submit errors with error codes
+ */
+class SubmitError extends Error {
+  /**
+   * @param {string} code - Error code (e.g., "60101")
+   * @param {string} message - Error message
+   */
+  constructor(code, message) {
+    super(message);
+    /** @type {string} */
+    this.code = code;
+    this.name = "SubmitError";
+  }
+}
+
+/**
+ * Error code patterns for blockchain RPC errors (parsed from errorMessage in submit_errors.csv)
+ * The errorMessage column contains JSON-serialized EVM RPC responses
+ * @type {Array<{code: string, patterns: RegExp[], description: string}>}
+ */
+// Note: Order matters! More specific patterns MUST come before more general ones.
+// E.g., "contract creation code storage out of gas" (60411) must be checked before "out of gas" (60404)
+const BLOCKCHAIN_ERROR_PATTERNS = [
+  {
+    code: "60401",
+    patterns: [/already known/i],
+    description: "Nonce already used",
+  },
+  {
+    code: "60402",
+    patterns: [/nonce too low/i],
+    description: "Nonce too low",
+  },
+  {
+    code: "60403",
+    patterns: [/insufficient funds/i],
+    description: "Insufficient funds",
+  },
+  // 60411 must come before 60404 because "contract creation code storage out of gas" contains "out of gas"
+  {
+    code: "60411",
+    patterns: [/contract creation code storage out of gas/i],
+    description: "Contract error",
+  },
+  {
+    code: "60404",
+    patterns: [/gas required exceeds/i, /out of gas/i],
+    description: "Gas estimation failed",
+  },
+  {
+    code: "60405",
+    patterns: [/transaction underpriced/i, /replacement transaction/i],
+    description: "Transaction underpriced",
+  },
+  {
+    code: "60406",
+    patterns: [/execution reverted/i, /revert/i],
+    description: "Execution reverted",
+  },
+  {
+    code: "60407",
+    patterns: [/invalid transaction/i, /invalid sender/i],
+    description: "Invalid transaction",
+  },
+  {
+    code: "60408",
+    patterns: [/ECONNREFUSED/i, /ETIMEDOUT/i, /network error/i],
+    description: "RPC connection error",
+  },
+  {
+    code: "60409",
+    patterns: [/timeout/i, /ESOCKETTIMEDOUT/i],
+    description: "RPC timeout",
+  },
+  {
+    code: "60410",
+    patterns: [/invalid argument/i, /invalid params/i],
+    description: "Invalid parameters",
+  },
+];
+
+/**
+ * Submit error codes - centralized definitions
+ */
+const SubmitErrorCodes = {
+  // Message Parsing (60100-60199)
+  MISSING_BODY: "60101",
+  INVALID_BODY_FORMAT: "60102",
+  EMPTY_TRANSACTION_ITEMS: "60103",
+  JSON_PARSE_ERROR: "60104",
+  // Environment Config (60200-60299)
+  MISSING_ENVIRONMENT_BUCKET: "60201",
+  MISSING_KEYSTORE_S3_KEY: "60202",
+  MISSING_KEYSTORE_PASSWORD: "60203",
+  MISSING_DOMAIN: "60204",
+  MISSING_API_KEY: "60205",
+  MISSING_ORACLE_KEY_ID: "60206",
+  MISSING_FROM_ADDRESS: "60207",
+  MISSING_RPC_URL: "60208",
+  // S3/Keystore (60300-60399)
+  KEYSTORE_BODY_NOT_FOUND: "60301",
+  S3_DOWNLOAD_FAILED: "60302",
+  // Blockchain/Contract (60400-60499) - see BLOCKCHAIN_ERROR_PATTERNS
+  SUBMIT_CLI_FAILURE: "60412",
+  // File I/O (60500-60599)
+  CSV_WRITE_FAILED: "60501",
+  TRANSACTION_STATUS_READ_FAILED: "60502",
+  SUBMIT_ERRORS_READ_FAILED: "60503",
+  // Unknown
+  UNKNOWN: "60999",
+};
+
+/**
+ * Resolve the error message from a submit error row (CSV row from submit_errors.csv)
+ * Reuses logic from codebuild/shared/errors.mjs
+ * @param {Object} row - Raw CSV row to inspect
+ * @param {string} [row.errorMessage] - Error message field
+ * @param {string} [row.error_message] - Error message field (snake_case)
+ * @param {string} [row.error] - Error field (from transaction-status.csv failed rows)
+ * @returns {string} - Error message extracted from the row
+ */
+function resolveErrorMessage(row) {
+  if (
+    typeof row.errorMessage === "string" &&
+    row.errorMessage.trim().length > 0
+  ) {
+    return row.errorMessage.trim();
+  } else if (
+    typeof row.error_message === "string" &&
+    row.error_message.trim().length > 0
+  ) {
+    return row.error_message.trim();
+  } else if (typeof row.error === "string" && row.error.trim().length > 0) {
+    return row.error.trim();
+  }
+  return "";
+}
+
+/**
+ * Classify a blockchain error message and return the appropriate error code
+ * @param {string} errorMessage - The error message to classify (may be JSON)
+ * @returns {{code: string, description: string}} Error code and description
+ */
+function classifyBlockchainError(errorMessage) {
+  // Try to parse as JSON if it looks like JSON (RPC error responses are often JSON)
+  let messageToMatch = errorMessage;
+  if (errorMessage.startsWith("{") || errorMessage.startsWith("[")) {
+    try {
+      const parsed = JSON.parse(errorMessage);
+      // Extract error message from common JSON-RPC error formats
+      messageToMatch =
+        parsed.error?.message ||
+        parsed.message ||
+        parsed.error ||
+        JSON.stringify(parsed);
+    } catch {
+      // Not valid JSON, use as-is
+    }
+  }
+
+  for (const errorDef of BLOCKCHAIN_ERROR_PATTERNS) {
+    for (const pattern of errorDef.patterns) {
+      if (pattern.test(messageToMatch)) {
+        return { code: errorDef.code, description: errorDef.description };
+      }
+    }
+  }
+  // Default: unknown blockchain error
+  return {
+    code: SubmitErrorCodes.UNKNOWN,
+    description: "Unknown blockchain error",
+  };
+}
+
+/**
+ * Classify errors from submit_errors.csv rows and return the most specific error code
+ * @param {Array<{errorMessage?: string, error_message?: string, error?: string}>} errorRows - Array of error rows from CSV
+ * @returns {{code: string, description: string, message: string}} Classified error info
+ */
+function classifySubmitErrors(errorRows) {
+  if (!errorRows || errorRows.length === 0) {
+    return {
+      code: SubmitErrorCodes.UNKNOWN,
+      description: "No error details available",
+      message: "Unknown error",
+    };
+  }
+
+  // Get the first error row and classify it
+  const firstRow =
+    /** @type {{errorMessage?: string, error_message?: string, error?: string}} */ (
+      errorRows[0]
+    );
+  const errorMessage = resolveErrorMessage(firstRow);
+
+  if (!errorMessage) {
+    return {
+      code: SubmitErrorCodes.UNKNOWN,
+      description: "Empty error message",
+      message: "Error message could not be resolved",
+    };
+  }
+
+  const { code, description } = classifyBlockchainError(errorMessage);
+  return { code, description, message: errorMessage };
+}
+
+/**
+ * Classify a general error (not from CSV) and return the appropriate error code
+ * @param {unknown} error - The error to classify
+ * @returns {{code: string, description: string}} Error code and description
+ */
+function classifyGeneralError(error) {
+  const errorMessage = error instanceof Error ? error.message : String(error);
+
+  // Check if it's already a SubmitError with a code
+  if (error instanceof SubmitError) {
+    return { code: error.code, description: errorMessage };
+  }
+
+  // Try blockchain error classification first
+  const blockchainResult = classifyBlockchainError(errorMessage);
+  if (blockchainResult.code !== SubmitErrorCodes.UNKNOWN) {
+    return blockchainResult;
+  }
+
+  // Check for specific known error patterns
+  if (errorMessage.includes("ENVIRONMENT_BUCKET")) {
+    return {
+      code: SubmitErrorCodes.MISSING_ENVIRONMENT_BUCKET,
+      description: "Missing ENVIRONMENT_BUCKET",
+    };
+  }
+  if (errorMessage.includes("ELEPHANT_KEYSTORE_S3_KEY")) {
+    return {
+      code: SubmitErrorCodes.MISSING_KEYSTORE_S3_KEY,
+      description: "Missing ELEPHANT_KEYSTORE_S3_KEY",
+    };
+  }
+  if (errorMessage.includes("ELEPHANT_KEYSTORE_PASSWORD")) {
+    return {
+      code: SubmitErrorCodes.MISSING_KEYSTORE_PASSWORD,
+      description: "Missing ELEPHANT_KEYSTORE_PASSWORD",
+    };
+  }
+  if (errorMessage.includes("ELEPHANT_DOMAIN")) {
+    return {
+      code: SubmitErrorCodes.MISSING_DOMAIN,
+      description: "Missing ELEPHANT_DOMAIN",
+    };
+  }
+  if (errorMessage.includes("ELEPHANT_API_KEY")) {
+    return {
+      code: SubmitErrorCodes.MISSING_API_KEY,
+      description: "Missing ELEPHANT_API_KEY",
+    };
+  }
+  if (errorMessage.includes("ELEPHANT_ORACLE_KEY_ID")) {
+    return {
+      code: SubmitErrorCodes.MISSING_ORACLE_KEY_ID,
+      description: "Missing ELEPHANT_ORACLE_KEY_ID",
+    };
+  }
+  if (errorMessage.includes("ELEPHANT_FROM_ADDRESS")) {
+    return {
+      code: SubmitErrorCodes.MISSING_FROM_ADDRESS,
+      description: "Missing ELEPHANT_FROM_ADDRESS",
+    };
+  }
+  if (errorMessage.includes("ELEPHANT_RPC_URL")) {
+    return {
+      code: SubmitErrorCodes.MISSING_RPC_URL,
+      description: "Missing ELEPHANT_RPC_URL",
+    };
+  }
+  if (
+    errorMessage.includes("download keystore") &&
+    errorMessage.includes("body not found")
+  ) {
+    return {
+      code: SubmitErrorCodes.KEYSTORE_BODY_NOT_FOUND,
+      description: "Keystore body not found in S3",
+    };
+  }
+  if (
+    errorMessage.includes("download keystore") ||
+    errorMessage.includes("Failed to download keystore")
+  ) {
+    return {
+      code: SubmitErrorCodes.S3_DOWNLOAD_FAILED,
+      description: "S3 download failed",
+    };
+  }
+
+  return {
+    code: SubmitErrorCodes.UNKNOWN,
+    description: "Unknown submit error",
+  };
+}
+
+/**
  * @typedef {Object} SubmitOutput
  * @property {string} status - Status of submit
+ * @property {Array<{itemIdentifier: string}>} [batchItemFailures] - Failed message IDs for partial batch response
  */
 
 /**
  * @typedef {Object} SqsRecord
+ * @property {string} messageId - SQS message ID for batch failure reporting
  * @property {string} body
  * @property {Object} [messageAttributes]
  * @property {Object} [messageAttributes.TaskToken]
@@ -54,10 +358,44 @@ const ssmClient = new SSMClient({
  * @typedef {Object} SubmitResultRow
  * @property {string} status - Status of the submission
  * @property {string} [txHash] - Transaction hash
+ * @property {string} [transactionHash] - Transaction hash (alternative field name)
  * @property {string} [error] - Error message if failed
  */
 
+/**
+ * @typedef {Object} ParsedMessage
+ * @property {string} messageId - SQS message ID
+ * @property {Object[]} transactionItems - Parsed transaction items
+ * @property {string} [taskToken] - Step Functions task token
+ * @property {string} [executionArn] - Step Functions execution ARN
+ * @property {string} [county] - County name
+ * @property {string} [dataGroupLabel] - Data group label
+ */
+
+/**
+ * @typedef {Object} FailedMessage
+ * @property {string} messageId - SQS message ID
+ * @property {string} [taskToken] - Step Functions task token (if available)
+ * @property {string} [executionArn] - Step Functions execution ARN (if available)
+ * @property {string} [county] - County name (if available)
+ * @property {string} error - Error message
+ * @property {string} [errorCode] - Error code for classification
+ */
+
 const base = { component: "submit", at: new Date().toISOString() };
+
+/**
+ * @typedef {Object} SubmitToBlockchainParams
+ * @property {string} csvFilePath - Path to CSV file with transaction items
+ * @property {string} tempDir - Temporary directory path
+ * @property {number} itemCount - Number of items being submitted
+ */
+
+/**
+ * @typedef {Object} SubmitToBlockchainResult
+ * @property {boolean} success - Whether submission succeeded
+ * @property {string} [error] - Error message if failed
+ */
 
 /**
  * Download keystore from S3
@@ -91,13 +429,22 @@ async function downloadKeystoreFromS3(bucket, key, targetPath) {
         );
       });
     const body = response.Body;
-    if (!body)
-      throw new Error("Failed to download keystore from S3: body not found");
+    if (!body) {
+      throw new SubmitError(
+        SubmitErrorCodes.KEYSTORE_BODY_NOT_FOUND,
+        "Failed to download keystore from S3: body not found",
+      );
+    }
     const bodyContents = await streamToString(body);
     await fs.writeFile(targetPath, bodyContents, "utf8");
     return targetPath;
   } catch (error) {
-    throw new Error(
+    // If it's already a SubmitError, re-throw it
+    if (error instanceof SubmitError) {
+      throw error;
+    }
+    throw new SubmitError(
+      SubmitErrorCodes.S3_DOWNLOAD_FAILED,
       `Failed to download keystore from S3: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
@@ -211,177 +558,504 @@ async function getGasPriceFromSSM() {
 }
 
 /**
- * Submit handler - supports both SQS events and Step Function Task Token invocations
- * - SQS format: { Records: [{ body: string }] }
- * - Step Function format: { taskToken: string, executionArn: string, transactionItems: Object[] }
+ * Validate environment variables required for keystore mode
+ * @throws {SubmitError} If required environment variables are missing
+ * @returns {void}
+ */
+function validateKeystoreEnvVars() {
+  if (!process.env.ENVIRONMENT_BUCKET) {
+    throw new SubmitError(
+      SubmitErrorCodes.MISSING_ENVIRONMENT_BUCKET,
+      "ENVIRONMENT_BUCKET is required",
+    );
+  }
+  if (!process.env.ELEPHANT_KEYSTORE_S3_KEY) {
+    throw new SubmitError(
+      SubmitErrorCodes.MISSING_KEYSTORE_S3_KEY,
+      "ELEPHANT_KEYSTORE_S3_KEY is required",
+    );
+  }
+  if (!process.env.ELEPHANT_KEYSTORE_PASSWORD) {
+    throw new SubmitError(
+      SubmitErrorCodes.MISSING_KEYSTORE_PASSWORD,
+      "ELEPHANT_KEYSTORE_PASSWORD is required",
+    );
+  }
+}
+
+/**
+ * Validate environment variables required for API mode
+ * @throws {SubmitError} If required environment variables are missing
+ * @returns {void}
+ */
+function validateApiEnvVars() {
+  if (!process.env.ELEPHANT_DOMAIN) {
+    throw new SubmitError(
+      SubmitErrorCodes.MISSING_DOMAIN,
+      "ELEPHANT_DOMAIN is required",
+    );
+  }
+  if (!process.env.ELEPHANT_API_KEY) {
+    throw new SubmitError(
+      SubmitErrorCodes.MISSING_API_KEY,
+      "ELEPHANT_API_KEY is required",
+    );
+  }
+  if (!process.env.ELEPHANT_ORACLE_KEY_ID) {
+    throw new SubmitError(
+      SubmitErrorCodes.MISSING_ORACLE_KEY_ID,
+      "ELEPHANT_ORACLE_KEY_ID is required",
+    );
+  }
+  if (!process.env.ELEPHANT_FROM_ADDRESS) {
+    throw new SubmitError(
+      SubmitErrorCodes.MISSING_FROM_ADDRESS,
+      "ELEPHANT_FROM_ADDRESS is required",
+    );
+  }
+}
+
+/**
+ * Submit to blockchain using keystore mode (self-custodial)
+ * Downloads keystore from S3, submits transaction, and cleans up keystore file
  *
- * @param {SubmitInput} event - Either SQS event or Step Function task token payload
+ * @param {SubmitToBlockchainParams} params - Submission parameters
+ * @returns {Promise<SubmitToBlockchainResult>} Submission result
+ */
+async function submitWithKeystore({ csvFilePath, tempDir, itemCount }) {
+  console.log({
+    ...base,
+    level: "info",
+    msg: "Using keystore mode for contract submission (self-custodial)",
+    itemCount,
+  });
+
+  validateKeystoreEnvVars();
+
+  const gasPriceConfig = await getGasPriceFromSSM();
+
+  const keystorePath = path.resolve(
+    tempDir,
+    `keystore-${Date.now()}-${Math.random().toString(36).substring(7)}.json`,
+  );
+
+  await downloadKeystoreFromS3(
+    /** @type {string} */ (process.env.ENVIRONMENT_BUCKET),
+    /** @type {string} */ (process.env.ELEPHANT_KEYSTORE_S3_KEY),
+    keystorePath,
+  );
+
+  try {
+    return await submitToContract({
+      csvFile: csvFilePath,
+      keystoreJson: keystorePath,
+      keystorePassword: /** @type {string} */ (
+        process.env.ELEPHANT_KEYSTORE_PASSWORD
+      ),
+      rpcUrl: /** @type {string} */ (process.env.ELEPHANT_RPC_URL),
+      cwd: tempDir,
+      // Spread gas price configuration (supports both legacy and EIP-1559 formats)
+      ...(gasPriceConfig || {}),
+    });
+  } finally {
+    try {
+      await fs.unlink(keystorePath);
+      console.log({
+        ...base,
+        level: "info",
+        msg: "Keystore file cleaned up successfully",
+      });
+    } catch (cleanupError) {
+      console.error({
+        ...base,
+        level: "warn",
+        msg: "Failed to clean up keystore file",
+        error:
+          cleanupError instanceof Error
+            ? cleanupError.message
+            : String(cleanupError),
+      });
+    }
+  }
+}
+
+/**
+ * Submit to blockchain using API mode (managed by Elephant)
+ * Uses API credentials for transaction signing
+ *
+ * @param {SubmitToBlockchainParams} params - Submission parameters
+ * @returns {Promise<SubmitToBlockchainResult>} Submission result
+ */
+async function submitWithApi({ csvFilePath, tempDir, itemCount }) {
+  console.log({
+    ...base,
+    level: "info",
+    msg: "Using API mode for contract submission",
+    itemCount,
+  });
+
+  validateApiEnvVars();
+
+  // Fetch gas buffer configuration from SSM Parameter Store for API mode
+  const gasPriceConfig = await getGasPriceFromSSM();
+  const gasBuffer = gasPriceConfig?.gasBuffer;
+
+  return submitToContract({
+    csvFile: csvFilePath,
+    domain: /** @type {string} */ (process.env.ELEPHANT_DOMAIN),
+    apiKey: /** @type {string} */ (process.env.ELEPHANT_API_KEY),
+    oracleKeyId: /** @type {string} */ (process.env.ELEPHANT_ORACLE_KEY_ID),
+    fromAddress: /** @type {string} */ (process.env.ELEPHANT_FROM_ADDRESS),
+    rpcUrl: /** @type {string} */ (process.env.ELEPHANT_RPC_URL),
+    cwd: tempDir,
+    // Note: Gas price is not passed in API mode - Elephant manages it
+    // But gas buffer can be set independently
+    ...(gasBuffer ? { gasBuffer } : {}),
+  });
+}
+
+/**
+ * Determine submission mode and execute blockchain submission
+ *
+ * @param {SubmitToBlockchainParams} params - Submission parameters
+ * @returns {Promise<SubmitToBlockchainResult>} Submission result
+ */
+async function submitToBlockchain(params) {
+  const isKeystoreMode = Boolean(process.env.ELEPHANT_KEYSTORE_S3_KEY);
+
+  return isKeystoreMode ? submitWithKeystore(params) : submitWithApi(params);
+}
+
+/**
+ * Parse and validate an SQS record, extracting transaction items and metadata
+ * @param {SqsRecord} record - SQS record to parse
+ * @returns {{ success: true, data: ParsedMessage } | { success: false, error: FailedMessage }}
+ */
+function parseRecord(record) {
+  const messageId = record.messageId;
+  const taskToken = record.messageAttributes?.TaskToken?.stringValue;
+  const executionArn = record.messageAttributes?.ExecutionArn?.stringValue;
+  const county = record.messageAttributes?.County?.stringValue || "unknown";
+  const dataGroupLabel =
+    record.messageAttributes?.DataGroupLabel?.stringValue || "County";
+
+  try {
+    if (!record.body) {
+      return {
+        success: false,
+        error: {
+          messageId,
+          taskToken,
+          executionArn,
+          county,
+          error: "Missing SQS record body",
+          errorCode: SubmitErrorCodes.MISSING_BODY,
+        },
+      };
+    }
+
+    const transactionItems = JSON.parse(record.body);
+
+    if (!Array.isArray(transactionItems)) {
+      return {
+        success: false,
+        error: {
+          messageId,
+          taskToken,
+          executionArn,
+          county,
+          error: "SQS message body must contain an array of transaction items",
+          errorCode: SubmitErrorCodes.INVALID_BODY_FORMAT,
+        },
+      };
+    }
+
+    if (transactionItems.length === 0) {
+      return {
+        success: false,
+        error: {
+          messageId,
+          taskToken,
+          executionArn,
+          county,
+          error: "Transaction items array is empty",
+          errorCode: SubmitErrorCodes.EMPTY_TRANSACTION_ITEMS,
+        },
+      };
+    }
+
+    return {
+      success: true,
+      data: {
+        messageId,
+        transactionItems,
+        taskToken,
+        executionArn,
+        county,
+        dataGroupLabel,
+      },
+    };
+  } catch (parseError) {
+    return {
+      success: false,
+      error: {
+        messageId,
+        taskToken,
+        executionArn,
+        county,
+        error: `Failed to parse message body: ${parseError instanceof Error ? parseError.message : String(parseError)}`,
+        errorCode: SubmitErrorCodes.JSON_PARSE_ERROR,
+      },
+    };
+  }
+}
+
+/**
+ * Send task failure for a failed message and emit workflow event
+ * @param {FailedMessage} failedMessage - Failed message details
+ * @returns {Promise<boolean>} True if task failure was sent successfully, false otherwise
+ */
+async function handleFailedMessage(failedMessage) {
+  const { taskToken, executionArn, county, error, errorCode, messageId } =
+    failedMessage;
+  const code = errorCode || SubmitErrorCodes.UNKNOWN;
+
+  if (taskToken && executionArn) {
+    try {
+      await sendTaskFailure({
+        taskToken,
+        error: code,
+        cause: error,
+      });
+      return true;
+    } catch (sendError) {
+      console.error({
+        ...base,
+        level: "error",
+        msg: "failed_to_send_task_failure",
+        messageId,
+        county,
+        error:
+          sendError instanceof Error ? sendError.message : String(sendError),
+      });
+      return false;
+    }
+  }
+  // No task token means we can't send to Step Functions, treat as success for SQS purposes
+  return true;
+}
+
+/**
+ * Send task success for all successfully processed messages
+ * @param {ParsedMessage[]} messages - Successfully processed messages
+ * @param {Object} result - Submit result to send
+ * @returns {Promise<string[]>} Array of message IDs that failed to send task success
+ */
+async function sendSuccessToAllMessages(messages, result) {
+  /** @type {string[]} */
+  const failedMessageIds = [];
+
+  const successPromises = messages.map(async (msg) => {
+    if (msg.taskToken && msg.executionArn) {
+      const log = createLogger({
+        component: "submit",
+        at: new Date().toISOString(),
+        county: msg.county || "unknown",
+        executionId: msg.executionArn,
+      });
+
+      try {
+        await sendTaskSuccess({
+          taskToken: msg.taskToken,
+          output: result,
+        });
+
+        log("info", "task_success_sent", {
+          county: msg.county,
+          executionArn: msg.executionArn,
+        });
+      } catch (sendError) {
+        log("error", "failed_to_send_task_success", {
+          county: msg.county,
+          executionArn: msg.executionArn,
+          error:
+            sendError instanceof Error ? sendError.message : String(sendError),
+        });
+        failedMessageIds.push(msg.messageId);
+      }
+    }
+  });
+
+  await Promise.all(successPromises);
+  return failedMessageIds;
+}
+
+/**
+ * Send task failure for all messages due to blockchain submission error
+ * @param {ParsedMessage[]} messages - Messages to send failure for
+ * @param {string} errorMessage - Error message
+ * @param {string} [errorCause] - Error cause/stack trace
+ * @param {string} [errorCode] - Error code for classification
+ * @returns {Promise<string[]>} Array of message IDs that failed to send task failure
+ */
+async function sendFailureToAllMessages(
+  messages,
+  errorMessage,
+  errorCause,
+  errorCode,
+) {
+  const code = errorCode || SubmitErrorCodes.UNKNOWN;
+  /** @type {string[]} */
+  const failedMessageIds = [];
+
+  const failurePromises = messages.map(async (msg) => {
+    if (msg.taskToken && msg.executionArn) {
+      const log = createLogger({
+        component: "submit",
+        at: new Date().toISOString(),
+        county: msg.county || "unknown",
+        executionId: msg.executionArn,
+      });
+
+      try {
+        await sendTaskFailure({
+          taskToken: msg.taskToken,
+          error: code,
+          cause: errorMessage,
+        });
+
+        log("info", "task_failure_sent", {
+          county: msg.county,
+          executionArn: msg.executionArn,
+          errorCode: code,
+        });
+      } catch (sendError) {
+        log("error", "failed_to_send_task_failure", {
+          county: msg.county,
+          executionArn: msg.executionArn,
+          errorCode: code,
+          error:
+            sendError instanceof Error ? sendError.message : String(sendError),
+        });
+        failedMessageIds.push(msg.messageId);
+      }
+    }
+  });
+
+  await Promise.all(failurePromises);
+  return failedMessageIds;
+}
+
+/**
+ * Submit handler - supports batch processing of SQS events with Step Function Task Tokens
+ * Processes up to 100 messages, aggregates transaction items, and submits to blockchain in single transaction.
+ * All task tokens receive the same transaction hash via sendTaskSuccess.
+ *
+ * @param {SubmitInput} event - SQS event with up to 100 records
  * @returns {Promise<SubmitOutput>}
  */
 export const handler = async (event) => {
-  // Check if invoked directly from Step Functions (has taskToken in payload)
-  const isDirectStepFunctionInvocation = !!event.taskToken;
+  if (!event.Records || event.Records.length === 0) {
+    throw new Error("Missing SQS Records");
+  }
 
-  // Check if invoked from SQS (has Records array)
-  const isSqsInvocation = !!event.Records && Array.isArray(event.Records);
+  const recordCount = event.Records.length;
+  console.log({
+    ...base,
+    level: "info",
+    msg: "batch_processing_start",
+    recordCount,
+  });
 
-  let toSubmit;
-  let taskToken;
-  let executionArn;
-  let record; // Store record for use in catch block
-  let county = "unknown"; // Store county for use in catch block
-  let dataGroupLabel = "County"; // Store dataGroupLabel for use in catch block
-  let log; // Logger for EventBridge events
+  // Parse all records and separate successes from failures
+  /** @type {ParsedMessage[]} */
+  const validMessages = [];
+  /** @type {FailedMessage[]} */
+  const failedMessages = [];
+  /** @type {Array<{itemIdentifier: string}>} */
+  const batchItemFailures = [];
 
-  if (isDirectStepFunctionInvocation) {
-    // Invoked directly from Step Functions with Task Token
-    if (!event.transactionItems || !Array.isArray(event.transactionItems)) {
-      const error =
-        "Missing or invalid transactionItems in Step Function payload";
-      if (event.taskToken) {
-        const errorLog = createLogger({
-          component: "submit",
-          at: new Date().toISOString(),
-          county: event.county || "unknown",
-          executionId: event.executionArn,
-        });
-        await executeWithTaskToken({
-          taskToken: event.taskToken,
-          log: errorLog,
-          workerFn: async () => {
-            throw new Error(error);
-          },
-        });
-      }
-      throw new Error(error);
+  for (const record of event.Records) {
+    const parseResult = parseRecord(record);
+    if (parseResult.success) {
+      validMessages.push(parseResult.data);
+    } else {
+      failedMessages.push(parseResult.error);
     }
-    toSubmit = event.transactionItems;
-    taskToken = event.taskToken;
-    executionArn = event.executionArn;
+  }
+
+  console.log({
+    ...base,
+    level: "info",
+    msg: "batch_parsing_complete",
+    validCount: validMessages.length,
+    failedCount: failedMessages.length,
+  });
+
+  // Handle failed messages - only add to batch failures if we failed to send task failure
+  for (const failedMsg of failedMessages) {
+    console.log({
+      ...base,
+      level: "warn",
+      msg: "message_parse_failed",
+      messageId: failedMsg.messageId,
+      error: failedMsg.error,
+      county: failedMsg.county,
+    });
+    const sentSuccessfully = await handleFailedMessage(failedMsg);
+    if (!sentSuccessfully) {
+      batchItemFailures.push({ itemIdentifier: failedMsg.messageId });
+    }
+  }
+
+  if (validMessages.length === 0) {
     console.log({
       ...base,
       level: "info",
-      msg: "invoked_directly_from_step_functions",
-      executionArn: executionArn,
-      itemCount: toSubmit.length,
+      msg: "no_valid_messages_in_batch",
     });
+    // Return success to SQS unless we failed to send task failures
+    if (batchItemFailures.length > 0) {
+      return { status: "failed", batchItemFailures };
+    }
+    return { status: "success" };
+  }
 
-    // Emit IN_PROGRESS event to EventBridge when invoked directly
-    if (taskToken && executionArn) {
-      county = event.county || "unknown";
-      dataGroupLabel = event.dataGroupLabel || "County";
-      log = createLogger({
+  /** @type {Object[]} */
+  const aggregatedItems = [];
+  for (const msg of validMessages) {
+    aggregatedItems.push(...msg.transactionItems);
+  }
+
+  console.log({
+    ...base,
+    level: "info",
+    msg: "items_aggregated",
+    messageCount: validMessages.length,
+    totalItemCount: aggregatedItems.length,
+    counties: validMessages.map((m) => m.county).join(", "),
+  });
+
+  for (const msg of validMessages) {
+    if (msg.taskToken && msg.executionArn) {
+      const log = createLogger({
         component: "submit",
         at: new Date().toISOString(),
-        county: county,
-        executionId: executionArn,
+        county: msg.county || "unknown",
+        executionId: msg.executionArn,
       });
       await emitWorkflowEvent({
-        executionId: executionArn,
-        county: county,
-        dataGroupLabel: dataGroupLabel,
+        executionId: msg.executionArn,
+        county: msg.county || "unknown",
+        dataGroupLabel: msg.dataGroupLabel || "County",
         status: "IN_PROGRESS",
         phase: "Submit",
         step: "SubmitToBlockchain",
-        taskToken: taskToken,
+        taskToken: msg.taskToken,
         errors: [],
         log,
       });
     }
-  } else if (isSqsInvocation) {
-    // Invoked from SQS (with optional task token in message attributes for Step Function callback)
-    if (!event.Records || event.Records.length === 0) {
-      throw new Error("Missing SQS Records");
-    }
-
-    const firstRecord = event.Records[0];
-    if (!firstRecord || !firstRecord.body) {
-      throw new Error("Missing SQS record body");
-    }
-    record = firstRecord; // Store for use in catch block
-
-    // Extract task token from message attributes if present (Step Function mode)
-    if (firstRecord.messageAttributes?.TaskToken?.stringValue) {
-      taskToken = firstRecord.messageAttributes.TaskToken.stringValue;
-      executionArn = firstRecord.messageAttributes.ExecutionArn?.stringValue;
-      console.log({
-        ...base,
-        level: "info",
-        msg: "invoked_from_sqs_with_task_token",
-        executionArn: executionArn,
-        hasTaskToken: !!taskToken,
-      });
-
-      // Emit IN_PROGRESS event to EventBridge when task token is received
-      if (taskToken && executionArn) {
-        // Extract county and dataGroupLabel from message attributes or use defaults
-        county =
-          firstRecord.messageAttributes?.County?.stringValue || "unknown";
-        dataGroupLabel =
-          firstRecord.messageAttributes?.DataGroupLabel?.stringValue ||
-          "County";
-        log = createLogger({
-          component: "submit",
-          at: new Date().toISOString(),
-          county: county,
-          executionId: executionArn,
-        });
-        await emitWorkflowEvent({
-          executionId: executionArn,
-          county: county,
-          dataGroupLabel: dataGroupLabel,
-          status: "IN_PROGRESS",
-          phase: "Submit",
-          step: "SubmitToBlockchain",
-          taskToken: taskToken,
-          errors: [],
-          log,
-        });
-      }
-    }
-
-    // Parse transaction items from SQS message body
-    // firstRecord is guaranteed to be defined here due to the check above
-    toSubmit = JSON.parse(firstRecord.body);
-    if (!Array.isArray(toSubmit)) {
-      throw new Error(
-        "SQS message body must contain an array of transaction items",
-      );
-    }
-
-    console.log({
-      ...base,
-      level: "info",
-      msg: "invoked_from_sqs",
-      itemCount: toSubmit.length,
-      hasTaskToken: !!taskToken,
-    });
-  } else {
-    throw new Error(
-      "Invalid event format: must be either Step Function payload or SQS event",
-    );
-  }
-
-  if (!toSubmit.length) {
-    const error = "No records to submit";
-    if (taskToken) {
-      const errorLog =
-        log ||
-        createLogger({
-          component: "submit",
-          at: new Date().toISOString(),
-          county,
-          executionId: executionArn,
-        });
-      await executeWithTaskToken({
-        taskToken,
-        log: errorLog,
-        workerFn: async () => {
-          throw new Error(error);
-        },
-      });
-    }
-    throw new Error(error);
   }
 
   const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "submit-"));
@@ -389,112 +1063,61 @@ export const handler = async (event) => {
     const csvFilePath = path.resolve(tmp, "submit.csv");
     const writer = createObjectCsvWriter({
       path: csvFilePath,
-      header: Object.keys(toSubmit[0]).map((k) => ({ id: k, title: k })),
+      // @ts-expect-error - firstItem guaranteed to exist (validated in parseRecord)
+      header: Object.keys(validMessages[0].transactionItems[0]).map((k) => ({
+        id: k,
+        title: k,
+      })),
     });
-    await writer.writeRecords(toSubmit);
+    await writer.writeRecords(aggregatedItems);
 
-    let submitResult;
-
-    if (!process.env.ELEPHANT_RPC_URL)
-      throw new Error("ELEPHANT_RPC_URL is required");
-
-    // Check if we're using keystore mode
-    if (process.env.ELEPHANT_KEYSTORE_S3_KEY) {
-      console.log({
-        ...base,
-        level: "info",
-        msg: "Using keystore mode for contract submission (self-custodial)",
-      });
-      if (!process.env.ENVIRONMENT_BUCKET)
-        throw new Error("ENVIRONMENT_BUCKET is required");
-      if (!process.env.ELEPHANT_KEYSTORE_S3_KEY)
-        throw new Error("ELEPHANT_KEYSTORE_S3_KEY is required");
-      if (!process.env.ELEPHANT_KEYSTORE_PASSWORD)
-        throw new Error("ELEPHANT_KEYSTORE_PASSWORD is required");
-
-      // Fetch gas price configuration from SSM Parameter Store for self-custodial oracles
-      const gasPriceConfig = await getGasPriceFromSSM();
-
-      // Download keystore from S3 with unique filename to avoid conflicts
-      const keystorePath = path.resolve(
-        tmp,
-        `keystore-${Date.now()}-${Math.random().toString(36).substring(7)}.json`,
+    if (!process.env.ELEPHANT_RPC_URL) {
+      throw new SubmitError(
+        SubmitErrorCodes.MISSING_RPC_URL,
+        "ELEPHANT_RPC_URL is required",
       );
-      await downloadKeystoreFromS3(
-        process.env.ENVIRONMENT_BUCKET,
-        process.env.ELEPHANT_KEYSTORE_S3_KEY,
-        keystorePath,
-      );
-
-      try {
-        submitResult = await submitToContract({
-          csvFile: csvFilePath,
-          keystoreJson: keystorePath,
-          keystorePassword: process.env.ELEPHANT_KEYSTORE_PASSWORD,
-          rpcUrl: process.env.ELEPHANT_RPC_URL,
-          cwd: tmp,
-          // Spread gas price configuration (supports both legacy and EIP-1559 formats)
-          ...(gasPriceConfig || {}),
-        });
-      } finally {
-        // Clean up keystore file immediately after use for security
-        try {
-          await fs.unlink(keystorePath);
-          console.log({
-            ...base,
-            level: "info",
-            msg: "Keystore file cleaned up successfully",
-          });
-        } catch (cleanupError) {
-          console.error({
-            ...base,
-            level: "warn",
-            msg: "Failed to clean up keystore file",
-            error:
-              cleanupError instanceof Error
-                ? cleanupError.message
-                : String(cleanupError),
-          });
-        }
-      }
-    } else {
-      console.log({
-        ...base,
-        level: "info",
-        msg: "Using traditional API credentials for contract submission",
-      });
-
-      if (!process.env.ELEPHANT_DOMAIN)
-        throw new Error("ELEPHANT_DOMAIN is required");
-      if (!process.env.ELEPHANT_API_KEY)
-        throw new Error("ELEPHANT_API_KEY is required");
-      if (!process.env.ELEPHANT_ORACLE_KEY_ID)
-        throw new Error("ELEPHANT_ORACLE_KEY_ID is required");
-      if (!process.env.ELEPHANT_FROM_ADDRESS)
-        throw new Error("ELEPHANT_FROM_ADDRESS is required");
-      if (!process.env.ELEPHANT_RPC_URL)
-        throw new Error("ELEPHANT_RPC_URL is required");
-
-      // Fetch gas buffer configuration from SSM Parameter Store for API mode
-      const gasPriceConfig = await getGasPriceFromSSM();
-      const gasBuffer = gasPriceConfig?.gasBuffer;
-
-      submitResult = await submitToContract({
-        csvFile: csvFilePath,
-        domain: process.env.ELEPHANT_DOMAIN,
-        apiKey: process.env.ELEPHANT_API_KEY,
-        oracleKeyId: process.env.ELEPHANT_ORACLE_KEY_ID,
-        fromAddress: process.env.ELEPHANT_FROM_ADDRESS,
-        rpcUrl: process.env.ELEPHANT_RPC_URL,
-        cwd: tmp,
-        // Note: Gas price is not passed in API mode - Elephant manages it
-        // But gas buffer can be set independently
-        ...(gasBuffer ? { gasBuffer } : {}),
-      });
     }
 
-    if (!submitResult.success)
-      throw new Error(`Submit failed: ${submitResult.error}`);
+    const submitResult = await submitToBlockchain({
+      csvFilePath,
+      tempDir: tmp,
+      itemCount: aggregatedItems.length,
+    });
+
+    if (!submitResult.success) {
+      const errorMsg = `Submit failed: ${submitResult.error}`;
+      // Classify the error from the CLI failure message
+      const { code: errorCode } = submitResult.error
+        ? classifyBlockchainError(submitResult.error)
+        : { code: SubmitErrorCodes.SUBMIT_CLI_FAILURE };
+
+      console.error({
+        ...base,
+        level: "error",
+        msg: "blockchain_submit_failed",
+        error: errorMsg,
+        errorCode,
+      });
+
+      // Send failure to all valid messages with classified error code
+      // Only add to batch failures if we failed to send task failure to Step Functions
+      const failedToSendIds = await sendFailureToAllMessages(
+        validMessages,
+        errorMsg,
+        undefined,
+        errorCode,
+      );
+
+      for (const messageId of failedToSendIds) {
+        batchItemFailures.push({ itemIdentifier: messageId });
+      }
+
+      // Return success to SQS unless we failed to send task failures
+      if (batchItemFailures.length > 0) {
+        return { status: "failed", batchItemFailures };
+      }
+      return { status: "success" };
+    }
 
     // Read and parse CSV files, ensuring cleanup even if parsing fails
     const transactionStatusPath = path.join(tmp, "transaction-status.csv");
@@ -517,13 +1140,13 @@ export const handler = async (event) => {
       console.log({
         ...base,
         level: "info",
-        msg: "completed",
-        submit_results: submitResults,
+        msg: "submit_results_parsed",
+        resultCount: submitResults.length,
       });
 
       // Read and parse submit_errors.csv
-      const submitErrrorsCsv = await fs.readFile(submitErrorsPath, "utf8");
-      submitErrors = parse(submitErrrorsCsv, {
+      const submitErrorsCsv = await fs.readFile(submitErrorsPath, "utf8");
+      submitErrors = parse(submitErrorsCsv, {
         columns: true,
         skip_empty_lines: true,
         trim: true,
@@ -547,7 +1170,6 @@ export const handler = async (event) => {
       }
     }
 
-    console.log(`Submit errors type is : ${typeof submitErrors}`);
     const allErrors = [
       ...submitErrors,
       ...submitResults.filter(
@@ -555,133 +1177,110 @@ export const handler = async (event) => {
       ),
     ];
 
+    if (allErrors.length > 0) {
+      // Classify the blockchain error from the CSV rows
+      const { code: errorCode, message: classifiedMessage } =
+        classifySubmitErrors(allErrors);
+      const errorMsg =
+        "Submit to the blockchain failed: " + JSON.stringify(allErrors);
+
+      console.error({
+        ...base,
+        level: "error",
+        msg: "blockchain_submit_errors",
+        errors: allErrors,
+        errorCode,
+        classifiedMessage,
+      });
+
+      // Send failure to all valid messages with classified error code
+      // Only add to batch failures if we failed to send task failure to Step Functions
+      const failedToSendIds = await sendFailureToAllMessages(
+        validMessages,
+        errorMsg,
+        undefined,
+        errorCode,
+      );
+
+      for (const messageId of failedToSendIds) {
+        batchItemFailures.push({ itemIdentifier: messageId });
+      }
+
+      // Return success to SQS unless we failed to send task failures
+      if (batchItemFailures.length > 0) {
+        return { status: "failed", batchItemFailures };
+      }
+      return { status: "success" };
+    }
+
+    // Build success result with transaction hash
+    const result = {
+      status: "success",
+      submitResults: submitResults,
+      batchedMessageCount: validMessages.length,
+      totalItemCount: aggregatedItems.length,
+    };
+
     console.log({
       ...base,
       level: "info",
-      msg: "completed",
-      submit_errors: submitErrors,
+      msg: "batch_submit_completed",
+      messageCount: validMessages.length,
+      itemCount: aggregatedItems.length,
+      transactionHash:
+        submitResults[0]?.transactionHash || submitResults[0]?.txHash,
     });
-    if (allErrors.length > 0) {
-      const errorMsg =
-        "Submit to the blockchain failed" + JSON.stringify(allErrors);
-      if (taskToken && executionArn) {
-        const errorLog =
-          log ||
-          createLogger({
-            component: "submit",
-            at: new Date().toISOString(),
-            county,
-            executionId: executionArn,
-          });
-        // Emit FAILED event to EventBridge before sending task failure
-        try {
-          await emitWorkflowEvent({
-            executionId: executionArn,
-            county: county,
-            dataGroupLabel: dataGroupLabel,
-            status: "FAILED",
-            phase: "Submit",
-            step: "SubmitToBlockchain",
-            taskToken: taskToken,
-            errors: [
-              createWorkflowError("60002", {
-                error: errorMsg,
-              }),
-            ],
-            log: errorLog,
-          });
-        } catch (eventErr) {
-          errorLog("error", "failed_to_emit_failed_event", {
-            error:
-              eventErr instanceof Error ? eventErr.message : String(eventErr),
-          });
-          // Continue to send task failure even if EventBridge emission fails
-        }
-        await executeWithTaskToken({
-          taskToken,
-          log: errorLog,
-          workerFn: async () => {
-            throw new Error(errorMsg);
-          },
-        });
-      }
-      throw new Error(errorMsg);
+
+    // Send success to all valid messages with the same result
+    // Only add to batch failures if we failed to send task success to Step Functions
+    const failedToSendIds = await sendSuccessToAllMessages(
+      validMessages,
+      result,
+    );
+
+    for (const messageId of failedToSendIds) {
+      batchItemFailures.push({ itemIdentifier: messageId });
     }
 
-    const result = { status: "success", submitResults: submitResults };
-    console.log({ ...base, level: "info", msg: "completed", result });
-
-    // Emit SUCCEEDED event to EventBridge and send task success
-    if (taskToken && executionArn && log) {
-      await emitWorkflowEvent({
-        executionId: executionArn,
-        county: county,
-        dataGroupLabel: dataGroupLabel,
-        status: "SUCCEEDED",
-        phase: "Submit",
-        step: "SubmitToBlockchain",
-        taskToken: taskToken,
-        errors: [],
-        log,
-      });
-    }
-
-    // Send success callback to Step Functions if task token is present (from SQS or direct invocation)
-    if (taskToken) {
-      await executeWithTaskToken({
-        taskToken,
-        log:
-          log ||
-          createLogger({
-            component: "submit",
-            at: new Date().toISOString(),
-            county,
-            executionId: executionArn,
-          }),
-        workerFn: async () => result,
-      });
+    // Return result with any batch failures (only from failed sends to Step Functions)
+    if (batchItemFailures.length > 0) {
+      return { ...result, batchItemFailures };
     }
 
     return result;
   } catch (err) {
     const errMessage = err instanceof Error ? err.message : String(err);
     const errCause = err instanceof Error ? err.stack : undefined;
+    // Classify the error - handles SubmitError instances and general errors
+    const { code: errorCode } = classifyGeneralError(err);
 
-    // Emit FAILED event to EventBridge and send task failure
-    if (taskToken && executionArn) {
-      const errorLog =
-        log ||
-        createLogger({
-          component: "submit",
-          at: new Date().toISOString(),
-          county,
-          executionId: executionArn,
-        });
-      await emitWorkflowEvent({
-        executionId: executionArn,
-        county: county,
-        dataGroupLabel: dataGroupLabel,
-        status: "FAILED",
-        phase: "Submit",
-        step: "SubmitToBlockchain",
-        taskToken: taskToken,
-        errors: [
-          createWorkflowError("60002", {
-            error: errMessage,
-            cause: errCause,
-          }),
-        ],
-        log: errorLog,
-      });
-      await executeWithTaskToken({
-        taskToken,
-        log: errorLog,
-        workerFn: async () => {
-          throw err;
-        },
-      });
+    console.error({
+      ...base,
+      level: "error",
+      msg: "batch_handler_error",
+      error: errMessage,
+      errorCode,
+      messageCount: validMessages.length,
+    });
+
+    // Send failure to all valid messages with classified error code
+    // Only add to batch failures if we failed to send task failure to Step Functions
+    const failedToSendIds = await sendFailureToAllMessages(
+      validMessages,
+      errMessage,
+      errCause,
+      errorCode,
+    );
+
+    for (const messageId of failedToSendIds) {
+      batchItemFailures.push({ itemIdentifier: messageId });
     }
-    throw err;
+
+    // Return success to SQS unless we failed to send task failures
+    if (batchItemFailures.length > 0) {
+      return { status: "failed", batchItemFailures };
+    }
+    return { status: "success" };
   } finally {
     await fs.rm(tmp, { recursive: true, force: true });
   }
