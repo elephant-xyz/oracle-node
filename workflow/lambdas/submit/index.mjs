@@ -84,6 +84,19 @@ const ssmClient = new SSMClient({
 const base = { component: "submit", at: new Date().toISOString() };
 
 /**
+ * @typedef {Object} SubmitToBlockchainParams
+ * @property {string} csvFilePath - Path to CSV file with transaction items
+ * @property {string} tempDir - Temporary directory path
+ * @property {number} itemCount - Number of items being submitted
+ */
+
+/**
+ * @typedef {Object} SubmitToBlockchainResult
+ * @property {boolean} success - Whether submission succeeded
+ * @property {string} [error] - Error message if failed
+ */
+
+/**
  * Download keystore from S3
  * @param {string} bucket
  * @param {string} key
@@ -232,6 +245,156 @@ async function getGasPriceFromSSM() {
     });
     return undefined;
   }
+}
+
+/**
+ * Validate environment variables required for keystore mode
+ * @throws {Error} If required environment variables are missing
+ * @returns {void}
+ */
+function validateKeystoreEnvVars() {
+  if (!process.env.ENVIRONMENT_BUCKET) {
+    throw new Error("ENVIRONMENT_BUCKET is required");
+  }
+  if (!process.env.ELEPHANT_KEYSTORE_S3_KEY) {
+    throw new Error("ELEPHANT_KEYSTORE_S3_KEY is required");
+  }
+  if (!process.env.ELEPHANT_KEYSTORE_PASSWORD) {
+    throw new Error("ELEPHANT_KEYSTORE_PASSWORD is required");
+  }
+}
+
+/**
+ * Validate environment variables required for API mode
+ * @throws {Error} If required environment variables are missing
+ * @returns {void}
+ */
+function validateApiEnvVars() {
+  if (!process.env.ELEPHANT_DOMAIN) {
+    throw new Error("ELEPHANT_DOMAIN is required");
+  }
+  if (!process.env.ELEPHANT_API_KEY) {
+    throw new Error("ELEPHANT_API_KEY is required");
+  }
+  if (!process.env.ELEPHANT_ORACLE_KEY_ID) {
+    throw new Error("ELEPHANT_ORACLE_KEY_ID is required");
+  }
+  if (!process.env.ELEPHANT_FROM_ADDRESS) {
+    throw new Error("ELEPHANT_FROM_ADDRESS is required");
+  }
+}
+
+/**
+ * Submit to blockchain using keystore mode (self-custodial)
+ * Downloads keystore from S3, submits transaction, and cleans up keystore file
+ *
+ * @param {SubmitToBlockchainParams} params - Submission parameters
+ * @returns {Promise<SubmitToBlockchainResult>} Submission result
+ */
+async function submitWithKeystore({ csvFilePath, tempDir, itemCount }) {
+  console.log({
+    ...base,
+    level: "info",
+    msg: "Using keystore mode for contract submission (self-custodial)",
+    itemCount,
+  });
+
+  validateKeystoreEnvVars();
+
+  const gasPriceConfig = await getGasPriceFromSSM();
+
+  const keystorePath = path.resolve(
+    tempDir,
+    `keystore-${Date.now()}-${Math.random().toString(36).substring(7)}.json`,
+  );
+
+  await downloadKeystoreFromS3(
+    /** @type {string} */(process.env.ENVIRONMENT_BUCKET),
+    /** @type {string} */(process.env.ELEPHANT_KEYSTORE_S3_KEY),
+    keystorePath,
+  );
+
+  try {
+    return await submitToContract({
+      csvFile: csvFilePath,
+      keystoreJson: keystorePath,
+      keystorePassword: /** @type {string} */ (
+        process.env.ELEPHANT_KEYSTORE_PASSWORD
+      ),
+      rpcUrl: /** @type {string} */ (process.env.ELEPHANT_RPC_URL),
+      cwd: tempDir,
+      // Spread gas price configuration (supports both legacy and EIP-1559 formats)
+      ...(gasPriceConfig || {}),
+    });
+  } finally {
+    try {
+      await fs.unlink(keystorePath);
+      console.log({
+        ...base,
+        level: "info",
+        msg: "Keystore file cleaned up successfully",
+      });
+    } catch (cleanupError) {
+      console.error({
+        ...base,
+        level: "warn",
+        msg: "Failed to clean up keystore file",
+        error:
+          cleanupError instanceof Error
+            ? cleanupError.message
+            : String(cleanupError),
+      });
+    }
+  }
+}
+
+/**
+ * Submit to blockchain using API mode (managed by Elephant)
+ * Uses API credentials for transaction signing
+ *
+ * @param {SubmitToBlockchainParams} params - Submission parameters
+ * @returns {Promise<SubmitToBlockchainResult>} Submission result
+ */
+async function submitWithApi({ csvFilePath, tempDir, itemCount }) {
+  console.log({
+    ...base,
+    level: "info",
+    msg: "Using API mode for contract submission",
+    itemCount,
+  });
+
+  validateApiEnvVars();
+
+  // Fetch gas buffer configuration from SSM Parameter Store for API mode
+  const gasPriceConfig = await getGasPriceFromSSM();
+  const gasBuffer = gasPriceConfig?.gasBuffer;
+
+  return submitToContract({
+    csvFile: csvFilePath,
+    domain: /** @type {string} */ (process.env.ELEPHANT_DOMAIN),
+    apiKey: /** @type {string} */ (process.env.ELEPHANT_API_KEY),
+    oracleKeyId: /** @type {string} */ (process.env.ELEPHANT_ORACLE_KEY_ID),
+    fromAddress: /** @type {string} */ (process.env.ELEPHANT_FROM_ADDRESS),
+    rpcUrl: /** @type {string} */ (process.env.ELEPHANT_RPC_URL),
+    cwd: tempDir,
+    // Note: Gas price is not passed in API mode - Elephant manages it
+    // But gas buffer can be set independently
+    ...(gasBuffer ? { gasBuffer } : {}),
+  });
+}
+
+/**
+ * Determine submission mode and execute blockchain submission
+ *
+ * @param {SubmitToBlockchainParams} params - Submission parameters
+ * @returns {Promise<SubmitToBlockchainResult>} Submission result
+ */
+async function submitToBlockchain(params) {
+  const isKeystoreMode = Boolean(process.env.ELEPHANT_KEYSTORE_S3_KEY);
+
+  return isKeystoreMode
+    ? submitWithKeystore(params)
+    : submitWithApi(params);
 }
 
 /**
@@ -510,7 +673,6 @@ export const handler = async (event) => {
     failedCount: failedMessages.length,
   });
 
-  // Handle failed messages - send task failure for each
   for (const failedMsg of failedMessages) {
     console.log({
       ...base,
@@ -523,7 +685,6 @@ export const handler = async (event) => {
     await handleFailedMessage(failedMsg);
   }
 
-  // If no valid messages, return batch failures
   if (validMessages.length === 0) {
     console.log({
       ...base,
@@ -533,7 +694,6 @@ export const handler = async (event) => {
     return { status: "failed", batchItemFailures };
   }
 
-  // Aggregate all transaction items from valid messages
   /** @type {Object[]} */
   const aggregatedItems = [];
   for (const msg of validMessages) {
@@ -584,103 +744,15 @@ export const handler = async (event) => {
     });
     await writer.writeRecords(aggregatedItems);
 
-    let submitResult;
-
-    if (!process.env.ELEPHANT_RPC_URL)
+    if (!process.env.ELEPHANT_RPC_URL) {
       throw new Error("ELEPHANT_RPC_URL is required");
-
-    if (process.env.ELEPHANT_KEYSTORE_S3_KEY) {
-      console.log({
-        ...base,
-        level: "info",
-        msg: "Using keystore mode for contract submission (self-custodial)",
-        itemCount: aggregatedItems.length,
-      });
-      if (!process.env.ENVIRONMENT_BUCKET)
-        throw new Error("ENVIRONMENT_BUCKET is required");
-      if (!process.env.ELEPHANT_KEYSTORE_S3_KEY)
-        throw new Error("ELEPHANT_KEYSTORE_S3_KEY is required");
-      if (!process.env.ELEPHANT_KEYSTORE_PASSWORD)
-        throw new Error("ELEPHANT_KEYSTORE_PASSWORD is required");
-
-      const gasPriceConfig = await getGasPriceFromSSM();
-
-      const keystorePath = path.resolve(
-        tmp,
-        `keystore-${Date.now()}-${Math.random().toString(36).substring(7)}.json`,
-      );
-      await downloadKeystoreFromS3(
-        process.env.ENVIRONMENT_BUCKET,
-        process.env.ELEPHANT_KEYSTORE_S3_KEY,
-        keystorePath,
-      );
-
-      try {
-        submitResult = await submitToContract({
-          csvFile: csvFilePath,
-          keystoreJson: keystorePath,
-          keystorePassword: process.env.ELEPHANT_KEYSTORE_PASSWORD,
-          rpcUrl: process.env.ELEPHANT_RPC_URL,
-          cwd: tmp,
-          // Spread gas price configuration (supports both legacy and EIP-1559 formats)
-          ...(gasPriceConfig || {}),
-        });
-      } finally {
-        try {
-          await fs.unlink(keystorePath);
-          console.log({
-            ...base,
-            level: "info",
-            msg: "Keystore file cleaned up successfully",
-          });
-        } catch (cleanupError) {
-          console.error({
-            ...base,
-            level: "warn",
-            msg: "Failed to clean up keystore file",
-            error:
-              cleanupError instanceof Error
-                ? cleanupError.message
-                : String(cleanupError),
-          });
-        }
-      }
-    } else {
-      console.log({
-        ...base,
-        level: "info",
-        msg: "Using traditional API credentials for contract submission",
-        itemCount: aggregatedItems.length,
-      });
-
-      if (!process.env.ELEPHANT_DOMAIN)
-        throw new Error("ELEPHANT_DOMAIN is required");
-      if (!process.env.ELEPHANT_API_KEY)
-        throw new Error("ELEPHANT_API_KEY is required");
-      if (!process.env.ELEPHANT_ORACLE_KEY_ID)
-        throw new Error("ELEPHANT_ORACLE_KEY_ID is required");
-      if (!process.env.ELEPHANT_FROM_ADDRESS)
-        throw new Error("ELEPHANT_FROM_ADDRESS is required");
-      if (!process.env.ELEPHANT_RPC_URL)
-        throw new Error("ELEPHANT_RPC_URL is required");
-
-      // Fetch gas buffer configuration from SSM Parameter Store for API mode
-      const gasPriceConfig = await getGasPriceFromSSM();
-      const gasBuffer = gasPriceConfig?.gasBuffer;
-
-      submitResult = await submitToContract({
-        csvFile: csvFilePath,
-        domain: process.env.ELEPHANT_DOMAIN,
-        apiKey: process.env.ELEPHANT_API_KEY,
-        oracleKeyId: process.env.ELEPHANT_ORACLE_KEY_ID,
-        fromAddress: process.env.ELEPHANT_FROM_ADDRESS,
-        rpcUrl: process.env.ELEPHANT_RPC_URL,
-        cwd: tmp,
-        // Note: Gas price is not passed in API mode - Elephant manages it
-        // But gas buffer can be set independently
-        ...(gasBuffer ? { gasBuffer } : {}),
-      });
     }
+
+    const submitResult = await submitToBlockchain({
+      csvFilePath,
+      tempDir: tmp,
+      itemCount: aggregatedItems.length,
+    });
 
     if (!submitResult.success) {
       const errorMsg = `Submit failed: ${submitResult.error}`;
