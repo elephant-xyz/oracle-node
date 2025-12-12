@@ -114,6 +114,7 @@ Resources:
         - arm64
       Handler: index.handler
       CodeUri: lambdas/event-handler
+      Timeout: 900
       Layers:
         - !Ref SharedLayer
       DeadLetterQueue:
