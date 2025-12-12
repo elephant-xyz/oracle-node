@@ -1065,56 +1065,58 @@ States:
   EmitSubmitFailed:
     Type: Task
     Resource: arn:aws:states:::events:putEvents
-    Comment: "Emit FAILED event for Submit to Blockchain step"
-    Parameters:
+    QueryLanguage: JSONata
+    Comment: "Emit FAILED event for Submit to Blockchain step with error code from lambda"
+    Arguments:
       Entries:
         - Source: elephant.workflow
           DetailType: WorkflowEvent
           Detail:
-            executionId.$: $$.Execution.Name
-            county.$: $.pre.county_name
+            executionId: "{% $states.context.Execution.Name %}"
+            county: "{% $states.input.pre.county_name %}"
             status: FAILED
             phase: Submit
             step: SubmitToBlockchain
             dataGroupLabel: County
             errors:
-              - code: "60002"
+              - code: "{% $states.input.submitError.Error %}"
                 details:
-                  error.$: States.JsonToString($.submitError)
-    ResultPath: $.eventResult
+                  cause: "{% $states.input.submitError.Cause %}"
+    Output: "{% $merge([$states.input, { 'eventResult': $states.result }]) %}"
     Next: WaitForSubmitResolution
     Catch:
       - ErrorEquals: [States.ALL]
-        ResultPath: $.eventError
+        Output: "{% $merge([$states.input, { 'eventError': $states.errorOutput }]) %}"
         Next: WaitForSubmitResolution
 
   WaitForSubmitResolution:
     Type: Task
     Resource: arn:aws:states:::events:putEvents.waitForTaskToken
+    QueryLanguage: JSONata
     Comment: "Emit FAILED event and wait for external resolution - retry target is SubmitToBlockchain"
     HeartbeatSeconds: 2592000 # 30 days
-    Parameters:
+    Arguments:
       Entries:
         - Source: elephant.workflow
           DetailType: WorkflowEvent
           Detail:
-            executionId.$: $$.Execution.Name
-            county.$: $.pre.county_name
+            executionId: "{% $states.context.Execution.Name %}"
+            county: "{% $states.input.pre.county_name %}"
             status: FAILED
             phase: Submit
             step: SubmitToBlockchain
             dataGroupLabel: County
-            taskToken.$: $$.Task.Token
+            taskToken: "{% $states.context.Task.Token %}"
             errors:
-              - code: "60002"
+              - code: "{% $states.input.submitError.Error %}"
                 details:
-                  error.$: States.JsonToString($.submitError)
-    ResultPath: $.resolutionResult
+                  cause: "{% $states.input.submitError.Cause %}"
+    Output: "{% $merge([$states.input, { 'resolutionResult': $states.result }]) %}"
     Next: SubmitToBlockchain
     Catch:
       - ErrorEquals: [States.ALL]
         Comment: "Resolution failed - stay parked and wait again"
-        ResultPath: $.submitError
+        Output: "{% $merge([$states.input, { 'submitError': $states.errorOutput }]) %}"
         Next: WaitForSubmitResolution
 
   # === TRANSACTION STATUS CHECK STEP ===

@@ -81,6 +81,13 @@ Emitted on workflow step status changes (success, failure, or parked).
 | `31001`         | SVL        | SVL runtime exception (non-validation failure)                                                                                                                                            |
 | `40001`         | Hash       | Generic hash step failure or exception                                                                                                                                                    |
 | `50001`         | Upload     | Generic upload step failure or exception                                                                                                                                                  |
+| `60001`         | GasPriceCheck | Gas price check step failure                                                                                                                                                            |
+| `601xx`         | Submit     | Message parsing errors (missing body, invalid format, empty items, JSON parse errors)                                                                                                     |
+| `602xx`         | Submit     | Environment configuration errors (missing required env vars for keystore/API mode)                                                                                                        |
+| `603xx`         | Submit     | S3/Keystore errors (download failures)                                                                                                                                                    |
+| `604xx`         | Submit     | Blockchain/Contract errors (nonce, gas, RPC, transaction errors from submit_errors.csv)                                                                                                   |
+| `605xx`         | Submit     | File I/O errors (CSV read/write failures)                                                                                                                                                 |
+| `60999`         | Submit     | Unknown/unclassified submit error                                                                                                                                                         |
 | `70001`         | AutoRepair | Auto-repair failed for MVL errors after max retries                                                                                                                                       |
 | `70002`         | AutoRepair | Auto-repair failed for SVL errors after max retries                                                                                                                                       |
 
@@ -110,33 +117,76 @@ Emitted on workflow step status changes (success, failure, or parked).
 
 > **Note on Transform errors (code `20<county>`)**: Transform errors include the county name in the error code, enabling county-specific tracking and aggregation of transform failures.
 
+#### Submit Error Codes (`60xxx` - Blockchain Submit)
+
+| Code    | Category              | Description                                           |
+| ------- | --------------------- | ----------------------------------------------------- |
+| `60001` | GasPriceCheck         | Gas price check step failure                          |
+| `60101` | Message Parsing       | Missing SQS record body                               |
+| `60102` | Message Parsing       | Invalid message body format (not JSON array)          |
+| `60103` | Message Parsing       | Empty transaction items array                         |
+| `60104` | Message Parsing       | JSON parse error                                      |
+| `60201` | Environment Config    | Missing ENVIRONMENT_BUCKET                            |
+| `60202` | Environment Config    | Missing ELEPHANT_KEYSTORE_S3_KEY                      |
+| `60203` | Environment Config    | Missing ELEPHANT_KEYSTORE_PASSWORD                    |
+| `60204` | Environment Config    | Missing ELEPHANT_DOMAIN                               |
+| `60205` | Environment Config    | Missing ELEPHANT_API_KEY                              |
+| `60206` | Environment Config    | Missing ELEPHANT_ORACLE_KEY_ID                        |
+| `60207` | Environment Config    | Missing ELEPHANT_FROM_ADDRESS                         |
+| `60208` | Environment Config    | Missing ELEPHANT_RPC_URL                              |
+| `60301` | S3/Keystore           | Keystore body not found in S3                         |
+| `60302` | S3/Keystore           | S3 download failed                                    |
+| `60401` | Blockchain/Contract   | Nonce already used (`already known`)                  |
+| `60402` | Blockchain/Contract   | Nonce too low                                         |
+| `60403` | Blockchain/Contract   | Insufficient funds                                    |
+| `60404` | Blockchain/Contract   | Gas estimation failed (`gas required exceeds`)        |
+| `60405` | Blockchain/Contract   | Transaction underpriced                               |
+| `60406` | Blockchain/Contract   | Execution reverted                                    |
+| `60407` | Blockchain/Contract   | Invalid transaction                                   |
+| `60408` | Blockchain/Contract   | RPC connection error (`ECONNREFUSED`, `ETIMEDOUT`)    |
+| `60409` | Blockchain/Contract   | RPC timeout                                           |
+| `60410` | Blockchain/Contract   | Invalid parameters                                    |
+| `60411` | Blockchain/Contract   | Contract error                                        |
+| `60412` | Blockchain/Contract   | Submit CLI returned failure status                    |
+| `60501` | File I/O              | CSV write failed                                      |
+| `60502` | File I/O              | Transaction status CSV read failed                    |
+| `60503` | File I/O              | Submit errors CSV read failed                         |
+| `60999` | Unknown               | Unknown/unclassified submit error                     |
+
+> **Note**: Blockchain/Contract errors (604xx) are classified from the `errorMessage` column in `submit_errors.csv`, which contains JSON-serialized EVM RPC responses. The classification uses regex pattern matching. See `workflow/lambdas/submit/index.mjs` for full mapping.
+
 ### Phase Values
 
-| Phase        | Description                      |
-| ------------ | -------------------------------- |
-| `Prepare`    | Input preparation and validation |
-| `Transform`  | Data transformation processing   |
-| `SVL`        | Schema Validation Layer          |
-| `MVL`        | Mirror Validation Layer          |
-| `Hash`       | Hashing and fingerprinting       |
-| `Upload`     | IPFS/storage upload              |
-| `Submit`     | Final submission                 |
-| `AutoRepair` | AI-driven error resolution       |
+| Phase                    | Description                         |
+| ------------------------ | ----------------------------------- |
+| `Prepare`                | Input preparation and validation    |
+| `Transform`              | Data transformation processing      |
+| `SVL`                    | Schema Validation Layer             |
+| `MVL`                    | Mirror Validation Layer             |
+| `Hash`                   | Hashing and fingerprinting          |
+| `Upload`                 | IPFS/storage upload                 |
+| `GasPriceCheck`          | Gas price verification              |
+| `Submit`                 | Final blockchain submission         |
+| `TransactionStatusCheck` | Transaction confirmation monitoring |
+| `AutoRepair`             | AI-driven error resolution          |
 
 ### Step Values
 
-| Step                | Phase      | Description                    |
-| ------------------- | ---------- | ------------------------------ |
-| `Prepare`           | Prepare    | Data preparation/download      |
-| `EvaluateTransform` | Transform  | Evaluation of transform errors |
-| `Transform`         | Transform  | Data transformation processing |
-| `SVL`               | SVL        | Schema validation              |
-| `MVL`               | MVL        | Mirror validation              |
-| `EvaluateHash`      | Hash       | Evaluation of hash errors      |
-| `Hash`              | Hash       | Hashing and CID-s calculation  |
-| `EvaluateUpload`    | Upload     | Evaluation of upload errors    |
-| `Upload`            | Upload     | IPFS upload                    |
-| `AutoRepair`        | AutoRepair | AI-driven error resolution     |
+| Step                     | Phase                  | Description                       |
+| ------------------------ | ---------------------- | --------------------------------- |
+| `Prepare`                | Prepare                | Data preparation/download         |
+| `EvaluateTransform`      | Transform              | Evaluation of transform errors    |
+| `Transform`              | Transform              | Data transformation processing    |
+| `SVL`                    | SVL                    | Schema validation                 |
+| `MVL`                    | MVL                    | Mirror validation                 |
+| `EvaluateHash`           | Hash                   | Evaluation of hash errors         |
+| `Hash`                   | Hash                   | Hashing and CID-s calculation     |
+| `EvaluateUpload`         | Upload                 | Evaluation of upload errors       |
+| `Upload`                 | Upload                 | IPFS upload                       |
+| `CheckGasPrice`          | GasPriceCheck          | Gas price verification            |
+| `SubmitToBlockchain`     | Submit                 | Submit transactions to blockchain |
+| `CheckTransactionStatus` | TransactionStatusCheck | Verify transaction confirmation   |
+| `AutoRepair`             | AutoRepair             | AI-driven error resolution        |
 
 > Additional steps will be added as other workflows are integrated.
 

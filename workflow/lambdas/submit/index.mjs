@@ -24,6 +24,259 @@ const ssmClient = new SSMClient({
 });
 
 /**
+ * Custom error class for Submit errors with error codes
+ */
+class SubmitError extends Error {
+  /**
+   * @param {string} code - Error code (e.g., "60101")
+   * @param {string} message - Error message
+   */
+  constructor(code, message) {
+    super(message);
+    /** @type {string} */
+    this.code = code;
+    this.name = "SubmitError";
+  }
+}
+
+/**
+ * Error code patterns for blockchain RPC errors (parsed from errorMessage in submit_errors.csv)
+ * The errorMessage column contains JSON-serialized EVM RPC responses
+ * @type {Array<{code: string, patterns: RegExp[], description: string}>}
+ */
+const BLOCKCHAIN_ERROR_PATTERNS = [
+  {
+    code: "60401",
+    patterns: [/already known/i],
+    description: "Nonce already used",
+  },
+  {
+    code: "60402",
+    patterns: [/nonce too low/i],
+    description: "Nonce too low",
+  },
+  {
+    code: "60403",
+    patterns: [/insufficient funds/i],
+    description: "Insufficient funds",
+  },
+  {
+    code: "60404",
+    patterns: [/gas required exceeds/i, /out of gas/i],
+    description: "Gas estimation failed",
+  },
+  {
+    code: "60405",
+    patterns: [/transaction underpriced/i, /replacement transaction/i],
+    description: "Transaction underpriced",
+  },
+  {
+    code: "60406",
+    patterns: [/execution reverted/i, /revert/i],
+    description: "Execution reverted",
+  },
+  {
+    code: "60407",
+    patterns: [/invalid transaction/i, /invalid sender/i],
+    description: "Invalid transaction",
+  },
+  {
+    code: "60408",
+    patterns: [/ECONNREFUSED/i, /ETIMEDOUT/i, /network error/i],
+    description: "RPC connection error",
+  },
+  {
+    code: "60409",
+    patterns: [/timeout/i, /ESOCKETTIMEDOUT/i],
+    description: "RPC timeout",
+  },
+  {
+    code: "60410",
+    patterns: [/invalid argument/i, /invalid params/i],
+    description: "Invalid parameters",
+  },
+  {
+    code: "60411",
+    patterns: [/contract creation code storage out of gas/i],
+    description: "Contract error",
+  },
+];
+
+/**
+ * Submit error codes - centralized definitions
+ */
+const SubmitErrorCodes = {
+  // Message Parsing (60100-60199)
+  MISSING_BODY: "60101",
+  INVALID_BODY_FORMAT: "60102",
+  EMPTY_TRANSACTION_ITEMS: "60103",
+  JSON_PARSE_ERROR: "60104",
+  // Environment Config (60200-60299)
+  MISSING_ENVIRONMENT_BUCKET: "60201",
+  MISSING_KEYSTORE_S3_KEY: "60202",
+  MISSING_KEYSTORE_PASSWORD: "60203",
+  MISSING_DOMAIN: "60204",
+  MISSING_API_KEY: "60205",
+  MISSING_ORACLE_KEY_ID: "60206",
+  MISSING_FROM_ADDRESS: "60207",
+  MISSING_RPC_URL: "60208",
+  // S3/Keystore (60300-60399)
+  KEYSTORE_BODY_NOT_FOUND: "60301",
+  S3_DOWNLOAD_FAILED: "60302",
+  // Blockchain/Contract (60400-60499) - see BLOCKCHAIN_ERROR_PATTERNS
+  SUBMIT_CLI_FAILURE: "60412",
+  // File I/O (60500-60599)
+  CSV_WRITE_FAILED: "60501",
+  TRANSACTION_STATUS_READ_FAILED: "60502",
+  SUBMIT_ERRORS_READ_FAILED: "60503",
+  // Unknown
+  UNKNOWN: "60999",
+};
+
+/**
+ * Resolve the error message from a submit error row (CSV row from submit_errors.csv)
+ * Reuses logic from codebuild/shared/errors.mjs
+ * @param {Object} row - Raw CSV row to inspect
+ * @param {string} [row.errorMessage] - Error message field
+ * @param {string} [row.error_message] - Error message field (snake_case)
+ * @param {string} [row.error] - Error field (from transaction-status.csv failed rows)
+ * @returns {string} - Error message extracted from the row
+ */
+function resolveErrorMessage(row) {
+  if (
+    typeof row.errorMessage === "string" &&
+    row.errorMessage.trim().length > 0
+  ) {
+    return row.errorMessage.trim();
+  } else if (
+    typeof row.error_message === "string" &&
+    row.error_message.trim().length > 0
+  ) {
+    return row.error_message.trim();
+  } else if (typeof row.error === "string" && row.error.trim().length > 0) {
+    return row.error.trim();
+  }
+  return "";
+}
+
+/**
+ * Classify a blockchain error message and return the appropriate error code
+ * @param {string} errorMessage - The error message to classify (may be JSON)
+ * @returns {{code: string, description: string}} Error code and description
+ */
+function classifyBlockchainError(errorMessage) {
+  // Try to parse as JSON if it looks like JSON (RPC error responses are often JSON)
+  let messageToMatch = errorMessage;
+  if (errorMessage.startsWith("{") || errorMessage.startsWith("[")) {
+    try {
+      const parsed = JSON.parse(errorMessage);
+      // Extract error message from common JSON-RPC error formats
+      messageToMatch =
+        parsed.error?.message ||
+        parsed.message ||
+        parsed.error ||
+        JSON.stringify(parsed);
+    } catch {
+      // Not valid JSON, use as-is
+    }
+  }
+
+  for (const errorDef of BLOCKCHAIN_ERROR_PATTERNS) {
+    for (const pattern of errorDef.patterns) {
+      if (pattern.test(messageToMatch)) {
+        return { code: errorDef.code, description: errorDef.description };
+      }
+    }
+  }
+  // Default: unknown blockchain error
+  return { code: SubmitErrorCodes.UNKNOWN, description: "Unknown blockchain error" };
+}
+
+/**
+ * Classify errors from submit_errors.csv rows and return the most specific error code
+ * @param {Array<{errorMessage?: string, error_message?: string, error?: string}>} errorRows - Array of error rows from CSV
+ * @returns {{code: string, description: string, message: string}} Classified error info
+ */
+function classifySubmitErrors(errorRows) {
+  if (!errorRows || errorRows.length === 0) {
+    return {
+      code: SubmitErrorCodes.UNKNOWN,
+      description: "No error details available",
+      message: "Unknown error",
+    };
+  }
+
+  // Get the first error row and classify it
+  const firstRow = /** @type {{errorMessage?: string, error_message?: string, error?: string}} */ (errorRows[0]);
+  const errorMessage = resolveErrorMessage(firstRow);
+
+  if (!errorMessage) {
+    return {
+      code: SubmitErrorCodes.UNKNOWN,
+      description: "Empty error message",
+      message: "Error message could not be resolved",
+    };
+  }
+
+  const { code, description } = classifyBlockchainError(errorMessage);
+  return { code, description, message: errorMessage };
+}
+
+/**
+ * Classify a general error (not from CSV) and return the appropriate error code
+ * @param {unknown} error - The error to classify
+ * @returns {{code: string, description: string}} Error code and description
+ */
+function classifyGeneralError(error) {
+  const errorMessage = error instanceof Error ? error.message : String(error);
+
+  // Check if it's already a SubmitError with a code
+  if (error instanceof SubmitError) {
+    return { code: error.code, description: errorMessage };
+  }
+
+  // Try blockchain error classification first
+  const blockchainResult = classifyBlockchainError(errorMessage);
+  if (blockchainResult.code !== SubmitErrorCodes.UNKNOWN) {
+    return blockchainResult;
+  }
+
+  // Check for specific known error patterns
+  if (errorMessage.includes("ENVIRONMENT_BUCKET")) {
+    return { code: SubmitErrorCodes.MISSING_ENVIRONMENT_BUCKET, description: "Missing ENVIRONMENT_BUCKET" };
+  }
+  if (errorMessage.includes("ELEPHANT_KEYSTORE_S3_KEY")) {
+    return { code: SubmitErrorCodes.MISSING_KEYSTORE_S3_KEY, description: "Missing ELEPHANT_KEYSTORE_S3_KEY" };
+  }
+  if (errorMessage.includes("ELEPHANT_KEYSTORE_PASSWORD")) {
+    return { code: SubmitErrorCodes.MISSING_KEYSTORE_PASSWORD, description: "Missing ELEPHANT_KEYSTORE_PASSWORD" };
+  }
+  if (errorMessage.includes("ELEPHANT_DOMAIN")) {
+    return { code: SubmitErrorCodes.MISSING_DOMAIN, description: "Missing ELEPHANT_DOMAIN" };
+  }
+  if (errorMessage.includes("ELEPHANT_API_KEY")) {
+    return { code: SubmitErrorCodes.MISSING_API_KEY, description: "Missing ELEPHANT_API_KEY" };
+  }
+  if (errorMessage.includes("ELEPHANT_ORACLE_KEY_ID")) {
+    return { code: SubmitErrorCodes.MISSING_ORACLE_KEY_ID, description: "Missing ELEPHANT_ORACLE_KEY_ID" };
+  }
+  if (errorMessage.includes("ELEPHANT_FROM_ADDRESS")) {
+    return { code: SubmitErrorCodes.MISSING_FROM_ADDRESS, description: "Missing ELEPHANT_FROM_ADDRESS" };
+  }
+  if (errorMessage.includes("ELEPHANT_RPC_URL")) {
+    return { code: SubmitErrorCodes.MISSING_RPC_URL, description: "Missing ELEPHANT_RPC_URL" };
+  }
+  if (errorMessage.includes("download keystore") && errorMessage.includes("body not found")) {
+    return { code: SubmitErrorCodes.KEYSTORE_BODY_NOT_FOUND, description: "Keystore body not found in S3" };
+  }
+  if (errorMessage.includes("download keystore") || errorMessage.includes("Failed to download keystore")) {
+    return { code: SubmitErrorCodes.S3_DOWNLOAD_FAILED, description: "S3 download failed" };
+  }
+
+  return { code: SubmitErrorCodes.UNKNOWN, description: "Unknown submit error" };
+}
+
+/**
  * @typedef {Object} SubmitOutput
  * @property {string} status - Status of submit
  * @property {Array<{itemIdentifier: string}>} [batchItemFailures] - Failed message IDs for partial batch response
@@ -79,6 +332,7 @@ const ssmClient = new SSMClient({
  * @property {string} [executionArn] - Step Functions execution ARN (if available)
  * @property {string} [county] - County name (if available)
  * @property {string} error - Error message
+ * @property {string} [errorCode] - Error code for classification
  */
 
 const base = { component: "submit", at: new Date().toISOString() };
@@ -128,13 +382,22 @@ async function downloadKeystoreFromS3(bucket, key, targetPath) {
         );
       });
     const body = response.Body;
-    if (!body)
-      throw new Error("Failed to download keystore from S3: body not found");
+    if (!body) {
+      throw new SubmitError(
+        SubmitErrorCodes.KEYSTORE_BODY_NOT_FOUND,
+        "Failed to download keystore from S3: body not found",
+      );
+    }
     const bodyContents = await streamToString(body);
     await fs.writeFile(targetPath, bodyContents, "utf8");
     return targetPath;
   } catch (error) {
-    throw new Error(
+    // If it's already a SubmitError, re-throw it
+    if (error instanceof SubmitError) {
+      throw error;
+    }
+    throw new SubmitError(
+      SubmitErrorCodes.S3_DOWNLOAD_FAILED,
       `Failed to download keystore from S3: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
@@ -249,38 +512,38 @@ async function getGasPriceFromSSM() {
 
 /**
  * Validate environment variables required for keystore mode
- * @throws {Error} If required environment variables are missing
+ * @throws {SubmitError} If required environment variables are missing
  * @returns {void}
  */
 function validateKeystoreEnvVars() {
   if (!process.env.ENVIRONMENT_BUCKET) {
-    throw new Error("ENVIRONMENT_BUCKET is required");
+    throw new SubmitError(SubmitErrorCodes.MISSING_ENVIRONMENT_BUCKET, "ENVIRONMENT_BUCKET is required");
   }
   if (!process.env.ELEPHANT_KEYSTORE_S3_KEY) {
-    throw new Error("ELEPHANT_KEYSTORE_S3_KEY is required");
+    throw new SubmitError(SubmitErrorCodes.MISSING_KEYSTORE_S3_KEY, "ELEPHANT_KEYSTORE_S3_KEY is required");
   }
   if (!process.env.ELEPHANT_KEYSTORE_PASSWORD) {
-    throw new Error("ELEPHANT_KEYSTORE_PASSWORD is required");
+    throw new SubmitError(SubmitErrorCodes.MISSING_KEYSTORE_PASSWORD, "ELEPHANT_KEYSTORE_PASSWORD is required");
   }
 }
 
 /**
  * Validate environment variables required for API mode
- * @throws {Error} If required environment variables are missing
+ * @throws {SubmitError} If required environment variables are missing
  * @returns {void}
  */
 function validateApiEnvVars() {
   if (!process.env.ELEPHANT_DOMAIN) {
-    throw new Error("ELEPHANT_DOMAIN is required");
+    throw new SubmitError(SubmitErrorCodes.MISSING_DOMAIN, "ELEPHANT_DOMAIN is required");
   }
   if (!process.env.ELEPHANT_API_KEY) {
-    throw new Error("ELEPHANT_API_KEY is required");
+    throw new SubmitError(SubmitErrorCodes.MISSING_API_KEY, "ELEPHANT_API_KEY is required");
   }
   if (!process.env.ELEPHANT_ORACLE_KEY_ID) {
-    throw new Error("ELEPHANT_ORACLE_KEY_ID is required");
+    throw new SubmitError(SubmitErrorCodes.MISSING_ORACLE_KEY_ID, "ELEPHANT_ORACLE_KEY_ID is required");
   }
   if (!process.env.ELEPHANT_FROM_ADDRESS) {
-    throw new Error("ELEPHANT_FROM_ADDRESS is required");
+    throw new SubmitError(SubmitErrorCodes.MISSING_FROM_ADDRESS, "ELEPHANT_FROM_ADDRESS is required");
   }
 }
 
@@ -420,6 +683,7 @@ function parseRecord(record) {
           executionArn,
           county,
           error: "Missing SQS record body",
+          errorCode: SubmitErrorCodes.MISSING_BODY,
         },
       };
     }
@@ -435,6 +699,7 @@ function parseRecord(record) {
           executionArn,
           county,
           error: "SQS message body must contain an array of transaction items",
+          errorCode: SubmitErrorCodes.INVALID_BODY_FORMAT,
         },
       };
     }
@@ -448,6 +713,7 @@ function parseRecord(record) {
           executionArn,
           county,
           error: "Transaction items array is empty",
+          errorCode: SubmitErrorCodes.EMPTY_TRANSACTION_ITEMS,
         },
       };
     }
@@ -472,6 +738,7 @@ function parseRecord(record) {
         executionArn,
         county,
         error: `Failed to parse message body: ${parseError instanceof Error ? parseError.message : String(parseError)}`,
+        errorCode: SubmitErrorCodes.JSON_PARSE_ERROR,
       },
     };
   }
@@ -483,7 +750,8 @@ function parseRecord(record) {
  * @returns {Promise<void>}
  */
 async function handleFailedMessage(failedMessage) {
-  const { taskToken, executionArn, county, error } = failedMessage;
+  const { taskToken, executionArn, county, error, errorCode } = failedMessage;
+  const code = errorCode || SubmitErrorCodes.UNKNOWN;
 
   if (taskToken && executionArn) {
     const log = createLogger({
@@ -502,7 +770,7 @@ async function handleFailedMessage(failedMessage) {
         phase: "Submit",
         step: "SubmitToBlockchain",
         taskToken,
-        errors: [createWorkflowError("60002", { error })],
+        errors: [createWorkflowError(code, { error })],
         log,
       });
     } catch (eventErr) {
@@ -513,7 +781,7 @@ async function handleFailedMessage(failedMessage) {
 
     await sendTaskFailure({
       taskToken,
-      error: "MessageParseError",
+      error: code,
       cause: error,
     });
   }
@@ -574,9 +842,12 @@ async function sendSuccessToAllMessages(messages, result) {
  * @param {ParsedMessage[]} messages - Messages to send failure for
  * @param {string} errorMessage - Error message
  * @param {string} [errorCause] - Error cause/stack trace
+ * @param {string} [errorCode] - Error code for classification
  * @returns {Promise<void>}
  */
-async function sendFailureToAllMessages(messages, errorMessage, errorCause) {
+async function sendFailureToAllMessages(messages, errorMessage, errorCause, errorCode) {
+  const code = errorCode || SubmitErrorCodes.UNKNOWN;
+
   const failurePromises = messages.map(async (msg) => {
     if (msg.taskToken && msg.executionArn) {
       const log = createLogger({
@@ -596,7 +867,7 @@ async function sendFailureToAllMessages(messages, errorMessage, errorCause) {
           step: "SubmitToBlockchain",
           taskToken: msg.taskToken,
           errors: [
-            createWorkflowError("60002", {
+            createWorkflowError(code, {
               error: errorMessage,
               cause: errorCause,
             }),
@@ -612,13 +883,14 @@ async function sendFailureToAllMessages(messages, errorMessage, errorCause) {
 
       await sendTaskFailure({
         taskToken: msg.taskToken,
-        error: "BlockchainSubmitError",
+        error: code,
         cause: errorMessage,
       });
 
       log("info", "task_failure_sent", {
         county: msg.county,
         executionArn: msg.executionArn,
+        errorCode: code,
       });
     }
   });
@@ -745,7 +1017,7 @@ export const handler = async (event) => {
     await writer.writeRecords(aggregatedItems);
 
     if (!process.env.ELEPHANT_RPC_URL) {
-      throw new Error("ELEPHANT_RPC_URL is required");
+      throw new SubmitError(SubmitErrorCodes.MISSING_RPC_URL, "ELEPHANT_RPC_URL is required");
     }
 
     const submitResult = await submitToBlockchain({
@@ -756,15 +1028,21 @@ export const handler = async (event) => {
 
     if (!submitResult.success) {
       const errorMsg = `Submit failed: ${submitResult.error}`;
+      // Classify the error from the CLI failure message
+      const { code: errorCode } = submitResult.error
+        ? classifyBlockchainError(submitResult.error)
+        : { code: SubmitErrorCodes.SUBMIT_CLI_FAILURE };
+
       console.error({
         ...base,
         level: "error",
         msg: "blockchain_submit_failed",
         error: errorMsg,
+        errorCode,
       });
 
-      // Send failure to all valid messages
-      await sendFailureToAllMessages(validMessages, errorMsg);
+      // Send failure to all valid messages with classified error code
+      await sendFailureToAllMessages(validMessages, errorMsg, undefined, errorCode);
 
       // Add all valid messages to batch failures since blockchain submission failed
       for (const msg of validMessages) {
@@ -833,17 +1111,22 @@ export const handler = async (event) => {
     ];
 
     if (allErrors.length > 0) {
+      // Classify the blockchain error from the CSV rows
+      const { code: errorCode, message: classifiedMessage } = classifySubmitErrors(allErrors);
       const errorMsg =
         "Submit to the blockchain failed: " + JSON.stringify(allErrors);
+
       console.error({
         ...base,
         level: "error",
         msg: "blockchain_submit_errors",
         errors: allErrors,
+        errorCode,
+        classifiedMessage,
       });
 
-      // Send failure to all valid messages
-      await sendFailureToAllMessages(validMessages, errorMsg);
+      // Send failure to all valid messages with classified error code
+      await sendFailureToAllMessages(validMessages, errorMsg, undefined, errorCode);
 
       // Add all valid messages to batch failures
       for (const msg of validMessages) {
@@ -883,17 +1166,20 @@ export const handler = async (event) => {
   } catch (err) {
     const errMessage = err instanceof Error ? err.message : String(err);
     const errCause = err instanceof Error ? err.stack : undefined;
+    // Classify the error - handles SubmitError instances and general errors
+    const { code: errorCode } = classifyGeneralError(err);
 
     console.error({
       ...base,
       level: "error",
       msg: "batch_handler_error",
       error: errMessage,
+      errorCode,
       messageCount: validMessages.length,
     });
 
-    // Send failure to all valid messages
-    await sendFailureToAllMessages(validMessages, errMessage, errCause);
+    // Send failure to all valid messages with classified error code
+    await sendFailureToAllMessages(validMessages, errMessage, errCause, errorCode);
 
     // Add all valid messages to batch failures
     for (const msg of validMessages) {

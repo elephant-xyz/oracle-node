@@ -469,11 +469,11 @@ describe("submit handler", () => {
         expect.objectContaining({ taskToken: "task-token-valid" }),
       );
 
-      // Invalid message should get task failure
+      // Invalid message should get task failure with JSON parse error code
       expect(mockSendTaskFailure).toHaveBeenCalledWith(
         expect.objectContaining({
           taskToken: "task-token-invalid",
-          error: "MessageParseError",
+          error: "60104", // JSON_PARSE_ERROR
         }),
       );
 
@@ -513,11 +513,11 @@ describe("submit handler", () => {
         expect.objectContaining({ taskToken: "task-token-valid" }),
       );
 
-      // Empty message should get task failure
+      // Empty message should get task failure with empty transaction items error code
       expect(mockSendTaskFailure).toHaveBeenCalledWith(
         expect.objectContaining({
           taskToken: "task-token-empty",
-          error: "MessageParseError",
+          error: "60103", // EMPTY_TRANSACTION_ITEMS
         }),
       );
 
@@ -557,11 +557,11 @@ describe("submit handler", () => {
         expect.objectContaining({ taskToken: "task-token-valid" }),
       );
 
-      // Non-array message should get task failure
+      // Non-array message should get task failure with invalid body format error code
       expect(mockSendTaskFailure).toHaveBeenCalledWith(
         expect.objectContaining({
           taskToken: "task-token-object",
-          error: "MessageParseError",
+          error: "60102", // INVALID_BODY_FORMAT
         }),
       );
 
