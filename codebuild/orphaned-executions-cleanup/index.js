@@ -196,7 +196,14 @@ async function deleteOrphanedExecution(tableName, item) {
  * Check a single execution and determine if it's orphaned
  */
 async function checkExecution(tableName, item) {
-  const { executionId, county, openErrorCount, uniqueErrorCount, taskToken, createdAt } = item;
+  const {
+    executionId,
+    county,
+    openErrorCount,
+    uniqueErrorCount,
+    taskToken,
+    createdAt,
+  } = item;
 
   const errorLinkCount = await countErrorLinksForExecution(
     tableName,
