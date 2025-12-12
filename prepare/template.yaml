@@ -387,7 +387,6 @@ Resources:
       SqsManagedSseEnabled: true
       RedrivePolicy:
         deadLetterTargetArn: !GetAtt TransactionsDeadLetterQueue.Arn
-        maxReceiveCount: 3
       Tags:
         - Key: Environment
           Value: !Ref EnvironmentName
