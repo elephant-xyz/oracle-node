@@ -55,6 +55,11 @@ GS3_MIGRATION_ARCHIVE_NAME="${GS3_MIGRATION_ARCHIVE_NAME:-gs3-migration.zip}"
 GS3_MIGRATION_PREFIX="${GS3_MIGRATION_PREFIX:-codebuild/gs3-migration}"
 GS3_MIGRATION_UPLOAD_PENDING=0
 
+ORPHANED_EXECUTIONS_CLEANUP_MODULE_DIR="codebuild/orphaned-executions-cleanup"
+ORPHANED_EXECUTIONS_CLEANUP_ARCHIVE_NAME="${ORPHANED_EXECUTIONS_CLEANUP_ARCHIVE_NAME:-orphaned-executions-cleanup.zip}"
+ORPHANED_EXECUTIONS_CLEANUP_PREFIX="${ORPHANED_EXECUTIONS_CLEANUP_PREFIX:-codebuild/orphaned-executions-cleanup}"
+ORPHANED_EXECUTIONS_CLEANUP_UPLOAD_PENDING=0
+
 WORKFLOW_DIRECT_SUBMIT_MODULE_DIR="codebuild/workflow-direct-submit"
 WORKFLOW_DIRECT_SUBMIT_ARCHIVE_NAME="${WORKFLOW_DIRECT_SUBMIT_ARCHIVE_NAME:-workflow-direct-submit.zip}"
 WORKFLOW_DIRECT_SUBMIT_PREFIX="${WORKFLOW_DIRECT_SUBMIT_PREFIX:-codebuild/workflow-direct-submit}"
@@ -601,6 +606,65 @@ package_and_upload_gs3_migration() {
 
   GS3_MIGRATION_UPLOAD_PENDING=0
   info "Uploaded GS3 migration module to s3://${bucket}/${s3_key}"
+}
+
+package_and_upload_orphaned_executions_cleanup() {
+  if [[ ! -d "$ORPHANED_EXECUTIONS_CLEANUP_MODULE_DIR" ]]; then
+    warn "Orphaned executions cleanup module directory ($ORPHANED_EXECUTIONS_CLEANUP_MODULE_DIR) not found, skipping upload."
+    return 0
+  fi
+
+  local bucket="${CODEBUILD_RUNTIME_BUCKET:-}"
+  if [[ -z "$bucket" ]]; then
+    bucket=$(get_bucket)
+  fi
+
+  if [[ -z "$bucket" ]]; then
+    ORPHANED_EXECUTIONS_CLEANUP_UPLOAD_PENDING=1
+    info "Delaying orphaned executions cleanup module upload until environment bucket exists."
+    return 0
+  fi
+
+  local prefix="${ORPHANED_EXECUTIONS_CLEANUP_PREFIX%/}"
+  prefix="${prefix#/}"
+  local dist_dir="codebuild/dist"
+  mkdir -p "$dist_dir"
+
+  local archive_path="${dist_dir}/${ORPHANED_EXECUTIONS_CLEANUP_ARCHIVE_NAME}"
+  rm -f "$archive_path"
+
+  info "Installing orphaned executions cleanup module production dependencies"
+  (
+    cd "$ORPHANED_EXECUTIONS_CLEANUP_MODULE_DIR"
+    npm ci --omit=dev >/dev/null
+  ) || {
+    err "Failed to install orphaned executions cleanup module dependencies."
+    exit 1
+  }
+
+  info "Packaging orphaned executions cleanup module"
+  (
+    cd "$ORPHANED_EXECUTIONS_CLEANUP_MODULE_DIR"
+    zip -r "../dist/${ORPHANED_EXECUTIONS_CLEANUP_ARCHIVE_NAME}" . >/dev/null
+  ) || {
+    err "Failed to package orphaned executions cleanup module."
+    exit 1
+  }
+
+  local s3_key
+  if [[ -n "$prefix" ]]; then
+    s3_key="${prefix}/${ORPHANED_EXECUTIONS_CLEANUP_ARCHIVE_NAME}"
+  else
+    s3_key="${ORPHANED_EXECUTIONS_CLEANUP_ARCHIVE_NAME}"
+  fi
+
+  aws s3 cp "$archive_path" "s3://${bucket}/${s3_key}" >/dev/null || {
+    err "Failed to upload orphaned executions cleanup module to s3://${bucket}/${s3_key}"
+    exit 1
+  }
+
+  ORPHANED_EXECUTIONS_CLEANUP_UPLOAD_PENDING=0
+  info "Uploaded orphaned executions cleanup module to s3://${bucket}/${s3_key}"
 }
 
 package_and_upload_workflow_direct_submit() {
@@ -1181,6 +1245,7 @@ main() {
   package_and_upload_codebuild_runtime
   package_and_upload_redrive_auto_repair
   package_and_upload_gs3_migration
+  package_and_upload_orphaned_executions_cleanup
   package_and_upload_workflow_direct_submit
   deploy_codebuild_stack
 
@@ -1265,6 +1330,11 @@ main() {
   # Upload GS3 migration module if pending
   if (( GS3_MIGRATION_UPLOAD_PENDING == 1 )); then
     package_and_upload_gs3_migration
+  fi
+
+  # Upload orphaned executions cleanup module if pending
+  if (( ORPHANED_EXECUTIONS_CLEANUP_UPLOAD_PENDING == 1 )); then
+    package_and_upload_orphaned_executions_cleanup
   fi
 
   # Upload workflow direct submit module if pending

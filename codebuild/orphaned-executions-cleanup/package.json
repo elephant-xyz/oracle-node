@@ -1,0 +1,13 @@
+{
+  "name": "@elephant-xyz/orphaned-executions-cleanup",
+  "version": "1.0.0",
+  "description": "Migration script to clean up orphaned FailedExecutionItem records that have no corresponding ExecutionErrorLink records",
+  "type": "module",
+  "main": "index.js",
+  "license": "UNLICENSED",
+  "private": true,
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.0.0",
+    "@aws-sdk/lib-dynamodb": "^3.0.0"
+  }
+}
