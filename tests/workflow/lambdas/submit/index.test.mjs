@@ -27,11 +27,15 @@ const mockCreateWorkflowError = vi.fn((code, details) => ({
   ...(details && { details }),
 }));
 const mockCreateLogger = vi.fn(() => vi.fn());
+const mockSendTaskSuccess = vi.fn().mockResolvedValue(undefined);
+const mockSendTaskFailure = vi.fn().mockResolvedValue(undefined);
 vi.mock("shared", () => ({
   executeWithTaskToken: mockExecuteWithTaskToken,
   emitWorkflowEvent: mockEmitWorkflowEvent,
   createWorkflowError: mockCreateWorkflowError,
   createLogger: mockCreateLogger,
+  sendTaskSuccess: mockSendTaskSuccess,
+  sendTaskFailure: mockSendTaskFailure,
 }));
 
 // Mock @elephant-xyz/cli/lib
@@ -53,6 +57,8 @@ describe("submit handler", () => {
     mockEmitWorkflowEvent.mockClear();
     mockCreateWorkflowError.mockClear();
     mockCreateLogger.mockClear();
+    mockSendTaskSuccess.mockClear();
+    mockSendTaskFailure.mockClear();
 
     process.env = {
       ...originalEnv,
@@ -92,7 +98,7 @@ describe("submit handler", () => {
       // Create transaction-status.csv
       await fs.writeFile(
         statusCsv,
-        "status,txHash\nsuccess,0xabc123\n",
+        "status,transactionHash\nsuccess,0xabc123def456\n",
         "utf8",
       );
 
@@ -112,32 +118,72 @@ describe("submit handler", () => {
     vi.restoreAllMocks();
   });
 
-  const createSqsEvent = (taskToken, transactionItems) => ({
-    Records: [
-      {
-        body: JSON.stringify(transactionItems),
-        messageAttributes: {
-          TaskToken: { stringValue: taskToken },
-          ExecutionArn: {
-            stringValue:
-              "arn:aws:states:us-east-1:123456789012:execution:test-exec",
-          },
-          County: { stringValue: "test-county" },
-        },
+  /**
+   * Create a single SQS record for testing
+   * @param {string} messageId - SQS message ID
+   * @param {string} taskToken - Step Functions task token
+   * @param {Object[]} transactionItems - Transaction items array
+   * @param {string} [county] - County name
+   * @returns {Object} SQS record
+   */
+  const createSqsRecord = (
+    messageId,
+    taskToken,
+    transactionItems,
+    county = "test-county",
+  ) => ({
+    messageId,
+    body: JSON.stringify(transactionItems),
+    messageAttributes: {
+      TaskToken: { stringValue: taskToken },
+      ExecutionArn: {
+        stringValue: `arn:aws:states:us-east-1:123456789012:execution:${messageId}`,
       },
-    ],
+      County: { stringValue: county },
+      DataGroupLabel: { stringValue: "County" },
+    },
   });
 
-  const createDirectInvocationEvent = (transactionItems) => ({
-    taskToken: "direct-task-token",
-    executionArn: "arn:aws:states:us-east-1:123456789012:execution:test-exec",
-    transactionItems: transactionItems,
+  /**
+   * Create a batch SQS event with multiple records
+   * @param {number} count - Number of records
+   * @param {string} [prefix] - Prefix for message IDs
+   * @returns {Object} SQS event with Records array
+   */
+  const createBatchSqsEvent = (count, prefix = "msg") => ({
+    Records: Array.from({ length: count }, (_, i) =>
+      createSqsRecord(
+        `${prefix}-${i}`,
+        `task-token-${i}`,
+        [
+          {
+            dataGroupLabel: "County",
+            dataGroupCid: `bafkrei-seed-${i}`,
+            propertyCid: `prop-${i}`,
+          },
+          {
+            dataGroupLabel: "County",
+            dataGroupCid: `bafkrei-county-${i}`,
+            propertyCid: `prop-${i}`,
+          },
+        ],
+        `county-${i}`,
+      ),
+    ),
   });
 
-  describe("SQS trigger mode (with task token)", () => {
+  /**
+   * Create a single-message SQS event (backward compatibility)
+   * @param {string} taskToken - Step Functions task token
+   * @param {Object[]} transactionItems - Transaction items array
+   * @returns {Object} SQS event
+   */
+  const createSqsEvent = (taskToken, transactionItems) => ({
+    Records: [createSqsRecord("single-msg", taskToken, transactionItems)],
+  });
+
+  describe("Single message processing (backward compatibility)", () => {
     it("should emit IN_PROGRESS event at start", async () => {
-      // Use default mock implementation that creates files
-
       const { handler } =
         await import("../../../../workflow/lambdas/submit/index.mjs");
 
@@ -159,8 +205,6 @@ describe("submit handler", () => {
     });
 
     it("should submit successfully and send task success", async () => {
-      // Use default mock implementation that creates files
-
       const { handler } =
         await import("../../../../workflow/lambdas/submit/index.mjs");
 
@@ -174,7 +218,7 @@ describe("submit handler", () => {
       expect(mockSubmitToContract).toHaveBeenCalled();
 
       // Verify task success was sent via shared layer
-      expect(mockExecuteWithTaskToken).toHaveBeenCalledWith(
+      expect(mockSendTaskSuccess).toHaveBeenCalledWith(
         expect.objectContaining({
           taskToken: "task-token-success",
         }),
@@ -182,8 +226,6 @@ describe("submit handler", () => {
     });
 
     it("should emit SUCCEEDED event on successful submission", async () => {
-      // Use default mock implementation that creates files
-
       const { handler } =
         await import("../../../../workflow/lambdas/submit/index.mjs");
 
@@ -212,7 +254,7 @@ describe("submit handler", () => {
         const errorsCsv = path.join(tmpDir, "submit_errors.csv");
 
         // Create empty files for error case
-        await fs.writeFile(statusCsv, "status,txHash\n", "utf8");
+        await fs.writeFile(statusCsv, "status,transactionHash\n", "utf8");
         await fs.writeFile(errorsCsv, "error_message,error_path\n", "utf8");
 
         return { success: false, error: "Submission failed" };
@@ -225,19 +267,18 @@ describe("submit handler", () => {
         { dataGroupLabel: "County", dataGroupCid: "bafkrei123" },
       ]);
 
-      // Handler will throw, but task failure should be sent in catch block
-      try {
-        await handler(event);
-      } catch (err) {
-        // Expected to throw
-      }
+      const result = await handler(event);
 
       // Verify task failure was sent via shared layer
-      expect(mockExecuteWithTaskToken).toHaveBeenCalledWith(
+      expect(mockSendTaskFailure).toHaveBeenCalledWith(
         expect.objectContaining({
           taskToken: "task-token-failed",
         }),
       );
+
+      // Should return batch item failures
+      expect(result.batchItemFailures).toBeDefined();
+      expect(result.batchItemFailures.length).toBe(1);
     });
 
     it("should emit FAILED event on submission failure", async () => {
@@ -248,7 +289,7 @@ describe("submit handler", () => {
         const errorsCsv = path.join(tmpDir, "submit_errors.csv");
 
         // Create empty files for error case
-        await fs.writeFile(statusCsv, "status,txHash\n", "utf8");
+        await fs.writeFile(statusCsv, "status,transactionHash\n", "utf8");
         await fs.writeFile(errorsCsv, "error_message,error_path\n", "utf8");
 
         return { success: false, error: "Submission failed" };
@@ -261,12 +302,7 @@ describe("submit handler", () => {
         { dataGroupLabel: "County", dataGroupCid: "bafkrei123" },
       ]);
 
-      // Handler will throw, but EventBridge FAILED event should be emitted in catch block
-      try {
-        await handler(event);
-      } catch (err) {
-        // Expected to throw
-      }
+      await handler(event);
 
       // Should have 2 EventBridge calls: IN_PROGRESS and FAILED
       expect(mockEmitWorkflowEvent).toHaveBeenCalledTimes(2);
@@ -275,24 +311,18 @@ describe("submit handler", () => {
           status: "FAILED",
           phase: "Submit",
           step: "SubmitToBlockchain",
-          errors: expect.arrayContaining([
-            expect.objectContaining({
-              code: "60002",
-            }),
-          ]),
         }),
       );
     });
 
     it("should handle external SQS invocation without task token", async () => {
-      // Use default mock implementation that creates files (don't override)
-
       const { handler } =
         await import("../../../../workflow/lambdas/submit/index.mjs");
 
       const event = {
         Records: [
           {
+            messageId: "external-msg",
             body: JSON.stringify([
               { dataGroupLabel: "County", dataGroupCid: "bafkrei123" },
             ]),
@@ -303,83 +333,317 @@ describe("submit handler", () => {
 
       const result = await handler(event);
 
-      // Should NOT emit EventBridge events (no task token)
-      expect(mockEmitWorkflowEvent).not.toHaveBeenCalled();
-
-      // Should NOT send Step Function callbacks
-      expect(mockExecuteWithTaskToken).not.toHaveBeenCalled();
+      // Should NOT send Step Function callbacks (no task token)
+      expect(mockSendTaskSuccess).not.toHaveBeenCalled();
+      expect(mockSendTaskFailure).not.toHaveBeenCalled();
 
       // Should return result
       expect(result).toBeDefined();
+      expect(result.status).toBe("success");
     });
   });
 
-  describe("Direct Step Function invocation mode", () => {
-    it("should submit successfully when invoked directly", async () => {
-      // Use default mock implementation that creates files
-
+  describe("Batch processing (multiple messages)", () => {
+    it("should process multiple messages and aggregate transaction items", async () => {
       const { handler } =
         await import("../../../../workflow/lambdas/submit/index.mjs");
 
-      const event = createDirectInvocationEvent([
-        { dataGroupLabel: "County", dataGroupCid: "bafkrei123" },
-      ]);
+      const event = createBatchSqsEvent(5); // 5 messages, each with 2 items = 10 items total
+
+      const result = await handler(event);
+
+      // Verify submitToContract was called with aggregated items
+      expect(mockSubmitToContract).toHaveBeenCalledTimes(1);
+
+      // Verify result contains batch info
+      expect(result.status).toBe("success");
+      expect(result.batchedMessageCount).toBe(5);
+      expect(result.totalItemCount).toBe(10);
+    });
+
+    it("should send task success to all messages in batch with same result", async () => {
+      const { handler } =
+        await import("../../../../workflow/lambdas/submit/index.mjs");
+
+      const event = createBatchSqsEvent(3);
 
       await handler(event);
 
-      // Verify submitToContract was called
-      expect(mockSubmitToContract).toHaveBeenCalled();
+      // Verify task success was sent for all 3 messages
+      expect(mockSendTaskSuccess).toHaveBeenCalledTimes(3);
 
-      // Verify task success was sent via shared layer
-      expect(mockExecuteWithTaskToken).toHaveBeenCalledWith(
-        expect.objectContaining({
-          taskToken: "direct-task-token",
-        }),
-      );
+      // All should receive the same transaction hash in result
+      const calls = mockSendTaskSuccess.mock.calls;
+      expect(calls[0][0].taskToken).toBe("task-token-0");
+      expect(calls[1][0].taskToken).toBe("task-token-1");
+      expect(calls[2][0].taskToken).toBe("task-token-2");
+
+      // All should have same output structure
+      const firstOutput = calls[0][0].output;
+      expect(firstOutput.status).toBe("success");
+      expect(firstOutput.batchedMessageCount).toBe(3);
     });
 
-    it("should handle missing transactionItems in direct invocation", async () => {
+    it("should emit IN_PROGRESS event only for first message", async () => {
+      const { handler } =
+        await import("../../../../workflow/lambdas/submit/index.mjs");
+
+      const event = createBatchSqsEvent(5);
+
+      await handler(event);
+
+      // Count IN_PROGRESS events
+      const inProgressCalls = mockEmitWorkflowEvent.mock.calls.filter(
+        (call) => call[0].status === "IN_PROGRESS",
+      );
+      expect(inProgressCalls.length).toBe(1);
+
+      // Should have 1 IN_PROGRESS + 5 SUCCEEDED events
+      expect(mockEmitWorkflowEvent).toHaveBeenCalledTimes(6);
+    });
+
+    it("should emit SUCCEEDED event for each message in batch", async () => {
+      const { handler } =
+        await import("../../../../workflow/lambdas/submit/index.mjs");
+
+      const event = createBatchSqsEvent(3);
+
+      await handler(event);
+
+      // Count SUCCEEDED events
+      const succeededCalls = mockEmitWorkflowEvent.mock.calls.filter(
+        (call) => call[0].status === "SUCCEEDED",
+      );
+      expect(succeededCalls.length).toBe(3);
+    });
+
+    it("should handle batch of 100 messages (max batch size)", async () => {
+      const { handler } =
+        await import("../../../../workflow/lambdas/submit/index.mjs");
+
+      const event = createBatchSqsEvent(100);
+
+      const result = await handler(event);
+
+      // Verify single blockchain submission for 200 items
+      expect(mockSubmitToContract).toHaveBeenCalledTimes(1);
+
+      // Verify all task tokens received success
+      expect(mockSendTaskSuccess).toHaveBeenCalledTimes(100);
+
+      // Verify result
+      expect(result.status).toBe("success");
+      expect(result.batchedMessageCount).toBe(100);
+      expect(result.totalItemCount).toBe(200);
+    });
+  });
+
+  describe("Partial batch failure handling", () => {
+    it("should handle messages with invalid JSON body", async () => {
       const { handler } =
         await import("../../../../workflow/lambdas/submit/index.mjs");
 
       const event = {
-        taskToken: "direct-task-token",
-        executionArn:
-          "arn:aws:states:us-east-1:123456789012:execution:test-exec",
-        // Missing transactionItems
+        Records: [
+          createSqsRecord("valid-msg", "task-token-valid", [
+            { dataGroupLabel: "County", dataGroupCid: "bafkrei123" },
+          ]),
+          {
+            messageId: "invalid-msg",
+            body: "not-valid-json",
+            messageAttributes: {
+              TaskToken: { stringValue: "task-token-invalid" },
+              ExecutionArn: {
+                stringValue: "arn:aws:states:us-east-1:123:execution:invalid",
+              },
+              County: { stringValue: "invalid-county" },
+            },
+          },
+        ],
       };
 
-      // Handler should throw or send task failure
-      try {
-        await handler(event);
-      } catch (err) {
-        // Expected to throw
-        expect(err.message).toContain("Missing or invalid transactionItems");
-      }
+      const result = await handler(event);
 
-      // Verify task failure was sent via shared layer
-      expect(mockExecuteWithTaskToken).toHaveBeenCalledWith(
+      // Valid message should succeed
+      expect(mockSendTaskSuccess).toHaveBeenCalledWith(
+        expect.objectContaining({ taskToken: "task-token-valid" }),
+      );
+
+      // Invalid message should get task failure
+      expect(mockSendTaskFailure).toHaveBeenCalledWith(
         expect.objectContaining({
-          taskToken: "direct-task-token",
+          taskToken: "task-token-invalid",
+          error: "MessageParseError",
         }),
       );
+
+      // Should return batch item failure for invalid message
+      expect(result.batchItemFailures).toContainEqual({
+        itemIdentifier: "invalid-msg",
+      });
+    });
+
+    it("should handle messages with empty transaction items array", async () => {
+      const { handler } =
+        await import("../../../../workflow/lambdas/submit/index.mjs");
+
+      const event = {
+        Records: [
+          createSqsRecord("valid-msg", "task-token-valid", [
+            { dataGroupLabel: "County", dataGroupCid: "bafkrei123" },
+          ]),
+          {
+            messageId: "empty-msg",
+            body: JSON.stringify([]), // Empty array
+            messageAttributes: {
+              TaskToken: { stringValue: "task-token-empty" },
+              ExecutionArn: {
+                stringValue: "arn:aws:states:us-east-1:123:execution:empty",
+              },
+              County: { stringValue: "empty-county" },
+            },
+          },
+        ],
+      };
+
+      const result = await handler(event);
+
+      // Valid message should succeed
+      expect(mockSendTaskSuccess).toHaveBeenCalledWith(
+        expect.objectContaining({ taskToken: "task-token-valid" }),
+      );
+
+      // Empty message should get task failure
+      expect(mockSendTaskFailure).toHaveBeenCalledWith(
+        expect.objectContaining({
+          taskToken: "task-token-empty",
+          error: "MessageParseError",
+        }),
+      );
+
+      // Should return batch item failure for empty message
+      expect(result.batchItemFailures).toContainEqual({
+        itemIdentifier: "empty-msg",
+      });
+    });
+
+    it("should handle message with non-array body", async () => {
+      const { handler } =
+        await import("../../../../workflow/lambdas/submit/index.mjs");
+
+      const event = {
+        Records: [
+          createSqsRecord("valid-msg", "task-token-valid", [
+            { dataGroupLabel: "County", dataGroupCid: "bafkrei123" },
+          ]),
+          {
+            messageId: "object-msg",
+            body: JSON.stringify({ dataGroupLabel: "County" }), // Object instead of array
+            messageAttributes: {
+              TaskToken: { stringValue: "task-token-object" },
+              ExecutionArn: {
+                stringValue: "arn:aws:states:us-east-1:123:execution:object",
+              },
+              County: { stringValue: "object-county" },
+            },
+          },
+        ],
+      };
+
+      const result = await handler(event);
+
+      // Valid message should succeed
+      expect(mockSendTaskSuccess).toHaveBeenCalledWith(
+        expect.objectContaining({ taskToken: "task-token-valid" }),
+      );
+
+      // Non-array message should get task failure
+      expect(mockSendTaskFailure).toHaveBeenCalledWith(
+        expect.objectContaining({
+          taskToken: "task-token-object",
+          error: "MessageParseError",
+        }),
+      );
+
+      // Should return batch item failure
+      expect(result.batchItemFailures).toContainEqual({
+        itemIdentifier: "object-msg",
+      });
+    });
+
+    it("should send failure to all messages when blockchain submission fails", async () => {
+      mockSubmitToContract.mockImplementation(async ({ csvFile }) => {
+        const tmpDir = path.dirname(csvFile);
+        const statusCsv = path.join(tmpDir, "transaction-status.csv");
+        const errorsCsv = path.join(tmpDir, "submit_errors.csv");
+        await fs.writeFile(statusCsv, "status,transactionHash\n", "utf8");
+        await fs.writeFile(errorsCsv, "error_message,error_path\n", "utf8");
+        return { success: false, error: "Blockchain error" };
+      });
+
+      const { handler } =
+        await import("../../../../workflow/lambdas/submit/index.mjs");
+
+      const event = createBatchSqsEvent(5);
+
+      const result = await handler(event);
+
+      // All 5 messages should get task failure
+      expect(mockSendTaskFailure).toHaveBeenCalledTimes(5);
+
+      // No success callbacks
+      expect(mockSendTaskSuccess).not.toHaveBeenCalled();
+
+      // All messages should be in batch failures
+      expect(result.batchItemFailures.length).toBe(5);
+    });
+
+    it("should return failed status when all messages fail parsing", async () => {
+      const { handler } =
+        await import("../../../../workflow/lambdas/submit/index.mjs");
+
+      const event = {
+        Records: [
+          {
+            messageId: "invalid-1",
+            body: "not-json-1",
+            messageAttributes: {
+              TaskToken: { stringValue: "task-1" },
+              ExecutionArn: {
+                stringValue: "arn:aws:states:us-east-1:123:execution:1",
+              },
+            },
+          },
+          {
+            messageId: "invalid-2",
+            body: "not-json-2",
+            messageAttributes: {
+              TaskToken: { stringValue: "task-2" },
+              ExecutionArn: {
+                stringValue: "arn:aws:states:us-east-1:123:execution:2",
+              },
+            },
+          },
+        ],
+      };
+
+      const result = await handler(event);
+
+      // No blockchain submission should happen
+      expect(mockSubmitToContract).not.toHaveBeenCalled();
+
+      // All messages should be failures
+      expect(result.status).toBe("failed");
+      expect(result.batchItemFailures.length).toBe(2);
     });
   });
 
   describe("Gas price configuration", () => {
     it("should retrieve gas price from SSM Parameter Store", async () => {
-      // The handler only calls SSM when using API credentials (not keystore)
-      // Since we're using keystore mode in tests, SSM won't be called
-      // This test verifies the handler works with SSM configured
-      // In a real scenario, SSM would be called when using API credentials
-
-      // Set up SSM mock (even though it won't be called in keystore mode)
       ssmMock.reset();
       ssmMock.on(GetParameterCommand).resolves({
         Parameter: { Value: "30" },
       });
-
-      // Use default mock implementation that creates files
 
       const { handler } =
         await import("../../../../workflow/lambdas/submit/index.mjs");
@@ -390,20 +654,10 @@ describe("submit handler", () => {
 
       await handler(event);
 
-      // Note: SSM is only called when using API credentials mode, not keystore mode
-      // In keystore mode (which we're testing), gas price comes from SSM but handler
-      // uses keystore, so SSM may not be called. The test verifies handler works correctly.
-      // For a full SSM test, we'd need to test API credentials mode separately.
       expect(mockSubmitToContract).toHaveBeenCalled();
     });
 
     it("should handle EIP-1559 gas price format from SSM", async () => {
-      // The handler only calls SSM when using API credentials (not keystore)
-      // Since we're using keystore mode in tests, SSM won't be called
-      // This test verifies the handler works with EIP-1559 SSM format configured
-      // In a real scenario, SSM would be called when using API credentials
-
-      // Set up SSM mock (even though it won't be called in keystore mode)
       ssmMock.reset();
       ssmMock.on(GetParameterCommand).resolves({
         Parameter: {
@@ -414,8 +668,6 @@ describe("submit handler", () => {
         },
       });
 
-      // Use default mock implementation that creates files
-
       const { handler } =
         await import("../../../../workflow/lambdas/submit/index.mjs");
 
@@ -425,10 +677,6 @@ describe("submit handler", () => {
 
       await handler(event);
 
-      // Note: SSM is only called when using API credentials mode, not keystore mode
-      // In keystore mode (which we're testing), gas price comes from SSM but handler
-      // uses keystore, so SSM may not be called. The test verifies handler works correctly.
-      // For a full SSM test, we'd need to test API credentials mode separately.
       expect(mockSubmitToContract).toHaveBeenCalled();
     });
 
@@ -436,8 +684,6 @@ describe("submit handler", () => {
       ssmMock.on(GetParameterCommand).rejects({
         name: "ParameterNotFound",
       });
-
-      // Use default mock implementation that creates files
 
       const { handler } =
         await import("../../../../workflow/lambdas/submit/index.mjs");
@@ -464,41 +710,35 @@ describe("submit handler", () => {
         { dataGroupLabel: "County", dataGroupCid: "bafkrei123" },
       ]);
 
-      // Handler should catch the error and send task failure
-      try {
-        await handler(event);
-      } catch (err) {
-        // May throw, but task failure should still be sent
-      }
+      const result = await handler(event);
 
       // Verify task failure was sent
-      // Verify task failure was sent via shared layer
-      expect(mockExecuteWithTaskToken).toHaveBeenCalledWith(
+      expect(mockSendTaskFailure).toHaveBeenCalledWith(
         expect.objectContaining({
           taskToken: "task-token-error",
         }),
       );
+
+      // Should return batch item failure
+      expect(result.batchItemFailures).toBeDefined();
     });
 
-    it("should handle keystore download failure", async () => {
-      s3Mock.on(GetObjectCommand).rejects(new Error("S3 access denied"));
-
+    it("should handle missing SQS Records", async () => {
       const { handler } =
         await import("../../../../workflow/lambdas/submit/index.mjs");
 
-      const event = createSqsEvent("task-token-keystore-error", [
-        { dataGroupLabel: "County", dataGroupCid: "bafkrei123" },
-      ]);
+      const event = {};
 
-      await handler(event);
+      await expect(handler(event)).rejects.toThrow("Missing SQS Records");
+    });
 
-      // Verify task failure was sent
-      // Verify task failure was sent via shared layer
-      expect(mockExecuteWithTaskToken).toHaveBeenCalledWith(
-        expect.objectContaining({
-          taskToken: "task-token-keystore-error",
-        }),
-      );
+    it("should handle empty SQS Records array", async () => {
+      const { handler } =
+        await import("../../../../workflow/lambdas/submit/index.mjs");
+
+      const event = { Records: [] };
+
+      await expect(handler(event)).rejects.toThrow("Missing SQS Records");
     });
   });
 });

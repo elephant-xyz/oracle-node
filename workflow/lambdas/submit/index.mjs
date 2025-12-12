@@ -12,6 +12,7 @@ import {
   createWorkflowError,
   createLogger,
   sendTaskFailure,
+  sendTaskSuccess,
 } from "shared";
 
 const s3Client = new S3Client({
@@ -25,10 +26,12 @@ const ssmClient = new SSMClient({
 /**
  * @typedef {Object} SubmitOutput
  * @property {string} status - Status of submit
+ * @property {Array<{itemIdentifier: string}>} [batchItemFailures] - Failed message IDs for partial batch response
  */
 
 /**
  * @typedef {Object} SqsRecord
+ * @property {string} messageId - SQS message ID for batch failure reporting
  * @property {string} body
  * @property {Object} [messageAttributes]
  * @property {Object} [messageAttributes.TaskToken]
@@ -55,7 +58,27 @@ const ssmClient = new SSMClient({
  * @typedef {Object} SubmitResultRow
  * @property {string} status - Status of the submission
  * @property {string} [txHash] - Transaction hash
+ * @property {string} [transactionHash] - Transaction hash (alternative field name)
  * @property {string} [error] - Error message if failed
+ */
+
+/**
+ * @typedef {Object} ParsedMessage
+ * @property {string} messageId - SQS message ID
+ * @property {Object[]} transactionItems - Parsed transaction items
+ * @property {string} [taskToken] - Step Functions task token
+ * @property {string} [executionArn] - Step Functions execution ARN
+ * @property {string} [county] - County name
+ * @property {string} [dataGroupLabel] - Data group label
+ */
+
+/**
+ * @typedef {Object} FailedMessage
+ * @property {string} messageId - SQS message ID
+ * @property {string} [taskToken] - Step Functions task token (if available)
+ * @property {string} [executionArn] - Step Functions execution ARN (if available)
+ * @property {string} [county] - County name (if available)
+ * @property {string} error - Error message
  */
 
 const base = { component: "submit", at: new Date().toISOString() };
@@ -75,7 +98,7 @@ async function downloadKeystoreFromS3(bucket, key, targetPath) {
     });
     const response = await s3Client.send(command);
     /**
-     * @param {any} stream
+     * @param {NodeJS.ReadableStream} stream
      * @returns {Promise<string>}
      */
     const streamToString = (stream) =>
@@ -84,7 +107,7 @@ async function downloadKeystoreFromS3(bucket, key, targetPath) {
         const chunks = [];
         stream.on(
           "data",
-          /** @param {Buffer} chunk */(chunk) => chunks.push(chunk),
+          /** @param {Buffer} chunk */ (chunk) => chunks.push(chunk),
         );
         stream.on("error", reject);
         stream.on("end", () =>
@@ -94,6 +117,7 @@ async function downloadKeystoreFromS3(bucket, key, targetPath) {
     const body = response.Body;
     if (!body)
       throw new Error("Failed to download keystore from S3: body not found");
+    // @ts-ignore - Body is a readable stream
     const bodyContents = await streamToString(body);
     await fs.writeFile(targetPath, bodyContents, "utf8");
     return targetPath;
@@ -212,100 +236,356 @@ async function getGasPriceFromSSM() {
 }
 
 /**
- * Submit handler - supports both SQS events and Step Function Task Token invocations
- * - SQS format: { Records: [{ body: string }] }
- * - Step Function format: { taskToken: string, executionArn: string, transactionItems: Object[] }
+ * Parse and validate an SQS record, extracting transaction items and metadata
+ * @param {SqsRecord} record - SQS record to parse
+ * @returns {{ success: true, data: ParsedMessage } | { success: false, error: FailedMessage }}
+ */
+function parseRecord(record) {
+  const messageId = record.messageId;
+  const taskToken = record.messageAttributes?.TaskToken?.stringValue;
+  const executionArn = record.messageAttributes?.ExecutionArn?.stringValue;
+  const county = record.messageAttributes?.County?.stringValue || "unknown";
+  const dataGroupLabel =
+    record.messageAttributes?.DataGroupLabel?.stringValue || "County";
+
+  try {
+    if (!record.body) {
+      return {
+        success: false,
+        error: {
+          messageId,
+          taskToken,
+          executionArn,
+          county,
+          error: "Missing SQS record body",
+        },
+      };
+    }
+
+    const transactionItems = JSON.parse(record.body);
+
+    if (!Array.isArray(transactionItems)) {
+      return {
+        success: false,
+        error: {
+          messageId,
+          taskToken,
+          executionArn,
+          county,
+          error: "SQS message body must contain an array of transaction items",
+        },
+      };
+    }
+
+    if (transactionItems.length === 0) {
+      return {
+        success: false,
+        error: {
+          messageId,
+          taskToken,
+          executionArn,
+          county,
+          error: "Transaction items array is empty",
+        },
+      };
+    }
+
+    return {
+      success: true,
+      data: {
+        messageId,
+        transactionItems,
+        taskToken,
+        executionArn,
+        county,
+        dataGroupLabel,
+      },
+    };
+  } catch (parseError) {
+    return {
+      success: false,
+      error: {
+        messageId,
+        taskToken,
+        executionArn,
+        county,
+        error: `Failed to parse message body: ${parseError instanceof Error ? parseError.message : String(parseError)}`,
+      },
+    };
+  }
+}
+
+/**
+ * Send task failure for a failed message and emit workflow event
+ * @param {FailedMessage} failedMessage - Failed message details
+ * @returns {Promise<void>}
+ */
+async function handleFailedMessage(failedMessage) {
+  const { taskToken, executionArn, county, error } = failedMessage;
+
+  if (taskToken && executionArn) {
+    const log = createLogger({
+      component: "submit",
+      at: new Date().toISOString(),
+      county: county || "unknown",
+      executionId: executionArn,
+    });
+
+    try {
+      await emitWorkflowEvent({
+        executionId: executionArn,
+        county: county || "unknown",
+        dataGroupLabel: "County",
+        status: "FAILED",
+        phase: "Submit",
+        step: "SubmitToBlockchain",
+        taskToken,
+        errors: [createWorkflowError("60002", { error })],
+        log,
+      });
+    } catch (eventErr) {
+      log("error", "failed_to_emit_failed_event", {
+        error: eventErr instanceof Error ? eventErr.message : String(eventErr),
+      });
+    }
+
+    await sendTaskFailure({
+      taskToken,
+      error: "MessageParseError",
+      cause: error,
+    });
+  }
+}
+
+/**
+ * Send task success for all successfully processed messages
+ * @param {ParsedMessage[]} messages - Successfully processed messages
+ * @param {Object} result - Submit result to send
+ * @returns {Promise<void>}
+ */
+async function sendSuccessToAllMessages(messages, result) {
+  const successPromises = messages.map(async (msg) => {
+    if (msg.taskToken && msg.executionArn) {
+      const log = createLogger({
+        component: "submit",
+        at: new Date().toISOString(),
+        county: msg.county || "unknown",
+        executionId: msg.executionArn,
+      });
+
+      try {
+        await emitWorkflowEvent({
+          executionId: msg.executionArn,
+          county: msg.county || "unknown",
+          dataGroupLabel: msg.dataGroupLabel || "County",
+          status: "SUCCEEDED",
+          phase: "Submit",
+          step: "SubmitToBlockchain",
+          taskToken: msg.taskToken,
+          errors: [],
+          log,
+        });
+      } catch (eventErr) {
+        log("error", "failed_to_emit_succeeded_event", {
+          error:
+            eventErr instanceof Error ? eventErr.message : String(eventErr),
+        });
+      }
+
+      await sendTaskSuccess({
+        taskToken: msg.taskToken,
+        output: result,
+      });
+
+      log("info", "task_success_sent", {
+        county: msg.county,
+        executionArn: msg.executionArn,
+      });
+    }
+  });
+
+  await Promise.all(successPromises);
+}
+
+/**
+ * Send task failure for all messages due to blockchain submission error
+ * @param {ParsedMessage[]} messages - Messages to send failure for
+ * @param {string} errorMessage - Error message
+ * @param {string} [errorCause] - Error cause/stack trace
+ * @returns {Promise<void>}
+ */
+async function sendFailureToAllMessages(messages, errorMessage, errorCause) {
+  const failurePromises = messages.map(async (msg) => {
+    if (msg.taskToken && msg.executionArn) {
+      const log = createLogger({
+        component: "submit",
+        at: new Date().toISOString(),
+        county: msg.county || "unknown",
+        executionId: msg.executionArn,
+      });
+
+      try {
+        await emitWorkflowEvent({
+          executionId: msg.executionArn,
+          county: msg.county || "unknown",
+          dataGroupLabel: msg.dataGroupLabel || "County",
+          status: "FAILED",
+          phase: "Submit",
+          step: "SubmitToBlockchain",
+          taskToken: msg.taskToken,
+          errors: [
+            createWorkflowError("60002", {
+              error: errorMessage,
+              cause: errorCause,
+            }),
+          ],
+          log,
+        });
+      } catch (eventErr) {
+        log("error", "failed_to_emit_failed_event", {
+          error:
+            eventErr instanceof Error ? eventErr.message : String(eventErr),
+        });
+      }
+
+      await sendTaskFailure({
+        taskToken: msg.taskToken,
+        error: "BlockchainSubmitError",
+        cause: errorMessage,
+      });
+
+      log("info", "task_failure_sent", {
+        county: msg.county,
+        executionArn: msg.executionArn,
+      });
+    }
+  });
+
+  await Promise.all(failurePromises);
+}
+
+/**
+ * Submit handler - supports batch processing of SQS events with Step Function Task Tokens
+ * Processes up to 100 messages, aggregates transaction items, and submits to blockchain in single transaction.
+ * All task tokens receive the same transaction hash via sendTaskSuccess.
  *
- * @param {SubmitInput} event - Either SQS event or Step Function task token payload
+ * @param {SubmitInput} event - SQS event with up to 100 records
  * @returns {Promise<SubmitOutput>}
  */
 export const handler = async (event) => {
-
-  let toSubmit;
-  let taskToken;
-  let executionArn;
-  let county = "unknown"; // Store county for use in catch block
-  let dataGroupLabel = "County"; // Store dataGroupLabel for use in catch block
-  let log; // Logger for EventBridge events
-
-
   if (!event.Records || event.Records.length === 0) {
     throw new Error("Missing SQS Records");
   }
 
-  const firstRecord = event.Records[0];
-  if (!firstRecord || !firstRecord.body) {
-    throw new Error("Missing SQS record body");
-  }
+  const recordCount = event.Records.length;
+  console.log({
+    ...base,
+    level: "info",
+    msg: "batch_processing_start",
+    recordCount,
+  });
 
-  if (firstRecord.messageAttributes?.TaskToken?.stringValue) {
-    taskToken = firstRecord.messageAttributes.TaskToken.stringValue;
-    executionArn = firstRecord.messageAttributes.ExecutionArn?.stringValue;
-    console.log({
-      ...base,
-      level: "info",
-      msg: "invoked_from_sqs_with_task_token",
-      executionArn: executionArn,
-      hasTaskToken: !!taskToken,
-    });
+  // Parse all records and separate successes from failures
+  /** @type {ParsedMessage[]} */
+  const validMessages = [];
+  /** @type {FailedMessage[]} */
+  const failedMessages = [];
+  /** @type {Array<{itemIdentifier: string}>} */
+  const batchItemFailures = [];
 
-    if (taskToken && executionArn) {
-      county =
-        firstRecord.messageAttributes?.County?.stringValue || "unknown";
-      dataGroupLabel =
-        firstRecord.messageAttributes?.DataGroupLabel?.stringValue ||
-        "County";
-      log = createLogger({
-        component: "submit",
-        at: new Date().toISOString(),
-        county: county,
-        executionId: executionArn,
-      });
-      await emitWorkflowEvent({
-        executionId: executionArn,
-        county: county,
-        dataGroupLabel: dataGroupLabel,
-        status: "IN_PROGRESS",
-        phase: "Submit",
-        step: "SubmitToBlockchain",
-        taskToken: taskToken,
-        errors: [],
-        log,
-      });
+  for (const record of event.Records) {
+    const parseResult = parseRecord(record);
+    if (parseResult.success) {
+      validMessages.push(parseResult.data);
+    } else {
+      failedMessages.push(parseResult.error);
+      batchItemFailures.push({ itemIdentifier: record.messageId });
     }
-  }
-
-  toSubmit = JSON.parse(firstRecord.body);
-  if (!Array.isArray(toSubmit)) {
-    throw new Error(
-      "SQS message body must contain an array of transaction items",
-    );
   }
 
   console.log({
     ...base,
     level: "info",
-    msg: "invoked_from_sqs",
-    itemCount: toSubmit.length,
-    hasTaskToken: !!taskToken,
+    msg: "batch_parsing_complete",
+    validCount: validMessages.length,
+    failedCount: failedMessages.length,
   });
 
-  if (!toSubmit.length) {
-    const error = "No records to submit";
-    if (taskToken) {
-      await sendTaskFailure({ taskToken, error: "NoRecords", cause: "Empty message submitted" })
-    }
-    console.error({ ...base, level: "error", msg: error })
+  // Handle failed messages - send task failure for each
+  for (const failedMsg of failedMessages) {
+    console.log({
+      ...base,
+      level: "warn",
+      msg: "message_parse_failed",
+      messageId: failedMsg.messageId,
+      error: failedMsg.error,
+      county: failedMsg.county,
+    });
+    await handleFailedMessage(failedMsg);
+  }
+
+  // If no valid messages, return batch failures
+  if (validMessages.length === 0) {
+    console.log({
+      ...base,
+      level: "error",
+      msg: "no_valid_messages_in_batch",
+    });
+    return { status: "failed", batchItemFailures };
+  }
+
+  // Aggregate all transaction items from valid messages
+  /** @type {Object[]} */
+  const aggregatedItems = [];
+  for (const msg of validMessages) {
+    aggregatedItems.push(...msg.transactionItems);
+  }
+
+  console.log({
+    ...base,
+    level: "info",
+    msg: "items_aggregated",
+    messageCount: validMessages.length,
+    totalItemCount: aggregatedItems.length,
+    counties: validMessages.map((m) => m.county).join(", "),
+  });
+
+  // Emit IN_PROGRESS event for first message (avoid duplicate events)
+  const firstMessage = validMessages[0];
+  if (firstMessage && firstMessage.taskToken && firstMessage.executionArn) {
+    const log = createLogger({
+      component: "submit",
+      at: new Date().toISOString(),
+      county: firstMessage.county || "unknown",
+      executionId: firstMessage.executionArn,
+    });
+    await emitWorkflowEvent({
+      executionId: firstMessage.executionArn,
+      county: firstMessage.county || "unknown",
+      dataGroupLabel: firstMessage.dataGroupLabel || "County",
+      status: "IN_PROGRESS",
+      phase: "Submit",
+      step: "SubmitToBlockchain",
+      taskToken: firstMessage.taskToken,
+      errors: [],
+      log,
+    });
   }
 
   const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "submit-"));
   try {
+    // Get the first item to determine CSV headers - guaranteed to exist since we checked validMessages.length > 0
+    const firstItem = aggregatedItems[0];
+    if (!firstItem) {
+      throw new Error("No transaction items to submit after aggregation");
+    }
+
     const csvFilePath = path.resolve(tmp, "submit.csv");
     const writer = createObjectCsvWriter({
       path: csvFilePath,
-      header: Object.keys(toSubmit[0]).map((k) => ({ id: k, title: k })),
+      header: Object.keys(firstItem).map((k) => ({ id: k, title: k })),
     });
-    await writer.writeRecords(toSubmit);
+    await writer.writeRecords(aggregatedItems);
 
     let submitResult;
 
@@ -317,6 +597,7 @@ export const handler = async (event) => {
         ...base,
         level: "info",
         msg: "Using keystore mode for contract submission (self-custodial)",
+        itemCount: aggregatedItems.length,
       });
       if (!process.env.ENVIRONMENT_BUCKET)
         throw new Error("ENVIRONMENT_BUCKET is required");
@@ -372,6 +653,7 @@ export const handler = async (event) => {
         ...base,
         level: "info",
         msg: "Using traditional API credentials for contract submission",
+        itemCount: aggregatedItems.length,
       });
 
       if (!process.env.ELEPHANT_DOMAIN)
@@ -403,8 +685,25 @@ export const handler = async (event) => {
       });
     }
 
-    if (!submitResult.success)
-      throw new Error(`Submit failed: ${submitResult.error}`);
+    if (!submitResult.success) {
+      const errorMsg = `Submit failed: ${submitResult.error}`;
+      console.error({
+        ...base,
+        level: "error",
+        msg: "blockchain_submit_failed",
+        error: errorMsg,
+      });
+
+      // Send failure to all valid messages
+      await sendFailureToAllMessages(validMessages, errorMsg);
+
+      // Add all valid messages to batch failures since blockchain submission failed
+      for (const msg of validMessages) {
+        batchItemFailures.push({ itemIdentifier: msg.messageId });
+      }
+
+      return { status: "failed", batchItemFailures };
+    }
 
     // Read and parse CSV files, ensuring cleanup even if parsing fails
     const transactionStatusPath = path.join(tmp, "transaction-status.csv");
@@ -427,13 +726,13 @@ export const handler = async (event) => {
       console.log({
         ...base,
         level: "info",
-        msg: "completed",
-        submit_results: submitResults,
+        msg: "submit_results_parsed",
+        resultCount: submitResults.length,
       });
 
       // Read and parse submit_errors.csv
-      const submitErrrorsCsv = await fs.readFile(submitErrorsPath, "utf8");
-      submitErrors = parse(submitErrrorsCsv, {
+      const submitErrorsCsv = await fs.readFile(submitErrorsPath, "utf8");
+      submitErrors = parse(submitErrorsCsv, {
         columns: true,
         skip_empty_lines: true,
         trim: true,
@@ -457,99 +756,58 @@ export const handler = async (event) => {
       }
     }
 
-    console.log(`Submit errors type is : ${typeof submitErrors}`);
     const allErrors = [
       ...submitErrors,
       ...submitResults.filter(
-        /** @param {SubmitResultRow} row */(row) => row.status === "failed",
+        /** @param {SubmitResultRow} row */ (row) => row.status === "failed",
       ),
     ];
+
+    if (allErrors.length > 0) {
+      const errorMsg =
+        "Submit to the blockchain failed: " + JSON.stringify(allErrors);
+      console.error({
+        ...base,
+        level: "error",
+        msg: "blockchain_submit_errors",
+        errors: allErrors,
+      });
+
+      // Send failure to all valid messages
+      await sendFailureToAllMessages(validMessages, errorMsg);
+
+      // Add all valid messages to batch failures
+      for (const msg of validMessages) {
+        batchItemFailures.push({ itemIdentifier: msg.messageId });
+      }
+
+      return { status: "failed", batchItemFailures };
+    }
+
+    // Build success result with transaction hash
+    const result = {
+      status: "success",
+      submitResults: submitResults,
+      batchedMessageCount: validMessages.length,
+      totalItemCount: aggregatedItems.length,
+    };
 
     console.log({
       ...base,
       level: "info",
-      msg: "completed",
-      submit_errors: submitErrors,
+      msg: "batch_submit_completed",
+      messageCount: validMessages.length,
+      itemCount: aggregatedItems.length,
+      transactionHash:
+        submitResults[0]?.transactionHash || submitResults[0]?.txHash,
     });
-    if (allErrors.length > 0) {
-      const errorMsg =
-        "Submit to the blockchain failed" + JSON.stringify(allErrors);
-      if (taskToken && executionArn) {
-        const errorLog =
-          log ||
-          createLogger({
-            component: "submit",
-            at: new Date().toISOString(),
-            county,
-            executionId: executionArn,
-          });
-        // Emit FAILED event to EventBridge before sending task failure
-        try {
-          await emitWorkflowEvent({
-            executionId: executionArn,
-            county: county,
-            dataGroupLabel: dataGroupLabel,
-            status: "FAILED",
-            phase: "Submit",
-            step: "SubmitToBlockchain",
-            taskToken: taskToken,
-            errors: [
-              createWorkflowError("60002", {
-                error: errorMsg,
-              }),
-            ],
-            log: errorLog,
-          });
-        } catch (eventErr) {
-          errorLog("error", "failed_to_emit_failed_event", {
-            error:
-              eventErr instanceof Error ? eventErr.message : String(eventErr),
-          });
-          // Continue to send task failure even if EventBridge emission fails
-        }
-        await executeWithTaskToken({
-          taskToken,
-          log: errorLog,
-          workerFn: async () => {
-            throw new Error(errorMsg);
-          },
-        });
-      }
-      throw new Error(errorMsg);
-    }
 
-    const result = { status: "success", submitResults: submitResults };
-    console.log({ ...base, level: "info", msg: "completed", result });
+    // Send success to all valid messages with the same result
+    await sendSuccessToAllMessages(validMessages, result);
 
-    // Emit SUCCEEDED event to EventBridge and send task success
-    if (taskToken && executionArn && log) {
-      await emitWorkflowEvent({
-        executionId: executionArn,
-        county: county,
-        dataGroupLabel: dataGroupLabel,
-        status: "SUCCEEDED",
-        phase: "Submit",
-        step: "SubmitToBlockchain",
-        taskToken: taskToken,
-        errors: [],
-        log,
-      });
-    }
-
-    // Send success callback to Step Functions if task token is present (from SQS or direct invocation)
-    if (taskToken) {
-      await executeWithTaskToken({
-        taskToken,
-        log:
-          log ||
-          createLogger({
-            component: "submit",
-            at: new Date().toISOString(),
-            county,
-            executionId: executionArn,
-          }),
-        workerFn: async () => result,
-      });
+    // Return result with any batch failures from parsing phase
+    if (batchItemFailures.length > 0) {
+      return { ...result, batchItemFailures };
     }
 
     return result;
@@ -557,41 +815,24 @@ export const handler = async (event) => {
     const errMessage = err instanceof Error ? err.message : String(err);
     const errCause = err instanceof Error ? err.stack : undefined;
 
-    // Emit FAILED event to EventBridge and send task failure
-    if (taskToken && executionArn) {
-      const errorLog =
-        log ||
-        createLogger({
-          component: "submit",
-          at: new Date().toISOString(),
-          county,
-          executionId: executionArn,
-        });
-      await emitWorkflowEvent({
-        executionId: executionArn,
-        county: county,
-        dataGroupLabel: dataGroupLabel,
-        status: "FAILED",
-        phase: "Submit",
-        step: "SubmitToBlockchain",
-        taskToken: taskToken,
-        errors: [
-          createWorkflowError("60002", {
-            error: errMessage,
-            cause: errCause,
-          }),
-        ],
-        log: errorLog,
-      });
-      await executeWithTaskToken({
-        taskToken,
-        log: errorLog,
-        workerFn: async () => {
-          throw err;
-        },
-      });
+    console.error({
+      ...base,
+      level: "error",
+      msg: "batch_handler_error",
+      error: errMessage,
+      messageCount: validMessages.length,
+    });
+
+    // Send failure to all valid messages
+    await sendFailureToAllMessages(validMessages, errMessage, errCause);
+
+    // Add all valid messages to batch failures
+    for (const msg of validMessages) {
+      batchItemFailures.push({ itemIdentifier: msg.messageId });
     }
-    throw err;
+
+    // Return batch failures instead of throwing - let Lambda know which messages failed
+    return { status: "failed", batchItemFailures };
   } finally {
     await fs.rm(tmp, { recursive: true, force: true });
   }

@@ -754,7 +754,7 @@ Resources:
       Handler: index.handler
       Layers:
         - !Ref WorkflowSharedLayer
-      Description: "Submits data to the blockchain"
+      Description: "Submits data to the blockchain - batches up to 100 messages into single transaction"
       LoggingConfig:
         LogFormat: JSON
       Policies:
@@ -789,8 +789,10 @@ Resources:
           Type: SQS
           Properties:
             Queue: !GetAtt TransactionsSqsQueue.Arn
-            BatchSize: 1
-            MaximumBatchingWindowInSeconds: 0
+            BatchSize: 100
+            MaximumBatchingWindowInSeconds: 30
+            FunctionResponseTypes:
+              - ReportBatchItemFailures
             ScalingConfig:
               MaximumConcurrency: 2
 
