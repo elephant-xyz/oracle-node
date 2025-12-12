@@ -549,25 +549,26 @@ export const handler = async (event) => {
     counties: validMessages.map((m) => m.county).join(", "),
   });
 
-  const firstMessage = validMessages[0];
-  if (firstMessage && firstMessage.taskToken && firstMessage.executionArn) {
-    const log = createLogger({
-      component: "submit",
-      at: new Date().toISOString(),
-      county: firstMessage.county || "unknown",
-      executionId: firstMessage.executionArn,
-    });
-    await emitWorkflowEvent({
-      executionId: firstMessage.executionArn,
-      county: firstMessage.county || "unknown",
-      dataGroupLabel: firstMessage.dataGroupLabel || "County",
-      status: "IN_PROGRESS",
-      phase: "Submit",
-      step: "SubmitToBlockchain",
-      taskToken: firstMessage.taskToken,
-      errors: [],
-      log,
-    });
+  for (const msg of validMessages) {
+    if (msg.taskToken && msg.executionArn) {
+      const log = createLogger({
+        component: "submit",
+        at: new Date().toISOString(),
+        county: msg.county || "unknown",
+        executionId: msg.executionArn,
+      });
+      await emitWorkflowEvent({
+        executionId: msg.executionArn,
+        county: msg.county || "unknown",
+        dataGroupLabel: msg.dataGroupLabel || "County",
+        status: "IN_PROGRESS",
+        phase: "Submit",
+        step: "SubmitToBlockchain",
+        taskToken: msg.taskToken,
+        errors: [],
+        log,
+      });
+    }
   }
 
   const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "submit-"));

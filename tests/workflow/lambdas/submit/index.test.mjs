@@ -108,9 +108,9 @@ describe("submit handler", () => {
       return { success: true };
     });
 
-    vi.spyOn(console, "log").mockImplementation(() => {});
-    vi.spyOn(console, "error").mockImplementation(() => {});
-    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(console, "log").mockImplementation(() => { });
+    vi.spyOn(console, "error").mockImplementation(() => { });
+    vi.spyOn(console, "warn").mockImplementation(() => { });
   });
 
   afterEach(() => {
@@ -384,7 +384,7 @@ describe("submit handler", () => {
       expect(firstOutput.batchedMessageCount).toBe(3);
     });
 
-    it("should emit IN_PROGRESS event only for first message", async () => {
+    it("should emit IN_PROGRESS event for all messages in batch", async () => {
       const { handler } =
         await import("../../../../workflow/lambdas/submit/index.mjs");
 
@@ -396,10 +396,10 @@ describe("submit handler", () => {
       const inProgressCalls = mockEmitWorkflowEvent.mock.calls.filter(
         (call) => call[0].status === "IN_PROGRESS",
       );
-      expect(inProgressCalls.length).toBe(1);
+      expect(inProgressCalls.length).toBe(5);
 
-      // Should have 1 IN_PROGRESS + 5 SUCCEEDED events
-      expect(mockEmitWorkflowEvent).toHaveBeenCalledTimes(6);
+      // Should have 5 IN_PROGRESS + 5 SUCCEEDED events
+      expect(mockEmitWorkflowEvent).toHaveBeenCalledTimes(10);
     });
 
     it("should emit SUCCEEDED event for each message in batch", async () => {
