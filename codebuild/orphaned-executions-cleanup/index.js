@@ -143,6 +143,9 @@ async function* scanFailedExecutionItems(tableName) {
 /**
  * Check if a FailedExecutionItem has any ExecutionErrorLink records
  * Returns the count of error links found
+ *
+ * Uses strongly consistent read to ensure we don't miss recently created links.
+ * This is critical to avoid false positives (deleting valid records).
  */
 async function countErrorLinksForExecution(tableName, executionId) {
   const pk = `EXECUTION#${executionId}`;
@@ -155,6 +158,7 @@ async function countErrorLinksForExecution(tableName, executionId) {
       ":skPrefix": "ERROR#",
     },
     Select: "COUNT",
+    ConsistentRead: true, // Use strong consistency to avoid false positives
   });
 
   const response = await dynamoClient.send(command);
@@ -192,7 +196,7 @@ async function deleteOrphanedExecution(tableName, item) {
  * Check a single execution and determine if it's orphaned
  */
 async function checkExecution(tableName, item) {
-  const { executionId, county, openErrorCount, uniqueErrorCount } = item;
+  const { executionId, county, openErrorCount, uniqueErrorCount, taskToken, createdAt } = item;
 
   const errorLinkCount = await countErrorLinksForExecution(
     tableName,
@@ -206,6 +210,8 @@ async function checkExecution(tableName, item) {
     openErrorCount,
     uniqueErrorCount,
     errorLinkCount,
+    hasTaskToken: !!taskToken,
+    createdAt,
     isOrphaned: errorLinkCount === 0,
   };
 }
@@ -348,13 +354,15 @@ async function runCleanup() {
           },
         );
 
-        // Store details for summary
+        // Store details for summary (including taskToken presence for audit)
         orphanedDetails.push(
           ...orphaned.map((r) => ({
             executionId: r.executionId,
             county: r.county,
             openErrorCount: r.openErrorCount,
             uniqueErrorCount: r.uniqueErrorCount,
+            hasTaskToken: r.hasTaskToken,
+            createdAt: r.createdAt,
           })),
         );
 
@@ -424,6 +432,8 @@ async function runCleanup() {
           county: r.county,
           openErrorCount: r.openErrorCount,
           uniqueErrorCount: r.uniqueErrorCount,
+          hasTaskToken: r.hasTaskToken,
+          createdAt: r.createdAt,
         })),
       );
 
