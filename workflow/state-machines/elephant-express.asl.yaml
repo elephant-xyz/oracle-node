@@ -1030,8 +1030,10 @@ States:
     Next: EmitSubmitSucceeded
     Retry:
       - ErrorEquals:
-          - States.TaskFailed
-          - States.Timeout
+          - Sqs.RequestThrottledException
+          - Sqs.ThrottlingException
+          - Sqs.ServiceUnavailableException
+          - Sqs.InternalFailureException
         IntervalSeconds: 2
         MaxAttempts: 2
         BackoffRate: 2
