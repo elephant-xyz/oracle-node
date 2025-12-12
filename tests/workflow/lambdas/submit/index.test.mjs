@@ -755,5 +755,962 @@ describe("submit handler", () => {
 
       await expect(handler(event)).rejects.toThrow("Missing SQS Records");
     });
+
+    it("should handle message with missing body (60101)", async () => {
+      const { handler } =
+        await import("../../../../workflow/lambdas/submit/index.mjs");
+
+      const event = {
+        Records: [
+          createSqsRecord("valid-msg", "task-token-valid", [
+            { dataGroupLabel: "County", dataGroupCid: "bafkrei123" },
+          ]),
+          {
+            messageId: "no-body-msg",
+            // body is undefined
+            messageAttributes: {
+              TaskToken: { stringValue: "task-token-no-body" },
+              ExecutionArn: {
+                stringValue: "arn:aws:states:us-east-1:123:execution:no-body",
+              },
+              County: { stringValue: "no-body-county" },
+            },
+          },
+        ],
+      };
+
+      const result = await handler(event);
+
+      // Valid message should succeed
+      expect(mockSendTaskSuccess).toHaveBeenCalledWith(
+        expect.objectContaining({ taskToken: "task-token-valid" }),
+      );
+
+      // Message with no body should get task failure with MISSING_BODY error code
+      expect(mockSendTaskFailure).toHaveBeenCalledWith(
+        expect.objectContaining({
+          taskToken: "task-token-no-body",
+          error: "60101", // MISSING_BODY
+        }),
+      );
+
+      // Should return batch item failure
+      expect(result.batchItemFailures).toContainEqual({
+        itemIdentifier: "no-body-msg",
+      });
+    });
+
+    it("should handle missing ELEPHANT_RPC_URL with error code 60208", async () => {
+      delete process.env.ELEPHANT_RPC_URL;
+
+      const { handler } =
+        await import("../../../../workflow/lambdas/submit/index.mjs");
+
+      const event = createSqsEvent("task-token-rpc-error", [
+        { dataGroupLabel: "County", dataGroupCid: "bafkrei123" },
+      ]);
+
+      const result = await handler(event);
+
+      // Verify task failure was sent with correct error code
+      expect(mockSendTaskFailure).toHaveBeenCalledWith(
+        expect.objectContaining({
+          taskToken: "task-token-rpc-error",
+          error: "60208", // MISSING_RPC_URL
+        }),
+      );
+
+      expect(result.status).toBe("failed");
+      expect(result.batchItemFailures.length).toBe(1);
+    });
+  });
+
+  describe("Blockchain error classification", () => {
+    /**
+     * Helper to create a submit_errors.csv-style error in the mock
+     * @param {string} errorMessage - Error message to include in CSV
+     */
+    const mockSubmitWithBlockchainError = (errorMessage) => {
+      mockSubmitToContract.mockImplementation(async ({ csvFile }) => {
+        const tmpDir = path.dirname(csvFile);
+        const statusCsv = path.join(tmpDir, "transaction-status.csv");
+        const errorsCsv = path.join(tmpDir, "submit_errors.csv");
+
+        await fs.writeFile(statusCsv, "status,transactionHash\n", "utf8");
+        await fs.writeFile(
+          errorsCsv,
+          `errorMessage,error_path\n"${errorMessage}","/path"\n`,
+          "utf8",
+        );
+
+        return { success: true }; // CLI returns success, but errors are in CSV
+      });
+    };
+
+    it("should classify 'already known' error as 60401 (nonce already used)", async () => {
+      mockSubmitWithBlockchainError("Transaction already known");
+
+      const { handler } =
+        await import("../../../../workflow/lambdas/submit/index.mjs");
+
+      const event = createSqsEvent("task-token-nonce-used", [
+        { dataGroupLabel: "County", dataGroupCid: "bafkrei123" },
+      ]);
+
+      const result = await handler(event);
+
+      expect(mockSendTaskFailure).toHaveBeenCalledWith(
+        expect.objectContaining({
+          taskToken: "task-token-nonce-used",
+          error: "60401", // NONCE_ALREADY_USED
+        }),
+      );
+
+      expect(result.status).toBe("failed");
+    });
+
+    it("should classify 'nonce too low' error as 60402", async () => {
+      mockSubmitWithBlockchainError("nonce too low: next nonce 5, tx nonce 3");
+
+      const { handler } =
+        await import("../../../../workflow/lambdas/submit/index.mjs");
+
+      const event = createSqsEvent("task-token-nonce-low", [
+        { dataGroupLabel: "County", dataGroupCid: "bafkrei123" },
+      ]);
+
+      const result = await handler(event);
+
+      expect(mockSendTaskFailure).toHaveBeenCalledWith(
+        expect.objectContaining({
+          taskToken: "task-token-nonce-low",
+          error: "60402", // NONCE_TOO_LOW
+        }),
+      );
+
+      expect(result.status).toBe("failed");
+    });
+
+    it("should classify 'insufficient funds' error as 60403", async () => {
+      mockSubmitWithBlockchainError(
+        "insufficient funds for gas * price + value",
+      );
+
+      const { handler } =
+        await import("../../../../workflow/lambdas/submit/index.mjs");
+
+      const event = createSqsEvent("task-token-insufficient", [
+        { dataGroupLabel: "County", dataGroupCid: "bafkrei123" },
+      ]);
+
+      const result = await handler(event);
+
+      expect(mockSendTaskFailure).toHaveBeenCalledWith(
+        expect.objectContaining({
+          taskToken: "task-token-insufficient",
+          error: "60403", // INSUFFICIENT_FUNDS
+        }),
+      );
+
+      expect(result.status).toBe("failed");
+    });
+
+    it("should classify 'gas required exceeds' error as 60404", async () => {
+      mockSubmitWithBlockchainError("gas required exceeds allowance (500000)");
+
+      const { handler } =
+        await import("../../../../workflow/lambdas/submit/index.mjs");
+
+      const event = createSqsEvent("task-token-gas-exceeds", [
+        { dataGroupLabel: "County", dataGroupCid: "bafkrei123" },
+      ]);
+
+      const result = await handler(event);
+
+      expect(mockSendTaskFailure).toHaveBeenCalledWith(
+        expect.objectContaining({
+          taskToken: "task-token-gas-exceeds",
+          error: "60404", // GAS_ESTIMATION_FAILED
+        }),
+      );
+
+      expect(result.status).toBe("failed");
+    });
+
+    it("should classify 'out of gas' error as 60404", async () => {
+      mockSubmitWithBlockchainError("out of gas");
+
+      const { handler } =
+        await import("../../../../workflow/lambdas/submit/index.mjs");
+
+      const event = createSqsEvent("task-token-out-of-gas", [
+        { dataGroupLabel: "County", dataGroupCid: "bafkrei123" },
+      ]);
+
+      const result = await handler(event);
+
+      expect(mockSendTaskFailure).toHaveBeenCalledWith(
+        expect.objectContaining({
+          taskToken: "task-token-out-of-gas",
+          error: "60404", // GAS_ESTIMATION_FAILED
+        }),
+      );
+
+      expect(result.status).toBe("failed");
+    });
+
+    it("should classify 'transaction underpriced' error as 60405", async () => {
+      mockSubmitWithBlockchainError("transaction underpriced");
+
+      const { handler } =
+        await import("../../../../workflow/lambdas/submit/index.mjs");
+
+      const event = createSqsEvent("task-token-underpriced", [
+        { dataGroupLabel: "County", dataGroupCid: "bafkrei123" },
+      ]);
+
+      const result = await handler(event);
+
+      expect(mockSendTaskFailure).toHaveBeenCalledWith(
+        expect.objectContaining({
+          taskToken: "task-token-underpriced",
+          error: "60405", // TRANSACTION_UNDERPRICED
+        }),
+      );
+
+      expect(result.status).toBe("failed");
+    });
+
+    it("should classify 'replacement transaction' error as 60405", async () => {
+      mockSubmitWithBlockchainError(
+        "replacement transaction underpriced: existing tx 10 gwei, new tx 5 gwei",
+      );
+
+      const { handler } =
+        await import("../../../../workflow/lambdas/submit/index.mjs");
+
+      const event = createSqsEvent("task-token-replacement", [
+        { dataGroupLabel: "County", dataGroupCid: "bafkrei123" },
+      ]);
+
+      const result = await handler(event);
+
+      expect(mockSendTaskFailure).toHaveBeenCalledWith(
+        expect.objectContaining({
+          taskToken: "task-token-replacement",
+          error: "60405", // TRANSACTION_UNDERPRICED
+        }),
+      );
+
+      expect(result.status).toBe("failed");
+    });
+
+    it("should classify 'execution reverted' error as 60406", async () => {
+      mockSubmitWithBlockchainError(
+        "execution reverted: Only oracle can call this function",
+      );
+
+      const { handler } =
+        await import("../../../../workflow/lambdas/submit/index.mjs");
+
+      const event = createSqsEvent("task-token-reverted", [
+        { dataGroupLabel: "County", dataGroupCid: "bafkrei123" },
+      ]);
+
+      const result = await handler(event);
+
+      expect(mockSendTaskFailure).toHaveBeenCalledWith(
+        expect.objectContaining({
+          taskToken: "task-token-reverted",
+          error: "60406", // EXECUTION_REVERTED
+        }),
+      );
+
+      expect(result.status).toBe("failed");
+    });
+
+    it("should classify 'revert' error as 60406", async () => {
+      mockSubmitWithBlockchainError("VM Exception: revert");
+
+      const { handler } =
+        await import("../../../../workflow/lambdas/submit/index.mjs");
+
+      const event = createSqsEvent("task-token-revert", [
+        { dataGroupLabel: "County", dataGroupCid: "bafkrei123" },
+      ]);
+
+      const result = await handler(event);
+
+      expect(mockSendTaskFailure).toHaveBeenCalledWith(
+        expect.objectContaining({
+          taskToken: "task-token-revert",
+          error: "60406", // EXECUTION_REVERTED
+        }),
+      );
+
+      expect(result.status).toBe("failed");
+    });
+
+    it("should classify 'invalid transaction' error as 60407", async () => {
+      mockSubmitWithBlockchainError("invalid transaction: invalid chain id");
+
+      const { handler } =
+        await import("../../../../workflow/lambdas/submit/index.mjs");
+
+      const event = createSqsEvent("task-token-invalid-tx", [
+        { dataGroupLabel: "County", dataGroupCid: "bafkrei123" },
+      ]);
+
+      const result = await handler(event);
+
+      expect(mockSendTaskFailure).toHaveBeenCalledWith(
+        expect.objectContaining({
+          taskToken: "task-token-invalid-tx",
+          error: "60407", // INVALID_TRANSACTION
+        }),
+      );
+
+      expect(result.status).toBe("failed");
+    });
+
+    it("should classify 'invalid sender' error as 60407", async () => {
+      mockSubmitWithBlockchainError("invalid sender");
+
+      const { handler } =
+        await import("../../../../workflow/lambdas/submit/index.mjs");
+
+      const event = createSqsEvent("task-token-invalid-sender", [
+        { dataGroupLabel: "County", dataGroupCid: "bafkrei123" },
+      ]);
+
+      const result = await handler(event);
+
+      expect(mockSendTaskFailure).toHaveBeenCalledWith(
+        expect.objectContaining({
+          taskToken: "task-token-invalid-sender",
+          error: "60407", // INVALID_TRANSACTION
+        }),
+      );
+
+      expect(result.status).toBe("failed");
+    });
+
+    it("should classify 'ECONNREFUSED' error as 60408 (RPC connection error)", async () => {
+      mockSubmitWithBlockchainError("connect ECONNREFUSED 127.0.0.1:8545");
+
+      const { handler } =
+        await import("../../../../workflow/lambdas/submit/index.mjs");
+
+      const event = createSqsEvent("task-token-conn-refused", [
+        { dataGroupLabel: "County", dataGroupCid: "bafkrei123" },
+      ]);
+
+      const result = await handler(event);
+
+      expect(mockSendTaskFailure).toHaveBeenCalledWith(
+        expect.objectContaining({
+          taskToken: "task-token-conn-refused",
+          error: "60408", // RPC_CONNECTION_ERROR
+        }),
+      );
+
+      expect(result.status).toBe("failed");
+    });
+
+    it("should classify 'ETIMEDOUT' error as 60408", async () => {
+      mockSubmitWithBlockchainError("connect ETIMEDOUT 10.0.0.1:8545");
+
+      const { handler } =
+        await import("../../../../workflow/lambdas/submit/index.mjs");
+
+      const event = createSqsEvent("task-token-conn-timeout", [
+        { dataGroupLabel: "County", dataGroupCid: "bafkrei123" },
+      ]);
+
+      const result = await handler(event);
+
+      expect(mockSendTaskFailure).toHaveBeenCalledWith(
+        expect.objectContaining({
+          taskToken: "task-token-conn-timeout",
+          error: "60408", // RPC_CONNECTION_ERROR
+        }),
+      );
+
+      expect(result.status).toBe("failed");
+    });
+
+    it("should classify 'network error' as 60408", async () => {
+      mockSubmitWithBlockchainError("Network error: Failed to fetch");
+
+      const { handler } =
+        await import("../../../../workflow/lambdas/submit/index.mjs");
+
+      const event = createSqsEvent("task-token-network-error", [
+        { dataGroupLabel: "County", dataGroupCid: "bafkrei123" },
+      ]);
+
+      const result = await handler(event);
+
+      expect(mockSendTaskFailure).toHaveBeenCalledWith(
+        expect.objectContaining({
+          taskToken: "task-token-network-error",
+          error: "60408", // RPC_CONNECTION_ERROR
+        }),
+      );
+
+      expect(result.status).toBe("failed");
+    });
+
+    it("should classify 'timeout' error as 60409 (RPC timeout)", async () => {
+      mockSubmitWithBlockchainError("Request timeout after 30000ms");
+
+      const { handler } =
+        await import("../../../../workflow/lambdas/submit/index.mjs");
+
+      const event = createSqsEvent("task-token-timeout", [
+        { dataGroupLabel: "County", dataGroupCid: "bafkrei123" },
+      ]);
+
+      const result = await handler(event);
+
+      expect(mockSendTaskFailure).toHaveBeenCalledWith(
+        expect.objectContaining({
+          taskToken: "task-token-timeout",
+          error: "60409", // RPC_TIMEOUT
+        }),
+      );
+
+      expect(result.status).toBe("failed");
+    });
+
+    it("should classify 'ESOCKETTIMEDOUT' error as 60409", async () => {
+      mockSubmitWithBlockchainError("ESOCKETTIMEDOUT");
+
+      const { handler } =
+        await import("../../../../workflow/lambdas/submit/index.mjs");
+
+      const event = createSqsEvent("task-token-socket-timeout", [
+        { dataGroupLabel: "County", dataGroupCid: "bafkrei123" },
+      ]);
+
+      const result = await handler(event);
+
+      expect(mockSendTaskFailure).toHaveBeenCalledWith(
+        expect.objectContaining({
+          taskToken: "task-token-socket-timeout",
+          error: "60409", // RPC_TIMEOUT
+        }),
+      );
+
+      expect(result.status).toBe("failed");
+    });
+
+    it("should classify 'invalid argument' error as 60410", async () => {
+      mockSubmitWithBlockchainError("invalid argument 0: hex string");
+
+      const { handler } =
+        await import("../../../../workflow/lambdas/submit/index.mjs");
+
+      const event = createSqsEvent("task-token-invalid-arg", [
+        { dataGroupLabel: "County", dataGroupCid: "bafkrei123" },
+      ]);
+
+      const result = await handler(event);
+
+      expect(mockSendTaskFailure).toHaveBeenCalledWith(
+        expect.objectContaining({
+          taskToken: "task-token-invalid-arg",
+          error: "60410", // INVALID_PARAMETERS
+        }),
+      );
+
+      expect(result.status).toBe("failed");
+    });
+
+    it("should classify 'invalid params' error as 60410", async () => {
+      mockSubmitWithBlockchainError(
+        "invalid params: missing value for required argument",
+      );
+
+      const { handler } =
+        await import("../../../../workflow/lambdas/submit/index.mjs");
+
+      const event = createSqsEvent("task-token-invalid-params", [
+        { dataGroupLabel: "County", dataGroupCid: "bafkrei123" },
+      ]);
+
+      const result = await handler(event);
+
+      expect(mockSendTaskFailure).toHaveBeenCalledWith(
+        expect.objectContaining({
+          taskToken: "task-token-invalid-params",
+          error: "60410", // INVALID_PARAMETERS
+        }),
+      );
+
+      expect(result.status).toBe("failed");
+    });
+
+    it("should classify 'contract creation code storage out of gas' error as 60411", async () => {
+      mockSubmitWithBlockchainError(
+        "contract creation code storage out of gas",
+      );
+
+      const { handler } =
+        await import("../../../../workflow/lambdas/submit/index.mjs");
+
+      const event = createSqsEvent("task-token-contract-error", [
+        { dataGroupLabel: "County", dataGroupCid: "bafkrei123" },
+      ]);
+
+      const result = await handler(event);
+
+      expect(mockSendTaskFailure).toHaveBeenCalledWith(
+        expect.objectContaining({
+          taskToken: "task-token-contract-error",
+          error: "60411", // CONTRACT_ERROR
+        }),
+      );
+
+      expect(result.status).toBe("failed");
+    });
+
+    it("should classify unknown error as 60999", async () => {
+      mockSubmitWithBlockchainError("Some completely unknown error message");
+
+      const { handler } =
+        await import("../../../../workflow/lambdas/submit/index.mjs");
+
+      const event = createSqsEvent("task-token-unknown", [
+        { dataGroupLabel: "County", dataGroupCid: "bafkrei123" },
+      ]);
+
+      const result = await handler(event);
+
+      expect(mockSendTaskFailure).toHaveBeenCalledWith(
+        expect.objectContaining({
+          taskToken: "task-token-unknown",
+          error: "60999", // UNKNOWN
+        }),
+      );
+
+      expect(result.status).toBe("failed");
+    });
+
+    it("should parse JSON-RPC error responses and classify them", async () => {
+      // Simulate a JSON-RPC error response in the errorMessage field
+      // In CSV, double quotes inside quoted fields must be escaped by doubling them
+      const jsonRpcError = `{"error":{"message":"insufficient funds for gas * price + value","code":-32000}}`;
+      // CSV requires quotes to be doubled inside quoted fields
+      const escapedForCsv = jsonRpcError.replace(/"/g, '""');
+
+      mockSubmitToContract.mockImplementation(async ({ csvFile }) => {
+        const tmpDir = path.dirname(csvFile);
+        const statusCsv = path.join(tmpDir, "transaction-status.csv");
+        const errorsCsv = path.join(tmpDir, "submit_errors.csv");
+
+        await fs.writeFile(statusCsv, "status,transactionHash\n", "utf8");
+        // Properly escape JSON in CSV format
+        await fs.writeFile(
+          errorsCsv,
+          `errorMessage,error_path\n"${escapedForCsv}","/path"\n`,
+          "utf8",
+        );
+
+        return { success: true };
+      });
+
+      const { handler } =
+        await import("../../../../workflow/lambdas/submit/index.mjs");
+
+      const event = createSqsEvent("task-token-jsonrpc", [
+        { dataGroupLabel: "County", dataGroupCid: "bafkrei123" },
+      ]);
+
+      const result = await handler(event);
+
+      expect(mockSendTaskFailure).toHaveBeenCalledWith(
+        expect.objectContaining({
+          taskToken: "task-token-jsonrpc",
+          error: "60403", // INSUFFICIENT_FUNDS - extracted from JSON
+        }),
+      );
+
+      expect(result.status).toBe("failed");
+    });
+
+    it("should handle error in transaction-status.csv failed rows", async () => {
+      mockSubmitToContract.mockImplementation(async ({ csvFile }) => {
+        const tmpDir = path.dirname(csvFile);
+        const statusCsv = path.join(tmpDir, "transaction-status.csv");
+        const errorsCsv = path.join(tmpDir, "submit_errors.csv");
+
+        // Error in transaction-status.csv with status=failed
+        await fs.writeFile(
+          statusCsv,
+          "status,transactionHash,error\nfailed,,nonce too low\n",
+          "utf8",
+        );
+        await fs.writeFile(errorsCsv, "errorMessage,error_path\n", "utf8");
+
+        return { success: true };
+      });
+
+      const { handler } =
+        await import("../../../../workflow/lambdas/submit/index.mjs");
+
+      const event = createSqsEvent("task-token-status-failed", [
+        { dataGroupLabel: "County", dataGroupCid: "bafkrei123" },
+      ]);
+
+      const result = await handler(event);
+
+      expect(mockSendTaskFailure).toHaveBeenCalledWith(
+        expect.objectContaining({
+          taskToken: "task-token-status-failed",
+          error: "60402", // NONCE_TOO_LOW - from error column in transaction-status.csv
+        }),
+      );
+
+      expect(result.status).toBe("failed");
+    });
+
+    it("should handle snake_case error_message field in CSV", async () => {
+      mockSubmitToContract.mockImplementation(async ({ csvFile }) => {
+        const tmpDir = path.dirname(csvFile);
+        const statusCsv = path.join(tmpDir, "transaction-status.csv");
+        const errorsCsv = path.join(tmpDir, "submit_errors.csv");
+
+        await fs.writeFile(statusCsv, "status,transactionHash\n", "utf8");
+        // Using snake_case error_message instead of camelCase
+        await fs.writeFile(
+          errorsCsv,
+          `error_message,error_path\n"execution reverted","/path"\n`,
+          "utf8",
+        );
+
+        return { success: true };
+      });
+
+      const { handler } =
+        await import("../../../../workflow/lambdas/submit/index.mjs");
+
+      const event = createSqsEvent("task-token-snake-case", [
+        { dataGroupLabel: "County", dataGroupCid: "bafkrei123" },
+      ]);
+
+      const result = await handler(event);
+
+      expect(mockSendTaskFailure).toHaveBeenCalledWith(
+        expect.objectContaining({
+          taskToken: "task-token-snake-case",
+          error: "60406", // EXECUTION_REVERTED
+        }),
+      );
+
+      expect(result.status).toBe("failed");
+    });
+  });
+
+  describe("Keystore mode", () => {
+    beforeEach(() => {
+      // Set up keystore mode environment
+      process.env.ELEPHANT_KEYSTORE_S3_KEY = "keystore.json";
+      process.env.ELEPHANT_KEYSTORE_PASSWORD = "test-password";
+      process.env.ENVIRONMENT_BUCKET = "test-bucket";
+
+      // Remove API mode env vars
+      delete process.env.ELEPHANT_DOMAIN;
+      delete process.env.ELEPHANT_API_KEY;
+      delete process.env.ELEPHANT_ORACLE_KEY_ID;
+      delete process.env.ELEPHANT_FROM_ADDRESS;
+    });
+
+    it("should submit successfully in keystore mode", async () => {
+      const { handler } =
+        await import("../../../../workflow/lambdas/submit/index.mjs");
+
+      const event = createSqsEvent("task-token-keystore-success", [
+        { dataGroupLabel: "County", dataGroupCid: "bafkrei123" },
+      ]);
+
+      const result = await handler(event);
+
+      expect(mockSubmitToContract).toHaveBeenCalled();
+      expect(mockSendTaskSuccess).toHaveBeenCalledWith(
+        expect.objectContaining({
+          taskToken: "task-token-keystore-success",
+        }),
+      );
+      expect(result.status).toBe("success");
+    });
+
+    it("should handle S3 download failure with error code 60302", async () => {
+      s3Mock.on(GetObjectCommand).rejects(new Error("Access Denied"));
+
+      const { handler } =
+        await import("../../../../workflow/lambdas/submit/index.mjs");
+
+      const event = createSqsEvent("task-token-s3-error", [
+        { dataGroupLabel: "County", dataGroupCid: "bafkrei123" },
+      ]);
+
+      const result = await handler(event);
+
+      expect(mockSendTaskFailure).toHaveBeenCalledWith(
+        expect.objectContaining({
+          taskToken: "task-token-s3-error",
+          error: "60302", // S3_DOWNLOAD_FAILED
+        }),
+      );
+
+      expect(result.status).toBe("failed");
+    });
+
+    it("should handle S3 response with no body (60301)", async () => {
+      s3Mock.on(GetObjectCommand).resolves({
+        // Body is undefined
+      });
+
+      const { handler } =
+        await import("../../../../workflow/lambdas/submit/index.mjs");
+
+      const event = createSqsEvent("task-token-no-body", [
+        { dataGroupLabel: "County", dataGroupCid: "bafkrei123" },
+      ]);
+
+      const result = await handler(event);
+
+      expect(mockSendTaskFailure).toHaveBeenCalledWith(
+        expect.objectContaining({
+          taskToken: "task-token-no-body",
+          error: "60301", // KEYSTORE_BODY_NOT_FOUND
+        }),
+      );
+
+      expect(result.status).toBe("failed");
+    });
+
+    it("should fail with 60201 when ENVIRONMENT_BUCKET is missing", async () => {
+      delete process.env.ENVIRONMENT_BUCKET;
+
+      const { handler } =
+        await import("../../../../workflow/lambdas/submit/index.mjs");
+
+      const event = createSqsEvent("task-token-no-bucket", [
+        { dataGroupLabel: "County", dataGroupCid: "bafkrei123" },
+      ]);
+
+      const result = await handler(event);
+
+      expect(mockSendTaskFailure).toHaveBeenCalledWith(
+        expect.objectContaining({
+          taskToken: "task-token-no-bucket",
+          error: "60201", // MISSING_ENVIRONMENT_BUCKET
+        }),
+      );
+
+      expect(result.status).toBe("failed");
+    });
+
+    it("should fail with 60202 when ELEPHANT_KEYSTORE_S3_KEY is missing", async () => {
+      delete process.env.ELEPHANT_KEYSTORE_S3_KEY;
+
+      const { handler } =
+        await import("../../../../workflow/lambdas/submit/index.mjs");
+
+      const event = createSqsEvent("task-token-no-key", [
+        { dataGroupLabel: "County", dataGroupCid: "bafkrei123" },
+      ]);
+
+      const result = await handler(event);
+
+      // When ELEPHANT_KEYSTORE_S3_KEY is not set, it uses API mode
+      // and API mode fails because ELEPHANT_DOMAIN is not set
+      expect(mockSendTaskFailure).toHaveBeenCalledWith(
+        expect.objectContaining({
+          taskToken: "task-token-no-key",
+          error: "60204", // MISSING_DOMAIN (API mode validation)
+        }),
+      );
+
+      expect(result.status).toBe("failed");
+    });
+
+    it("should fail with 60203 when ELEPHANT_KEYSTORE_PASSWORD is missing", async () => {
+      delete process.env.ELEPHANT_KEYSTORE_PASSWORD;
+
+      const { handler } =
+        await import("../../../../workflow/lambdas/submit/index.mjs");
+
+      const event = createSqsEvent("task-token-no-password", [
+        { dataGroupLabel: "County", dataGroupCid: "bafkrei123" },
+      ]);
+
+      const result = await handler(event);
+
+      expect(mockSendTaskFailure).toHaveBeenCalledWith(
+        expect.objectContaining({
+          taskToken: "task-token-no-password",
+          error: "60203", // MISSING_KEYSTORE_PASSWORD
+        }),
+      );
+
+      expect(result.status).toBe("failed");
+    });
+  });
+
+  describe("API mode environment validation", () => {
+    it("should fail with 60204 when ELEPHANT_DOMAIN is missing", async () => {
+      delete process.env.ELEPHANT_DOMAIN;
+
+      const { handler } =
+        await import("../../../../workflow/lambdas/submit/index.mjs");
+
+      const event = createSqsEvent("task-token-no-domain", [
+        { dataGroupLabel: "County", dataGroupCid: "bafkrei123" },
+      ]);
+
+      const result = await handler(event);
+
+      expect(mockSendTaskFailure).toHaveBeenCalledWith(
+        expect.objectContaining({
+          taskToken: "task-token-no-domain",
+          error: "60204", // MISSING_DOMAIN
+        }),
+      );
+
+      expect(result.status).toBe("failed");
+    });
+
+    it("should fail with 60205 when ELEPHANT_API_KEY is missing", async () => {
+      delete process.env.ELEPHANT_API_KEY;
+
+      const { handler } =
+        await import("../../../../workflow/lambdas/submit/index.mjs");
+
+      const event = createSqsEvent("task-token-no-api-key", [
+        { dataGroupLabel: "County", dataGroupCid: "bafkrei123" },
+      ]);
+
+      const result = await handler(event);
+
+      expect(mockSendTaskFailure).toHaveBeenCalledWith(
+        expect.objectContaining({
+          taskToken: "task-token-no-api-key",
+          error: "60205", // MISSING_API_KEY
+        }),
+      );
+
+      expect(result.status).toBe("failed");
+    });
+
+    it("should fail with 60206 when ELEPHANT_ORACLE_KEY_ID is missing", async () => {
+      delete process.env.ELEPHANT_ORACLE_KEY_ID;
+
+      const { handler } =
+        await import("../../../../workflow/lambdas/submit/index.mjs");
+
+      const event = createSqsEvent("task-token-no-oracle-key", [
+        { dataGroupLabel: "County", dataGroupCid: "bafkrei123" },
+      ]);
+
+      const result = await handler(event);
+
+      expect(mockSendTaskFailure).toHaveBeenCalledWith(
+        expect.objectContaining({
+          taskToken: "task-token-no-oracle-key",
+          error: "60206", // MISSING_ORACLE_KEY_ID
+        }),
+      );
+
+      expect(result.status).toBe("failed");
+    });
+
+    it("should fail with 60207 when ELEPHANT_FROM_ADDRESS is missing", async () => {
+      delete process.env.ELEPHANT_FROM_ADDRESS;
+
+      const { handler } =
+        await import("../../../../workflow/lambdas/submit/index.mjs");
+
+      const event = createSqsEvent("task-token-no-from-address", [
+        { dataGroupLabel: "County", dataGroupCid: "bafkrei123" },
+      ]);
+
+      const result = await handler(event);
+
+      expect(mockSendTaskFailure).toHaveBeenCalledWith(
+        expect.objectContaining({
+          taskToken: "task-token-no-from-address",
+          error: "60207", // MISSING_FROM_ADDRESS
+        }),
+      );
+
+      expect(result.status).toBe("failed");
+    });
+  });
+
+  describe("Submit CLI failure classification", () => {
+    it("should classify CLI failure with blockchain error in message", async () => {
+      mockSubmitToContract.mockImplementation(async ({ csvFile }) => {
+        const tmpDir = path.dirname(csvFile);
+        const statusCsv = path.join(tmpDir, "transaction-status.csv");
+        const errorsCsv = path.join(tmpDir, "submit_errors.csv");
+        await fs.writeFile(statusCsv, "status,transactionHash\n", "utf8");
+        await fs.writeFile(errorsCsv, "errorMessage,error_path\n", "utf8");
+
+        // CLI returns failure with error message
+        return { success: false, error: "insufficient funds for transaction" };
+      });
+
+      const { handler } =
+        await import("../../../../workflow/lambdas/submit/index.mjs");
+
+      const event = createSqsEvent("task-token-cli-failure", [
+        { dataGroupLabel: "County", dataGroupCid: "bafkrei123" },
+      ]);
+
+      const result = await handler(event);
+
+      expect(mockSendTaskFailure).toHaveBeenCalledWith(
+        expect.objectContaining({
+          taskToken: "task-token-cli-failure",
+          error: "60403", // INSUFFICIENT_FUNDS - classified from error message
+        }),
+      );
+
+      expect(result.status).toBe("failed");
+    });
+
+    it("should use SUBMIT_CLI_FAILURE (60412) when CLI returns unclassifiable error", async () => {
+      mockSubmitToContract.mockImplementation(async ({ csvFile }) => {
+        const tmpDir = path.dirname(csvFile);
+        const statusCsv = path.join(tmpDir, "transaction-status.csv");
+        const errorsCsv = path.join(tmpDir, "submit_errors.csv");
+        await fs.writeFile(statusCsv, "status,transactionHash\n", "utf8");
+        await fs.writeFile(errorsCsv, "errorMessage,error_path\n", "utf8");
+
+        // CLI returns failure with generic error
+        return { success: false, error: "Some internal CLI error" };
+      });
+
+      const { handler } =
+        await import("../../../../workflow/lambdas/submit/index.mjs");
+
+      const event = createSqsEvent("task-token-cli-generic", [
+        { dataGroupLabel: "County", dataGroupCid: "bafkrei123" },
+      ]);
+
+      const result = await handler(event);
+
+      expect(mockSendTaskFailure).toHaveBeenCalledWith(
+        expect.objectContaining({
+          taskToken: "task-token-cli-generic",
+          error: "60999", // UNKNOWN - unclassifiable error
+        }),
+      );
+
+      expect(result.status).toBe("failed");
+    });
   });
 });

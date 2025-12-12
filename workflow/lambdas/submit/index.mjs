@@ -43,6 +43,8 @@ class SubmitError extends Error {
  * The errorMessage column contains JSON-serialized EVM RPC responses
  * @type {Array<{code: string, patterns: RegExp[], description: string}>}
  */
+// Note: Order matters! More specific patterns MUST come before more general ones.
+// E.g., "contract creation code storage out of gas" (60411) must be checked before "out of gas" (60404)
 const BLOCKCHAIN_ERROR_PATTERNS = [
   {
     code: "60401",
@@ -58,6 +60,12 @@ const BLOCKCHAIN_ERROR_PATTERNS = [
     code: "60403",
     patterns: [/insufficient funds/i],
     description: "Insufficient funds",
+  },
+  // 60411 must come before 60404 because "contract creation code storage out of gas" contains "out of gas"
+  {
+    code: "60411",
+    patterns: [/contract creation code storage out of gas/i],
+    description: "Contract error",
   },
   {
     code: "60404",
@@ -93,11 +101,6 @@ const BLOCKCHAIN_ERROR_PATTERNS = [
     code: "60410",
     patterns: [/invalid argument/i, /invalid params/i],
     description: "Invalid parameters",
-  },
-  {
-    code: "60411",
-    patterns: [/contract creation code storage out of gas/i],
-    description: "Contract error",
   },
 ];
 
