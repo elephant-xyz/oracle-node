@@ -98,7 +98,7 @@ async function downloadKeystoreFromS3(bucket, key, targetPath) {
     });
     const response = await s3Client.send(command);
     /**
-     * @param {NodeJS.ReadableStream} stream
+     * @param {any} stream
      * @returns {Promise<string>}
      */
     const streamToString = (stream) =>
@@ -107,7 +107,7 @@ async function downloadKeystoreFromS3(bucket, key, targetPath) {
         const chunks = [];
         stream.on(
           "data",
-          /** @param {Buffer} chunk */ (chunk) => chunks.push(chunk),
+          /** @param {Buffer} chunk */(chunk) => chunks.push(chunk),
         );
         stream.on("error", reject);
         stream.on("end", () =>
@@ -117,7 +117,6 @@ async function downloadKeystoreFromS3(bucket, key, targetPath) {
     const body = response.Body;
     if (!body)
       throw new Error("Failed to download keystore from S3: body not found");
-    // @ts-ignore - Body is a readable stream
     const bodyContents = await streamToString(body);
     await fs.writeFile(targetPath, bodyContents, "utf8");
     return targetPath;
@@ -550,7 +549,6 @@ export const handler = async (event) => {
     counties: validMessages.map((m) => m.county).join(", "),
   });
 
-  // Emit IN_PROGRESS event for first message (avoid duplicate events)
   const firstMessage = validMessages[0];
   if (firstMessage && firstMessage.taskToken && firstMessage.executionArn) {
     const log = createLogger({
@@ -574,16 +572,14 @@ export const handler = async (event) => {
 
   const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "submit-"));
   try {
-    // Get the first item to determine CSV headers - guaranteed to exist since we checked validMessages.length > 0
-    const firstItem = aggregatedItems[0];
-    if (!firstItem) {
-      throw new Error("No transaction items to submit after aggregation");
-    }
-
     const csvFilePath = path.resolve(tmp, "submit.csv");
     const writer = createObjectCsvWriter({
       path: csvFilePath,
-      header: Object.keys(firstItem).map((k) => ({ id: k, title: k })),
+      // @ts-expect-error - firstItem guaranteed to exist (validated in parseRecord)
+      header: Object.keys(validMessages[0].transactionItems[0]).map((k) => ({
+        id: k,
+        title: k,
+      })),
     });
     await writer.writeRecords(aggregatedItems);
 
@@ -759,7 +755,7 @@ export const handler = async (event) => {
     const allErrors = [
       ...submitErrors,
       ...submitResults.filter(
-        /** @param {SubmitResultRow} row */ (row) => row.status === "failed",
+        /** @param {SubmitResultRow} row */(row) => row.status === "failed",
       ),
     ];
 
