@@ -282,9 +282,9 @@ describe("submit handler", () => {
         }),
       );
 
-      // Should return batch item failures
-      expect(result.batchItemFailures).toBeDefined();
-      expect(result.batchItemFailures.length).toBe(1);
+      // Should return success to SQS when task failure was sent successfully
+      expect(result.status).toBe("success");
+      expect(result.batchItemFailures).toBeUndefined();
     });
 
     it("should NOT emit FAILED event on submission failure", async () => {
@@ -492,10 +492,10 @@ describe("submit handler", () => {
         }),
       );
 
-      // Should return batch item failure for invalid message
-      expect(result.batchItemFailures).toContainEqual({
-        itemIdentifier: "invalid-msg",
-      });
+      // Should return success to SQS when task failure was sent successfully
+      expect(result.status).toBe("success");
+      // No batch item failures since task failure was sent successfully
+      expect(result.batchItemFailures).toBeUndefined();
     });
 
     it("should handle messages with empty transaction items array", async () => {
@@ -536,10 +536,9 @@ describe("submit handler", () => {
         }),
       );
 
-      // Should return batch item failure for empty message
-      expect(result.batchItemFailures).toContainEqual({
-        itemIdentifier: "empty-msg",
-      });
+      // Should return success to SQS when task failure was sent successfully
+      expect(result.status).toBe("success");
+      expect(result.batchItemFailures).toBeUndefined();
     });
 
     it("should handle message with non-array body", async () => {
@@ -580,10 +579,9 @@ describe("submit handler", () => {
         }),
       );
 
-      // Should return batch item failure
-      expect(result.batchItemFailures).toContainEqual({
-        itemIdentifier: "object-msg",
-      });
+      // Should return success to SQS when task failure was sent successfully
+      expect(result.status).toBe("success");
+      expect(result.batchItemFailures).toBeUndefined();
     });
 
     it("should send failure to all messages when blockchain submission fails", async () => {
@@ -609,11 +607,12 @@ describe("submit handler", () => {
       // No success callbacks
       expect(mockSendTaskSuccess).not.toHaveBeenCalled();
 
-      // All messages should be in batch failures
-      expect(result.batchItemFailures.length).toBe(5);
+      // Should return success to SQS when all task failures were sent successfully
+      expect(result.status).toBe("success");
+      expect(result.batchItemFailures).toBeUndefined();
     });
 
-    it("should return failed status when all messages fail parsing", async () => {
+    it("should return success status when all messages fail parsing but task failures sent successfully", async () => {
       const { handler } =
         await import("../../../../workflow/lambdas/submit/index.mjs");
 
@@ -647,9 +646,12 @@ describe("submit handler", () => {
       // No blockchain submission should happen
       expect(mockSubmitToContract).not.toHaveBeenCalled();
 
-      // All messages should be failures
-      expect(result.status).toBe("failed");
-      expect(result.batchItemFailures.length).toBe(2);
+      // Task failures should be sent for both messages
+      expect(mockSendTaskFailure).toHaveBeenCalledTimes(2);
+
+      // Should return success to SQS when task failures were sent successfully
+      expect(result.status).toBe("success");
+      expect(result.batchItemFailures).toBeUndefined();
     });
   });
 
@@ -734,8 +736,9 @@ describe("submit handler", () => {
         }),
       );
 
-      // Should return batch item failure
-      expect(result.batchItemFailures).toBeDefined();
+      // Should return success to SQS when task failure was sent successfully
+      expect(result.status).toBe("success");
+      expect(result.batchItemFailures).toBeUndefined();
     });
 
     it("should handle missing SQS Records", async () => {
@@ -794,10 +797,9 @@ describe("submit handler", () => {
         }),
       );
 
-      // Should return batch item failure
-      expect(result.batchItemFailures).toContainEqual({
-        itemIdentifier: "no-body-msg",
-      });
+      // Should return success to SQS when task failure was sent successfully
+      expect(result.status).toBe("success");
+      expect(result.batchItemFailures).toBeUndefined();
     });
 
     it("should handle missing ELEPHANT_RPC_URL with error code 60208", async () => {
@@ -820,8 +822,9 @@ describe("submit handler", () => {
         }),
       );
 
-      expect(result.status).toBe("failed");
-      expect(result.batchItemFailures.length).toBe(1);
+      // Should return success to SQS when task failure was sent successfully
+      expect(result.status).toBe("success");
+      expect(result.batchItemFailures).toBeUndefined();
     });
   });
 
@@ -866,7 +869,8 @@ describe("submit handler", () => {
         }),
       );
 
-      expect(result.status).toBe("failed");
+      // Should return success to SQS when task failure was sent successfully
+      expect(result.status).toBe("success");
     });
 
     it("should classify 'nonce too low' error as 60402", async () => {
@@ -888,7 +892,8 @@ describe("submit handler", () => {
         }),
       );
 
-      expect(result.status).toBe("failed");
+      // Should return success to SQS when task failure was sent successfully
+      expect(result.status).toBe("success");
     });
 
     it("should classify 'insufficient funds' error as 60403", async () => {
@@ -912,7 +917,8 @@ describe("submit handler", () => {
         }),
       );
 
-      expect(result.status).toBe("failed");
+      // Should return success to SQS when task failure was sent successfully
+      expect(result.status).toBe("success");
     });
 
     it("should classify 'gas required exceeds' error as 60404", async () => {
@@ -934,7 +940,8 @@ describe("submit handler", () => {
         }),
       );
 
-      expect(result.status).toBe("failed");
+      // Should return success to SQS when task failure was sent successfully
+      expect(result.status).toBe("success");
     });
 
     it("should classify 'out of gas' error as 60404", async () => {
@@ -956,7 +963,8 @@ describe("submit handler", () => {
         }),
       );
 
-      expect(result.status).toBe("failed");
+      // Should return success to SQS when task failure was sent successfully
+      expect(result.status).toBe("success");
     });
 
     it("should classify 'transaction underpriced' error as 60405", async () => {
@@ -978,7 +986,8 @@ describe("submit handler", () => {
         }),
       );
 
-      expect(result.status).toBe("failed");
+      // Should return success to SQS when task failure was sent successfully
+      expect(result.status).toBe("success");
     });
 
     it("should classify 'replacement transaction' error as 60405", async () => {
@@ -1002,7 +1011,8 @@ describe("submit handler", () => {
         }),
       );
 
-      expect(result.status).toBe("failed");
+      // Should return success to SQS when task failure was sent successfully
+      expect(result.status).toBe("success");
     });
 
     it("should classify 'execution reverted' error as 60406", async () => {
@@ -1026,7 +1036,8 @@ describe("submit handler", () => {
         }),
       );
 
-      expect(result.status).toBe("failed");
+      // Should return success to SQS when task failure was sent successfully
+      expect(result.status).toBe("success");
     });
 
     it("should classify 'revert' error as 60406", async () => {
@@ -1048,7 +1059,8 @@ describe("submit handler", () => {
         }),
       );
 
-      expect(result.status).toBe("failed");
+      // Should return success to SQS when task failure was sent successfully
+      expect(result.status).toBe("success");
     });
 
     it("should classify 'invalid transaction' error as 60407", async () => {
@@ -1070,7 +1082,8 @@ describe("submit handler", () => {
         }),
       );
 
-      expect(result.status).toBe("failed");
+      // Should return success to SQS when task failure was sent successfully
+      expect(result.status).toBe("success");
     });
 
     it("should classify 'invalid sender' error as 60407", async () => {
@@ -1092,7 +1105,8 @@ describe("submit handler", () => {
         }),
       );
 
-      expect(result.status).toBe("failed");
+      // Should return success to SQS when task failure was sent successfully
+      expect(result.status).toBe("success");
     });
 
     it("should classify 'ECONNREFUSED' error as 60408 (RPC connection error)", async () => {
@@ -1114,7 +1128,8 @@ describe("submit handler", () => {
         }),
       );
 
-      expect(result.status).toBe("failed");
+      // Should return success to SQS when task failure was sent successfully
+      expect(result.status).toBe("success");
     });
 
     it("should classify 'ETIMEDOUT' error as 60408", async () => {
@@ -1136,7 +1151,8 @@ describe("submit handler", () => {
         }),
       );
 
-      expect(result.status).toBe("failed");
+      // Should return success to SQS when task failure was sent successfully
+      expect(result.status).toBe("success");
     });
 
     it("should classify 'network error' as 60408", async () => {
@@ -1158,7 +1174,8 @@ describe("submit handler", () => {
         }),
       );
 
-      expect(result.status).toBe("failed");
+      // Should return success to SQS when task failure was sent successfully
+      expect(result.status).toBe("success");
     });
 
     it("should classify 'timeout' error as 60409 (RPC timeout)", async () => {
@@ -1180,7 +1197,8 @@ describe("submit handler", () => {
         }),
       );
 
-      expect(result.status).toBe("failed");
+      // Should return success to SQS when task failure was sent successfully
+      expect(result.status).toBe("success");
     });
 
     it("should classify 'ESOCKETTIMEDOUT' error as 60409", async () => {
@@ -1202,7 +1220,8 @@ describe("submit handler", () => {
         }),
       );
 
-      expect(result.status).toBe("failed");
+      // Should return success to SQS when task failure was sent successfully
+      expect(result.status).toBe("success");
     });
 
     it("should classify 'invalid argument' error as 60410", async () => {
@@ -1224,7 +1243,8 @@ describe("submit handler", () => {
         }),
       );
 
-      expect(result.status).toBe("failed");
+      // Should return success to SQS when task failure was sent successfully
+      expect(result.status).toBe("success");
     });
 
     it("should classify 'invalid params' error as 60410", async () => {
@@ -1248,7 +1268,8 @@ describe("submit handler", () => {
         }),
       );
 
-      expect(result.status).toBe("failed");
+      // Should return success to SQS when task failure was sent successfully
+      expect(result.status).toBe("success");
     });
 
     it("should classify 'contract creation code storage out of gas' error as 60411", async () => {
@@ -1272,7 +1293,8 @@ describe("submit handler", () => {
         }),
       );
 
-      expect(result.status).toBe("failed");
+      // Should return success to SQS when task failure was sent successfully
+      expect(result.status).toBe("success");
     });
 
     it("should classify unknown error as 60999", async () => {
@@ -1294,7 +1316,8 @@ describe("submit handler", () => {
         }),
       );
 
-      expect(result.status).toBe("failed");
+      // Should return success to SQS when task failure was sent successfully
+      expect(result.status).toBe("success");
     });
 
     it("should parse JSON-RPC error responses and classify them", async () => {
@@ -1336,7 +1359,8 @@ describe("submit handler", () => {
         }),
       );
 
-      expect(result.status).toBe("failed");
+      // Should return success to SQS when task failure was sent successfully
+      expect(result.status).toBe("success");
     });
 
     it("should handle error in transaction-status.csv failed rows", async () => {
@@ -1372,7 +1396,8 @@ describe("submit handler", () => {
         }),
       );
 
-      expect(result.status).toBe("failed");
+      // Should return success to SQS when task failure was sent successfully
+      expect(result.status).toBe("success");
     });
 
     it("should handle snake_case error_message field in CSV", async () => {
@@ -1408,7 +1433,8 @@ describe("submit handler", () => {
         }),
       );
 
-      expect(result.status).toBe("failed");
+      // Should return success to SQS when task failure was sent successfully
+      expect(result.status).toBe("success");
     });
   });
 
@@ -1464,7 +1490,8 @@ describe("submit handler", () => {
         }),
       );
 
-      expect(result.status).toBe("failed");
+      // Should return success to SQS when task failure was sent successfully
+      expect(result.status).toBe("success");
     });
 
     it("should handle S3 response with no body (60301)", async () => {
@@ -1488,7 +1515,8 @@ describe("submit handler", () => {
         }),
       );
 
-      expect(result.status).toBe("failed");
+      // Should return success to SQS when task failure was sent successfully
+      expect(result.status).toBe("success");
     });
 
     it("should fail with 60201 when ENVIRONMENT_BUCKET is missing", async () => {
@@ -1510,7 +1538,8 @@ describe("submit handler", () => {
         }),
       );
 
-      expect(result.status).toBe("failed");
+      // Should return success to SQS when task failure was sent successfully
+      expect(result.status).toBe("success");
     });
 
     it("should fail with 60202 when ELEPHANT_KEYSTORE_S3_KEY is missing", async () => {
@@ -1534,7 +1563,8 @@ describe("submit handler", () => {
         }),
       );
 
-      expect(result.status).toBe("failed");
+      // Should return success to SQS when task failure was sent successfully
+      expect(result.status).toBe("success");
     });
 
     it("should fail with 60203 when ELEPHANT_KEYSTORE_PASSWORD is missing", async () => {
@@ -1556,7 +1586,8 @@ describe("submit handler", () => {
         }),
       );
 
-      expect(result.status).toBe("failed");
+      // Should return success to SQS when task failure was sent successfully
+      expect(result.status).toBe("success");
     });
   });
 
@@ -1580,7 +1611,8 @@ describe("submit handler", () => {
         }),
       );
 
-      expect(result.status).toBe("failed");
+      // Should return success to SQS when task failure was sent successfully
+      expect(result.status).toBe("success");
     });
 
     it("should fail with 60205 when ELEPHANT_API_KEY is missing", async () => {
@@ -1602,7 +1634,8 @@ describe("submit handler", () => {
         }),
       );
 
-      expect(result.status).toBe("failed");
+      // Should return success to SQS when task failure was sent successfully
+      expect(result.status).toBe("success");
     });
 
     it("should fail with 60206 when ELEPHANT_ORACLE_KEY_ID is missing", async () => {
@@ -1624,7 +1657,8 @@ describe("submit handler", () => {
         }),
       );
 
-      expect(result.status).toBe("failed");
+      // Should return success to SQS when task failure was sent successfully
+      expect(result.status).toBe("success");
     });
 
     it("should fail with 60207 when ELEPHANT_FROM_ADDRESS is missing", async () => {
@@ -1646,7 +1680,8 @@ describe("submit handler", () => {
         }),
       );
 
-      expect(result.status).toBe("failed");
+      // Should return success to SQS when task failure was sent successfully
+      expect(result.status).toBe("success");
     });
   });
 
@@ -1679,7 +1714,8 @@ describe("submit handler", () => {
         }),
       );
 
-      expect(result.status).toBe("failed");
+      // Should return success to SQS when task failure was sent successfully
+      expect(result.status).toBe("success");
     });
 
     it("should use SUBMIT_CLI_FAILURE (60412) when CLI returns unclassifiable error", async () => {
@@ -1710,7 +1746,62 @@ describe("submit handler", () => {
         }),
       );
 
+      // Should return success to SQS when task failure was sent successfully
+      expect(result.status).toBe("success");
+    });
+  });
+
+  describe("Batch item failures when Step Functions send fails", () => {
+    it("should return batch item failures when sendTaskFailure throws", async () => {
+      // Mock sendTaskFailure to throw an error
+      mockSendTaskFailure.mockRejectedValue(new Error("Step Functions error"));
+
+      const { handler } =
+        await import("../../../../workflow/lambdas/submit/index.mjs");
+
+      const event = {
+        Records: [
+          {
+            messageId: "invalid-msg",
+            body: "not-valid-json",
+            messageAttributes: {
+              TaskToken: { stringValue: "task-token-invalid" },
+              ExecutionArn: {
+                stringValue: "arn:aws:states:us-east-1:123:execution:invalid",
+              },
+              County: { stringValue: "invalid-county" },
+            },
+          },
+        ],
+      };
+
+      const result = await handler(event);
+
+      // Should return failed status when sendTaskFailure throws
       expect(result.status).toBe("failed");
+      expect(result.batchItemFailures).toContainEqual({
+        itemIdentifier: "invalid-msg",
+      });
+    });
+
+    it("should return batch item failures when sendTaskSuccess throws", async () => {
+      // Mock sendTaskSuccess to throw an error
+      mockSendTaskSuccess.mockRejectedValue(new Error("Step Functions error"));
+
+      const { handler } =
+        await import("../../../../workflow/lambdas/submit/index.mjs");
+
+      const event = createSqsEvent("task-token-success-fail", [
+        { dataGroupLabel: "County", dataGroupCid: "bafkrei123" },
+      ]);
+
+      const result = await handler(event);
+
+      // Should return batch item failures when sendTaskSuccess throws
+      expect(result.batchItemFailures).toBeDefined();
+      expect(result.batchItemFailures).toContainEqual({
+        itemIdentifier: "single-msg",
+      });
     });
   });
 });

@@ -813,28 +813,48 @@ function parseRecord(record) {
 /**
  * Send task failure for a failed message and emit workflow event
  * @param {FailedMessage} failedMessage - Failed message details
- * @returns {Promise<void>}
+ * @returns {Promise<boolean>} True if task failure was sent successfully, false otherwise
  */
 async function handleFailedMessage(failedMessage) {
-  const { taskToken, executionArn, county, error, errorCode } = failedMessage;
+  const { taskToken, executionArn, county, error, errorCode, messageId } =
+    failedMessage;
   const code = errorCode || SubmitErrorCodes.UNKNOWN;
 
   if (taskToken && executionArn) {
-    await sendTaskFailure({
-      taskToken,
-      error: code,
-      cause: error,
-    });
+    try {
+      await sendTaskFailure({
+        taskToken,
+        error: code,
+        cause: error,
+      });
+      return true;
+    } catch (sendError) {
+      console.error({
+        ...base,
+        level: "error",
+        msg: "failed_to_send_task_failure",
+        messageId,
+        county,
+        error:
+          sendError instanceof Error ? sendError.message : String(sendError),
+      });
+      return false;
+    }
   }
+  // No task token means we can't send to Step Functions, treat as success for SQS purposes
+  return true;
 }
 
 /**
  * Send task success for all successfully processed messages
  * @param {ParsedMessage[]} messages - Successfully processed messages
  * @param {Object} result - Submit result to send
- * @returns {Promise<void>}
+ * @returns {Promise<string[]>} Array of message IDs that failed to send task success
  */
 async function sendSuccessToAllMessages(messages, result) {
+  /** @type {string[]} */
+  const failedMessageIds = [];
+
   const successPromises = messages.map(async (msg) => {
     if (msg.taskToken && msg.executionArn) {
       const log = createLogger({
@@ -844,19 +864,30 @@ async function sendSuccessToAllMessages(messages, result) {
         executionId: msg.executionArn,
       });
 
-      await sendTaskSuccess({
-        taskToken: msg.taskToken,
-        output: result,
-      });
+      try {
+        await sendTaskSuccess({
+          taskToken: msg.taskToken,
+          output: result,
+        });
 
-      log("info", "task_success_sent", {
-        county: msg.county,
-        executionArn: msg.executionArn,
-      });
+        log("info", "task_success_sent", {
+          county: msg.county,
+          executionArn: msg.executionArn,
+        });
+      } catch (sendError) {
+        log("error", "failed_to_send_task_success", {
+          county: msg.county,
+          executionArn: msg.executionArn,
+          error:
+            sendError instanceof Error ? sendError.message : String(sendError),
+        });
+        failedMessageIds.push(msg.messageId);
+      }
     }
   });
 
   await Promise.all(successPromises);
+  return failedMessageIds;
 }
 
 /**
@@ -865,7 +896,7 @@ async function sendSuccessToAllMessages(messages, result) {
  * @param {string} errorMessage - Error message
  * @param {string} [errorCause] - Error cause/stack trace
  * @param {string} [errorCode] - Error code for classification
- * @returns {Promise<void>}
+ * @returns {Promise<string[]>} Array of message IDs that failed to send task failure
  */
 async function sendFailureToAllMessages(
   messages,
@@ -874,6 +905,8 @@ async function sendFailureToAllMessages(
   errorCode,
 ) {
   const code = errorCode || SubmitErrorCodes.UNKNOWN;
+  /** @type {string[]} */
+  const failedMessageIds = [];
 
   const failurePromises = messages.map(async (msg) => {
     if (msg.taskToken && msg.executionArn) {
@@ -884,21 +917,33 @@ async function sendFailureToAllMessages(
         executionId: msg.executionArn,
       });
 
-      await sendTaskFailure({
-        taskToken: msg.taskToken,
-        error: code,
-        cause: errorMessage,
-      });
+      try {
+        await sendTaskFailure({
+          taskToken: msg.taskToken,
+          error: code,
+          cause: errorMessage,
+        });
 
-      log("info", "task_failure_sent", {
-        county: msg.county,
-        executionArn: msg.executionArn,
-        errorCode: code,
-      });
+        log("info", "task_failure_sent", {
+          county: msg.county,
+          executionArn: msg.executionArn,
+          errorCode: code,
+        });
+      } catch (sendError) {
+        log("error", "failed_to_send_task_failure", {
+          county: msg.county,
+          executionArn: msg.executionArn,
+          errorCode: code,
+          error:
+            sendError instanceof Error ? sendError.message : String(sendError),
+        });
+        failedMessageIds.push(msg.messageId);
+      }
     }
   });
 
   await Promise.all(failurePromises);
+  return failedMessageIds;
 }
 
 /**
@@ -936,7 +981,6 @@ export const handler = async (event) => {
       validMessages.push(parseResult.data);
     } else {
       failedMessages.push(parseResult.error);
-      batchItemFailures.push({ itemIdentifier: record.messageId });
     }
   }
 
@@ -948,6 +992,7 @@ export const handler = async (event) => {
     failedCount: failedMessages.length,
   });
 
+  // Handle failed messages - only add to batch failures if we failed to send task failure
   for (const failedMsg of failedMessages) {
     console.log({
       ...base,
@@ -957,16 +1002,23 @@ export const handler = async (event) => {
       error: failedMsg.error,
       county: failedMsg.county,
     });
-    await handleFailedMessage(failedMsg);
+    const sentSuccessfully = await handleFailedMessage(failedMsg);
+    if (!sentSuccessfully) {
+      batchItemFailures.push({ itemIdentifier: failedMsg.messageId });
+    }
   }
 
   if (validMessages.length === 0) {
     console.log({
       ...base,
-      level: "error",
+      level: "info",
       msg: "no_valid_messages_in_batch",
     });
-    return { status: "failed", batchItemFailures };
+    // Return success to SQS unless we failed to send task failures
+    if (batchItemFailures.length > 0) {
+      return { status: "failed", batchItemFailures };
+    }
+    return { status: "success" };
   }
 
   /** @type {Object[]} */
@@ -1048,19 +1100,23 @@ export const handler = async (event) => {
       });
 
       // Send failure to all valid messages with classified error code
-      await sendFailureToAllMessages(
+      // Only add to batch failures if we failed to send task failure to Step Functions
+      const failedToSendIds = await sendFailureToAllMessages(
         validMessages,
         errorMsg,
         undefined,
         errorCode,
       );
 
-      // Add all valid messages to batch failures since blockchain submission failed
-      for (const msg of validMessages) {
-        batchItemFailures.push({ itemIdentifier: msg.messageId });
+      for (const messageId of failedToSendIds) {
+        batchItemFailures.push({ itemIdentifier: messageId });
       }
 
-      return { status: "failed", batchItemFailures };
+      // Return success to SQS unless we failed to send task failures
+      if (batchItemFailures.length > 0) {
+        return { status: "failed", batchItemFailures };
+      }
+      return { status: "success" };
     }
 
     // Read and parse CSV files, ensuring cleanup even if parsing fails
@@ -1138,19 +1194,23 @@ export const handler = async (event) => {
       });
 
       // Send failure to all valid messages with classified error code
-      await sendFailureToAllMessages(
+      // Only add to batch failures if we failed to send task failure to Step Functions
+      const failedToSendIds = await sendFailureToAllMessages(
         validMessages,
         errorMsg,
         undefined,
         errorCode,
       );
 
-      // Add all valid messages to batch failures
-      for (const msg of validMessages) {
-        batchItemFailures.push({ itemIdentifier: msg.messageId });
+      for (const messageId of failedToSendIds) {
+        batchItemFailures.push({ itemIdentifier: messageId });
       }
 
-      return { status: "failed", batchItemFailures };
+      // Return success to SQS unless we failed to send task failures
+      if (batchItemFailures.length > 0) {
+        return { status: "failed", batchItemFailures };
+      }
+      return { status: "success" };
     }
 
     // Build success result with transaction hash
@@ -1172,9 +1232,17 @@ export const handler = async (event) => {
     });
 
     // Send success to all valid messages with the same result
-    await sendSuccessToAllMessages(validMessages, result);
+    // Only add to batch failures if we failed to send task success to Step Functions
+    const failedToSendIds = await sendSuccessToAllMessages(
+      validMessages,
+      result,
+    );
 
-    // Return result with any batch failures from parsing phase
+    for (const messageId of failedToSendIds) {
+      batchItemFailures.push({ itemIdentifier: messageId });
+    }
+
+    // Return result with any batch failures (only from failed sends to Step Functions)
     if (batchItemFailures.length > 0) {
       return { ...result, batchItemFailures };
     }
@@ -1196,20 +1264,23 @@ export const handler = async (event) => {
     });
 
     // Send failure to all valid messages with classified error code
-    await sendFailureToAllMessages(
+    // Only add to batch failures if we failed to send task failure to Step Functions
+    const failedToSendIds = await sendFailureToAllMessages(
       validMessages,
       errMessage,
       errCause,
       errorCode,
     );
 
-    // Add all valid messages to batch failures
-    for (const msg of validMessages) {
-      batchItemFailures.push({ itemIdentifier: msg.messageId });
+    for (const messageId of failedToSendIds) {
+      batchItemFailures.push({ itemIdentifier: messageId });
     }
 
-    // Return batch failures instead of throwing - let Lambda know which messages failed
-    return { status: "failed", batchItemFailures };
+    // Return success to SQS unless we failed to send task failures
+    if (batchItemFailures.length > 0) {
+      return { status: "failed", batchItemFailures };
+    }
+    return { status: "success" };
   } finally {
     await fs.rm(tmp, { recursive: true, force: true });
   }
