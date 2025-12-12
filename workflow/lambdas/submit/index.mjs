@@ -9,7 +9,6 @@ import { SSMClient, GetParameterCommand } from "@aws-sdk/client-ssm";
 import {
   executeWithTaskToken,
   emitWorkflowEvent,
-  createWorkflowError,
   createLogger,
   sendTaskFailure,
   sendTaskSuccess,
@@ -754,31 +753,6 @@ async function handleFailedMessage(failedMessage) {
   const code = errorCode || SubmitErrorCodes.UNKNOWN;
 
   if (taskToken && executionArn) {
-    const log = createLogger({
-      component: "submit",
-      at: new Date().toISOString(),
-      county: county || "unknown",
-      executionId: executionArn,
-    });
-
-    try {
-      await emitWorkflowEvent({
-        executionId: executionArn,
-        county: county || "unknown",
-        dataGroupLabel: "County",
-        status: "FAILED",
-        phase: "Submit",
-        step: "SubmitToBlockchain",
-        taskToken,
-        errors: [createWorkflowError(code, { error })],
-        log,
-      });
-    } catch (eventErr) {
-      log("error", "failed_to_emit_failed_event", {
-        error: eventErr instanceof Error ? eventErr.message : String(eventErr),
-      });
-    }
-
     await sendTaskFailure({
       taskToken,
       error: code,
@@ -802,25 +776,6 @@ async function sendSuccessToAllMessages(messages, result) {
         county: msg.county || "unknown",
         executionId: msg.executionArn,
       });
-
-      try {
-        await emitWorkflowEvent({
-          executionId: msg.executionArn,
-          county: msg.county || "unknown",
-          dataGroupLabel: msg.dataGroupLabel || "County",
-          status: "SUCCEEDED",
-          phase: "Submit",
-          step: "SubmitToBlockchain",
-          taskToken: msg.taskToken,
-          errors: [],
-          log,
-        });
-      } catch (eventErr) {
-        log("error", "failed_to_emit_succeeded_event", {
-          error:
-            eventErr instanceof Error ? eventErr.message : String(eventErr),
-        });
-      }
 
       await sendTaskSuccess({
         taskToken: msg.taskToken,
@@ -856,30 +811,6 @@ async function sendFailureToAllMessages(messages, errorMessage, errorCause, erro
         county: msg.county || "unknown",
         executionId: msg.executionArn,
       });
-
-      try {
-        await emitWorkflowEvent({
-          executionId: msg.executionArn,
-          county: msg.county || "unknown",
-          dataGroupLabel: msg.dataGroupLabel || "County",
-          status: "FAILED",
-          phase: "Submit",
-          step: "SubmitToBlockchain",
-          taskToken: msg.taskToken,
-          errors: [
-            createWorkflowError(code, {
-              error: errorMessage,
-              cause: errorCause,
-            }),
-          ],
-          log,
-        });
-      } catch (eventErr) {
-        log("error", "failed_to_emit_failed_event", {
-          error:
-            eventErr instanceof Error ? eventErr.message : String(eventErr),
-        });
-      }
 
       await sendTaskFailure({
         taskToken: msg.taskToken,

@@ -225,7 +225,7 @@ describe("submit handler", () => {
       );
     });
 
-    it("should emit SUCCEEDED event on successful submission", async () => {
+    it("should NOT emit SUCCEEDED event on successful submission", async () => {
       const { handler } =
         await import("../../../../workflow/lambdas/submit/index.mjs");
 
@@ -235,13 +235,19 @@ describe("submit handler", () => {
 
       await handler(event);
 
-      // Should have 2 EventBridge calls: IN_PROGRESS and SUCCEEDED
-      expect(mockEmitWorkflowEvent).toHaveBeenCalledTimes(2);
+      // Should have only 1 EventBridge call: IN_PROGRESS (no SUCCEEDED)
+      expect(mockEmitWorkflowEvent).toHaveBeenCalledTimes(1);
       expect(mockEmitWorkflowEvent).toHaveBeenCalledWith(
         expect.objectContaining({
-          status: "SUCCEEDED",
+          status: "IN_PROGRESS",
           phase: "Submit",
           step: "SubmitToBlockchain",
+        }),
+      );
+      // Verify no SUCCEEDED event was emitted
+      expect(mockEmitWorkflowEvent).not.toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: "SUCCEEDED",
         }),
       );
     });
@@ -281,7 +287,7 @@ describe("submit handler", () => {
       expect(result.batchItemFailures.length).toBe(1);
     });
 
-    it("should emit FAILED event on submission failure", async () => {
+    it("should NOT emit FAILED event on submission failure", async () => {
       // Override mock to return failure (but still create files for error handling)
       mockSubmitToContract.mockImplementation(async ({ csvFile }) => {
         const tmpDir = path.dirname(csvFile);
@@ -304,13 +310,19 @@ describe("submit handler", () => {
 
       await handler(event);
 
-      // Should have 2 EventBridge calls: IN_PROGRESS and FAILED
-      expect(mockEmitWorkflowEvent).toHaveBeenCalledTimes(2);
+      // Should have only 1 EventBridge call: IN_PROGRESS (no FAILED)
+      expect(mockEmitWorkflowEvent).toHaveBeenCalledTimes(1);
       expect(mockEmitWorkflowEvent).toHaveBeenCalledWith(
         expect.objectContaining({
-          status: "FAILED",
+          status: "IN_PROGRESS",
           phase: "Submit",
           step: "SubmitToBlockchain",
+        }),
+      );
+      // Verify no FAILED event was emitted
+      expect(mockEmitWorkflowEvent).not.toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: "FAILED",
         }),
       );
     });
@@ -398,11 +410,11 @@ describe("submit handler", () => {
       );
       expect(inProgressCalls.length).toBe(5);
 
-      // Should have 5 IN_PROGRESS + 5 SUCCEEDED events
-      expect(mockEmitWorkflowEvent).toHaveBeenCalledTimes(10);
+      // Should have only 5 IN_PROGRESS events (no SUCCEEDED events)
+      expect(mockEmitWorkflowEvent).toHaveBeenCalledTimes(5);
     });
 
-    it("should emit SUCCEEDED event for each message in batch", async () => {
+    it("should NOT emit SUCCEEDED event for each message in batch", async () => {
       const { handler } =
         await import("../../../../workflow/lambdas/submit/index.mjs");
 
@@ -410,11 +422,14 @@ describe("submit handler", () => {
 
       await handler(event);
 
-      // Count SUCCEEDED events
+      // Count SUCCEEDED events - should be none
       const succeededCalls = mockEmitWorkflowEvent.mock.calls.filter(
         (call) => call[0].status === "SUCCEEDED",
       );
-      expect(succeededCalls.length).toBe(3);
+      expect(succeededCalls.length).toBe(0);
+
+      // Verify only IN_PROGRESS events were emitted (3 total)
+      expect(mockEmitWorkflowEvent).toHaveBeenCalledTimes(3);
     });
 
     it("should handle batch of 100 messages (max batch size)", async () => {
