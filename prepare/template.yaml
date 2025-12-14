@@ -386,6 +386,7 @@ Resources:
       MessageRetentionPeriod: 1209600
       SqsManagedSseEnabled: true
       RedrivePolicy:
+        maxReceiveCount: 1
         deadLetterTargetArn: !GetAtt TransactionsDeadLetterQueue.Arn
       Tags:
         - Key: Environment
