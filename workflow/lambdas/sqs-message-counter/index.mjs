@@ -1017,7 +1017,7 @@ async function updateGoogleSheet(
       range: `${config.tabName}!${readyToMintColumnLetter}${rowIndex}`,
       valueInputOption: "RAW",
       requestBody: {
-        values: [[readyToMintMessages.toString()]],
+        values: [[readyToMintMessages]],
       },
     });
 
@@ -1038,7 +1038,7 @@ async function updateGoogleSheet(
       range: `${config.tabName}!${waitingForMiningColumnLetter}${rowIndex}`,
       valueInputOption: "RAW",
       requestBody: {
-        values: [[waitingForMiningMessages.toString()]],
+        values: [[waitingForMiningMessages]],
       },
     });
 
@@ -1059,7 +1059,7 @@ async function updateGoogleSheet(
       range: `${config.tabName}!${inProgressColumnLetter}${rowIndex}`,
       valueInputOption: "RAW",
       requestBody: {
-        values: [[inProgressMessages.toString()]],
+        values: [[inProgressMessages]],
       },
     });
 
@@ -1081,7 +1081,7 @@ async function updateGoogleSheet(
       range: `${config.tabName}!${readyToMintFailedColumnLetter}${rowIndex}`,
       valueInputOption: "RAW",
       requestBody: {
-        values: [[readyToMintFailedMessages.toString()]],
+        values: [[readyToMintFailedMessages]],
       },
     });
 
