@@ -16,13 +16,114 @@ import {
  * @typedef {Object} GasPriceCheckerInput
  * @property {string} rpcUrl - RPC URL for blockchain
  * @property {number} maxGasPriceGwei - Maximum allowed gas price in Gwei
- * @property {number} [waitMinutes] - Minutes to wait before retry (default: 2)
+ * @property {number} [waitMinutes] - Minutes to wait between retries (default: 2)
+ * @property {number} [maxWaitMinutes] - Maximum total minutes to wait before failing (default: 10)
  */
 
 const base = {
   component: "gas-price-checker",
   at: new Date().toISOString(),
 };
+
+/**
+ * Gas price check error codes - follows same pattern as submit Lambda
+ * Error code patterns for GasPriceCheck phase (600xx range)
+ */
+const GasPriceCheckErrorCodes = {
+  // Configuration (60010-60019)
+  MISSING_RPC_URL: "60010",
+  MISSING_MAX_GAS_PRICE: "60011",
+  // RPC/Network (60020-60029)
+  RPC_RETRIEVAL_FAILED: "60020",
+  RPC_CONNECTION_ERROR: "60021",
+  RPC_TIMEOUT: "60022",
+  // Gas price (60030-60039)
+  GAS_PRICE_TOO_HIGH: "60030",
+  // Unknown
+  UNKNOWN: "60001",
+};
+
+/**
+ * Default maximum retry duration in minutes before failing due to high gas price
+ * Can be overridden via GAS_PRICE_MAX_WAIT_MINUTES env var
+ */
+const DEFAULT_MAX_WAIT_MINUTES = 10;
+
+/**
+ * RPC error patterns for classification
+ * @type {Array<{code: string, patterns: RegExp[], description: string}>}
+ */
+const RPC_ERROR_PATTERNS = [
+  {
+    code: GasPriceCheckErrorCodes.RPC_CONNECTION_ERROR,
+    patterns: [/ECONNREFUSED/i, /ETIMEDOUT/i, /network error/i],
+    description: "RPC connection error",
+  },
+  {
+    code: GasPriceCheckErrorCodes.RPC_TIMEOUT,
+    patterns: [/timeout/i, /ESOCKETTIMEDOUT/i],
+    description: "RPC timeout",
+  },
+];
+
+/**
+ * Classify an error and return the appropriate error code
+ * @param {unknown} error - The error to classify
+ * @returns {{code: string, description: string}} Error code and description
+ */
+function classifyError(error) {
+  const errorMessage = error instanceof Error ? error.message : String(error);
+
+  // Check for specific configuration errors
+  if (
+    errorMessage.includes("RPC URL is required") ||
+    errorMessage.includes("ELEPHANT_RPC_URL")
+  ) {
+    return {
+      code: GasPriceCheckErrorCodes.MISSING_RPC_URL,
+      description: "Missing RPC URL configuration",
+    };
+  }
+  if (
+    errorMessage.includes("maxGasPriceGwei") ||
+    errorMessage.includes("GAS_PRICE_MAX_GWEI")
+  ) {
+    return {
+      code: GasPriceCheckErrorCodes.MISSING_MAX_GAS_PRICE,
+      description: "Missing max gas price configuration",
+    };
+  }
+  if (errorMessage.includes("Unable to retrieve gas price")) {
+    return {
+      code: GasPriceCheckErrorCodes.RPC_RETRIEVAL_FAILED,
+      description: "Unable to retrieve gas price from RPC",
+    };
+  }
+  if (
+    errorMessage.includes("Gas price too high") ||
+    errorMessage.includes("exceeded maximum wait time")
+  ) {
+    return {
+      code: GasPriceCheckErrorCodes.GAS_PRICE_TOO_HIGH,
+      description: "Gas price exceeded maximum threshold after retry timeout",
+    };
+  }
+
+  // Check RPC error patterns
+  for (const errorDef of RPC_ERROR_PATTERNS) {
+    for (const pattern of errorDef.patterns) {
+      if (pattern.test(errorMessage)) {
+        return { code: errorDef.code, description: errorDef.description };
+      }
+    }
+  }
+
+  // Default: unknown error
+  return {
+    code: GasPriceCheckErrorCodes.UNKNOWN,
+    description: "Unknown gas price check error",
+  };
+}
 
 /**
  * @typedef {Object} SqsRecord
@@ -133,9 +234,16 @@ async function sendSuccessToAllMessages(messages, result) {
  * @param {ParsedMessage[]} messages - Messages to send failure for
  * @param {string} errorMessage - Error message
  * @param {string} [errorCause] - Error cause/stack trace
+ * @param {string} [errorCode] - Error code for classification (defaults to UNKNOWN)
  * @returns {Promise<string[]>} Array of message IDs that failed to send task failure
  */
-async function sendFailureToAllMessages(messages, errorMessage, errorCause) {
+async function sendFailureToAllMessages(
+  messages,
+  errorMessage,
+  errorCause,
+  errorCode,
+) {
+  const code = errorCode || GasPriceCheckErrorCodes.UNKNOWN;
   /** @type {string[]} */
   const failedMessageIds = [];
 
@@ -151,12 +259,13 @@ async function sendFailureToAllMessages(messages, errorMessage, errorCause) {
       try {
         await sendTaskFailure({
           taskToken: msg.taskToken,
-          error: "GasPriceCheckError",
+          error: code,
           cause: errorCause || errorMessage,
         });
-        log("info", "task_failure_sent", {});
+        log("info", "task_failure_sent", { errorCode: code });
       } catch (sendError) {
         log("error", "failed_to_send_task_failure", {
+          errorCode: code,
           error:
             sendError instanceof Error ? sendError.message : String(sendError),
         });
@@ -175,7 +284,12 @@ async function sendFailureToAllMessages(messages, errorMessage, errorCause) {
  * @returns {Promise<GasPriceCheckerOutput>}
  */
 async function checkAndWaitForGasPrice(input) {
-  const { rpcUrl, maxGasPriceGwei, waitMinutes = 2 } = input;
+  const {
+    rpcUrl,
+    maxGasPriceGwei,
+    waitMinutes = 2,
+    maxWaitMinutes = DEFAULT_MAX_WAIT_MINUTES,
+  } = input;
 
   if (!rpcUrl) {
     throw new Error("RPC URL is required");
@@ -186,10 +300,35 @@ async function checkAndWaitForGasPrice(input) {
   }
 
   const waitMs = waitMinutes * 60 * 1000;
+  const maxWaitMs = maxWaitMinutes * 60 * 1000;
+  const startTime = Date.now();
   let retries = 0;
+  /** @type {number | null} */
+  let lastGasPriceGwei = null;
 
-  // Retry forever until gas price is acceptable
+  // Retry until gas price is acceptable or max wait time exceeded
   while (true) {
+    const elapsedMs = Date.now() - startTime;
+    const remainingMs = maxWaitMs - elapsedMs;
+
+    // Check if we've exceeded max wait time (but allow first check)
+    if (retries > 0 && elapsedMs >= maxWaitMs) {
+      const errorMsg = `Gas price too high: exceeded maximum wait time of ${maxWaitMinutes} minutes. Current: ${lastGasPriceGwei} Gwei, Max: ${maxGasPriceGwei} Gwei`;
+      console.error(
+        JSON.stringify({
+          ...base,
+          level: "error",
+          msg: "gas_price_max_wait_exceeded",
+          currentGasPriceGwei: lastGasPriceGwei,
+          maxGasPriceGwei: maxGasPriceGwei,
+          maxWaitMinutes: maxWaitMinutes,
+          elapsedMinutes: elapsedMs / 60000,
+          retries: retries,
+        }),
+      );
+      throw new Error(errorMsg);
+    }
+
     try {
       console.log(
         JSON.stringify({
@@ -198,6 +337,8 @@ async function checkAndWaitForGasPrice(input) {
           msg: "checking_gas_price",
           retry: retries,
           maxGasPriceGwei: maxGasPriceGwei,
+          elapsedMinutes: Math.round((elapsedMs / 60000) * 100) / 100,
+          remainingMinutes: Math.round((remainingMs / 60000) * 100) / 100,
         }),
       );
 
@@ -216,6 +357,7 @@ async function checkAndWaitForGasPrice(input) {
 
       // Convert from Wei to Gwei (divide by 1e9)
       const currentGasPriceGwei = parseFloat(currentGasPriceWei) / 1e9;
+      lastGasPriceGwei = currentGasPriceGwei;
 
       console.log(
         JSON.stringify({
@@ -249,12 +391,9 @@ async function checkAndWaitForGasPrice(input) {
           maxGasPriceGwei: maxGasPriceGwei,
           waitMinutes: waitMinutes,
           retry: retries,
+          remainingMinutes: Math.round((remainingMs / 60000) * 100) / 100,
         }),
       );
-
-      // Note: We could emit a PARKED event here, but it might be too frequent
-      // since we're waiting and retrying. The IN_PROGRESS event at the start
-      // and SUCCEEDED/FAILED at the end should be sufficient.
 
       await sleep(waitMs);
     } catch (err) {
@@ -269,10 +408,11 @@ async function checkAndWaitForGasPrice(input) {
         }),
       );
 
-      // Wait and retry forever (only throw if it's a configuration error)
+      // Throw if it's a configuration error or max wait exceeded error
       if (
         errorMsg.includes("RPC URL is required") ||
-        errorMsg.includes("maxGasPriceGwei must be")
+        errorMsg.includes("maxGasPriceGwei must be") ||
+        errorMsg.includes("exceeded maximum wait time")
       ) {
         throw err;
       }
@@ -355,18 +495,26 @@ export const handler = async (event) => {
     const rpcUrl = process.env.ELEPHANT_RPC_URL;
     const maxGasPriceGwei = parseFloat(process.env.GAS_PRICE_MAX_GWEI || "0");
     const waitMinutes = parseFloat(process.env.GAS_PRICE_WAIT_MINUTES || "2");
+    const maxWaitMinutes = parseFloat(
+      process.env.GAS_PRICE_MAX_WAIT_MINUTES ||
+        String(DEFAULT_MAX_WAIT_MINUTES),
+    );
 
     if (!rpcUrl) {
       const error = "RPC URL is required (ELEPHANT_RPC_URL env var)";
+      const errorCode = GasPriceCheckErrorCodes.MISSING_RPC_URL;
       console.error({
         ...base,
         level: "error",
         msg: "config_validation_failed",
         error,
+        errorCode,
       });
       const failedToSendIds = await sendFailureToAllMessages(
         parsedMessages,
         error,
+        undefined,
+        errorCode,
       );
       for (const messageId of failedToSendIds) {
         batchItemFailures.push({ itemIdentifier: messageId });
@@ -383,15 +531,19 @@ export const handler = async (event) => {
 
     if (!maxGasPriceGwei || maxGasPriceGwei <= 0) {
       const error = "maxGasPriceGwei is required (GAS_PRICE_MAX_GWEI env var)";
+      const errorCode = GasPriceCheckErrorCodes.MISSING_MAX_GAS_PRICE;
       console.error({
         ...base,
         level: "error",
         msg: "config_validation_failed",
         error,
+        errorCode,
       });
       const failedToSendIds = await sendFailureToAllMessages(
         parsedMessages,
         error,
+        undefined,
+        errorCode,
       );
       for (const messageId of failedToSendIds) {
         batchItemFailures.push({ itemIdentifier: messageId });
@@ -410,6 +562,7 @@ export const handler = async (event) => {
       rpcUrl,
       maxGasPriceGwei,
       waitMinutes,
+      maxWaitMinutes,
     });
     const batchResult = {
       ...result,
@@ -450,12 +603,15 @@ export const handler = async (event) => {
   } catch (err) {
     const errMessage = err instanceof Error ? err.message : String(err);
     const errCause = err instanceof Error ? err.stack : undefined;
+    // Classify the error to get the appropriate error code
+    const { code: errorCode } = classifyError(err);
 
     console.error({
       ...base,
       level: "error",
       msg: "batch_handler_error",
       error: errMessage,
+      errorCode,
       messageCount: parsedMessages.length,
     });
 
@@ -466,6 +622,7 @@ export const handler = async (event) => {
       parsedMessages,
       errMessage,
       errCause,
+      errorCode,
     );
     for (const messageId of failedToSendIds) {
       batchItemFailures.push({ itemIdentifier: messageId });

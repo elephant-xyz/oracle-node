@@ -366,24 +366,24 @@ describe("gas-price-checker handler", () => {
 
       const result = await handler(event);
 
-      // Task failure should be sent to all 3 task tokens
+      // Task failure should be sent to all 3 task tokens with proper error code
       expect(mockSendTaskFailure).toHaveBeenCalledTimes(3);
       expect(mockSendTaskFailure).toHaveBeenCalledWith(
         expect.objectContaining({
           taskToken: "task-token-1",
-          error: "GasPriceCheckError",
+          error: "60010", // Missing RPC URL error code
         }),
       );
       expect(mockSendTaskFailure).toHaveBeenCalledWith(
         expect.objectContaining({
           taskToken: "task-token-2",
-          error: "GasPriceCheckError",
+          error: "60010", // Missing RPC URL error code
         }),
       );
       expect(mockSendTaskFailure).toHaveBeenCalledWith(
         expect.objectContaining({
           taskToken: "task-token-3",
-          error: "GasPriceCheckError",
+          error: "60010", // Missing RPC URL error code
         }),
       );
 

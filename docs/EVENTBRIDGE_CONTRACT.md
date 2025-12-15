@@ -81,7 +81,13 @@ Emitted on workflow step status changes (success, failure, or parked).
 | `31001`         | SVL           | SVL runtime exception (non-validation failure)                                                                                                                                            |
 | `40001`         | Hash          | Generic hash step failure or exception                                                                                                                                                    |
 | `50001`         | Upload        | Generic upload step failure or exception                                                                                                                                                  |
-| `60001`         | GasPriceCheck | Gas price check step failure                                                                                                                                                              |
+| `60001`         | GasPriceCheck | Generic gas price check failure (unknown/unclassified)                                                                                                                                    |
+| `60010`         | GasPriceCheck | Missing RPC URL configuration                                                                                                                                                             |
+| `60011`         | GasPriceCheck | Missing max gas price configuration                                                                                                                                                       |
+| `60020`         | GasPriceCheck | Unable to retrieve gas price from RPC                                                                                                                                                     |
+| `60021`         | GasPriceCheck | RPC connection error (`ECONNREFUSED`, `ETIMEDOUT`)                                                                                                                                        |
+| `60022`         | GasPriceCheck | RPC timeout                                                                                                                                                                               |
+| `60030`         | GasPriceCheck | Gas price too high after max wait time (default 10 min)                                                                                                                                   |
 | `601xx`         | Submit        | Message parsing errors (missing body, invalid format, empty items, JSON parse errors)                                                                                                     |
 | `602xx`         | Submit        | Environment configuration errors (missing required env vars for keystore/API mode)                                                                                                        |
 | `603xx`         | Submit        | S3/Keystore errors (download failures)                                                                                                                                                    |
@@ -117,11 +123,33 @@ Emitted on workflow step status changes (success, failure, or parked).
 
 > **Note on Transform errors (code `20<county>`)**: Transform errors include the county name in the error code, enabling county-specific tracking and aggregation of transform failures.
 
+#### GasPriceCheck Error Codes (`600xx` - Gas Price Check)
+
+| Code    | Category      | Description                                        |
+| ------- | ------------- | -------------------------------------------------- |
+| `60001` | Unknown       | Generic gas price check failure                    |
+| `60010` | Configuration | Missing ELEPHANT_RPC_URL                           |
+| `60011` | Configuration | Missing GAS_PRICE_MAX_GWEI                         |
+| `60020` | RPC/Network   | Unable to retrieve gas price from RPC              |
+| `60021` | RPC/Network   | RPC connection error (`ECONNREFUSED`, `ETIMEDOUT`) |
+| `60022` | RPC/Network   | RPC timeout                                        |
+| `60030` | Gas Price     | Gas price exceeded threshold after max wait time   |
+
+> **Note**: GasPriceCheck errors are classified using pattern matching against the error message. The Lambda sends the error code via `sendTaskFailure`, and the Step Function extracts it for EventBridge events. See `workflow/lambdas/gas-price-checker/index.mjs` for full mapping.
+
+> **Note**: The gas price checker retries for a maximum of 10 minutes (configurable via `GAS_PRICE_MAX_WAIT_MINUTES` env var) before failing with error code `60030`. The retry interval is configurable via `GAS_PRICE_WAIT_MINUTES` (default 2 minutes).
+
 #### Submit Error Codes (`60xxx` - Blockchain Submit)
 
 | Code    | Category            | Description                                        |
 | ------- | ------------------- | -------------------------------------------------- |
-| `60001` | GasPriceCheck       | Gas price check step failure                       |
+| `60001` | GasPriceCheck       | Generic gas price check failure                    |
+| `60010` | GasPriceCheck       | Missing ELEPHANT_RPC_URL                           |
+| `60011` | GasPriceCheck       | Missing GAS_PRICE_MAX_GWEI                         |
+| `60020` | GasPriceCheck       | Unable to retrieve gas price from RPC              |
+| `60021` | GasPriceCheck       | RPC connection error                               |
+| `60022` | GasPriceCheck       | RPC timeout                                        |
+| `60030` | GasPriceCheck       | Gas price too high after max wait time             |
 | `60101` | Message Parsing     | Missing SQS record body                            |
 | `60102` | Message Parsing     | Invalid message body format (not JSON array)       |
 | `60103` | Message Parsing     | Empty transaction items array                      |
