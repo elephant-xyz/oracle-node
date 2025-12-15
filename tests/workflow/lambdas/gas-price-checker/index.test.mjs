@@ -17,16 +17,11 @@ const eventBridgeMock = mockClient(EventBridgeClient);
 const mockSendTaskSuccess = vi.fn().mockResolvedValue(undefined);
 const mockSendTaskFailure = vi.fn().mockResolvedValue(undefined);
 const mockEmitWorkflowEvent = vi.fn().mockResolvedValue(undefined);
-const mockCreateWorkflowError = vi.fn((code, details) => ({
-  code,
-  ...(details && { details }),
-}));
 const mockCreateLogger = vi.fn(() => vi.fn());
 vi.mock("shared", () => ({
   sendTaskSuccess: mockSendTaskSuccess,
   sendTaskFailure: mockSendTaskFailure,
   emitWorkflowEvent: mockEmitWorkflowEvent,
-  createWorkflowError: mockCreateWorkflowError,
   createLogger: mockCreateLogger,
 }));
 
@@ -46,7 +41,6 @@ describe("gas-price-checker handler", () => {
     mockSendTaskSuccess.mockClear();
     mockSendTaskFailure.mockClear();
     mockEmitWorkflowEvent.mockClear();
-    mockCreateWorkflowError.mockClear();
     mockCreateLogger.mockClear();
 
     process.env = {
@@ -212,7 +206,7 @@ describe("gas-price-checker handler", () => {
       vi.useRealTimers();
     });
 
-    it("should emit SUCCEEDED event on successful check", async () => {
+    it("should only emit IN_PROGRESS event (SUCCEEDED emitted by step function)", async () => {
       mockCheckGasPrice.mockResolvedValue({
         eip1559: { maxFeePerGas: "20000000000" },
         legacy: { gasPrice: "20000000000" },
@@ -225,10 +219,11 @@ describe("gas-price-checker handler", () => {
 
       await handler(event);
 
-      expect(mockEmitWorkflowEvent).toHaveBeenCalledTimes(2);
+      // Lambda should only emit IN_PROGRESS, SUCCEEDED is emitted by step function
+      expect(mockEmitWorkflowEvent).toHaveBeenCalledTimes(1);
       expect(mockEmitWorkflowEvent).toHaveBeenCalledWith(
         expect.objectContaining({
-          status: "SUCCEEDED",
+          status: "IN_PROGRESS",
           phase: "GasPriceCheck",
           step: "CheckGasPrice",
         }),
@@ -289,7 +284,7 @@ describe("gas-price-checker handler", () => {
       expect(inProgressCalls).toHaveLength(3);
     });
 
-    it("should emit SUCCEEDED events for all messages", async () => {
+    it("should not emit SUCCEEDED events (emitted by step function)", async () => {
       mockCheckGasPrice.mockResolvedValue({
         eip1559: { maxFeePerGas: "20000000000" },
         legacy: { gasPrice: "20000000000" },
@@ -302,11 +297,17 @@ describe("gas-price-checker handler", () => {
 
       await handler(event);
 
-      // SUCCEEDED events should be emitted for all 3 messages
+      // Lambda should NOT emit SUCCEEDED events - step function handles those
       const succeededCalls = mockEmitWorkflowEvent.mock.calls.filter(
         (call) => call[0].status === "SUCCEEDED",
       );
-      expect(succeededCalls).toHaveLength(3);
+      expect(succeededCalls).toHaveLength(0);
+
+      // Only IN_PROGRESS events should be emitted (one per message)
+      const inProgressCalls = mockEmitWorkflowEvent.mock.calls.filter(
+        (call) => call[0].status === "IN_PROGRESS",
+      );
+      expect(inProgressCalls).toHaveLength(3);
     });
 
     it("should handle large batches (100 messages)", async () => {
@@ -618,10 +619,9 @@ describe("gas-price-checker handler", () => {
       );
     });
 
-    it("should still send task success even if emitWorkflowEvent fails for SUCCEEDED", async () => {
-      mockEmitWorkflowEvent
-        .mockResolvedValueOnce(undefined)
-        .mockRejectedValueOnce(new Error("EventBridge failure"));
+    it("should send task success regardless of IN_PROGRESS emission (SUCCEEDED emitted by step function)", async () => {
+      // Only IN_PROGRESS is emitted by lambda now, so only one call expected
+      mockEmitWorkflowEvent.mockResolvedValue(undefined);
 
       mockCheckGasPrice.mockResolvedValue({
         eip1559: { maxFeePerGas: "20000000000" },
@@ -635,7 +635,13 @@ describe("gas-price-checker handler", () => {
 
       await handler(event);
 
-      expect(mockEmitWorkflowEvent).toHaveBeenCalledTimes(2);
+      // Lambda only emits IN_PROGRESS now (SUCCEEDED emitted by step function)
+      expect(mockEmitWorkflowEvent).toHaveBeenCalledTimes(1);
+      expect(mockEmitWorkflowEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: "IN_PROGRESS",
+        }),
+      );
       expect(mockSendTaskSuccess).toHaveBeenCalledWith(
         expect.objectContaining({
           taskToken: "task-token-succeeded-eventbridge-fail",

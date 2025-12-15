@@ -7,7 +7,6 @@
 import { checkGasPrice } from "@elephant-xyz/cli/lib";
 import {
   emitWorkflowEvent,
-  createWorkflowError,
   createLogger,
   sendTaskSuccess,
   sendTaskFailure,
@@ -425,34 +424,8 @@ export const handler = async (event) => {
       messageCount: parsedMessages.length,
     });
 
-    for (const msg of parsedMessages) {
-      if (msg.taskToken && msg.executionArn) {
-        const log = createLogger({
-          component: "gas-price-checker",
-          at: new Date().toISOString(),
-          county: msg.county,
-          executionId: msg.executionArn,
-        });
-        try {
-          await emitWorkflowEvent({
-            executionId: msg.executionArn,
-            county: msg.county,
-            dataGroupLabel: msg.dataGroupLabel,
-            status: "SUCCEEDED",
-            phase: "GasPriceCheck",
-            step: "CheckGasPrice",
-            taskToken: msg.taskToken,
-            errors: [],
-            log,
-          });
-        } catch (eventErr) {
-          log("warn", "failed_to_emit_succeeded_event", {
-            error:
-              eventErr instanceof Error ? eventErr.message : String(eventErr),
-          });
-        }
-      }
-    }
+    // Note: SUCCEEDED event is emitted by step function (EmitGasPriceCheckSucceeded)
+    // Lambda only emits IN_PROGRESS, step function handles SCHEDULED/SUCCEEDED/FAILED
 
     const failedToSendIds = await sendSuccessToAllMessages(
       parsedMessages,
@@ -486,39 +459,8 @@ export const handler = async (event) => {
       messageCount: parsedMessages.length,
     });
 
-    for (const msg of parsedMessages) {
-      if (msg.taskToken && msg.executionArn) {
-        const log = createLogger({
-          component: "gas-price-checker",
-          at: new Date().toISOString(),
-          county: msg.county,
-          executionId: msg.executionArn,
-        });
-        try {
-          await emitWorkflowEvent({
-            executionId: msg.executionArn,
-            county: msg.county,
-            dataGroupLabel: msg.dataGroupLabel,
-            status: "FAILED",
-            phase: "GasPriceCheck",
-            step: "CheckGasPrice",
-            taskToken: msg.taskToken,
-            errors: [
-              createWorkflowError("60001", {
-                error: errMessage,
-                cause: errCause,
-              }),
-            ],
-            log,
-          });
-        } catch (eventErr) {
-          log("warn", "failed_to_emit_failed_event", {
-            error:
-              eventErr instanceof Error ? eventErr.message : String(eventErr),
-          });
-        }
-      }
-    }
+    // Note: FAILED event is emitted by step function (EmitGasPriceCheckFailed/WaitForGasPriceCheckResolution)
+    // Lambda only emits IN_PROGRESS, step function handles SCHEDULED/SUCCEEDED/FAILED
 
     const failedToSendIds = await sendFailureToAllMessages(
       parsedMessages,
