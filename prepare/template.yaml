@@ -410,7 +410,7 @@ Resources:
       SqsManagedSseEnabled: true
       RedrivePolicy:
         deadLetterTargetArn: !GetAtt GasPriceCheckerDeadLetterQueue.Arn
-        maxReceiveCount: 3
+        maxReceiveCount: 1
       Tags:
         - Key: Environment
           Value: !Ref EnvironmentName
@@ -685,8 +685,8 @@ Resources:
           Type: SQS
           Properties:
             Queue: !GetAtt GasPriceCheckerSqsQueue.Arn
-            BatchSize: 1
-            MaximumBatchingWindowInSeconds: 0
+            BatchSize: 100
+            MaximumBatchingWindowInSeconds: 30
             ScalingConfig:
               MaximumConcurrency: 2
 
@@ -738,7 +738,7 @@ Resources:
             BatchSize: 1
             MaximumBatchingWindowInSeconds: 0
             ScalingConfig:
-              MaximumConcurrency: 2 # Same as submitter function
+              MaximumConcurrency: 2
 
   SubmitterFunction:
     Type: AWS::Serverless::Function

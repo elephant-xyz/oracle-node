@@ -892,8 +892,10 @@ States:
     Next: EmitGasPriceCheckSucceeded
     Retry:
       - ErrorEquals:
-          - States.TaskFailed
-          - States.Timeout
+          - Sqs.RequestThrottledException
+          - Sqs.ThrottlingException
+          - Sqs.ServiceUnavailableException
+          - Sqs.InternalFailureException
         IntervalSeconds: 2
         MaxAttempts: 2
         BackoffRate: 2
@@ -927,56 +929,58 @@ States:
   EmitGasPriceCheckFailed:
     Type: Task
     Resource: arn:aws:states:::events:putEvents
-    Comment: "Emit FAILED event for Gas Price Check step"
-    Parameters:
+    QueryLanguage: JSONata
+    Comment: "Emit FAILED event for Gas Price Check step with error code from lambda"
+    Arguments:
       Entries:
         - Source: elephant.workflow
           DetailType: WorkflowEvent
           Detail:
-            executionId.$: $$.Execution.Name
-            county.$: $.pre.county_name
+            executionId: "{% $states.context.Execution.Name %}"
+            county: "{% $states.input.pre.county_name %}"
             status: FAILED
             phase: GasPriceCheck
             step: CheckGasPrice
             dataGroupLabel: County
             errors:
-              - code: "60001"
+              - code: "{% $states.input.gasPriceError.Error %}"
                 details:
-                  error.$: States.JsonToString($.gasPriceError)
-    ResultPath: $.eventResult
+                  cause: "{% $states.input.gasPriceError.Cause %}"
+    Output: "{% $merge([$states.input, { 'eventResult': $states.result }]) %}"
     Next: WaitForGasPriceCheckResolution
     Catch:
       - ErrorEquals: [States.ALL]
-        ResultPath: $.eventError
+        Output: "{% $merge([$states.input, { 'eventError': $states.errorOutput }]) %}"
         Next: WaitForGasPriceCheckResolution
 
   WaitForGasPriceCheckResolution:
     Type: Task
     Resource: arn:aws:states:::events:putEvents.waitForTaskToken
+    QueryLanguage: JSONata
     Comment: "Emit FAILED event and wait for external resolution - retry target is CheckGasPrice"
     HeartbeatSeconds: 2592000 # 30 days
-    Parameters:
+    Arguments:
       Entries:
         - Source: elephant.workflow
           DetailType: WorkflowEvent
           Detail:
-            executionId.$: $$.Execution.Name
-            county.$: $.pre.county_name
+            executionId: "{% $states.context.Execution.Name %}"
+            county: "{% $states.input.pre.county_name %}"
             status: FAILED
             phase: GasPriceCheck
             step: CheckGasPrice
             dataGroupLabel: County
-            taskToken.$: $$.Task.Token
+            taskToken: "{% $states.context.Task.Token %}"
             errors:
-              - code: "60001"
+              - code: "{% $states.input.gasPriceError.Error %}"
                 details:
-                  error.$: States.JsonToString($.gasPriceError)
-    ResultPath: $.resolutionResult
+                  cause: "{% $states.input.gasPriceError.Cause %}"
+    Output: "{% $merge([$states.input, { 'resolutionResult': $states.result }]) %}"
     Next: CheckGasPrice
     Catch:
       - ErrorEquals: [States.ALL]
         Comment: "Resolution failed - stay parked and wait again"
-        ResultPath: $.gasPriceError
+        Output: "{% $merge([$states.input, { 'gasPriceError': $states.errorOutput }]) %}"
         Next: WaitForGasPriceCheckResolution
 
   # === SUBMIT TO BLOCKCHAIN STEP ===
