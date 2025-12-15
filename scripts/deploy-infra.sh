@@ -68,6 +68,7 @@ WORKFLOW_DIRECT_SUBMIT_UPLOAD_PENDING=0
 WORKFLOW_EVENTS_STACK_NAME="${WORKFLOW_EVENTS_STACK_NAME:-workflow-events-stack}"
 WORKFLOW_EVENTS_TEMPLATE="workflow-events/template.yaml"
 DEPLOY_WORKFLOW_EVENTS="${DEPLOY_WORKFLOW_EVENTS:-true}"
+NO_BUILD="${NO_BUILD:-false}"
 
 mkdir -p "$BUILD_DIR"
 
@@ -427,51 +428,61 @@ package_and_upload_codebuild_runtime() {
   mkdir -p "$dist_dir"
 
   local archive_path="${dist_dir}/${CODEBUILD_RUNTIME_ARCHIVE_NAME}"
-  rm -f "$archive_path"
 
-  info "Installing CodeBuild runtime module production dependencies"
-  (
-    cd "$CODEBUILD_RUNTIME_MODULE_DIR"
-    npm ci --omit=dev >/dev/null
-  ) || {
-    err "Failed to install CodeBuild runtime module dependencies."
-    exit 1
-  }
+  if [[ "$NO_BUILD" != "true" ]]; then
+    rm -f "$archive_path"
 
-  # Create temporary directory to package both runtime-module and shared
-  local temp_package_dir
-  temp_package_dir=$(mktemp -d)
-  trap "rm -rf '$temp_package_dir'" EXIT
+    info "Installing CodeBuild runtime module production dependencies"
+    (
+      cd "$CODEBUILD_RUNTIME_MODULE_DIR"
+      npm ci --omit=dev >/dev/null
+    ) || {
+      err "Failed to install CodeBuild runtime module dependencies."
+      exit 1
+    }
 
-  # Get project root (parent of scripts directory)
-  local project_root
-  project_root="$(cd "$SCRIPT_DIR/.." && pwd)"
-  
-  info "Copying runtime-module files..."
-  cp -r "${project_root}/${CODEBUILD_RUNTIME_MODULE_DIR}"/* "$temp_package_dir/"
+    # Create temporary directory to package both runtime-module and shared
+    local temp_package_dir
+    temp_package_dir=$(mktemp -d)
+    trap "rm -rf '$temp_package_dir'" EXIT
 
-  # Copy shared directory if it exists
-  local shared_dir="${project_root}/codebuild/shared"
-  if [[ -d "$shared_dir" ]]; then
-    info "Including shared directory in package..."
-    # Remove existing shared file/directory if it exists (from runtime-module copy)
-    rm -rf "$temp_package_dir/shared"
-    mkdir -p "$temp_package_dir/shared"
-    cp -r "$shared_dir"/* "$temp_package_dir/shared/"
-  else
-    warn "Shared directory ($shared_dir) not found. Runtime module may fail if it imports from shared."
-  fi
+    # Get project root (parent of scripts directory)
+    local project_root
+    project_root="$(cd "$SCRIPT_DIR/.." && pwd)"
+    
+    info "Copying runtime-module files..."
+    cp -r "${project_root}/${CODEBUILD_RUNTIME_MODULE_DIR}"/* "$temp_package_dir/"
 
-  (
-    cd "$temp_package_dir"
-    zip -r "${project_root}/${dist_dir}/${CODEBUILD_RUNTIME_ARCHIVE_NAME}" . >/dev/null
-  ) || {
-    err "Failed to package CodeBuild runtime module."
+    # Copy shared directory if it exists
+    local shared_dir="${project_root}/codebuild/shared"
+    if [[ -d "$shared_dir" ]]; then
+      info "Including shared directory in package..."
+      # Remove existing shared file/directory if it exists (from runtime-module copy)
+      rm -rf "$temp_package_dir/shared"
+      mkdir -p "$temp_package_dir/shared"
+      cp -r "$shared_dir"/* "$temp_package_dir/shared/"
+    else
+      warn "Shared directory ($shared_dir) not found. Runtime module may fail if it imports from shared."
+    fi
+
+    (
+      cd "$temp_package_dir"
+      zip -r "${project_root}/${dist_dir}/${CODEBUILD_RUNTIME_ARCHIVE_NAME}" . >/dev/null
+    ) || {
+      err "Failed to package CodeBuild runtime module."
+      rm -rf "$temp_package_dir"
+      exit 1
+    }
+    
     rm -rf "$temp_package_dir"
-    exit 1
-  }
-  
-  rm -rf "$temp_package_dir"
+  else
+    info "Skipping CodeBuild runtime module packaging (--no-build flag set)"
+    if [[ ! -f "$archive_path" ]]; then
+      err "Pre-built archive not found at $archive_path"
+      err "Run without --no-build flag first to create the build artifacts"
+      exit 1
+    fi
+  fi
 
   local s3_key
   if [[ -n "$prefix" ]]; then
@@ -484,7 +495,6 @@ package_and_upload_codebuild_runtime() {
     err "Failed to upload CodeBuild runtime module to s3://${bucket}/${s3_key}"
     exit 1
   }
-  rm -rf "$dist_dir"
 
   CODEBUILD_RUNTIME_UPLOAD_PENDING=0
   info "Uploaded CodeBuild runtime module to s3://${bucket}/${s3_key}"
@@ -513,25 +523,35 @@ package_and_upload_redrive_auto_repair() {
   mkdir -p "$dist_dir"
 
   local archive_path="${dist_dir}/${REDRIVE_AUTO_REPAIR_ARCHIVE_NAME}"
-  rm -f "$archive_path"
 
-  info "Installing redrive auto repair module production dependencies"
-  (
-    cd "$REDRIVE_AUTO_REPAIR_MODULE_DIR"
-    npm ci --omit=dev >/dev/null
-  ) || {
-    err "Failed to install redrive auto repair module dependencies."
-    exit 1
-  }
+  if [[ "$NO_BUILD" != "true" ]]; then
+    rm -f "$archive_path"
 
-  info "Packaging redrive auto repair module"
-  (
-    cd "$REDRIVE_AUTO_REPAIR_MODULE_DIR"
-    zip -r "../dist/${REDRIVE_AUTO_REPAIR_ARCHIVE_NAME}" . >/dev/null
-  ) || {
-    err "Failed to package redrive auto repair module."
-    exit 1
-  }
+    info "Installing redrive auto repair module production dependencies"
+    (
+      cd "$REDRIVE_AUTO_REPAIR_MODULE_DIR"
+      npm ci --omit=dev >/dev/null
+    ) || {
+      err "Failed to install redrive auto repair module dependencies."
+      exit 1
+    }
+
+    info "Packaging redrive auto repair module"
+    (
+      cd "$REDRIVE_AUTO_REPAIR_MODULE_DIR"
+      zip -r "../dist/${REDRIVE_AUTO_REPAIR_ARCHIVE_NAME}" . >/dev/null
+    ) || {
+      err "Failed to package redrive auto repair module."
+      exit 1
+    }
+  else
+    info "Skipping redrive auto repair module packaging (--no-build flag set)"
+    if [[ ! -f "$archive_path" ]]; then
+      err "Pre-built archive not found at $archive_path"
+      err "Run without --no-build flag first to create the build artifacts"
+      exit 1
+    fi
+  fi
 
   local s3_key
   if [[ -n "$prefix" ]]; then
@@ -572,25 +592,35 @@ package_and_upload_gs3_migration() {
   mkdir -p "$dist_dir"
 
   local archive_path="${dist_dir}/${GS3_MIGRATION_ARCHIVE_NAME}"
-  rm -f "$archive_path"
 
-  info "Installing GS3 migration module production dependencies"
-  (
-    cd "$GS3_MIGRATION_MODULE_DIR"
-    npm ci --omit=dev >/dev/null
-  ) || {
-    err "Failed to install GS3 migration module dependencies."
-    exit 1
-  }
+  if [[ "$NO_BUILD" != "true" ]]; then
+    rm -f "$archive_path"
 
-  info "Packaging GS3 migration module"
-  (
-    cd "$GS3_MIGRATION_MODULE_DIR"
-    zip -r "../dist/${GS3_MIGRATION_ARCHIVE_NAME}" . >/dev/null
-  ) || {
-    err "Failed to package GS3 migration module."
-    exit 1
-  }
+    info "Installing GS3 migration module production dependencies"
+    (
+      cd "$GS3_MIGRATION_MODULE_DIR"
+      npm ci --omit=dev >/dev/null
+    ) || {
+      err "Failed to install GS3 migration module dependencies."
+      exit 1
+    }
+
+    info "Packaging GS3 migration module"
+    (
+      cd "$GS3_MIGRATION_MODULE_DIR"
+      zip -r "../dist/${GS3_MIGRATION_ARCHIVE_NAME}" . >/dev/null
+    ) || {
+      err "Failed to package GS3 migration module."
+      exit 1
+    }
+  else
+    info "Skipping GS3 migration module packaging (--no-build flag set)"
+    if [[ ! -f "$archive_path" ]]; then
+      err "Pre-built archive not found at $archive_path"
+      err "Run without --no-build flag first to create the build artifacts"
+      exit 1
+    fi
+  fi
 
   local s3_key
   if [[ -n "$prefix" ]]; then
@@ -631,25 +661,35 @@ package_and_upload_orphaned_executions_cleanup() {
   mkdir -p "$dist_dir"
 
   local archive_path="${dist_dir}/${ORPHANED_EXECUTIONS_CLEANUP_ARCHIVE_NAME}"
-  rm -f "$archive_path"
 
-  info "Installing orphaned executions cleanup module production dependencies"
-  (
-    cd "$ORPHANED_EXECUTIONS_CLEANUP_MODULE_DIR"
-    npm ci --omit=dev >/dev/null
-  ) || {
-    err "Failed to install orphaned executions cleanup module dependencies."
-    exit 1
-  }
+  if [[ "$NO_BUILD" != "true" ]]; then
+    rm -f "$archive_path"
 
-  info "Packaging orphaned executions cleanup module"
-  (
-    cd "$ORPHANED_EXECUTIONS_CLEANUP_MODULE_DIR"
-    zip -r "../dist/${ORPHANED_EXECUTIONS_CLEANUP_ARCHIVE_NAME}" . >/dev/null
-  ) || {
-    err "Failed to package orphaned executions cleanup module."
-    exit 1
-  }
+    info "Installing orphaned executions cleanup module production dependencies"
+    (
+      cd "$ORPHANED_EXECUTIONS_CLEANUP_MODULE_DIR"
+      npm ci --omit=dev >/dev/null
+    ) || {
+      err "Failed to install orphaned executions cleanup module dependencies."
+      exit 1
+    }
+
+    info "Packaging orphaned executions cleanup module"
+    (
+      cd "$ORPHANED_EXECUTIONS_CLEANUP_MODULE_DIR"
+      zip -r "../dist/${ORPHANED_EXECUTIONS_CLEANUP_ARCHIVE_NAME}" . >/dev/null
+    ) || {
+      err "Failed to package orphaned executions cleanup module."
+      exit 1
+    }
+  else
+    info "Skipping orphaned executions cleanup module packaging (--no-build flag set)"
+    if [[ ! -f "$archive_path" ]]; then
+      err "Pre-built archive not found at $archive_path"
+      err "Run without --no-build flag first to create the build artifacts"
+      exit 1
+    fi
+  fi
 
   local s3_key
   if [[ -n "$prefix" ]]; then
@@ -690,25 +730,35 @@ package_and_upload_workflow_direct_submit() {
   mkdir -p "$dist_dir"
 
   local archive_path="${dist_dir}/${WORKFLOW_DIRECT_SUBMIT_ARCHIVE_NAME}"
-  rm -f "$archive_path"
 
-  info "Installing workflow direct submit module production dependencies"
-  (
-    cd "$WORKFLOW_DIRECT_SUBMIT_MODULE_DIR"
-    npm ci --omit=dev >/dev/null
-  ) || {
-    err "Failed to install workflow direct submit module dependencies."
-    exit 1
-  }
+  if [[ "$NO_BUILD" != "true" ]]; then
+    rm -f "$archive_path"
 
-  info "Packaging workflow direct submit module"
-  (
-    cd "$WORKFLOW_DIRECT_SUBMIT_MODULE_DIR"
-    zip -r "../dist/${WORKFLOW_DIRECT_SUBMIT_ARCHIVE_NAME}" . >/dev/null
-  ) || {
-    err "Failed to package workflow direct submit module."
-    exit 1
-  }
+    info "Installing workflow direct submit module production dependencies"
+    (
+      cd "$WORKFLOW_DIRECT_SUBMIT_MODULE_DIR"
+      npm ci --omit=dev >/dev/null
+    ) || {
+      err "Failed to install workflow direct submit module dependencies."
+      exit 1
+    }
+
+    info "Packaging workflow direct submit module"
+    (
+      cd "$WORKFLOW_DIRECT_SUBMIT_MODULE_DIR"
+      zip -r "../dist/${WORKFLOW_DIRECT_SUBMIT_ARCHIVE_NAME}" . >/dev/null
+    ) || {
+      err "Failed to package workflow direct submit module."
+      exit 1
+    }
+  else
+    info "Skipping workflow direct submit module packaging (--no-build flag set)"
+    if [[ ! -f "$archive_path" ]]; then
+      err "Pre-built archive not found at $archive_path"
+      err "Run without --no-build flag first to create the build artifacts"
+      exit 1
+    fi
+  fi
 
   local s3_key
   if [[ -n "$prefix" ]]; then
@@ -939,13 +989,23 @@ deploy_workflow_events_stack() {
   info "Building and deploying workflow-events stack ($WORKFLOW_EVENTS_STACK_NAME)"
 
   # Build the workflow-events stack with beta features for TypeScript support
-  sam build \
-    --template-file "$WORKFLOW_EVENTS_TEMPLATE" \
-    --beta-features \
-    --build-dir ".aws-sam/workflow-events" || {
-    err "Failed to build workflow-events stack"
-    return 1
-  }
+  if [[ "$NO_BUILD" != "true" ]]; then
+    sam build \
+      --template-file "$WORKFLOW_EVENTS_TEMPLATE" \
+      --beta-features \
+      --build-dir ".aws-sam/workflow-events" || {
+      err "Failed to build workflow-events stack"
+      return 1
+    }
+  else
+    info "Skipping workflow-events build (--no-build flag set)"
+    # Verify pre-built template exists
+    if [[ ! -f ".aws-sam/workflow-events/template.yaml" ]]; then
+      err "Pre-built workflow-events template not found at .aws-sam/workflow-events/template.yaml"
+      err "Run without --no-build flag first to create the build artifacts"
+      return 1
+    fi
+  fi
 
   # Deploy the workflow-events stack
   sam deploy \
@@ -1221,6 +1281,18 @@ cleanup_old_dashboards() {
 }
 
 main() {
+  # Parse command line arguments
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+      --no-build) NO_BUILD=true; shift ;;
+      *) shift ;;
+    esac
+  done
+
+  if [[ "$NO_BUILD" == "true" ]]; then
+    info "Running in no-build mode - using pre-built artifacts"
+  fi
+
   check_prereqs
   ensure_lambda_concurrency_quota
 
@@ -1276,7 +1348,17 @@ main() {
     fi
   fi
 
-  sam_build
+  if [[ "$NO_BUILD" != "true" ]]; then
+    sam_build
+  else
+    info "Skipping SAM build (--no-build flag set)"
+    # Verify pre-built template exists
+    if [[ ! -f "$BUILT_TEMPLATE" ]]; then
+      err "Pre-built SAM template not found at $BUILT_TEMPLATE"
+      err "Run without --no-build flag first to create the build artifacts"
+      exit 1
+    fi
+  fi
   sam_deploy
 
   # Handle pending scenarios after stack creation
