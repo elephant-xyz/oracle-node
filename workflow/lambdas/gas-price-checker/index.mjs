@@ -6,10 +6,11 @@
 
 import { checkGasPrice } from "@elephant-xyz/cli/lib";
 import {
-  executeWithTaskToken,
   emitWorkflowEvent,
   createWorkflowError,
   createLogger,
+  sendTaskSuccess,
+  sendTaskFailure,
 } from "shared";
 
 /**
@@ -19,14 +20,6 @@ import {
  * @property {number} [waitMinutes] - Minutes to wait before retry (default: 2)
  */
 
-/**
- * @typedef {Object} GasPriceCheckerOutput
- * @property {string} status - "success" or "error"
- * @property {number} currentGasPriceGwei - Current gas price in Gwei
- * @property {number} maxGasPriceGwei - Maximum allowed gas price in Gwei
- * @property {number} retries - Number of retries performed
- */
-
 const base = {
   component: "gas-price-checker",
   at: new Date().toISOString(),
@@ -34,6 +27,7 @@ const base = {
 
 /**
  * @typedef {Object} SqsRecord
+ * @property {string} messageId - SQS message ID for batch failure reporting
  * @property {string} body
  * @property {Object} [messageAttributes]
  * @property {Object} [messageAttributes.TaskToken]
@@ -42,6 +36,27 @@ const base = {
  * @property {string} [messageAttributes.ExecutionArn.stringValue]
  * @property {Object} [messageAttributes.County]
  * @property {string} [messageAttributes.County.stringValue]
+ * @property {Object} [messageAttributes.DataGroupLabel]
+ * @property {string} [messageAttributes.DataGroupLabel.stringValue]
+ */
+
+/**
+ * @typedef {Object} ParsedMessage
+ * @property {string} messageId - SQS message ID
+ * @property {string} [taskToken] - Step Functions task token
+ * @property {string} [executionArn] - Step Functions execution ARN
+ * @property {string} [county] - County name
+ * @property {string} [dataGroupLabel] - Data group label
+ */
+
+/**
+ * @typedef {Object} GasPriceCheckerOutput
+ * @property {string} status - "success" or "error"
+ * @property {number} currentGasPriceGwei - Current gas price in Gwei
+ * @property {number} maxGasPriceGwei - Maximum allowed gas price in Gwei
+ * @property {number} retries - Number of retries performed
+ * @property {number} [batchedMessageCount] - Number of messages in batch
+ * @property {Array<{itemIdentifier: string}>} [batchItemFailures] - Failed message IDs for partial batch response
  */
 
 /**
@@ -51,6 +66,108 @@ const base = {
  */
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Parse and validate an SQS record, extracting task token and metadata
+ * @param {SqsRecord} record - SQS record to parse
+ * @returns {ParsedMessage}
+ */
+function parseRecord(record) {
+  const messageId = record.messageId;
+  const taskToken = record.messageAttributes?.TaskToken?.stringValue;
+  const executionArn = record.messageAttributes?.ExecutionArn?.stringValue;
+  const county = record.messageAttributes?.County?.stringValue || "unknown";
+  const dataGroupLabel =
+    record.messageAttributes?.DataGroupLabel?.stringValue || "County";
+
+  return {
+    messageId,
+    taskToken,
+    executionArn,
+    county,
+    dataGroupLabel,
+  };
+}
+
+/**
+ * Send task success for all successfully processed messages
+ * @param {ParsedMessage[]} messages - Successfully processed messages
+ * @param {Object} result - Gas price check result to send
+ * @returns {Promise<string[]>} Array of message IDs that failed to send task success
+ */
+async function sendSuccessToAllMessages(messages, result) {
+  /** @type {string[]} */
+  const failedMessageIds = [];
+
+  const successPromises = messages.map(async (msg) => {
+    if (msg.taskToken && msg.executionArn) {
+      const log = createLogger({
+        component: "gas-price-checker",
+        at: new Date().toISOString(),
+        county: msg.county,
+        executionId: msg.executionArn,
+      });
+
+      try {
+        await sendTaskSuccess({
+          taskToken: msg.taskToken,
+          output: result,
+        });
+        log("info", "task_success_sent", {});
+      } catch (sendError) {
+        log("error", "failed_to_send_task_success", {
+          error:
+            sendError instanceof Error ? sendError.message : String(sendError),
+        });
+        failedMessageIds.push(msg.messageId);
+      }
+    }
+  });
+
+  await Promise.all(successPromises);
+  return failedMessageIds;
+}
+
+/**
+ * Send task failure for all messages due to gas price check error
+ * @param {ParsedMessage[]} messages - Messages to send failure for
+ * @param {string} errorMessage - Error message
+ * @param {string} [errorCause] - Error cause/stack trace
+ * @returns {Promise<string[]>} Array of message IDs that failed to send task failure
+ */
+async function sendFailureToAllMessages(messages, errorMessage, errorCause) {
+  /** @type {string[]} */
+  const failedMessageIds = [];
+
+  const failurePromises = messages.map(async (msg) => {
+    if (msg.taskToken && msg.executionArn) {
+      const log = createLogger({
+        component: "gas-price-checker",
+        at: new Date().toISOString(),
+        county: msg.county,
+        executionId: msg.executionArn,
+      });
+
+      try {
+        await sendTaskFailure({
+          taskToken: msg.taskToken,
+          error: "GasPriceCheckError",
+          cause: errorCause || errorMessage,
+        });
+        log("info", "task_failure_sent", {});
+      } catch (sendError) {
+        log("error", "failed_to_send_task_failure", {
+          error:
+            sendError instanceof Error ? sendError.message : String(sendError),
+        });
+        failedMessageIds.push(msg.messageId);
+      }
+    }
+  });
+
+  await Promise.all(failurePromises);
+  return failedMessageIds;
 }
 
 /**
@@ -169,71 +286,68 @@ async function checkAndWaitForGasPrice(input) {
 }
 
 /**
- * Lambda handler - supports both SQS events (with task token) and direct invocation
- * @param {GasPriceCheckerInput | { Records?: SqsRecord[] }} event
- * @returns {Promise<GasPriceCheckerOutput | void>}
+ * Lambda handler - supports batch processing of SQS events with Step Function Task Tokens
+ * Processes up to 100 messages, checks gas price once, and sends callback to all task tokens.
+ * All task tokens receive the same gas price check result via sendTaskSuccess/sendTaskFailure.
+ *
+ * @param {{ Records?: SqsRecord[] }} event - SQS event with up to 100 records
+ * @returns {Promise<GasPriceCheckerOutput>}
  */
 export const handler = async (event) => {
-  // Check if invoked from SQS (has Records array)
-  const isSqsInvocation = !!event.Records && Array.isArray(event.Records);
+  if (!event.Records || event.Records.length === 0) {
+    throw new Error("Missing SQS Records");
+  }
 
-  let taskToken;
-  let executionArn;
-  let county;
-  let dataGroupLabel = "County"; // Default for Submit phase
+  const recordCount = event.Records.length;
+  console.log({
+    ...base,
+    level: "info",
+    msg: "batch_processing_start",
+    recordCount,
+  });
 
-  if (isSqsInvocation) {
-    // Invoked from SQS (with task token in message attributes for Step Function callback)
-    if (!event.Records || event.Records.length === 0) {
-      throw new Error("Missing SQS Records");
-    }
+  /** @type {ParsedMessage[]} */
+  const parsedMessages = [];
+  /** @type {Array<{itemIdentifier: string}>} */
+  const batchItemFailures = [];
 
-    const record = event.Records[0];
+  for (const record of event.Records) {
+    parsedMessages.push(parseRecord(record));
+  }
 
-    // Extract task token from message attributes if present (Step Function mode)
-    if (record.messageAttributes?.TaskToken?.stringValue) {
-      taskToken = record.messageAttributes.TaskToken.stringValue;
-      executionArn = record.messageAttributes.ExecutionArn?.stringValue;
-      county = record.messageAttributes.County?.stringValue;
-      // @ts-ignore - DataGroupLabel is added in state machine but not in type definition
-      dataGroupLabel =
-        record.messageAttributes?.DataGroupLabel?.stringValue || "County";
-      console.log({
-        ...base,
-        level: "info",
-        msg: "invoked_from_sqs_with_task_token",
-        executionArn: executionArn,
-        county: county,
-        hasTaskToken: !!taskToken,
+  console.log({
+    ...base,
+    level: "info",
+    msg: "batch_parsing_complete",
+    messageCount: parsedMessages.length,
+    counties: parsedMessages.map((m) => m.county).join(", "),
+  });
+
+  for (const msg of parsedMessages) {
+    if (msg.taskToken && msg.executionArn) {
+      const log = createLogger({
+        component: "gas-price-checker",
+        at: new Date().toISOString(),
+        county: msg.county,
+        executionId: msg.executionArn,
       });
-
-      // Emit IN_PROGRESS event to EventBridge when task token is received (non-blocking)
-      if (taskToken && executionArn) {
-        const log = createLogger({
-          component: "gas-price-checker",
-          at: new Date().toISOString(),
-          county: county || "unknown",
-          executionId: executionArn,
+      try {
+        await emitWorkflowEvent({
+          executionId: msg.executionArn,
+          county: msg.county,
+          dataGroupLabel: msg.dataGroupLabel,
+          status: "IN_PROGRESS",
+          phase: "GasPriceCheck",
+          step: "CheckGasPrice",
+          taskToken: msg.taskToken,
+          errors: [],
+          log,
         });
-        try {
-          await emitWorkflowEvent({
-            executionId: executionArn,
-            county: county || "unknown",
-            dataGroupLabel: dataGroupLabel,
-            status: "IN_PROGRESS",
-            phase: "GasPriceCheck",
-            step: "CheckGasPrice",
-            taskToken: taskToken,
-            errors: [],
-            log,
-          });
-        } catch (eventErr) {
-          log("warn", "failed_to_emit_in_progress_event", {
-            error:
-              eventErr instanceof Error ? eventErr.message : String(eventErr),
-          });
-          // Continue processing even if EventBridge emission fails
-        }
+      } catch (eventErr) {
+        log("warn", "failed_to_emit_in_progress_event", {
+          error:
+            eventErr instanceof Error ? eventErr.message : String(eventErr),
+        });
       }
     }
   }
@@ -245,68 +359,52 @@ export const handler = async (event) => {
 
     if (!rpcUrl) {
       const error = "RPC URL is required (ELEPHANT_RPC_URL env var)";
-      if (taskToken && executionArn) {
-        const errorLog = createLogger({
-          component: "gas-price-checker",
-          at: new Date().toISOString(),
-          county: county || "unknown",
-          executionId: executionArn,
-        });
-        await emitWorkflowEvent({
-          executionId: executionArn,
-          county: county || "unknown",
-          dataGroupLabel: dataGroupLabel,
-          status: "FAILED",
-          phase: "GasPriceCheck",
-          step: "CheckGasPrice",
-          taskToken: taskToken,
-          errors: [createWorkflowError("60001", { error })],
-          log: errorLog,
-        });
-        await executeWithTaskToken({
-          taskToken,
-          log: errorLog,
-          workerFn: async () => {
-            throw new Error(error);
-          },
-        });
-        // Don't throw after sending failure callback - let SQS know Lambda completed
-        return;
+      console.error({
+        ...base,
+        level: "error",
+        msg: "config_validation_failed",
+        error,
+      });
+      const failedToSendIds = await sendFailureToAllMessages(
+        parsedMessages,
+        error,
+      );
+      for (const messageId of failedToSendIds) {
+        batchItemFailures.push({ itemIdentifier: messageId });
       }
-      throw new Error(error);
+      for (const msg of parsedMessages) {
+        if (!msg.taskToken) {
+          batchItemFailures.push({ itemIdentifier: msg.messageId });
+        }
+      }
+      return batchItemFailures.length > 0
+        ? { status: "failed", batchItemFailures }
+        : { status: "failed" };
     }
 
     if (!maxGasPriceGwei || maxGasPriceGwei <= 0) {
       const error = "maxGasPriceGwei is required (GAS_PRICE_MAX_GWEI env var)";
-      if (taskToken && executionArn) {
-        const errorLog = createLogger({
-          component: "gas-price-checker",
-          at: new Date().toISOString(),
-          county: county || "unknown",
-          executionId: executionArn,
-        });
-        await emitWorkflowEvent({
-          executionId: executionArn,
-          county: county || "unknown",
-          dataGroupLabel: dataGroupLabel,
-          status: "FAILED",
-          phase: "GasPriceCheck",
-          step: "CheckGasPrice",
-          taskToken: taskToken,
-          errors: [createWorkflowError("60001", { error })],
-          log: errorLog,
-        });
-        await executeWithTaskToken({
-          taskToken,
-          log: errorLog,
-          workerFn: async () => {
-            throw new Error(error);
-          },
-        });
-        // Don't throw after sending failure callback - let SQS know Lambda completed
-        return;
+      console.error({
+        ...base,
+        level: "error",
+        msg: "config_validation_failed",
+        error,
+      });
+      const failedToSendIds = await sendFailureToAllMessages(
+        parsedMessages,
+        error,
+      );
+      for (const messageId of failedToSendIds) {
+        batchItemFailures.push({ itemIdentifier: messageId });
       }
-      throw new Error(error);
+      for (const msg of parsedMessages) {
+        if (!msg.taskToken) {
+          batchItemFailures.push({ itemIdentifier: msg.messageId });
+        }
+      }
+      return batchItemFailures.length > 0
+        ? { status: "failed", batchItemFailures }
+        : { status: "failed" };
     }
 
     const result = await checkAndWaitForGasPrice({
@@ -314,113 +412,130 @@ export const handler = async (event) => {
       maxGasPriceGwei,
       waitMinutes,
     });
+    const batchResult = {
+      ...result,
+      batchedMessageCount: parsedMessages.length,
+    };
 
-    console.log(
-      JSON.stringify({
-        ...base,
-        level: "info",
-        msg: "gas_price_check_complete",
-        result: result,
-      }),
-    );
+    console.log({
+      ...base,
+      level: "info",
+      msg: "gas_price_check_complete",
+      result: batchResult,
+      messageCount: parsedMessages.length,
+    });
 
-    // Emit SUCCEEDED event to EventBridge and send task success
-    if (taskToken && executionArn) {
-      const log = createLogger({
-        component: "gas-price-checker",
-        at: new Date().toISOString(),
-        county: county || "unknown",
-        executionId: executionArn,
-      });
-      // Emit event (non-blocking - don't fail if this fails)
-      try {
-        await emitWorkflowEvent({
-          executionId: executionArn,
-          county: county || "unknown",
-          dataGroupLabel: dataGroupLabel,
-          status: "SUCCEEDED",
-          phase: "GasPriceCheck",
-          step: "CheckGasPrice",
-          taskToken: taskToken,
-          errors: [],
-          log,
+    for (const msg of parsedMessages) {
+      if (msg.taskToken && msg.executionArn) {
+        const log = createLogger({
+          component: "gas-price-checker",
+          at: new Date().toISOString(),
+          county: msg.county,
+          executionId: msg.executionArn,
         });
-      } catch (eventErr) {
-        log("warn", "failed_to_emit_succeeded_event", {
-          error:
-            eventErr instanceof Error ? eventErr.message : String(eventErr),
-        });
-        // Continue to task token callback even if EventBridge emission fails
+        try {
+          await emitWorkflowEvent({
+            executionId: msg.executionArn,
+            county: msg.county,
+            dataGroupLabel: msg.dataGroupLabel,
+            status: "SUCCEEDED",
+            phase: "GasPriceCheck",
+            step: "CheckGasPrice",
+            taskToken: msg.taskToken,
+            errors: [],
+            log,
+          });
+        } catch (eventErr) {
+          log("warn", "failed_to_emit_succeeded_event", {
+            error:
+              eventErr instanceof Error ? eventErr.message : String(eventErr),
+          });
+        }
       }
-      // Always call task token callback
-      await executeWithTaskToken({
-        taskToken,
-        log,
-        workerFn: async () => result,
-      });
     }
 
-    return result;
+    const failedToSendIds = await sendSuccessToAllMessages(
+      parsedMessages,
+      batchResult,
+    );
+    for (const messageId of failedToSendIds) {
+      batchItemFailures.push({ itemIdentifier: messageId });
+    }
+
+    console.log({
+      ...base,
+      level: "info",
+      msg: "batch_processing_complete",
+      messageCount: parsedMessages.length,
+      failedCallbackCount: failedToSendIds.length,
+    });
+
+    if (batchItemFailures.length > 0) {
+      return { ...batchResult, batchItemFailures };
+    }
+    return batchResult;
   } catch (err) {
     const errMessage = err instanceof Error ? err.message : String(err);
     const errCause = err instanceof Error ? err.stack : undefined;
 
-    console.error(
-      JSON.stringify({
-        ...base,
-        level: "error",
-        msg: "handler_failed",
-        error: errMessage,
-      }),
-    );
+    console.error({
+      ...base,
+      level: "error",
+      msg: "batch_handler_error",
+      error: errMessage,
+      messageCount: parsedMessages.length,
+    });
 
-    // Emit FAILED event to EventBridge and send task failure
-    if (taskToken && executionArn) {
-      const errorLog = createLogger({
-        component: "gas-price-checker",
-        at: new Date().toISOString(),
-        county: county || "unknown",
-        executionId: executionArn,
-      });
-      // Emit event (non-blocking - don't fail if this fails)
-      try {
-        await emitWorkflowEvent({
-          executionId: executionArn,
-          county: county || "unknown",
-          dataGroupLabel: dataGroupLabel,
-          status: "FAILED",
-          phase: "GasPriceCheck",
-          step: "CheckGasPrice",
-          taskToken: taskToken,
-          errors: [
-            createWorkflowError("60001", {
-              error: errMessage,
-              cause: errCause,
-            }),
-          ],
-          log: errorLog,
+    for (const msg of parsedMessages) {
+      if (msg.taskToken && msg.executionArn) {
+        const log = createLogger({
+          component: "gas-price-checker",
+          at: new Date().toISOString(),
+          county: msg.county,
+          executionId: msg.executionArn,
         });
-      } catch (eventErr) {
-        errorLog("warn", "failed_to_emit_failed_event", {
-          error:
-            eventErr instanceof Error ? eventErr.message : String(eventErr),
-        });
-        // Continue to task token callback even if EventBridge emission fails
+        try {
+          await emitWorkflowEvent({
+            executionId: msg.executionArn,
+            county: msg.county,
+            dataGroupLabel: msg.dataGroupLabel,
+            status: "FAILED",
+            phase: "GasPriceCheck",
+            step: "CheckGasPrice",
+            taskToken: msg.taskToken,
+            errors: [
+              createWorkflowError("60001", {
+                error: errMessage,
+                cause: errCause,
+              }),
+            ],
+            log,
+          });
+        } catch (eventErr) {
+          log("warn", "failed_to_emit_failed_event", {
+            error:
+              eventErr instanceof Error ? eventErr.message : String(eventErr),
+          });
+        }
       }
-      // Always call task token callback
-      await executeWithTaskToken({
-        taskToken,
-        log: errorLog,
-        workerFn: async () => {
-          throw err;
-        },
-      });
-      // Don't throw after sending failure callback - let SQS know Lambda completed
-      // The Step Function will handle the failure via the callback
-      return;
     }
 
-    // If no task token, throw to trigger SQS redelivery or fail the Lambda
-    throw err;
+    const failedToSendIds = await sendFailureToAllMessages(
+      parsedMessages,
+      errMessage,
+      errCause,
+    );
+    for (const messageId of failedToSendIds) {
+      batchItemFailures.push({ itemIdentifier: messageId });
+    }
+    for (const msg of parsedMessages) {
+      if (!msg.taskToken) {
+        batchItemFailures.push({ itemIdentifier: msg.messageId });
+      }
+    }
+
+    return batchItemFailures.length > 0
+      ? { status: "failed", batchItemFailures }
+      : { status: "failed" };
   }
 };
