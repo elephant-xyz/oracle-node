@@ -685,7 +685,7 @@ Resources:
           Type: SQS
           Properties:
             Queue: !GetAtt GasPriceCheckerSqsQueue.Arn
-            BatchSize: 1
+            BatchSize: 100
             MaximumBatchingWindowInSeconds: 0
             ScalingConfig:
               MaximumConcurrency: 2
