@@ -686,7 +686,7 @@ Resources:
           Properties:
             Queue: !GetAtt GasPriceCheckerSqsQueue.Arn
             BatchSize: 100
-            MaximumBatchingWindowInSeconds: 0
+            MaximumBatchingWindowInSeconds: 30
             ScalingConfig:
               MaximumConcurrency: 2
 
