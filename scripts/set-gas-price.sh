@@ -410,9 +410,9 @@ main() {
 
     # Validate mutually exclusive options for gas price
     local mode_count=0
-    [[ -n "$max_fee" ]] && ((mode_count++))
-    [[ -n "$gas_price" ]] && ((mode_count++))
-    [[ "$auto_mode" == "true" ]] && ((mode_count++))
+    [[ -n "$max_fee" ]] && ((mode_count+=1)) || true
+    [[ -n "$gas_price" ]] && ((mode_count+=1)) || true
+    [[ "$auto_mode" == "true" ]] && ((mode_count+=1)) || true
 
     if [[ $mode_count -eq 0 && -z "$gas_buffer" ]]; then
         err "Must specify one of: --max-fee, --gas-price, --gas-buffer, --auto, --view, or --history"
