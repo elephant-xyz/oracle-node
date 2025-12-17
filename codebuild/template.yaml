@@ -321,10 +321,7 @@ Resources:
                 nodejs: 22
               commands:
                 - npm install -g cheerio
-                # Install elephant-mcp from branch for testing (remove OpenAI dependency)
-                # Using manual clone+build approach since npm git install has issues with build steps
-                - git clone --depth 1 --branch feat/remove-openai-dependency https://github.com/elephant-xyz/elephant-mcp.git /tmp/elephant-mcp
-                - cd /tmp/elephant-mcp && npm install && npm run build && npm link
+                - npm install -g @elephant-xyz/mcp
                 - echo "Node.js runtime set to version 22."
             pre_build:
               commands:
