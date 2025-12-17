@@ -47,10 +47,6 @@ Parameters:
   WorkflowSqsQueueUrl:
     Description: URL of the Workflow SQS Queue (triggers workflow)
     Type: String
-  OpenAiApiKey:
-    Description: OpenAI API Key
-    Type: String
-    NoEcho: true
   DefaultDlqUrl:
     Description: Default Dead Letter Queue URL
     Type: String
@@ -289,9 +285,6 @@ Resources:
           - Name: TRANSACTIONS_SQS_QUEUE_URL
             Type: PLAINTEXT
             Value: !Ref TransactionsSqsQueueUrl
-          - Name: OPENAI_API_KEY
-            Type: PLAINTEXT
-            Value: !Ref OpenAiApiKey
           - Name: MAX_EXECUTIONS_PER_RUN
             Type: PLAINTEXT
             Value: "50"
@@ -328,7 +321,10 @@ Resources:
                 nodejs: 22
               commands:
                 - npm install -g cheerio
-                - npm install -g @elephant-xyz/mcp
+                # Install elephant-mcp from branch for testing (remove OpenAI dependency)
+                # Using manual clone+build approach since npm git install has issues with build steps
+                - git clone --depth 1 --branch feat/remove-openai-dependency https://github.com/elephant-xyz/elephant-mcp.git /tmp/elephant-mcp
+                - cd /tmp/elephant-mcp && npm install && npm run build && npm link
                 - echo "Node.js runtime set to version 22."
             pre_build:
               commands:

@@ -734,9 +734,7 @@ For EACH error in the list above, follow these steps:
           type: "stdio",
           command: "npx",
           args: ["-y", "@elephant-xyz/mcp"],
-          env: {
-            OPENAI_API_KEY: process.env.OPENAI_API_KEY,
-          },
+          // No OPENAI_API_KEY - uses AWS Bedrock for embeddings instead
         },
       },
       canUseTool: (toolName, input, options) => {
