@@ -1222,7 +1222,7 @@ Resources:
     Type: AWS::Logs::LogGroup
     Properties:
       LogGroupName: !Sub "/aws/events/${AWS::StackName}-workflow-events"
-      RetentionInDays: 14
+      RetentionInDays: 365
 
   WorkflowEventLogGroupPolicy:
     Type: AWS::Logs::ResourcePolicy
