@@ -12,7 +12,9 @@ import type { TransactWriteCommandInput } from "@aws-sdk/lib-dynamodb";
 /**
  * Type for a single transact write item (non-nullable version).
  */
-type TransactWriteItem = NonNullable<TransactWriteCommandInput["TransactItems"]>[number];
+type TransactWriteItem = NonNullable<
+  TransactWriteCommandInput["TransactItems"]
+>[number];
 import type {
   WorkflowEventDetail,
   WorkflowError,
@@ -2396,8 +2398,7 @@ export const upsertExecutionStateAndUpdateAggregates = async (
     };
   } catch (error) {
     // Handle conditional check failures (could be out-of-order or race condition)
-    const errorMessage =
-      error instanceof Error ? error.message : String(error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
 
     if (errorMessage.includes("ConditionalCheckFailed")) {
       // Could be an out-of-order event or race condition, skip gracefully
@@ -2616,9 +2617,9 @@ export const queryAllStepAggregates = async (
 
   const nextCursor: AllStepAggregatesCursor | null = hasMore
     ? {
-      shardCursors: newShardCursors,
-      completedShards: newCompletedShards,
-    }
+        shardCursors: newShardCursors,
+        completedShards: newCompletedShards,
+      }
     : null;
 
   return {

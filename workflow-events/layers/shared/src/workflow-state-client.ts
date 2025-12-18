@@ -22,4 +22,3 @@ export const getWorkflowStateTableName = (): string => {
   }
   return WORKFLOW_STATE_TABLE_NAME;
 };
-

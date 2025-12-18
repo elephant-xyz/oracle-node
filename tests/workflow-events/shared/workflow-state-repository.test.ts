@@ -191,9 +191,8 @@ describe("workflow-state-repository", () => {
 
   describe("upsertExecutionStateAndUpdateAggregates", () => {
     it("should create new execution state for new execution", async () => {
-      const {
-        upsertExecutionStateAndUpdateAggregates,
-      } = await import("shared/repository.js");
+      const { upsertExecutionStateAndUpdateAggregates } =
+        await import("shared/repository.js");
 
       const detail = createWorkflowDetail({
         executionId: "exec-new-001",
@@ -247,9 +246,8 @@ describe("workflow-state-repository", () => {
         },
       });
 
-      const {
-        upsertExecutionStateAndUpdateAggregates,
-      } = await import("shared/repository.js");
+      const { upsertExecutionStateAndUpdateAggregates } =
+        await import("shared/repository.js");
 
       const detail = createWorkflowDetail({
         executionId: "exec-existing-001",
@@ -300,9 +298,8 @@ describe("workflow-state-repository", () => {
         },
       });
 
-      const {
-        upsertExecutionStateAndUpdateAggregates,
-      } = await import("shared/repository.js");
+      const { upsertExecutionStateAndUpdateAggregates } =
+        await import("shared/repository.js");
 
       const detail = createWorkflowDetail({
         executionId: "exec-ooo-001",
@@ -345,9 +342,8 @@ describe("workflow-state-repository", () => {
         },
       });
 
-      const {
-        upsertExecutionStateAndUpdateAggregates,
-      } = await import("shared/repository.js");
+      const { upsertExecutionStateAndUpdateAggregates } =
+        await import("shared/repository.js");
 
       const detail = createWorkflowDetail({
         executionId: "exec-same-001",
@@ -373,9 +369,8 @@ describe("workflow-state-repository", () => {
     });
 
     it("should use idempotency token from event ID", async () => {
-      const {
-        upsertExecutionStateAndUpdateAggregates,
-      } = await import("shared/repository.js");
+      const { upsertExecutionStateAndUpdateAggregates } =
+        await import("shared/repository.js");
 
       const detail = createWorkflowDetail({ executionId: "exec-token-001" });
 
@@ -561,4 +556,3 @@ describe("workflow-state-repository", () => {
     });
   });
 });
-

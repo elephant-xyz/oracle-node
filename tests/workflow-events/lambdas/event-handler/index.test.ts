@@ -104,10 +104,10 @@ describe("event-handler", () => {
       WORKFLOW_ERRORS_TABLE_NAME: TEST_TABLE_NAME,
       WORKFLOW_STATE_TABLE_NAME: TEST_STATE_TABLE_NAME,
     };
-    vi.spyOn(console, "log").mockImplementation(() => { });
-    vi.spyOn(console, "info").mockImplementation(() => { });
-    vi.spyOn(console, "debug").mockImplementation(() => { });
-    vi.spyOn(console, "error").mockImplementation(() => { });
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    vi.spyOn(console, "debug").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
 
     // Default mock for CloudWatch PutMetricData
     cloudWatchMock.on(PutMetricDataCommand).resolves({});
@@ -1752,9 +1752,7 @@ describe("event-handler", () => {
       });
 
       // Should have ClientRequestToken set to event.id for idempotency
-      expect(stateTransaction?.args[0].input.ClientRequestToken).toBe(
-        event.id,
-      );
+      expect(stateTransaction?.args[0].input.ClientRequestToken).toBe(event.id);
     });
   });
 });
