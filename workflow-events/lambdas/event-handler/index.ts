@@ -41,6 +41,12 @@ type SupportedDetailType =
 const handleWorkflowEvent = async (
   event: EventBridgeEvent<"WorkflowEvent", WorkflowEventDetail>,
 ): Promise<void> => {
+  if (event.detail.executionId.startsWith("arn")) {
+    const extractedExecutionId = event.detail.executionId.split(":").pop();
+    if (extractedExecutionId) {
+      event.detail.executionId = extractedExecutionId;
+    }
+  }
   console.info(
     createLogEntry("received_workflow_event", event, {
       executionId: event.detail.executionId,

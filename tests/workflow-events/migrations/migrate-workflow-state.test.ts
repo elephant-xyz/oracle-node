@@ -15,6 +15,7 @@ import {
   TransactWriteCommand,
 } from "@aws-sdk/lib-dynamodb";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
+import { migrateExecution } from "../../../scripts/migrate-workflow-state.js";
 
 /**
  * Mock clients for all AWS services used by the migration script.
@@ -161,18 +162,69 @@ describe("migrate-workflow-state", () => {
         version: 2,
       };
 
+      // Mock GetExecutionHistory to return a candidate event with older eventTime
+      sfnMock.on(GetExecutionHistoryCommand).resolves({
+        events: [
+          {
+            id: 1,
+            timestamp: new Date("2024-01-01T00:00:00Z"),
+            type: "ExecutionStarted",
+            executionStartedEventDetails: {
+              input: JSON.stringify({
+                message: { county: "palm_beach", dataGroupLabel: "County" },
+              }),
+            },
+          },
+          {
+            id: 2,
+            timestamp: new Date("2024-01-01T01:00:00Z"), // Older than existing lastEventTime
+            type: "TaskScheduled",
+            taskScheduledEventDetails: {
+              resource: "arn:aws:states:::events:putEvents",
+              parameters: JSON.stringify({
+                Entries: [
+                  {
+                    Source: "elephant.workflow",
+                    DetailType: "WorkflowEvent",
+                    Detail: {
+                      executionId: TEST_EXECUTION_ID,
+                      county: "palm_beach",
+                      status: "IN_PROGRESS",
+                      phase: "Prepare",
+                      step: "Prepare",
+                      dataGroupLabel: "County",
+                      errors: [],
+                    },
+                  },
+                ],
+              }),
+            },
+          },
+        ],
+      });
+
       ddbMock.on(GetCommand).resolves({ Item: existingState });
 
-      // The migration should skip this execution
-      // We verify by checking that TransactWriteCommand is NOT called
+      // Call migrateExecution
+      const result = await migrateExecution(
+        ddbMock as unknown as DynamoDBDocumentClient,
+        sfnMock as unknown as SFNClient,
+        TEST_EXECUTION_ARN,
+        TEST_TABLE_NAME,
+        false, // not dry run
+      );
+
+      // Verify it was skipped
+      expect(result.status).toBe("skipped_newer");
+      expect(result.reason).toContain("Existing lastEventTime");
+
+      // Verify GetCommand was called
       const getCalls = ddbMock.commandCalls(GetCommand);
       expect(getCalls.length).toBeGreaterThan(0);
 
       // TransactWriteCommand should not be called when skipping
       const transactCalls = ddbMock.commandCalls(TransactWriteCommand);
-      // In a real test, we'd verify this is 0, but since we're testing the .js file indirectly,
-      // we focus on the condition expression logic
-      expect(true).toBe(true);
+      expect(transactCalls.length).toBe(0);
     });
 
     it("should use strict condition expression (lastEventTime < eventTime, not <=)", async () => {
@@ -348,4 +400,3 @@ describe("migrate-workflow-state", () => {
     });
   });
 });
-

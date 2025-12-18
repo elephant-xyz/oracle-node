@@ -13,13 +13,8 @@ import {
   SecretsManagerClient,
   GetSecretValueCommand,
 } from "@aws-sdk/client-secrets-manager";
-import {
-  DynamoDBClient,
-} from "@aws-sdk/client-dynamodb";
-import {
-  DynamoDBDocumentClient,
-  QueryCommand,
-} from "@aws-sdk/lib-dynamodb";
+import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
+import { DynamoDBDocumentClient, QueryCommand } from "@aws-sdk/lib-dynamodb";
 import { google } from "googleapis";
 
 const cloudFormationClient = new CloudFormationClient({});
@@ -589,11 +584,7 @@ function buildGSI2PKForShard(shardIndex) {
  * @param {"inProgressCount"|"failedCount"} countField - Field to sum
  * @returns {Promise<number>} - Total count
  */
-async function queryStepAggregatesCount(
-  tableName,
-  phaseSet,
-  countField,
-) {
+async function queryStepAggregatesCount(tableName, phaseSet, countField) {
   const GSI2_SHARD_COUNT = 16;
   let total = 0;
 
@@ -675,9 +666,7 @@ async function queryStepAggregatesCount(
  * @param {string} workflowEventsStackName - Name of the workflow-events stack
  * @returns {Promise<number>} - Total in progress count
  */
-async function calculateInProgressCountFromDynamoDB(
-  workflowEventsStackName,
-) {
+async function calculateInProgressCountFromDynamoDB(workflowEventsStackName) {
   const tableName = await getWorkflowStateTableName(workflowEventsStackName);
 
   if (!tableName) {
@@ -709,11 +698,7 @@ async function calculateInProgressCountFromDynamoDB(
     "hash",
   ]);
 
-  return await queryStepAggregatesCount(
-    tableName,
-    phaseSet,
-    "inProgressCount",
-  );
+  return await queryStepAggregatesCount(tableName, phaseSet, "inProgressCount");
 }
 
 /**
@@ -1519,12 +1504,15 @@ export const handler = async (event = {}) => {
     // Calculate in progress count from DynamoDB workflow-state table
     const workflowEventsStackName =
       process.env.WORKFLOW_EVENTS_STACK_NAME || "workflow-events-stack";
-    const inProgressMessages =
-      await calculateInProgressCountFromDynamoDB(workflowEventsStackName);
+    const inProgressMessages = await calculateInProgressCountFromDynamoDB(
+      workflowEventsStackName,
+    );
 
     // Calculate ready to be minted (failed) count from DynamoDB workflow-state table
     const readyToMintFailedMessages =
-      await calculateReadyToMintFailedCountFromDynamoDB(workflowEventsStackName);
+      await calculateReadyToMintFailedCountFromDynamoDB(
+        workflowEventsStackName,
+      );
 
     // Update Google Sheet if configured
     // readyToMintMessages = totalMessages (Transactions/Gas Price queues)

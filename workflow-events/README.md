@@ -123,12 +123,14 @@ Migration Summary:
 ### Troubleshooting
 
 **"Skipped (no data)"**: The execution history doesn't contain enough information to extract phase/step/status. This can happen if:
+
 - The execution just started and hasn't reached any `putEvents` states yet
 - The execution is in an unexpected state not covered by the fallback mapping
 
 **"Skipped (newer exists)"**: A newer status was already written by the live EventBridge handler. This is expected and safe—the migration correctly avoids overwriting newer data.
 
 **"Failed"**: Check the error message. Common causes:
+
 - DynamoDB throttling (reduce `--concurrency`)
 - Missing IAM permissions
 - Invalid execution ARN or table name
@@ -140,6 +142,7 @@ After migration, verify the results:
 1. **Check CloudWatch Dashboard**: The "Workflow Phase Aggregates" widget should show non-empty counts for phases with RUNNING executions.
 
 2. **Query DynamoDB directly**:
+
    ```bash
    aws dynamodb query \
      --table-name <WORKFLOW_STATE_TABLE_NAME> \
