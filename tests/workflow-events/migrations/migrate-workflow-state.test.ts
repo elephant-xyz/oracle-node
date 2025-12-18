@@ -163,12 +163,14 @@ describe("migrate-workflow-state", () => {
       };
 
       // Mock GetExecutionHistory to return a candidate event with older eventTime
+      // Include complete event chain: TaskScheduled → TaskStarted → TaskSucceeded
       sfnMock.on(GetExecutionHistoryCommand).resolves({
         events: [
           {
             id: 1,
             timestamp: new Date("2024-01-01T00:00:00Z"),
             type: "ExecutionStarted",
+            previousEventId: 0,
             executionStartedEventDetails: {
               input: JSON.stringify({
                 message: { county: "palm_beach", dataGroupLabel: "County" },
@@ -179,6 +181,7 @@ describe("migrate-workflow-state", () => {
             id: 2,
             timestamp: new Date("2024-01-01T01:00:00Z"), // Older than existing lastEventTime
             type: "TaskScheduled",
+            previousEventId: 1,
             taskScheduledEventDetails: {
               resource: "arn:aws:states:::events:putEvents",
               parameters: JSON.stringify({
@@ -200,6 +203,30 @@ describe("migrate-workflow-state", () => {
               }),
             },
           },
+          {
+            id: 3,
+            timestamp: new Date("2024-01-01T01:00:01Z"),
+            type: "TaskStarted",
+            previousEventId: 2, // Links to TaskScheduled
+            taskStartedEventDetails: {
+              resourceType: "events",
+              resource: "putEvents",
+            },
+          },
+          {
+            id: 4,
+            timestamp: new Date("2024-01-01T01:00:02Z"),
+            type: "TaskSucceeded",
+            previousEventId: 3, // Links to TaskStarted
+            taskSucceededEventDetails: {
+              resourceType: "events",
+              resource: "putEvents",
+              output: JSON.stringify({
+                Entries: [{ EventId: "test-event-id" }],
+                FailedEntryCount: 0,
+              }),
+            },
+          },
         ],
       });
 
@@ -212,6 +239,7 @@ describe("migrate-workflow-state", () => {
         TEST_EXECUTION_ARN,
         TEST_TABLE_NAME,
         false, // not dry run
+        "RUNNING", // execution status
       );
 
       // Verify it was skipped

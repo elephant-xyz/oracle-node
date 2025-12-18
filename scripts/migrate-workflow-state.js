@@ -30,6 +30,7 @@ const { DynamoDBClient } = require("@aws-sdk/client-dynamodb");
 const yargs = require("yargs/yargs");
 const { hideBin } = require("yargs/helpers");
 const chalk = require("chalk");
+const cliProgress = require("cli-progress");
 
 // =============================================================================
 // Types (matching workflow-events shared types)
@@ -81,7 +82,7 @@ const chalk = require("chalk");
 
 /**
  * @typedef {Object} MigrationSummary
- * @property {number} totalRunning - Total RUNNING executions found
+ * @property {number} totalRunning - Total executions found (RUNNING, SUCCEEDED, FAILED)
  * @property {number} updated - Number successfully updated
  * @property {number} skippedNewer - Number skipped (newer status already exists)
  * @property {number} skippedNoData - Number skipped (could not extract status)
@@ -98,6 +99,9 @@ const DEFAULT_WORKFLOW_EVENTS_STACK_NAME = "workflow-events-stack";
 const DEFAULT_REGION = "us-east-1";
 const DEFAULT_CONCURRENCY = 10;
 const DEFAULT_MAX_EXECUTIONS = undefined; // No limit by default
+const DEFAULT_RETRY_MAX_ATTEMPTS = 5;
+const DEFAULT_RETRY_BASE_DELAY_MS = 1000; // 1 second base delay
+const DEFAULT_PAGINATION_DELAY_MS = 200; // 200ms delay between paginated requests
 
 const STATE_ENTITY_TYPES = {
   EXECUTION_STATE: "ExecutionState",
@@ -170,11 +174,18 @@ const STATE_NAME_TO_PHASE_STEP = {
 // Logging utilities
 // =============================================================================
 
+// Global flag to control debug logging
+let debugEnabled = false;
+
 const log = {
   info: (msg) => console.log(chalk.green("[INFO]"), msg),
   warn: (msg) => console.log(chalk.yellow("[WARN]"), msg),
   error: (msg) => console.log(chalk.red("[ERROR]"), msg),
-  debug: (msg) => console.log(chalk.blue("[DEBUG]"), msg),
+  debug: (msg) => {
+    if (debugEnabled) {
+      console.log(chalk.blue("[DEBUG]"), msg);
+    }
+  },
 };
 
 // =============================================================================
@@ -192,7 +203,12 @@ const log = {
  */
 async function getStackOutput(cfnClient, stackName, outputKey) {
   const command = new DescribeStacksCommand({ StackName: stackName });
-  const response = await cfnClient.send(command);
+  const response = await retryWithBackoff(
+    async () => await cfnClient.send(command),
+    {
+      operation: `CloudFormation DescribeStacks (${stackName})`,
+    },
+  );
 
   if (!response.Stacks || response.Stacks.length === 0) {
     throw new Error(`Stack not found: ${stackName}`);
@@ -247,56 +263,141 @@ async function discoverResources(
 }
 
 // =============================================================================
-// Step Functions execution listing
+// Retry utilities
 // =============================================================================
 
 /**
- * Lists all RUNNING executions for a state machine.
+ * Sleeps for a specified number of milliseconds.
+ *
+ * @param {number} ms - Milliseconds to sleep
+ * @returns {Promise<void>}
+ */
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Checks if an error is a throttling/rate limit error.
+ *
+ * @param {unknown} error - Error to check
+ * @returns {boolean} True if error is throttling-related
+ */
+function isThrottlingError(error) {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+
+  const errorName = error.name || "";
+  const errorMessage = error.message || error.toString() || "";
+  const httpStatusCode = error.$metadata?.httpStatusCode;
+
+  return (
+    errorName === "ThrottlingException" ||
+    errorName === "TooManyRequestsException" ||
+    httpStatusCode === 429 ||
+    errorMessage.includes("Rate exceeded") ||
+    errorMessage.includes("Throttling") ||
+    errorMessage.includes("TooManyRequests")
+  );
+}
+
+/**
+ * Retries an async function with exponential backoff.
+ *
+ * @template T
+ * @param {() => Promise<T>} fn - Function to retry
+ * @param {Object} options - Retry options
+ * @param {number} [options.maxAttempts] - Maximum retry attempts (default: 5)
+ * @param {number} [options.baseDelayMs] - Base delay in milliseconds (default: 1000)
+ * @param {string} [options.operation] - Operation name for logging
+ * @returns {Promise<T>} Result of the function
+ * @throws {Error} Last error if all retries fail
+ */
+async function retryWithBackoff(fn, options = {}) {
+  const {
+    maxAttempts = DEFAULT_RETRY_MAX_ATTEMPTS,
+    baseDelayMs = DEFAULT_RETRY_BASE_DELAY_MS,
+    operation = "operation",
+  } = options;
+
+  let lastError;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error;
+
+      // Only retry on throttling errors
+      if (!isThrottlingError(error)) {
+        throw error;
+      }
+
+      // Don't retry on last attempt
+      if (attempt >= maxAttempts) {
+        break;
+      }
+
+      // Calculate delay with exponential backoff and jitter
+      const exponentialDelay = baseDelayMs * Math.pow(2, attempt - 1);
+      const jitter = Math.random() * 0.3 * exponentialDelay; // Up to 30% jitter
+      const delay = Math.min(exponentialDelay + jitter, 30000); // Cap at 30 seconds
+
+      log.debug(
+        `  Retrying ${operation} (attempt ${attempt}/${maxAttempts}) after ${Math.round(delay)}ms...`,
+      );
+      await sleep(delay);
+    }
+  }
+
+  throw lastError;
+}
+
+// =============================================================================
+// Step Functions execution listing and processing
+// =============================================================================
+
+/**
+ * Processes a page of executions immediately as they're retrieved.
  *
  * @param {SFNClient} sfnClient - Step Functions client
  * @param {string} stateMachineArn - State machine ARN
- * @param {number} [maxExecutions] - Maximum number of executions to process
- * @returns {Promise<Array<{executionArn: string, name: string}>>} List of execution ARNs and names
+ * @param {"RUNNING" | "SUCCEEDED" | "FAILED"} statusFilter - Status filter
+ * @param {string | undefined} nextToken - Pagination token
+ * @param {number} pageNumber - Current page number
+ * @returns {Promise<{executions: Array<{executionArn: string, name: string}>, nextToken: string | undefined}>} Page of executions
  */
-async function listRunningExecutions(
+async function fetchExecutionPage(
   sfnClient,
   stateMachineArn,
-  maxExecutions,
+  statusFilter,
+  nextToken,
+  pageNumber,
 ) {
-  log.info(`Listing RUNNING executions for state machine...`);
+  const command = new ListExecutionsCommand({
+    stateMachineArn,
+    statusFilter,
+    maxResults: 100,
+    nextToken,
+  });
 
-  const executions = [];
-  let nextToken;
+  const response = await retryWithBackoff(
+    async () => await sfnClient.send(command),
+    {
+      operation: `ListExecutions (${statusFilter}, page ${pageNumber})`,
+    },
+  );
 
-  do {
-    const command = new ListExecutionsCommand({
-      stateMachineArn,
-      statusFilter: "RUNNING",
-      maxResults: 100,
-      nextToken,
-    });
+  const executions =
+    response.executions?.map((e) => ({
+      executionArn: e.executionArn || "",
+      name: e.name || "",
+      status: e.status || statusFilter, // Include execution status
+    })) || [];
 
-    const response = await sfnClient.send(command);
-
-    if (response.executions) {
-      executions.push(
-        ...response.executions.map((e) => ({
-          executionArn: e.executionArn || "",
-          name: e.name || "",
-        })),
-      );
-    }
-
-    nextToken = response.nextToken;
-
-    if (maxExecutions && executions.length >= maxExecutions) {
-      executions.splice(maxExecutions);
-      break;
-    }
-  } while (nextToken);
-
-  log.info(`  Found ${executions.length} RUNNING execution(s)`);
-  return executions;
+  return {
+    executions,
+    nextToken: response.nextToken,
+  };
 }
 
 // =============================================================================
@@ -388,59 +489,217 @@ function inferPhaseStepFromStateName(stateName) {
 }
 
 /**
- * Extracts current execution status from execution history.
+ * Represents a WorkflowEvent found in execution history.
+ *
+ * @typedef {Object} WorkflowEventHistoryItem
+ * @property {WorkflowEventDetail} detail - WorkflowEvent detail
+ * @property {string} eventTime - ISO timestamp of the event
+ * @property {number} eventIndex - Index in the events array (for ordering)
+ * @property {string} stateName - State name that emitted this event
+ */
+
+/**
+ * Extracts all WorkflowEvents from execution history and derives the final state.
  *
  * @param {SFNClient} sfnClient - Step Functions client
  * @param {string} executionArn - Execution ARN
  * @param {string} executionInput - Execution input JSON (from ExecutionStarted)
+ * @param {"RUNNING" | "SUCCEEDED" | "FAILED" | "TIMED_OUT" | "ABORTED"} executionStatus - Current execution status
  * @returns {Promise<{detail: WorkflowEventDetail, eventTime: string} | null>} Extracted status or null
  */
-async function extractExecutionStatus(sfnClient, executionArn, executionInput) {
+async function extractExecutionStatus(
+  sfnClient,
+  executionArn,
+  executionInput,
+  executionStatus,
+) {
   const command = new GetExecutionHistoryCommand({
     executionArn,
-    reverseOrder: true,
+    reverseOrder: false, // Get chronological order to traverse properly
     includeExecutionData: true,
-    maxResults: 1000, // Get enough history to find putEvents
+    maxResults: 1000, // Get enough history
   });
 
-  const response = await sfnClient.send(command);
+  const response = await retryWithBackoff(
+    async () => await sfnClient.send(command),
+    {
+      operation: `GetExecutionHistory (${executionArn.split(":").pop()})`,
+    },
+  );
   const events = response.events || [];
 
   // Extract county and dataGroupLabel from input (fallback)
   const county = extractCountyFromInput(executionInput);
   const dataGroupLabel = extractDataGroupLabelFromInput(executionInput);
+  const executionId = executionArn.split(":").pop() || executionArn;
 
-  // First pass: Look for latest TaskScheduled with events:putEvents resource
-  for (const event of events) {
+  // Determine final status based on execution status
+  let finalStatus = "IN_PROGRESS";
+  if (executionStatus === "SUCCEEDED") {
+    finalStatus = "SUCCEEDED";
+  } else if (
+    executionStatus === "FAILED" ||
+    executionStatus === "TIMED_OUT" ||
+    executionStatus === "ABORTED"
+  ) {
+    finalStatus = "FAILED";
+  }
+
+  // Build a map of TaskScheduled events and track which ones succeeded
+  const taskScheduledMap = new Map(); // eventId -> {event, stateName}
+  const succeededTaskIds = new Set();
+  const stateNameMap = new Map(); // eventId -> stateName
+  const eventById = new Map(); // eventId -> event (for tracing previousEventId chain)
+
+  // First pass: Build maps of events and track state names
+  for (let i = 0; i < events.length; i++) {
+    const event = events[i];
+
+    // Build event map for tracing previousEventId chain
+    eventById.set(event.id, event);
+
+    // Track state names for TaskScheduled events
+    // Event types are specific like TaskStateEntered, ChoiceStateEntered, PassStateEntered, etc.
+    if (event.type.endsWith("StateEntered")) {
+      const stateName = event.stateEnteredEventDetails?.name;
+      if (stateName) {
+        // Store state name for subsequent TaskScheduled events
+        // (they happen after StateEntered)
+        stateNameMap.set(i, stateName);
+      }
+    }
+
+    // Track TaskScheduled events with putEvents
+    // Resource can be just "putEvents" or full ARN "arn:aws:states:::events:putEvents"
     if (event.type === "TaskScheduled") {
       const details = event.taskScheduledEventDetails;
       if (
         details?.resource &&
-        details.resource.startsWith("arn:aws:states:::events:putEvents")
+        (details.resource === "putEvents" ||
+          details.resource.startsWith("arn:aws:states:::events:putEvents"))
       ) {
-        const parameters = details.parameters;
-        if (parameters) {
-          const detail = extractWorkflowEventFromTaskParameters(parameters);
-          if (detail) {
-            // Use county/dataGroupLabel from input if not in detail
-            return {
-              detail: {
-                ...detail,
-                county: detail.county !== "unknown" ? detail.county : county,
-                dataGroupLabel:
-                  detail.dataGroupLabel || dataGroupLabel || undefined,
-              },
-              eventTime: new Date(event.timestamp).toISOString(),
-            };
+        // Find the most recent StateEntered before this TaskScheduled
+        let associatedStateName = null;
+        for (let j = i - 1; j >= 0; j--) {
+          if (stateNameMap.has(j)) {
+            associatedStateName = stateNameMap.get(j);
+            break;
           }
+        }
+
+        taskScheduledMap.set(event.id, {
+          event,
+          stateName: associatedStateName,
+          index: i,
+        });
+      }
+    }
+
+    // Track which tasks succeeded
+    // TaskSucceeded links to TaskStarted via previousEventId, and TaskStarted links to TaskScheduled
+    // So we need to trace: TaskSucceeded.previousEventId → TaskStarted → TaskStarted.previousEventId → TaskScheduled
+    if (event.type === "TaskSucceeded") {
+      // Find the TaskStarted event via previousEventId
+      const taskStartedEvent = eventById.get(event.previousEventId);
+      if (taskStartedEvent && taskStartedEvent.type === "TaskStarted") {
+        // The TaskStarted's previousEventId points to TaskScheduled
+        const scheduledEventId = taskStartedEvent.previousEventId;
+        if (scheduledEventId) {
+          succeededTaskIds.add(scheduledEventId);
         }
       }
     }
   }
 
-  // Fallback: Use latest StateEntered to infer phase/step
-  for (const event of events) {
-    if (event.type === "StateEntered") {
+  // Second pass: Extract all successful WorkflowEvents
+  /**
+   * @type {Array<WorkflowEventHistoryItem>}
+   */
+  const workflowEvents = [];
+
+  for (const [eventId, { event, stateName, index }] of taskScheduledMap) {
+    const details = event.taskScheduledEventDetails;
+    const isWaitForTaskToken = details?.resource?.includes("waitForTaskToken");
+    const isSucceeded = succeededTaskIds.has(eventId);
+    const isRunning = executionStatus === "RUNNING";
+
+    // Accept if:
+    // 1. Task succeeded (event was emitted), OR
+    // 2. It's a waitForTaskToken and execution is still running (waiting for callback)
+    if (isSucceeded || (isWaitForTaskToken && isRunning)) {
+      const parameters = details.parameters;
+      if (parameters) {
+        const detail = extractWorkflowEventFromTaskParameters(parameters);
+        if (detail) {
+          workflowEvents.push({
+            detail: {
+              ...detail,
+              county: detail.county !== "unknown" ? detail.county : county,
+              dataGroupLabel:
+                detail.dataGroupLabel || dataGroupLabel || undefined,
+            },
+            eventTime: new Date(event.timestamp).toISOString(),
+            eventIndex: index,
+            stateName: stateName || "unknown",
+          });
+        }
+      }
+    }
+  }
+
+  // If we found WorkflowEvents, calculate latest status per phase
+  if (workflowEvents.length > 0) {
+    // Group events by phase+step combination and find latest status for each
+    const phaseStepMap = new Map(); // key: `${phase}#${step}` -> latest event
+
+    for (const workflowEvent of workflowEvents) {
+      const key = `${workflowEvent.detail.phase}#${workflowEvent.detail.step}`;
+      const existing = phaseStepMap.get(key);
+
+      // Keep the latest event for this phase+step (highest eventIndex = most recent)
+      if (!existing || workflowEvent.eventIndex > existing.eventIndex) {
+        phaseStepMap.set(key, workflowEvent);
+      }
+    }
+
+    // Determine the latest phase reached (by eventIndex)
+    // This represents the most recent phase the execution was in
+    workflowEvents.sort((a, b) => b.eventIndex - a.eventIndex);
+    const latestEventOverall = workflowEvents[0];
+    const latestPhaseKey = `${latestEventOverall.detail.phase}#${latestEventOverall.detail.step}`;
+    const latestEventForPhase = phaseStepMap.get(latestPhaseKey);
+
+    // Use the latest status for the latest phase reached
+    const finalEvent = latestEventForPhase || latestEventOverall;
+
+    log.debug(
+      `  Found ${workflowEvents.length} WorkflowEvent(s) across ${phaseStepMap.size} phase/step(s). Latest phase: ${finalEvent.detail.phase}, Step: ${finalEvent.detail.step}, Status: ${finalEvent.detail.status}`,
+    );
+
+    // Override status with execution status for completed executions
+    return {
+      detail: {
+        ...finalEvent.detail,
+        status:
+          executionStatus === "SUCCEEDED"
+            ? "SUCCEEDED"
+            : executionStatus === "FAILED" ||
+                executionStatus === "TIMED_OUT" ||
+                executionStatus === "ABORTED"
+              ? "FAILED"
+              : finalEvent.detail.status,
+      },
+      eventTime: finalEvent.eventTime,
+    };
+  }
+
+  // If no WorkflowEvents found, fallback to StateEntered events
+  // Find the latest StateEntered event that we can map
+  // Event types are specific like TaskStateEntered, ChoiceStateEntered, PassStateEntered, etc.
+  const stateEnteredEvents = [];
+  for (let i = 0; i < events.length; i++) {
+    const event = events[i];
+    if (event.type.endsWith("StateEntered")) {
       const details = event.stateEnteredEventDetails;
       const stateName = details?.name;
 
@@ -456,22 +715,150 @@ async function extractExecutionStatus(sfnClient, executionArn, executionInput) {
             }
           }
 
-          return {
+          stateEnteredEvents.push({
             detail: {
-              executionId: executionArn.split(":").pop() || executionArn,
+              executionId,
               county: stateCounty,
-              status: "IN_PROGRESS", // Default for RUNNING executions
+              status: finalStatus,
               phase: mapping.phase,
               step: mapping.step,
               dataGroupLabel: dataGroupLabel || undefined,
               errors: [],
             },
             eventTime: new Date(event.timestamp).toISOString(),
-          };
+            eventIndex: i,
+            stateName,
+          });
         }
       }
     }
   }
+
+  // If we found StateEntered events, use the latest one
+  if (stateEnteredEvents.length > 0) {
+    // Sort by eventIndex (chronological order) and get the latest
+    stateEnteredEvents.sort((a, b) => b.eventIndex - a.eventIndex);
+    const latestState = stateEnteredEvents[0];
+
+    log.debug(
+      `  Using StateEntered fallback for ${executionId}. State: ${latestState.stateName}, Phase: ${latestState.detail.phase}, Step: ${latestState.detail.step}`,
+    );
+
+    return {
+      detail: latestState.detail,
+      eventTime: latestState.eventTime,
+    };
+  }
+
+  // Last resort: Try to infer from any StateEntered event using pattern matching
+  // Event types are specific like TaskStateEntered, ChoiceStateEntered, PassStateEntered, etc.
+  const allStateEnteredEvents = events.filter((e) =>
+    e.type.endsWith("StateEntered"),
+  );
+  if (allStateEnteredEvents.length > 0) {
+    // Get the latest StateEntered (last in chronological order)
+    const lastStateEvent =
+      allStateEnteredEvents[allStateEnteredEvents.length - 1];
+    const stateName = lastStateEvent.stateEnteredEventDetails?.name;
+
+    if (stateName) {
+      // Use a generic fallback - try to infer phase from state name patterns
+      let inferredPhase = "Unknown";
+      let inferredStep = stateName;
+
+      // Try to infer phase from common patterns
+      if (
+        stateName.includes("Preprocess") ||
+        stateName === "WaitForPreprocessResolution"
+      ) {
+        inferredPhase = "Preprocess";
+        inferredStep = "Preprocess";
+      } else if (
+        stateName.includes("Prepare") ||
+        stateName === "EmitBypassPrepareSucceeded"
+      ) {
+        inferredPhase = "Prepare";
+        inferredStep = "Prepare";
+      } else if (
+        stateName.includes("Transform") ||
+        stateName === "WaitForTransformResolution"
+      ) {
+        inferredPhase = "Transform";
+        inferredStep = "Transform";
+      } else if (
+        stateName.includes("SVL") ||
+        stateName.includes("Svl") ||
+        stateName === "WaitForSvlValidationResolution" ||
+        stateName === "WaitForSvlExceptionResolution" ||
+        stateName === "CheckSvlResult"
+      ) {
+        inferredPhase = "SVL";
+        inferredStep = "SVL";
+      } else if (
+        stateName.includes("Hash") ||
+        stateName === "WaitForHashResolution"
+      ) {
+        inferredPhase = "Hash";
+        inferredStep = "Hash";
+      } else if (
+        stateName.includes("Upload") ||
+        stateName === "WaitForUploadResolution"
+      ) {
+        inferredPhase = "Upload";
+        inferredStep = "Upload";
+      } else if (
+        stateName.includes("GasPrice") ||
+        stateName.includes("CheckGasPrice") ||
+        stateName === "WaitForGasPriceCheckResolution"
+      ) {
+        inferredPhase = "GasPriceCheck";
+        inferredStep = "CheckGasPrice";
+      } else if (
+        stateName.includes("Submit") ||
+        stateName.includes("Blockchain") ||
+        stateName === "WaitForSubmitResolution"
+      ) {
+        inferredPhase = "Submit";
+        inferredStep =
+          stateName.includes("Blockchain") || stateName === "SubmitToBlockchain"
+            ? "SubmitToBlockchain"
+            : "Submit";
+      } else if (
+        stateName.includes("Transaction") ||
+        stateName === "WaitForTransactionStatusCheckResolution"
+      ) {
+        inferredPhase = "TransactionStatusCheck";
+        inferredStep = "CheckTransactionStatus";
+      }
+
+      log.debug(
+        `  Using pattern-based inference for ${executionId}. State: ${stateName}, Inferred Phase: ${inferredPhase}, Step: ${inferredStep}`,
+      );
+
+      return {
+        detail: {
+          executionId,
+          county: county !== "unknown" ? county : "unknown",
+          status: finalStatus,
+          phase: inferredPhase,
+          step: inferredStep,
+          dataGroupLabel: dataGroupLabel || undefined,
+          errors: [],
+        },
+        eventTime: new Date(lastStateEvent.timestamp).toISOString(),
+      };
+    }
+  }
+
+  // If we still can't find anything, log debug info
+  const stateNames = events
+    .filter((e) => e.type === "StateEntered")
+    .map((e) => e.stateEnteredEventDetails?.name)
+    .filter(Boolean);
+  const eventTypes = [...new Set(events.map((e) => e.type))];
+  log.debug(
+    `  Could not extract status for ${executionId}. Execution status: ${executionStatus}. Found ${events.length} events. Event types: ${eventTypes.join(", ")}. State names: ${stateNames.slice(0, 10).join(", ")}${stateNames.length > 10 ? "..." : ""}`,
+  );
 
   return null;
 }
@@ -735,7 +1122,20 @@ function buildExecutionStateTransactItem(
 }
 
 /**
+ * Gets the other two bucket count attributes (excluding the specified bucket).
+ *
+ * @param {string} bucketAttr - The bucket attribute to exclude
+ * @returns {Array<string>} Array of the other two bucket attributes
+ */
+function getOtherBucketAttributes(bucketAttr) {
+  const allBuckets = ["inProgressCount", "failedCount", "succeededCount"];
+  return allBuckets.filter((b) => b !== bucketAttr);
+}
+
+/**
  * Builds aggregate increment transact item.
+ * Properly handles the SET/ADD overlap by only using if_not_exists for the
+ * buckets NOT being incremented.
  *
  * @param {string} county - County identifier
  * @param {string} dataGroupLabel - Normalized data group label
@@ -758,6 +1158,13 @@ function buildAggregateIncrementTransactItem(
   const pk = buildStepAggregatePK(county, dataGroupLabel);
   const sk = buildStepAggregateSK(phase, step);
   const bucketAttr = getBucketCountAttribute(bucket);
+  const otherBuckets = getOtherBucketAttributes(bucketAttr);
+
+  // Build SET clause for the other two buckets (not the one being incremented)
+  // This avoids the "overlapping document paths" error with ADD
+  const otherBucketSetClauses = otherBuckets
+    .map((b) => `${b} = if_not_exists(${b}, :zero)`)
+    .join(",\n            ");
 
   return {
     Update: {
@@ -769,9 +1176,7 @@ function buildAggregateIncrementTransactItem(
             dataGroupLabel = if_not_exists(dataGroupLabel, :dataGroupLabel),
             phase = if_not_exists(phase, :phase),
             step = if_not_exists(step, :step),
-            inProgressCount = if_not_exists(inProgressCount, :zero),
-            failedCount = if_not_exists(failedCount, :zero),
-            succeededCount = if_not_exists(succeededCount, :zero),
+            ${otherBucketSetClauses},
             createdAt = if_not_exists(createdAt, :now),
             updatedAt = :now,
             GSI1PK = :gsi1pk,
@@ -851,6 +1256,65 @@ function buildAggregateDecrementTransactItem(
 }
 
 /**
+ * Builds a combined aggregate update transact item that decrements one bucket
+ * and increments another in a single operation. Used when an execution changes
+ * status (bucket) but stays in the same phase/step.
+ *
+ * @param {string} county - County identifier
+ * @param {string} dataGroupLabel - Normalized data group label
+ * @param {string} phase - Phase name
+ * @param {string} step - Step name
+ * @param {"IN_PROGRESS" | "FAILED" | "SUCCEEDED"} oldBucket - Bucket to decrement
+ * @param {"IN_PROGRESS" | "FAILED" | "SUCCEEDED"} newBucket - Bucket to increment
+ * @param {string} now - Current ISO timestamp
+ * @param {string} tableName - Table name
+ * @returns {import("@aws-sdk/lib-dynamodb").TransactWriteItem} Transact write item
+ */
+function buildAggregateBucketTransferTransactItem(
+  county,
+  dataGroupLabel,
+  phase,
+  step,
+  oldBucket,
+  newBucket,
+  now,
+  tableName,
+) {
+  const pk = buildStepAggregatePK(county, dataGroupLabel);
+  const sk = buildStepAggregateSK(phase, step);
+  const oldBucketAttr = getBucketCountAttribute(oldBucket);
+  const newBucketAttr = getBucketCountAttribute(newBucket);
+
+  // Find the third bucket that's not being modified
+  const allBuckets = ["inProgressCount", "failedCount", "succeededCount"];
+  const unchangedBucket = allBuckets.find(
+    (b) => b !== oldBucketAttr && b !== newBucketAttr,
+  );
+
+  return {
+    Update: {
+      TableName: tableName,
+      Key: { PK: pk, SK: sk },
+      UpdateExpression: `
+        SET ${unchangedBucket} = if_not_exists(${unchangedBucket}, :zero),
+            updatedAt = :now
+        ADD #oldBucketAttr :decrement, #newBucketAttr :increment
+      `.trim(),
+      ExpressionAttributeNames: {
+        "#oldBucketAttr": oldBucketAttr,
+        "#newBucketAttr": newBucketAttr,
+      },
+      ExpressionAttributeValues: {
+        ":zero": 0,
+        ":now": now,
+        ":decrement": -1,
+        ":increment": 1,
+      },
+    },
+  };
+}
+
+/**
  * Migrates a single execution to DynamoDB.
  *
  * @param {DynamoDBDocumentClient} ddbClient - DynamoDB document client
@@ -858,6 +1322,7 @@ function buildAggregateDecrementTransactItem(
  * @param {string} executionArn - Execution ARN
  * @param {string} tableName - Table name
  * @param {boolean} dryRun - Whether this is a dry run
+ * @param {"RUNNING" | "SUCCEEDED" | "FAILED" | "TIMED_OUT" | "ABORTED"} executionStatus - Execution status
  * @returns {Promise<MigrationResult>} Migration result
  */
 async function migrateExecution(
@@ -866,6 +1331,7 @@ async function migrateExecution(
   executionArn,
   tableName,
   dryRun,
+  executionStatus,
 ) {
   try {
     // Get execution history to extract current status
@@ -876,7 +1342,12 @@ async function migrateExecution(
       maxResults: 1,
     });
 
-    const historyResponse = await sfnClient.send(historyCommand);
+    const historyResponse = await retryWithBackoff(
+      async () => await sfnClient.send(historyCommand),
+      {
+        operation: `GetExecutionHistory (started event) (${executionArn.split(":").pop()})`,
+      },
+    );
     const startedEvent = historyResponse.events?.find(
       (e) => e.type === "ExecutionStarted",
     );
@@ -897,6 +1368,7 @@ async function migrateExecution(
       sfnClient,
       executionArn,
       executionInput,
+      executionStatus,
     );
 
     if (!statusResult) {
@@ -919,7 +1391,12 @@ async function migrateExecution(
       ConsistentRead: true,
     });
 
-    const existingState = await ddbClient.send(getCommand);
+    const existingState = await retryWithBackoff(
+      async () => await ddbClient.send(getCommand),
+      {
+        operation: `DynamoDB Get (${detail.executionId})`,
+      },
+    );
     const previousState = (existingState.Item && existingState.Item) || null;
 
     // Check if we should skip (newer status already exists)
@@ -970,10 +1447,26 @@ async function migrateExecution(
     const newAggKey = `${detail.county}#${dataGroupLabel}#${detail.phase}#${detail.step}`;
     const oldBucket = previousState?.bucket || null;
 
-    const sameAggKeyAndBucket =
-      oldAggKey === newAggKey && oldBucket === newBucket;
+    const sameAggKey = oldAggKey === newAggKey;
+    const sameBucket = oldBucket === newBucket;
 
-    if (!sameAggKeyAndBucket) {
+    if (sameAggKey && !sameBucket && previousState && oldBucket) {
+      // Same aggregate, different bucket: use a single combined update
+      // (DynamoDB doesn't allow two operations on the same item in a transaction)
+      transactItems.push(
+        buildAggregateBucketTransferTransactItem(
+          detail.county,
+          dataGroupLabel,
+          detail.phase,
+          detail.step,
+          oldBucket,
+          newBucket,
+          now,
+          tableName,
+        ),
+      );
+    } else if (!sameAggKey || !sameBucket) {
+      // Different aggregate or new execution: use separate decrement/increment
       // Decrement old aggregate if there was a previous state
       if (previousState && oldBucket) {
         transactItems.push(
@@ -1004,12 +1497,16 @@ async function migrateExecution(
     }
 
     // Execute transaction
+    // ClientRequestToken must be ≤36 characters (DynamoDB API constraint)
+    // Use execution ID directly since it's a UUID (36 chars) and unique per execution
     const transactCommand = new TransactWriteCommand({
       TransactItems: transactItems,
-      ClientRequestToken: `migration-${detail.executionId}-${Date.now()}`,
+      ClientRequestToken: detail.executionId,
     });
 
-    await ddbClient.send(transactCommand);
+    await retryWithBackoff(async () => await ddbClient.send(transactCommand), {
+      operation: `DynamoDB TransactWrite (${detail.executionId})`,
+    });
 
     return {
       executionArn,
@@ -1030,7 +1527,7 @@ async function migrateExecution(
 // =============================================================================
 
 /**
- * Runs the migration for all RUNNING executions.
+ * Runs the migration for executions (RUNNING, SUCCEEDED, FAILED) processing page-by-page.
  *
  * @param {Object} options - Migration options
  * @param {string} options.stateMachineArn - State machine ARN
@@ -1054,105 +1551,210 @@ async function runMigration(options) {
   const sfnClient = new SFNClient({ region });
   const ddbClient = DynamoDBDocumentClient.from(new DynamoDBClient({ region }));
 
-  // List RUNNING executions
-  const executions = await listRunningExecutions(
-    sfnClient,
-    stateMachineArn,
-    maxExecutions,
-  );
-
-  if (executions.length === 0) {
-    log.info("No RUNNING executions found. Nothing to migrate.");
-    return {
-      totalRunning: 0,
-      updated: 0,
-      skippedNewer: 0,
-      skippedNoData: 0,
-      failed: 0,
-      results: [],
-    };
-  }
+  // Status filters to process
+  const statusFilters = ["RUNNING", "SUCCEEDED", "FAILED"];
 
   log.info(
-    `Processing ${executions.length} execution(s) with concurrency ${concurrency}...`,
+    `Processing executions with statuses: ${statusFilters.join(", ")}...`,
+  );
+  log.info(`  Concurrency: ${concurrency}`);
+  if (maxExecutions) {
+    log.info(`  Max executions: ${maxExecutions}`);
+  }
+
+  // Create progress bar (incremental, no total count)
+  // Use a large total value so the bar can grow incrementally
+  const progressBar = new cliProgress.SingleBar(
+    {
+      format:
+        "Migration Progress |" +
+        chalk.cyan("{bar}") +
+        "| {value} processed | {status}",
+      barCompleteChar: "\u2588",
+      barIncompleteChar: "\u2591",
+      hideCursor: true,
+      stopOnComplete: false,
+      etaBuffer: 50,
+    },
+    cliProgress.Presets.shades_classic,
   );
 
-  // Process executions with concurrency limit using a proper queue pattern
+  // Start with a large total (will be updated as we go)
+  progressBar.start(1000000, 0, {
+    status: "Starting...",
+  });
+
   /**
    * @type {Array<MigrationResult>}
    */
   const results = [];
-  /**
-   * @type {Array<{executionArn: string, name: string}>}
-   */
-  const executionQueue = [...executions]; // Create a copy to avoid mutation
+  let processedCount = 0;
+  let totalFound = 0;
+
+  // Semaphore for controlling concurrency
+  let activeWorkers = 0;
+  const maxActiveWorkers = concurrency;
 
   /**
-   * Processes the next execution from the queue with proper synchronization.
-   * Uses array shift() which is atomic in JavaScript's single-threaded execution model.
-   * Each worker processes items from the queue until it's empty.
+   * Acquires a worker slot (waits if all slots are taken).
    *
    * @returns {Promise<void>}
    */
-  const processNext = async () => {
-    while (executionQueue.length > 0) {
-      // Atomically get next execution (shift() is atomic per JavaScript single-threaded execution)
-      // Since JavaScript is single-threaded and async functions yield at await points,
-      // shift() operations are effectively atomic - only one can execute at a time
-      const execution = executionQueue.shift();
-      if (!execution) {
-        break; // Queue exhausted
-      }
+  const acquireWorker = async () => {
+    while (activeWorkers >= maxActiveWorkers) {
+      await sleep(10); // Small delay before checking again
+    }
+    activeWorkers++;
+  };
 
-      try {
-        const result = await migrateExecution(
-          ddbClient,
-          sfnClient,
-          execution.executionArn,
-          tableName,
-          dryRun,
-        );
-        results.push(result);
+  /**
+   * Releases a worker slot.
+   */
+  const releaseWorker = () => {
+    activeWorkers--;
+  };
 
-        if (result.status === "updated") {
-          log.info(`  ✓ ${execution.name || execution.executionArn}`);
-        } else if (result.status === "skipped_newer") {
-          log.warn(
-            `  ⊘ ${execution.name || execution.executionArn} (newer exists)`,
-          );
-        } else if (result.status === "skipped_no_data") {
-          log.warn(`  ⊘ ${execution.name || execution.executionArn} (no data)`);
-        } else {
-          log.error(
-            `  ✗ ${execution.name || execution.executionArn}: ${result.error}`,
-          );
-        }
-      } catch (error) {
-        // Handle unexpected errors during migration
-        const errorMessage =
-          error instanceof Error ? error.message : String(error);
-        results.push({
-          executionArn: execution.executionArn,
-          status: "failed",
-          error: errorMessage,
-        });
-        log.error(
-          `  ✗ ${execution.name || execution.executionArn}: ${errorMessage}`,
+  /**
+   * Processes a single execution.
+   *
+   * @param {{executionArn: string, name: string, status: string}} execution - Execution to process
+   * @returns {Promise<void>}
+   */
+  const processExecution = async (execution) => {
+    await acquireWorker();
+    try {
+      const result = await migrateExecution(
+        ddbClient,
+        sfnClient,
+        execution.executionArn,
+        tableName,
+        dryRun,
+        execution.status || "RUNNING",
+      );
+      results.push(result);
+      processedCount++;
+
+      // Update progress bar
+      const status =
+        result.status === "updated"
+          ? "Updated"
+          : result.status === "skipped_newer"
+            ? "Skipped (newer)"
+            : result.status === "skipped_no_data"
+              ? "Skipped (no data)"
+              : "Failed";
+
+      progressBar.update(processedCount, {
+        status: status,
+      });
+
+      // Log details (but don't spam the console)
+      if (result.status === "updated") {
+        log.debug(`  ✓ ${execution.name || execution.executionArn}`);
+      } else if (result.status === "skipped_newer") {
+        log.debug(
+          `  ⊘ ${execution.name || execution.executionArn} (newer exists)`,
+        );
+      } else if (result.status === "skipped_no_data") {
+        log.debug(`  ⊘ ${execution.name || execution.executionArn} (no data)`);
+      } else {
+        log.warn(
+          `  ✗ ${execution.name || execution.executionArn}: ${result.error}`,
         );
       }
+    } catch (error) {
+      // Handle unexpected errors during migration
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      results.push({
+        executionArn: execution.executionArn,
+        status: "failed",
+        error: errorMessage,
+      });
+      processedCount++;
+      progressBar.update(processedCount, {
+        status: "Failed",
+      });
+      log.error(
+        `  ✗ ${execution.name || execution.executionArn}: ${errorMessage}`,
+      );
+    } finally {
+      releaseWorker();
     }
   };
 
-  // Start concurrent workers (each will process items from the queue until empty)
-  await Promise.all(
-    Array(concurrency)
-      .fill(null)
-      .map(() => processNext()),
-  );
+  // Process each status filter
+  for (const statusFilter of statusFilters) {
+    log.info(`Processing ${statusFilter} executions...`);
+
+    let nextToken;
+    let pageNumber = 0;
+    let statusProcessed = 0;
+
+    do {
+      pageNumber++;
+
+      // Fetch next page
+      const { executions, nextToken: newNextToken } = await fetchExecutionPage(
+        sfnClient,
+        stateMachineArn,
+        statusFilter,
+        nextToken,
+        pageNumber,
+      );
+
+      if (executions.length === 0) {
+        nextToken = newNextToken;
+        continue;
+      }
+
+      totalFound += executions.length;
+      log.debug(
+        `  Page ${pageNumber}: Found ${executions.length} execution(s) (${statusFilter})`,
+      );
+
+      // Process all executions from this page concurrently (respecting concurrency limit)
+      const pagePromises = executions.map((execution) =>
+        processExecution(execution),
+      );
+
+      // Wait for all executions in this page to complete
+      await Promise.all(pagePromises);
+
+      statusProcessed += executions.length;
+
+      // Check if we've hit the max executions limit
+      if (maxExecutions && processedCount >= maxExecutions) {
+        log.info(
+          `  Reached max executions limit (${maxExecutions}). Stopping.`,
+        );
+        nextToken = undefined;
+        break;
+      }
+
+      nextToken = newNextToken;
+
+      // Add delay between paginated requests to avoid rate limiting
+      if (nextToken) {
+        await sleep(DEFAULT_PAGINATION_DELAY_MS);
+      }
+    } while (nextToken);
+
+    log.info(
+      `  Completed ${statusFilter}: ${statusProcessed} execution(s) processed`,
+    );
+  }
+
+  // Wait for any remaining active workers to finish
+  while (activeWorkers > 0) {
+    await sleep(10);
+  }
+
+  progressBar.stop();
 
   // Calculate summary
   const summary = {
-    totalRunning: executions.length,
+    totalRunning: totalFound,
     updated: results.filter((r) => r.status === "updated").length,
     skippedNewer: results.filter((r) => r.status === "skipped_newer").length,
     skippedNoData: results.filter((r) => r.status === "skipped_no_data").length,
@@ -1210,9 +1812,18 @@ async function main() {
       type: "number",
       description: "Maximum number of executions to process",
     })
+    .option("verbose", {
+      type: "boolean",
+      default: false,
+      description: "Enable debug logging",
+      alias: "v",
+    })
     .help()
     .alias("help", "h")
     .parse();
+
+  // Set debug logging based on flag
+  debugEnabled = argv.verbose;
 
   try {
     log.info("Starting workflow-state migration...");
@@ -1247,7 +1858,7 @@ async function main() {
 
     // Print summary
     console.log("\n" + chalk.bold("Migration Summary:"));
-    console.log(`  Total RUNNING: ${summary.totalRunning}`);
+    console.log(`  Total executions processed: ${summary.totalRunning}`);
     console.log(`  Updated: ${chalk.green(summary.updated)}`);
     console.log(
       `  Skipped (newer exists): ${chalk.yellow(summary.skippedNewer)}`,
