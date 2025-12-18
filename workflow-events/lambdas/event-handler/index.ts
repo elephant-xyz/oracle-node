@@ -103,8 +103,6 @@ const handleWorkflowEvent = async (
         error: stateResult.error,
       }),
     );
-    // Don't throw - continue processing errors even if state update fails
-    // This maintains backwards compatibility and error persistence
   }
 
   const errors = event.detail.errors;

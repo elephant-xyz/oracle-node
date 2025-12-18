@@ -1029,8 +1029,6 @@ const updateFailedExecutionToUnrecoverable = async (
     await docClient.send(command);
     return true;
   } catch (error) {
-    // Log all errors and return false for consistent error handling
-    // This prevents partial update failures from breaking the entire operation
     console.warn(
       `Failed to update FailedExecutionItem ${executionId}:`,
       error instanceof Error ? error.message : String(error),
@@ -2284,19 +2282,7 @@ export const upsertExecutionStateAndUpdateAggregates = async (
   const dataGroupLabel = normalizeDataGroupLabel(detail.dataGroupLabel);
   const newBucket = normalizeStepStatusToBucket(detail.status);
 
-  // Get current execution state
-  let previousState: ExecutionStateItem | null = null;
-  try {
-    previousState = await getExecutionState(detail.executionId);
-  } catch (error) {
-    return {
-      success: false,
-      skipped: false,
-      previousState: null,
-      newState: {} as ExecutionStateItem,
-      error: `Failed to get execution state: ${error instanceof Error ? error.message : String(error)}`,
-    };
-  }
+  const previousState = await getExecutionState(detail.executionId);
 
   // Check for out-of-order events
   if (previousState && previousState.lastEventTime > eventTime) {
@@ -2397,11 +2383,9 @@ export const upsertExecutionStateAndUpdateAggregates = async (
       newState,
     };
   } catch (error) {
-    // Handle conditional check failures (could be out-of-order or race condition)
     const errorMessage = error instanceof Error ? error.message : String(error);
 
     if (errorMessage.includes("ConditionalCheckFailed")) {
-      // Could be an out-of-order event or race condition, skip gracefully
       return {
         success: true,
         skipped: true,
@@ -2503,12 +2487,7 @@ export interface AllStepAggregatesCursor {
 export interface QueryAllStepAggregatesInput {
   /** Optional data group filter (uses begins_with on GSI2SK). */
   dataGroupLabel?: string;
-  /**
-   * Optional phase filter (uses begins_with on GSI2SK after dataGroupLabel).
-   * NOTE: This filter is only applied when dataGroupLabel is also provided,
-   * because GSI2SK format is `DG#${dataGroupLabel}#PHASE#${phase}#...`.
-   * If phase is provided without dataGroupLabel, it will be ignored.
-   */
+  /** Optional phase filter (only applied when dataGroupLabel is also provided). */
   phase?: string;
   /** Maximum number of items to return per request. */
   limit?: number;
@@ -2563,10 +2542,6 @@ export const queryAllStepAggregates = async (
       ":gsi2pk": gsi2pk,
     };
 
-    // Add optional SK prefix filter
-    // Note: phase filter only works when dataGroupLabel is also provided,
-    // because GSI2SK format is `DG#${dataGroupLabel}#PHASE#${phase}#...`
-    // and begins_with can only match from the start of the string.
     if (dataGroupLabel) {
       let skPrefix = `DG#${dataGroupLabel}#`;
       if (phase) {

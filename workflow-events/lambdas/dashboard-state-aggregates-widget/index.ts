@@ -244,10 +244,8 @@ export const handler = async (
   }
 
   try {
-    // Query all step aggregates from DynamoDB
-    // We fetch all aggregates without filtering to get a complete picture
     const result = await queryAllStepAggregates({
-      limit: 1000, // Reasonable limit for dashboard display
+      limit: 1000,
     });
 
     console.info("aggregates-queried", {
