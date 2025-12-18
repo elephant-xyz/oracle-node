@@ -2146,6 +2146,11 @@ const buildExecutionStateTransactItem = (
 /**
  * Builds the transact item for incrementing an aggregate bucket.
  *
+ * Note: We exclude the bucket being incremented from the SET clause's
+ * if_not_exists initialization because:
+ * 1. DynamoDB doesn't allow the same attribute in both SET and ADD clauses
+ * 2. ADD treats non-existent attributes as 0, so no initialization is needed
+ *
  * @param county - The county identifier
  * @param dataGroupLabel - The normalized data group label
  * @param phase - The phase name
@@ -2167,27 +2172,47 @@ const buildAggregateIncrementTransactItem = (
   const sk = buildStepAggregateSK(phase, step);
   const bucketAttr = getBucketCountAttribute(bucket);
 
+  // Build initialization clauses for the OTHER bucket counts (not the one being incremented)
+  // This avoids DynamoDB's "overlapping document paths" error when the same attribute
+  // appears in both SET and ADD clauses
+  const otherBucketInitClauses: string[] = [];
+  if (bucketAttr !== "inProgressCount") {
+    otherBucketInitClauses.push(
+      "inProgressCount = if_not_exists(inProgressCount, :zero)",
+    );
+  }
+  if (bucketAttr !== "failedCount") {
+    otherBucketInitClauses.push(
+      "failedCount = if_not_exists(failedCount, :zero)",
+    );
+  }
+  if (bucketAttr !== "succeededCount") {
+    otherBucketInitClauses.push(
+      "succeededCount = if_not_exists(succeededCount, :zero)",
+    );
+  }
+
+  const updateExpression = `
+    SET entityType = if_not_exists(entityType, :entityType),
+        county = if_not_exists(county, :county),
+        dataGroupLabel = if_not_exists(dataGroupLabel, :dataGroupLabel),
+        phase = if_not_exists(phase, :phase),
+        step = if_not_exists(step, :step),
+        ${otherBucketInitClauses.join(",\n        ")},
+        createdAt = if_not_exists(createdAt, :now),
+        updatedAt = :now,
+        GSI1PK = :gsi1pk,
+        GSI1SK = :gsi1sk,
+        GSI2PK = :gsi2pk,
+        GSI2SK = :gsi2sk
+    ADD #bucketAttr :increment
+  `.trim();
+
   return {
     Update: {
       TableName: tableName,
       Key: { PK: pk, SK: sk },
-      UpdateExpression: `
-        SET entityType = if_not_exists(entityType, :entityType),
-            county = if_not_exists(county, :county),
-            dataGroupLabel = if_not_exists(dataGroupLabel, :dataGroupLabel),
-            phase = if_not_exists(phase, :phase),
-            step = if_not_exists(step, :step),
-            inProgressCount = if_not_exists(inProgressCount, :zero),
-            failedCount = if_not_exists(failedCount, :zero),
-            succeededCount = if_not_exists(succeededCount, :zero),
-            createdAt = if_not_exists(createdAt, :now),
-            updatedAt = :now,
-            GSI1PK = :gsi1pk,
-            GSI1SK = :gsi1sk,
-            GSI2PK = :gsi2pk,
-            GSI2SK = :gsi2sk
-        ADD #bucketAttr :increment
-      `.trim(),
+      UpdateExpression: updateExpression,
       ExpressionAttributeNames: {
         "#bucketAttr": bucketAttr,
       },
