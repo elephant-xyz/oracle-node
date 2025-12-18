@@ -777,12 +777,6 @@ package_and_upload_workflow_direct_submit() {
 }
 
 deploy_codebuild_stack() {
-
-  local openai_api_key="${OPENAI_API_KEY:-}"
-  if [[ -z "$openai_api_key" ]]; then
-    err "OPENAI_API_KEY is required"
-    exit 1
-  fi
   if [[ ! -f "$CODEBUILD_TEMPLATE" ]]; then
     warn "CodeBuild template not found at $CODEBUILD_TEMPLATE, skipping deployment."
     return 0
@@ -947,7 +941,6 @@ deploy_codebuild_stack() {
     "SvlWorkerFunctionName=$svl_worker_function_name"
     "OutputS3Prefix=$output_s3_prefix"
     "MvlFunctionName=$mvl_function_name"
-    "OpenAiApiKey=$openai_api_key"
     "TransactionsSqsQueueUrl=$transactions_sqs_queue_url"
     "TransactionsDeadLetterQueueUrl=$transactions_dlq_url"
     "DefaultDlqUrl=$default_dlq_url"
