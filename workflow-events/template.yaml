@@ -97,6 +97,55 @@ Resources:
         - Key: Environment
           Value: !Ref EnvironmentName
 
+  # DynamoDB table for storing workflow execution state and step aggregates
+  WorkflowStateTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "${EnvironmentName}-workflow-state"
+      BillingMode: PAY_PER_REQUEST
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      AttributeDefinitions:
+        - AttributeName: PK
+          AttributeType: S
+        - AttributeName: SK
+          AttributeType: S
+        - AttributeName: GSI1PK
+          AttributeType: S
+        - AttributeName: GSI1SK
+          AttributeType: S
+        - AttributeName: GSI2PK
+          AttributeType: S
+        - AttributeName: GSI2SK
+          AttributeType: S
+      KeySchema:
+        - AttributeName: PK
+          KeyType: HASH
+        - AttributeName: SK
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        # GSI1: Query aggregates by phase+step across counties
+        - IndexName: GSI1
+          KeySchema:
+            - AttributeName: GSI1PK
+              KeyType: HASH
+            - AttributeName: GSI1SK
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+        # GSI2: Sharded "list all aggregates" index for querying without knowing counties/data groups
+        - IndexName: GSI2
+          KeySchema:
+            - AttributeName: GSI2PK
+              KeyType: HASH
+            - AttributeName: GSI2SK
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      Tags:
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
   WorkflowEventHandlerDeadLetterQueue:
     Type: AWS::SQS::Queue
     Properties:
@@ -124,11 +173,14 @@ Resources:
       Environment:
         Variables:
           WORKFLOW_ERRORS_TABLE_NAME: !Ref WorkflowErrorsTable
+          WORKFLOW_STATE_TABLE_NAME: !Ref WorkflowStateTable
       Policies:
         - AWSLambdaBasicExecutionRole
         - CloudWatchPutMetricPolicy: {}
         - DynamoDBCrudPolicy:
             TableName: !Ref WorkflowErrorsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref WorkflowStateTable
       Events:
         WorkflowEventRule:
           Type: EventBridgeRule
@@ -905,3 +957,9 @@ Outputs:
   WorkflowErrorsTableStreamArn:
     Description: ARN of the DynamoDB Stream for workflow errors table
     Value: !GetAtt WorkflowErrorsTable.StreamArn
+  WorkflowStateTableName:
+    Description: Name of the DynamoDB table for workflow execution state and step aggregates
+    Value: !Ref WorkflowStateTable
+  WorkflowStateTableArn:
+    Description: ARN of the DynamoDB table for workflow execution state and step aggregates
+    Value: !GetAtt WorkflowStateTable.Arn
