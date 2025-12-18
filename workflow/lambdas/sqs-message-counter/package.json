@@ -11,10 +11,11 @@
   },
   "dependencies": {
     "@aws-sdk/client-cloudformation": "^3.879.0",
-    "@aws-sdk/client-cloudwatch": "^3.879.0",
+    "@aws-sdk/client-dynamodb": "^3.879.0",
     "@aws-sdk/client-secrets-manager": "^3.879.0",
     "@aws-sdk/client-sqs": "^3.879.0",
     "@aws-sdk/client-sts": "^3.879.0",
+    "@aws-sdk/lib-dynamodb": "^3.879.0",
     "googleapis": "^144.0.0"
   },
   "devDependencies": {

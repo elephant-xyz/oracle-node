@@ -1858,7 +1858,9 @@ Resources:
             - Effect: Allow
               Action:
                 - cloudformation:DescribeStacks
-              Resource: !Sub "arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${AWS::StackName}/*"
+              Resource:
+                - !Sub "arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${AWS::StackName}/*"
+                - !Sub "arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/workflow-events-stack/*"
             - Effect: Allow
               Action:
                 - sqs:GetQueueAttributes
@@ -1878,12 +1880,15 @@ Resources:
                 - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:spreadsheet-api/google-credentials-*"
             - Effect: Allow
               Action:
-                - cloudwatch:GetMetricStatistics
-                - cloudwatch:ListMetrics
-              Resource: "*"
+                - dynamodb:Query
+                - dynamodb:DescribeTable
+              Resource:
+                - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/*-workflow-state"
+                - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/*-workflow-state/index/*"
       Environment:
         Variables:
           STACK_NAME: !Ref AWS::StackName
+          WORKFLOW_EVENTS_STACK_NAME: workflow-events-stack
       Events:
         DailySchedule1:
           Type: Schedule

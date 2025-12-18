@@ -14,17 +14,20 @@ import {
   GetSecretValueCommand,
 } from "@aws-sdk/client-secrets-manager";
 import {
-  CloudWatchClient,
-  GetMetricStatisticsCommand,
-  ListMetricsCommand,
-} from "@aws-sdk/client-cloudwatch";
+  DynamoDBClient,
+} from "@aws-sdk/client-dynamodb";
+import {
+  DynamoDBDocumentClient,
+  QueryCommand,
+} from "@aws-sdk/lib-dynamodb";
 import { google } from "googleapis";
 
 const cloudFormationClient = new CloudFormationClient({});
 const sqsClient = new SQSClient({});
 const stsClient = new STSClient({});
 const secretsClient = new SecretsManagerClient({});
-const cloudWatchClient = new CloudWatchClient({});
+const dynamoDBClient = new DynamoDBClient({});
+const docClient = DynamoDBDocumentClient.from(dynamoDBClient);
 
 /**
  * @typedef {Object} QueueCountResult
@@ -515,6 +518,244 @@ async function findAccountIdRow(sheets, sheetId, tabName, accountId) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     throw new Error(`Failed to find account ID row: ${errorMessage}`);
   }
+}
+
+/**
+ * Get workflow-state table name from workflow-events CloudFormation stack
+ * @param {string} workflowEventsStackName - Name of the workflow-events stack
+ * @returns {Promise<string|null>} - Table name or null if not found
+ */
+async function getWorkflowStateTableName(workflowEventsStackName) {
+  try {
+    const describeResponse = await cloudFormationClient.send(
+      new DescribeStacksCommand({ StackName: workflowEventsStackName }),
+    );
+
+    const stack = describeResponse.Stacks?.[0];
+    if (stack?.Outputs) {
+      const output = stack.Outputs.find(
+        (o) => o.OutputKey === "WorkflowStateTableName",
+      );
+      if (output?.OutputValue) {
+        return output.OutputValue;
+      }
+    }
+
+    console.error(
+      JSON.stringify({
+        level: "error",
+        msg: "workflow_state_table_name_not_found",
+        stackName: workflowEventsStackName,
+        availableOutputs: stack?.Outputs?.map((o) => o.OutputKey) || [],
+      }),
+    );
+    return null;
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error(
+      JSON.stringify({
+        level: "error",
+        msg: "failed_to_get_workflow_state_table_name",
+        stackName: workflowEventsStackName,
+        error: errorMessage,
+      }),
+    );
+    return null;
+  }
+}
+
+/**
+ * Format shard index as zero-padded string (e.g., "00", "01", ..., "15")
+ * @param {number} shardIndex - The shard index
+ * @returns {string} Zero-padded shard string
+ */
+function formatShardKey(shardIndex) {
+  return shardIndex.toString().padStart(2, "0");
+}
+
+/**
+ * Build GSI2PK for a specific shard index
+ * @param {number} shardIndex - The shard index (0 to 15)
+ * @returns {string} The GSI2PK value: `AGG#ALL#S#${shard}`
+ */
+function buildGSI2PKForShard(shardIndex) {
+  return `AGG#ALL#S#${formatShardKey(shardIndex)}`;
+}
+
+/**
+ * Query all step aggregates from DynamoDB workflow-state table and accumulate counts
+ * @param {string} tableName - DynamoDB table name
+ * @param {Set<string>} phaseSet - Set of phase names to include (lowercase)
+ * @param {"inProgressCount"|"failedCount"} countField - Field to sum
+ * @returns {Promise<number>} - Total count
+ */
+async function queryStepAggregatesCount(
+  tableName,
+  phaseSet,
+  countField,
+) {
+  const GSI2_SHARD_COUNT = 16;
+  let total = 0;
+
+  console.log(
+    JSON.stringify({
+      level: "info",
+      msg: "querying_step_aggregates",
+      tableName: tableName,
+      phaseSet: Array.from(phaseSet),
+      countField: countField,
+    }),
+  );
+
+  // Query each shard
+  for (let shardIndex = 0; shardIndex < GSI2_SHARD_COUNT; shardIndex++) {
+    const gsi2pk = buildGSI2PKForShard(shardIndex);
+    let exclusiveStartKey = undefined;
+
+    do {
+      try {
+        const command = new QueryCommand({
+          TableName: tableName,
+          IndexName: "GSI2",
+          KeyConditionExpression: "GSI2PK = :gsi2pk",
+          ExpressionAttributeValues: {
+            ":gsi2pk": gsi2pk,
+          },
+          ExclusiveStartKey: exclusiveStartKey,
+        });
+
+        const response = await docClient.send(command);
+
+        if (response.Items) {
+          for (const item of response.Items) {
+            const phaseLower = String(item.phase || "").toLowerCase();
+            if (phaseSet.has(phaseLower)) {
+              const count = Number(item[countField] || 0);
+              total += count;
+            }
+          }
+        }
+
+        exclusiveStartKey = response.LastEvaluatedKey;
+      } catch (error) {
+        const errorMessage =
+          error instanceof Error ? error.message : String(error);
+        console.error(
+          JSON.stringify({
+            level: "error",
+            msg: "failed_to_query_shard",
+            shardIndex: shardIndex,
+            tableName: tableName,
+            error: errorMessage,
+          }),
+        );
+        // Continue with next shard
+        break;
+      }
+    } while (exclusiveStartKey);
+  }
+
+  console.log(
+    JSON.stringify({
+      level: "info",
+      msg: "step_aggregates_count_calculated",
+      tableName: tableName,
+      phaseSet: Array.from(phaseSet),
+      countField: countField,
+      total: total,
+    }),
+  );
+
+  return total;
+}
+
+/**
+ * Calculate "in progress" count from DynamoDB workflow-state table
+ * Includes phases: prepare, transform, svl, mvl, upload, hash
+ * @param {string} workflowEventsStackName - Name of the workflow-events stack
+ * @returns {Promise<number>} - Total in progress count
+ */
+async function calculateInProgressCountFromDynamoDB(
+  workflowEventsStackName,
+) {
+  const tableName = await getWorkflowStateTableName(workflowEventsStackName);
+
+  if (!tableName) {
+    console.warn(
+      JSON.stringify({
+        level: "warn",
+        msg: "workflow_state_table_not_found_using_zero",
+        workflowEventsStackName: workflowEventsStackName,
+      }),
+    );
+    return 0;
+  }
+
+  console.log(
+    JSON.stringify({
+      level: "info",
+      msg: "calculating_in_progress_count_from_dynamodb",
+      tableName: tableName,
+    }),
+  );
+
+  // Phases to include: prepare, transform, svl, mvl, upload, hash
+  const phaseSet = new Set([
+    "prepare",
+    "transform",
+    "svl",
+    "mvl",
+    "upload",
+    "hash",
+  ]);
+
+  return await queryStepAggregatesCount(
+    tableName,
+    phaseSet,
+    "inProgressCount",
+  );
+}
+
+/**
+ * Calculate "ready to be minted" (failed) count from DynamoDB workflow-state table
+ * Includes phases: prepare, transform, upload, hash, autorepair
+ * @param {string} workflowEventsStackName - Name of the workflow-events stack
+ * @returns {Promise<number>} - Total failed count
+ */
+async function calculateReadyToMintFailedCountFromDynamoDB(
+  workflowEventsStackName,
+) {
+  const tableName = await getWorkflowStateTableName(workflowEventsStackName);
+
+  if (!tableName) {
+    console.warn(
+      JSON.stringify({
+        level: "warn",
+        msg: "workflow_state_table_not_found_using_zero",
+        workflowEventsStackName: workflowEventsStackName,
+      }),
+    );
+    return 0;
+  }
+
+  console.log(
+    JSON.stringify({
+      level: "info",
+      msg: "calculating_ready_to_mint_failed_count_from_dynamodb",
+      tableName: tableName,
+    }),
+  );
+
+  // Phases to include: prepare, transform, upload, hash, autorepair
+  const phaseSet = new Set([
+    "prepare",
+    "transform",
+    "upload",
+    "hash",
+    "autorepair",
+  ]);
+
+  return await queryStepAggregatesCount(tableName, phaseSet, "failedCount");
 }
 
 /**
@@ -1064,7 +1305,7 @@ async function updateGoogleSheet(
     });
 
     // Update "failed" column
-    // Note: This column tracks FAILED metrics from CloudWatch (Prepare, Transform, Upload, Hash, AutoRepair)
+    // Note: This column tracks FAILED counts from DynamoDB workflow-state aggregates (Prepare, Transform, Upload, Hash, AutoRepair)
     const readyToMintFailedColumnIndex = await findOrCreateDateColumn(
       sheets,
       config.sheetId,
@@ -1275,17 +1516,21 @@ export const handler = async (event = {}) => {
     // Count workflow queue messages (waiting for mining)
     const waitingForMiningMessages = await countWorkflowQueueMessages();
 
-    // Calculate in progress count from CloudWatch metrics (last 30 days)
-    const inProgressMessages = await calculateInProgressCount();
+    // Calculate in progress count from DynamoDB workflow-state table
+    const workflowEventsStackName =
+      process.env.WORKFLOW_EVENTS_STACK_NAME || "workflow-events-stack";
+    const inProgressMessages =
+      await calculateInProgressCountFromDynamoDB(workflowEventsStackName);
 
-    // Calculate ready to be minted (failed) count from CloudWatch metrics (last 30 days)
-    const readyToMintFailedMessages = await calculateReadyToMintFailedCount();
+    // Calculate ready to be minted (failed) count from DynamoDB workflow-state table
+    const readyToMintFailedMessages =
+      await calculateReadyToMintFailedCountFromDynamoDB(workflowEventsStackName);
 
     // Update Google Sheet if configured
     // readyToMintMessages = totalMessages (Transactions/Gas Price queues)
     // waitingForMiningMessages = workflow queue messages
-    // inProgressMessages = calculated from CloudWatch metrics
-    // readyToMintFailedMessages = FAILED metrics from CloudWatch (Prepare, Transform, Upload, Hash)
+    // inProgressMessages = calculated from DynamoDB workflow-state aggregates
+    // readyToMintFailedMessages = FAILED counts from DynamoDB (Prepare, Transform, Upload, Hash, AutoRepair)
     await updateGoogleSheet(
       accountId,
       totalMessages,
