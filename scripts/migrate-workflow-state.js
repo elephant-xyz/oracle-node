@@ -1497,11 +1497,12 @@ async function migrateExecution(
     }
 
     // Execute transaction
-    // ClientRequestToken must be ≤36 characters (DynamoDB API constraint)
-    // Use execution ID directly since it's a UUID (36 chars) and unique per execution
+    // Note: We don't use ClientRequestToken for migration because:
+    // 1. It's primarily for Lambda retry idempotency, not one-time migration
+    // 2. Using executionId as token causes issues on retry within 10-min window
+    //    when transaction parameters change (e.g., timestamp)
     const transactCommand = new TransactWriteCommand({
       TransactItems: transactItems,
-      ClientRequestToken: detail.executionId,
     });
 
     await retryWithBackoff(async () => await ddbClient.send(transactCommand), {
@@ -1514,6 +1515,28 @@ async function migrateExecution(
     };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
+
+    // Check for TransactionConflict - this means the live handler is updating
+    // the same item concurrently. This is expected and safe - the live handler's
+    // data is more current, so we can treat this as "skipped_newer"
+    if (errorMessage.includes("TransactionConflict")) {
+      return {
+        executionArn,
+        status: "skipped_newer",
+        reason: "TransactionConflict - live handler is updating this execution",
+      };
+    }
+
+    // Check for idempotency token conflict - can happen if script was re-run
+    // within 10 minutes. Treat as already processed.
+    if (errorMessage.includes("idempotent token was used")) {
+      return {
+        executionArn,
+        status: "skipped_newer",
+        reason: "Idempotency conflict - already processed within 10-min window",
+      };
+    }
+
     return {
       executionArn,
       status: "failed",
