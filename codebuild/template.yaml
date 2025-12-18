@@ -321,7 +321,7 @@ Resources:
                 nodejs: 22
               commands:
                 - npm install -g cheerio
-                - npm install -g @elephant-xyz/mcp
+                - npm install -g @elephant-xyz/mcp@latest
                 - echo "Node.js runtime set to version 22."
             pre_build:
               commands:
