@@ -898,10 +898,10 @@ function normalizeStepStatusToBucket(status) {
     case "SUCCEEDED":
       return "SUCCEEDED";
     case "FAILED":
+    case "PARKED":
       return "FAILED";
     case "IN_PROGRESS":
     case "SCHEDULED":
-    case "PARKED":
       return "IN_PROGRESS";
     default:
       return "IN_PROGRESS";

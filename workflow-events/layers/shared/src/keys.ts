@@ -115,10 +115,10 @@ export const normalizeStepStatusToBucket = (
     case "SUCCEEDED":
       return "SUCCEEDED";
     case "FAILED":
+    case "PARKED":
       return "FAILED";
     case "IN_PROGRESS":
     case "SCHEDULED":
-    case "PARKED":
       return "IN_PROGRESS";
   }
 };
