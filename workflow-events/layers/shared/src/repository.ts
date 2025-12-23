@@ -7,6 +7,14 @@ import {
   BatchWriteCommand,
   GetCommand,
 } from "@aws-sdk/lib-dynamodb";
+import type { TransactWriteCommandInput } from "@aws-sdk/lib-dynamodb";
+
+/**
+ * Type for a single transact write item (non-nullable version).
+ */
+type TransactWriteItem = NonNullable<
+  TransactWriteCommandInput["TransactItems"]
+>[number];
 import type {
   WorkflowEventDetail,
   WorkflowError,
@@ -14,10 +22,18 @@ import type {
   ExecutionErrorLink,
   FailedExecutionItem,
   ErrorStatus,
+  ExecutionStateItem,
+  StepAggregateItem,
+  ExecutionBucket,
 } from "./types.js";
 import { TABLE_NAME, docClient } from "./dynamodb-client.js";
 import {
+  getWorkflowStateTableName,
+  WORKFLOW_STATE_TABLE_NAME,
+} from "./workflow-state-client.js";
+import {
   ENTITY_TYPES,
+  STATE_ENTITY_TYPES,
   padCount,
   extractErrorType,
   createKey,
@@ -25,6 +41,19 @@ import {
   toGsiStatus,
   GS3_EXECUTION_PK,
   GS3_ERROR_PK,
+  normalizeStepStatusToBucket,
+  normalizeDataGroupLabel,
+  getBucketCountAttribute,
+  buildExecutionStatePK,
+  buildExecutionStateSK,
+  buildStepAggregatePK,
+  buildStepAggregateSK,
+  buildStepAggregateGSI1PK,
+  buildStepAggregateGSI1SK,
+  buildStepAggregateGSI2PK,
+  buildStepAggregateGSI2SK,
+  buildGSI2PKForShard,
+  GSI2_SHARD_COUNT,
 } from "./keys.js";
 
 // =============================================================================
@@ -1000,8 +1029,6 @@ const updateFailedExecutionToUnrecoverable = async (
     await docClient.send(command);
     return true;
   } catch (error) {
-    // Log all errors and return false for consistent error handling
-    // This prevents partial update failures from breaking the entire operation
     console.warn(
       `Failed to update FailedExecutionItem ${executionId}:`,
       error instanceof Error ? error.message : String(error),
@@ -1975,4 +2002,657 @@ export const batchDeleteErrorRecords = async (
   }
 
   return deletedCodes;
+};
+
+// =============================================================================
+// Workflow State Table Operations
+// =============================================================================
+
+/**
+ * Input for the upsertExecutionStateAndUpdateAggregates function.
+ */
+export interface UpsertExecutionStateInput {
+  /** The workflow event detail from EventBridge. */
+  detail: WorkflowEventDetail;
+  /** The EventBridge event ID (used for idempotency via ClientRequestToken). */
+  eventId: string;
+  /** The EventBridge event time (ISO string). */
+  eventTime: string;
+}
+
+/**
+ * Result of upserting execution state and updating aggregates.
+ */
+export interface UpsertExecutionStateResult {
+  /** Whether the operation was successful. */
+  success: boolean;
+  /** Whether the event was skipped (e.g., out-of-order event). */
+  skipped: boolean;
+  /** The previous execution state (if any). */
+  previousState: ExecutionStateItem | null;
+  /** The new execution state. */
+  newState: ExecutionStateItem;
+  /** Error message if the operation failed. */
+  error?: string;
+}
+
+/**
+ * Gets the current execution state for an execution ID.
+ *
+ * @param executionId - The execution identifier
+ * @returns The execution state item, or null if not found
+ */
+export const getExecutionState = async (
+  executionId: string,
+): Promise<ExecutionStateItem | null> => {
+  const tableName = getWorkflowStateTableName();
+  const pk = buildExecutionStatePK(executionId);
+  const sk = buildExecutionStateSK(executionId);
+
+  const command = new GetCommand({
+    TableName: tableName,
+    Key: { PK: pk, SK: sk },
+    ConsistentRead: true,
+  });
+
+  const response = await docClient.send(command);
+  return (response.Item as ExecutionStateItem) ?? null;
+};
+
+/**
+ * Builds the transact items for updating execution state.
+ *
+ * @param detail - The workflow event detail
+ * @param eventTime - The EventBridge event time
+ * @param now - Current ISO timestamp
+ * @param previousState - The previous execution state (if any)
+ * @param newBucket - The normalized bucket for the new state
+ * @param dataGroupLabel - The normalized data group label
+ * @returns The transact write item for the execution state
+ */
+const buildExecutionStateTransactItem = (
+  detail: WorkflowEventDetail,
+  eventTime: string,
+  now: string,
+  previousState: ExecutionStateItem | null,
+  newBucket: ExecutionBucket,
+  dataGroupLabel: string,
+): TransactWriteItem => {
+  const tableName = getWorkflowStateTableName();
+  const pk = buildExecutionStatePK(detail.executionId);
+  const sk = buildExecutionStateSK(detail.executionId);
+  const newVersion = (previousState?.version ?? 0) + 1;
+
+  if (previousState) {
+    // Update existing state with optimistic concurrency
+    return {
+      Update: {
+        TableName: tableName,
+        Key: { PK: pk, SK: sk },
+        UpdateExpression: `
+          SET county = :county,
+              dataGroupLabel = :dataGroupLabel,
+              phase = :phase,
+              step = :step,
+              bucket = :bucket,
+              rawStatus = :rawStatus,
+              lastEventTime = :eventTime,
+              updatedAt = :now,
+              version = :newVersion
+        `.trim(),
+        ConditionExpression:
+          "version = :oldVersion AND (attribute_not_exists(lastEventTime) OR lastEventTime <= :eventTime)",
+        ExpressionAttributeValues: {
+          ":county": detail.county,
+          ":dataGroupLabel": dataGroupLabel,
+          ":phase": detail.phase,
+          ":step": detail.step,
+          ":bucket": newBucket,
+          ":rawStatus": detail.status,
+          ":eventTime": eventTime,
+          ":now": now,
+          ":newVersion": newVersion,
+          ":oldVersion": previousState.version,
+        },
+      },
+    };
+  }
+
+  // Create new execution state
+  return {
+    Put: {
+      TableName: tableName,
+      Item: {
+        PK: pk,
+        SK: sk,
+        entityType: STATE_ENTITY_TYPES.EXECUTION_STATE,
+        executionId: detail.executionId,
+        county: detail.county,
+        dataGroupLabel,
+        phase: detail.phase,
+        step: detail.step,
+        bucket: newBucket,
+        rawStatus: detail.status,
+        lastEventTime: eventTime,
+        createdAt: now,
+        updatedAt: now,
+        version: 1,
+      },
+      ConditionExpression: "attribute_not_exists(PK)",
+    },
+  };
+};
+
+/**
+ * Builds the transact item for incrementing an aggregate bucket.
+ *
+ * Note: We exclude the bucket being incremented from the SET clause's
+ * if_not_exists initialization because:
+ * 1. DynamoDB doesn't allow the same attribute in both SET and ADD clauses
+ * 2. ADD treats non-existent attributes as 0, so no initialization is needed
+ *
+ * @param county - The county identifier
+ * @param dataGroupLabel - The normalized data group label
+ * @param phase - The phase name
+ * @param step - The step name
+ * @param bucket - The bucket to increment
+ * @param now - Current ISO timestamp
+ * @returns The transact write item for the aggregate increment
+ */
+const buildAggregateIncrementTransactItem = (
+  county: string,
+  dataGroupLabel: string,
+  phase: string,
+  step: string,
+  bucket: ExecutionBucket,
+  now: string,
+): TransactWriteItem => {
+  const tableName = getWorkflowStateTableName();
+  const pk = buildStepAggregatePK(county, dataGroupLabel);
+  const sk = buildStepAggregateSK(phase, step);
+  const bucketAttr = getBucketCountAttribute(bucket);
+
+  // Build initialization clauses for the OTHER bucket counts (not the one being incremented)
+  // This avoids DynamoDB's "overlapping document paths" error when the same attribute
+  // appears in both SET and ADD clauses
+  const otherBucketInitClauses: string[] = [];
+  if (bucketAttr !== "inProgressCount") {
+    otherBucketInitClauses.push(
+      "inProgressCount = if_not_exists(inProgressCount, :zero)",
+    );
+  }
+  if (bucketAttr !== "failedCount") {
+    otherBucketInitClauses.push(
+      "failedCount = if_not_exists(failedCount, :zero)",
+    );
+  }
+  if (bucketAttr !== "succeededCount") {
+    otherBucketInitClauses.push(
+      "succeededCount = if_not_exists(succeededCount, :zero)",
+    );
+  }
+
+  const updateExpression = `
+    SET entityType = if_not_exists(entityType, :entityType),
+        county = if_not_exists(county, :county),
+        dataGroupLabel = if_not_exists(dataGroupLabel, :dataGroupLabel),
+        phase = if_not_exists(phase, :phase),
+        step = if_not_exists(step, :step),
+        ${otherBucketInitClauses.join(",\n        ")},
+        createdAt = if_not_exists(createdAt, :now),
+        updatedAt = :now,
+        GSI1PK = :gsi1pk,
+        GSI1SK = :gsi1sk,
+        GSI2PK = :gsi2pk,
+        GSI2SK = :gsi2sk
+    ADD #bucketAttr :increment
+  `.trim();
+
+  return {
+    Update: {
+      TableName: tableName,
+      Key: { PK: pk, SK: sk },
+      UpdateExpression: updateExpression,
+      ExpressionAttributeNames: {
+        "#bucketAttr": bucketAttr,
+      },
+      ExpressionAttributeValues: {
+        ":entityType": STATE_ENTITY_TYPES.STEP_AGGREGATE,
+        ":county": county,
+        ":dataGroupLabel": dataGroupLabel,
+        ":phase": phase,
+        ":step": step,
+        ":zero": 0,
+        ":now": now,
+        ":increment": 1,
+        ":gsi1pk": buildStepAggregateGSI1PK(phase, step, dataGroupLabel),
+        ":gsi1sk": buildStepAggregateGSI1SK(county),
+        ":gsi2pk": buildStepAggregateGSI2PK(county, dataGroupLabel),
+        ":gsi2sk": buildStepAggregateGSI2SK(
+          dataGroupLabel,
+          phase,
+          step,
+          county,
+        ),
+      },
+    },
+  };
+};
+
+/**
+ * Builds the transact item for decrementing an aggregate bucket.
+ *
+ * @param county - The county identifier
+ * @param dataGroupLabel - The normalized data group label
+ * @param phase - The phase name
+ * @param step - The step name
+ * @param bucket - The bucket to decrement
+ * @param now - Current ISO timestamp
+ * @returns The transact write item for the aggregate decrement
+ */
+const buildAggregateDecrementTransactItem = (
+  county: string,
+  dataGroupLabel: string,
+  phase: string,
+  step: string,
+  bucket: ExecutionBucket,
+  now: string,
+): TransactWriteItem => {
+  const tableName = getWorkflowStateTableName();
+  const pk = buildStepAggregatePK(county, dataGroupLabel);
+  const sk = buildStepAggregateSK(phase, step);
+  const bucketAttr = getBucketCountAttribute(bucket);
+
+  return {
+    Update: {
+      TableName: tableName,
+      Key: { PK: pk, SK: sk },
+      UpdateExpression: `
+        SET updatedAt = :now
+        ADD #bucketAttr :decrement
+      `.trim(),
+      ExpressionAttributeNames: {
+        "#bucketAttr": bucketAttr,
+      },
+      ExpressionAttributeValues: {
+        ":now": now,
+        ":decrement": -1,
+      },
+    },
+  };
+};
+
+/**
+ * Upserts execution state and atomically updates step aggregates.
+ *
+ * This function:
+ * 1. Reads the current execution state (if any)
+ * 2. Computes the state transition
+ * 3. Uses TransactWriteItems to atomically update execution state and aggregates
+ *
+ * When an execution moves from one state to another:
+ * - Decrements the old aggregate bucket (if state existed)
+ * - Increments the new aggregate bucket
+ *
+ * Uses ClientRequestToken for idempotency on Lambda retries.
+ *
+ * @param input - The input containing event details
+ * @returns The result of the operation
+ */
+export const upsertExecutionStateAndUpdateAggregates = async (
+  input: UpsertExecutionStateInput,
+): Promise<UpsertExecutionStateResult> => {
+  const { detail, eventId, eventTime } = input;
+  const now = new Date().toISOString();
+  const dataGroupLabel = normalizeDataGroupLabel(detail.dataGroupLabel);
+  const newBucket = normalizeStepStatusToBucket(detail.status);
+
+  const previousState = await getExecutionState(detail.executionId);
+
+  // Check for out-of-order events
+  if (previousState && previousState.lastEventTime > eventTime) {
+    return {
+      success: true,
+      skipped: true,
+      previousState,
+      newState: previousState,
+    };
+  }
+
+  // Build new state object for the result
+  const pk = buildExecutionStatePK(detail.executionId);
+  const sk = buildExecutionStateSK(detail.executionId);
+  const newState: ExecutionStateItem = {
+    PK: pk,
+    SK: sk,
+    entityType: STATE_ENTITY_TYPES.EXECUTION_STATE,
+    executionId: detail.executionId,
+    county: detail.county,
+    dataGroupLabel,
+    phase: detail.phase,
+    step: detail.step,
+    bucket: newBucket,
+    rawStatus: detail.status,
+    lastEventTime: eventTime,
+    createdAt: previousState?.createdAt ?? now,
+    updatedAt: now,
+    version: (previousState?.version ?? 0) + 1,
+  };
+
+  // Build transaction items
+  const transactItems: TransactWriteItem[] = [];
+
+  // Add execution state update
+  transactItems.push(
+    buildExecutionStateTransactItem(
+      detail,
+      eventTime,
+      now,
+      previousState,
+      newBucket,
+      dataGroupLabel,
+    ),
+  );
+
+  // Determine aggregate key changes
+  const oldAggKey = previousState
+    ? `${previousState.county}#${previousState.dataGroupLabel}#${previousState.phase}#${previousState.step}`
+    : null;
+  const newAggKey = `${detail.county}#${dataGroupLabel}#${detail.phase}#${detail.step}`;
+  const oldBucket = previousState?.bucket ?? null;
+
+  const sameAggKeyAndBucket =
+    oldAggKey === newAggKey && oldBucket === newBucket;
+
+  if (!sameAggKeyAndBucket) {
+    // Decrement old aggregate if there was a previous state
+    if (previousState && oldBucket) {
+      transactItems.push(
+        buildAggregateDecrementTransactItem(
+          previousState.county,
+          previousState.dataGroupLabel,
+          previousState.phase,
+          previousState.step,
+          oldBucket,
+          now,
+        ),
+      );
+    }
+
+    // Increment new aggregate
+    transactItems.push(
+      buildAggregateIncrementTransactItem(
+        detail.county,
+        dataGroupLabel,
+        detail.phase,
+        detail.step,
+        newBucket,
+        now,
+      ),
+    );
+  }
+
+  // Execute transaction with idempotency token
+  try {
+    const command = new TransactWriteCommand({
+      TransactItems: transactItems,
+      ClientRequestToken: eventId,
+    });
+
+    await docClient.send(command);
+
+    return {
+      success: true,
+      skipped: false,
+      previousState,
+      newState,
+    };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+
+    if (errorMessage.includes("ConditionalCheckFailed")) {
+      return {
+        success: true,
+        skipped: true,
+        previousState,
+        newState: previousState ?? newState,
+      };
+    }
+
+    return {
+      success: false,
+      skipped: false,
+      previousState,
+      newState,
+      error: errorMessage,
+    };
+  }
+};
+
+// =============================================================================
+// Workflow State Query Operations
+// =============================================================================
+
+/**
+ * Input for querying step aggregates for a county.
+ */
+export interface QueryStepAggregatesForCountyInput {
+  /** The county identifier. */
+  county: string;
+  /** The normalized data group label. */
+  dataGroupLabel: string;
+  /** Optional phase filter (uses begins_with). */
+  phase?: string;
+}
+
+/**
+ * Queries all step aggregates for a specific county and data group.
+ *
+ * @param input - The query input
+ * @returns Array of step aggregate items
+ */
+export const queryStepAggregatesForCounty = async (
+  input: QueryStepAggregatesForCountyInput,
+): Promise<StepAggregateItem[]> => {
+  const tableName = getWorkflowStateTableName();
+  const { county, dataGroupLabel, phase } = input;
+  const pk = buildStepAggregatePK(county, dataGroupLabel);
+
+  const keyConditionExpression = phase
+    ? "PK = :pk AND begins_with(SK, :skPrefix)"
+    : "PK = :pk";
+
+  const expressionAttributeValues: Record<string, string> = {
+    ":pk": pk,
+  };
+
+  if (phase) {
+    expressionAttributeValues[":skPrefix"] = `PHASE#${phase}#`;
+  }
+
+  const aggregates: StepAggregateItem[] = [];
+  let exclusiveStartKey: Record<string, unknown> | undefined;
+
+  do {
+    const command = new QueryCommand({
+      TableName: tableName,
+      KeyConditionExpression: keyConditionExpression,
+      ExpressionAttributeValues: expressionAttributeValues,
+      ExclusiveStartKey: exclusiveStartKey,
+    });
+
+    const response = await docClient.send(command);
+
+    if (response.Items) {
+      aggregates.push(...(response.Items as StepAggregateItem[]));
+    }
+
+    exclusiveStartKey = response.LastEvaluatedKey as
+      | Record<string, unknown>
+      | undefined;
+  } while (exclusiveStartKey);
+
+  return aggregates;
+};
+
+/**
+ * Cursor for paginating through all step aggregates.
+ * Contains the last evaluated key per shard.
+ */
+export interface AllStepAggregatesCursor {
+  /** Map of shard index to the last evaluated key for that shard. */
+  shardCursors: Record<string, Record<string, unknown>>;
+  /** Shards that have been fully processed. */
+  completedShards: number[];
+}
+
+/**
+ * Input for querying all step aggregates.
+ */
+export interface QueryAllStepAggregatesInput {
+  /** Optional data group filter (uses begins_with on GSI2SK). */
+  dataGroupLabel?: string;
+  /** Optional phase filter (only applied when dataGroupLabel is also provided). */
+  phase?: string;
+  /** Maximum number of items to return per request. */
+  limit?: number;
+  /** Cursor for pagination (from previous response). */
+  cursor?: AllStepAggregatesCursor;
+}
+
+/**
+ * Result of querying all step aggregates.
+ */
+export interface QueryAllStepAggregatesResult {
+  /** Array of step aggregate items. */
+  items: StepAggregateItem[];
+  /** Cursor for fetching more results (null if no more results). */
+  nextCursor: AllStepAggregatesCursor | null;
+  /** Whether there are more results to fetch. */
+  hasMore: boolean;
+}
+
+/**
+ * Queries all step aggregates across all shards.
+ * Uses GSI2 (sharded "list all aggregates" index).
+ *
+ * @param input - The query input
+ * @returns Result containing aggregates and pagination cursor
+ */
+export const queryAllStepAggregates = async (
+  input: QueryAllStepAggregatesInput = {},
+): Promise<QueryAllStepAggregatesResult> => {
+  const tableName = getWorkflowStateTableName();
+  const { dataGroupLabel, phase, limit = 100, cursor } = input;
+
+  const completedShards = new Set(cursor?.completedShards ?? []);
+  const shardCursors = cursor?.shardCursors ?? {};
+
+  const allItems: StepAggregateItem[] = [];
+  const newShardCursors: Record<string, Record<string, unknown>> = {};
+  const newCompletedShards: number[] = [...completedShards];
+
+  // Query each shard that hasn't been completed
+  for (let shardIndex = 0; shardIndex < GSI2_SHARD_COUNT; shardIndex++) {
+    if (completedShards.has(shardIndex)) {
+      continue;
+    }
+
+    const gsi2pk = buildGSI2PKForShard(shardIndex);
+    const shardKey = String(shardIndex);
+
+    // Build key condition expression
+    let keyConditionExpression = "GSI2PK = :gsi2pk";
+    const expressionAttributeValues: Record<string, string | number> = {
+      ":gsi2pk": gsi2pk,
+    };
+
+    if (dataGroupLabel) {
+      let skPrefix = `DG#${dataGroupLabel}#`;
+      if (phase) {
+        skPrefix += `PHASE#${phase}#`;
+      }
+      keyConditionExpression += " AND begins_with(GSI2SK, :skPrefix)";
+      expressionAttributeValues[":skPrefix"] = skPrefix;
+    }
+
+    const exclusiveStartKey = shardCursors[shardKey] as
+      | Record<string, unknown>
+      | undefined;
+
+    const command = new QueryCommand({
+      TableName: tableName,
+      IndexName: "GSI2",
+      KeyConditionExpression: keyConditionExpression,
+      ExpressionAttributeValues: expressionAttributeValues,
+      ExclusiveStartKey: exclusiveStartKey,
+      Limit: Math.max(1, Math.ceil(limit / GSI2_SHARD_COUNT)),
+    });
+
+    try {
+      const response = await docClient.send(command);
+
+      if (response.Items) {
+        allItems.push(...(response.Items as StepAggregateItem[]));
+      }
+
+      if (response.LastEvaluatedKey) {
+        newShardCursors[shardKey] = response.LastEvaluatedKey as Record<
+          string,
+          unknown
+        >;
+      } else {
+        newCompletedShards.push(shardIndex);
+      }
+    } catch (error) {
+      console.error(
+        `Failed to query shard ${shardIndex}:`,
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+  }
+
+  // Check if there are more results
+  const hasMore = newCompletedShards.length < GSI2_SHARD_COUNT;
+
+  const nextCursor: AllStepAggregatesCursor | null = hasMore
+    ? {
+        shardCursors: newShardCursors,
+        completedShards: newCompletedShards,
+      }
+    : null;
+
+  return {
+    items: allItems,
+    nextCursor,
+    hasMore,
+  };
+};
+
+/**
+ * Gets a single step aggregate item.
+ *
+ * @param county - The county identifier
+ * @param dataGroupLabel - The normalized data group label
+ * @param phase - The phase name
+ * @param step - The step name
+ * @returns The step aggregate item, or null if not found
+ */
+export const getStepAggregate = async (
+  county: string,
+  dataGroupLabel: string,
+  phase: string,
+  step: string,
+): Promise<StepAggregateItem | null> => {
+  const tableName = getWorkflowStateTableName();
+  const pk = buildStepAggregatePK(county, dataGroupLabel);
+  const sk = buildStepAggregateSK(phase, step);
+
+  const command = new GetCommand({
+    TableName: tableName,
+    Key: { PK: pk, SK: sk },
+  });
+
+  const response = await docClient.send(command);
+  return (response.Item as StepAggregateItem) ?? null;
 };

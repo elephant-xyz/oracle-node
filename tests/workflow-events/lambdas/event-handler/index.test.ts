@@ -31,6 +31,11 @@ const cloudWatchMock = mockClient(CloudWatchClient);
 const TEST_TABLE_NAME = "test-workflow-errors-table";
 
 /**
+ * Test table name for workflow state used in all tests.
+ */
+const TEST_STATE_TABLE_NAME = "test-workflow-state-table";
+
+/**
  * Creates a mock EventBridge event with the given workflow event detail.
  * @param detail - The workflow event detail
  * @returns A mock EventBridge event
@@ -97,6 +102,7 @@ describe("event-handler", () => {
     process.env = {
       ...originalEnv,
       WORKFLOW_ERRORS_TABLE_NAME: TEST_TABLE_NAME,
+      WORKFLOW_STATE_TABLE_NAME: TEST_STATE_TABLE_NAME,
     };
     vi.spyOn(console, "log").mockImplementation(() => {});
     vi.spyOn(console, "info").mockImplementation(() => {});
@@ -121,6 +127,12 @@ describe("event-handler", () => {
 
     // Default mock for UpdateCommand (for updateErrorRecordSortKey calls)
     ddbMock.on(UpdateCommand).resolves({});
+
+    // Default mock for GetCommand - returns null for execution state (new executions)
+    ddbMock.on(GetCommand).resolves({ Item: undefined });
+
+    // Default mock for TransactWriteCommand - success
+    ddbMock.on(TransactWriteCommand).resolves({});
   });
 
   afterEach(() => {
@@ -146,7 +158,7 @@ describe("event-handler", () => {
       expect(ddbMock).toHaveReceivedCommand(TransactWriteCommand);
     });
 
-    it("should skip DynamoDB save when event has no errors", async () => {
+    it("should skip error DynamoDB save when event has no errors but still update state", async () => {
       const { handler } =
         await import("../../../../workflow-events/lambdas/event-handler/index.js");
 
@@ -158,7 +170,22 @@ describe("event-handler", () => {
 
       await handler(event);
 
-      expect(ddbMock).not.toHaveReceivedCommand(TransactWriteCommand);
+      // Should still receive TransactWriteCommand for state updates
+      expect(ddbMock).toHaveReceivedCommand(TransactWriteCommand);
+
+      // Verify that the transaction was for the state table (Put for new execution)
+      const calls = ddbMock.commandCalls(TransactWriteCommand);
+      // The state update transaction should be present
+      const stateTransaction = calls.find((call) => {
+        const items = call.args[0].input.TransactItems;
+        // State updates use Put for new executions or Update for existing
+        return items?.some(
+          (item) =>
+            item.Put?.Item?.entityType === "ExecutionState" ||
+            item.Update?.Key?.PK?.startsWith("EXECUTION#"),
+        );
+      });
+      expect(stateTransaction).toBeDefined();
     });
 
     it("should propagate DynamoDB errors to caller", async () => {
@@ -1526,6 +1553,206 @@ describe("event-handler", () => {
       expect(result.updatedCount).toBe(0);
       expect(result.affectedExecutionIds).toHaveLength(0);
       expect(result.updatedErrorCodes).toHaveLength(0);
+    });
+  });
+
+  describe("execution state and aggregates", () => {
+    it("should update execution state on WorkflowEvent with no errors", async () => {
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/event-handler/index.js");
+
+      const detail = createWorkflowDetail({
+        executionId: "exec-state-001",
+        county: "broward",
+        status: "IN_PROGRESS",
+        phase: "prepare",
+        step: "download",
+        dataGroupLabel: "group-1",
+        errors: [],
+      });
+      const event = createMockEvent(detail);
+
+      await handler(event);
+
+      // Should receive TransactWriteCommand for state table
+      expect(ddbMock).toHaveReceivedCommand(TransactWriteCommand);
+
+      const calls = ddbMock.commandCalls(TransactWriteCommand);
+      // Find the state transaction (has Put with ExecutionState entityType)
+      const stateTransaction = calls.find((call) => {
+        const items = call.args[0].input.TransactItems;
+        return items?.some(
+          (item) => item.Put?.Item?.entityType === "ExecutionState",
+        );
+      });
+
+      expect(stateTransaction).toBeDefined();
+      const putItem = stateTransaction?.args[0].input.TransactItems?.find(
+        (item) => item.Put?.Item?.entityType === "ExecutionState",
+      );
+
+      expect(putItem?.Put?.Item?.executionId).toBe("exec-state-001");
+      expect(putItem?.Put?.Item?.county).toBe("broward");
+      expect(putItem?.Put?.Item?.phase).toBe("prepare");
+      expect(putItem?.Put?.Item?.step).toBe("download");
+      expect(putItem?.Put?.Item?.bucket).toBe("IN_PROGRESS");
+      expect(putItem?.Put?.Item?.dataGroupLabel).toBe("group-1");
+    });
+
+    it("should normalize SCHEDULED status to IN_PROGRESS bucket", async () => {
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/event-handler/index.js");
+
+      const detail = createWorkflowDetail({
+        executionId: "exec-scheduled-001",
+        status: "SCHEDULED",
+        phase: "prepare",
+        step: "download",
+        errors: [],
+      });
+      const event = createMockEvent(detail);
+
+      await handler(event);
+
+      const calls = ddbMock.commandCalls(TransactWriteCommand);
+      const stateTransaction = calls.find((call) => {
+        const items = call.args[0].input.TransactItems;
+        return items?.some(
+          (item) => item.Put?.Item?.entityType === "ExecutionState",
+        );
+      });
+
+      const putItem = stateTransaction?.args[0].input.TransactItems?.find(
+        (item) => item.Put?.Item?.entityType === "ExecutionState",
+      );
+
+      // SCHEDULED should be normalized to IN_PROGRESS
+      expect(putItem?.Put?.Item?.bucket).toBe("IN_PROGRESS");
+      // But raw status should be preserved
+      expect(putItem?.Put?.Item?.rawStatus).toBe("SCHEDULED");
+    });
+
+    it("should update aggregate counts when execution state changes", async () => {
+      // Mock existing execution state
+      ddbMock.on(GetCommand).callsFake((input) => {
+        if (input.Key?.PK === "EXECUTION#exec-transition-001") {
+          return {
+            Item: {
+              PK: "EXECUTION#exec-transition-001",
+              SK: "EXECUTION#exec-transition-001",
+              entityType: "ExecutionState",
+              executionId: "exec-transition-001",
+              county: "palm_beach",
+              dataGroupLabel: "not-set",
+              phase: "prepare",
+              step: "download",
+              bucket: "IN_PROGRESS",
+              rawStatus: "IN_PROGRESS",
+              lastEventTime: "2024-01-01T00:00:00Z",
+              createdAt: "2024-01-01T00:00:00Z",
+              updatedAt: "2024-01-01T00:00:00Z",
+              version: 1,
+            },
+          };
+        }
+        return { Item: undefined };
+      });
+
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/event-handler/index.js");
+
+      const detail = createWorkflowDetail({
+        executionId: "exec-transition-001",
+        county: "palm_beach",
+        status: "SUCCEEDED",
+        phase: "prepare",
+        step: "download",
+        errors: [],
+      });
+      const event = createMockEvent(detail);
+
+      await handler(event);
+
+      const calls = ddbMock.commandCalls(TransactWriteCommand);
+      const stateTransaction = calls.find((call) => {
+        const items = call.args[0].input.TransactItems;
+        return items?.some(
+          (item) =>
+            item.Update?.Key?.PK === "EXECUTION#exec-transition-001" ||
+            item.Put?.Item?.executionId === "exec-transition-001",
+        );
+      });
+
+      expect(stateTransaction).toBeDefined();
+      const transactItems = stateTransaction?.args[0].input.TransactItems;
+
+      // Should have execution state update + decrement old aggregate + increment new aggregate
+      expect(transactItems?.length).toBeGreaterThanOrEqual(3);
+
+      // Find the aggregate updates
+      const aggregateUpdates = transactItems?.filter(
+        (item) =>
+          item.Update?.Key?.PK?.startsWith("AGG#") ||
+          item.Put?.Item?.PK?.startsWith("AGG#"),
+      );
+
+      // Should have at least one aggregate update (could be same item for bucket change only)
+      expect(aggregateUpdates?.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it("should use default data group label when not provided", async () => {
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/event-handler/index.js");
+
+      const detail = createWorkflowDetail({
+        executionId: "exec-no-dg-001",
+        status: "IN_PROGRESS",
+        phase: "transform",
+        step: "parse",
+        errors: [],
+        // dataGroupLabel not set
+      });
+      const event = createMockEvent(detail);
+
+      await handler(event);
+
+      const calls = ddbMock.commandCalls(TransactWriteCommand);
+      const stateTransaction = calls.find((call) => {
+        const items = call.args[0].input.TransactItems;
+        return items?.some(
+          (item) => item.Put?.Item?.entityType === "ExecutionState",
+        );
+      });
+
+      const putItem = stateTransaction?.args[0].input.TransactItems?.find(
+        (item) => item.Put?.Item?.entityType === "ExecutionState",
+      );
+
+      expect(putItem?.Put?.Item?.dataGroupLabel).toBe("not-set");
+    });
+
+    it("should include idempotency token in transaction", async () => {
+      const { handler } =
+        await import("../../../../workflow-events/lambdas/event-handler/index.js");
+
+      const detail = createWorkflowDetail({
+        executionId: "exec-idempotent-001",
+        errors: [],
+      });
+      const event = createMockEvent(detail);
+
+      await handler(event);
+
+      const calls = ddbMock.commandCalls(TransactWriteCommand);
+      const stateTransaction = calls.find((call) => {
+        const items = call.args[0].input.TransactItems;
+        return items?.some(
+          (item) => item.Put?.Item?.entityType === "ExecutionState",
+        );
+      });
+
+      // Should have ClientRequestToken set to event.id for idempotency
+      expect(stateTransaction?.args[0].input.ClientRequestToken).toBe(event.id);
     });
   });
 });
