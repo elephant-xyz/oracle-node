@@ -835,44 +835,16 @@ States:
             step: Submit
             dataGroupLabel: County
     ResultPath: $.eventResult
-    Next: EmitGasPriceCheckScheduled
+    Next: GetGasPriceFromSSM
     Catch:
       - ErrorEquals: [States.ALL]
         ResultPath: $.eventError
-        Next: EmitGasPriceCheckScheduled
+        Next: GetGasPriceFromSSM
 
   # === GAS PRICE CHECK STEP (SSM-based, no Lambda polling) ===
   # Gas price is updated every 5 minutes by GasPriceUpdater cron job Lambda
   # Step Function reads SSM directly and uses Choice state to decide
-
-  EmitGasPriceCheckScheduled:
-    Type: Task
-    Resource: arn:aws:states:::events:putEvents
-    Comment: "Emit SCHEDULED event for Gas Price Check step"
-    Parameters:
-      Entries:
-        - Source: elephant.workflow
-          DetailType: WorkflowEvent
-          Detail:
-            executionId.$: $$.Execution.Name
-            county.$: $.pre.county_name
-            status: SCHEDULED
-            phase: GasPriceCheck
-            step: CheckGasPrice
-            dataGroupLabel: County
-    ResultPath: $.eventResult
-    Next: InitializeGasPriceRetry
-    Catch:
-      - ErrorEquals: [States.ALL]
-        ResultPath: $.eventError
-        Next: InitializeGasPriceRetry
-
-  InitializeGasPriceRetry:
-    Type: Pass
-    Comment: "Initialize gas price retry counter to 0"
-    Result: 0
-    ResultPath: $.gasPriceRetryCount
-    Next: GetGasPriceFromSSM
+  # Time-based retry: 5 min during 17:00-05:00 UTC, 1 hour during 05:00-17:00 UTC
 
   GetGasPriceFromSSM:
     Type: Task
@@ -892,7 +864,7 @@ States:
     Catch:
       - ErrorEquals: [States.ALL]
         ResultPath: $.gasPriceError
-        Next: EmitGasPriceCheckFailed
+        Next: DetermineGasPriceWaitInterval
 
   CheckGasPriceChoice:
     Type: Choice
@@ -901,116 +873,29 @@ States:
       # If gasPrice <= maxGwei, proceed to submit
       - Variable: $.gasPriceResult.value.gasPrice
         NumericLessThanEquals: ${GasPriceMaxGwei}
-        Next: EmitGasPriceCheckSucceeded
-      # If max retries exceeded (576 = 2 days at 5 min intervals), fail
-      - Variable: $.gasPriceRetryCount
-        NumericGreaterThanEquals: 576
-        Next: GasPriceMaxRetriesExceeded
-    Default: IncrementAndWaitForGasPrice
+        Next: EmitSubmitToBlockchainScheduled
+    Default: DetermineGasPriceWaitInterval
 
-  IncrementAndWaitForGasPrice:
+  DetermineGasPriceWaitInterval:
     Type: Pass
     QueryLanguage: JSONata
-    Comment: "Increment retry counter and prepare for wait"
+    Comment: "Determine wait interval based on UTC hour: 5 min (300s) for 17:00-05:00 UTC, 1 hour (3600s) for 05:00-17:00 UTC"
     Output: >-
       {%
-        $merge([$states.input, { "gasPriceRetryCount": $states.input.gasPriceRetryCount + 1 }])
+        (
+          $hour := $number($substring($now(), 11, 2));
+          $isOffPeak := $hour >= 17 or $hour < 5;
+          $waitSeconds := $isOffPeak ? 300 : 3600;
+          $merge([$states.input, { "gasPriceWaitSeconds": $waitSeconds }])
+        )
       %}
     Next: WaitForGasPrice
 
   WaitForGasPrice:
     Type: Wait
-    Comment: "Wait 5 minutes before checking gas price again"
-    Seconds: 300
+    Comment: "Wait based on time of day before checking gas price again"
+    SecondsPath: $.gasPriceWaitSeconds
     Next: GetGasPriceFromSSM
-
-  GasPriceMaxRetriesExceeded:
-    Type: Pass
-    Comment: "Set error for max retries exceeded (error code 60030)"
-    Parameters:
-      Error: "60030"
-      Cause.$: States.Format('Gas price {} Gwei exceeds max threshold after 2 days of retries', $.gasPriceResult.value.gasPrice)
-    ResultPath: $.gasPriceError
-    Next: EmitGasPriceCheckFailed
-
-  EmitGasPriceCheckSucceeded:
-    Type: Task
-    Resource: arn:aws:states:::events:putEvents
-    Comment: "Emit SUCCEEDED event for Gas Price Check step"
-    Parameters:
-      Entries:
-        - Source: elephant.workflow
-          DetailType: WorkflowEvent
-          Detail:
-            executionId.$: $$.Execution.Name
-            county.$: $.pre.county_name
-            status: SUCCEEDED
-            phase: GasPriceCheck
-            step: CheckGasPrice
-            dataGroupLabel: County
-    ResultPath: $.eventResult
-    Next: EmitSubmitToBlockchainScheduled
-    Catch:
-      - ErrorEquals: [States.ALL]
-        ResultPath: $.eventError
-        Next: EmitSubmitToBlockchainScheduled
-
-  EmitGasPriceCheckFailed:
-    Type: Task
-    Resource: arn:aws:states:::events:putEvents
-    QueryLanguage: JSONata
-    Comment: "Emit FAILED event for Gas Price Check step"
-    Arguments:
-      Entries:
-        - Source: elephant.workflow
-          DetailType: WorkflowEvent
-          Detail:
-            executionId: "{% $states.context.Execution.Name %}"
-            county: "{% $states.input.pre.county_name %}"
-            status: FAILED
-            phase: GasPriceCheck
-            step: CheckGasPrice
-            dataGroupLabel: County
-            errors:
-              - code: "{% $states.input.gasPriceError.Error %}"
-                details:
-                  cause: "{% $states.input.gasPriceError.Cause %}"
-    Output: "{% $merge([$states.input, { 'eventResult': $states.result }]) %}"
-    Next: WaitForGasPriceCheckResolution
-    Catch:
-      - ErrorEquals: [States.ALL]
-        Output: "{% $merge([$states.input, { 'eventError': $states.errorOutput }]) %}"
-        Next: WaitForGasPriceCheckResolution
-
-  WaitForGasPriceCheckResolution:
-    Type: Task
-    Resource: arn:aws:states:::events:putEvents.waitForTaskToken
-    QueryLanguage: JSONata
-    Comment: "Emit FAILED event and wait for external resolution - retry from InitializeGasPriceRetry"
-    HeartbeatSeconds: 2592000 # 30 days
-    Arguments:
-      Entries:
-        - Source: elephant.workflow
-          DetailType: WorkflowEvent
-          Detail:
-            executionId: "{% $states.context.Execution.Name %}"
-            county: "{% $states.input.pre.county_name %}"
-            status: FAILED
-            phase: GasPriceCheck
-            step: CheckGasPrice
-            dataGroupLabel: County
-            taskToken: "{% $states.context.Task.Token %}"
-            errors:
-              - code: "{% $states.input.gasPriceError.Error %}"
-                details:
-                  cause: "{% $states.input.gasPriceError.Cause %}"
-    Output: "{% $merge([$states.input, { 'resolutionResult': $states.result }]) %}"
-    Next: InitializeGasPriceRetry
-    Catch:
-      - ErrorEquals: [States.ALL]
-        Comment: "Resolution failed - stay parked and wait again"
-        Output: "{% $merge([$states.input, { 'gasPriceError': $states.errorOutput }]) %}"
-        Next: WaitForGasPriceCheckResolution
 
   # === SUBMIT TO BLOCKCHAIN STEP ===
 
@@ -1259,41 +1144,36 @@ States:
         ResultPath: $.transactionStatusError
         Next: HandleTransactionGeneralError
 
-  # === PENDING: Wait 5 min and retry status check (max 576 retries = 2 days) ===
+  # === PENDING: Retry indefinitely with exponential backoff (2^n seconds, max 12 hours) ===
 
   HandleTransactionPending:
-    Type: Choice
-    Comment: "Check if max retries exceeded for pending transaction (576 = 2 days at 5 min intervals)"
-    Choices:
-      - Variable: $.txStatusRetryCount
-        NumericGreaterThanEquals: 576
-        Next: TransactionPendingMaxRetriesExceeded
-    Default: IncrementAndWaitForTransactionStatus
+    Type: Pass
+    Comment: "Transaction pending - proceed to exponential backoff wait"
+    Next: CalculateTransactionStatusWait
 
-  IncrementAndWaitForTransactionStatus:
+  CalculateTransactionStatusWait:
     Type: Pass
     QueryLanguage: JSONata
-    Comment: "Increment retry counter for pending transaction"
+    Comment: "Calculate exponential backoff wait time: min(2^retryCount * 60, 43200) seconds (max 12 hours)"
     Output: >-
       {%
-        $merge([$states.input, { "txStatusRetryCount": $states.input.txStatusRetryCount + 1 }])
+        (
+          $baseInterval := 60;
+          $maxInterval := 43200;
+          $waitSeconds := $min($power(2, $states.input.txStatusRetryCount) * $baseInterval, $maxInterval);
+          $merge([$states.input, {
+            "txStatusRetryCount": $states.input.txStatusRetryCount + 1,
+            "txStatusWaitSeconds": $waitSeconds
+          }])
+        )
       %}
     Next: WaitForTransactionStatus
 
   WaitForTransactionStatus:
     Type: Wait
-    Comment: "Wait 5 minutes before checking transaction status again"
-    Seconds: 300
+    Comment: "Wait with exponential backoff before checking transaction status again"
+    SecondsPath: $.txStatusWaitSeconds
     Next: CheckTransactionStatus
-
-  TransactionPendingMaxRetriesExceeded:
-    Type: Pass
-    Comment: "Transaction pending for too long (2 days), go back to gas price check to resubmit"
-    Parameters:
-      Error: "60004"
-      Cause: "Transaction pending in mempool for over 2 days, resubmitting"
-    ResultPath: $.transactionStatusError
-    Next: EmitTransactionStatusCheckFailedThenResubmit
 
   # === NOT_FOUND: Transaction dropped, go back to gas price check (resubmit) ===
 
@@ -1354,7 +1234,7 @@ States:
                 details:
                   cause: "{% $states.input.transactionStatusError.Cause %}"
     Output: "{% $merge([$states.input, { 'resolutionResult': $states.result }]) %}"
-    Next: InitializeGasPriceRetry
+    Next: GetGasPriceFromSSM
     Catch:
       - ErrorEquals: [States.ALL]
         Comment: "Resolution failed - stay parked and wait again"
@@ -1443,11 +1323,11 @@ States:
                 details:
                   cause: "{% $states.input.transactionStatusError.Cause %}"
     Output: "{% $merge([$states.input, { 'eventResult': $states.result }]) %}"
-    Next: InitializeGasPriceRetry
+    Next: GetGasPriceFromSSM
     Catch:
       - ErrorEquals: [States.ALL]
         Output: "{% $merge([$states.input, { 'eventError': $states.errorOutput }]) %}"
-        Next: InitializeGasPriceRetry
+        Next: GetGasPriceFromSSM
 
   EmitTransactionStatusCheckSucceeded:
     Type: Task
