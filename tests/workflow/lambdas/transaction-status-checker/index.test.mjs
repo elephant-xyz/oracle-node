@@ -261,8 +261,8 @@ describe("transaction-status-checker handler", () => {
       );
     });
 
-    it("should emit FAILED event when transaction is dropped", async () => {
-      mockCheckTransactionStatus.mockResolvedValue([]); // Empty result = dropped
+    it("should emit FAILED event when transaction is not found", async () => {
+      mockCheckTransactionStatus.mockResolvedValue([]); // Empty result = not found
 
       const transactionItems = [
         { dataGroupLabel: "County", dataGroupCid: "bafkrei123" },
@@ -272,7 +272,7 @@ describe("transaction-status-checker handler", () => {
         await import("../../../../workflow/lambdas/transaction-status-checker/index.mjs");
 
       const event = createSqsEvent(
-        "task-token-dropped-event",
+        "task-token-not-found-event",
         "0xabc123",
         transactionItems,
       );
@@ -295,21 +295,21 @@ describe("transaction-status-checker handler", () => {
       );
     });
 
-    it("should include TRANSACTION_DROPPED prefix in error message when dropped", async () => {
-      mockCheckTransactionStatus.mockResolvedValue([]); // Empty result = dropped
+    it("should include TRANSACTION_NOT_FOUND prefix in error message when not found", async () => {
+      mockCheckTransactionStatus.mockResolvedValue([]); // Empty result = not found
 
       const { handler } =
         await import("../../../../workflow/lambdas/transaction-status-checker/index.mjs");
 
-      const event = createSqsEvent("task-token-dropped-prefix", "0xabc123");
+      const event = createSqsEvent("task-token-not-found-prefix", "0xabc123");
 
       await handler(event);
 
-      // Verify the error includes TRANSACTION_DROPPED prefix
+      // Verify the error includes TRANSACTION_NOT_FOUND prefix
       expect(mockCreateWorkflowError).toHaveBeenCalledWith(
         "60003",
         expect.objectContaining({
-          error: expect.stringContaining("TRANSACTION_DROPPED:"),
+          error: expect.stringContaining("TRANSACTION_NOT_FOUND:"),
           transactionHash: "0xabc123",
         }),
       );

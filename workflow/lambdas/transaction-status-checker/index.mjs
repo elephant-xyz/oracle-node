@@ -5,7 +5,7 @@
  * - success → transaction confirmed with block number
  * - error 60003 with message prefix:
  *   - "TRANSACTION_FAILED:" → transaction reverted on blockchain
- *   - "TRANSACTION_DROPPED:" → transaction not found (dropped from mempool)
+ *   - "TRANSACTION_NOT_FOUND:" → transaction not found on chain
  *   - "TRANSACTION_PENDING:" → transaction still in mempool, not yet mined
  *   - "GENERAL_ERROR:" → configuration or RPC errors
  *
@@ -24,7 +24,7 @@ import {
  * Error code for transaction status checker (all use 60003 for backward compatibility)
  * Different error messages distinguish the failure type:
  * - "TRANSACTION_FAILED:" - Transaction reverted on blockchain
- * - "TRANSACTION_DROPPED:" - Transaction not found (dropped from mempool)
+ * - "TRANSACTION_NOT_FOUND:" - Transaction not found on chain
  * - "TRANSACTION_PENDING:" - Transaction still in mempool, not yet mined
  */
 const ERROR_CODE = "60003";
@@ -35,7 +35,7 @@ const ERROR_CODE = "60003";
 const ErrorPrefix = {
   GENERAL: "GENERAL_ERROR:",
   FAILED: "TRANSACTION_FAILED:",
-  DROPPED: "TRANSACTION_DROPPED:",
+  NOT_FOUND: "TRANSACTION_NOT_FOUND:",
   PENDING: "TRANSACTION_PENDING:",
 };
 
@@ -130,20 +130,20 @@ async function checkTransactionStatusOnce(input) {
       rpcUrl: rpcUrl,
     });
 
-    // Transaction not found - dropped from mempool
+    // Transaction not found - empty result from CLI
     if (!results || results.length === 0) {
       console.log(
         JSON.stringify({
           ...base,
           level: "warn",
-          msg: "transaction_dropped",
+          msg: "transaction_not_found",
           transactionHash: transactionHash,
         }),
       );
 
       throw new TransactionStatusError(
         ERROR_CODE,
-        `${ErrorPrefix.DROPPED} Transaction ${transactionHash} not found - dropped from mempool`,
+        `${ErrorPrefix.NOT_FOUND} Transaction ${transactionHash} not found on chain`,
         transactionHash,
       );
     }
@@ -192,10 +192,19 @@ async function checkTransactionStatusOnce(input) {
       );
     }
 
-    // Unknown status or no block number - treat as dropped
+    // Transaction not found on chain (CLI returned not_found status)
+    if (status === "not_found" || status === "not found") {
+      throw new TransactionStatusError(
+        ERROR_CODE,
+        `${ErrorPrefix.NOT_FOUND} Transaction ${transactionHash} not found on chain`,
+        transactionHash,
+      );
+    }
+
+    // Unknown status - treat as not found
     throw new TransactionStatusError(
       ERROR_CODE,
-      `${ErrorPrefix.DROPPED} Transaction ${transactionHash} has unknown status: ${status}`,
+      `${ErrorPrefix.NOT_FOUND} Transaction ${transactionHash} has unknown status: ${status}`,
       transactionHash,
     );
   } catch (err) {
