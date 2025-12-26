@@ -644,6 +644,57 @@ Resources:
   # Workflow Lambdas (starter -> pre -> prepare -> post)
   #####################################################################################################################
 
+  #####################################################################################################################
+  # Gas Price SSM Parameter (updated by cron job, read by Step Function)
+  #####################################################################################################################
+
+  GasPriceParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub "/${AWS::StackName}/gas-price/current"
+      Type: String
+      Value: '{"gasPrice":0,"updatedAt":""}'
+      Description: Current gas price updated by cron job Lambda, read by Step Function
+
+  #####################################################################################################################
+  # Gas Price Updater Lambda (Cron Job - every 5 minutes)
+  #####################################################################################################################
+
+  GasPriceUpdaterFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Runtime: nodejs22.x
+      Architectures:
+        - arm64
+      MemorySize: 128
+      Timeout: 30
+      CodeUri: ../workflow/lambdas/gas-price-updater/
+      Handler: index.handler
+      Description: "Cron job that updates current gas price to SSM Parameter Store every 5 minutes"
+      LoggingConfig:
+        LogFormat: JSON
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - ssm:PutParameter
+              Resource:
+                - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${AWS::StackName}/gas-price/*"
+      Environment:
+        Variables:
+          ELEPHANT_RPC_URL: !Ref ElephantRpcUrl
+          GAS_PRICE_PARAMETER_NAME: !Sub "/${AWS::StackName}/gas-price/current"
+      Events:
+        GasPriceUpdateSchedule:
+          Type: Schedule
+          Properties:
+            Name: !Sub "${AWS::StackName}-gas-price-updater"
+            Description: "Update gas price to SSM every 5 minutes"
+            Schedule: rate(5 minutes)
+            Enabled: true
+
   GasPriceCheckerFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -1196,6 +1247,8 @@ Resources:
         HashQueueUrl: !Ref HashQueue
         UploadQueueUrl: !Ref UploadQueue
         StackName: !Ref AWS::StackName
+        GasPriceParameterName: !Sub "/${AWS::StackName}/gas-price/current"
+        GasPriceMaxGwei: !Ref GasPriceMaxGwei
       Role: !GetAtt ElephantExpressStateMachineRole.Arn
       Logging:
         Destinations:
@@ -1306,6 +1359,7 @@ Resources:
                   - ssm:GetParameter
                 Resource:
                   - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${AWS::StackName}/repair/*"
+                  - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${AWS::StackName}/gas-price/*"
               - Effect: Allow
                 Action:
                   - s3:GetObject

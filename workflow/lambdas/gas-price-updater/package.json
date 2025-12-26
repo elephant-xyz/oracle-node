@@ -1,0 +1,20 @@
+{
+  "name": "gas-price-updater",
+  "version": "1.0.0",
+  "description": "Cron job Lambda that updates current gas price to SSM Parameter Store",
+  "main": "index.mjs",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "typecheck": "tsc --pretty false --noEmit -p jsconfig.json"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@aws-sdk/client-ssm": "^3.0.0",
+    "@elephant-xyz/cli": "^1.57.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.16.3"
+  }
+}
