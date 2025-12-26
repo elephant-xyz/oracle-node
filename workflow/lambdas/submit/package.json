@@ -13,9 +13,9 @@
   "dependencies": {
     "@aws-sdk/client-eventbridge": "^3.0.0",
     "@aws-sdk/client-s3": "^3.0.0",
-    "@aws-sdk/client-ssm": "^3.0.0",
     "@aws-sdk/client-sfn": "^3.0.0",
-    "@elephant-xyz/cli": "github:elephant-xyz/elephant-cli#5497bbf939d40033936296e6faed564002342150",
+    "@aws-sdk/client-ssm": "^3.0.0",
+    "@elephant-xyz/cli": "^1.58.1",
     "csv-parse": "^6.1.0",
     "csv-writer": "^1.6.0"
   },

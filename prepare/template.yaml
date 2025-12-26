@@ -33,7 +33,7 @@ Parameters:
   GasPriceMaxGwei:
     Description: Maximum allowed gas price in Gwei (submission will wait if current price exceeds this)
     Type: Number
-    Default: 50
+    Default: 40
   GasPriceWaitMinutes:
     Description: Minutes to wait before retrying gas price check if price is too high
     Type: Number

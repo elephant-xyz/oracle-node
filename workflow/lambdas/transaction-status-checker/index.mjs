@@ -1,13 +1,18 @@
 /**
- * Transaction Status Checker Lambda: Checks transaction status on blockchain
- * - If succeeded with block number → succeed
- * - If response but no block number → wait and retry (configurable, default 5 minutes)
- * - If empty/null → transaction dropped, trigger resubmission
+ * Transaction Status Checker Lambda: Checks transaction status on blockchain (single check, no retry)
+ *
+ * Returns:
+ * - success → transaction confirmed with block number
+ * - error 60003 with message prefix:
+ *   - "TRANSACTION_FAILED:" → transaction reverted on blockchain
+ *   - "TRANSACTION_NOT_FOUND:" → transaction not found on chain
+ *   - "TRANSACTION_PENDING:" → transaction still in mempool, not yet mined
+ *   - "GENERAL_ERROR:" → configuration or RPC errors
+ *
  * Supports both SQS events (with task token) and direct invocation
  */
 
 import { checkTransactionStatus } from "@elephant-xyz/cli/lib";
-import { SQSClient, SendMessageCommand } from "@aws-sdk/client-sqs";
 import {
   executeWithTaskToken,
   emitWorkflowEvent,
@@ -16,26 +21,56 @@ import {
 } from "shared";
 
 /**
+ * Error code for transaction status checker (all use 60003 for backward compatibility)
+ * Different error messages distinguish the failure type:
+ * - "TRANSACTION_FAILED:" - Transaction reverted on blockchain
+ * - "TRANSACTION_NOT_FOUND:" - Transaction not found on chain
+ * - "TRANSACTION_PENDING:" - Transaction still in mempool, not yet mined
+ */
+const ERROR_CODE = "60003";
+
+/**
+ * Error message prefixes to identify failure type
+ */
+const ErrorPrefix = {
+  GENERAL: "GENERAL_ERROR:",
+  FAILED: "TRANSACTION_FAILED:",
+  NOT_FOUND: "TRANSACTION_NOT_FOUND:",
+  PENDING: "TRANSACTION_PENDING:",
+};
+
+/**
+ * Custom error class with error code
+ */
+class TransactionStatusError extends Error {
+  /**
+   * @param {string} code - Error code
+   * @param {string} message - Error message
+   * @param {string} [transactionHash] - Transaction hash
+   */
+  constructor(code, message, transactionHash) {
+    super(message);
+    this.code = code;
+    this.transactionHash = transactionHash;
+    this.name = "TransactionStatusError";
+  }
+}
+
+/**
  * @typedef {Object} TransactionStatusResult
  * @property {string} transactionHash - Transaction hash
- * @property {string} status - "success", "pending", "failed", or "not found"
+ * @property {string} status - "success", "pending", "failed", or "dropped"
  * @property {number} [blockNumber] - Block number if mined
  * @property {string} [gasUsed] - Gas used if mined
  * @property {string} [error] - Error message if failed
+ * @property {string} [errorCode] - Error code for failed/dropped status
  */
 
 /**
  * @typedef {Object} TransactionStatusCheckerInput
  * @property {string} transactionHash - Transaction hash to check
  * @property {string} rpcUrl - RPC URL for blockchain
- * @property {number} [waitMinutes] - Minutes to wait before retry if pending (default: 5)
- * @property {string} [resubmitQueueUrl] - SQS queue URL for resubmission if transaction dropped
- * @property {Object} [originalTransactionItems] - Original transaction items for resubmission
  */
-
-const sqsClient = new SQSClient({
-  region: process.env.AWS_REGION || "us-east-1",
-});
 
 const base = {
   component: "transaction-status-checker",
@@ -57,209 +92,144 @@ const base = {
  */
 
 /**
- * Sleep for specified milliseconds
- * @param {number} ms - Milliseconds to sleep
- * @returns {Promise<void>}
- */
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-/**
- * Resubmit transaction items to the submit queue
- * @param {string} queueUrl - SQS queue URL for resubmission
- * @param {Object[]} transactionItems - Transaction items to resubmit
- * @returns {Promise<void>}
- */
-async function resubmitTransaction(queueUrl, transactionItems) {
-  try {
-    await sqsClient.send(
-      new SendMessageCommand({
-        QueueUrl: queueUrl,
-        MessageBody: JSON.stringify(transactionItems),
-      }),
-    );
-    console.log(
-      JSON.stringify({
-        ...base,
-        level: "info",
-        msg: "transaction_resubmitted",
-        queueUrl: queueUrl,
-        itemCount: transactionItems.length,
-      }),
-    );
-  } catch (err) {
-    console.error(
-      JSON.stringify({
-        ...base,
-        level: "error",
-        msg: "failed_to_resubmit_transaction",
-        error: err instanceof Error ? err.message : String(err),
-      }),
-    );
-    throw err;
-  }
-}
-
-/**
- * Check transaction status and handle retries/resubmission
+ * Check transaction status once (no retries)
  * @param {TransactionStatusCheckerInput} input
  * @returns {Promise<TransactionStatusResult>}
  */
-async function checkAndWaitForTransactionStatus(input) {
-  const {
-    transactionHash,
-    rpcUrl,
-    waitMinutes = 5,
-    resubmitQueueUrl,
-    originalTransactionItems,
-  } = input;
+async function checkTransactionStatusOnce(input) {
+  const { transactionHash, rpcUrl } = input;
 
   if (!rpcUrl) {
-    throw new Error("RPC URL is required");
+    throw new TransactionStatusError(
+      ERROR_CODE,
+      `${ErrorPrefix.GENERAL} RPC URL is required`,
+      transactionHash,
+    );
   }
 
   if (!transactionHash) {
-    throw new Error("Transaction hash is required");
+    throw new TransactionStatusError(
+      ERROR_CODE,
+      `${ErrorPrefix.GENERAL} Transaction hash is required`,
+      transactionHash,
+    );
   }
 
-  const waitMs = waitMinutes * 60 * 1000;
-  let retries = 0;
+  console.log(
+    JSON.stringify({
+      ...base,
+      level: "info",
+      msg: "checking_transaction_status",
+      transactionHash: transactionHash,
+    }),
+  );
 
-  // Retry forever until transaction is confirmed or failed
-  while (true) {
-    try {
-      console.log(
-        JSON.stringify({
-          ...base,
-          level: "info",
-          msg: "checking_transaction_status",
-          transactionHash: transactionHash,
-          retry: retries,
-        }),
-      );
+  try {
+    const results = await checkTransactionStatus({
+      transactionHashes: transactionHash,
+      rpcUrl: rpcUrl,
+    });
 
-      const results = await checkTransactionStatus({
-        transactionHashes: transactionHash,
-        rpcUrl: rpcUrl,
-      });
-
-      if (!results || results.length === 0) {
-        // Transaction not found - likely dropped
-        console.log(
-          JSON.stringify({
-            ...base,
-            level: "warn",
-            msg: "transaction_not_found_dropped",
-            transactionHash: transactionHash,
-          }),
-        );
-
-        // If resubmit queue is provided, resubmit the transaction
-        if (resubmitQueueUrl && originalTransactionItems) {
-          await resubmitTransaction(resubmitQueueUrl, originalTransactionItems);
-          throw new Error(
-            `Transaction ${transactionHash} was dropped and has been resubmitted for processing`,
-          );
-        } else {
-          // If no resubmit queue, wait and retry (transaction might appear later)
-          console.log(
-            JSON.stringify({
-              ...base,
-              level: "warn",
-              msg: "transaction_not_found_waiting",
-              transactionHash: transactionHash,
-              waitMinutes: waitMinutes,
-              retry: retries,
-            }),
-          );
-          retries++;
-          await sleep(waitMs);
-          continue;
-        }
-      }
-
-      const result = results[0];
-      const status = result.status || "not found";
-      const blockNumber = result.blockNumber;
-
-      console.log(
-        JSON.stringify({
-          ...base,
-          level: "info",
-          msg: "transaction_status_retrieved",
-          transactionHash: transactionHash,
-          status: status,
-          blockNumber: blockNumber,
-          gasUsed: result.gasUsed,
-        }),
-      );
-
-      // If transaction succeeded and has block number, return success
-      if (status === "success" && blockNumber) {
-        return {
-          transactionHash: transactionHash,
-          status: "success",
-          blockNumber: blockNumber,
-          gasUsed: result.gasUsed,
-        };
-      }
-
-      // If transaction failed, throw error (this is a final failure, don't retry)
-      if (status === "failed") {
-        throw new Error(
-          `Transaction ${transactionHash} failed on blockchain. Block: ${blockNumber || "N/A"}`,
-        );
-      }
-
-      // If pending or no block number, wait and retry forever
-      retries++;
+    // Transaction not found - empty result from CLI
+    if (!results || results.length === 0) {
       console.log(
         JSON.stringify({
           ...base,
           level: "warn",
-          msg: "transaction_pending_waiting",
+          msg: "transaction_not_found",
           transactionHash: transactionHash,
-          status: status,
-          waitMinutes: waitMinutes,
-          retry: retries,
         }),
       );
 
-      await sleep(waitMs);
-    } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : String(err);
-
-      // If it's a resubmission error or transaction failed, throw (don't retry)
-      if (
-        errorMsg.includes("resubmitted") ||
-        errorMsg.includes("failed on blockchain")
-      ) {
-        throw err;
-      }
-
-      // Configuration errors should also throw
-      if (
-        errorMsg.includes("RPC URL is required") ||
-        errorMsg.includes("Transaction hash is required")
-      ) {
-        throw err;
-      }
-
-      // Otherwise wait and retry forever
-      console.error(
-        JSON.stringify({
-          ...base,
-          level: "error",
-          msg: "transaction_status_check_failed",
-          error: errorMsg,
-          retry: retries,
-        }),
+      throw new TransactionStatusError(
+        ERROR_CODE,
+        `${ErrorPrefix.NOT_FOUND} Transaction ${transactionHash} not found on chain`,
+        transactionHash,
       );
-
-      retries++;
-      await sleep(waitMs);
     }
+
+    const result = results[0];
+    const status = result.status || "not found";
+    const blockNumber = result.blockNumber;
+
+    console.log(
+      JSON.stringify({
+        ...base,
+        level: "info",
+        msg: "transaction_status_retrieved",
+        transactionHash: transactionHash,
+        status: status,
+        blockNumber: blockNumber,
+        gasUsed: result.gasUsed,
+      }),
+    );
+
+    // Transaction succeeded with block number
+    if (status === "success" && blockNumber) {
+      return {
+        transactionHash: transactionHash,
+        status: "success",
+        blockNumber: blockNumber,
+        gasUsed: result.gasUsed,
+      };
+    }
+
+    // Transaction failed on blockchain (reverted)
+    if (status === "failed") {
+      throw new TransactionStatusError(
+        ERROR_CODE,
+        `${ErrorPrefix.FAILED} Transaction ${transactionHash} failed on blockchain (reverted). Block: ${blockNumber || "N/A"}`,
+        transactionHash,
+      );
+    }
+
+    // Transaction pending in mempool (has tx but no receipt yet)
+    if (status === "pending") {
+      throw new TransactionStatusError(
+        ERROR_CODE,
+        `${ErrorPrefix.PENDING} Transaction ${transactionHash} is pending in mempool`,
+        transactionHash,
+      );
+    }
+
+    // Transaction not found on chain (CLI returned not_found status)
+    if (status === "not_found" || status === "not found") {
+      throw new TransactionStatusError(
+        ERROR_CODE,
+        `${ErrorPrefix.NOT_FOUND} Transaction ${transactionHash} not found on chain`,
+        transactionHash,
+      );
+    }
+
+    // Unknown status - treat as not found
+    throw new TransactionStatusError(
+      ERROR_CODE,
+      `${ErrorPrefix.NOT_FOUND} Transaction ${transactionHash} has unknown status: ${status}`,
+      transactionHash,
+    );
+  } catch (err) {
+    // Re-throw TransactionStatusError as-is
+    if (err instanceof TransactionStatusError) {
+      throw err;
+    }
+
+    // Wrap other errors
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    console.error(
+      JSON.stringify({
+        ...base,
+        level: "error",
+        msg: "transaction_status_check_error",
+        error: errorMsg,
+        transactionHash: transactionHash,
+      }),
+    );
+
+    throw new TransactionStatusError(
+      ERROR_CODE,
+      `${ErrorPrefix.GENERAL} Failed to check transaction status: ${errorMsg}`,
+      transactionHash,
+    );
   }
 }
 
@@ -277,7 +247,6 @@ export const handler = async (event) => {
   let county;
   let dataGroupLabel = "County"; // Default for Submit phase
   let transactionHash;
-  let originalTransactionItems;
 
   if (isSqsInvocation) {
     // Invoked from SQS (with task token in message attributes for Step Function callback)
@@ -309,26 +278,6 @@ export const handler = async (event) => {
         }),
       );
 
-      // Parse body for original transaction items (for resubmission if needed)
-      try {
-        const body = JSON.parse(record.body || "{}");
-        if (body.transactionItems) {
-          originalTransactionItems = body.transactionItems;
-        } else if (Array.isArray(body)) {
-          originalTransactionItems = body;
-        }
-      } catch (parseErr) {
-        console.warn(
-          JSON.stringify({
-            ...base,
-            level: "warn",
-            msg: "could_not_parse_body_for_resubmission",
-            error:
-              parseErr instanceof Error ? parseErr.message : String(parseErr),
-          }),
-        );
-      }
-
       // Emit IN_PROGRESS event to EventBridge when task token is received
       if (taskToken && executionArn) {
         const log = createLogger({
@@ -353,8 +302,6 @@ export const handler = async (event) => {
       // SQS invocation without task token - parse body for transaction hash
       const body = JSON.parse(record.body || "{}");
       transactionHash = body.transactionHash || body.transaction_hash;
-      originalTransactionItems =
-        body.transactionItems || body.transaction_items;
     }
   } else {
     // Direct invocation - extract from event
@@ -362,87 +309,30 @@ export const handler = async (event) => {
     taskToken = event.taskToken;
     executionArn = event.executionArn;
     county = event.county;
-    originalTransactionItems =
-      event.transactionItems || event.transaction_items;
   }
 
   try {
     const rpcUrl = process.env.ELEPHANT_RPC_URL;
-    const waitMinutes = parseFloat(
-      process.env.TRANSACTION_STATUS_WAIT_MINUTES || "5",
-    );
-    const resubmitQueueUrl = process.env.RESUBMIT_QUEUE_URL;
 
     if (!rpcUrl) {
-      const error = "RPC URL is required (ELEPHANT_RPC_URL env var)";
-      if (taskToken && executionArn) {
-        const errorLog = createLogger({
-          component: "transaction-status-checker",
-          at: new Date().toISOString(),
-          county: county || "unknown",
-          executionId: executionArn,
-        });
-        await emitWorkflowEvent({
-          executionId: executionArn,
-          county: county || "unknown",
-          dataGroupLabel: dataGroupLabel,
-          status: "FAILED",
-          phase: "TransactionStatusCheck",
-          step: "CheckTransactionStatus",
-          taskToken: taskToken,
-          errors: [createWorkflowError("60003", { error })],
-          log: errorLog,
-        });
-        await executeWithTaskToken({
-          taskToken,
-          log: errorLog,
-          workerFn: async () => {
-            throw new Error(error);
-          },
-        });
-        return;
-      }
-      throw new Error(error);
+      throw new TransactionStatusError(
+        ERROR_CODE,
+        `${ErrorPrefix.GENERAL} RPC URL is required (ELEPHANT_RPC_URL env var)`,
+        transactionHash,
+      );
     }
 
     if (!transactionHash) {
-      const error = "Transaction hash is required";
-      if (taskToken && executionArn) {
-        const errorLog = createLogger({
-          component: "transaction-status-checker",
-          at: new Date().toISOString(),
-          county: county || "unknown",
-          executionId: executionArn,
-        });
-        await emitWorkflowEvent({
-          executionId: executionArn,
-          county: county || "unknown",
-          dataGroupLabel: dataGroupLabel,
-          status: "FAILED",
-          phase: "TransactionStatusCheck",
-          step: "CheckTransactionStatus",
-          taskToken: taskToken,
-          errors: [createWorkflowError("60003", { error })],
-          log: errorLog,
-        });
-        await executeWithTaskToken({
-          taskToken,
-          log: errorLog,
-          workerFn: async () => {
-            throw new Error(error);
-          },
-        });
-        return;
-      }
-      throw new Error(error);
+      throw new TransactionStatusError(
+        ERROR_CODE,
+        `${ErrorPrefix.GENERAL} Transaction hash is required`,
+        transactionHash,
+      );
     }
 
-    const result = await checkAndWaitForTransactionStatus({
+    const result = await checkTransactionStatusOnce({
       transactionHash: transactionHash,
       rpcUrl: rpcUrl,
-      waitMinutes: waitMinutes,
-      resubmitQueueUrl: resubmitQueueUrl,
-      originalTransactionItems: originalTransactionItems,
     });
 
     console.log(
@@ -482,6 +372,8 @@ export const handler = async (event) => {
 
     return result;
   } catch (err) {
+    const isTransactionStatusError = err instanceof TransactionStatusError;
+    const errorCode = isTransactionStatusError ? err.code : ERROR_CODE;
     const errMessage = err instanceof Error ? err.message : String(err);
     const errCause = err instanceof Error ? err.stack : undefined;
 
@@ -490,12 +382,13 @@ export const handler = async (event) => {
         ...base,
         level: "error",
         msg: "handler_failed",
+        errorCode: errorCode,
         error: errMessage,
         transactionHash: transactionHash,
       }),
     );
 
-    // Emit FAILED event to EventBridge and send task failure
+    // Emit FAILED event to EventBridge and send task failure with specific error code
     if (taskToken && executionArn) {
       const errorLog = createLogger({
         component: "transaction-status-checker",
@@ -512,7 +405,7 @@ export const handler = async (event) => {
         step: "CheckTransactionStatus",
         taskToken: taskToken,
         errors: [
-          createWorkflowError("60003", {
+          createWorkflowError(errorCode, {
             error: errMessage,
             cause: errCause,
             transactionHash: transactionHash,
@@ -524,7 +417,10 @@ export const handler = async (event) => {
         taskToken,
         log: errorLog,
         workerFn: async () => {
-          throw err;
+          // Create error with code as the error name for Step Function to catch
+          const error = new Error(errMessage);
+          error.name = errorCode;
+          throw error;
         },
       });
       // Don't throw after sending failure callback - let SQS know Lambda completed
