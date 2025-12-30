@@ -163,7 +163,7 @@ describe("transaction-status-checker handler", () => {
       );
     });
 
-    it("should fail with error code 60005 when transaction is not found (dropped)", async () => {
+    it("should fail with error code 60005 when transaction is not found", async () => {
       mockCheckTransactionStatus.mockResolvedValue([]); // Empty result = not found
 
       const transactionItems = [
@@ -175,7 +175,7 @@ describe("transaction-status-checker handler", () => {
       );
 
       const event = createSqsEvent(
-        "task-token-dropped",
+        "task-token-not-found",
         "0xabc123",
         transactionItems,
       );
@@ -538,14 +538,14 @@ describe("transaction-status-checker handler", () => {
       );
     });
 
-    it("should handle 'dropped' status from CLI", async () => {
-      mockCheckTransactionStatus.mockResolvedValue([{ status: "dropped" }]);
+    it("should handle unknown status as not_found", async () => {
+      mockCheckTransactionStatus.mockResolvedValue([{ status: "unknown_status" }]);
 
       const { handler } = await import(
         "../../../../workflow/lambdas/transaction-status-checker/index.mjs"
       );
 
-      const event = createSqsEvent("task-token-status-dropped", "0xabc123");
+      const event = createSqsEvent("task-token-status-unknown", "0xabc123");
 
       await handler(event);
 

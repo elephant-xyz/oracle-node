@@ -26,7 +26,7 @@ import {
 const ERROR_CODES = {
   FAILED: "60003", // Transaction reverted on blockchain
   PENDING: "60004", // Still in mempool, not yet mined
-  NOT_FOUND: "60005", // Not found on chain (dropped)
+  NOT_FOUND: "60005", // Not found on chain
   GENERAL: "60006", // Configuration or RPC errors
 };
 
@@ -60,11 +60,11 @@ class TransactionStatusError extends Error {
 /**
  * @typedef {Object} TransactionStatusResult
  * @property {string} transactionHash - Transaction hash
- * @property {string} status - "success", "pending", "failed", or "dropped"
+ * @property {string} status - "success", "pending", "failed", or "not_found"
  * @property {number} [blockNumber] - Block number if mined
  * @property {string} [gasUsed] - Gas used if mined
  * @property {string} [error] - Error message if failed
- * @property {string} [errorCode] - Error code for failed/dropped status
+ * @property {string} [errorCode] - Error code for failed status
  */
 
 /**
@@ -150,7 +150,7 @@ async function checkTransactionStatusOnce(input) {
     }
 
     const result = results[0];
-    const status = result.status || "not found";
+    const status = result.status || "not_found";
     const blockNumber = result.blockNumber;
 
     console.log(
@@ -194,7 +194,7 @@ async function checkTransactionStatusOnce(input) {
     }
 
     // Transaction not found on chain (CLI returned not_found status)
-    if (status === "not_found" || status === "not found" || status === "dropped") {
+    if (status === "not_found" || status === "not found") {
       throw new TransactionStatusError(
         ERROR_CODES.NOT_FOUND,
         `${ErrorPrefix.NOT_FOUND} Transaction ${transactionHash} not found on chain`,

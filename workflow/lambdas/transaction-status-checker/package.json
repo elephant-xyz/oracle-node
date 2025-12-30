@@ -14,7 +14,7 @@
     "@aws-sdk/client-eventbridge": "^3.0.0",
     "@aws-sdk/client-sfn": "^3.0.0",
     "@aws-sdk/client-sqs": "^3.0.0",
-    "@elephant-xyz/cli": "^1.57.0"
+    "@elephant-xyz/cli": "github:elephant-xyz/elephant-cli#ba97530af248e697856e082505a14a5f7a9d1cde"
   },
   "devDependencies": {
     "@types/node": "^20.16.3"
