@@ -183,34 +183,32 @@ async function checkExecutionStatus(executionArn) {
 async function getTaskTokenFromExecution(executionArn, targetStates) {
   try {
     // Get execution history (most recent events first)
-    let allEvents = [];
-    let nextToken = null;
-
     const command = new GetExecutionHistoryCommand({
       executionArn,
       reverseOrder: true,
-      maxResults: 100,
+      maxResults: 200,
     });
 
     const response = await sfnClient.send(command);
-    allEvents = response.events;
+    const allEvents = response.events;
 
-    // Find the most recent TaskStateEntered for a wait state that hasn't completed
-    let currentState = null;
-    let taskToken = null;
+    // Build a map of event ID to event for quick lookup
+    const eventById = new Map();
+    for (const event of allEvents) {
+      eventById.set(event.id, event);
+    }
+
+    // In reverse order, we encounter TaskScheduled BEFORE TaskStateEntered
+    // So we need to:
+    // 1. Collect all TaskScheduled events with their taskTokens
+    // 2. Find the most recent TaskStateEntered for a wait state
+    // 3. Match the TaskScheduled that immediately follows that TaskStateEntered
+
+    // First pass: collect TaskScheduled events with taskTokens
+    const scheduledEvents = new Map(); // eventId -> { stateName, taskToken, previousEventId }
 
     for (const event of allEvents) {
-      // Find current state
-      if (event.type === "TaskStateEntered" && !currentState) {
-        const stateName = event.stateEnteredEventDetails?.name;
-        const statesToCheck = targetStates || WAIT_FOR_TOKEN_STATES;
-        if (statesToCheck.includes(stateName)) {
-          currentState = stateName;
-        }
-      }
-
-      // Find task token from TaskScheduled event
-      if (event.type === "TaskScheduled" && currentState && !taskToken) {
+      if (event.type === "TaskScheduled") {
         const parameters = event.taskScheduledEventDetails?.parameters;
         if (parameters) {
           try {
@@ -222,23 +220,60 @@ async function getTaskTokenFromExecution(executionArn, targetStates) {
                 detail = JSON.parse(detail);
               }
               if (detail.taskToken) {
-                taskToken = detail.taskToken;
-                break;
+                scheduledEvents.set(event.id, {
+                  taskToken: detail.taskToken,
+                  previousEventId: event.previousEventId,
+                });
               }
             }
           } catch (e) {
-            // Continue looking
+            // Continue
           }
         }
       }
     }
 
-    if (currentState && taskToken) {
-      return {
-        stateName: currentState,
-        executionArn,
-        taskToken,
-      };
+    // Second pass: find the most recent TaskStateEntered for a wait state
+    // and match it with the corresponding TaskScheduled
+    const statesToCheck = targetStates || WAIT_FOR_TOKEN_STATES;
+
+    for (const event of allEvents) {
+      if (event.type === "TaskStateEntered") {
+        const stateName = event.stateEnteredEventDetails?.name;
+        if (statesToCheck.includes(stateName)) {
+          // Found a wait state entry. Now find the TaskScheduled that follows it.
+          // The TaskScheduled should have previousEventId equal to this event's id
+          // OR be the next event in sequence (id = this.id + 1)
+
+          const taskStateEnteredId = event.id;
+
+          // Look for TaskScheduled with previousEventId = taskStateEnteredId
+          for (const [scheduledId, scheduledData] of scheduledEvents) {
+            if (scheduledData.previousEventId === taskStateEnteredId ||
+                scheduledId === taskStateEnteredId + 1) {
+              return {
+                stateName,
+                executionArn,
+                taskToken: scheduledData.taskToken,
+              };
+            }
+          }
+
+          // If no direct match, look for the next TaskScheduled after this event
+          // (by event ID order)
+          const sortedScheduledIds = Array.from(scheduledEvents.keys()).sort((a, b) => a - b);
+          for (const scheduledId of sortedScheduledIds) {
+            if (scheduledId > taskStateEnteredId) {
+              const scheduledData = scheduledEvents.get(scheduledId);
+              return {
+                stateName,
+                executionArn,
+                taskToken: scheduledData.taskToken,
+              };
+            }
+          }
+        }
+      }
     }
 
     return null;
