@@ -79,16 +79,48 @@ const handleWorkflowEvent = async (
       }),
     );
 
-    const result = await saveErrorRecords(event.detail);
+    const maxRetries = 3;
+    const baseDelayMs = 50;
+    let lastError: unknown;
 
-    console.info(
-      createLogEntry("errors_saved_to_dynamodb", event, {
-        executionId: event.detail.executionId,
-        uniqueErrorCount: result.uniqueErrorCount,
-        totalOccurrences: result.totalOccurrences,
-        errorCodes: result.errorCodes,
-      }),
-    );
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        const result = await saveErrorRecords(event.detail);
+
+        console.info(
+          createLogEntry("errors_saved_to_dynamodb", event, {
+            executionId: event.detail.executionId,
+            uniqueErrorCount: result.uniqueErrorCount,
+            totalOccurrences: result.totalOccurrences,
+            errorCodes: result.errorCodes,
+            attempt,
+          }),
+        );
+        break; // Success, exit retry loop
+      } catch (error) {
+        lastError = error;
+        const isTransactionConflict =
+          error instanceof Error &&
+          error.name === "TransactionCanceledException" &&
+          error.message.includes("TransactionConflict");
+
+        if (isTransactionConflict && attempt < maxRetries) {
+          const delayMs = baseDelayMs * Math.pow(2, attempt - 1); // Exponential backoff: 50ms, 100ms, 200ms
+          console.warn(
+            createLogEntry("transaction_conflict_retry", event, {
+              executionId: event.detail.executionId,
+              attempt,
+              maxRetries,
+              delayMs,
+            }),
+          );
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+        } else {
+          // Not a TransactionConflict or max retries reached, throw
+          throw error;
+        }
+      }
+    }
   } else {
     console.info(
       createLogEntry("no_errors_to_process", event, {
