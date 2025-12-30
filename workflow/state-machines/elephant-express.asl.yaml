@@ -1160,7 +1160,8 @@ States:
         (
           $baseInterval := 60;
           $maxInterval := 43200;
-          $waitSeconds := $min($power(2, $states.input.txStatusRetryCount) * $baseInterval, $maxInterval);
+          $calculated := $power(2, $states.input.txStatusRetryCount) * $baseInterval;
+          $waitSeconds := $min([$calculated, $maxInterval]);
           $merge([$states.input, {
             "txStatusRetryCount": $states.input.txStatusRetryCount + 1,
             "txStatusWaitSeconds": $waitSeconds
