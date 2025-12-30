@@ -23,22 +23,39 @@ export const handler = async () => {
 
   if (!rpcUrl) {
     const error = "RPC URL is required (ELEPHANT_RPC_URL env var)";
-    console.error(JSON.stringify({ ...base, level: "error", msg: "config_validation_failed", error }));
+    console.error(
+      JSON.stringify({
+        ...base,
+        level: "error",
+        msg: "config_validation_failed",
+        error,
+      }),
+    );
     throw new Error(error);
   }
 
   if (!parameterName) {
-    const error = "SSM Parameter name is required (GAS_PRICE_PARAMETER_NAME env var)";
-    console.error(JSON.stringify({ ...base, level: "error", msg: "config_validation_failed", error }));
+    const error =
+      "SSM Parameter name is required (GAS_PRICE_PARAMETER_NAME env var)";
+    console.error(
+      JSON.stringify({
+        ...base,
+        level: "error",
+        msg: "config_validation_failed",
+        error,
+      }),
+    );
     throw new Error(error);
   }
 
-  console.log(JSON.stringify({
-    ...base,
-    level: "info",
-    msg: "fetching_gas_price",
-    rpcUrl: rpcUrl.replace(/\/[^/]*$/, "/***"), // Mask API key in URL
-  }));
+  console.log(
+    JSON.stringify({
+      ...base,
+      level: "info",
+      msg: "fetching_gas_price",
+      rpcUrl: rpcUrl.replace(/\/[^/]*$/, "/***"), // Mask API key in URL
+    }),
+  );
 
   try {
     // Get current gas price from RPC
@@ -59,12 +76,14 @@ export const handler = async () => {
     const currentGasPriceGwei = parseFloat(currentGasPriceWei) / 1e9;
     const updatedAt = new Date().toISOString();
 
-    console.log(JSON.stringify({
-      ...base,
-      level: "info",
-      msg: "gas_price_retrieved",
-      gasPriceGwei: currentGasPriceGwei,
-    }));
+    console.log(
+      JSON.stringify({
+        ...base,
+        level: "info",
+        msg: "gas_price_retrieved",
+        gasPriceGwei: currentGasPriceGwei,
+      }),
+    );
 
     // Update SSM Parameter with current gas price
     const ssm = new SSMClient({});
@@ -73,21 +92,25 @@ export const handler = async () => {
       updatedAt: updatedAt,
     });
 
-    await ssm.send(new PutParameterCommand({
-      Name: parameterName,
-      Value: parameterValue,
-      Type: "String",
-      Overwrite: true,
-    }));
+    await ssm.send(
+      new PutParameterCommand({
+        Name: parameterName,
+        Value: parameterValue,
+        Type: "String",
+        Overwrite: true,
+      }),
+    );
 
-    console.log(JSON.stringify({
-      ...base,
-      level: "info",
-      msg: "ssm_parameter_updated",
-      parameterName: parameterName,
-      gasPriceGwei: currentGasPriceGwei,
-      updatedAt: updatedAt,
-    }));
+    console.log(
+      JSON.stringify({
+        ...base,
+        level: "info",
+        msg: "ssm_parameter_updated",
+        parameterName: parameterName,
+        gasPriceGwei: currentGasPriceGwei,
+        updatedAt: updatedAt,
+      }),
+    );
 
     return {
       gasPrice: currentGasPriceGwei,
@@ -95,12 +118,14 @@ export const handler = async () => {
     };
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err);
-    console.error(JSON.stringify({
-      ...base,
-      level: "error",
-      msg: "gas_price_update_failed",
-      error: errorMessage,
-    }));
+    console.error(
+      JSON.stringify({
+        ...base,
+        level: "error",
+        msg: "gas_price_update_failed",
+        error: errorMessage,
+      }),
+    );
     throw err;
   }
 };

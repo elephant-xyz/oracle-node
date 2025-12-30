@@ -42,9 +42,8 @@ describe("gas-price-updater handler", () => {
 
       ssmMock.on(PutParameterCommand).resolves({});
 
-      const { handler } = await import(
-        "../../../../workflow/lambdas/gas-price-updater/index.mjs"
-      );
+      const { handler } =
+        await import("../../../../workflow/lambdas/gas-price-updater/index.mjs");
 
       const result = await handler();
 
@@ -75,9 +74,8 @@ describe("gas-price-updater handler", () => {
 
       ssmMock.on(PutParameterCommand).resolves({});
 
-      const { handler } = await import(
-        "../../../../workflow/lambdas/gas-price-updater/index.mjs"
-      );
+      const { handler } =
+        await import("../../../../workflow/lambdas/gas-price-updater/index.mjs");
 
       const result = await handler();
 
@@ -92,9 +90,8 @@ describe("gas-price-updater handler", () => {
 
       ssmMock.on(PutParameterCommand).resolves({});
 
-      const { handler } = await import(
-        "../../../../workflow/lambdas/gas-price-updater/index.mjs"
-      );
+      const { handler } =
+        await import("../../../../workflow/lambdas/gas-price-updater/index.mjs");
 
       const result = await handler();
 
@@ -110,9 +107,8 @@ describe("gas-price-updater handler", () => {
 
       ssmMock.on(PutParameterCommand).resolves({});
 
-      const { handler } = await import(
-        "../../../../workflow/lambdas/gas-price-updater/index.mjs"
-      );
+      const { handler } =
+        await import("../../../../workflow/lambdas/gas-price-updater/index.mjs");
 
       const result = await handler();
 
@@ -127,9 +123,8 @@ describe("gas-price-updater handler", () => {
 
       ssmMock.on(PutParameterCommand).resolves({});
 
-      const { handler } = await import(
-        "../../../../workflow/lambdas/gas-price-updater/index.mjs"
-      );
+      const { handler } =
+        await import("../../../../workflow/lambdas/gas-price-updater/index.mjs");
 
       const result = await handler();
 
@@ -144,9 +139,8 @@ describe("gas-price-updater handler", () => {
 
       ssmMock.on(PutParameterCommand).resolves({});
 
-      const { handler } = await import(
-        "../../../../workflow/lambdas/gas-price-updater/index.mjs"
-      );
+      const { handler } =
+        await import("../../../../workflow/lambdas/gas-price-updater/index.mjs");
 
       const result = await handler();
 
@@ -158,9 +152,8 @@ describe("gas-price-updater handler", () => {
     it("should fail when RPC URL is missing", async () => {
       delete process.env.ELEPHANT_RPC_URL;
 
-      const { handler } = await import(
-        "../../../../workflow/lambdas/gas-price-updater/index.mjs"
-      );
+      const { handler } =
+        await import("../../../../workflow/lambdas/gas-price-updater/index.mjs");
 
       await expect(handler()).rejects.toThrow(
         "RPC URL is required (ELEPHANT_RPC_URL env var)",
@@ -170,9 +163,8 @@ describe("gas-price-updater handler", () => {
     it("should fail when SSM Parameter name is missing", async () => {
       delete process.env.GAS_PRICE_PARAMETER_NAME;
 
-      const { handler } = await import(
-        "../../../../workflow/lambdas/gas-price-updater/index.mjs"
-      );
+      const { handler } =
+        await import("../../../../workflow/lambdas/gas-price-updater/index.mjs");
 
       await expect(handler()).rejects.toThrow(
         "SSM Parameter name is required (GAS_PRICE_PARAMETER_NAME env var)",
@@ -184,9 +176,8 @@ describe("gas-price-updater handler", () => {
     it("should fail when checkGasPrice throws an error", async () => {
       mockCheckGasPrice.mockRejectedValue(new Error("RPC connection failed"));
 
-      const { handler } = await import(
-        "../../../../workflow/lambdas/gas-price-updater/index.mjs"
-      );
+      const { handler } =
+        await import("../../../../workflow/lambdas/gas-price-updater/index.mjs");
 
       await expect(handler()).rejects.toThrow("RPC connection failed");
     });
@@ -194,9 +185,8 @@ describe("gas-price-updater handler", () => {
     it("should fail when gas price cannot be retrieved", async () => {
       mockCheckGasPrice.mockResolvedValue({});
 
-      const { handler } = await import(
-        "../../../../workflow/lambdas/gas-price-updater/index.mjs"
-      );
+      const { handler } =
+        await import("../../../../workflow/lambdas/gas-price-updater/index.mjs");
 
       await expect(handler()).rejects.toThrow(
         "Unable to retrieve gas price from RPC",
@@ -213,9 +203,8 @@ describe("gas-price-updater handler", () => {
         .on(PutParameterCommand)
         .rejects(new Error("SSM service unavailable"));
 
-      const { handler } = await import(
-        "../../../../workflow/lambdas/gas-price-updater/index.mjs"
-      );
+      const { handler } =
+        await import("../../../../workflow/lambdas/gas-price-updater/index.mjs");
 
       await expect(handler()).rejects.toThrow("SSM service unavailable");
     });
@@ -226,9 +215,8 @@ describe("gas-price-updater handler", () => {
         legacy: null,
       });
 
-      const { handler } = await import(
-        "../../../../workflow/lambdas/gas-price-updater/index.mjs"
-      );
+      const { handler } =
+        await import("../../../../workflow/lambdas/gas-price-updater/index.mjs");
 
       await expect(handler()).rejects.toThrow(
         "Unable to retrieve gas price from RPC",
@@ -247,9 +235,8 @@ describe("gas-price-updater handler", () => {
 
       ssmMock.on(PutParameterCommand).resolves({});
 
-      const { handler } = await import(
-        "../../../../workflow/lambdas/gas-price-updater/index.mjs"
-      );
+      const { handler } =
+        await import("../../../../workflow/lambdas/gas-price-updater/index.mjs");
 
       await handler();
 
@@ -282,9 +269,8 @@ describe("gas-price-updater handler", () => {
 
       ssmMock.on(PutParameterCommand).resolves({});
 
-      const { handler } = await import(
-        "../../../../workflow/lambdas/gas-price-updater/index.mjs"
-      );
+      const { handler } =
+        await import("../../../../workflow/lambdas/gas-price-updater/index.mjs");
 
       await handler();
 
@@ -309,9 +295,8 @@ describe("gas-price-updater handler", () => {
 
       mockCheckGasPrice.mockRejectedValue(new Error("RPC error"));
 
-      const { handler } = await import(
-        "../../../../workflow/lambdas/gas-price-updater/index.mjs"
-      );
+      const { handler } =
+        await import("../../../../workflow/lambdas/gas-price-updater/index.mjs");
 
       await expect(handler()).rejects.toThrow("RPC error");
 
@@ -338,9 +323,8 @@ describe("gas-price-updater handler", () => {
 
       ssmMock.on(PutParameterCommand).resolves({});
 
-      const { handler } = await import(
-        "../../../../workflow/lambdas/gas-price-updater/index.mjs"
-      );
+      const { handler } =
+        await import("../../../../workflow/lambdas/gas-price-updater/index.mjs");
 
       await handler();
 
@@ -365,9 +349,8 @@ describe("gas-price-updater handler", () => {
 
       ssmMock.on(PutParameterCommand).resolves({});
 
-      const { handler } = await import(
-        "../../../../workflow/lambdas/gas-price-updater/index.mjs"
-      );
+      const { handler } =
+        await import("../../../../workflow/lambdas/gas-price-updater/index.mjs");
 
       await handler();
 

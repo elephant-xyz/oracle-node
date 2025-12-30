@@ -84,9 +84,8 @@ describe("transaction-status-checker handler", () => {
         { status: "success", blockNumber: 12345 },
       ]);
 
-      const { handler } = await import(
-        "../../../../workflow/lambdas/transaction-status-checker/index.mjs"
-      );
+      const { handler } =
+        await import("../../../../workflow/lambdas/transaction-status-checker/index.mjs");
 
       const event = createSqsEvent("task-token-123", "0xabc123");
 
@@ -107,9 +106,8 @@ describe("transaction-status-checker handler", () => {
         { status: "success", blockNumber: 12345 },
       ]);
 
-      const { handler } = await import(
-        "../../../../workflow/lambdas/transaction-status-checker/index.mjs"
-      );
+      const { handler } =
+        await import("../../../../workflow/lambdas/transaction-status-checker/index.mjs");
 
       const event = createSqsEvent("task-token-success", "0xabc123");
 
@@ -133,9 +131,8 @@ describe("transaction-status-checker handler", () => {
     it("should fail with error code 60004 when transaction is pending", async () => {
       mockCheckTransactionStatus.mockResolvedValue([{ status: "pending" }]);
 
-      const { handler } = await import(
-        "../../../../workflow/lambdas/transaction-status-checker/index.mjs"
-      );
+      const { handler } =
+        await import("../../../../workflow/lambdas/transaction-status-checker/index.mjs");
 
       const event = createSqsEvent("task-token-pending", "0xabc123");
 
@@ -170,9 +167,8 @@ describe("transaction-status-checker handler", () => {
         { dataGroupLabel: "County", dataGroupCid: "bafkrei123" },
       ];
 
-      const { handler } = await import(
-        "../../../../workflow/lambdas/transaction-status-checker/index.mjs"
-      );
+      const { handler } =
+        await import("../../../../workflow/lambdas/transaction-status-checker/index.mjs");
 
       const event = createSqsEvent(
         "task-token-not-found",
@@ -203,9 +199,8 @@ describe("transaction-status-checker handler", () => {
         { status: "failed", blockNumber: 12345 },
       ]);
 
-      const { handler } = await import(
-        "../../../../workflow/lambdas/transaction-status-checker/index.mjs"
-      );
+      const { handler } =
+        await import("../../../../workflow/lambdas/transaction-status-checker/index.mjs");
 
       const event = createSqsEvent("task-token-failed", "0xabc123");
 
@@ -229,9 +224,8 @@ describe("transaction-status-checker handler", () => {
         { status: "success", blockNumber: 12345 },
       ]);
 
-      const { handler } = await import(
-        "../../../../workflow/lambdas/transaction-status-checker/index.mjs"
-      );
+      const { handler } =
+        await import("../../../../workflow/lambdas/transaction-status-checker/index.mjs");
 
       const event = createSqsEvent("task-token-succeeded", "0xabc123");
 
@@ -251,9 +245,8 @@ describe("transaction-status-checker handler", () => {
     it("should fail with error code 60006 when checkTransactionStatus throws an error", async () => {
       mockCheckTransactionStatus.mockRejectedValue(new Error("RPC error"));
 
-      const { handler } = await import(
-        "../../../../workflow/lambdas/transaction-status-checker/index.mjs"
-      );
+      const { handler } =
+        await import("../../../../workflow/lambdas/transaction-status-checker/index.mjs");
 
       const event = createSqsEvent("task-token-error", "0xabc123");
 
@@ -274,9 +267,8 @@ describe("transaction-status-checker handler", () => {
     it("should include TRANSACTION_NOT_FOUND prefix in error message when not found", async () => {
       mockCheckTransactionStatus.mockResolvedValue([]);
 
-      const { handler } = await import(
-        "../../../../workflow/lambdas/transaction-status-checker/index.mjs"
-      );
+      const { handler } =
+        await import("../../../../workflow/lambdas/transaction-status-checker/index.mjs");
 
       const event = createSqsEvent("task-token-not-found-prefix", "0xabc123");
 
@@ -294,9 +286,8 @@ describe("transaction-status-checker handler", () => {
     it("should include TRANSACTION_PENDING prefix in error message when pending", async () => {
       mockCheckTransactionStatus.mockResolvedValue([{ status: "pending" }]);
 
-      const { handler } = await import(
-        "../../../../workflow/lambdas/transaction-status-checker/index.mjs"
-      );
+      const { handler } =
+        await import("../../../../workflow/lambdas/transaction-status-checker/index.mjs");
 
       const event = createSqsEvent("task-token-pending-prefix", "0xabc123");
 
@@ -316,9 +307,8 @@ describe("transaction-status-checker handler", () => {
         { status: "failed", blockNumber: 12345 },
       ]);
 
-      const { handler } = await import(
-        "../../../../workflow/lambdas/transaction-status-checker/index.mjs"
-      );
+      const { handler } =
+        await import("../../../../workflow/lambdas/transaction-status-checker/index.mjs");
 
       const event = createSqsEvent("task-token-failed-prefix", "0xabc123");
 
@@ -338,9 +328,8 @@ describe("transaction-status-checker handler", () => {
     it("should fail with error code 60006 when RPC URL is missing", async () => {
       delete process.env.ELEPHANT_RPC_URL;
 
-      const { handler } = await import(
-        "../../../../workflow/lambdas/transaction-status-checker/index.mjs"
-      );
+      const { handler } =
+        await import("../../../../workflow/lambdas/transaction-status-checker/index.mjs");
 
       const event = createSqsEvent("task-token-no-rpc", "0xabc123");
 
@@ -367,9 +356,8 @@ describe("transaction-status-checker handler", () => {
     it("should fail with error code 60006 when checkTransactionStatus throws an error", async () => {
       mockCheckTransactionStatus.mockRejectedValue(new Error("Network error"));
 
-      const { handler } = await import(
-        "../../../../workflow/lambdas/transaction-status-checker/index.mjs"
-      );
+      const { handler } =
+        await import("../../../../workflow/lambdas/transaction-status-checker/index.mjs");
 
       const event = createSqsEvent("task-token-network-error", "0xabc123");
 
@@ -395,9 +383,8 @@ describe("transaction-status-checker handler", () => {
     });
 
     it("should handle missing SQS Records", async () => {
-      const { handler } = await import(
-        "../../../../workflow/lambdas/transaction-status-checker/index.mjs"
-      );
+      const { handler } =
+        await import("../../../../workflow/lambdas/transaction-status-checker/index.mjs");
 
       const event = {
         Records: [],
@@ -407,9 +394,8 @@ describe("transaction-status-checker handler", () => {
     });
 
     it("should fail with error code 60006 when missing transaction hash", async () => {
-      const { handler } = await import(
-        "../../../../workflow/lambdas/transaction-status-checker/index.mjs"
-      );
+      const { handler } =
+        await import("../../../../workflow/lambdas/transaction-status-checker/index.mjs");
 
       const event = {
         Records: [
@@ -452,9 +438,8 @@ describe("transaction-status-checker handler", () => {
         { status: "failed", blockNumber: 12345 },
       ]);
 
-      const { handler } = await import(
-        "../../../../workflow/lambdas/transaction-status-checker/index.mjs"
-      );
+      const { handler } =
+        await import("../../../../workflow/lambdas/transaction-status-checker/index.mjs");
 
       const event = createSqsEvent("task-token-reverted", "0xabc123");
 
@@ -469,9 +454,8 @@ describe("transaction-status-checker handler", () => {
     it("should use error code 60004 for pending transactions", async () => {
       mockCheckTransactionStatus.mockResolvedValue([{ status: "pending" }]);
 
-      const { handler } = await import(
-        "../../../../workflow/lambdas/transaction-status-checker/index.mjs"
-      );
+      const { handler } =
+        await import("../../../../workflow/lambdas/transaction-status-checker/index.mjs");
 
       const event = createSqsEvent("task-token-pending-code", "0xabc123");
 
@@ -486,9 +470,8 @@ describe("transaction-status-checker handler", () => {
     it("should use error code 60005 for not found transactions", async () => {
       mockCheckTransactionStatus.mockResolvedValue([]);
 
-      const { handler } = await import(
-        "../../../../workflow/lambdas/transaction-status-checker/index.mjs"
-      );
+      const { handler } =
+        await import("../../../../workflow/lambdas/transaction-status-checker/index.mjs");
 
       const event = createSqsEvent("task-token-notfound-code", "0xabc123");
 
@@ -505,9 +488,8 @@ describe("transaction-status-checker handler", () => {
         new Error("Unexpected error"),
       );
 
-      const { handler } = await import(
-        "../../../../workflow/lambdas/transaction-status-checker/index.mjs"
-      );
+      const { handler } =
+        await import("../../../../workflow/lambdas/transaction-status-checker/index.mjs");
 
       const event = createSqsEvent("task-token-general-code", "0xabc123");
 
@@ -522,9 +504,8 @@ describe("transaction-status-checker handler", () => {
     it("should handle 'not_found' status from CLI", async () => {
       mockCheckTransactionStatus.mockResolvedValue([{ status: "not_found" }]);
 
-      const { handler } = await import(
-        "../../../../workflow/lambdas/transaction-status-checker/index.mjs"
-      );
+      const { handler } =
+        await import("../../../../workflow/lambdas/transaction-status-checker/index.mjs");
 
       const event = createSqsEvent("task-token-status-not-found", "0xabc123");
 
@@ -539,11 +520,12 @@ describe("transaction-status-checker handler", () => {
     });
 
     it("should handle unknown status as not_found", async () => {
-      mockCheckTransactionStatus.mockResolvedValue([{ status: "unknown_status" }]);
+      mockCheckTransactionStatus.mockResolvedValue([
+        { status: "unknown_status" },
+      ]);
 
-      const { handler } = await import(
-        "../../../../workflow/lambdas/transaction-status-checker/index.mjs"
-      );
+      const { handler } =
+        await import("../../../../workflow/lambdas/transaction-status-checker/index.mjs");
 
       const event = createSqsEvent("task-token-status-unknown", "0xabc123");
 
