@@ -91,8 +91,6 @@ describe("transaction-status-checker handler", () => {
 
       await handler(event);
 
-      // Verify IN_PROGRESS and SUCCEEDED events were emitted
-      // Verify IN_PROGRESS event was emitted via shared layer
       expect(mockEmitWorkflowEvent).toHaveBeenCalledWith(
         expect.objectContaining({
           status: "IN_PROGRESS",
@@ -115,7 +113,7 @@ describe("transaction-status-checker handler", () => {
 
       await handler(event);
 
-      // Verify checkTransactionStatus was called once (no retries)
+      // Verify checkTransactionStatus was called once (single check, no retries)
       expect(mockCheckTransactionStatus).toHaveBeenCalledTimes(1);
       expect(mockCheckTransactionStatus).toHaveBeenCalledWith({
         transactionHashes: "0xabc123",
@@ -123,7 +121,6 @@ describe("transaction-status-checker handler", () => {
       });
 
       // Verify task success was sent
-      // Verify task success was sent via shared layer
       expect(mockExecuteWithTaskToken).toHaveBeenCalledWith(
         expect.objectContaining({
           taskToken: "task-token-success",
@@ -131,7 +128,7 @@ describe("transaction-status-checker handler", () => {
       );
     });
 
-    it("should fail immediately when transaction is pending (no retries)", async () => {
+    it("should fail with error code 60004 when transaction is pending", async () => {
       mockCheckTransactionStatus.mockResolvedValue([{ status: "pending" }]);
 
       const { handler } =
@@ -141,13 +138,15 @@ describe("transaction-status-checker handler", () => {
 
       await handler(event);
 
-      // Verify checkTransactionStatus was called only once (no retries)
+      // Verify single check (no retries in Lambda - Step Function handles retries)
       expect(mockCheckTransactionStatus).toHaveBeenCalledTimes(1);
 
-      // Verify task failure was sent with TRANSACTION_PENDING prefix
-      expect(mockExecuteWithTaskToken).toHaveBeenCalledWith(
+      // Verify task failure was sent with error code 60004
+      expect(mockCreateWorkflowError).toHaveBeenCalledWith(
+        "60004",
         expect.objectContaining({
-          taskToken: "task-token-pending",
+          error: expect.stringContaining("TRANSACTION_PENDING:"),
+          transactionHash: "0xabc123",
         }),
       );
 
@@ -161,8 +160,8 @@ describe("transaction-status-checker handler", () => {
       );
     });
 
-    it("should fail immediately when transaction is dropped (no resubmission)", async () => {
-      mockCheckTransactionStatus.mockResolvedValue([]); // Empty result = dropped
+    it("should fail with error code 60005 when transaction is not found", async () => {
+      mockCheckTransactionStatus.mockResolvedValue([]); // Empty result = not found
 
       const transactionItems = [
         { dataGroupLabel: "County", dataGroupCid: "bafkrei123" },
@@ -172,30 +171,32 @@ describe("transaction-status-checker handler", () => {
         await import("../../../../workflow/lambdas/transaction-status-checker/index.mjs");
 
       const event = createSqsEvent(
-        "task-token-dropped",
+        "task-token-not-found",
         "0xabc123",
         transactionItems,
       );
 
       await handler(event);
 
-      // Verify checkTransactionStatus was called only once (no retries)
+      // Verify single check (no retries)
       expect(mockCheckTransactionStatus).toHaveBeenCalledTimes(1);
 
-      // Verify task failure was sent via shared layer (transaction dropped)
-      expect(mockExecuteWithTaskToken).toHaveBeenCalledWith(
+      // Verify task failure was sent with error code 60005
+      expect(mockCreateWorkflowError).toHaveBeenCalledWith(
+        "60005",
         expect.objectContaining({
-          taskToken: "task-token-dropped",
+          error: expect.stringContaining("TRANSACTION_NOT_FOUND:"),
+          transactionHash: "0xabc123",
         }),
       );
 
-      // Verify NO SQS resubmission (removed resubmission logic)
+      // Verify NO SQS resubmission (Step Function handles resubmission)
       expect(sqsMock.calls()).toHaveLength(0);
     });
 
-    it("should handle failed transaction status", async () => {
+    it("should fail with error code 60003 when transaction failed on chain", async () => {
       mockCheckTransactionStatus.mockResolvedValue([
-        { status: "failed", error: "Transaction reverted" },
+        { status: "failed", blockNumber: 12345 },
       ]);
 
       const { handler } =
@@ -205,13 +206,15 @@ describe("transaction-status-checker handler", () => {
 
       await handler(event);
 
-      // Verify checkTransactionStatus was called only once (no retries)
+      // Verify single check (no retries)
       expect(mockCheckTransactionStatus).toHaveBeenCalledTimes(1);
 
-      // Verify task failure was sent via shared layer
-      expect(mockExecuteWithTaskToken).toHaveBeenCalledWith(
+      // Verify task failure was sent with error code 60003
+      expect(mockCreateWorkflowError).toHaveBeenCalledWith(
+        "60003",
         expect.objectContaining({
-          taskToken: "task-token-failed",
+          error: expect.stringContaining("TRANSACTION_FAILED:"),
+          transactionHash: "0xabc123",
         }),
       );
     });
@@ -229,7 +232,6 @@ describe("transaction-status-checker handler", () => {
       await handler(event);
 
       // Should have 2 EventBridge calls: IN_PROGRESS and SUCCEEDED
-      // Should have 2 EventBridge calls: IN_PROGRESS and SUCCEEDED
       expect(mockEmitWorkflowEvent).toHaveBeenCalledTimes(2);
       expect(mockEmitWorkflowEvent).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -240,7 +242,7 @@ describe("transaction-status-checker handler", () => {
       );
     });
 
-    it("should fail immediately when checkTransactionStatus throws an error", async () => {
+    it("should fail with error code 60006 when checkTransactionStatus throws an error", async () => {
       mockCheckTransactionStatus.mockRejectedValue(new Error("RPC error"));
 
       const { handler } =
@@ -250,53 +252,20 @@ describe("transaction-status-checker handler", () => {
 
       await handler(event);
 
-      // Verify checkTransactionStatus was called only once (no retries)
+      // Verify single check (no retries)
       expect(mockCheckTransactionStatus).toHaveBeenCalledTimes(1);
 
-      // Verify task failure was sent via shared layer
-      expect(mockExecuteWithTaskToken).toHaveBeenCalledWith(
+      // Verify task failure was sent with error code 60006 (GENERAL_ERROR)
+      expect(mockCreateWorkflowError).toHaveBeenCalledWith(
+        "60006",
         expect.objectContaining({
-          taskToken: "task-token-error",
-        }),
-      );
-    });
-
-    it("should emit FAILED event when transaction is not found", async () => {
-      mockCheckTransactionStatus.mockResolvedValue([]); // Empty result = not found
-
-      const transactionItems = [
-        { dataGroupLabel: "County", dataGroupCid: "bafkrei123" },
-      ];
-
-      const { handler } =
-        await import("../../../../workflow/lambdas/transaction-status-checker/index.mjs");
-
-      const event = createSqsEvent(
-        "task-token-not-found-event",
-        "0xabc123",
-        transactionItems,
-      );
-
-      await handler(event);
-
-      // Should have 2 EventBridge calls: IN_PROGRESS and FAILED
-      expect(mockEmitWorkflowEvent).toHaveBeenCalledTimes(2);
-      expect(mockEmitWorkflowEvent).toHaveBeenCalledWith(
-        expect.objectContaining({
-          status: "FAILED",
-          phase: "TransactionStatusCheck",
-          step: "CheckTransactionStatus",
-          errors: expect.arrayContaining([
-            expect.objectContaining({
-              code: "60003",
-            }),
-          ]),
+          error: expect.stringContaining("GENERAL_ERROR:"),
         }),
       );
     });
 
     it("should include TRANSACTION_NOT_FOUND prefix in error message when not found", async () => {
-      mockCheckTransactionStatus.mockResolvedValue([]); // Empty result = not found
+      mockCheckTransactionStatus.mockResolvedValue([]);
 
       const { handler } =
         await import("../../../../workflow/lambdas/transaction-status-checker/index.mjs");
@@ -305,9 +274,8 @@ describe("transaction-status-checker handler", () => {
 
       await handler(event);
 
-      // Verify the error includes TRANSACTION_NOT_FOUND prefix
       expect(mockCreateWorkflowError).toHaveBeenCalledWith(
-        "60003",
+        "60005",
         expect.objectContaining({
           error: expect.stringContaining("TRANSACTION_NOT_FOUND:"),
           transactionHash: "0xabc123",
@@ -325,9 +293,8 @@ describe("transaction-status-checker handler", () => {
 
       await handler(event);
 
-      // Verify the error includes TRANSACTION_PENDING prefix
       expect(mockCreateWorkflowError).toHaveBeenCalledWith(
-        "60003",
+        "60004",
         expect.objectContaining({
           error: expect.stringContaining("TRANSACTION_PENDING:"),
           transactionHash: "0xabc123",
@@ -347,7 +314,6 @@ describe("transaction-status-checker handler", () => {
 
       await handler(event);
 
-      // Verify the error includes TRANSACTION_FAILED prefix
       expect(mockCreateWorkflowError).toHaveBeenCalledWith(
         "60003",
         expect.objectContaining({
@@ -359,7 +325,7 @@ describe("transaction-status-checker handler", () => {
   });
 
   describe("Configuration validation", () => {
-    it("should fail when RPC URL is missing", async () => {
+    it("should fail with error code 60006 when RPC URL is missing", async () => {
       delete process.env.ELEPHANT_RPC_URL;
 
       const { handler } =
@@ -369,49 +335,25 @@ describe("transaction-status-checker handler", () => {
 
       await handler(event);
 
-      // Verify task failure was sent via shared layer
+      // Verify task failure was sent
       expect(mockExecuteWithTaskToken).toHaveBeenCalledWith(
         expect.objectContaining({
           taskToken: "task-token-no-rpc",
         }),
       );
 
-      // Verify error includes GENERAL_ERROR prefix
+      // Verify error code 60006 for config error
       expect(mockCreateWorkflowError).toHaveBeenCalledWith(
-        "60003",
+        "60006",
         expect.objectContaining({
           error: expect.stringContaining("GENERAL_ERROR:"),
-        }),
-      );
-    });
-
-    it("should fail immediately when transaction is dropped (no resubmit queue needed)", async () => {
-      mockCheckTransactionStatus.mockResolvedValue([]); // Dropped transaction
-
-      const { handler } =
-        await import("../../../../workflow/lambdas/transaction-status-checker/index.mjs");
-
-      const event = createSqsEvent("task-token-no-queue", "0xabc123");
-
-      await handler(event);
-
-      // Verify checkTransactionStatus was called only once (no retries)
-      expect(mockCheckTransactionStatus).toHaveBeenCalledTimes(1);
-
-      // Should NOT have called SQS (no resubmission logic)
-      expect(sqsMock.calls()).toHaveLength(0);
-
-      // Verify task failure was sent
-      expect(mockExecuteWithTaskToken).toHaveBeenCalledWith(
-        expect.objectContaining({
-          taskToken: "task-token-no-queue",
         }),
       );
     });
   });
 
   describe("Error handling", () => {
-    it("should fail immediately when checkTransactionStatus throws an error", async () => {
+    it("should fail with error code 60006 when checkTransactionStatus throws an error", async () => {
       mockCheckTransactionStatus.mockRejectedValue(new Error("Network error"));
 
       const { handler } =
@@ -421,7 +363,7 @@ describe("transaction-status-checker handler", () => {
 
       await handler(event);
 
-      // Verify checkTransactionStatus was called only once (no retries)
+      // Verify single check (no retries)
       expect(mockCheckTransactionStatus).toHaveBeenCalledTimes(1);
 
       // Verify task failure was sent
@@ -433,7 +375,7 @@ describe("transaction-status-checker handler", () => {
 
       // Verify GENERAL_ERROR prefix in error message
       expect(mockCreateWorkflowError).toHaveBeenCalledWith(
-        "60003",
+        "60006",
         expect.objectContaining({
           error: expect.stringContaining("GENERAL_ERROR:"),
         }),
@@ -451,7 +393,7 @@ describe("transaction-status-checker handler", () => {
       await expect(handler(event)).rejects.toThrow("Missing SQS Records");
     });
 
-    it("should handle missing transaction hash in message body", async () => {
+    it("should fail with error code 60006 when missing transaction hash", async () => {
       const { handler } =
         await import("../../../../workflow/lambdas/transaction-status-checker/index.mjs");
 
@@ -473,10 +415,126 @@ describe("transaction-status-checker handler", () => {
 
       await handler(event);
 
-      // Verify task failure was sent via shared layer
+      // Verify task failure was sent
       expect(mockExecuteWithTaskToken).toHaveBeenCalledWith(
         expect.objectContaining({
           taskToken: "task-token-no-hash",
+        }),
+      );
+
+      // Verify error code 60006 for missing transaction hash
+      expect(mockCreateWorkflowError).toHaveBeenCalledWith(
+        "60006",
+        expect.objectContaining({
+          error: expect.stringContaining("Transaction hash is required"),
+        }),
+      );
+    });
+  });
+
+  describe("Error codes for Step Function routing", () => {
+    it("should use error code 60003 for on-chain failures (reverted)", async () => {
+      mockCheckTransactionStatus.mockResolvedValue([
+        { status: "failed", blockNumber: 12345 },
+      ]);
+
+      const { handler } =
+        await import("../../../../workflow/lambdas/transaction-status-checker/index.mjs");
+
+      const event = createSqsEvent("task-token-reverted", "0xabc123");
+
+      await handler(event);
+
+      expect(mockCreateWorkflowError).toHaveBeenCalledWith(
+        "60003",
+        expect.anything(),
+      );
+    });
+
+    it("should use error code 60004 for pending transactions", async () => {
+      mockCheckTransactionStatus.mockResolvedValue([{ status: "pending" }]);
+
+      const { handler } =
+        await import("../../../../workflow/lambdas/transaction-status-checker/index.mjs");
+
+      const event = createSqsEvent("task-token-pending-code", "0xabc123");
+
+      await handler(event);
+
+      expect(mockCreateWorkflowError).toHaveBeenCalledWith(
+        "60004",
+        expect.anything(),
+      );
+    });
+
+    it("should use error code 60005 for not found transactions", async () => {
+      mockCheckTransactionStatus.mockResolvedValue([]);
+
+      const { handler } =
+        await import("../../../../workflow/lambdas/transaction-status-checker/index.mjs");
+
+      const event = createSqsEvent("task-token-notfound-code", "0xabc123");
+
+      await handler(event);
+
+      expect(mockCreateWorkflowError).toHaveBeenCalledWith(
+        "60005",
+        expect.anything(),
+      );
+    });
+
+    it("should use error code 60006 for general errors", async () => {
+      mockCheckTransactionStatus.mockRejectedValue(
+        new Error("Unexpected error"),
+      );
+
+      const { handler } =
+        await import("../../../../workflow/lambdas/transaction-status-checker/index.mjs");
+
+      const event = createSqsEvent("task-token-general-code", "0xabc123");
+
+      await handler(event);
+
+      expect(mockCreateWorkflowError).toHaveBeenCalledWith(
+        "60006",
+        expect.anything(),
+      );
+    });
+
+    it("should handle 'not_found' status from CLI", async () => {
+      mockCheckTransactionStatus.mockResolvedValue([{ status: "not_found" }]);
+
+      const { handler } =
+        await import("../../../../workflow/lambdas/transaction-status-checker/index.mjs");
+
+      const event = createSqsEvent("task-token-status-not-found", "0xabc123");
+
+      await handler(event);
+
+      expect(mockCreateWorkflowError).toHaveBeenCalledWith(
+        "60005",
+        expect.objectContaining({
+          error: expect.stringContaining("TRANSACTION_NOT_FOUND:"),
+        }),
+      );
+    });
+
+    it("should handle unknown status as not_found", async () => {
+      mockCheckTransactionStatus.mockResolvedValue([
+        { status: "unknown_status" },
+      ]);
+
+      const { handler } =
+        await import("../../../../workflow/lambdas/transaction-status-checker/index.mjs");
+
+      const event = createSqsEvent("task-token-status-unknown", "0xabc123");
+
+      await handler(event);
+
+      expect(mockCreateWorkflowError).toHaveBeenCalledWith(
+        "60005",
+        expect.objectContaining({
+          error: expect.stringContaining("TRANSACTION_NOT_FOUND:"),
         }),
       );
     });

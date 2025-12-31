@@ -835,153 +835,68 @@ States:
             step: Submit
             dataGroupLabel: County
     ResultPath: $.eventResult
-    Next: EmitGasPriceCheckScheduled
+    Next: GetGasPriceFromSSM
     Catch:
       - ErrorEquals: [States.ALL]
         ResultPath: $.eventError
-        Next: EmitGasPriceCheckScheduled
+        Next: GetGasPriceFromSSM
 
-  # === GAS PRICE CHECK STEP ===
+  # === GAS PRICE CHECK STEP (SSM-based, no Lambda polling) ===
+  # Gas price is updated every 5 minutes by GasPriceUpdater cron job Lambda
+  # Step Function reads SSM directly and uses Choice state to decide
+  # Time-based retry: 5 min during 17:00-05:00 UTC, 1 hour during 05:00-17:00 UTC
 
-  EmitGasPriceCheckScheduled:
+  GetGasPriceFromSSM:
     Type: Task
-    Resource: arn:aws:states:::events:putEvents
-    Comment: "Emit SCHEDULED event for Gas Price Check step"
+    Resource: arn:aws:states:::aws-sdk:ssm:getParameter
+    Comment: "Read current gas price from SSM Parameter (updated by cron job)"
     Parameters:
-      Entries:
-        - Source: elephant.workflow
-          DetailType: WorkflowEvent
-          Detail:
-            executionId.$: $$.Execution.Name
-            county.$: $.pre.county_name
-            status: SCHEDULED
-            phase: GasPriceCheck
-            step: CheckGasPrice
-            dataGroupLabel: County
-    ResultPath: $.eventResult
-    Next: CheckGasPrice
-    Catch:
-      - ErrorEquals: [States.ALL]
-        ResultPath: $.eventError
-        Next: CheckGasPrice
-
-  CheckGasPrice:
-    Type: Task
-    Resource: arn:aws:states:::sqs:sendMessage.waitForTaskToken
-    Comment: "Check gas price before submitting to blockchain"
-    Parameters:
-      QueueUrl: ${GasPriceCheckerSqsQueueUrl}
-      MessageBody: "{}"
-      MessageAttributes:
-        TaskToken:
-          DataType: String
-          StringValue.$: $$.Task.Token
-        ExecutionArn:
-          DataType: String
-          StringValue.$: $$.Execution.Name
-        County:
-          DataType: String
-          StringValue.$: $.pre.county_name
-        DataGroupLabel:
-          DataType: String
-          StringValue: "County"
+      Name: ${GasPriceParameterName}
     ResultSelector:
-      taskToken.$: $$.Task.Token
-      result.$: $
-    ResultPath: $.gasPriceCheck
-    Next: EmitGasPriceCheckSucceeded
+      value.$: States.StringToJson($.Parameter.Value)
+    ResultPath: $.gasPriceResult
+    Next: CheckGasPriceChoice
     Retry:
-      - ErrorEquals:
-          - Sqs.RequestThrottledException
-          - Sqs.ThrottlingException
-          - Sqs.ServiceUnavailableException
-          - Sqs.InternalFailureException
-        IntervalSeconds: 2
+      - ErrorEquals: [States.ALL]
+        IntervalSeconds: 5
         MaxAttempts: 2
         BackoffRate: 2
     Catch:
       - ErrorEquals: [States.ALL]
         ResultPath: $.gasPriceError
-        Next: EmitGasPriceCheckFailed
+        Next: DetermineGasPriceWaitInterval
 
-  EmitGasPriceCheckSucceeded:
-    Type: Task
-    Resource: arn:aws:states:::events:putEvents
-    Comment: "Emit SUCCEEDED event for Gas Price Check step"
-    Parameters:
-      Entries:
-        - Source: elephant.workflow
-          DetailType: WorkflowEvent
-          Detail:
-            executionId.$: $$.Execution.Name
-            county.$: $.pre.county_name
-            status: SUCCEEDED
-            phase: GasPriceCheck
-            step: CheckGasPrice
-            dataGroupLabel: County
-    ResultPath: $.eventResult
-    Next: EmitSubmitToBlockchainScheduled
-    Catch:
-      - ErrorEquals: [States.ALL]
-        ResultPath: $.eventError
+  CheckGasPriceChoice:
+    Type: Choice
+    Comment: "Compare gas price from SSM against configured max threshold (${GasPriceMaxGwei} Gwei)"
+    Choices:
+      # If gasPrice <= maxGwei, proceed to submit
+      - Variable: $.gasPriceResult.value.gasPrice
+        NumericLessThanEquals: ${GasPriceMaxGwei}
         Next: EmitSubmitToBlockchainScheduled
+    Default: DetermineGasPriceWaitInterval
 
-  EmitGasPriceCheckFailed:
-    Type: Task
-    Resource: arn:aws:states:::events:putEvents
+  DetermineGasPriceWaitInterval:
+    Type: Pass
     QueryLanguage: JSONata
-    Comment: "Emit FAILED event for Gas Price Check step with error code from lambda"
-    Arguments:
-      Entries:
-        - Source: elephant.workflow
-          DetailType: WorkflowEvent
-          Detail:
-            executionId: "{% $states.context.Execution.Name %}"
-            county: "{% $states.input.pre.county_name %}"
-            status: FAILED
-            phase: GasPriceCheck
-            step: CheckGasPrice
-            dataGroupLabel: County
-            errors:
-              - code: "{% $states.input.gasPriceError.Error %}"
-                details:
-                  cause: "{% $states.input.gasPriceError.Cause %}"
-    Output: "{% $merge([$states.input, { 'eventResult': $states.result }]) %}"
-    Next: WaitForGasPriceCheckResolution
-    Catch:
-      - ErrorEquals: [States.ALL]
-        Output: "{% $merge([$states.input, { 'eventError': $states.errorOutput }]) %}"
-        Next: WaitForGasPriceCheckResolution
+    Comment: "Determine wait interval based on UTC hour: 5 min (300s) for 17:00-05:00 UTC, 1 hour (3600s) for 05:00-17:00 UTC"
+    Output: >-
+      {%
+        (
+          $rawHour := $number($substring($now(), 11, 2));
+          $hour := $type($rawHour) = 'number' ? $rawHour : 12;
+          $isOffPeak := $hour >= 17 or $hour < 5;
+          $waitSeconds := $isOffPeak ? 300 : 3600;
+          $merge([$states.input, { "gasPriceWaitSeconds": $waitSeconds }])
+        )
+      %}
+    Next: WaitForGasPrice
 
-  WaitForGasPriceCheckResolution:
-    Type: Task
-    Resource: arn:aws:states:::events:putEvents.waitForTaskToken
-    QueryLanguage: JSONata
-    Comment: "Emit FAILED event and wait for external resolution - retry target is CheckGasPrice"
-    HeartbeatSeconds: 2592000 # 30 days
-    Arguments:
-      Entries:
-        - Source: elephant.workflow
-          DetailType: WorkflowEvent
-          Detail:
-            executionId: "{% $states.context.Execution.Name %}"
-            county: "{% $states.input.pre.county_name %}"
-            status: FAILED
-            phase: GasPriceCheck
-            step: CheckGasPrice
-            dataGroupLabel: County
-            taskToken: "{% $states.context.Task.Token %}"
-            errors:
-              - code: "{% $states.input.gasPriceError.Error %}"
-                details:
-                  cause: "{% $states.input.gasPriceError.Cause %}"
-    Output: "{% $merge([$states.input, { 'resolutionResult': $states.result }]) %}"
-    Next: CheckGasPrice
-    Catch:
-      - ErrorEquals: [States.ALL]
-        Comment: "Resolution failed - stay parked and wait again"
-        Output: "{% $merge([$states.input, { 'gasPriceError': $states.errorOutput }]) %}"
-        Next: WaitForGasPriceCheckResolution
+  WaitForGasPrice:
+    Type: Wait
+    Comment: "Wait based on time of day before checking gas price again"
+    SecondsPath: $.gasPriceWaitSeconds
+    Next: GetGasPriceFromSSM
 
   # === SUBMIT TO BLOCKCHAIN STEP ===
 
@@ -1175,12 +1090,19 @@ States:
       transactionHash.$: $.transactionStatus.transactionHash
       transactionItems.$: $.transactionStatus.transactionItems
     ResultPath: $.transactionStatusCheckInput
+    Next: InitializeTransactionStatusRetry
+
+  InitializeTransactionStatusRetry:
+    Type: Pass
+    Comment: "Initialize transaction status retry counter to 0"
+    Result: 0
+    ResultPath: $.txStatusRetryCount
     Next: CheckTransactionStatus
 
   CheckTransactionStatus:
     Type: Task
     Resource: arn:aws:states:::sqs:sendMessage.waitForTaskToken
-    Comment: "Check transaction status on blockchain"
+    Comment: "Check transaction status on blockchain - routes based on error code"
     Parameters:
       QueueUrl: ${TransactionStatusCheckerSqsQueueUrl}
       MessageBody.$: States.JsonToString($.transactionStatusCheckInput)
@@ -1205,17 +1127,209 @@ States:
       result.$: $
     ResultPath: $.transactionStatusCheck
     Next: EmitTransactionStatusCheckSucceeded
-    Retry:
-      - ErrorEquals:
-          - States.TaskFailed
-          - States.Timeout
-        IntervalSeconds: 5
-        MaxAttempts: 2
-        BackoffRate: 2
     Catch:
+      # 60004: PENDING - transaction in mempool, wait and retry
+      - ErrorEquals: ["60004"]
+        ResultPath: $.transactionStatusError
+        Next: HandleTransactionPending
+      # 60005: NOT_FOUND - transaction dropped, go back to gas price check (resubmit)
+      - ErrorEquals: ["60005"]
+        ResultPath: $.transactionStatusError
+        Next: HandleTransactionNotFound
+      # 60003: FAILED - transaction reverted, wait for resolution then resubmit
+      - ErrorEquals: ["60003"]
+        ResultPath: $.transactionStatusError
+        Next: HandleTransactionFailed
+      # 60006 or other: GENERAL_ERROR - wait for resolution then retry status check
       - ErrorEquals: [States.ALL]
         ResultPath: $.transactionStatusError
-        Next: EmitTransactionStatusCheckFailed
+        Next: HandleTransactionGeneralError
+
+  # === PENDING: Retry indefinitely with exponential backoff (2^n seconds, max 12 hours) ===
+
+  HandleTransactionPending:
+    Type: Pass
+    Comment: "Transaction pending - proceed to exponential backoff wait"
+    Next: CalculateTransactionStatusWait
+
+  CalculateTransactionStatusWait:
+    Type: Pass
+    QueryLanguage: JSONata
+    Comment: "Calculate exponential backoff wait time: min(2^retryCount * 60, 43200) seconds (max 12 hours)"
+    Output: >-
+      {%
+        (
+          $baseInterval := 60;
+          $maxInterval := 43200;
+          $calculated := $power(2, $states.input.txStatusRetryCount) * $baseInterval;
+          $waitSeconds := $min([$calculated, $maxInterval]);
+          $merge([$states.input, {
+            "txStatusRetryCount": $states.input.txStatusRetryCount + 1,
+            "txStatusWaitSeconds": $waitSeconds
+          }])
+        )
+      %}
+    Next: WaitForTransactionStatus
+
+  WaitForTransactionStatus:
+    Type: Wait
+    Comment: "Wait with exponential backoff before checking transaction status again"
+    SecondsPath: $.txStatusWaitSeconds
+    Next: CheckTransactionStatus
+
+  # === NOT_FOUND: Transaction dropped, go back to gas price check (resubmit) ===
+
+  HandleTransactionNotFound:
+    Type: Pass
+    Comment: "Transaction not found (dropped), prepare to resubmit"
+    Next: EmitTransactionStatusCheckFailedThenResubmit
+
+  # === FAILED: Transaction reverted, wait for resolution then resubmit ===
+
+  HandleTransactionFailed:
+    Type: Task
+    Resource: arn:aws:states:::events:putEvents
+    QueryLanguage: JSONata
+    Comment: "Emit FAILED event for transaction that reverted on blockchain"
+    Arguments:
+      Entries:
+        - Source: elephant.workflow
+          DetailType: WorkflowEvent
+          Detail:
+            executionId: "{% $states.context.Execution.Name %}"
+            county: "{% $states.input.pre.county_name %}"
+            status: FAILED
+            phase: TransactionStatusCheck
+            step: CheckTransactionStatus
+            dataGroupLabel: County
+            errors:
+              - code: "60003"
+                details:
+                  cause: "{% $states.input.transactionStatusError.Cause %}"
+    Output: "{% $merge([$states.input, { 'eventResult': $states.result }]) %}"
+    Next: WaitForTransactionFailedResolution
+    Catch:
+      - ErrorEquals: [States.ALL]
+        Output: "{% $merge([$states.input, { 'eventError': $states.errorOutput }]) %}"
+        Next: WaitForTransactionFailedResolution
+
+  WaitForTransactionFailedResolution:
+    Type: Task
+    Resource: arn:aws:states:::events:putEvents.waitForTaskToken
+    QueryLanguage: JSONata
+    Comment: "Wait for resolution of failed transaction - then go back to gas price check (resubmit)"
+    HeartbeatSeconds: 2592000 # 30 days
+    Arguments:
+      Entries:
+        - Source: elephant.workflow
+          DetailType: WorkflowEvent
+          Detail:
+            executionId: "{% $states.context.Execution.Name %}"
+            county: "{% $states.input.pre.county_name %}"
+            status: FAILED
+            phase: TransactionStatusCheck
+            step: CheckTransactionStatus
+            dataGroupLabel: County
+            taskToken: "{% $states.context.Task.Token %}"
+            errors:
+              - code: "60003"
+                details:
+                  cause: "{% $states.input.transactionStatusError.Cause %}"
+    Output: "{% $merge([$states.input, { 'resolutionResult': $states.result }]) %}"
+    Next: GetGasPriceFromSSM
+    Catch:
+      - ErrorEquals: [States.ALL]
+        Comment: "Resolution failed - stay parked and wait again"
+        Output: "{% $merge([$states.input, { 'transactionStatusError': $states.errorOutput }]) %}"
+        Next: WaitForTransactionFailedResolution
+
+  # === GENERAL_ERROR: Wait for resolution then retry status check ===
+
+  HandleTransactionGeneralError:
+    Type: Task
+    Resource: arn:aws:states:::events:putEvents
+    QueryLanguage: JSONata
+    Comment: "Emit FAILED event for general error (RPC, config, etc.)"
+    Arguments:
+      Entries:
+        - Source: elephant.workflow
+          DetailType: WorkflowEvent
+          Detail:
+            executionId: "{% $states.context.Execution.Name %}"
+            county: "{% $states.input.pre.county_name %}"
+            status: FAILED
+            phase: TransactionStatusCheck
+            step: CheckTransactionStatus
+            dataGroupLabel: County
+            errors:
+              - code: "{% $states.input.transactionStatusError.Error %}"
+                details:
+                  cause: "{% $states.input.transactionStatusError.Cause %}"
+    Output: "{% $merge([$states.input, { 'eventResult': $states.result }]) %}"
+    Next: WaitForTransactionGeneralErrorResolution
+    Catch:
+      - ErrorEquals: [States.ALL]
+        Output: "{% $merge([$states.input, { 'eventError': $states.errorOutput }]) %}"
+        Next: WaitForTransactionGeneralErrorResolution
+
+  WaitForTransactionGeneralErrorResolution:
+    Type: Task
+    Resource: arn:aws:states:::events:putEvents.waitForTaskToken
+    QueryLanguage: JSONata
+    Comment: "Wait for resolution of general error - then retry status check"
+    HeartbeatSeconds: 2592000 # 30 days
+    Arguments:
+      Entries:
+        - Source: elephant.workflow
+          DetailType: WorkflowEvent
+          Detail:
+            executionId: "{% $states.context.Execution.Name %}"
+            county: "{% $states.input.pre.county_name %}"
+            status: FAILED
+            phase: TransactionStatusCheck
+            step: CheckTransactionStatus
+            dataGroupLabel: County
+            taskToken: "{% $states.context.Task.Token %}"
+            errors:
+              - code: "{% $states.input.transactionStatusError.Error %}"
+                details:
+                  cause: "{% $states.input.transactionStatusError.Cause %}"
+    Output: "{% $merge([$states.input, { 'resolutionResult': $states.result }]) %}"
+    Next: InitializeTransactionStatusRetry
+    Catch:
+      - ErrorEquals: [States.ALL]
+        Comment: "Resolution failed - stay parked and wait again"
+        Output: "{% $merge([$states.input, { 'transactionStatusError': $states.errorOutput }]) %}"
+        Next: WaitForTransactionGeneralErrorResolution
+
+  # === RESUBMIT: Emit failure event then go back to gas price check ===
+
+  EmitTransactionStatusCheckFailedThenResubmit:
+    Type: Task
+    Resource: arn:aws:states:::events:putEvents
+    QueryLanguage: JSONata
+    Comment: "Emit FAILED event then go back to gas price check (resubmit transaction)"
+    Arguments:
+      Entries:
+        - Source: elephant.workflow
+          DetailType: WorkflowEvent
+          Detail:
+            executionId: "{% $states.context.Execution.Name %}"
+            county: "{% $states.input.pre.county_name %}"
+            status: FAILED
+            phase: TransactionStatusCheck
+            step: CheckTransactionStatus
+            dataGroupLabel: County
+            errors:
+              - code: "{% $states.input.transactionStatusError.Error %}"
+                details:
+                  cause: "{% $states.input.transactionStatusError.Cause %}"
+    Output: "{% $merge([$states.input, { 'eventResult': $states.result }]) %}"
+    Next: GetGasPriceFromSSM
+    Catch:
+      - ErrorEquals: [States.ALL]
+        Output: "{% $merge([$states.input, { 'eventError': $states.errorOutput }]) %}"
+        Next: GetGasPriceFromSSM
 
   EmitTransactionStatusCheckSucceeded:
     Type: Task
@@ -1237,59 +1351,6 @@ States:
       - ErrorEquals: [States.ALL]
         ResultPath: $.eventError
         Next: WorkflowComplete
-
-  EmitTransactionStatusCheckFailed:
-    Type: Task
-    Resource: arn:aws:states:::events:putEvents
-    Comment: "Emit FAILED event for Transaction Status Check step"
-    Parameters:
-      Entries:
-        - Source: elephant.workflow
-          DetailType: WorkflowEvent
-          Detail:
-            executionId.$: $$.Execution.Name
-            county.$: $.pre.county_name
-            status: FAILED
-            phase: TransactionStatusCheck
-            step: CheckTransactionStatus
-            errors:
-              - code: "60003"
-                details:
-                  error.$: States.JsonToString($.transactionStatusError)
-    ResultPath: $.eventResult
-    Next: WaitForTransactionStatusCheckResolution
-    Catch:
-      - ErrorEquals: [States.ALL]
-        ResultPath: $.eventError
-        Next: WaitForTransactionStatusCheckResolution
-
-  WaitForTransactionStatusCheckResolution:
-    Type: Task
-    Resource: arn:aws:states:::events:putEvents.waitForTaskToken
-    Comment: "Emit FAILED event and wait for external resolution - retry target is CheckTransactionStatus"
-    HeartbeatSeconds: 2592000 # 30 days
-    Parameters:
-      Entries:
-        - Source: elephant.workflow
-          DetailType: WorkflowEvent
-          Detail:
-            executionId.$: $$.Execution.Name
-            county.$: $.pre.county_name
-            status: FAILED
-            phase: TransactionStatusCheck
-            step: CheckTransactionStatus
-            taskToken.$: $$.Task.Token
-            errors:
-              - code: "60003"
-                details:
-                  error.$: States.JsonToString($.transactionStatusError)
-    ResultPath: $.resolutionResult
-    Next: CheckTransactionStatus
-    Catch:
-      - ErrorEquals: [States.ALL]
-        Comment: "Resolution failed - stay parked and wait again"
-        ResultPath: $.transactionStatusError
-        Next: WaitForTransactionStatusCheckResolution
 
   WorkflowComplete:
     Type: Succeed
