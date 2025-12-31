@@ -20,7 +20,11 @@ const mockExecuteWithTaskToken = vi.fn(async ({ workerFn }) => {
   try {
     const result = await workerFn();
     mockEmitWorkflowEvent.mock.calls.push([
-      { status: "SUCCEEDED", phase: "TransactionStatusCheck", step: "CheckTransactionStatus" },
+      {
+        status: "SUCCEEDED",
+        phase: "TransactionStatusCheck",
+        step: "CheckTransactionStatus",
+      },
     ]);
     return result;
   } catch (error) {
@@ -32,7 +36,11 @@ const mockExecuteWithTaskToken = vi.fn(async ({ workerFn }) => {
       ...(transactionHash && { transactionHash }),
     });
     mockEmitWorkflowEvent.mock.calls.push([
-      { status: "FAILED", phase: "TransactionStatusCheck", step: "CheckTransactionStatus" },
+      {
+        status: "FAILED",
+        phase: "TransactionStatusCheck",
+        step: "CheckTransactionStatus",
+      },
     ]);
     return undefined;
   }
