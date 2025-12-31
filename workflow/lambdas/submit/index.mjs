@@ -1045,7 +1045,7 @@ export const handler = async (event) => {
         executionId: msg.executionArn,
       });
       await emitWorkflowEvent({
-        executionId: msg.executionArn,
+        executionId: /** @type {string} */ (msg.executionArn.split(":").pop()),
         county: msg.county || "unknown",
         dataGroupLabel: msg.dataGroupLabel || "County",
         status: "IN_PROGRESS",

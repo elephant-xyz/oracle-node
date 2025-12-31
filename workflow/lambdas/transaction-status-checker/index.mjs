@@ -288,7 +288,7 @@ export const handler = async (event) => {
           executionId: executionArn,
         });
         await emitWorkflowEvent({
-          executionId: executionArn,
+          executionId: /** @type {string} */ (executionArn.split(":").pop()),
           county: county || "unknown",
           dataGroupLabel: dataGroupLabel,
           status: "IN_PROGRESS",
@@ -353,17 +353,6 @@ export const handler = async (event) => {
         county: county || "unknown",
         executionId: executionArn,
       });
-      await emitWorkflowEvent({
-        executionId: executionArn,
-        county: county || "unknown",
-        dataGroupLabel: dataGroupLabel,
-        status: "SUCCEEDED",
-        phase: "TransactionStatusCheck",
-        step: "CheckTransactionStatus",
-        taskToken: taskToken,
-        errors: [],
-        log,
-      });
       await executeWithTaskToken({
         taskToken,
         log,
@@ -396,23 +385,6 @@ export const handler = async (event) => {
         at: new Date().toISOString(),
         county: county || "unknown",
         executionId: executionArn,
-      });
-      await emitWorkflowEvent({
-        executionId: executionArn,
-        county: county || "unknown",
-        dataGroupLabel: dataGroupLabel,
-        status: "FAILED",
-        phase: "TransactionStatusCheck",
-        step: "CheckTransactionStatus",
-        taskToken: taskToken,
-        errors: [
-          createWorkflowError(errorCode, {
-            error: errMessage,
-            cause: errCause,
-            transactionHash: transactionHash,
-          }),
-        ],
-        log: errorLog,
       });
       await executeWithTaskToken({
         taskToken,
