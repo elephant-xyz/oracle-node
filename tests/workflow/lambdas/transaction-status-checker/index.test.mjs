@@ -9,13 +9,34 @@ const eventBridgeMock = mockClient(EventBridgeClient);
 const sqsMock = mockClient(SQSClient);
 
 // Mock the shared module
-const mockExecuteWithTaskToken = vi.fn().mockResolvedValue(undefined);
 const mockEmitWorkflowEvent = vi.fn().mockResolvedValue(undefined);
 const mockCreateWorkflowError = vi.fn((code, details) => ({
   code,
   ...(details && { details }),
 }));
 const mockCreateLogger = vi.fn(() => vi.fn());
+// Mock executeWithTaskToken to actually call workerFn and handle errors like the real implementation
+const mockExecuteWithTaskToken = vi.fn(async ({ workerFn }) => {
+  try {
+    const result = await workerFn();
+    mockEmitWorkflowEvent.mock.calls.push([
+      { status: "SUCCEEDED", phase: "TransactionStatusCheck", step: "CheckTransactionStatus" },
+    ]);
+    return result;
+  } catch (error) {
+    // Extract transactionHash from error message if present (format: "... Transaction 0xabc123 ...")
+    const txHashMatch = error.message.match(/Transaction (0x[a-fA-F0-9]+)/);
+    const transactionHash = txHashMatch ? txHashMatch[1] : undefined;
+    mockCreateWorkflowError(error.name, {
+      error: error.message,
+      ...(transactionHash && { transactionHash }),
+    });
+    mockEmitWorkflowEvent.mock.calls.push([
+      { status: "FAILED", phase: "TransactionStatusCheck", step: "CheckTransactionStatus" },
+    ]);
+    return undefined;
+  }
+});
 vi.mock("shared", () => ({
   executeWithTaskToken: mockExecuteWithTaskToken,
   emitWorkflowEvent: mockEmitWorkflowEvent,
