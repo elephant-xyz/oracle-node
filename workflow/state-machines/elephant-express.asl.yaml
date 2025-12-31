@@ -883,7 +883,8 @@ States:
     Output: >-
       {%
         (
-          $hour := $number($substring($now(), 11, 2));
+          $rawHour := $number($substring($now(), 11, 2));
+          $hour := $type($rawHour) = 'number' ? $rawHour : 12;
           $isOffPeak := $hour >= 17 or $hour < 5;
           $waitSeconds := $isOffPeak ? 300 : 3600;
           $merge([$states.input, { "gasPriceWaitSeconds": $waitSeconds }])
