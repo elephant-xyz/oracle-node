@@ -472,7 +472,9 @@ export const handler = async (event) => {
       });
       try {
         await emitWorkflowEvent({
-          executionId: msg.executionArn,
+          executionId: /** @type {string} */ (
+            msg.executionArn.split(":").pop()
+          ),
           county: msg.county,
           dataGroupLabel: msg.dataGroupLabel,
           status: "IN_PROGRESS",

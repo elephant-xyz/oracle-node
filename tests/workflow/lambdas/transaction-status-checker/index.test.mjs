@@ -9,13 +9,29 @@ const eventBridgeMock = mockClient(EventBridgeClient);
 const sqsMock = mockClient(SQSClient);
 
 // Mock the shared module
-const mockExecuteWithTaskToken = vi.fn().mockResolvedValue(undefined);
 const mockEmitWorkflowEvent = vi.fn().mockResolvedValue(undefined);
 const mockCreateWorkflowError = vi.fn((code, details) => ({
   code,
   ...(details && { details }),
 }));
 const mockCreateLogger = vi.fn(() => vi.fn());
+// Mock executeWithTaskToken to call workerFn and handle errors
+// Note: Lambda only emits IN_PROGRESS events; SUCCEEDED/FAILED are emitted by Step Functions state machine
+const mockExecuteWithTaskToken = vi.fn(async ({ workerFn }) => {
+  try {
+    const result = await workerFn();
+    return result;
+  } catch (error) {
+    // Extract transactionHash from error message if present (format: "... Transaction 0xabc123 ...")
+    const txHashMatch = error.message.match(/Transaction (0x[a-fA-F0-9]+)/);
+    const transactionHash = txHashMatch ? txHashMatch[1] : undefined;
+    mockCreateWorkflowError(error.name, {
+      error: error.message,
+      ...(transactionHash && { transactionHash }),
+    });
+    return undefined;
+  }
+});
 vi.mock("shared", () => ({
   executeWithTaskToken: mockExecuteWithTaskToken,
   emitWorkflowEvent: mockEmitWorkflowEvent,
@@ -150,14 +166,7 @@ describe("transaction-status-checker handler", () => {
         }),
       );
 
-      // Verify FAILED event was emitted
-      expect(mockEmitWorkflowEvent).toHaveBeenCalledWith(
-        expect.objectContaining({
-          status: "FAILED",
-          phase: "TransactionStatusCheck",
-          step: "CheckTransactionStatus",
-        }),
-      );
+      // Note: FAILED event is emitted by Step Functions state machine, not by Lambda
     });
 
     it("should fail with error code 60005 when transaction is not found", async () => {
@@ -219,7 +228,7 @@ describe("transaction-status-checker handler", () => {
       );
     });
 
-    it("should emit SUCCEEDED event on successful check", async () => {
+    it("should call executeWithTaskToken on successful check", async () => {
       mockCheckTransactionStatus.mockResolvedValue([
         { status: "success", blockNumber: 12345 },
       ]);
@@ -231,13 +240,20 @@ describe("transaction-status-checker handler", () => {
 
       await handler(event);
 
-      // Should have 2 EventBridge calls: IN_PROGRESS and SUCCEEDED
-      expect(mockEmitWorkflowEvent).toHaveBeenCalledTimes(2);
+      // Lambda emits only IN_PROGRESS event; SUCCEEDED is emitted by Step Functions state machine
+      expect(mockEmitWorkflowEvent).toHaveBeenCalledTimes(1);
       expect(mockEmitWorkflowEvent).toHaveBeenCalledWith(
         expect.objectContaining({
-          status: "SUCCEEDED",
+          status: "IN_PROGRESS",
           phase: "TransactionStatusCheck",
           step: "CheckTransactionStatus",
+        }),
+      );
+
+      // Verify executeWithTaskToken was called to send success callback
+      expect(mockExecuteWithTaskToken).toHaveBeenCalledWith(
+        expect.objectContaining({
+          taskToken: "task-token-succeeded",
         }),
       );
     });
