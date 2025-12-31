@@ -120,6 +120,7 @@ Resources:
       DeadLetterQueue:
         TargetArn: !GetAtt WorkflowEventHandlerDeadLetterQueue.Arn
         Type: SQS
+      ReservedConcurrentExecutions: 20
       Description: "Processes EventBridge events from elephant.workflow source (WorkflowEvent and ElephantErrorResolved)"
       Environment:
         Variables:
@@ -815,7 +816,7 @@ Resources:
       DeadLetterQueue:
         TargetArn: !GetAtt ErrorCountHandlerDeadLetterQueue.Arn
         Type: SQS
-      ReservedConcurrentExecutions: 1
+      ReservedConcurrentExecutions: 5
       Description: "Processes DynamoDB Stream events to manage error counts and send task success callbacks"
       Environment:
         Variables:

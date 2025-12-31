@@ -369,7 +369,7 @@ Resources:
     Type: AWS::SQS::Queue
     Properties:
       QueueName: !Ref WorkflowQueueName
-      VisibilityTimeout: 331
+      VisibilityTimeout: 915
       MessageRetentionPeriod: 1209600
       SqsManagedSseEnabled: true
       RedrivePolicy:
