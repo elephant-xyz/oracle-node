@@ -264,6 +264,9 @@ compute_param_overrides() {
   # Updater schedule rate
   [[ -n "${UPDATER_SCHEDULE_RATE:-}" ]] && parts+=("UpdaterScheduleRate=\"$UPDATER_SCHEDULE_RATE\"")
 
+  # Gas price max threshold
+  [[ -n "${GAS_PRICE_MAX_GWEI:-}" ]] && parts+=("GasPriceMaxGwei=\"$GAS_PRICE_MAX_GWEI\"")
+
   # GitHub integration parameter (required)
   : "${GITHUB_TOKEN?Set GITHUB_TOKEN to enable GitHub integration}"
   parts+=("GitHubToken=\"${GITHUB_TOKEN}\"")
