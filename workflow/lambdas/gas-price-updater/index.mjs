@@ -8,10 +8,10 @@
 import { checkGasPrice } from "@elephant-xyz/cli/lib";
 import { SSMClient, PutParameterCommand } from "@aws-sdk/client-ssm";
 
-const base = {
+const getLogBase = () => ({
   component: "gas-price-updater",
   at: new Date().toISOString(),
-};
+});
 
 /**
  * Lambda handler - updates SSM with current gas price from RPC
@@ -25,7 +25,7 @@ export const handler = async () => {
     const error = "RPC URL is required (ELEPHANT_RPC_URL env var)";
     console.error(
       JSON.stringify({
-        ...base,
+        ...getLogBase(),
         level: "error",
         msg: "config_validation_failed",
         error,
@@ -39,7 +39,7 @@ export const handler = async () => {
       "SSM Parameter name is required (GAS_PRICE_PARAMETER_NAME env var)";
     console.error(
       JSON.stringify({
-        ...base,
+        ...getLogBase(),
         level: "error",
         msg: "config_validation_failed",
         error,
@@ -50,7 +50,7 @@ export const handler = async () => {
 
   console.log(
     JSON.stringify({
-      ...base,
+      ...getLogBase(),
       level: "info",
       msg: "fetching_gas_price",
       rpcUrl: rpcUrl.replace(/\/[^/]*$/, "/***"), // Mask API key in URL
@@ -78,7 +78,7 @@ export const handler = async () => {
 
     console.log(
       JSON.stringify({
-        ...base,
+        ...getLogBase(),
         level: "info",
         msg: "gas_price_retrieved",
         gasPriceGwei: currentGasPriceGwei,
@@ -103,7 +103,7 @@ export const handler = async () => {
 
     console.log(
       JSON.stringify({
-        ...base,
+        ...getLogBase(),
         level: "info",
         msg: "ssm_parameter_updated",
         parameterName: parameterName,
@@ -120,7 +120,7 @@ export const handler = async () => {
     const errorMessage = err instanceof Error ? err.message : String(err);
     console.error(
       JSON.stringify({
-        ...base,
+        ...getLogBase(),
         level: "error",
         msg: "gas_price_update_failed",
         error: errorMessage,

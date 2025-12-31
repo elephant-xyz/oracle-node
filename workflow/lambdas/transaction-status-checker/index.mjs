@@ -73,10 +73,10 @@ class TransactionStatusError extends Error {
  * @property {string} rpcUrl - RPC URL for blockchain
  */
 
-const base = {
+const getLogBase = () => ({
   component: "transaction-status-checker",
   at: new Date().toISOString(),
-};
+});
 
 /**
  * @typedef {Object} SqsRecord
@@ -118,7 +118,7 @@ async function checkTransactionStatusOnce(input) {
 
   console.log(
     JSON.stringify({
-      ...base,
+      ...getLogBase(),
       level: "info",
       msg: "checking_transaction_status",
       transactionHash: transactionHash,
@@ -135,7 +135,7 @@ async function checkTransactionStatusOnce(input) {
     if (!results || results.length === 0) {
       console.log(
         JSON.stringify({
-          ...base,
+          ...getLogBase(),
           level: "warn",
           msg: "transaction_not_found",
           transactionHash: transactionHash,
@@ -155,7 +155,7 @@ async function checkTransactionStatusOnce(input) {
 
     console.log(
       JSON.stringify({
-        ...base,
+        ...getLogBase(),
         level: "info",
         msg: "transaction_status_retrieved",
         transactionHash: transactionHash,
@@ -218,7 +218,7 @@ async function checkTransactionStatusOnce(input) {
     const errorMsg = err instanceof Error ? err.message : String(err);
     console.error(
       JSON.stringify({
-        ...base,
+        ...getLogBase(),
         level: "error",
         msg: "transaction_status_check_error",
         error: errorMsg,
@@ -269,7 +269,7 @@ export const handler = async (event) => {
 
       console.log(
         JSON.stringify({
-          ...base,
+          ...getLogBase(),
           level: "info",
           msg: "invoked_from_sqs_with_task_token",
           executionArn: executionArn,
@@ -338,7 +338,7 @@ export const handler = async (event) => {
 
     console.log(
       JSON.stringify({
-        ...base,
+        ...getLogBase(),
         level: "info",
         msg: "transaction_status_check_complete",
         result: result,
@@ -380,7 +380,7 @@ export const handler = async (event) => {
 
     console.error(
       JSON.stringify({
-        ...base,
+        ...getLogBase(),
         level: "error",
         msg: "handler_failed",
         errorCode: errorCode,
