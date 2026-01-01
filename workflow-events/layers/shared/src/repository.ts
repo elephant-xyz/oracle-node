@@ -45,8 +45,12 @@ interface RetryConfig {
 
 /**
  * Default retry configuration for DynamoDB operations.
- * With 10 retries and exponential backoff (capped at 3s), worst-case total
- * wait time is ~20s, but with jitter it averages ~10s.
+ *
+ * With maxRetries: 10, there are 11 total attempts (1 initial + 10 retries).
+ * Exponential backoff with 25ms base, capped at 3s:
+ *   Delays: 25, 50, 100, 200, 400, 800, 1600, 3000, 3000, 3000ms
+ *   Worst-case total wait: ~12s (sum of max delays)
+ *   Average with jitter: ~6s (delays randomized between 0 and max)
  */
 const DEFAULT_RETRY_CONFIG: RetryConfig = {
   maxRetries: 10,
