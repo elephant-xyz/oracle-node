@@ -32,6 +32,111 @@ import {
 // =============================================================================
 
 /**
+ * Configuration for retry with exponential backoff.
+ */
+interface RetryConfig {
+  /** Maximum number of retry attempts. */
+  maxRetries: number;
+  /** Base delay in milliseconds. */
+  baseDelayMs: number;
+  /** Maximum delay in milliseconds. */
+  maxDelayMs: number;
+}
+
+/**
+ * Default retry configuration for DynamoDB operations.
+ * With 10 retries and exponential backoff (capped at 3s), worst-case total
+ * wait time is ~20s, but with jitter it averages ~10s.
+ */
+const DEFAULT_RETRY_CONFIG: RetryConfig = {
+  maxRetries: 10,
+  baseDelayMs: 25,
+  maxDelayMs: 3000,
+};
+
+/**
+ * Calculates delay with exponential backoff and jitter.
+ * Uses full jitter strategy to prevent thundering herd.
+ * @param attempt - The current attempt number (0-based)
+ * @param config - Retry configuration
+ * @returns Delay in milliseconds
+ */
+const calculateBackoffDelay = (
+  attempt: number,
+  config: RetryConfig = DEFAULT_RETRY_CONFIG,
+): number => {
+  const exponentialDelay = config.baseDelayMs * Math.pow(2, attempt);
+  const cappedDelay = Math.min(exponentialDelay, config.maxDelayMs);
+  // Full jitter: random value between 0 and cappedDelay
+  return Math.random() * cappedDelay;
+};
+
+/**
+ * Delays execution for the specified number of milliseconds.
+ * @param ms - Delay in milliseconds
+ */
+const delay = (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Executes an async operation with retry using exponential backoff and jitter.
+ * @param operation - The async operation to execute
+ * @param isRetryable - Function to determine if an error is retryable
+ * @param config - Retry configuration
+ * @returns The result of the operation
+ * @throws The last error if all retries are exhausted
+ */
+const executeWithRetry = async <T>(
+  operation: () => Promise<T>,
+  isRetryable: (error: unknown) => boolean,
+  config: RetryConfig = DEFAULT_RETRY_CONFIG,
+): Promise<T> => {
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt <= config.maxRetries; attempt++) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+
+      if (!isRetryable(error) || attempt === config.maxRetries) {
+        throw error;
+      }
+
+      const delayMs = calculateBackoffDelay(attempt, config);
+      console.warn(
+        `Retryable error on attempt ${attempt + 1}/${config.maxRetries + 1}, retrying in ${Math.round(delayMs)}ms:`,
+        error instanceof Error ? error.message : String(error),
+      );
+      await delay(delayMs);
+    }
+  }
+
+  throw lastError;
+};
+
+/**
+ * Determines if a DynamoDB error is retryable.
+ * @param error - The error to check
+ * @returns True if the error is retryable
+ */
+const isRetryableDynamoDBError = (error: unknown): boolean => {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  const retryableErrorNames = [
+    "ProvisionedThroughputExceededException",
+    "ThrottlingException",
+    "RequestLimitExceeded",
+    "InternalServerError",
+    "ServiceUnavailable",
+  ];
+
+  return retryableErrorNames.includes(error.name);
+};
+
+/**
  * Gets the table name, throwing a descriptive error if not set.
  * @returns The DynamoDB table name
  * @throws Error if WORKFLOW_ERRORS_TABLE_NAME is not set
@@ -157,6 +262,41 @@ const buildErrorRecordUpdate = (
       },
     },
   };
+};
+
+/**
+ * Executes a single ErrorRecord update with retry using exponential backoff.
+ * This is used instead of including ErrorRecord in a transaction to avoid
+ * TransactionConflict errors when multiple events with the same error code
+ * are processed concurrently.
+ *
+ * @param errorCode - The error code identifier
+ * @param errorDetails - Additional error details
+ * @param executionId - The execution ID that observed this error
+ * @param occurrences - Number of times this error occurred in the execution
+ * @param now - ISO timestamp for the operation
+ */
+const executeErrorRecordUpdate = async (
+  errorCode: string,
+  errorDetails: Record<string, unknown>,
+  executionId: string,
+  occurrences: number,
+  now: string,
+): Promise<void> => {
+  const updateParams = buildErrorRecordUpdate(
+    errorCode,
+    errorDetails,
+    executionId,
+    occurrences,
+    now,
+  );
+
+  const command = new UpdateCommand(updateParams.Update);
+
+  await executeWithRetry(
+    () => docClient.send(command),
+    isRetryableDynamoDBError,
+  );
 };
 
 /**
@@ -570,12 +710,19 @@ export const updateErrorRecordSortKey = async (
 };
 
 /**
- * Saves workflow errors to DynamoDB using transactional writes.
- * Creates or updates ErrorRecord, ExecutionErrorLink, and FailedExecutionItem.
+ * Saves workflow errors to DynamoDB.
+ *
+ * ErrorRecord updates are executed individually (not in a transaction) to avoid
+ * TransactionConflict errors when multiple events with the same error code are
+ * processed concurrently. ErrorRecords are shared across executions, making them
+ * prone to conflicts when using transactions.
+ *
+ * FailedExecutionItem and ExecutionErrorLink updates are kept in a transaction
+ * since they are unique per execution and don't conflict across parallel invocations.
  *
  * @param detail - The workflow event detail containing errors
  * @returns Result of the save operation
- * @throws Error if DynamoDB transaction fails
+ * @throws Error if DynamoDB operations fail after retries
  */
 export const saveErrorRecords = async (
   detail: WorkflowEventDetail,
@@ -607,7 +754,24 @@ export const saveErrorRecords = async (
     errorType: executionErrorType,
   };
 
-  // Build transaction items for each unique error
+  const errorCodes = Array.from(errorOccurrences.keys());
+
+  // Step 1: Execute ErrorRecord updates individually in parallel with retry.
+  // This avoids TransactionConflict errors because individual UpdateCommand
+  // operations with atomic counters handle concurrent updates correctly.
+  const errorRecordUpdatePromises = Array.from(errorOccurrences.entries()).map(
+    ([errorCode, { count, details }]) =>
+      executeErrorRecordUpdate(
+        errorCode,
+        details,
+        detail.executionId,
+        count,
+        now,
+      ),
+  );
+
+  // Step 2: Build transaction items for FailedExecutionItem and ExecutionErrorLinks.
+  // These are unique per execution, so they won't conflict across parallel invocations.
   const transactItems: Array<{
     Update: {
       TableName: string;
@@ -621,17 +785,8 @@ export const saveErrorRecords = async (
   // Add FailedExecutionItem update (one per execution)
   transactItems.push(buildFailedExecutionItemUpdate(detail, stats, now));
 
-  // Add ErrorRecord and ExecutionErrorLink updates for each unique error
+  // Add ExecutionErrorLink updates for each unique error (NOT ErrorRecord)
   for (const [errorCode, { count, details }] of errorOccurrences) {
-    transactItems.push(
-      buildErrorRecordUpdate(
-        errorCode,
-        details,
-        detail.executionId,
-        count,
-        now,
-      ),
-    );
     transactItems.push(
       buildExecutionErrorLinkUpdate(
         errorCode,
@@ -645,32 +800,38 @@ export const saveErrorRecords = async (
   }
 
   const TRANSACTION_LIMIT = 100;
-  const errorCodes = Array.from(errorOccurrences.keys());
 
-  if (transactItems.length <= TRANSACTION_LIMIT) {
-    const command = new TransactWriteCommand({
-      TransactItems: transactItems,
-    });
-    await docClient.send(command);
-  } else {
-    const failedExecutionUpdate = transactItems[0];
-    const errorItems = transactItems.slice(1);
+  // Step 3: Execute both operations concurrently
+  // - ErrorRecord updates run in parallel with retry
+  // - Transaction for FailedExecutionItem + ExecutionErrorLinks
+  const transactionPromise =
+    transactItems.length <= TRANSACTION_LIMIT
+      ? docClient.send(
+          new TransactWriteCommand({ TransactItems: transactItems }),
+        )
+      : (async () => {
+          // For large transactions, split into batches
+          const failedExecutionUpdate = transactItems[0];
+          const linkItems = transactItems.slice(1);
 
-    const failedExecutionCommand = new UpdateCommand(
-      failedExecutionUpdate.Update,
-    );
-    await docClient.send(failedExecutionCommand);
+          const failedExecutionCommand = new UpdateCommand(
+            failedExecutionUpdate.Update,
+          );
+          await docClient.send(failedExecutionCommand);
 
-    for (let i = 0; i < errorItems.length; i += TRANSACTION_LIMIT) {
-      const batch = errorItems.slice(i, i + TRANSACTION_LIMIT);
-      const batchCommand = new TransactWriteCommand({
-        TransactItems: batch,
-      });
-      await docClient.send(batchCommand);
-    }
-  }
+          for (let i = 0; i < linkItems.length; i += TRANSACTION_LIMIT) {
+            const batch = linkItems.slice(i, i + TRANSACTION_LIMIT);
+            const batchCommand = new TransactWriteCommand({
+              TransactItems: batch,
+            });
+            await docClient.send(batchCommand);
+          }
+        })();
 
-  // After the transaction, refresh GS2SK with the actual totalCount values.
+  // Wait for all operations to complete
+  await Promise.all([...errorRecordUpdatePromises, transactionPromise]);
+
+  // After all updates, refresh GS2SK with the actual totalCount values.
   // This is done separately because totalCount uses atomic increment,
   // so we need to read the updated values before setting GS2SK.
   await refreshErrorRecordSortKeys(errorCodes);

@@ -197,6 +197,164 @@ describe("event-handler", () => {
     });
   });
 
+  describe("ErrorRecord retry behavior", () => {
+    /**
+     * ErrorRecord updates are executed individually with retry logic.
+     * These tests verify the retry behavior for transient DynamoDB errors.
+     */
+
+    it("should succeed after retrying on ProvisionedThroughputExceededException", async () => {
+      const throttleError = new Error("Rate exceeded");
+      throttleError.name = "ProvisionedThroughputExceededException";
+
+      // First 2 calls fail with throttling, third succeeds
+      let errorRecordCallCount = 0;
+      ddbMock.on(UpdateCommand).callsFake((input) => {
+        // ErrorRecord updates have :entityType = "Error"
+        if (input.ExpressionAttributeValues?.[":entityType"] === "Error") {
+          errorRecordCallCount++;
+          if (errorRecordCallCount <= 2) {
+            throw throttleError;
+          }
+        }
+        return {};
+      });
+      ddbMock.on(TransactWriteCommand).resolves({});
+
+      const { saveErrorRecords } = await import("shared/repository.js");
+
+      const detail = createWorkflowDetail({
+        executionId: "exec-retry-001",
+        errors: [createError("12345")],
+      });
+
+      const result = await saveErrorRecords(detail);
+
+      expect(result.success).toBe(true);
+      // ErrorRecord update should have been called 3 times (2 failures + 1 success)
+      expect(errorRecordCallCount).toBe(3);
+    });
+
+    it("should succeed after retrying on ThrottlingException", async () => {
+      const throttleError = new Error("Throttled");
+      throttleError.name = "ThrottlingException";
+
+      let errorRecordCallCount = 0;
+      ddbMock.on(UpdateCommand).callsFake((input) => {
+        if (input.ExpressionAttributeValues?.[":entityType"] === "Error") {
+          errorRecordCallCount++;
+          if (errorRecordCallCount === 1) {
+            throw throttleError;
+          }
+        }
+        return {};
+      });
+      ddbMock.on(TransactWriteCommand).resolves({});
+
+      const { saveErrorRecords } = await import("shared/repository.js");
+
+      const detail = createWorkflowDetail({
+        executionId: "exec-retry-002",
+        errors: [createError("12345")],
+      });
+
+      const result = await saveErrorRecords(detail);
+
+      expect(result.success).toBe(true);
+      expect(errorRecordCallCount).toBe(2);
+    });
+
+    it("should not retry on non-retryable errors", async () => {
+      const validationError = new Error("Validation failed");
+      validationError.name = "ValidationException";
+
+      let errorRecordCallCount = 0;
+      ddbMock.on(UpdateCommand).callsFake((input) => {
+        if (input.ExpressionAttributeValues?.[":entityType"] === "Error") {
+          errorRecordCallCount++;
+          throw validationError;
+        }
+        return {};
+      });
+      ddbMock.on(TransactWriteCommand).resolves({});
+
+      const { saveErrorRecords } = await import("shared/repository.js");
+
+      const detail = createWorkflowDetail({
+        executionId: "exec-no-retry-001",
+        errors: [createError("12345")],
+      });
+
+      await expect(saveErrorRecords(detail)).rejects.toThrow(
+        "Validation failed",
+      );
+      // Should only be called once (no retries for non-retryable errors)
+      expect(errorRecordCallCount).toBe(1);
+    });
+
+    it("should throw error after exhausting all retries", async () => {
+      const throttleError = new Error("Persistent throttling");
+      throttleError.name = "ProvisionedThroughputExceededException";
+
+      let errorRecordCallCount = 0;
+      ddbMock.on(UpdateCommand).callsFake((input) => {
+        if (input.ExpressionAttributeValues?.[":entityType"] === "Error") {
+          errorRecordCallCount++;
+          throw throttleError;
+        }
+        return {};
+      });
+      ddbMock.on(TransactWriteCommand).resolves({});
+
+      const { saveErrorRecords } = await import("shared/repository.js");
+
+      const detail = createWorkflowDetail({
+        executionId: "exec-exhaust-001",
+        errors: [createError("12345")],
+      });
+
+      await expect(saveErrorRecords(detail)).rejects.toThrow(
+        "Persistent throttling",
+      );
+      // Should have tried maxRetries + 1 times (initial + 10 retries = 11)
+      expect(errorRecordCallCount).toBe(11);
+    }, 60000); // Increase timeout for retry delays
+
+    it("should retry each ErrorRecord independently", async () => {
+      const throttleError = new Error("Throttled");
+      throttleError.name = "ThrottlingException";
+
+      const callCounts: Record<string, number> = {};
+      ddbMock.on(UpdateCommand).callsFake((input) => {
+        if (input.ExpressionAttributeValues?.[":entityType"] === "Error") {
+          const pk = input.Key?.PK as string;
+          callCounts[pk] = (callCounts[pk] || 0) + 1;
+          // Only fail error "11111" on first attempt
+          if (pk === "ERROR#11111" && callCounts[pk] === 1) {
+            throw throttleError;
+          }
+        }
+        return {};
+      });
+      ddbMock.on(TransactWriteCommand).resolves({});
+
+      const { saveErrorRecords } = await import("shared/repository.js");
+
+      const detail = createWorkflowDetail({
+        executionId: "exec-independent-001",
+        errors: [createError("11111"), createError("22222")],
+      });
+
+      const result = await saveErrorRecords(detail);
+
+      expect(result.success).toBe(true);
+      // Error "11111" should have been called twice (1 failure + 1 success)
+      expect(callCounts["ERROR#11111"]).toBe(2);
+      // Error "22222" should have been called once (immediate success)
+      expect(callCounts["ERROR#22222"]).toBe(1);
+    });
+  });
+
   describe("single error execution", () => {
     it("should create FailedExecutionItem, ErrorRecord, and ExecutionErrorLink for single error", async () => {
       ddbMock.on(TransactWriteCommand).resolves({});
@@ -216,14 +374,14 @@ describe("event-handler", () => {
       expect(result.totalOccurrences).toBe(1);
       expect(result.errorCodes).toEqual(["01256"]);
 
-      // Should have exactly one TransactWriteCommand with 3 items:
-      // 1 FailedExecutionItem + 1 ErrorRecord + 1 ExecutionErrorLink
+      // Transaction contains: 1 FailedExecutionItem + 1 ExecutionErrorLink = 2 items
+      // ErrorRecord is updated separately via UpdateCommand to avoid TransactionConflict
       expect(ddbMock).toHaveReceivedCommandTimes(TransactWriteCommand, 1);
 
       const calls = ddbMock.commandCalls(TransactWriteCommand);
       const transactItems = calls[0].args[0].input.TransactItems;
 
-      expect(transactItems).toHaveLength(3);
+      expect(transactItems).toHaveLength(2);
 
       // Verify FailedExecutionItem
       const failedExecutionItem = transactItems![0].Update;
@@ -241,24 +399,8 @@ describe("event-handler", () => {
         failedExecutionItem?.ExpressionAttributeValues?.[":totalOccurrences"],
       ).toBe(1);
 
-      // Verify ErrorRecord
-      const errorRecord = transactItems![1].Update;
-      expect(errorRecord?.Key).toEqual({
-        PK: "ERROR#01256",
-        SK: "ERROR#01256",
-      });
-      expect(errorRecord?.ExpressionAttributeValues?.[":entityType"]).toBe(
-        "Error",
-      );
-      expect(errorRecord?.ExpressionAttributeValues?.[":errorCode"]).toBe(
-        "01256",
-      );
-      expect(errorRecord?.ExpressionAttributeValues?.[":errorDetails"]).toBe(
-        JSON.stringify({ reason: "login timeout" }),
-      );
-
-      // Verify ExecutionErrorLink
-      const executionErrorLink = transactItems![2].Update;
+      // Verify ExecutionErrorLink (now at index 1)
+      const executionErrorLink = transactItems![1].Update;
       expect(executionErrorLink?.Key).toEqual({
         PK: "EXECUTION#exec-single-001",
         SK: "ERROR#01256",
@@ -271,6 +413,27 @@ describe("event-handler", () => {
       ).toBe(1);
       expect(
         executionErrorLink?.ExpressionAttributeValues?.[":errorDetails"],
+      ).toBe(JSON.stringify({ reason: "login timeout" }));
+
+      // Verify ErrorRecord is updated via separate UpdateCommand (not in transaction)
+      // UpdateCommand is called for: 1 ErrorRecord update + 1 GS2SK/GS3SK refresh = 2 calls
+      const updateCalls = ddbMock.commandCalls(UpdateCommand);
+      const errorRecordUpdate = updateCalls.find(
+        (call) =>
+          call.args[0].input.Key?.PK === "ERROR#01256" &&
+          call.args[0].input.ExpressionAttributeValues?.[":entityType"] ===
+            "Error",
+      );
+      expect(errorRecordUpdate).toBeDefined();
+      expect(
+        errorRecordUpdate?.args[0].input.ExpressionAttributeValues?.[
+          ":errorCode"
+        ],
+      ).toBe("01256");
+      expect(
+        errorRecordUpdate?.args[0].input.ExpressionAttributeValues?.[
+          ":errorDetails"
+        ],
       ).toBe(JSON.stringify({ reason: "login timeout" }));
     });
 
@@ -321,11 +484,12 @@ describe("event-handler", () => {
       expect(result.errorCodes).toContain("23456");
       expect(result.errorCodes).toContain("34567");
 
-      // Should have: 1 FailedExecutionItem + 3 ErrorRecords + 3 ExecutionErrorLinks = 7 items
+      // Transaction contains: 1 FailedExecutionItem + 3 ExecutionErrorLinks = 4 items
+      // ErrorRecords are updated separately via UpdateCommand
       const calls = ddbMock.commandCalls(TransactWriteCommand);
       const transactItems = calls[0].args[0].input.TransactItems;
 
-      expect(transactItems).toHaveLength(7);
+      expect(transactItems).toHaveLength(4);
 
       // Verify FailedExecutionItem counts
       const failedExecutionItem = transactItems![0].Update;
@@ -335,6 +499,15 @@ describe("event-handler", () => {
       expect(
         failedExecutionItem?.ExpressionAttributeValues?.[":totalOccurrences"],
       ).toBe(3);
+
+      // Verify ErrorRecords are updated via separate UpdateCommand calls
+      const updateCalls = ddbMock.commandCalls(UpdateCommand);
+      const errorRecordUpdates = updateCalls.filter(
+        (call) =>
+          call.args[0].input.ExpressionAttributeValues?.[":entityType"] ===
+          "Error",
+      );
+      expect(errorRecordUpdates).toHaveLength(3);
     });
   });
 
@@ -363,11 +536,12 @@ describe("event-handler", () => {
       expect(result.totalOccurrences).toBe(5);
       expect(result.errorCodes).toHaveLength(2);
 
-      // Should have: 1 FailedExecutionItem + 2 ErrorRecords + 2 ExecutionErrorLinks = 5 items
+      // Transaction contains: 1 FailedExecutionItem + 2 ExecutionErrorLinks = 3 items
+      // ErrorRecords are updated separately via UpdateCommand
       const calls = ddbMock.commandCalls(TransactWriteCommand);
       const transactItems = calls[0].args[0].input.TransactItems;
 
-      expect(transactItems).toHaveLength(5);
+      expect(transactItems).toHaveLength(3);
 
       // Verify FailedExecutionItem
       const failedExecutionItem = transactItems![0].Update;
@@ -438,20 +612,21 @@ describe("event-handler", () => {
 
       await saveErrorRecords(detail);
 
-      const calls = ddbMock.commandCalls(TransactWriteCommand);
-      const transactItems = calls[0].args[0].input.TransactItems;
-
-      // Find ErrorRecord for "01256"
-      const errorRecord = transactItems!.find(
-        (item) =>
-          item.Update?.Key?.PK === "ERROR#01256" &&
-          item.Update?.Key?.SK === "ERROR#01256",
-      )?.Update;
+      // ErrorRecord is now updated via separate UpdateCommand (not in transaction)
+      const updateCalls = ddbMock.commandCalls(UpdateCommand);
+      const errorRecordUpdate = updateCalls.find(
+        (call) =>
+          call.args[0].input.Key?.PK === "ERROR#01256" &&
+          call.args[0].input.ExpressionAttributeValues?.[":entityType"] ===
+            "Error",
+      );
 
       // Should use details from the first occurrence
-      expect(errorRecord?.ExpressionAttributeValues?.[":errorDetails"]).toBe(
-        JSON.stringify({ attempt: 1, first: true }),
-      );
+      expect(
+        errorRecordUpdate?.args[0].input.ExpressionAttributeValues?.[
+          ":errorDetails"
+        ],
+      ).toBe(JSON.stringify({ attempt: 1, first: true }));
     });
   });
 
@@ -486,29 +661,33 @@ describe("event-handler", () => {
       // Verify both executions sent TransactWriteCommands
       expect(ddbMock).toHaveReceivedCommandTimes(TransactWriteCommand, 2);
 
-      // Verify that ErrorRecord for "01256" was updated in both transactions
-      // with atomic increment (:increment = 1)
+      // ErrorRecords are now updated via separate UpdateCommand calls (not in transaction)
+      // Verify that ErrorRecord for "01256" was updated in both calls with atomic increment
+      const updateCalls = ddbMock.commandCalls(UpdateCommand);
+      const errorRecordUpdates01256 = updateCalls.filter(
+        (call) =>
+          call.args[0].input.Key?.PK === "ERROR#01256" &&
+          call.args[0].input.ExpressionAttributeValues?.[":entityType"] ===
+            "Error",
+      );
+      // Should have 2 updates for error "01256" (one from each execution)
+      expect(errorRecordUpdates01256).toHaveLength(2);
+      expect(
+        errorRecordUpdates01256[0].args[0].input.ExpressionAttributeValues?.[
+          ":increment"
+        ],
+      ).toBe(1);
+      expect(
+        errorRecordUpdates01256[1].args[0].input.ExpressionAttributeValues?.[
+          ":increment"
+        ],
+      ).toBe(1);
+
+      // Verify each execution has its own ExecutionErrorLink in the transaction
       const allCalls = ddbMock.commandCalls(TransactWriteCommand);
-
-      // First execution's transaction
       const firstTransactItems = allCalls[0].args[0].input.TransactItems;
-      const firstErrorRecord01256 = firstTransactItems!.find(
-        (item) => item.Update?.Key?.PK === "ERROR#01256",
-      )?.Update;
-      expect(
-        firstErrorRecord01256?.ExpressionAttributeValues?.[":increment"],
-      ).toBe(1);
-
-      // Second execution's transaction
       const secondTransactItems = allCalls[1].args[0].input.TransactItems;
-      const secondErrorRecord01256 = secondTransactItems!.find(
-        (item) => item.Update?.Key?.PK === "ERROR#01256",
-      )?.Update;
-      expect(
-        secondErrorRecord01256?.ExpressionAttributeValues?.[":increment"],
-      ).toBe(1);
 
-      // Verify each execution has its own ExecutionErrorLink
       const firstExecLinks = firstTransactItems!.filter(
         (item) => item.Update?.Key?.PK === "EXECUTION#exec-shared-001",
       );
@@ -516,10 +695,10 @@ describe("event-handler", () => {
         (item) => item.Update?.Key?.PK === "EXECUTION#exec-shared-002",
       );
 
-      // First execution should have: 1 FailedExecutionItem + 2 ExecutionErrorLinks
+      // First execution should have: 1 FailedExecutionItem + 2 ExecutionErrorLinks = 3
       expect(firstExecLinks).toHaveLength(3);
 
-      // Second execution should have: 1 FailedExecutionItem + 2 ExecutionErrorLinks
+      // Second execution should have: 1 FailedExecutionItem + 2 ExecutionErrorLinks = 3
       expect(secondExecLinks).toHaveLength(3);
     });
 
@@ -583,15 +762,20 @@ describe("event-handler", () => {
 
       await saveErrorRecords(detail);
 
-      const calls = ddbMock.commandCalls(TransactWriteCommand);
-      const transactItems = calls[0].args[0].input.TransactItems;
+      // ErrorRecord is now updated via separate UpdateCommand (not in transaction)
+      const updateCalls = ddbMock.commandCalls(UpdateCommand);
+      const errorRecordUpdate = updateCalls.find(
+        (call) =>
+          call.args[0].input.Key?.PK === "ERROR#01256" &&
+          call.args[0].input.ExpressionAttributeValues?.[":entityType"] ===
+            "Error",
+      );
 
-      // Find ErrorRecord
-      const errorRecord = transactItems!.find(
-        (item) => item.Update?.Key?.PK === "ERROR#01256",
-      )?.Update;
-
-      expect(errorRecord?.ExpressionAttributeValues?.[":errorType"]).toBe("01");
+      expect(
+        errorRecordUpdate?.args[0].input.ExpressionAttributeValues?.[
+          ":errorType"
+        ],
+      ).toBe("01");
     });
 
     it("should extract errorType for each unique error code in ErrorRecord", async () => {
@@ -610,32 +794,47 @@ describe("event-handler", () => {
 
       await saveErrorRecords(detail);
 
-      const calls = ddbMock.commandCalls(TransactWriteCommand);
-      const transactItems = calls[0].args[0].input.TransactItems;
+      // ErrorRecords are now updated via separate UpdateCommand (not in transaction)
+      const updateCalls = ddbMock.commandCalls(UpdateCommand);
 
-      // Find ErrorRecord for "01256"
-      const errorRecord01256 = transactItems!.find(
-        (item) => item.Update?.Key?.PK === "ERROR#01256",
-      )?.Update;
-      expect(errorRecord01256?.ExpressionAttributeValues?.[":errorType"]).toBe(
-        "01",
+      // Find ErrorRecord update for "01256"
+      const errorRecord01256 = updateCalls.find(
+        (call) =>
+          call.args[0].input.Key?.PK === "ERROR#01256" &&
+          call.args[0].input.ExpressionAttributeValues?.[":entityType"] ===
+            "Error",
       );
+      expect(
+        errorRecord01256?.args[0].input.ExpressionAttributeValues?.[
+          ":errorType"
+        ],
+      ).toBe("01");
 
-      // Find ErrorRecord for "02789"
-      const errorRecord02789 = transactItems!.find(
-        (item) => item.Update?.Key?.PK === "ERROR#02789",
-      )?.Update;
-      expect(errorRecord02789?.ExpressionAttributeValues?.[":errorType"]).toBe(
-        "02",
+      // Find ErrorRecord update for "02789"
+      const errorRecord02789 = updateCalls.find(
+        (call) =>
+          call.args[0].input.Key?.PK === "ERROR#02789" &&
+          call.args[0].input.ExpressionAttributeValues?.[":entityType"] ===
+            "Error",
       );
+      expect(
+        errorRecord02789?.args[0].input.ExpressionAttributeValues?.[
+          ":errorType"
+        ],
+      ).toBe("02");
 
-      // Find ErrorRecord for "01999"
-      const errorRecord01999 = transactItems!.find(
-        (item) => item.Update?.Key?.PK === "ERROR#01999",
-      )?.Update;
-      expect(errorRecord01999?.ExpressionAttributeValues?.[":errorType"]).toBe(
-        "01",
+      // Find ErrorRecord update for "01999"
+      const errorRecord01999 = updateCalls.find(
+        (call) =>
+          call.args[0].input.Key?.PK === "ERROR#01999" &&
+          call.args[0].input.ExpressionAttributeValues?.[":entityType"] ===
+            "Error",
       );
+      expect(
+        errorRecord01999?.args[0].input.ExpressionAttributeValues?.[
+          ":errorType"
+        ],
+      ).toBe("01");
     });
 
     it("should set errorType in FailedExecutionItem when all errors share same type", async () => {
@@ -673,11 +872,14 @@ describe("event-handler", () => {
 
       await saveErrorRecords(detail);
 
-      // GS3SK is set via a separate UpdateCommand after the transaction
+      // GS3SK is set via a separate UpdateCommand after the ErrorRecord update
       // (because it depends on the atomic totalCount increment)
       const updateCalls = ddbMock.commandCalls(UpdateCommand);
+      // Find the sort key update (which has :gs3sk, not :entityType)
       const sortKeyUpdate = updateCalls.find(
-        (call) => call.args[0].input.Key?.PK === "ERROR#01256",
+        (call) =>
+          call.args[0].input.Key?.PK === "ERROR#01256" &&
+          call.args[0].input.ExpressionAttributeValues?.[":gs3sk"],
       );
 
       // GS3SK format: COUNT#{errorType}#{status}#{paddedCount}#ERROR#{errorCode}
@@ -724,16 +926,21 @@ describe("event-handler", () => {
 
       await saveErrorRecords(detail);
 
-      const calls = ddbMock.commandCalls(TransactWriteCommand);
-      const transactItems = calls[0].args[0].input.TransactItems;
-
-      // Find ErrorRecord
-      const errorRecord = transactItems!.find(
-        (item) => item.Update?.Key?.PK === "ERROR#1",
-      )?.Update;
+      // ErrorRecord is now updated via separate UpdateCommand (not in transaction)
+      const updateCalls = ddbMock.commandCalls(UpdateCommand);
+      const errorRecordUpdate = updateCalls.find(
+        (call) =>
+          call.args[0].input.Key?.PK === "ERROR#1" &&
+          call.args[0].input.ExpressionAttributeValues?.[":entityType"] ===
+            "Error",
+      );
 
       // For single character codes, errorType should be the code itself ("1")
-      expect(errorRecord?.ExpressionAttributeValues?.[":errorType"]).toBe("1");
+      expect(
+        errorRecordUpdate?.args[0].input.ExpressionAttributeValues?.[
+          ":errorType"
+        ],
+      ).toBe("1");
     });
   });
 
@@ -750,16 +957,16 @@ describe("event-handler", () => {
 
       await saveErrorRecords(detail);
 
-      const calls = ddbMock.commandCalls(TransactWriteCommand);
-      const transactItems = calls[0].args[0].input.TransactItems;
+      // ErrorRecord is now updated via separate UpdateCommand (not in transaction)
+      const updateCalls = ddbMock.commandCalls(UpdateCommand);
+      const errorRecordUpdate = updateCalls.find(
+        (call) =>
+          call.args[0].input.Key?.PK?.startsWith("ERROR#") &&
+          call.args[0].input.ExpressionAttributeValues?.[":entityType"] ===
+            "Error",
+      );
 
-      const errorRecord = transactItems!.find(
-        (item) =>
-          item.Update?.Key?.PK?.startsWith("ERROR#") &&
-          item.Update?.Key?.SK?.startsWith("ERROR#"),
-      )?.Update;
-
-      expect(errorRecord?.Key).toEqual({
+      expect(errorRecordUpdate?.args[0].input.Key).toEqual({
         PK: "ERROR#12345",
         SK: "ERROR#12345",
       });
@@ -830,36 +1037,39 @@ describe("event-handler", () => {
 
       await saveErrorRecords(detail);
 
-      const calls = ddbMock.commandCalls(TransactWriteCommand);
-      const transactItems = calls[0].args[0].input.TransactItems;
-
-      const errorRecord = transactItems!.find(
-        (item) => item.Update?.Key?.PK === "ERROR#12345",
-      )?.Update;
+      // ErrorRecord is now updated via separate UpdateCommand (not in transaction)
+      const updateCalls = ddbMock.commandCalls(UpdateCommand);
+      const errorRecordUpdate = updateCalls.find(
+        (call) =>
+          call.args[0].input.Key?.PK === "ERROR#12345" &&
+          call.args[0].input.ExpressionAttributeValues?.[":entityType"] ===
+            "Error",
+      );
 
       // GS1: TYPE#ERROR -> ERROR#errorCode
-      expect(errorRecord?.ExpressionAttributeValues?.[":gs1pk"]).toBe(
-        "TYPE#ERROR",
-      );
-      expect(errorRecord?.ExpressionAttributeValues?.[":gs1sk"]).toBe(
-        "ERROR#12345",
-      );
+      expect(
+        errorRecordUpdate?.args[0].input.ExpressionAttributeValues?.[":gs1pk"],
+      ).toBe("TYPE#ERROR");
+      expect(
+        errorRecordUpdate?.args[0].input.ExpressionAttributeValues?.[":gs1sk"],
+      ).toBe("ERROR#12345");
 
       // GS2: TYPE#ERROR (GS2SK is updated separately via updateErrorRecordSortKey)
-      expect(errorRecord?.ExpressionAttributeValues?.[":gs2pk"]).toBe(
-        "TYPE#ERROR",
-      );
+      expect(
+        errorRecordUpdate?.args[0].input.ExpressionAttributeValues?.[":gs2pk"],
+      ).toBe("TYPE#ERROR");
 
       // GS3: METRIC#ERRORCOUNT#ERROR (separate partition from FailedExecutionItem)
       // GS3SK is updated separately via updateErrorRecordSortKey
-      expect(errorRecord?.ExpressionAttributeValues?.[":gs3pk"]).toBe(
-        "METRIC#ERRORCOUNT#ERROR",
-      );
+      expect(
+        errorRecordUpdate?.args[0].input.ExpressionAttributeValues?.[":gs3pk"],
+      ).toBe("METRIC#ERRORCOUNT#ERROR");
 
-      // GS2SK and GS3SK are set via separate UpdateCommand after the transaction
-      const updateCalls = ddbMock.commandCalls(UpdateCommand);
+      // GS2SK and GS3SK are set via separate UpdateCommand after the ErrorRecord update
       const sortKeyUpdate = updateCalls.find(
-        (call) => call.args[0].input.Key?.PK === "ERROR#12345",
+        (call) =>
+          call.args[0].input.Key?.PK === "ERROR#12345" &&
+          call.args[0].input.ExpressionAttributeValues?.[":gs2sk"],
       );
       // GS2SK format: COUNT#{status}#{paddedCount}#ERROR#{errorCode}
       expect(
@@ -988,7 +1198,8 @@ describe("event-handler", () => {
       const { saveErrorRecords } = await import("shared/repository.js");
 
       // Create 33 unique errors
-      // This will create: 1 FailedExecutionItem + 33 ErrorRecords + 33 ExecutionErrorLinks = 67 items
+      // Transaction now contains: 1 FailedExecutionItem + 33 ExecutionErrorLinks = 34 items
+      // ErrorRecords are updated separately via UpdateCommand
       const errors: WorkflowError[] = [];
       for (let i = 0; i < 33; i++) {
         errors.push(createError(String(10000 + i).padStart(5, "0")));
@@ -1006,8 +1217,11 @@ describe("event-handler", () => {
       // Should use single TransactWriteCommand
       expect(ddbMock).toHaveReceivedCommandTimes(TransactWriteCommand, 1);
 
-      // UpdateCommand is called once per error to refresh GS2SK and GS3SK sort keys
-      expect(ddbMock).toHaveReceivedCommandTimes(UpdateCommand, 33);
+      // UpdateCommand is called:
+      // - 33 times for ErrorRecord updates (individual, not in transaction)
+      // - 33 times to refresh GS2SK and GS3SK sort keys
+      // Total: 66 calls
+      expect(ddbMock).toHaveReceivedCommandTimes(UpdateCommand, 66);
     });
   });
 
@@ -1067,15 +1281,21 @@ describe("event-handler", () => {
         failedExecutionItem?.ExpressionAttributeValues?.[":defaultStatus"],
       ).toBe("failed");
 
-      // Check ErrorRecord
-      const errorRecord = transactItems!.find(
-        (item) => item.Update?.Key?.PK === "ERROR#12345",
-      )?.Update;
-      expect(errorRecord?.ExpressionAttributeValues?.[":defaultStatus"]).toBe(
-        "failed",
+      // Check ErrorRecord (now via UpdateCommand, not in transaction)
+      const updateCalls = ddbMock.commandCalls(UpdateCommand);
+      const errorRecordUpdate = updateCalls.find(
+        (call) =>
+          call.args[0].input.Key?.PK === "ERROR#12345" &&
+          call.args[0].input.ExpressionAttributeValues?.[":entityType"] ===
+            "Error",
       );
+      expect(
+        errorRecordUpdate?.args[0].input.ExpressionAttributeValues?.[
+          ":defaultStatus"
+        ],
+      ).toBe("failed");
 
-      // Check ExecutionErrorLink
+      // Check ExecutionErrorLink (now at index 1 in transaction)
       const executionErrorLink = transactItems!.find(
         (item) =>
           item.Update?.Key?.PK === "EXECUTION#exec-status-001" &&
