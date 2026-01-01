@@ -1,13 +1,12 @@
 /**
  * Transaction Status Checker Lambda: Checks transaction status on blockchain (single check, no retry)
  *
- * Returns:
- * - success → transaction confirmed with block number
- * - error 60003 with message prefix:
- *   - "TRANSACTION_FAILED:" → transaction reverted on blockchain
- *   - "TRANSACTION_NOT_FOUND:" → transaction not found on chain
- *   - "TRANSACTION_PENDING:" → transaction still in mempool, not yet mined
- *   - "GENERAL_ERROR:" → configuration or RPC errors
+ * Returns different error codes for Step Function routing:
+ * - Success → transaction confirmed with block number
+ * - 60003 (TRANSACTION_FAILED) → transaction reverted on blockchain → Wait for resolution → Resubmit
+ * - 60004 (TRANSACTION_PENDING) → still in mempool → Step Function waits and retries
+ * - 60005 (TRANSACTION_NOT_FOUND) → not found on chain → Resubmit (go back to gas price check)
+ * - 60006 (GENERAL_ERROR) → configuration or RPC errors
  *
  * Supports both SQS events (with task token) and direct invocation
  */
@@ -21,13 +20,15 @@ import {
 } from "shared";
 
 /**
- * Error code for transaction status checker (all use 60003 for backward compatibility)
- * Different error messages distinguish the failure type:
- * - "TRANSACTION_FAILED:" - Transaction reverted on blockchain
- * - "TRANSACTION_NOT_FOUND:" - Transaction not found on chain
- * - "TRANSACTION_PENDING:" - Transaction still in mempool, not yet mined
+ * Error codes for transaction status checker
+ * Step Function catches these to route to appropriate handling
  */
-const ERROR_CODE = "60003";
+const ERROR_CODES = {
+  FAILED: "60003", // Transaction reverted on blockchain
+  PENDING: "60004", // Still in mempool, not yet mined
+  NOT_FOUND: "60005", // Not found on chain
+  GENERAL: "60006", // Configuration or RPC errors
+};
 
 /**
  * Error message prefixes to identify failure type
@@ -59,11 +60,11 @@ class TransactionStatusError extends Error {
 /**
  * @typedef {Object} TransactionStatusResult
  * @property {string} transactionHash - Transaction hash
- * @property {string} status - "success", "pending", "failed", or "dropped"
+ * @property {string} status - "success", "pending", "failed", or "not_found"
  * @property {number} [blockNumber] - Block number if mined
  * @property {string} [gasUsed] - Gas used if mined
  * @property {string} [error] - Error message if failed
- * @property {string} [errorCode] - Error code for failed/dropped status
+ * @property {string} [errorCode] - Error code for failed status
  */
 
 /**
@@ -72,10 +73,10 @@ class TransactionStatusError extends Error {
  * @property {string} rpcUrl - RPC URL for blockchain
  */
 
-const base = {
+const getLogBase = () => ({
   component: "transaction-status-checker",
   at: new Date().toISOString(),
-};
+});
 
 /**
  * @typedef {Object} SqsRecord
@@ -101,7 +102,7 @@ async function checkTransactionStatusOnce(input) {
 
   if (!rpcUrl) {
     throw new TransactionStatusError(
-      ERROR_CODE,
+      ERROR_CODES.GENERAL,
       `${ErrorPrefix.GENERAL} RPC URL is required`,
       transactionHash,
     );
@@ -109,7 +110,7 @@ async function checkTransactionStatusOnce(input) {
 
   if (!transactionHash) {
     throw new TransactionStatusError(
-      ERROR_CODE,
+      ERROR_CODES.GENERAL,
       `${ErrorPrefix.GENERAL} Transaction hash is required`,
       transactionHash,
     );
@@ -117,7 +118,7 @@ async function checkTransactionStatusOnce(input) {
 
   console.log(
     JSON.stringify({
-      ...base,
+      ...getLogBase(),
       level: "info",
       msg: "checking_transaction_status",
       transactionHash: transactionHash,
@@ -134,7 +135,7 @@ async function checkTransactionStatusOnce(input) {
     if (!results || results.length === 0) {
       console.log(
         JSON.stringify({
-          ...base,
+          ...getLogBase(),
           level: "warn",
           msg: "transaction_not_found",
           transactionHash: transactionHash,
@@ -142,19 +143,19 @@ async function checkTransactionStatusOnce(input) {
       );
 
       throw new TransactionStatusError(
-        ERROR_CODE,
+        ERROR_CODES.NOT_FOUND,
         `${ErrorPrefix.NOT_FOUND} Transaction ${transactionHash} not found on chain`,
         transactionHash,
       );
     }
 
     const result = results[0];
-    const status = result.status || "not found";
+    const status = result.status || "not_found";
     const blockNumber = result.blockNumber;
 
     console.log(
       JSON.stringify({
-        ...base,
+        ...getLogBase(),
         level: "info",
         msg: "transaction_status_retrieved",
         transactionHash: transactionHash,
@@ -177,7 +178,7 @@ async function checkTransactionStatusOnce(input) {
     // Transaction failed on blockchain (reverted)
     if (status === "failed") {
       throw new TransactionStatusError(
-        ERROR_CODE,
+        ERROR_CODES.FAILED,
         `${ErrorPrefix.FAILED} Transaction ${transactionHash} failed on blockchain (reverted). Block: ${blockNumber || "N/A"}`,
         transactionHash,
       );
@@ -186,7 +187,7 @@ async function checkTransactionStatusOnce(input) {
     // Transaction pending in mempool (has tx but no receipt yet)
     if (status === "pending") {
       throw new TransactionStatusError(
-        ERROR_CODE,
+        ERROR_CODES.PENDING,
         `${ErrorPrefix.PENDING} Transaction ${transactionHash} is pending in mempool`,
         transactionHash,
       );
@@ -195,7 +196,7 @@ async function checkTransactionStatusOnce(input) {
     // Transaction not found on chain (CLI returned not_found status)
     if (status === "not_found" || status === "not found") {
       throw new TransactionStatusError(
-        ERROR_CODE,
+        ERROR_CODES.NOT_FOUND,
         `${ErrorPrefix.NOT_FOUND} Transaction ${transactionHash} not found on chain`,
         transactionHash,
       );
@@ -203,7 +204,7 @@ async function checkTransactionStatusOnce(input) {
 
     // Unknown status - treat as not found
     throw new TransactionStatusError(
-      ERROR_CODE,
+      ERROR_CODES.NOT_FOUND,
       `${ErrorPrefix.NOT_FOUND} Transaction ${transactionHash} has unknown status: ${status}`,
       transactionHash,
     );
@@ -217,7 +218,7 @@ async function checkTransactionStatusOnce(input) {
     const errorMsg = err instanceof Error ? err.message : String(err);
     console.error(
       JSON.stringify({
-        ...base,
+        ...getLogBase(),
         level: "error",
         msg: "transaction_status_check_error",
         error: errorMsg,
@@ -226,7 +227,7 @@ async function checkTransactionStatusOnce(input) {
     );
 
     throw new TransactionStatusError(
-      ERROR_CODE,
+      ERROR_CODES.GENERAL,
       `${ErrorPrefix.GENERAL} Failed to check transaction status: ${errorMsg}`,
       transactionHash,
     );
@@ -268,7 +269,7 @@ export const handler = async (event) => {
 
       console.log(
         JSON.stringify({
-          ...base,
+          ...getLogBase(),
           level: "info",
           msg: "invoked_from_sqs_with_task_token",
           executionArn: executionArn,
@@ -287,7 +288,7 @@ export const handler = async (event) => {
           executionId: executionArn,
         });
         await emitWorkflowEvent({
-          executionId: executionArn,
+          executionId: /** @type {string} */ (executionArn.split(":").pop()),
           county: county || "unknown",
           dataGroupLabel: dataGroupLabel,
           status: "IN_PROGRESS",
@@ -316,7 +317,7 @@ export const handler = async (event) => {
 
     if (!rpcUrl) {
       throw new TransactionStatusError(
-        ERROR_CODE,
+        ERROR_CODES.GENERAL,
         `${ErrorPrefix.GENERAL} RPC URL is required (ELEPHANT_RPC_URL env var)`,
         transactionHash,
       );
@@ -324,7 +325,7 @@ export const handler = async (event) => {
 
     if (!transactionHash) {
       throw new TransactionStatusError(
-        ERROR_CODE,
+        ERROR_CODES.GENERAL,
         `${ErrorPrefix.GENERAL} Transaction hash is required`,
         transactionHash,
       );
@@ -337,7 +338,7 @@ export const handler = async (event) => {
 
     console.log(
       JSON.stringify({
-        ...base,
+        ...getLogBase(),
         level: "info",
         msg: "transaction_status_check_complete",
         result: result,
@@ -352,17 +353,6 @@ export const handler = async (event) => {
         county: county || "unknown",
         executionId: executionArn,
       });
-      await emitWorkflowEvent({
-        executionId: executionArn,
-        county: county || "unknown",
-        dataGroupLabel: dataGroupLabel,
-        status: "SUCCEEDED",
-        phase: "TransactionStatusCheck",
-        step: "CheckTransactionStatus",
-        taskToken: taskToken,
-        errors: [],
-        log,
-      });
       await executeWithTaskToken({
         taskToken,
         log,
@@ -373,13 +363,13 @@ export const handler = async (event) => {
     return result;
   } catch (err) {
     const isTransactionStatusError = err instanceof TransactionStatusError;
-    const errorCode = isTransactionStatusError ? err.code : ERROR_CODE;
+    const errorCode = isTransactionStatusError ? err.code : ERROR_CODES.GENERAL;
     const errMessage = err instanceof Error ? err.message : String(err);
     const errCause = err instanceof Error ? err.stack : undefined;
 
     console.error(
       JSON.stringify({
-        ...base,
+        ...getLogBase(),
         level: "error",
         msg: "handler_failed",
         errorCode: errorCode,
@@ -395,23 +385,6 @@ export const handler = async (event) => {
         at: new Date().toISOString(),
         county: county || "unknown",
         executionId: executionArn,
-      });
-      await emitWorkflowEvent({
-        executionId: executionArn,
-        county: county || "unknown",
-        dataGroupLabel: dataGroupLabel,
-        status: "FAILED",
-        phase: "TransactionStatusCheck",
-        step: "CheckTransactionStatus",
-        taskToken: taskToken,
-        errors: [
-          createWorkflowError(errorCode, {
-            error: errMessage,
-            cause: errCause,
-            transactionHash: transactionHash,
-          }),
-        ],
-        log: errorLog,
       });
       await executeWithTaskToken({
         taskToken,
