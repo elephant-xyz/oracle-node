@@ -135,6 +135,11 @@ const isRetryableDynamoDBError = (error: unknown): boolean => {
     "RequestLimitExceeded",
     "InternalServerError",
     "ServiceUnavailable",
+    // TransactionCanceledException can be transient (e.g., TransactionConflict)
+    // Note: Some cancellation reasons (like ConditionalCheckFailed) shouldn't
+    // be retried, but for defensive resilience we retry and let it fail again
+    // if the condition persists.
+    "TransactionCanceledException",
   ];
 
   return retryableErrorNames.includes(error.name);
@@ -807,11 +812,15 @@ export const saveErrorRecords = async (
 
   // Step 3: Execute both operations concurrently
   // - ErrorRecord updates run in parallel with retry
-  // - Transaction for FailedExecutionItem + ExecutionErrorLinks
+  // - Transaction for FailedExecutionItem + ExecutionErrorLinks (with retry for resilience)
   const transactionPromise =
     transactItems.length <= TRANSACTION_LIMIT
-      ? docClient.send(
-          new TransactWriteCommand({ TransactItems: transactItems }),
+      ? executeWithRetry(
+          () =>
+            docClient.send(
+              new TransactWriteCommand({ TransactItems: transactItems }),
+            ),
+          isRetryableDynamoDBError,
         )
       : (async () => {
           // For large transactions, split into batches
@@ -821,14 +830,20 @@ export const saveErrorRecords = async (
           const failedExecutionCommand = new UpdateCommand(
             failedExecutionUpdate.Update,
           );
-          await docClient.send(failedExecutionCommand);
+          await executeWithRetry(
+            () => docClient.send(failedExecutionCommand),
+            isRetryableDynamoDBError,
+          );
 
           for (let i = 0; i < linkItems.length; i += TRANSACTION_LIMIT) {
             const batch = linkItems.slice(i, i + TRANSACTION_LIMIT);
-            const batchCommand = new TransactWriteCommand({
-              TransactItems: batch,
-            });
-            await docClient.send(batchCommand);
+            await executeWithRetry(
+              () =>
+                docClient.send(
+                  new TransactWriteCommand({ TransactItems: batch }),
+                ),
+              isRetryableDynamoDBError,
+            );
           }
         })();
 

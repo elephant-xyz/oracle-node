@@ -320,6 +320,34 @@ describe("event-handler", () => {
       expect(errorRecordCallCount).toBe(11);
     }, 60000); // Increase timeout for retry delays
 
+    it("should retry on TransactionCanceledException", async () => {
+      const transactionError = new Error("Transaction cancelled");
+      transactionError.name = "TransactionCanceledException";
+
+      let transactionCallCount = 0;
+      ddbMock.on(TransactWriteCommand).callsFake(() => {
+        transactionCallCount++;
+        if (transactionCallCount === 1) {
+          throw transactionError;
+        }
+        return {};
+      });
+      ddbMock.on(UpdateCommand).resolves({});
+
+      const { saveErrorRecords } = await import("shared/repository.js");
+
+      const detail = createWorkflowDetail({
+        executionId: "exec-transaction-retry-001",
+        errors: [createError("12345")],
+      });
+
+      const result = await saveErrorRecords(detail);
+
+      expect(result.success).toBe(true);
+      // Transaction should have been called twice (1 failure + 1 success)
+      expect(transactionCallCount).toBe(2);
+    });
+
     it("should retry each ErrorRecord independently", async () => {
       const throttleError = new Error("Throttled");
       throttleError.name = "ThrottlingException";
