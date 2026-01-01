@@ -62,13 +62,17 @@ export const handler = async () => {
     const gasPriceInfo = await checkGasPrice({ rpcUrl });
 
     // Use EIP-1559 maxFeePerGas if available, otherwise fall back to legacy gasPrice
-    // Note: checkGasPrice returns values already in Gwei
-    const currentGasPriceGwei =
-      gasPriceInfo.eip1559?.maxFeePerGas ||
-      gasPriceInfo.legacy?.gasPrice ||
+    // Note: checkGasPrice returns values already in Gwei (may be string or number)
+    const rawGasPrice =
+      gasPriceInfo.eip1559?.maxFeePerGas ??
+      gasPriceInfo.legacy?.gasPrice ??
       null;
 
-    if (currentGasPriceGwei === null) {
+    // Ensure gasPrice is always a number
+    const currentGasPriceGwei =
+      rawGasPrice !== null ? Number(rawGasPrice) : null;
+
+    if (currentGasPriceGwei === null || Number.isNaN(currentGasPriceGwei)) {
       throw new Error("Unable to retrieve gas price from RPC");
     }
     const updatedAt = new Date().toISOString();

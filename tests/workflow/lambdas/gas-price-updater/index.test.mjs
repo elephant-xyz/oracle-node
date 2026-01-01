@@ -116,6 +116,29 @@ describe("gas-price-updater handler", () => {
       expect(result.gasPrice).toBe(25.5);
     });
 
+    it("should convert string gas prices to numbers", async () => {
+      // CLI may return gas prices as strings per type definitions
+      mockCheckGasPrice.mockResolvedValue({
+        eip1559: { maxFeePerGas: "30.5" },
+        legacy: { gasPrice: "30.5" },
+      });
+
+      ssmMock.on(PutParameterCommand).resolves({});
+
+      const { handler } =
+        await import("../../../../workflow/lambdas/gas-price-updater/index.mjs");
+
+      const result = await handler();
+
+      expect(result.gasPrice).toBe(30.5);
+      expect(typeof result.gasPrice).toBe("number");
+
+      // Verify SSM also receives a number
+      const putCall = ssmMock.calls()[0];
+      const storedValue = JSON.parse(putCall.args[0].input.Value);
+      expect(typeof storedValue.gasPrice).toBe("number");
+    });
+
     it("should handle very low gas prices", async () => {
       mockCheckGasPrice.mockResolvedValue({
         eip1559: { maxFeePerGas: 1 },
@@ -214,6 +237,20 @@ describe("gas-price-updater handler", () => {
       mockCheckGasPrice.mockResolvedValue({
         eip1559: null,
         legacy: null,
+      });
+
+      const { handler } =
+        await import("../../../../workflow/lambdas/gas-price-updater/index.mjs");
+
+      await expect(handler()).rejects.toThrow(
+        "Unable to retrieve gas price from RPC",
+      );
+    });
+
+    it("should fail when gas price is not a valid number", async () => {
+      mockCheckGasPrice.mockResolvedValue({
+        eip1559: { maxFeePerGas: "invalid" },
+        legacy: { gasPrice: "invalid" },
       });
 
       const { handler } =

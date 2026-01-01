@@ -667,7 +667,7 @@ Resources:
       Architectures:
         - arm64
       MemorySize: 128
-      Timeout: 30
+      Timeout: 300
       CodeUri: ../workflow/lambdas/gas-price-updater/
       Handler: index.handler
       Description: "Cron job that updates current gas price to SSM Parameter Store every 5 minutes"
