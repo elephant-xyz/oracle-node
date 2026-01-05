@@ -1,0 +1,118 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: SAM template for AWS Budget alerts with SNS notification to Lambda
+
+Parameters:
+  EnvironmentName:
+    Description: An environment name that is prefixed to resource names
+    Type: String
+    Default: MWAAEnvironment
+
+  DailyBudgetAmount:
+    Description: Daily budget threshold in USD
+    Type: Number
+    Default: 30
+
+Globals:
+  Function:
+    Timeout: 60
+    MemorySize: 128
+    LoggingConfig:
+      LogFormat: JSON
+
+Resources:
+  BudgetAlertTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub "${EnvironmentName}-budget-alert-topic"
+      Tags:
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  BudgetAlertTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics:
+        - !Ref BudgetAlertTopic
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowBudgetsToPublish
+            Effect: Allow
+            Principal:
+              Service: budgets.amazonaws.com
+            Action: sns:Publish
+            Resource: !Ref BudgetAlertTopic
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+
+  DailyBudget:
+    Type: AWS::Budgets::Budget
+    Properties:
+      Budget:
+        BudgetName: !Sub "${EnvironmentName}-daily-spend-budget"
+        BudgetType: COST
+        TimeUnit: DAILY
+        BudgetLimit:
+          Amount: !Ref DailyBudgetAmount
+          Unit: USD
+      NotificationsWithSubscribers:
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN
+            Threshold: 100
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - SubscriptionType: SNS
+              Address: !Ref BudgetAlertTopic
+
+  BudgetAlertHandlerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${EnvironmentName}-budget-alert-handler"
+      Runtime: nodejs22.x
+      Architectures:
+        - arm64
+      Handler: index.handler
+      CodeUri: lambdas/budget-handler
+      Description: "Handles AWS Budget alerts when daily spending exceeds threshold"
+      Policies:
+        - AWSLambdaBasicExecutionRole
+      Events:
+        BudgetAlert:
+          Type: SNS
+          Properties:
+            Topic: !Ref BudgetAlertTopic
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Format: esm
+        OutExtension:
+          - .js=.mjs
+        External:
+          - "@aws-sdk/*"
+          - "@smithy/*"
+        Minify: true
+        Target: es2022
+        EntryPoints:
+          - index.ts
+        Sourcemap: true
+        LogLevel: info
+
+Outputs:
+  BudgetAlertHandlerFunctionName:
+    Description: Name of the budget alert handler Lambda function
+    Value: !Ref BudgetAlertHandlerFunction
+
+  BudgetAlertHandlerFunctionArn:
+    Description: ARN of the budget alert handler Lambda function
+    Value: !GetAtt BudgetAlertHandlerFunction.Arn
+
+  BudgetAlertTopicArn:
+    Description: ARN of the SNS topic for budget alerts
+    Value: !Ref BudgetAlertTopic
+
+  DailyBudgetName:
+    Description: Name of the AWS Budget
+    Value: !Sub "${EnvironmentName}-daily-spend-budget"
