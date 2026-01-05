@@ -19,6 +19,20 @@ import {
 } from "@aws-sdk/client-sfn";
 
 /**
+ * Event source mapping states that should be skipped when disabling.
+ * These states indicate the mapping is either already disabled, in transition,
+ * or being deleted.
+ */
+const SKIP_ESM_STATES = new Set([
+  "Disabled",
+  "Disabling",
+  "Deleting",
+  "Creating",
+  "Enabling",
+  "Updating",
+]);
+
+/**
  * Budget alert message structure from AWS Budgets.
  */
 interface BudgetAlertMessage {
@@ -184,12 +198,12 @@ async function disableEventSourceMappings(
         response.EventSourceMappings || [];
 
       for (const mapping of mappings) {
-        // Only disable SQS event source mappings
+        // Only disable SQS event source mappings that are in "Enabled" state
+        const shouldSkip = mapping.State && SKIP_ESM_STATES.has(mapping.State);
         if (
           mapping.EventSourceArn?.includes(":sqs:") &&
           mapping.UUID &&
-          mapping.State !== "Disabled" &&
-          mapping.State !== "Disabling"
+          !shouldSkip
         ) {
           try {
             const updateCommand = new UpdateEventSourceMappingCommand({
@@ -342,9 +356,7 @@ async function emergencyStop(stackName: string): Promise<EmergencyStopSummary> {
 
   for (const result of disableResults) {
     if (!result.success && result.error) {
-      errors.push(
-        `Failed to disable ESM ${result.uuid}: ${result.error}`,
-      );
+      errors.push(`Failed to disable ESM ${result.uuid}: ${result.error}`);
     }
   }
 
@@ -382,6 +394,9 @@ async function emergencyStop(stackName: string): Promise<EmergencyStopSummary> {
 /**
  * Main handler for SNS events from AWS Budget alerts.
  * Triggered when daily spending exceeds the configured threshold.
+ *
+ * Emergency stop is performed only once per invocation, regardless of
+ * the number of SNS records in the event.
  */
 export const handler: SNSHandler = async (event: SNSEvent): Promise<void> => {
   console.info(
@@ -390,6 +405,7 @@ export const handler: SNSHandler = async (event: SNSEvent): Promise<void> => {
     }),
   );
 
+  // Log all SNS records first
   for (const record of event.Records) {
     const { Sns } = record;
 
@@ -419,44 +435,44 @@ export const handler: SNSHandler = async (event: SNSEvent): Promise<void> => {
         }),
       );
     }
+  }
 
-    // Perform emergency stop if prepare stack name is configured
-    const prepareStackName = process.env.PREPARE_STACK_NAME;
+  // Perform emergency stop once if prepare stack name is configured
+  const prepareStackName = process.env.PREPARE_STACK_NAME;
 
-    if (prepareStackName) {
-      try {
-        const summary = await emergencyStop(prepareStackName);
+  if (prepareStackName) {
+    try {
+      const summary = await emergencyStop(prepareStackName);
 
-        console.info(
-          createLogEntry("emergency_stop_summary", {
-            ...summary,
-          }),
-        );
-      } catch (error) {
-        const errorMessage =
-          error instanceof Error ? error.message : String(error);
-
-        console.error(
-          createLogEntry("emergency_stop_failed", {
-            stackName: prepareStackName,
-            error: errorMessage,
-          }),
-        );
-
-        throw error;
-      }
-    } else {
-      console.warn(
-        createLogEntry("emergency_stop_skipped", {
-          reason: "PREPARE_STACK_NAME environment variable not set",
+      console.info(
+        createLogEntry("emergency_stop_summary", {
+          ...summary,
         }),
       );
-    }
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
 
-    console.info(
-      createLogEntry("budget_alert_processed", {
-        messageId: record.Sns.MessageId,
+      console.error(
+        createLogEntry("emergency_stop_failed", {
+          stackName: prepareStackName,
+          error: errorMessage,
+        }),
+      );
+
+      throw error;
+    }
+  } else {
+    console.warn(
+      createLogEntry("emergency_stop_skipped", {
+        reason: "PREPARE_STACK_NAME environment variable not set",
       }),
     );
   }
+
+  console.info(
+    createLogEntry("budget_alert_processing_complete", {
+      recordsProcessed: event.Records.length,
+    }),
+  );
 };
