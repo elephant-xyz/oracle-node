@@ -145,7 +145,6 @@ describe("budget-handler", () => {
 
       await expect(handler(event)).resolves.toBeUndefined();
 
-      // Should call ListStackResourcesCommand only once (emergency stop runs once per invocation)
       expect(cfnMock).toHaveReceivedCommandTimes(ListStackResourcesCommand, 1);
     });
 
@@ -159,10 +158,8 @@ describe("budget-handler", () => {
 
       const event = createMockSNSEvent("this is not valid JSON");
 
-      // The handler should still process and trigger emergency stop
       await expect(handler(event)).resolves.toBeUndefined();
 
-      // Should still discover stack resources even with invalid message
       expect(cfnMock).toHaveReceivedCommand(ListStackResourcesCommand);
     });
 
@@ -191,7 +188,6 @@ describe("budget-handler", () => {
 
       await expect(handler(event)).resolves.toBeUndefined();
 
-      // Should not call CloudFormation
       expect(cfnMock).not.toHaveReceivedCommand(ListStackResourcesCommand);
       expect(console.warn).toHaveBeenCalled();
     });
@@ -348,7 +344,6 @@ describe("budget-handler", () => {
       await handler(event);
 
       expect(cfnMock).toHaveReceivedCommandTimes(ListStackResourcesCommand, 2);
-      // Should list event source mappings for both functions
       expect(lambdaMock).toHaveReceivedCommandTimes(
         ListEventSourceMappingsCommand,
         2,
@@ -360,7 +355,6 @@ describe("budget-handler", () => {
         StackResourceSummaries: [
           {
             LogicalResourceId: "MyLambdaFunction",
-            // PhysicalResourceId is undefined
             ResourceType: "AWS::Lambda::Function",
             ResourceStatus: "CREATE_IN_PROGRESS",
           },
@@ -374,7 +368,6 @@ describe("budget-handler", () => {
 
       await handler(event);
 
-      // Should not try to list event source mappings for undefined physical resource
       expect(lambdaMock).not.toHaveReceivedCommand(
         ListEventSourceMappingsCommand,
       );
@@ -493,7 +486,6 @@ describe("budget-handler", () => {
 
       await handler(event);
 
-      // Should not try to disable Kinesis or DynamoDB stream mappings
       expect(lambdaMock).not.toHaveReceivedCommand(
         UpdateEventSourceMappingCommand,
       );
@@ -614,7 +606,6 @@ describe("budget-handler", () => {
 
       await handler(event);
 
-      // Should disable both mappings from both pages
       expect(lambdaMock).toHaveReceivedCommandTimes(
         UpdateEventSourceMappingCommand,
         2,
@@ -662,10 +653,8 @@ describe("budget-handler", () => {
 
       const event = createMockSNSEvent(createBudgetAlertMessage());
 
-      // Should not throw - continues processing
       await expect(handler(event)).resolves.toBeUndefined();
 
-      // Should have attempted both
       expect(lambdaMock).toHaveReceivedCommandTimes(
         UpdateEventSourceMappingCommand,
         2,
@@ -686,7 +675,6 @@ describe("budget-handler", () => {
       lambdaMock.on(ListEventSourceMappingsCommand).resolves({
         EventSourceMappings: [
           {
-            // UUID is undefined
             EventSourceArn: "arn:aws:sqs:us-east-1:123456789012:my-queue",
             FunctionArn:
               "arn:aws:lambda:us-east-1:123456789012:function:my-function",
@@ -730,7 +718,6 @@ describe("budget-handler", () => {
 
       await handler(event);
 
-      // Should extract the function name from the ARN
       expect(lambdaMock).toHaveReceivedCommandWith(
         ListEventSourceMappingsCommand,
         {
@@ -761,8 +748,6 @@ describe("budget-handler", () => {
 
       await handler(event);
 
-      // When PhysicalResourceId is just a function name (no colons),
-      // split(":").pop() returns the full name
       expect(lambdaMock).toHaveReceivedCommandWith(
         ListEventSourceMappingsCommand,
         {
@@ -920,7 +905,6 @@ describe("budget-handler", () => {
 
       const event = createMockSNSEvent(createBudgetAlertMessage());
 
-      // Should not throw - continues processing
       await expect(handler(event)).resolves.toBeUndefined();
 
       expect(sfnMock).toHaveReceivedCommandTimes(StopExecutionCommand, 2);
@@ -941,7 +925,6 @@ describe("budget-handler", () => {
       sfnMock.on(ListExecutionsCommand).resolves({
         executions: [
           {
-            // executionArn is undefined
             stateMachineArn:
               "arn:aws:states:us-east-1:123456789012:stateMachine:my-state-machine",
             name: "exec-1",
@@ -1128,7 +1111,6 @@ describe("budget-handler", () => {
 
       await handler(event);
 
-      // Verify info logging was called with summary
       expect(console.info).toHaveBeenCalled();
     });
 
@@ -1165,7 +1147,6 @@ describe("budget-handler", () => {
 
       await handler(event);
 
-      // Should log error for the failed operation
       expect(console.error).toHaveBeenCalled();
     });
   });
@@ -1185,9 +1166,7 @@ describe("budget-handler", () => {
     });
 
     it("should handle undefined StackResourceSummaries response", async () => {
-      cfnMock.on(ListStackResourcesCommand).resolves({
-        // StackResourceSummaries is undefined
-      });
+      cfnMock.on(ListStackResourcesCommand).resolves({});
 
       const { handler } =
         await import("../../../../budget-alert/lambdas/budget-handler/index.js");
@@ -1208,9 +1187,7 @@ describe("budget-handler", () => {
           },
         ],
       });
-      lambdaMock.on(ListEventSourceMappingsCommand).resolves({
-        // EventSourceMappings is undefined
-      });
+      lambdaMock.on(ListEventSourceMappingsCommand).resolves({});
 
       const { handler } =
         await import("../../../../budget-alert/lambdas/budget-handler/index.js");
@@ -1232,9 +1209,7 @@ describe("budget-handler", () => {
           },
         ],
       });
-      sfnMock.on(ListExecutionsCommand).resolves({
-        // executions is undefined
-      });
+      sfnMock.on(ListExecutionsCommand).resolves({});
 
       const { handler } =
         await import("../../../../budget-alert/lambdas/budget-handler/index.js");
@@ -1259,7 +1234,6 @@ describe("budget-handler", () => {
         EventSourceMappings: [
           {
             UUID: "uuid-123",
-            // EventSourceArn is undefined
             FunctionArn:
               "arn:aws:lambda:us-east-1:123456789012:function:my-function",
             State: "Enabled",
@@ -1274,8 +1248,6 @@ describe("budget-handler", () => {
 
       await handler(event);
 
-      // Should not try to disable mapping without EventSourceArn
-      // (because EventSourceArn?.includes(":sqs:") returns undefined/false)
       expect(lambdaMock).not.toHaveReceivedCommand(
         UpdateEventSourceMappingCommand,
       );
@@ -1303,7 +1275,6 @@ describe("budget-handler", () => {
 
       await expect(handler(event)).resolves.toBeUndefined();
 
-      // Should call ListEventSourceMappings for each function
       expect(lambdaMock).toHaveReceivedCommandTimes(
         ListEventSourceMappingsCommand,
         50,
@@ -1383,7 +1354,6 @@ describe("budget-handler", () => {
 
       await handler(event);
 
-      // Should stop all 3 executions (1 from sm-1, 2 from sm-2)
       expect(sfnMock).toHaveReceivedCommandTimes(StopExecutionCommand, 3);
     });
 
@@ -1417,7 +1387,6 @@ describe("budget-handler", () => {
 
       await handler(event);
 
-      // "Creating" state should be skipped - mapping is in transition
       expect(lambdaMock).not.toHaveReceivedCommand(
         UpdateEventSourceMappingCommand,
       );
@@ -1453,7 +1422,6 @@ describe("budget-handler", () => {
 
       await handler(event);
 
-      // "Enabling" state should be skipped - mapping is in transition
       expect(lambdaMock).not.toHaveReceivedCommand(
         UpdateEventSourceMappingCommand,
       );
@@ -1489,7 +1457,6 @@ describe("budget-handler", () => {
 
       await handler(event);
 
-      // "Updating" state should be skipped - mapping is in transition
       expect(lambdaMock).not.toHaveReceivedCommand(
         UpdateEventSourceMappingCommand,
       );
@@ -1525,7 +1492,6 @@ describe("budget-handler", () => {
 
       await handler(event);
 
-      // "Deleting" state should be skipped - mapping is being deleted
       expect(lambdaMock).not.toHaveReceivedCommand(
         UpdateEventSourceMappingCommand,
       );

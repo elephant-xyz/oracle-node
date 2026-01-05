@@ -18,11 +18,6 @@ import {
   type ExecutionListItem,
 } from "@aws-sdk/client-sfn";
 
-/**
- * Event source mapping states that should be skipped when disabling.
- * These states indicate the mapping is either already disabled, in transition,
- * or being deleted.
- */
 const SKIP_ESM_STATES = new Set([
   "Disabled",
   "Disabling",
@@ -32,9 +27,6 @@ const SKIP_ESM_STATES = new Set([
   "Updating",
 ]);
 
-/**
- * Budget alert message structure from AWS Budgets.
- */
 interface BudgetAlertMessage {
   budgetName: string;
   budgetType: string;
@@ -48,9 +40,6 @@ interface BudgetAlertMessage {
   endDate: string;
 }
 
-/**
- * Result of disabling an event source mapping.
- */
 interface DisableResult {
   uuid: string;
   functionArn: string;
@@ -59,18 +48,12 @@ interface DisableResult {
   error?: string;
 }
 
-/**
- * Result of stopping an execution.
- */
 interface StopResult {
   executionArn: string;
   success: boolean;
   error?: string;
 }
 
-/**
- * Summary of the emergency stop operation.
- */
 interface EmergencyStopSummary {
   stackName: string;
   eventSourceMappingsDisabled: number;
@@ -80,14 +63,10 @@ interface EmergencyStopSummary {
   errors: string[];
 }
 
-// Initialize AWS SDK clients
 const cfnClient = new CloudFormationClient({});
 const lambdaClient = new LambdaClient({});
 const sfnClient = new SFNClient({});
 
-/**
- * Creates a structured log entry for budget alert processing.
- */
 const createLogEntry = (
   action: string,
   data: Record<string, unknown>,
@@ -99,21 +78,14 @@ const createLogEntry = (
   });
 };
 
-/**
- * Parses the SNS message body from AWS Budgets.
- */
 const parseBudgetMessage = (message: string): BudgetAlertMessage | null => {
   try {
-    return JSON.parse(message) as BudgetAlertMessage;
+    return JSON.parse(message);
   } catch {
     return null;
   }
 };
 
-/**
- * Discovers all resources from a CloudFormation stack.
- * Returns Lambda function ARNs and State Machine ARNs.
- */
 async function discoverStackResources(
   stackName: string,
 ): Promise<{ lambdaFunctionArns: string[]; stateMachineArns: string[] }> {
@@ -147,13 +119,11 @@ async function discoverStackResources(
         resource.ResourceType === "AWS::Serverless::Function" &&
         resource.PhysicalResourceId
       ) {
-        // SAM Serverless Functions are also Lambda functions
         lambdaFunctionArns.push(resource.PhysicalResourceId);
       } else if (
         resource.ResourceType === "AWS::Serverless::StateMachine" &&
         resource.PhysicalResourceId
       ) {
-        // SAM Serverless State Machines
         stateMachineArns.push(resource.PhysicalResourceId);
       }
     }
@@ -172,16 +142,12 @@ async function discoverStackResources(
   return { lambdaFunctionArns, stateMachineArns };
 }
 
-/**
- * Disables all SQS event source mappings for the given Lambda functions.
- */
 async function disableEventSourceMappings(
   functionArns: string[],
 ): Promise<DisableResult[]> {
   const results: DisableResult[] = [];
 
   for (const functionArn of functionArns) {
-    // Extract function name from ARN for ListEventSourceMappings
     const functionName = functionArn.split(":").pop() || functionArn;
 
     let nextMarker: string | undefined;
@@ -198,7 +164,6 @@ async function disableEventSourceMappings(
         response.EventSourceMappings || [];
 
       for (const mapping of mappings) {
-        // Only disable SQS event source mappings that are in "Enabled" state
         const shouldSkip = mapping.State && SKIP_ESM_STATES.has(mapping.State);
         if (
           mapping.EventSourceArn?.includes(":sqs:") &&
@@ -206,12 +171,12 @@ async function disableEventSourceMappings(
           !shouldSkip
         ) {
           try {
-            const updateCommand = new UpdateEventSourceMappingCommand({
-              UUID: mapping.UUID,
-              Enabled: false,
-            });
-
-            await lambdaClient.send(updateCommand);
+            await lambdaClient.send(
+              new UpdateEventSourceMappingCommand({
+                UUID: mapping.UUID,
+                Enabled: false,
+              }),
+            );
 
             console.info(
               createLogEntry("event_source_mapping_disabled", {
@@ -228,8 +193,7 @@ async function disableEventSourceMappings(
               success: true,
             });
           } catch (error) {
-            const errorMessage =
-              error instanceof Error ? error.message : String(error);
+            const errorMessage = String(error);
 
             console.error(
               createLogEntry("event_source_mapping_disable_failed", {
@@ -258,9 +222,6 @@ async function disableEventSourceMappings(
   return results;
 }
 
-/**
- * Stops all running executions for the given state machines.
- */
 async function stopRunningExecutions(
   stateMachineArns: string[],
 ): Promise<StopResult[]> {
@@ -270,27 +231,27 @@ async function stopRunningExecutions(
     let nextToken: string | undefined;
 
     do {
-      const listCommand = new ListExecutionsCommand({
-        stateMachineArn,
-        statusFilter: ExecutionStatus.RUNNING,
-        maxResults: 100,
-        nextToken,
-      });
-
-      const response = await sfnClient.send(listCommand);
+      const response = await sfnClient.send(
+        new ListExecutionsCommand({
+          stateMachineArn,
+          statusFilter: ExecutionStatus.RUNNING,
+          maxResults: 100,
+          nextToken,
+        }),
+      );
       const executions: ExecutionListItem[] = response.executions || [];
 
       for (const execution of executions) {
         if (!execution.executionArn) continue;
 
         try {
-          const stopCommand = new StopExecutionCommand({
-            executionArn: execution.executionArn,
-            error: "BudgetAlertTriggered",
-            cause: "Daily budget exceeded - emergency stop triggered",
-          });
-
-          await sfnClient.send(stopCommand);
+          await sfnClient.send(
+            new StopExecutionCommand({
+              executionArn: execution.executionArn,
+              error: "BudgetAlertTriggered",
+              cause: "Daily budget exceeded - emergency stop triggered",
+            }),
+          );
 
           console.info(
             createLogEntry("execution_stopped", {
@@ -304,8 +265,7 @@ async function stopRunningExecutions(
             success: true,
           });
         } catch (error) {
-          const errorMessage =
-            error instanceof Error ? error.message : String(error);
+          const errorMessage = String(error);
 
           console.error(
             createLogEntry("execution_stop_failed", {
@@ -330,12 +290,6 @@ async function stopRunningExecutions(
   return results;
 }
 
-/**
- * Performs the emergency stop operation:
- * 1. Discovers resources from the prepare stack
- * 2. Disables all SQS event source mappings
- * 3. Stops all running state machine executions
- */
 async function emergencyStop(stackName: string): Promise<EmergencyStopSummary> {
   console.info(
     createLogEntry("emergency_stop_started", {
@@ -345,11 +299,9 @@ async function emergencyStop(stackName: string): Promise<EmergencyStopSummary> {
 
   const errors: string[] = [];
 
-  // Discover resources
   const { lambdaFunctionArns, stateMachineArns } =
     await discoverStackResources(stackName);
 
-  // Disable event source mappings
   const disableResults = await disableEventSourceMappings(lambdaFunctionArns);
   const disabledCount = disableResults.filter((r) => r.success).length;
   const disableFailedCount = disableResults.filter((r) => !r.success).length;
@@ -360,7 +312,6 @@ async function emergencyStop(stackName: string): Promise<EmergencyStopSummary> {
     }
   }
 
-  // Stop running executions
   const stopResults = await stopRunningExecutions(stateMachineArns);
   const stoppedCount = stopResults.filter((r) => r.success).length;
   const stopFailedCount = stopResults.filter((r) => !r.success).length;
@@ -391,13 +342,6 @@ async function emergencyStop(stackName: string): Promise<EmergencyStopSummary> {
   return summary;
 }
 
-/**
- * Main handler for SNS events from AWS Budget alerts.
- * Triggered when daily spending exceeds the configured threshold.
- *
- * Emergency stop is performed only once per invocation, regardless of
- * the number of SNS records in the event.
- */
 export const handler: SNSHandler = async (event: SNSEvent): Promise<void> => {
   console.info(
     createLogEntry("budget_alert_received", {
@@ -405,7 +349,6 @@ export const handler: SNSHandler = async (event: SNSEvent): Promise<void> => {
     }),
   );
 
-  // Log all SNS records first
   for (const record of event.Records) {
     const { Sns } = record;
 
@@ -437,7 +380,6 @@ export const handler: SNSHandler = async (event: SNSEvent): Promise<void> => {
     }
   }
 
-  // Perform emergency stop once if prepare stack name is configured
   const prepareStackName = process.env.PREPARE_STACK_NAME;
 
   if (prepareStackName) {
@@ -450,13 +392,10 @@ export const handler: SNSHandler = async (event: SNSEvent): Promise<void> => {
         }),
       );
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : String(error);
-
       console.error(
         createLogEntry("emergency_stop_failed", {
           stackName: prepareStackName,
-          error: errorMessage,
+          error: String(error),
         }),
       );
 
