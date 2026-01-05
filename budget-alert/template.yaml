@@ -13,10 +13,15 @@ Parameters:
     Type: Number
     Default: 30
 
+  PrepareStackName:
+    Description: Name of the prepare stack to control (disable SQS triggers and stop executions)
+    Type: String
+    Default: ""
+
 Globals:
   Function:
-    Timeout: 60
-    MemorySize: 128
+    Timeout: 300
+    MemorySize: 256
     LoggingConfig:
       LogFormat: JSON
 
@@ -77,8 +82,41 @@ Resources:
       Handler: index.handler
       CodeUri: lambdas/budget-handler
       Description: "Handles AWS Budget alerts when daily spending exceeds threshold"
+      Environment:
+        Variables:
+          PREPARE_STACK_NAME: !Ref PrepareStackName
       Policies:
         - AWSLambdaBasicExecutionRole
+        - Version: "2012-10-17"
+          Statement:
+            # CloudFormation permissions to discover stack resources
+            - Effect: Allow
+              Action:
+                - cloudformation:DescribeStackResources
+                - cloudformation:ListStackResources
+              Resource: !Sub "arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${PrepareStackName}/*"
+            # Lambda permissions to list and disable event source mappings
+            - Effect: Allow
+              Action:
+                - lambda:ListEventSourceMappings
+              Resource: "*"
+            - Effect: Allow
+              Action:
+                - lambda:UpdateEventSourceMapping
+                - lambda:GetEventSourceMapping
+              Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:event-source-mapping:*"
+            # Step Functions permissions to list and stop executions
+            - Effect: Allow
+              Action:
+                - states:ListStateMachines
+              Resource: "*"
+            - Effect: Allow
+              Action:
+                - states:ListExecutions
+                - states:StopExecution
+              Resource:
+                - !Sub "arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:${PrepareStackName}-*"
+                - !Sub "arn:aws:states:${AWS::Region}:${AWS::AccountId}:execution:${PrepareStackName}-*:*"
       Events:
         BudgetAlert:
           Type: SNS
