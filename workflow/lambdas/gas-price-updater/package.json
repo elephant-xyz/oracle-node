@@ -12,6 +12,7 @@
   "license": "ISC",
   "dependencies": {
     "@aws-sdk/client-dynamodb": "^3.0.0",
+    "@aws-sdk/lib-dynamodb": "^3.0.0",
     "@elephant-xyz/cli": "^1.57.0"
   },
   "devDependencies": {

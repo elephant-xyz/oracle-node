@@ -6,7 +6,13 @@
  */
 
 import { checkGasPrice } from "@elephant-xyz/cli/lib";
-import { DynamoDBClient, PutItemCommand } from "@aws-sdk/client-dynamodb";
+import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
+import { DynamoDBDocumentClient, PutCommand } from "@aws-sdk/lib-dynamodb";
+
+const dynamodbClient = new DynamoDBClient({
+  region: process.env.AWS_REGION,
+});
+const dynamodb = DynamoDBDocumentClient.from(dynamodbClient);
 
 const getLogBase = () => ({
   component: "gas-price-updater",
@@ -85,15 +91,13 @@ export const handler = async () => {
     );
 
     // Update DynamoDB with current gas price
-    const dynamodb = new DynamoDBClient({});
-
     await dynamodb.send(
-      new PutItemCommand({
+      new PutCommand({
         TableName: tableName,
         Item: {
-          PK: { S: "CURRENT" },
-          gasPrice: { N: String(currentGasPriceGwei) },
-          updatedAt: { S: updatedAt },
+          PK: "CURRENT",
+          gasPrice: currentGasPriceGwei,
+          updatedAt: updatedAt,
         },
       }),
     );
