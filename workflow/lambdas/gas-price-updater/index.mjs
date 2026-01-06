@@ -62,13 +62,11 @@ export const handler = async () => {
     const gasPriceInfo = await checkGasPrice({ rpcUrl });
 
     // Use EIP-1559 maxFeePerGas if available, otherwise fall back to legacy gasPrice
-    // Note: checkGasPrice returns values already in Gwei (may be string or number)
     const rawGasPrice =
       gasPriceInfo.eip1559?.maxFeePerGas ??
       gasPriceInfo.legacy?.gasPrice ??
       null;
 
-    // Ensure gasPrice is always a number
     const currentGasPriceGwei =
       rawGasPrice !== null ? Number(rawGasPrice) : null;
 

@@ -35,7 +35,6 @@ describe("gas-price-updater handler", () => {
 
   describe("Successful gas price updates", () => {
     it("should fetch gas price and update DynamoDB item", async () => {
-      // CLI returns values in Gwei directly
       mockCheckGasPrice.mockResolvedValue({
         eip1559: { maxFeePerGas: 25 },
         legacy: { gasPrice: 25 },
@@ -113,7 +112,6 @@ describe("gas-price-updater handler", () => {
     });
 
     it("should convert string gas prices to numbers", async () => {
-      // CLI may return gas prices as strings per type definitions
       mockCheckGasPrice.mockResolvedValue({
         eip1559: { maxFeePerGas: "30.5" },
         legacy: { gasPrice: "30.5" },
@@ -129,7 +127,6 @@ describe("gas-price-updater handler", () => {
       expect(result.gasPrice).toBe(30.5);
       expect(typeof result.gasPrice).toBe("number");
 
-      // Verify DynamoDB receives the number as a string (N type)
       const putCall = dynamoMock.calls()[0];
       expect(putCall.args[0].input.Item.gasPrice.N).toBe("30.5");
     });
@@ -368,7 +365,7 @@ describe("gas-price-updater handler", () => {
       expect(item).toHaveProperty("gasPrice");
       expect(item).toHaveProperty("updatedAt");
       expect(item.PK.S).toBe("CURRENT");
-      expect(typeof item.gasPrice.N).toBe("string"); // DynamoDB N type is string
+      expect(typeof item.gasPrice.N).toBe("string");
       expect(typeof item.updatedAt.S).toBe("string");
 
       // Verify updatedAt is a valid ISO date string
@@ -392,8 +389,6 @@ describe("gas-price-updater handler", () => {
       const putCall = dynamoMock.calls()[0];
       const item = putCall.args[0].input.Item;
 
-      // DynamoDB should only store PK, gasPrice, and updatedAt
-      // Step Function compares against GasPriceMaxGwei threshold directly
       expect(item).not.toHaveProperty("maxGasPrice");
       expect(item).not.toHaveProperty("isAcceptable");
     });
