@@ -383,7 +383,7 @@ async function stopRunningExecutions(
             success: true,
           });
         } catch (error) {
-          const errorMessage = String(error);
+          const errorMessage = extractErrorMessage(error);
 
           console.error(
             createLogEntry("execution_stop_failed", {
@@ -513,7 +513,7 @@ export const handler: SNSHandler = async (event: SNSEvent): Promise<void> => {
       console.error(
         createLogEntry("emergency_stop_failed", {
           stackName: prepareStackName,
-          error: String(error),
+          error: extractErrorMessage(error),
         }),
       );
 

@@ -70,6 +70,11 @@ WORKFLOW_EVENTS_TEMPLATE="workflow-events/template.yaml"
 DEPLOY_WORKFLOW_EVENTS="${DEPLOY_WORKFLOW_EVENTS:-true}"
 NO_BUILD="${NO_BUILD:-false}"
 
+BUDGET_ALERT_STACK_NAME="${BUDGET_ALERT_STACK_NAME:-budget-alert-stack}"
+BUDGET_ALERT_TEMPLATE="budget-alert/template.yaml"
+DEPLOY_BUDGET_ALERT="${DEPLOY_BUDGET_ALERT:-true}"
+DAILY_BUDGET_AMOUNT="${DAILY_BUDGET_AMOUNT:-30}"
+
 mkdir -p "$BUILD_DIR"
 
 check_prereqs() {
@@ -1019,6 +1024,58 @@ deploy_workflow_events_stack() {
   info "Workflow-events stack deployed successfully"
 }
 
+deploy_budget_alert_stack() {
+  if [[ "$DEPLOY_BUDGET_ALERT" != "true" ]]; then
+    info "DEPLOY_BUDGET_ALERT flag not set (default: true), skipping budget-alert stack deployment"
+    return 0
+  fi
+
+  if [[ ! -f "$BUDGET_ALERT_TEMPLATE" ]]; then
+    warn "Budget alert template not found at $BUDGET_ALERT_TEMPLATE, skipping deployment."
+    return 0
+  fi
+
+  info "Building and deploying budget-alert stack ($BUDGET_ALERT_STACK_NAME)"
+
+  # Build the budget-alert stack with beta features for TypeScript support
+  if [[ "$NO_BUILD" != "true" ]]; then
+    sam build \
+      --template-file "$BUDGET_ALERT_TEMPLATE" \
+      --beta-features \
+      --build-dir ".aws-sam/budget-alert" || {
+      err "Failed to build budget-alert stack"
+      return 1
+    }
+  else
+    info "Skipping budget-alert build (--no-build flag set)"
+    # Verify pre-built template exists
+    if [[ ! -f ".aws-sam/budget-alert/template.yaml" ]]; then
+      err "Pre-built budget-alert template not found at .aws-sam/budget-alert/template.yaml"
+      err "Run without --no-build flag first to create the build artifacts"
+      return 1
+    fi
+  fi
+
+  # Deploy the budget-alert stack
+  sam deploy \
+    --template-file ".aws-sam/budget-alert/template.yaml" \
+    --stack-name "$BUDGET_ALERT_STACK_NAME" \
+    --capabilities CAPABILITY_IAM \
+    --resolve-s3 \
+    --beta-features \
+    --no-confirm-changeset \
+    --no-fail-on-empty-changeset \
+    --parameter-overrides \
+      "EnvironmentName=$ENVIRONMENT_NAME" \
+      "DailyBudgetAmount=$DAILY_BUDGET_AMOUNT" \
+      "PrepareStackName=$STACK_NAME" || {
+    err "Failed to deploy budget-alert stack"
+    return 1
+  }
+
+  info "Budget-alert stack deployed successfully"
+}
+
 # Note: MVL Lambda Docker image is now built and pushed automatically by SAM
 # during sam_build and sam_deploy using --resolve-image-repos
 # No manual push needed anymore
@@ -1294,6 +1351,8 @@ main() {
 
   # Deploy workflow-events stack (separate independent stack)
   deploy_workflow_events_stack
+  # Deploy budget-alert stack (separate independent stack)
+  deploy_budget_alert_stack
   # Clean up old dashboards before deploying new CloudFormation-managed one
   cleanup_old_dashboards
 
