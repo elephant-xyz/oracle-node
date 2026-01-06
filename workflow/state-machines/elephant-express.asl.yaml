@@ -835,27 +835,35 @@ States:
             step: Submit
             dataGroupLabel: County
     ResultPath: $.eventResult
-    Next: GetGasPriceFromSSM
+    Next: InitializeGasPriceRetry
     Catch:
       - ErrorEquals: [States.ALL]
         ResultPath: $.eventError
-        Next: GetGasPriceFromSSM
+        Next: InitializeGasPriceRetry
 
-  # === GAS PRICE CHECK STEP (SSM-based, no Lambda polling) ===
+  # === GAS PRICE CHECK STEP (DynamoDB-based, no Lambda polling) ===
   # Gas price is updated every 5 minutes by GasPriceUpdater cron job Lambda
-  # Step Function reads SSM directly and uses Choice state to decide
-  # Time-based retry: 5 min during 17:00-05:00 UTC, 1 hour during 05:00-17:00 UTC
+  # Step Function reads DynamoDB directly and uses Choice state to decide
+  # Progressive exponential backoff: min(2^retryCount * 60, 43200) seconds (max 12 hours)
 
-  GetGasPriceFromSSM:
+  InitializeGasPriceRetry:
+    Type: Pass
+    Comment: "Initialize gas price retry counter to 0"
+    Result: 0
+    ResultPath: $.gasPriceRetryCount
+    Next: GetGasPriceFromDynamoDB
+
+  GetGasPriceFromDynamoDB:
     Type: Task
-    Resource: arn:aws:states:::aws-sdk:ssm:getParameter
-    Comment: "Read current gas price from SSM Parameter (updated by cron job)"
+    Resource: arn:aws:states:::dynamodb:getItem
+    Comment: "Read current gas price from DynamoDB (updated by cron job)"
     Parameters:
-      Name: ${GasPriceParameterName}
-    ResultSelector:
-      value.$: States.StringToJson($.Parameter.Value)
-    ResultPath: $.gasPriceResult
-    Next: CheckGasPriceChoice
+      TableName: ${GasPriceTableName}
+      Key:
+        PK:
+          S: "CURRENT"
+    ResultPath: $.dynamoResult
+    Next: ParseGasPriceResult
     Retry:
       - ErrorEquals: [States.ALL]
         IntervalSeconds: 5
@@ -864,39 +872,59 @@ States:
     Catch:
       - ErrorEquals: [States.ALL]
         ResultPath: $.gasPriceError
-        Next: DetermineGasPriceWaitInterval
+        Next: CalculateGasPriceWait
+
+  ParseGasPriceResult:
+    Type: Pass
+    QueryLanguage: JSONata
+    Comment: "Convert DynamoDB response format to usable values (N type returns string)"
+    Output: >-
+      {%
+        $merge([$states.input, {
+          "gasPriceResult": {
+            "value": {
+              "gasPrice": $number($states.input.dynamoResult.Item.gasPrice.N),
+              "updatedAt": $states.input.dynamoResult.Item.updatedAt.S
+            }
+          }
+        }])
+      %}
+    Next: CheckGasPriceChoice
 
   CheckGasPriceChoice:
     Type: Choice
-    Comment: "Compare gas price from SSM against configured max threshold (${GasPriceMaxGwei} Gwei)"
+    Comment: "Compare gas price from DynamoDB against configured max threshold (${GasPriceMaxGwei} Gwei)"
     Choices:
       # If gasPrice <= maxGwei, proceed to submit
       - Variable: $.gasPriceResult.value.gasPrice
         NumericLessThanEquals: ${GasPriceMaxGwei}
         Next: EmitSubmitToBlockchainScheduled
-    Default: DetermineGasPriceWaitInterval
+    Default: CalculateGasPriceWait
 
-  DetermineGasPriceWaitInterval:
+  CalculateGasPriceWait:
     Type: Pass
     QueryLanguage: JSONata
-    Comment: "Determine wait interval based on UTC hour: 5 min (300s) for 17:00-05:00 UTC, 1 hour (3600s) for 05:00-17:00 UTC"
+    Comment: "Calculate exponential backoff wait time: min(2^retryCount * 60, 43200) seconds (max 12 hours)"
     Output: >-
       {%
         (
-          $rawHour := $number($substring($now(), 11, 2));
-          $hour := $type($rawHour) = 'number' ? $rawHour : 12;
-          $isOffPeak := $hour >= 17 or $hour < 5;
-          $waitSeconds := $isOffPeak ? 300 : 3600;
-          $merge([$states.input, { "gasPriceWaitSeconds": $waitSeconds }])
+          $baseInterval := 60;
+          $maxInterval := 43200;
+          $calculated := $power(2, $states.input.gasPriceRetryCount) * $baseInterval;
+          $waitSeconds := $min([$calculated, $maxInterval]);
+          $merge([$states.input, {
+            "gasPriceRetryCount": $states.input.gasPriceRetryCount + 1,
+            "gasPriceWaitSeconds": $waitSeconds
+          }])
         )
       %}
     Next: WaitForGasPrice
 
   WaitForGasPrice:
     Type: Wait
-    Comment: "Wait based on time of day before checking gas price again"
+    Comment: "Wait with exponential backoff before checking gas price again"
     SecondsPath: $.gasPriceWaitSeconds
-    Next: GetGasPriceFromSSM
+    Next: GetGasPriceFromDynamoDB
 
   # === SUBMIT TO BLOCKCHAIN STEP ===
 

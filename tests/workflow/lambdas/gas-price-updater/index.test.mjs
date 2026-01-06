@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mockClient } from "aws-sdk-client-mock";
-import { SSMClient, PutParameterCommand } from "@aws-sdk/client-ssm";
+import { DynamoDBClient, PutItemCommand } from "@aws-sdk/client-dynamodb";
 
-const ssmMock = mockClient(SSMClient);
+const dynamoMock = mockClient(DynamoDBClient);
 
 // Mock @elephant-xyz/cli/lib
 const mockCheckGasPrice = vi.fn();
@@ -15,13 +15,13 @@ describe("gas-price-updater handler", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    ssmMock.reset();
+    dynamoMock.reset();
     mockCheckGasPrice.mockClear();
 
     process.env = {
       ...originalEnv,
       ELEPHANT_RPC_URL: "https://rpc.example.com",
-      GAS_PRICE_PARAMETER_NAME: "/test-stack/gas-price/current",
+      GAS_PRICE_TABLE_NAME: "test-stack-GasPrice",
     };
 
     vi.spyOn(console, "log").mockImplementation(() => {});
@@ -34,14 +34,14 @@ describe("gas-price-updater handler", () => {
   });
 
   describe("Successful gas price updates", () => {
-    it("should fetch gas price and update SSM parameter", async () => {
+    it("should fetch gas price and update DynamoDB item", async () => {
       // CLI returns values in Gwei directly
       mockCheckGasPrice.mockResolvedValue({
         eip1559: { maxFeePerGas: 25 },
         legacy: { gasPrice: 25 },
       });
 
-      ssmMock.on(PutParameterCommand).resolves({});
+      dynamoMock.on(PutItemCommand).resolves({});
 
       const { handler } =
         await import("../../../../workflow/lambdas/gas-price-updater/index.mjs");
@@ -52,16 +52,12 @@ describe("gas-price-updater handler", () => {
         rpcUrl: "https://rpc.example.com",
       });
 
-      expect(ssmMock.calls()).toHaveLength(1);
-      const putCall = ssmMock.calls()[0];
-      expect(putCall.args[0].input.Name).toBe("/test-stack/gas-price/current");
-      expect(putCall.args[0].input.Type).toBe("String");
-      expect(putCall.args[0].input.Overwrite).toBe(true);
-
-      // Parse the stored value to verify structure
-      const storedValue = JSON.parse(putCall.args[0].input.Value);
-      expect(storedValue.gasPrice).toBe(25);
-      expect(storedValue.updatedAt).toBeDefined();
+      expect(dynamoMock.calls()).toHaveLength(1);
+      const putCall = dynamoMock.calls()[0];
+      expect(putCall.args[0].input.TableName).toBe("test-stack-GasPrice");
+      expect(putCall.args[0].input.Item.PK.S).toBe("CURRENT");
+      expect(putCall.args[0].input.Item.gasPrice.N).toBe("25");
+      expect(putCall.args[0].input.Item.updatedAt.S).toBeDefined();
 
       expect(result.gasPrice).toBe(25);
       expect(result.updatedAt).toBeDefined();
@@ -73,7 +69,7 @@ describe("gas-price-updater handler", () => {
         legacy: { gasPrice: 20 },
       });
 
-      ssmMock.on(PutParameterCommand).resolves({});
+      dynamoMock.on(PutItemCommand).resolves({});
 
       const { handler } =
         await import("../../../../workflow/lambdas/gas-price-updater/index.mjs");
@@ -89,7 +85,7 @@ describe("gas-price-updater handler", () => {
         legacy: { gasPrice: 20 },
       });
 
-      ssmMock.on(PutParameterCommand).resolves({});
+      dynamoMock.on(PutItemCommand).resolves({});
 
       const { handler } =
         await import("../../../../workflow/lambdas/gas-price-updater/index.mjs");
@@ -106,7 +102,7 @@ describe("gas-price-updater handler", () => {
         legacy: { gasPrice: 25.5 },
       });
 
-      ssmMock.on(PutParameterCommand).resolves({});
+      dynamoMock.on(PutItemCommand).resolves({});
 
       const { handler } =
         await import("../../../../workflow/lambdas/gas-price-updater/index.mjs");
@@ -123,7 +119,7 @@ describe("gas-price-updater handler", () => {
         legacy: { gasPrice: "30.5" },
       });
 
-      ssmMock.on(PutParameterCommand).resolves({});
+      dynamoMock.on(PutItemCommand).resolves({});
 
       const { handler } =
         await import("../../../../workflow/lambdas/gas-price-updater/index.mjs");
@@ -133,10 +129,9 @@ describe("gas-price-updater handler", () => {
       expect(result.gasPrice).toBe(30.5);
       expect(typeof result.gasPrice).toBe("number");
 
-      // Verify SSM also receives a number
-      const putCall = ssmMock.calls()[0];
-      const storedValue = JSON.parse(putCall.args[0].input.Value);
-      expect(typeof storedValue.gasPrice).toBe("number");
+      // Verify DynamoDB receives the number as a string (N type)
+      const putCall = dynamoMock.calls()[0];
+      expect(putCall.args[0].input.Item.gasPrice.N).toBe("30.5");
     });
 
     it("should handle very low gas prices", async () => {
@@ -145,7 +140,7 @@ describe("gas-price-updater handler", () => {
         legacy: { gasPrice: 1 },
       });
 
-      ssmMock.on(PutParameterCommand).resolves({});
+      dynamoMock.on(PutItemCommand).resolves({});
 
       const { handler } =
         await import("../../../../workflow/lambdas/gas-price-updater/index.mjs");
@@ -161,7 +156,7 @@ describe("gas-price-updater handler", () => {
         legacy: { gasPrice: 500 },
       });
 
-      ssmMock.on(PutParameterCommand).resolves({});
+      dynamoMock.on(PutItemCommand).resolves({});
 
       const { handler } =
         await import("../../../../workflow/lambdas/gas-price-updater/index.mjs");
@@ -184,14 +179,14 @@ describe("gas-price-updater handler", () => {
       );
     });
 
-    it("should fail when SSM Parameter name is missing", async () => {
-      delete process.env.GAS_PRICE_PARAMETER_NAME;
+    it("should fail when DynamoDB table name is missing", async () => {
+      delete process.env.GAS_PRICE_TABLE_NAME;
 
       const { handler } =
         await import("../../../../workflow/lambdas/gas-price-updater/index.mjs");
 
       await expect(handler()).rejects.toThrow(
-        "SSM Parameter name is required (GAS_PRICE_PARAMETER_NAME env var)",
+        "DynamoDB table name is required (GAS_PRICE_TABLE_NAME env var)",
       );
     });
   });
@@ -217,20 +212,20 @@ describe("gas-price-updater handler", () => {
       );
     });
 
-    it("should fail when SSM PutParameter fails", async () => {
+    it("should fail when DynamoDB PutItem fails", async () => {
       mockCheckGasPrice.mockResolvedValue({
         eip1559: { maxFeePerGas: 25 },
         legacy: { gasPrice: 25 },
       });
 
-      ssmMock
-        .on(PutParameterCommand)
-        .rejects(new Error("SSM service unavailable"));
+      dynamoMock
+        .on(PutItemCommand)
+        .rejects(new Error("DynamoDB service unavailable"));
 
       const { handler } =
         await import("../../../../workflow/lambdas/gas-price-updater/index.mjs");
 
-      await expect(handler()).rejects.toThrow("SSM service unavailable");
+      await expect(handler()).rejects.toThrow("DynamoDB service unavailable");
     });
 
     it("should fail when eip1559 is null and legacy is null", async () => {
@@ -271,7 +266,7 @@ describe("gas-price-updater handler", () => {
         legacy: { gasPrice: 25 },
       });
 
-      ssmMock.on(PutParameterCommand).resolves({});
+      dynamoMock.on(PutItemCommand).resolves({});
 
       const { handler } =
         await import("../../../../workflow/lambdas/gas-price-updater/index.mjs");
@@ -297,7 +292,7 @@ describe("gas-price-updater handler", () => {
       expect(parsedLog.gasPriceGwei).toBe(25);
     });
 
-    it("should log SSM parameter update", async () => {
+    it("should log DynamoDB item update", async () => {
       const consoleLogSpy = vi.spyOn(console, "log");
 
       mockCheckGasPrice.mockResolvedValue({
@@ -305,7 +300,7 @@ describe("gas-price-updater handler", () => {
         legacy: { gasPrice: 25 },
       });
 
-      ssmMock.on(PutParameterCommand).resolves({});
+      dynamoMock.on(PutItemCommand).resolves({});
 
       const { handler } =
         await import("../../../../workflow/lambdas/gas-price-updater/index.mjs");
@@ -316,7 +311,7 @@ describe("gas-price-updater handler", () => {
       const updatedLog = logCalls.find((call) => {
         try {
           const parsed = JSON.parse(call[0]);
-          return parsed.msg === "ssm_parameter_updated";
+          return parsed.msg === "dynamodb_item_updated";
         } catch {
           return false;
         }
@@ -324,7 +319,7 @@ describe("gas-price-updater handler", () => {
 
       expect(updatedLog).toBeDefined();
       const parsedLog = JSON.parse(updatedLog[0]);
-      expect(parsedLog.parameterName).toBe("/test-stack/gas-price/current");
+      expect(parsedLog.tableName).toBe("test-stack-GasPrice");
       expect(parsedLog.gasPriceGwei).toBe(25);
     });
 
@@ -352,31 +347,33 @@ describe("gas-price-updater handler", () => {
     });
   });
 
-  describe("SSM Parameter structure", () => {
+  describe("DynamoDB item structure", () => {
     it("should store gas price with correct structure", async () => {
       mockCheckGasPrice.mockResolvedValue({
         eip1559: { maxFeePerGas: 25 },
         legacy: { gasPrice: 25 },
       });
 
-      ssmMock.on(PutParameterCommand).resolves({});
+      dynamoMock.on(PutItemCommand).resolves({});
 
       const { handler } =
         await import("../../../../workflow/lambdas/gas-price-updater/index.mjs");
 
       await handler();
 
-      const putCall = ssmMock.calls()[0];
-      const storedValue = JSON.parse(putCall.args[0].input.Value);
+      const putCall = dynamoMock.calls()[0];
+      const item = putCall.args[0].input.Item;
 
-      expect(storedValue).toHaveProperty("gasPrice");
-      expect(storedValue).toHaveProperty("updatedAt");
-      expect(typeof storedValue.gasPrice).toBe("number");
-      expect(typeof storedValue.updatedAt).toBe("string");
+      expect(item).toHaveProperty("PK");
+      expect(item).toHaveProperty("gasPrice");
+      expect(item).toHaveProperty("updatedAt");
+      expect(item.PK.S).toBe("CURRENT");
+      expect(typeof item.gasPrice.N).toBe("string"); // DynamoDB N type is string
+      expect(typeof item.updatedAt.S).toBe("string");
 
       // Verify updatedAt is a valid ISO date string
-      const date = new Date(storedValue.updatedAt);
-      expect(date.toISOString()).toBe(storedValue.updatedAt);
+      const date = new Date(item.updatedAt.S);
+      expect(date.toISOString()).toBe(item.updatedAt.S);
     });
 
     it("should not include maxGasPrice or isAcceptable in stored value", async () => {
@@ -385,20 +382,20 @@ describe("gas-price-updater handler", () => {
         legacy: { gasPrice: 25 },
       });
 
-      ssmMock.on(PutParameterCommand).resolves({});
+      dynamoMock.on(PutItemCommand).resolves({});
 
       const { handler } =
         await import("../../../../workflow/lambdas/gas-price-updater/index.mjs");
 
       await handler();
 
-      const putCall = ssmMock.calls()[0];
-      const storedValue = JSON.parse(putCall.args[0].input.Value);
+      const putCall = dynamoMock.calls()[0];
+      const item = putCall.args[0].input.Item;
 
-      // SSM should only store gas price and updatedAt
+      // DynamoDB should only store PK, gasPrice, and updatedAt
       // Step Function compares against GasPriceMaxGwei threshold directly
-      expect(storedValue).not.toHaveProperty("maxGasPrice");
-      expect(storedValue).not.toHaveProperty("isAcceptable");
+      expect(item).not.toHaveProperty("maxGasPrice");
+      expect(item).not.toHaveProperty("isAcceptable");
     });
   });
 });

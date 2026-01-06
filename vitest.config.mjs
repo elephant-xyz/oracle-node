@@ -70,6 +70,14 @@ export default defineConfig({
           "node_modules/@aws-sdk/client-cloudformation",
         ),
       },
+      // Ensure @elephant-xyz/cli/lib mocking works correctly across workspace packages
+      {
+        find: "@elephant-xyz/cli/lib",
+        replacement: path.resolve(
+          __dirname,
+          "node_modules/@elephant-xyz/cli/lib",
+        ),
+      },
       // Resolve 'shared/*.js' imports for workflow-events lambdas (import from "shared/types.js" etc.)
       // Maps .js extension to .ts source files for test resolution
       // Must come before exact 'shared' match to handle subpath imports first

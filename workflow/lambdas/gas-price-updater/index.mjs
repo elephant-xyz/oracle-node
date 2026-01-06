@@ -1,12 +1,12 @@
 /**
- * Gas Price Updater Lambda: Cron job that updates current gas price to SSM Parameter Store
+ * Gas Price Updater Lambda: Cron job that updates current gas price to DynamoDB
  *
- * Runs every 5 minutes to fetch the current gas price from RPC and store it in SSM.
- * Step Functions read this SSM parameter directly to decide whether to proceed with submission.
+ * Runs every 5 minutes to fetch the current gas price from RPC and store it in DynamoDB.
+ * Step Functions read this DynamoDB item directly to decide whether to proceed with submission.
  */
 
 import { checkGasPrice } from "@elephant-xyz/cli/lib";
-import { SSMClient, PutParameterCommand } from "@aws-sdk/client-ssm";
+import { DynamoDBClient, PutItemCommand } from "@aws-sdk/client-dynamodb";
 
 const getLogBase = () => ({
   component: "gas-price-updater",
@@ -14,12 +14,12 @@ const getLogBase = () => ({
 });
 
 /**
- * Lambda handler - updates SSM with current gas price from RPC
+ * Lambda handler - updates DynamoDB with current gas price from RPC
  * @returns {Promise<{gasPrice: number, updatedAt: string}>}
  */
 export const handler = async () => {
   const rpcUrl = process.env.ELEPHANT_RPC_URL;
-  const parameterName = process.env.GAS_PRICE_PARAMETER_NAME;
+  const tableName = process.env.GAS_PRICE_TABLE_NAME;
 
   if (!rpcUrl) {
     const error = "RPC URL is required (ELEPHANT_RPC_URL env var)";
@@ -34,9 +34,9 @@ export const handler = async () => {
     throw new Error(error);
   }
 
-  if (!parameterName) {
+  if (!tableName) {
     const error =
-      "SSM Parameter name is required (GAS_PRICE_PARAMETER_NAME env var)";
+      "DynamoDB table name is required (GAS_PRICE_TABLE_NAME env var)";
     console.error(
       JSON.stringify({
         ...getLogBase(),
@@ -86,19 +86,17 @@ export const handler = async () => {
       }),
     );
 
-    // Update SSM Parameter with current gas price
-    const ssm = new SSMClient({});
-    const parameterValue = JSON.stringify({
-      gasPrice: currentGasPriceGwei,
-      updatedAt: updatedAt,
-    });
+    // Update DynamoDB with current gas price
+    const dynamodb = new DynamoDBClient({});
 
-    await ssm.send(
-      new PutParameterCommand({
-        Name: parameterName,
-        Value: parameterValue,
-        Type: "String",
-        Overwrite: true,
+    await dynamodb.send(
+      new PutItemCommand({
+        TableName: tableName,
+        Item: {
+          PK: { S: "CURRENT" },
+          gasPrice: { N: String(currentGasPriceGwei) },
+          updatedAt: { S: updatedAt },
+        },
       }),
     );
 
@@ -106,8 +104,8 @@ export const handler = async () => {
       JSON.stringify({
         ...getLogBase(),
         level: "info",
-        msg: "ssm_parameter_updated",
-        parameterName: parameterName,
+        msg: "dynamodb_item_updated",
+        tableName: tableName,
         gasPriceGwei: currentGasPriceGwei,
         updatedAt: updatedAt,
       }),
