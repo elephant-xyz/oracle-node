@@ -1271,7 +1271,7 @@ States:
                 details:
                   cause: "{% $states.input.transactionStatusError.Cause %}"
     Output: "{% $merge([$states.input, { 'resolutionResult': $states.result }]) %}"
-    Next: GetGasPriceFromSSM
+    Next: GetGasPriceFromDynamoDB
     Catch:
       - ErrorEquals: [States.ALL]
         Comment: "Resolution failed - stay parked and wait again"
@@ -1360,11 +1360,11 @@ States:
                 details:
                   cause: "{% $states.input.transactionStatusError.Cause %}"
     Output: "{% $merge([$states.input, { 'eventResult': $states.result }]) %}"
-    Next: GetGasPriceFromSSM
+    Next: GetGasPriceFromDynamoDB
     Catch:
       - ErrorEquals: [States.ALL]
         Output: "{% $merge([$states.input, { 'eventError': $states.errorOutput }]) %}"
-        Next: GetGasPriceFromSSM
+        Next: GetGasPriceFromDynamoDB
 
   EmitTransactionStatusCheckSucceeded:
     Type: Task
