@@ -78,6 +78,129 @@ const createLogEntry = (
   });
 };
 
+/**
+ * Extracts a robust error message from an error object.
+ * If the error is an Error instance, includes message and stack trace.
+ * Otherwise, uses JSON.stringify for serialization.
+ *
+ * @param error - The error to extract a message from
+ * @returns A string representation of the error with full details
+ */
+const extractErrorMessage = (error: unknown): string => {
+  if (error instanceof Error) {
+    const parts: string[] = [error.message];
+    if (error.stack) {
+      parts.push(`\nStack: ${error.stack}`);
+    }
+    // Include error name if it's not the default "Error"
+    if (error.name && error.name !== "Error") {
+      parts.unshift(`[${error.name}]`);
+    }
+    return parts.join(" ");
+  }
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
+};
+
+/**
+ * Determines if an error is a throttling/rate limit error that should be retried.
+ *
+ * @param error - The error to check
+ * @returns True if the error is a throttling error
+ */
+const isThrottlingError = (error: unknown): boolean => {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  const errorName = error.name || "";
+  const errorMessage = error.message || "";
+
+  return (
+    errorName === "ThrottlingException" ||
+    errorName === "TooManyRequestsException" ||
+    errorName === "TooManyRequests" ||
+    errorMessage.includes("Rate exceeded") ||
+    errorMessage.includes("throttl") ||
+    errorMessage.includes("429")
+  );
+};
+
+/**
+ * Sleeps for the specified number of milliseconds.
+ *
+ * @param ms - Milliseconds to sleep
+ * @returns Promise that resolves after the delay
+ */
+const sleep = (ms: number): Promise<void> => {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+};
+
+/**
+ * Retry configuration for event source mapping operations.
+ */
+const RETRY_CONFIG = {
+  maxAttempts: 3,
+  initialDelayMs: 1000,
+  maxDelayMs: 8000,
+  backoffMultiplier: 2,
+};
+
+/**
+ * Disables an event source mapping with retry logic for throttling errors.
+ * Uses exponential backoff to retry on transient throttling failures.
+ *
+ * @param uuid - The UUID of the event source mapping to disable
+ * @returns Promise that resolves when the mapping is disabled
+ * @throws Error if all retry attempts fail or a non-retryable error occurs
+ */
+const disableEventSourceMappingWithRetry = async (
+  uuid: string,
+): Promise<void> => {
+  let lastError: unknown;
+  let delayMs = RETRY_CONFIG.initialDelayMs;
+
+  for (let attempt = 0; attempt < RETRY_CONFIG.maxAttempts; attempt++) {
+    try {
+      await lambdaClient.send(
+        new UpdateEventSourceMappingCommand({
+          UUID: uuid,
+          Enabled: false,
+        }),
+      );
+      return; // Success, exit retry loop
+    } catch (error) {
+      lastError = error;
+
+      // Only retry on throttling errors
+      if (isThrottlingError(error) && attempt < RETRY_CONFIG.maxAttempts - 1) {
+        const actualDelay = Math.min(delayMs, RETRY_CONFIG.maxDelayMs);
+        console.warn(
+          createLogEntry("event_source_mapping_disable_retry", {
+            uuid,
+            attempt: attempt + 1,
+            maxAttempts: RETRY_CONFIG.maxAttempts,
+            delayMs: actualDelay,
+            error: extractErrorMessage(error),
+          }),
+        );
+        await sleep(actualDelay);
+        delayMs *= RETRY_CONFIG.backoffMultiplier;
+        continue;
+      }
+
+      // Non-retryable error or max attempts reached, throw
+      throw error;
+    }
+  }
+
+  // This should never be reached, but TypeScript needs it
+  throw lastError;
+};
+
 const parseBudgetMessage = (message: string): BudgetAlertMessage | null => {
   try {
     return JSON.parse(message);
@@ -171,12 +294,7 @@ async function disableEventSourceMappings(
           !shouldSkip
         ) {
           try {
-            await lambdaClient.send(
-              new UpdateEventSourceMappingCommand({
-                UUID: mapping.UUID,
-                Enabled: false,
-              }),
-            );
+            await disableEventSourceMappingWithRetry(mapping.UUID);
 
             console.info(
               createLogEntry("event_source_mapping_disabled", {
@@ -193,7 +311,7 @@ async function disableEventSourceMappings(
               success: true,
             });
           } catch (error) {
-            const errorMessage = String(error);
+            const errorMessage = extractErrorMessage(error);
 
             console.error(
               createLogEntry("event_source_mapping_disable_failed", {
