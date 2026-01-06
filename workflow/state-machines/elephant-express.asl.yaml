@@ -877,16 +877,23 @@ States:
   ParseGasPriceResult:
     Type: Pass
     QueryLanguage: JSONata
-    Comment: "Convert DynamoDB response format to usable values (N type returns string)"
+    Comment: "Convert DynamoDB response format to usable values (N type returns string)."
     Output: >-
       {%
         $merge([$states.input, {
-          "gasPriceResult": {
-            "value": {
-              "gasPrice": $number($states.input.dynamoResult.Item.gasPrice.N),
-              "updatedAt": $states.input.dynamoResult.Item.updatedAt.S
-            }
-          }
+          "gasPriceResult": $exists($states.input.dynamoResult.Item)
+            ? {
+                "value": {
+                  "gasPrice": $number($states.input.dynamoResult.Item.gasPrice.N),
+                  "updatedAt": $states.input.dynamoResult.Item.updatedAt.S
+                }
+              }
+            : {
+                "value": {
+                  "gasPrice": 999999,
+                  "updatedAt": 999999
+                }
+              }
         }])
       %}
     Next: CheckGasPriceChoice
