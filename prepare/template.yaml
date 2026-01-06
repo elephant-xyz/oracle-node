@@ -641,20 +641,27 @@ Resources:
           Value: !Ref EnvironmentName
 
   #####################################################################################################################
+  # DynamoDB Table for Gas Price (updated by cron job, read by Step Function)
+  #####################################################################################################################
+
+  GasPriceTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "${AWS::StackName}-GasPrice"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: PK
+          AttributeType: S
+      KeySchema:
+        - AttributeName: PK
+          KeyType: HASH
+      Tags:
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  #####################################################################################################################
   # Workflow Lambdas (starter -> pre -> prepare -> post)
   #####################################################################################################################
-
-  #####################################################################################################################
-  # Gas Price SSM Parameter (updated by cron job, read by Step Function)
-  #####################################################################################################################
-
-  GasPriceParameter:
-    Type: AWS::SSM::Parameter
-    Properties:
-      Name: !Sub "/${AWS::StackName}/gas-price/current"
-      Type: String
-      Value: '{"gasPrice":0,"updatedAt":""}'
-      Description: Current gas price updated by cron job Lambda, read by Step Function
 
   #####################################################################################################################
   # Gas Price Updater Lambda (Cron Job - every 5 minutes)
@@ -670,7 +677,7 @@ Resources:
       Timeout: 300
       CodeUri: ../workflow/lambdas/gas-price-updater/
       Handler: index.handler
-      Description: "Cron job that updates current gas price to SSM Parameter Store every 5 minutes"
+      Description: "Cron job that updates current gas price to DynamoDB every 5 minutes"
       LoggingConfig:
         LogFormat: JSON
       Policies:
@@ -679,19 +686,19 @@ Resources:
           Statement:
             - Effect: Allow
               Action:
-                - ssm:PutParameter
+                - dynamodb:PutItem
               Resource:
-                - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${AWS::StackName}/gas-price/*"
+                - !GetAtt GasPriceTable.Arn
       Environment:
         Variables:
           ELEPHANT_RPC_URL: !Ref ElephantRpcUrl
-          GAS_PRICE_PARAMETER_NAME: !Sub "/${AWS::StackName}/gas-price/current"
+          GAS_PRICE_TABLE_NAME: !Ref GasPriceTable
       Events:
         GasPriceUpdateSchedule:
           Type: Schedule
           Properties:
             Name: !Sub "${AWS::StackName}-gas-price-updater"
-            Description: "Update gas price to SSM every 5 minutes"
+            Description: "Update gas price to DynamoDB every 5 minutes"
             Schedule: rate(5 minutes)
             Enabled: true
 
@@ -1247,7 +1254,7 @@ Resources:
         HashQueueUrl: !Ref HashQueue
         UploadQueueUrl: !Ref UploadQueue
         StackName: !Ref AWS::StackName
-        GasPriceParameterName: !Sub "/${AWS::StackName}/gas-price/current"
+        GasPriceTableName: !Ref GasPriceTable
         GasPriceMaxGwei: !Ref GasPriceMaxGwei
       Role: !GetAtt ElephantExpressStateMachineRole.Arn
       Logging:
@@ -1359,7 +1366,11 @@ Resources:
                   - ssm:GetParameter
                 Resource:
                   - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${AWS::StackName}/repair/*"
-                  - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${AWS::StackName}/gas-price/*"
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                Resource:
+                  - !GetAtt GasPriceTable.Arn
               - Effect: Allow
                 Action:
                   - s3:GetObject
@@ -2061,6 +2072,12 @@ Outputs:
   ErrorsTableName:
     Description: Name of the Errors DynamoDB table
     Value: !Ref ErrorsTable
+  GasPriceTableName:
+    Description: Name of the Gas Price DynamoDB table
+    Value: !Ref GasPriceTable
+  GasPriceTableArn:
+    Description: ARN of the Gas Price DynamoDB table
+    Value: !GetAtt GasPriceTable.Arn
   GitHubSyncFunctionName:
     Description: Name of the GitHub Sync Lambda function
     Value: !Ref GitHubSyncFunction
