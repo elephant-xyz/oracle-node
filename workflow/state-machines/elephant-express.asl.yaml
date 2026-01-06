@@ -911,11 +911,11 @@ States:
   CalculateGasPriceWait:
     Type: Pass
     QueryLanguage: JSONata
-    Comment: "Calculate exponential backoff wait time: min(2^retryCount * 60, 43200) seconds (max 12 hours)"
+    Comment: "Calculate exponential backoff wait time: min(2^retryCount * 300, 43200) seconds (max 12 hours)"
     Output: >-
       {%
         (
-          $baseInterval := 60;
+          $baseInterval := 300;
           $maxInterval := 43200;
           $calculated := $power(2, $states.input.gasPriceRetryCount) * $baseInterval;
           $waitSeconds := $min([$calculated, $maxInterval]);
@@ -1360,11 +1360,11 @@ States:
                 details:
                   cause: "{% $states.input.transactionStatusError.Cause %}"
     Output: "{% $merge([$states.input, { 'eventResult': $states.result }]) %}"
-    Next: GetGasPriceFromDynamoDB
+    Next: InitializeGasPriceRetry
     Catch:
       - ErrorEquals: [States.ALL]
         Output: "{% $merge([$states.input, { 'eventError': $states.errorOutput }]) %}"
-        Next: GetGasPriceFromDynamoDB
+        Next: InitializeGasPriceRetry
 
   EmitTransactionStatusCheckSucceeded:
     Type: Task
