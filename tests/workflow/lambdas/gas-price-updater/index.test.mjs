@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mockClient } from "aws-sdk-client-mock";
-import { DynamoDBClient, PutItemCommand } from "@aws-sdk/client-dynamodb";
+import { DynamoDBDocumentClient, PutCommand } from "@aws-sdk/lib-dynamodb";
 
-const dynamoMock = mockClient(DynamoDBClient);
+const dynamoMock = mockClient(DynamoDBDocumentClient);
 
 // Mock @elephant-xyz/cli/lib
 const mockCheckGasPrice = vi.fn();
@@ -40,7 +40,7 @@ describe("gas-price-updater handler", () => {
         legacy: { gasPrice: 25 },
       });
 
-      dynamoMock.on(PutItemCommand).resolves({});
+      dynamoMock.on(PutCommand).resolves({});
 
       const { handler } =
         await import("../../../../workflow/lambdas/gas-price-updater/index.mjs");
@@ -54,9 +54,9 @@ describe("gas-price-updater handler", () => {
       expect(dynamoMock.calls()).toHaveLength(1);
       const putCall = dynamoMock.calls()[0];
       expect(putCall.args[0].input.TableName).toBe("test-stack-GasPrice");
-      expect(putCall.args[0].input.Item.PK.S).toBe("CURRENT");
-      expect(putCall.args[0].input.Item.gasPrice.N).toBe("25");
-      expect(putCall.args[0].input.Item.updatedAt.S).toBeDefined();
+      expect(putCall.args[0].input.Item.PK).toBe("CURRENT");
+      expect(putCall.args[0].input.Item.gasPrice).toBe(25);
+      expect(putCall.args[0].input.Item.updatedAt).toBeDefined();
 
       expect(result.gasPrice).toBe(25);
       expect(result.updatedAt).toBeDefined();
@@ -68,7 +68,7 @@ describe("gas-price-updater handler", () => {
         legacy: { gasPrice: 20 },
       });
 
-      dynamoMock.on(PutItemCommand).resolves({});
+      dynamoMock.on(PutCommand).resolves({});
 
       const { handler } =
         await import("../../../../workflow/lambdas/gas-price-updater/index.mjs");
@@ -84,7 +84,7 @@ describe("gas-price-updater handler", () => {
         legacy: { gasPrice: 20 },
       });
 
-      dynamoMock.on(PutItemCommand).resolves({});
+      dynamoMock.on(PutCommand).resolves({});
 
       const { handler } =
         await import("../../../../workflow/lambdas/gas-price-updater/index.mjs");
@@ -101,7 +101,7 @@ describe("gas-price-updater handler", () => {
         legacy: { gasPrice: 25.5 },
       });
 
-      dynamoMock.on(PutItemCommand).resolves({});
+      dynamoMock.on(PutCommand).resolves({});
 
       const { handler } =
         await import("../../../../workflow/lambdas/gas-price-updater/index.mjs");
@@ -117,7 +117,7 @@ describe("gas-price-updater handler", () => {
         legacy: { gasPrice: "30.5" },
       });
 
-      dynamoMock.on(PutItemCommand).resolves({});
+      dynamoMock.on(PutCommand).resolves({});
 
       const { handler } =
         await import("../../../../workflow/lambdas/gas-price-updater/index.mjs");
@@ -128,7 +128,7 @@ describe("gas-price-updater handler", () => {
       expect(typeof result.gasPrice).toBe("number");
 
       const putCall = dynamoMock.calls()[0];
-      expect(putCall.args[0].input.Item.gasPrice.N).toBe("30.5");
+      expect(putCall.args[0].input.Item.gasPrice).toBe(30.5);
     });
 
     it("should handle very low gas prices", async () => {
@@ -137,7 +137,7 @@ describe("gas-price-updater handler", () => {
         legacy: { gasPrice: 1 },
       });
 
-      dynamoMock.on(PutItemCommand).resolves({});
+      dynamoMock.on(PutCommand).resolves({});
 
       const { handler } =
         await import("../../../../workflow/lambdas/gas-price-updater/index.mjs");
@@ -153,7 +153,7 @@ describe("gas-price-updater handler", () => {
         legacy: { gasPrice: 500 },
       });
 
-      dynamoMock.on(PutItemCommand).resolves({});
+      dynamoMock.on(PutCommand).resolves({});
 
       const { handler } =
         await import("../../../../workflow/lambdas/gas-price-updater/index.mjs");
@@ -216,7 +216,7 @@ describe("gas-price-updater handler", () => {
       });
 
       dynamoMock
-        .on(PutItemCommand)
+        .on(PutCommand)
         .rejects(new Error("DynamoDB service unavailable"));
 
       const { handler } =
@@ -263,7 +263,7 @@ describe("gas-price-updater handler", () => {
         legacy: { gasPrice: 25 },
       });
 
-      dynamoMock.on(PutItemCommand).resolves({});
+      dynamoMock.on(PutCommand).resolves({});
 
       const { handler } =
         await import("../../../../workflow/lambdas/gas-price-updater/index.mjs");
@@ -297,7 +297,7 @@ describe("gas-price-updater handler", () => {
         legacy: { gasPrice: 25 },
       });
 
-      dynamoMock.on(PutItemCommand).resolves({});
+      dynamoMock.on(PutCommand).resolves({});
 
       const { handler } =
         await import("../../../../workflow/lambdas/gas-price-updater/index.mjs");
@@ -351,7 +351,7 @@ describe("gas-price-updater handler", () => {
         legacy: { gasPrice: 25 },
       });
 
-      dynamoMock.on(PutItemCommand).resolves({});
+      dynamoMock.on(PutCommand).resolves({});
 
       const { handler } =
         await import("../../../../workflow/lambdas/gas-price-updater/index.mjs");
@@ -364,13 +364,13 @@ describe("gas-price-updater handler", () => {
       expect(item).toHaveProperty("PK");
       expect(item).toHaveProperty("gasPrice");
       expect(item).toHaveProperty("updatedAt");
-      expect(item.PK.S).toBe("CURRENT");
-      expect(typeof item.gasPrice.N).toBe("string");
-      expect(typeof item.updatedAt.S).toBe("string");
+      expect(item.PK).toBe("CURRENT");
+      expect(typeof item.gasPrice).toBe("number");
+      expect(typeof item.updatedAt).toBe("string");
 
       // Verify updatedAt is a valid ISO date string
-      const date = new Date(item.updatedAt.S);
-      expect(date.toISOString()).toBe(item.updatedAt.S);
+      const date = new Date(item.updatedAt);
+      expect(date.toISOString()).toBe(item.updatedAt);
     });
 
     it("should not include maxGasPrice or isAcceptable in stored value", async () => {
@@ -379,7 +379,7 @@ describe("gas-price-updater handler", () => {
         legacy: { gasPrice: 25 },
       });
 
-      dynamoMock.on(PutItemCommand).resolves({});
+      dynamoMock.on(PutCommand).resolves({});
 
       const { handler } =
         await import("../../../../workflow/lambdas/gas-price-updater/index.mjs");
