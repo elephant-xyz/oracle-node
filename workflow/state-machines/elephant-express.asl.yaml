@@ -1,6 +1,33 @@
 Comment: Elephant Express workflow. Triggered by Starter Lambda with one SQS message payload.
-StartAt: CheckDirectSubmit
+StartAt: ValidateWorkflowBranch
 States:
+  ValidateWorkflowBranch:
+    Type: Choice
+    Comment: "Validate Workflow Branch before starting workflow work"
+    Choices:
+      - Variable: $.workflowBranch
+        IsPresent: false
+        Next: DefaultWorkflowBranch
+      - Variable: $.workflowBranch
+        StringEquals: structured_archive
+        Next: CheckDirectSubmit
+      - Variable: $.workflowBranch
+        StringEquals: minting
+        Next: CheckDirectSubmit
+    Default: InvalidWorkflowBranch
+
+  DefaultWorkflowBranch:
+    Type: Pass
+    QueryLanguage: JSONata
+    Comment: "Default omitted Workflow Branch to Structured Archive"
+    Output: "{% $merge([$states.input, { 'workflowBranch': 'structured_archive' }]) %}"
+    Next: CheckDirectSubmit
+
+  InvalidWorkflowBranch:
+    Type: Fail
+    Error: InvalidWorkflowBranch
+    Cause: "workflowBranch must be structured_archive or minting"
+
   CheckDirectSubmit:
     Type: Choice
     Comment: "Check if this is a direct-submit execution (transactionItems provided in message)"
@@ -130,7 +157,8 @@ States:
             "expectedOutputUri": $states.input.pre.output_prefix & '/output.zip'
           },
           "message": $states.input.message,
-          "pre": $states.input.pre
+          "pre": $states.input.pre,
+          "workflowBranch": $states.input.workflowBranch
         }
       %}
     Next: HeadOutputZip
@@ -403,11 +431,42 @@ States:
             step: Transform
             dataGroupLabel: County
     ResultPath: $.eventResult
-    Next: EmitSvlScheduled
+    Next: ChoosePostTransformBranch
     Catch:
       - ErrorEquals: [States.ALL]
         ResultPath: $.eventError
+        Next: ChoosePostTransformBranch
+
+  ChoosePostTransformBranch:
+    Type: Choice
+    Comment: "Choose Structured Archive by default, or Minting when explicitly requested"
+    Choices:
+      - Variable: $.workflowBranch
+        StringEquals: minting
         Next: EmitSvlScheduled
+    Default: EmitStructuredArchiveSucceeded
+
+  EmitStructuredArchiveSucceeded:
+    Type: Task
+    Resource: arn:aws:states:::events:putEvents
+    Comment: "Emit SUCCEEDED event for Structured Archive branch"
+    Parameters:
+      Entries:
+        - Source: elephant.workflow
+          DetailType: WorkflowEvent
+          Detail:
+            executionId.$: $$.Execution.Name
+            county.$: $.pre.county_name
+            status: SUCCEEDED
+            phase: StructuredArchive
+            step: StructuredArchive
+            dataGroupLabel: County
+    ResultPath: $.eventResult
+    Next: WorkflowComplete
+    Catch:
+      - ErrorEquals: [States.ALL]
+        ResultPath: $.eventError
+        Next: WorkflowComplete
 
   WaitForTransformResolution:
     Type: Task

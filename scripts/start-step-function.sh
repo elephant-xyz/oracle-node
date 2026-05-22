@@ -25,6 +25,9 @@ Options:
     --express          Directly invoke ElephantExpressWorkflow (bypasses S3ToSqsStateMachine)
     --queue <name>     Send message to specific queue (default: elephant-workflow-queue)
                        Can be queue name (e.g., elephant-workflow-queue-escambia) or URL
+    --workflow-branch <branch>
+                       Workflow branch to run: structured_archive or minting
+                       Defaults to omitted, which the workflow treats as structured_archive
     --help             Show this help message
 
 Environment Variables:
@@ -40,9 +43,21 @@ Examples:
     # Start ElephantExpressWorkflow directly with specific S3 object
     $0 --express my-data-bucket source-data/county-data.json
 
+    # Explicitly run the Minting branch
+    $0 --workflow-branch minting --express my-data-bucket source-data/county-data.json
+
     # Start ElephantExpressWorkflow with auto-generated S3 object key
     $0 --express my-data-bucket
 EOF
+}
+
+validate_workflow_branch() {
+    local workflow_branch="$1"
+    if [[ -n "$workflow_branch" && "$workflow_branch" != "structured_archive" && "$workflow_branch" != "minting" ]]; then
+        err "Invalid workflow branch: $workflow_branch"
+        err "Workflow branch must be one of: structured_archive, minting"
+        exit 1
+    fi
 }
 
 # Check prerequisites
@@ -114,6 +129,7 @@ start_execution() {
     local bucket_name="$1"
     local step_function_arn="$2"
     local sqs_queue_url="$3"
+    local workflow_branch="$4"
     
     # Generate unique execution name with timestamp and bucket name
     local timestamp=$(date +%Y%m%d-%H%M%S)
@@ -126,10 +142,18 @@ start_execution() {
 
     # Create execution input
     local input_payload
-    input_payload=$(jq -n \
-        --arg bucket "$bucket_name" \
-        --arg sqs_url "$sqs_queue_url" \
-        '{bucketName: $bucket, sqsQueueUrl: $sqs_url}')
+    if [[ -n "$workflow_branch" ]]; then
+        input_payload=$(jq -n \
+            --arg bucket "$bucket_name" \
+            --arg sqs_url "$sqs_queue_url" \
+            --arg workflow_branch "$workflow_branch" \
+            '{bucketName: $bucket, sqsQueueUrl: $sqs_url, workflowBranch: $workflow_branch}')
+    else
+        input_payload=$(jq -n \
+            --arg bucket "$bucket_name" \
+            --arg sqs_url "$sqs_queue_url" \
+            '{bucketName: $bucket, sqsQueueUrl: $sqs_url}')
+    fi
 
     # Start execution
     local execution_arn
@@ -172,6 +196,7 @@ start_express_workflow() {
     local bucket_name="$1"
     local s3_object_key="$2"
     local express_workflow_arn="$3"
+    local workflow_branch="$4"
     
     # Generate unique execution name with timestamp and bucket name
     local timestamp=$(date +%Y%m%d-%H%M%S)
@@ -184,17 +209,33 @@ start_express_workflow() {
 
     # Create S3 event record format for the workflow
     local input_payload
-    input_payload=$(jq -n \
-        --arg bucket "$bucket_name" \
-        --arg key "$s3_object_key" \
-        '{
-            Records: [{
-                s3: {
-                    bucket: { name: $bucket },
-                    object: { key: $key }
-                }
-            }]
-        }')
+    if [[ -n "$workflow_branch" ]]; then
+        input_payload=$(jq -n \
+            --arg bucket "$bucket_name" \
+            --arg key "$s3_object_key" \
+            --arg workflow_branch "$workflow_branch" \
+            '{
+                workflowBranch: $workflow_branch,
+                Records: [{
+                    s3: {
+                        bucket: { name: $bucket },
+                        object: { key: $key }
+                    }
+                }]
+            }')
+    else
+        input_payload=$(jq -n \
+            --arg bucket "$bucket_name" \
+            --arg key "$s3_object_key" \
+            '{
+                Records: [{
+                    s3: {
+                        bucket: { name: $bucket },
+                        object: { key: $key }
+                    }
+                }]
+            }')
+    fi
 
     # Start execution
     local execution_arn
@@ -236,6 +277,7 @@ start_express_workflow() {
     local bucket_name="$1"
     local s3_object_key="$2"
     local express_workflow_arn="$3"
+    local workflow_branch="$4"
     
     info "Directly invoking ElephantExpressWorkflow"
     info "S3 Bucket: $bucket_name"
@@ -249,17 +291,33 @@ start_express_workflow() {
 
     # Create S3 event record format for the workflow
     local input_payload
-    input_payload=$(jq -n \
-        --arg bucket "$bucket_name" \
-        --arg key "$s3_object_key" \
-        '{
-            Records: [{
-                s3: {
-                    bucket: { name: $bucket },
-                    object: { key: $key }
-                }
-            }]
-        }')
+    if [[ -n "$workflow_branch" ]]; then
+        input_payload=$(jq -n \
+            --arg bucket "$bucket_name" \
+            --arg key "$s3_object_key" \
+            --arg workflow_branch "$workflow_branch" \
+            '{
+                workflowBranch: $workflow_branch,
+                Records: [{
+                    s3: {
+                        bucket: { name: $bucket },
+                        object: { key: $key }
+                    }
+                }]
+            }')
+    else
+        input_payload=$(jq -n \
+            --arg bucket "$bucket_name" \
+            --arg key "$s3_object_key" \
+            '{
+                Records: [{
+                    s3: {
+                        bucket: { name: $bucket },
+                        object: { key: $key }
+                    }
+                }]
+            }')
+    fi
 
     info "Starting Express Step Function execution: $execution_name"
 
@@ -288,6 +346,7 @@ main() {
     local queue_name=""
     local bucket_name=""
     local s3_object_key=""
+    local workflow_branch=""
 
     # Parse command line arguments
     while [[ $# -gt 0 ]]; do
@@ -304,6 +363,16 @@ main() {
                     exit 1
                 fi
                 queue_name="$2"
+                shift 2
+                ;;
+            --workflow-branch)
+                if [[ -z "$2" || "$2" =~ ^-- ]]; then
+                    err "--workflow-branch requires a branch value"
+                    usage
+                    exit 1
+                fi
+                workflow_branch="$2"
+                validate_workflow_branch "$workflow_branch"
                 shift 2
                 ;;
             --help)
@@ -336,6 +405,8 @@ main() {
         usage
         exit 1
     fi
+
+    validate_workflow_branch "$workflow_branch"
 
     # Set default S3 object key if not provided
     if [[ -z "$s3_object_key" ]]; then
@@ -372,7 +443,7 @@ main() {
             exit 1
         fi
         info "Express mode: Directly invoking ElephantExpressWorkflow"
-        start_express_workflow "$bucket_name" "$s3_object_key" "$express_workflow_arn"
+        start_express_workflow "$bucket_name" "$s3_object_key" "$express_workflow_arn" "$workflow_branch"
     else
         # Determine target queue
         local sqs_queue_url
@@ -398,7 +469,7 @@ main() {
         fi
 
         info "Starting S3ToSqsStateMachine -> $sqs_queue_url"
-        start_execution "$bucket_name" "$step_function_arn" "$sqs_queue_url"
+        start_execution "$bucket_name" "$step_function_arn" "$sqs_queue_url" "$workflow_branch"
     fi
 }
 
