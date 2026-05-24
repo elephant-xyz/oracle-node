@@ -79,6 +79,19 @@ describe("Elephant Express workflow branch selection", () => {
     });
   });
 
+  it("falls through to the post-transform branch when EmitTransformSucceeded errors", async () => {
+    const definition = await loadStateMachine();
+
+    expect(definition.States.EmitTransformSucceeded.Catch).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          ErrorEquals: ["States.ALL"],
+          Next: "ChoosePostTransformBranch",
+        }),
+      ]),
+    );
+  });
+
   it("routes explicit Minting executions to the existing SVL path", async () => {
     const definition = await loadStateMachine();
 
