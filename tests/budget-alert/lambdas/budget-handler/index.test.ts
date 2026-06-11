@@ -101,6 +101,7 @@ describe("budget-handler", () => {
     process.env = {
       ...originalEnv,
       PREPARE_STACK_NAME: TEST_STACK_NAME,
+      EMERGENCY_STOP_ENABLED: "true",
     };
     vi.spyOn(console, "log").mockImplementation(() => {});
     vi.spyOn(console, "info").mockImplementation(() => {});
@@ -189,6 +190,24 @@ describe("budget-handler", () => {
       await expect(handler(event)).resolves.toBeUndefined();
 
       expect(cfnMock).not.toHaveReceivedCommand(ListStackResourcesCommand);
+      expect(console.warn).toHaveBeenCalled();
+    });
+
+    it("should skip emergency stop when EMERGENCY_STOP_ENABLED is not true", async () => {
+      process.env.EMERGENCY_STOP_ENABLED = "false";
+
+      const { handler } =
+        await import("../../../../budget-alert/lambdas/budget-handler/index.js");
+
+      const event = createMockSNSEvent(createBudgetAlertMessage());
+
+      await expect(handler(event)).resolves.toBeUndefined();
+
+      expect(cfnMock).not.toHaveReceivedCommand(ListStackResourcesCommand);
+      expect(lambdaMock).not.toHaveReceivedCommand(
+        UpdateEventSourceMappingCommand,
+      );
+      expect(sfnMock).not.toHaveReceivedCommand(ListExecutionsCommand);
       expect(console.warn).toHaveBeenCalled();
     });
   });

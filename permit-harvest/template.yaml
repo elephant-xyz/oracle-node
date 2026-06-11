@@ -1,0 +1,251 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Separate low-concurrency permit harvest queue and worker for oracle-node
+
+Parameters:
+  EnvironmentName:
+    Description: Environment tag value
+    Type: String
+    Default: MWAAEnvironment
+  EnvironmentBucketName:
+    Description: Existing oracle-node environment bucket for raw and extracted harvest artifacts
+    Type: String
+  SourceSeedBucketName:
+    Description: S3 bucket containing county seed CSV inputs used by the property-first feeder
+    Type: String
+    Default: counties-seeds
+  WorkerCodeS3Bucket:
+    Description: S3 bucket containing the packaged permit harvest worker zip
+    Type: String
+  WorkerCodeS3Key:
+    Description: S3 key containing the packaged permit harvest worker zip
+    Type: String
+  PermitHarvestQueueName:
+    Description: Name for the separate permit harvest SQS queue
+    Type: String
+    Default: elephant-oracle-node-permit-harvest-queue
+  PropertyFirstPermitQueueName:
+    Description: Name for the property-first permit harvest SQS queue
+    Type: String
+    Default: elephant-oracle-node-property-first-permit-queue
+  PermitHarvestReservedConcurrency:
+    Description: Reserved concurrency for all permit-harvest Lambda event sources; keep low because county portals are slow
+    Type: Number
+    Default: 15
+  PermitHarvestMaximumConcurrency:
+    Description: Max concurrent Lambda invocations from the legacy countywide permit-harvest queue
+    Type: Number
+    Default: 2
+  PropertyFirstPermitMaximumConcurrency:
+    Description: Max concurrent Lambda invocations from the property-first permit queue
+    Type: Number
+    Default: 10
+  PermitHarvestOutputPrefix:
+    Description: S3 URI prefix for raw and extracted permit harvest artifacts
+    Type: String
+  QueryDatabaseUrlSecretArn:
+    Description: Optional AWS Secrets Manager secret ARN containing Neon DATABASE_URL for property-first incremental loads
+    Type: String
+    Default: ""
+  WorkflowQueueArn:
+    Description: Optional oracle-node workflow SQS queue ARN; enables the seed feeder to enqueue appraisal workflows
+    Type: String
+    Default: ""
+  LeePrepareQueueArn:
+    Description: Optional Lee prepare SQS queue ARN for seed-feeder backpressure checks
+    Type: String
+    Default: ""
+  TransformQueueArn:
+    Description: Optional transform SQS queue ARN for seed-feeder backpressure checks
+    Type: String
+    Default: ""
+
+Conditions:
+  HasQueryDatabaseSecret: !Not [!Equals [!Ref QueryDatabaseUrlSecretArn, ""]]
+  HasWorkflowQueueArn: !Not [!Equals [!Ref WorkflowQueueArn, ""]]
+  HasLeePrepareQueueArn: !Not [!Equals [!Ref LeePrepareQueueArn, ""]]
+  HasTransformQueueArn: !Not [!Equals [!Ref TransformQueueArn, ""]]
+
+Resources:
+  PermitHarvestDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      MessageRetentionPeriod: 1209600
+      VisibilityTimeout: 900
+      SqsManagedSseEnabled: true
+      Tags:
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  PermitHarvestQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Ref PermitHarvestQueueName
+      VisibilityTimeout: 5400
+      MessageRetentionPeriod: 1209600
+      SqsManagedSseEnabled: true
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt PermitHarvestDeadLetterQueue.Arn
+        maxReceiveCount: 5
+      Tags:
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  PropertyFirstPermitQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Ref PropertyFirstPermitQueueName
+      VisibilityTimeout: 5400
+      MessageRetentionPeriod: 1209600
+      SqsManagedSseEnabled: true
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt PermitHarvestDeadLetterQueue.Arn
+        maxReceiveCount: 5
+      Tags:
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  PermitHarvestWorkerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: PermitHarvestWorkerAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:HeadObject
+                  - s3:PutObject
+                Resource: !Sub "arn:${AWS::Partition}:s3:::${EnvironmentBucketName}/*"
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:HeadObject
+                Resource: !Sub "arn:${AWS::Partition}:s3:::${SourceSeedBucketName}/*"
+              - Effect: Allow
+                Action:
+                  - s3:ListBucket
+                Resource: !Sub "arn:${AWS::Partition}:s3:::${EnvironmentBucketName}"
+              - Effect: Allow
+                Action:
+                  - sqs:ReceiveMessage
+                  - sqs:DeleteMessage
+                  - sqs:GetQueueAttributes
+                  - sqs:ChangeMessageVisibility
+                  - sqs:SendMessage
+                Resource:
+                  - !GetAtt PermitHarvestQueue.Arn
+                  - !GetAtt PropertyFirstPermitQueue.Arn
+              - !If
+                - HasWorkflowQueueArn
+                - Effect: Allow
+                  Action:
+                    - sqs:SendMessage
+                    - sqs:GetQueueAttributes
+                  Resource: !Ref WorkflowQueueArn
+                - !Ref AWS::NoValue
+              - !If
+                - HasLeePrepareQueueArn
+                - Effect: Allow
+                  Action:
+                    - sqs:GetQueueAttributes
+                  Resource: !Ref LeePrepareQueueArn
+                - !Ref AWS::NoValue
+              - !If
+                - HasTransformQueueArn
+                - Effect: Allow
+                  Action:
+                    - sqs:GetQueueAttributes
+                  Resource: !Ref TransformQueueArn
+                - !Ref AWS::NoValue
+              - !If
+                - HasQueryDatabaseSecret
+                - Effect: Allow
+                  Action:
+                    - secretsmanager:GetSecretValue
+                  Resource: !Ref QueryDatabaseUrlSecretArn
+                - !Ref AWS::NoValue
+
+  PermitHarvestWorkerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Runtime: nodejs22.x
+      Handler: index.handler
+      Role: !GetAtt PermitHarvestWorkerRole.Arn
+      Code:
+        S3Bucket: !Ref WorkerCodeS3Bucket
+        S3Key: !Ref WorkerCodeS3Key
+      MemorySize: 4096
+      Timeout: 900
+      EphemeralStorage:
+        Size: 4096
+      ReservedConcurrentExecutions: !Ref PermitHarvestReservedConcurrency
+      Environment:
+        Variables:
+          PERMIT_HARVEST_QUEUE_URL: !Ref PermitHarvestQueue
+          PERMIT_HARVEST_OUTPUT_PREFIX: !Ref PermitHarvestOutputPrefix
+          QUERY_DB_DATABASE_URL_SECRET_ARN: !Ref QueryDatabaseUrlSecretArn
+      Tags:
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  PermitHarvestWorkerEventSourceMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      EventSourceArn: !GetAtt PermitHarvestQueue.Arn
+      FunctionName: !Ref PermitHarvestWorkerFunction
+      BatchSize: 1
+      MaximumBatchingWindowInSeconds: 0
+      ScalingConfig:
+        MaximumConcurrency: !Ref PermitHarvestMaximumConcurrency
+      Enabled: false
+
+  PropertyFirstPermitWorkerEventSourceMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      EventSourceArn: !GetAtt PropertyFirstPermitQueue.Arn
+      FunctionName: !Ref PermitHarvestWorkerFunction
+      BatchSize: 1
+      MaximumBatchingWindowInSeconds: 0
+      ScalingConfig:
+        MaximumConcurrency: !Ref PropertyFirstPermitMaximumConcurrency
+      Enabled: true
+
+Outputs:
+  PermitHarvestQueueUrl:
+    Description: URL of the separate permit harvest SQS queue
+    Value: !Ref PermitHarvestQueue
+  PermitHarvestQueueArn:
+    Description: ARN of the separate permit harvest SQS queue
+    Value: !GetAtt PermitHarvestQueue.Arn
+  PropertyFirstPermitQueueUrl:
+    Description: URL of the property-first permit harvest SQS queue
+    Value: !Ref PropertyFirstPermitQueue
+  PropertyFirstPermitQueueArn:
+    Description: ARN of the property-first permit harvest SQS queue
+    Value: !GetAtt PropertyFirstPermitQueue.Arn
+  PermitHarvestDeadLetterQueueUrl:
+    Description: URL of the permit harvest dead-letter queue
+    Value: !Ref PermitHarvestDeadLetterQueue
+  PermitHarvestDeadLetterQueueArn:
+    Description: ARN of the permit harvest dead-letter queue
+    Value: !GetAtt PermitHarvestDeadLetterQueue.Arn
+  PermitHarvestWorkerFunctionName:
+    Description: Name of the permit harvest worker Lambda function
+    Value: !Ref PermitHarvestWorkerFunction
+  PermitHarvestWorkerFunctionArn:
+    Description: ARN of the permit harvest worker Lambda function
+    Value: !GetAtt PermitHarvestWorkerFunction.Arn
+  PermitHarvestOutputS3Prefix:
+    Description: S3 prefix for raw and extracted permit harvest artifacts
+    Value: !Ref PermitHarvestOutputPrefix

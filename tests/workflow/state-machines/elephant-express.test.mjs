@@ -102,6 +102,60 @@ describe("Elephant Express workflow branch selection", () => {
     });
   });
 
+  it("routes seeded property-first appraisal executions to the permit queue after transform", async () => {
+    const definition = await loadStateMachine();
+
+    expect(definition.States.ChoosePostTransformBranch.Choices).toContainEqual({
+      Variable: "$.message.propertyFirstPermitQueueUrl",
+      IsPresent: true,
+      Next: "ChoosePropertyFirstPermitEligibility",
+    });
+    expect(definition.States.Transform.ResultSelector).toMatchObject({
+      "propertyFirstPermitEligibility.$": "$.propertyFirstPermitEligibility",
+    });
+    expect(definition.States.ChoosePropertyFirstPermitEligibility).toMatchObject({
+      Type: "Choice",
+      Choices: [
+        {
+          Variable: "$.transform.propertyFirstPermitEligibility.shouldEnqueue",
+          BooleanEquals: true,
+          Next: "EmitPropertyFirstPermitScheduled",
+        },
+      ],
+      Default: "EmitPropertyFirstPermitSkipped",
+    });
+    expect(definition.States.EmitPropertyFirstPermitSkipped).toMatchObject({
+      Type: "Task",
+      Resource: "arn:aws:states:::events:putEvents",
+      Next: "EmitStructuredArchiveSucceeded",
+    });
+    expect(definition.States.Preprocess.ResultSelector).toMatchObject({
+      "parcel_identifier.$": "$.Payload.parcel_identifier",
+      "request_identifier.$": "$.Payload.request_identifier",
+      "best_permit_address.$": "$.Payload.best_permit_address",
+    });
+    expect(definition.States.EnqueuePropertyFirstPermit).toMatchObject({
+      Type: "Task",
+      Resource: "arn:aws:states:::sqs:sendMessage",
+      Parameters: {
+        "QueueUrl.$": "$.message.propertyFirstPermitQueueUrl",
+        MessageBody: {
+          type: "lee-property-first-permit-parcel",
+          version: 1,
+          "jobId.$": "$.message.propertyFirstPermitJobId",
+          "parcelIdentifier.$": "$.pre.parcel_identifier",
+          "requestIdentifier.$": "$.pre.request_identifier",
+          "appraisalOutputS3Uri.$": "$.transform.transformedOutputS3Uri",
+          "appraisalPreparedOutputS3Uri.$": "$.prepare.output_s3_uri",
+          "outputPrefix.$": "$.message.propertyFirstPermitOutputPrefix",
+          loadToNeon: true,
+          loadAppraisalToNeon: true,
+        },
+      },
+      Next: "EmitPropertyFirstPermitEnqueued",
+    });
+  });
+
   it("preserves the Workflow Branch when rebuilding state for prepare-skip checks", async () => {
     const definition = await loadStateMachine();
 

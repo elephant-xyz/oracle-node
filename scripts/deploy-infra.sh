@@ -1068,7 +1068,8 @@ deploy_budget_alert_stack() {
     --parameter-overrides \
       "EnvironmentName=$ENVIRONMENT_NAME" \
       "DailyBudgetAmount=$DAILY_BUDGET_AMOUNT" \
-      "PrepareStackName=$STACK_NAME" || {
+      "PrepareStackName=$STACK_NAME" \
+      "EmergencyStopEnabled=false" || {
     err "Failed to deploy budget-alert stack"
     return 1
   }

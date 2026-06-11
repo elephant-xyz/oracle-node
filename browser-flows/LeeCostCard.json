@@ -1,0 +1,26 @@
+{
+  "starts_at": "open_cost_card",
+  "states": {
+    "open_cost_card": {
+      "type": "open_page",
+      "input": {
+        "url": "{{=it.url}}?TaxYear=2025",
+        "timeout": 30000,
+        "wait_until": "domcontentloaded"
+      },
+      "next": "wait_for_body"
+    },
+    "wait_for_body": {
+      "type": "wait_for_selector",
+      "input": {
+        "selector": "body",
+        "timeout": 30000,
+        "visible": true
+      },
+      "end": true
+    }
+  },
+  "capture": {
+    "type": "page"
+  }
+}
