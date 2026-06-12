@@ -145,7 +145,9 @@ function parseNonNegativeInteger(optionName, rawValue, fallback) {
   if (rawValue === undefined) return fallback;
   const parsed = Number.parseInt(rawValue, 10);
   if (!Number.isFinite(parsed) || parsed < 0) {
-    throw new Error(`${optionName} must be a non-negative integer, received ${rawValue}`);
+    throw new Error(
+      `${optionName} must be a non-negative integer, received ${rawValue}`,
+    );
   }
   return parsed;
 }
@@ -162,7 +164,9 @@ function parsePositiveInteger(optionName, rawValue, fallback) {
   if (rawValue === undefined) return fallback;
   const parsed = Number.parseInt(rawValue, 10);
   if (!Number.isFinite(parsed) || parsed <= 0) {
-    throw new Error(`${optionName} must be a positive integer, received ${rawValue}`);
+    throw new Error(
+      `${optionName} must be a positive integer, received ${rawValue}`,
+    );
   }
   return parsed;
 }
@@ -203,20 +207,49 @@ function parseArgs(argv) {
   }
 
   return {
-    sourceCsvS3Uri: readOptionalString(values["source-csv-s3-uri"]) ?? DEFAULT_SOURCE_CSV_S3_URI,
+    sourceCsvS3Uri:
+      readOptionalString(values["source-csv-s3-uri"]) ??
+      DEFAULT_SOURCE_CSV_S3_URI,
     stackName: readOptionalString(values.stack) ?? DEFAULT_STACK_NAME,
-    permitStackName: readOptionalString(values["permit-stack"]) ?? DEFAULT_PERMIT_STACK_NAME,
+    permitStackName:
+      readOptionalString(values["permit-stack"]) ?? DEFAULT_PERMIT_STACK_NAME,
     workflowQueueUrl: readOptionalString(values["workflow-queue-url"]),
-    propertyFirstPermitQueueUrl: readOptionalString(values["property-first-permit-queue-url"]),
+    propertyFirstPermitQueueUrl: readOptionalString(
+      values["property-first-permit-queue-url"],
+    ),
     generatedSeedPrefix: readOptionalString(values["generated-seed-prefix"]),
-    workflowOutputBaseUri: readOptionalString(values["workflow-output-base-uri"]),
-    propertyFirstPermitOutputPrefix: readOptionalString(values["property-first-permit-output-prefix"]),
+    workflowOutputBaseUri: readOptionalString(
+      values["workflow-output-base-uri"],
+    ),
+    propertyFirstPermitOutputPrefix: readOptionalString(
+      values["property-first-permit-output-prefix"],
+    ),
     jobId: readOptionalString(values["job-id"]) ?? DEFAULT_JOB_ID,
-    limit: parseNonNegativeInteger("--limit", readOptionalString(values.limit), 1000),
-    offset: parseNonNegativeInteger("--offset", readOptionalString(values.offset), 0),
-    maxPages: parsePositiveInteger("--max-pages", readOptionalString(values["max-pages"]), 200),
-    sendDelayMs: parseNonNegativeInteger("--send-delay-ms", readOptionalString(values["send-delay-ms"]), 0),
-    concurrency: parsePositiveInteger("--concurrency", readOptionalString(values.concurrency), 1),
+    limit: parseNonNegativeInteger(
+      "--limit",
+      readOptionalString(values.limit),
+      1000,
+    ),
+    offset: parseNonNegativeInteger(
+      "--offset",
+      readOptionalString(values.offset),
+      0,
+    ),
+    maxPages: parsePositiveInteger(
+      "--max-pages",
+      readOptionalString(values["max-pages"]),
+      200,
+    ),
+    sendDelayMs: parseNonNegativeInteger(
+      "--send-delay-ms",
+      readOptionalString(values["send-delay-ms"]),
+      0,
+    ),
+    concurrency: parsePositiveInteger(
+      "--concurrency",
+      readOptionalString(values.concurrency),
+      1,
+    ),
     envFile: readOptionalString(values["env-file"]) ?? DEFAULT_ENV_FILE,
     skipExistingNeon: values.includeExistingNeon !== true,
     dryRun: values.dryRun === true,
@@ -262,12 +295,16 @@ async function getStackOutput(stackName, outputKey) {
  * @returns {Promise<ResolvedOptions>} Fully resolved options.
  */
 async function resolveOptions(cli) {
-  const environmentBucketName = await getStackOutput(cli.stackName, "EnvironmentBucketName");
+  const environmentBucketName = await getStackOutput(
+    cli.stackName,
+    "EnvironmentBucketName",
+  );
   const workflowQueueUrl =
-    cli.workflowQueueUrl ?? await getStackOutput(cli.stackName, "WorkflowQueueUrl");
+    cli.workflowQueueUrl ??
+    (await getStackOutput(cli.stackName, "WorkflowQueueUrl"));
   const propertyFirstPermitQueueUrl =
     cli.propertyFirstPermitQueueUrl ??
-    await getStackOutput(cli.permitStackName, "PropertyFirstPermitQueueUrl");
+    (await getStackOutput(cli.permitStackName, "PropertyFirstPermitQueueUrl"));
   return {
     cli,
     workflowQueueUrl,
@@ -330,7 +367,9 @@ function normalizeParcelIdentifier(value) {
  */
 function safeKeyPart(value, fallback) {
   const source = readOptionalString(value) ?? fallback;
-  const safe = source.replace(/[^A-Za-z0-9._=-]+/g, "-").replace(/^-+|-+$/g, "");
+  const safe = source
+    .replace(/[^A-Za-z0-9._=-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
   return safe.length > 0 ? safe.slice(0, 96) : fallback;
 }
 
@@ -376,7 +415,10 @@ function normalizeCsvHeader(header) {
  */
 async function readExistingNeonIdentifiers(cli) {
   if (!cli.skipExistingNeon) {
-    return { requestIdentifiers: new Set(), normalizedParcelIdentifiers: new Set() };
+    return {
+      requestIdentifiers: new Set(),
+      normalizedParcelIdentifiers: new Set(),
+    };
   }
   await loadEnvFile(cli.envFile);
   const databaseUrl = readOptionalString(process.env.DATABASE_URL);
@@ -406,9 +448,11 @@ async function readExistingNeonIdentifiers(cli) {
     const normalizedParcelIdentifiers = new Set();
     for (const row of result.rows) {
       const requestIdentifier = readOptionalString(row.request_identifier);
-      if (requestIdentifier !== undefined) requestIdentifiers.add(requestIdentifier);
+      if (requestIdentifier !== undefined)
+        requestIdentifiers.add(requestIdentifier);
       const parcelIdentifier = normalizeParcelIdentifier(row.parcel_identifier);
-      if (parcelIdentifier !== undefined) normalizedParcelIdentifiers.add(parcelIdentifier);
+      if (parcelIdentifier !== undefined)
+        normalizedParcelIdentifiers.add(parcelIdentifier);
     }
     return { requestIdentifiers, normalizedParcelIdentifiers };
   } finally {
@@ -425,11 +469,17 @@ async function readExistingNeonIdentifiers(cli) {
  */
 function isExistingNeonRow(row, existing) {
   const requestIdentifier = readOptionalString(row.source_identifier);
-  if (requestIdentifier !== undefined && existing.requestIdentifiers.has(requestIdentifier)) {
+  if (
+    requestIdentifier !== undefined &&
+    existing.requestIdentifiers.has(requestIdentifier)
+  ) {
     return true;
   }
   const parcelIdentifier = normalizeParcelIdentifier(row.parcel_id);
-  return parcelIdentifier !== undefined && existing.normalizedParcelIdentifiers.has(parcelIdentifier);
+  return (
+    parcelIdentifier !== undefined &&
+    existing.normalizedParcelIdentifiers.has(parcelIdentifier)
+  );
 }
 
 /**
@@ -439,10 +489,12 @@ function isExistingNeonRow(row, existing) {
  * @returns {value is NodeJS.ReadableStream} True when `pipe` is available.
  */
 function isNodeReadableStream(value) {
-  return typeof value === "object" &&
+  return (
+    typeof value === "object" &&
     value !== null &&
     "pipe" in value &&
-    typeof /** @type {{ pipe?: unknown }} */ (value).pipe === "function";
+    typeof (/** @type {{ pipe?: unknown }} */ (value).pipe) === "function"
+  );
 }
 
 /**
@@ -466,7 +518,9 @@ async function uploadSeedAndEnqueueWorkflow({
   const seedPrefix = parseS3Uri(options.generatedSeedPrefix);
   const parcelIdentifier = normalizeParcelIdentifier(row.parcel_id);
   if (parcelIdentifier === undefined) {
-    throw new Error(`Source row ${String(sourceRowNumber)} is missing parcel_id`);
+    throw new Error(
+      `Source row ${String(sourceRowNumber)} is missing parcel_id`,
+    );
   }
   const requestIdentifier = safeKeyPart(row.source_identifier, "unknown-folio");
   const seedKey = `${seedPrefix.key}/row-${String(sourceRowNumber).padStart(9, "0")}-folio-${requestIdentifier}-parcel-${safeKeyPart(parcelIdentifier, "unknown-parcel")}.csv`;
@@ -485,7 +539,18 @@ async function uploadSeedAndEnqueueWorkflow({
   };
 
   if (options.cli.dryRun) {
-    console.log(JSON.stringify({ enqueuedIndex, sourceRowNumber, seedUri: `s3://${seedPrefix.bucket}/${seedKey}`, workflowMessage }, null, 2));
+    console.log(
+      JSON.stringify(
+        {
+          enqueuedIndex,
+          sourceRowNumber,
+          seedUri: `s3://${seedPrefix.bucket}/${seedKey}`,
+          workflowMessage,
+        },
+        null,
+        2,
+      ),
+    );
     return;
   }
 
@@ -604,20 +669,24 @@ async function enqueueFromSeed(options, existing) {
     new GetObjectCommand({ Bucket: source.bucket, Key: source.key }),
   );
   if (!isNodeReadableStream(response.Body)) {
-    throw new Error(`S3 object body is not a Node readable stream: ${options.cli.sourceCsvS3Uri}`);
+    throw new Error(
+      `S3 object body is not a Node readable stream: ${options.cli.sourceCsvS3Uri}`,
+    );
   }
 
   /** @type {string[]} */
   let columns = [];
-  const parser = response.Body.pipe(parse({
-    columns: (header) => {
-      columns = normalizeCsvHeader(header);
-      return columns;
-    },
-    relax_column_count: true,
-    skip_empty_lines: true,
-    trim: false,
-  }));
+  const parser = response.Body.pipe(
+    parse({
+      columns: (header) => {
+        columns = normalizeCsvHeader(header);
+        return columns;
+      },
+      relax_column_count: true,
+      skip_empty_lines: true,
+      trim: false,
+    }),
+  );
 
   let sourceRowNumber = 0;
   let validRowNumber = 0;
@@ -625,10 +694,14 @@ async function enqueueFromSeed(options, existing) {
   let skippedInvalid = 0;
   let enqueued = 0;
   /** @type {PendingUploadState} */
-  const pendingUploadState = { pendingUploads: new Set(), firstError: undefined };
+  const pendingUploadState = {
+    pendingUploads: new Set(),
+    firstError: undefined,
+  };
 
   for await (const parsedRow of parser) {
-    if (pendingUploadState.firstError !== undefined) throw pendingUploadState.firstError;
+    if (pendingUploadState.firstError !== undefined)
+      throw pendingUploadState.firstError;
     sourceRowNumber += 1;
     const row = /** @type {SeedRow} */ (parsedRow);
     const parcelIdentifier = normalizeParcelIdentifier(row.parcel_id);

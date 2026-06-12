@@ -136,7 +136,9 @@ function resolvePropertyFirstPermitEligibleUsageTypes() {
     .split(",")
     .map((value) => value.trim())
     .filter((value) => value.length > 0);
-  return values.length > 0 ? values : [...DEFAULT_PROPERTY_FIRST_PERMIT_ELIGIBLE_USAGE_TYPES];
+  return values.length > 0
+    ? values
+    : [...DEFAULT_PROPERTY_FIRST_PERMIT_ELIGIBLE_USAGE_TYPES];
 }
 
 /**
@@ -194,7 +196,8 @@ async function buildAndUploadPropertyFirstPermitEligibility({
   const eligibleUsageTypeSet = new Set(eligibleUsageTypes);
   const { propertyUsageType, readError } =
     readPropertyUsageTypeFromTransformedZip(outputZipLocal);
-  const shouldEnqueue = propertyUsageType !== null && eligibleUsageTypeSet.has(propertyUsageType);
+  const shouldEnqueue =
+    propertyUsageType !== null && eligibleUsageTypeSet.has(propertyUsageType);
   const reason = shouldEnqueue
     ? "eligible_property_usage_type"
     : readError !== null

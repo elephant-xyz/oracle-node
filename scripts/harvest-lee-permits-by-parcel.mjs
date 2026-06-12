@@ -89,7 +89,8 @@ async function main() {
     ? await readCompletedParcelKeys(options.statePath)
     : new Set();
   const uncompleted = candidates.filter(
-    (candidate) => completed.has(candidate.normalizedParcelIdentifier) === false,
+    (candidate) =>
+      completed.has(candidate.normalizedParcelIdentifier) === false,
   );
   const pending = uncompleted.slice(0, options.limit ?? undefined);
   const output = resolveOutputPrefix(options.outputPrefix, options.jobId);
@@ -142,7 +143,8 @@ async function main() {
           }),
         );
       } catch (caught) {
-        const message = caught instanceof Error ? caught.message : String(caught);
+        const message =
+          caught instanceof Error ? caught.message : String(caught);
         failures.push(message);
         await appendStateRecord(options.statePath, {
           event: "parcel_failed",
@@ -255,14 +257,19 @@ async function harvestCandidate({ browser, candidate, output, s3, options }) {
   });
   const detailErrors = detailResults.filter((result) => result.error !== null);
   if (detailErrors.length > 0) {
-    const failedRecordNumbers = detailErrors.map((result) => result.recordNumber).join(", ");
+    const failedRecordNumbers = detailErrors
+      .map((result) => result.recordNumber)
+      .join(", ");
     throw new Error(
       `Parcel ${candidate.parcelIdentifier} is missing ${String(detailErrors.length)} permit detail artifact(s): ${failedRecordNumbers}`,
     );
   }
 
   return {
-    event: searchResult.permits.length === 0 ? "parcel_no_permits" : "parcel_completed",
+    event:
+      searchResult.permits.length === 0
+        ? "parcel_no_permits"
+        : "parcel_completed",
     completedAt: new Date().toISOString(),
     jobId: options.jobId,
     rank: candidate.rank,
@@ -276,9 +283,12 @@ async function harvestCandidate({ browser, candidate, output, s3, options }) {
     discoveredPermitCount: searchResult.permits.length,
     reportedTotal: searchResult.reportedTotal,
     noResults: searchResult.noResults,
-    processedPermitCount: detailResults.filter((result) => result.skipped === false && result.error === null).length,
+    processedPermitCount: detailResults.filter(
+      (result) => result.skipped === false && result.error === null,
+    ).length,
     skippedPermitCount: detailResults.filter((result) => result.skipped).length,
-    errorPermitCount: detailResults.filter((result) => result.error !== null).length,
+    errorPermitCount: detailResults.filter((result) => result.error !== null)
+      .length,
     detailResults,
   };
 }
@@ -331,7 +341,10 @@ async function writePermitDetails({
           permit,
           logger: consoleLogger,
         });
-        const extraction = withPropertyFirstParcel(capture.extraction, candidate);
+        const extraction = withPropertyFirstParcel(
+          capture.extraction,
+          candidate,
+        );
         const htmlUri = await putTextObject({
           s3,
           bucket: output.bucket,
@@ -351,7 +364,8 @@ async function writePermitDetails({
               idempotencyKey: `lee-permit:${shortHash(permit.url)}`,
               propertyFirstTarget: {
                 parcelIdentifier: candidate.parcelIdentifier,
-                normalizedParcelIdentifier: candidate.normalizedParcelIdentifier,
+                normalizedParcelIdentifier:
+                  candidate.normalizedParcelIdentifier,
                 requestIdentifier: candidate.requestIdentifier,
                 bestPermitAddress: candidate.bestPermitAddress,
                 addressBase: candidate.addressBase,
@@ -377,7 +391,8 @@ async function writePermitDetails({
         });
         break;
       } catch (caught) {
-        const message = caught instanceof Error ? caught.message : String(caught);
+        const message =
+          caught instanceof Error ? caught.message : String(caught);
         if (attempt < DETAIL_CAPTURE_ATTEMPTS) {
           consoleLogger.warn("lee_property_first_detail_capture_retrying", {
             recordNumber: permit.recordNumber,
@@ -479,7 +494,9 @@ async function readTargetCandidates(options) {
   if (options.manifestPath !== null) {
     const parsed = JSON.parse(await readFile(options.manifestPath, "utf8"));
     if (!isRecord(parsed) || Array.isArray(parsed.candidates) === false) {
-      throw new Error(`Manifest must contain a candidates array: ${options.manifestPath}`);
+      throw new Error(
+        `Manifest must contain a candidates array: ${options.manifestPath}`,
+      );
     }
     const candidates = [];
     for (const [index, value] of parsed.candidates.entries()) {
@@ -489,7 +506,9 @@ async function readTargetCandidates(options) {
     return dedupeCandidates(candidates);
   }
   if (options.parcelIdentifier !== null) {
-    const normalizedParcelIdentifier = normalizeParcelSearchValue(options.parcelIdentifier);
+    const normalizedParcelIdentifier = normalizeParcelSearchValue(
+      options.parcelIdentifier,
+    );
     if (normalizedParcelIdentifier === null) {
       throw new Error(`Invalid --parcel value: ${options.parcelIdentifier}`);
     }
@@ -517,17 +536,25 @@ async function readTargetCandidates(options) {
  */
 function readTargetCandidate(value, index) {
   if (!isRecord(value)) return null;
-  const rawParcel = readString(value.parcelIdentifier ?? value.parcel_identifier);
+  const rawParcel = readString(
+    value.parcelIdentifier ?? value.parcel_identifier,
+  );
   const normalizedParcelIdentifier = normalizeParcelSearchValue(rawParcel);
   if (rawParcel === null || normalizedParcelIdentifier === null) return null;
   return {
     rank: readNumber(value.rank) ?? index + 1,
     parcelIdentifier: rawParcel,
     normalizedParcelIdentifier,
-    requestIdentifier: readString(value.requestIdentifier ?? value.request_identifier),
-    bestPermitAddress: readString(value.bestPermitAddress ?? value.best_permit_address),
+    requestIdentifier: readString(
+      value.requestIdentifier ?? value.request_identifier,
+    ),
+    bestPermitAddress: readString(
+      value.bestPermitAddress ?? value.best_permit_address,
+    ),
     addressBase: readString(value.addressBase ?? value.address_base),
-    appraisalOutputS3Uri: readString(value.appraisalOutputS3Uri ?? value.source_artifact_uri),
+    appraisalOutputS3Uri: readString(
+      value.appraisalOutputS3Uri ?? value.source_artifact_uri,
+    ),
   };
 }
 
@@ -563,14 +590,16 @@ async function readCompletedParcelKeys(statePath) {
       const parsed = JSON.parse(line);
       if (
         !isRecord(parsed) ||
-        (parsed.event !== "parcel_completed" && parsed.event !== "parcel_no_permits")
+        (parsed.event !== "parcel_completed" &&
+          parsed.event !== "parcel_no_permits")
       ) {
         continue;
       }
       const normalizedParcelIdentifier = normalizeParcelSearchValue(
         parsed.normalizedParcelIdentifier ?? parsed.parcelIdentifier,
       );
-      if (normalizedParcelIdentifier !== null) completed.add(normalizedParcelIdentifier);
+      if (normalizedParcelIdentifier !== null)
+        completed.add(normalizedParcelIdentifier);
     }
     return completed;
   } catch (caught) {
@@ -651,10 +680,17 @@ async function objectExists(s3, bucket, key) {
     await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: key }));
     return true;
   } catch (caught) {
-    if (caught instanceof Error && (caught.name === "NotFound" || caught.name === "NoSuchKey")) {
+    if (
+      caught instanceof Error &&
+      (caught.name === "NotFound" || caught.name === "NoSuchKey")
+    ) {
       return false;
     }
-    if (isRecord(caught) && isRecord(caught.$metadata) && caught.$metadata.httpStatusCode === 404) {
+    if (
+      isRecord(caught) &&
+      isRecord(caught.$metadata) &&
+      caught.$metadata.httpStatusCode === 404
+    ) {
       return false;
     }
     throw caught;
@@ -669,7 +705,12 @@ async function objectExists(s3, bucket, key) {
  */
 function parseOptions(args) {
   const values = readCliValues(args);
-  const jobId = values.get("job-id") ?? `lee-property-first-${new Date().toISOString().replace(/[^0-9]/g, "").slice(0, 14)}`;
+  const jobId =
+    values.get("job-id") ??
+    `lee-property-first-${new Date()
+      .toISOString()
+      .replace(/[^0-9]/g, "")
+      .slice(0, 14)}`;
   return {
     manifestPath: values.get("manifest") ?? null,
     parcelIdentifier: values.get("parcel") ?? null,
@@ -723,7 +764,8 @@ function readCliValues(args) {
 function parsePositiveInteger(value, fieldName) {
   if (value === undefined || value.trim().length === 0) return null;
   const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed <= 0) throw new Error(`Invalid --${fieldName}: ${value}`);
+  if (!Number.isInteger(parsed) || parsed <= 0)
+    throw new Error(`Invalid --${fieldName}: ${value}`);
   return parsed;
 }
 
@@ -748,7 +790,11 @@ function parseBoolean(value, defaultValue) {
  * @returns {value is Record<string, unknown>} True for object records.
  */
 function isRecord(value) {
-  return value !== null && typeof value === "object" && Array.isArray(value) === false;
+  return (
+    value !== null &&
+    typeof value === "object" &&
+    Array.isArray(value) === false
+  );
 }
 
 /**
@@ -758,7 +804,9 @@ function isRecord(value) {
  * @returns {string | null} String value, or `null`.
  */
 function readString(value) {
-  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+  return typeof value === "string" && value.trim().length > 0
+    ? value.trim()
+    : null;
 }
 
 /**
@@ -774,7 +822,12 @@ function readNumber(value) {
 if (import.meta.url === `file://${process.argv[1]}`) {
   main().catch((caught) => {
     const message = caught instanceof Error ? caught.message : String(caught);
-    console.error(JSON.stringify({ event: "lee_property_first_permit_harvest_failed", error: message }));
+    console.error(
+      JSON.stringify({
+        event: "lee_property_first_permit_harvest_failed",
+        error: message,
+      }),
+    );
     process.exitCode = 1;
   });
 }

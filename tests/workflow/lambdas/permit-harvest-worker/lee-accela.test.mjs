@@ -241,7 +241,8 @@ describe("lee-accela permit harvest helpers", () => {
         sourcePage: 2,
       },
       sourceUrl: "https://aca-prod.accela.com/LEECO/Error.aspx?ErrorId=example",
-      rawText: "You are unable to proceed with the requested action due to technical difficulties.",
+      rawText:
+        "You are unable to proceed with the requested action due to technical difficulties.",
       errorMessage: "Accela returned unavailable detail page for TMP2006-00334",
     });
 

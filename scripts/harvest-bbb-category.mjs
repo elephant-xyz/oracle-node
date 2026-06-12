@@ -19,7 +19,11 @@ const DEFAULT_VIEWPORT_WIDTH = 1365;
 const DEFAULT_VIEWPORT_HEIGHT = 900;
 const DEFAULT_USER_AGENT =
   "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36";
-const DEFAULT_PROFILE_SUBPAGES = ["customer-reviews", "complaints", "more-info"];
+const DEFAULT_PROFILE_SUBPAGES = [
+  "customer-reviews",
+  "complaints",
+  "more-info",
+];
 
 /**
  * @typedef {Record<string, unknown>} JsonObject
@@ -289,11 +293,16 @@ export async function harvestBbbCategoryInExistingPage(options, page) {
 
   let parsedPageCount = options.maxPages;
   let pageNumber = options.startPage;
-  while (parsedPageCount === null || pageNumber < options.startPage + parsedPageCount) {
+  while (
+    parsedPageCount === null ||
+    pageNumber < options.startPage + parsedPageCount
+  ) {
     const pageUrl = buildCategoryPageUrl(options.categoryUrl, pageNumber);
     const navigation = await gotoAccessibleBbbPage(page, pageUrl, options);
     if (!navigation.ok) {
-      throw new Error(`Could not load BBB category page ${pageUrl}: ${navigation.title}`);
+      throw new Error(
+        `Could not load BBB category page ${pageUrl}: ${navigation.title}`,
+      );
     }
     const snapshot = await snapshotPage(page, options.includeHtml);
     const categoryRecord = buildCategoryPageRecord({
@@ -314,7 +323,10 @@ export async function harvestBbbCategoryInExistingPage(options, page) {
       parsedPageCount = Math.min(parsedPageCount, options.maxPages);
     }
     pageNumber += 1;
-    if (parsedPageCount === null || pageNumber < options.startPage + parsedPageCount) {
+    if (
+      parsedPageCount === null ||
+      pageNumber < options.startPage + parsedPageCount
+    ) {
       await sleep(options.pageDelayMs);
     }
   }
@@ -374,7 +386,11 @@ export async function harvestBbbCategoryInExistingPage(options, page) {
   }
   if (failedProfiles.length > 0) {
     outputArtifacts.push(
-      await writeJsonlRecords(options.outputLocation, "failures/failed-profiles.jsonl", failedProfiles),
+      await writeJsonlRecords(
+        options.outputLocation,
+        "failures/failed-profiles.jsonl",
+        failedProfiles,
+      ),
     );
   }
 
@@ -390,7 +406,11 @@ export async function harvestBbbCategoryInExistingPage(options, page) {
     outputArtifacts,
   };
   outputArtifacts.push(
-    await writeJsonObject(options.outputLocation, "manifest/summary.json", summary),
+    await writeJsonObject(
+      options.outputLocation,
+      "manifest/summary.json",
+      summary,
+    ),
   );
   return { ...summary, outputArtifacts };
 }
@@ -410,21 +430,38 @@ export async function harvestBbbCategoryInExistingPage(options, page) {
  * @param {string} params.retrievedAt - ISO timestamp when the profile was harvested.
  * @returns {BbbBusinessProfileRecord} Profile record suitable for query-db BBB loading.
  */
-export function buildBbbBusinessProfileRecord({ profileUrl, listing, mainPage, subpages, retrievedAt }) {
+export function buildBbbBusinessProfileRecord({
+  profileUrl,
+  listing,
+  mainPage,
+  subpages,
+  retrievedAt,
+}) {
   const jsonLdObjects = flattenJsonLdObjects(mainPage.jsonLd);
   const localBusiness = findJsonLdObjectByType(jsonLdObjects, "LocalBusiness");
   const identity = parseBbbProfileUrlIdentity(profileUrl);
   const address = buildAddressRecord(localBusiness);
   const links = externalBusinessLinks(mainPage.links);
-  const reviewsPage = subpages.find((subpage) => subpage.kind === "customer-reviews")?.page ?? null;
-  const complaintsPage = subpages.find((subpage) => subpage.kind === "complaints")?.page ?? null;
-  const moreInfoPage = subpages.find((subpage) => subpage.kind === "more-info")?.page ?? null;
-  const reviewsSummary = reviewsPage === null ? {} : parseReviewsSummary(reviewsPage.text);
-  const complaintsSummary = complaintsPage === null ? {} : parseComplaintsSummary(complaintsPage.text);
-  const ratingReasons = moreInfoPage === null ? [] : parseRatingReasons(moreInfoPage.text);
+  const reviewsPage =
+    subpages.find((subpage) => subpage.kind === "customer-reviews")?.page ??
+    null;
+  const complaintsPage =
+    subpages.find((subpage) => subpage.kind === "complaints")?.page ?? null;
+  const moreInfoPage =
+    subpages.find((subpage) => subpage.kind === "more-info")?.page ?? null;
+  const reviewsSummary =
+    reviewsPage === null ? {} : parseReviewsSummary(reviewsPage.text);
+  const complaintsSummary =
+    complaintsPage === null ? {} : parseComplaintsSummary(complaintsPage.text);
+  const ratingReasons =
+    moreInfoPage === null ? [] : parseRatingReasons(moreInfoPage.text);
   const reviews = reviewsPage === null ? [] : parseReviewRows(reviewsPage.text);
-  const complaints = complaintsPage === null ? [] : parseComplaintRows(complaintsPage.text);
-  const name = readStringProperty(localBusiness, "name") ?? listing?.linkText ?? readProfileNameFromText(mainPage.text);
+  const complaints =
+    complaintsPage === null ? [] : parseComplaintRows(complaintsPage.text);
+  const name =
+    readStringProperty(localBusiness, "name") ??
+    listing?.linkText ??
+    readProfileNameFromText(mainPage.text);
 
   return {
     recordKind: "bbb_business_profile",
@@ -439,29 +476,47 @@ export function buildBbbBusinessProfileRecord({ profileUrl, listing, mainPage, s
     profileSlug: identity.slug,
     name,
     legalName: readStringProperty(localBusiness, "legalName"),
-    description: readStringProperty(localBusiness, "description") ?? readSection(mainPage.text, "About This Business", "BBB Accredited Since"),
-    phone: readStringProperty(localBusiness, "telephone") ?? firstTelephoneLink(mainPage.links),
+    description:
+      readStringProperty(localBusiness, "description") ??
+      readSection(mainPage.text, "About This Business", "BBB Accredited Since"),
+    phone:
+      readStringProperty(localBusiness, "telephone") ??
+      firstTelephoneLink(mainPage.links),
     websiteUrl: firstWebsiteUrl(mainPage.links),
     emailUrl: firstEmailUrl(mainPage.links),
     address,
     accredited: readAccreditation(mainPage.text),
-    accreditationStatus: readAccreditation(mainPage.text) === true ? "BBB Accredited" : null,
+    accreditationStatus:
+      readAccreditation(mainPage.text) === true ? "BBB Accredited" : null,
     accreditedSince: readTextAfterLabel(mainPage.text, "BBB Accredited Since"),
     bbbRating: readBbbRating(mainPage.text),
     bbbFileOpenedDate: readTextAfterLabel(mainPage.text, "BBB File Opened"),
     businessStarted: readTextAfterLabel(mainPage.text, "Business Started"),
-    businessIncorporated: readTextAfterLabel(mainPage.text, "Business Incorporated"),
+    businessIncorporated: readTextAfterLabel(
+      mainPage.text,
+      "Business Incorporated",
+    ),
     yearsInBusiness: readIntegerAfterLabel(mainPage.text, "Years in Business"),
     entityType: readTextAfterLabel(mainPage.text, "Type of Entity"),
     localBbbName: readTextAfterLabel(mainPage.text, "Local BBB"),
-    localBbbUrl: firstLinkAfterText(mainPage.links, readTextAfterLabel(mainPage.text, "Local BBB")),
-    productsAndServices: readSection(mainPage.text, "Products and Services", "Photos and Videos"),
+    localBbbUrl: firstLinkAfterText(
+      mainPage.links,
+      readTextAfterLabel(mainPage.text, "Local BBB"),
+    ),
+    productsAndServices: readSection(
+      mainPage.text,
+      "Products and Services",
+      "Photos and Videos",
+    ),
     alternateNames: alternateNameRows(mainPage.text),
     businessManagement: businessManagementRows(localBusiness, mainPage.text),
     categories: categoryRows(mainPage.links),
     locations: locationRows(mainPage.links, profileUrl),
     licenses: licenseRows(mainPage.text),
-    serviceAreas: serviceAreaRows(localBusiness, moreInfoPage?.text ?? mainPage.text),
+    serviceAreas: serviceAreaRows(
+      localBusiness,
+      moreInfoPage?.text ?? mainPage.text,
+    ),
     images: imageRows(localBusiness),
     links,
     ratingReasons,
@@ -490,14 +545,31 @@ export function parseBbbProfileUrlIdentity(profileUrl) {
   const parsed = new URL(profileUrl);
   const segments = parsed.pathname.split("/").filter(Boolean);
   const addressIndex = segments.indexOf("addressId");
-  const addressId = addressIndex >= 0 ? segments[addressIndex + 1] ?? null : null;
-  const profileSegment = addressIndex >= 0 ? segments[addressIndex - 1] ?? null : segments.at(-1) ?? null;
+  const addressId =
+    addressIndex >= 0 ? (segments[addressIndex + 1] ?? null) : null;
+  const profileSegment =
+    addressIndex >= 0
+      ? (segments[addressIndex - 1] ?? null)
+      : (segments.at(-1) ?? null);
   if (profileSegment === null) {
-    return { providerBbbId: null, providerBusinessId: null, addressId, slug: null };
+    return {
+      providerBbbId: null,
+      providerBusinessId: null,
+      addressId,
+      slug: null,
+    };
   }
-  const match = /^(?<slug>.+)-(?<providerBbbId>\d{4})-(?<providerBusinessId>\d+)$/.exec(profileSegment);
+  const match =
+    /^(?<slug>.+)-(?<providerBbbId>\d{4})-(?<providerBusinessId>\d+)$/.exec(
+      profileSegment,
+    );
   if (match?.groups === undefined) {
-    return { providerBbbId: null, providerBusinessId: null, addressId, slug: profileSegment };
+    return {
+      providerBbbId: null,
+      providerBusinessId: null,
+      addressId,
+      slug: profileSegment,
+    };
   }
   return {
     providerBbbId: match.groups.providerBbbId,
@@ -515,11 +587,14 @@ export function parseBbbProfileUrlIdentity(profileUrl) {
  */
 export function parseCategoryCounts(snapshot) {
   const totalMatch = /Showing:\s*([\d,]+)\s+results/i.exec(snapshot.text);
-  const totalResults = totalMatch === null ? null : Number(totalMatch[1].replace(/,/g, ""));
+  const totalResults =
+    totalMatch === null ? null : Number(totalMatch[1].replace(/,/g, ""));
   const pageNumbers = snapshot.links.flatMap((link) => {
     const textMatch = /^Page\s+(\d+)$/i.exec(link.text);
     const urlPage = readPageNumberFromUrl(link.href);
-    return [textMatch === null ? null : Number(textMatch[1]), urlPage].filter(isNonNullNumber);
+    return [textMatch === null ? null : Number(textMatch[1]), urlPage].filter(
+      isNonNullNumber,
+    );
   });
   const pageCount = pageNumbers.length === 0 ? null : Math.max(...pageNumbers);
   return { totalResults, pageCount };
@@ -546,26 +621,48 @@ export async function main() {
  * @param {readonly string[]} params.profileSubpages - Profile subpage kinds to visit.
  * @returns {Promise<BbbBusinessProfileRecord>} Query-db-ready profile record.
  */
-async function harvestProfileRecord({ listing, page, options, profileSubpages }) {
-  const navigation = await gotoAccessibleBbbPage(page, listing.profileUrl, options);
+async function harvestProfileRecord({
+  listing,
+  page,
+  options,
+  profileSubpages,
+}) {
+  const navigation = await gotoAccessibleBbbPage(
+    page,
+    listing.profileUrl,
+    options,
+  );
   if (!navigation.ok) {
-    throw new Error(`Could not load BBB profile ${listing.profileUrl}: ${navigation.title}`);
+    throw new Error(
+      `Could not load BBB profile ${listing.profileUrl}: ${navigation.title}`,
+    );
   }
   const mainPage = await snapshotPage(page, options.includeHtml);
-  const subpageTargets = discoverProfileSubpages(mainPage.links, profileSubpages);
+  const subpageTargets = discoverProfileSubpages(
+    mainPage.links,
+    profileSubpages,
+  );
   /** @type {ProfileSubpageResult[]} */
   const subpages = [];
   for (const target of subpageTargets) {
     await sleep(options.profileDelayMs);
     try {
-      const subpageNavigation = await gotoAccessibleBbbPage(page, target.url, options);
+      const subpageNavigation = await gotoAccessibleBbbPage(
+        page,
+        target.url,
+        options,
+      );
       subpages.push({
         kind: target.kind,
         url: target.url,
         status: subpageNavigation.status,
         ok: subpageNavigation.ok,
-        page: subpageNavigation.ok ? await snapshotPage(page, options.includeHtml) : null,
-        error: subpageNavigation.ok ? null : `Challenge page remained after navigation: ${subpageNavigation.title}`,
+        page: subpageNavigation.ok
+          ? await snapshotPage(page, options.includeHtml)
+          : null,
+        error: subpageNavigation.ok
+          ? null
+          : `Challenge page remained after navigation: ${subpageNavigation.title}`,
       });
     } catch (caught) {
       subpages.push({
@@ -598,7 +695,11 @@ async function harvestProfileRecord({ listing, page, options, profileSubpages })
  */
 function buildCategoryPageRecord({ categoryUrl, pageNumber, snapshot }) {
   const counts = parseCategoryCounts(snapshot);
-  const profileListings = profileListingsFromSnapshot(snapshot, categoryUrl, pageNumber);
+  const profileListings = profileListingsFromSnapshot(
+    snapshot,
+    categoryUrl,
+    pageNumber,
+  );
   return {
     recordKind: "bbb_category_page",
     schemaVersion: DEFAULT_OUTPUT_SCHEMA_VERSION,
@@ -652,7 +753,10 @@ async function newConfiguredPage(browser, navigationTimeoutMs) {
   page.setDefaultNavigationTimeout(navigationTimeoutMs);
   page.setDefaultTimeout(navigationTimeoutMs);
   await page.setCacheEnabled(false);
-  await page.setViewport({ width: DEFAULT_VIEWPORT_WIDTH, height: DEFAULT_VIEWPORT_HEIGHT });
+  await page.setViewport({
+    width: DEFAULT_VIEWPORT_WIDTH,
+    height: DEFAULT_VIEWPORT_HEIGHT,
+  });
   await page.setUserAgent(DEFAULT_USER_AGENT);
   await page.evaluateOnNewDocument(() => {
     Object.defineProperty(navigator, "webdriver", { get: () => undefined });
@@ -674,16 +778,20 @@ async function gotoAccessibleBbbPage(page, url, options) {
   /** @type {NavigationResult} */
   let lastResult = { ok: false, status: null, title: "", previewText: "" };
   for (let attempt = 1; attempt <= options.challengeAttempts; attempt += 1) {
-    const response = await page.goto(url, {
-      waitUntil: "domcontentloaded",
-      timeout: options.navigationTimeoutMs,
-    }).catch(() => null);
+    const response = await page
+      .goto(url, {
+        waitUntil: "domcontentloaded",
+        timeout: options.navigationTimeoutMs,
+      })
+      .catch(() => null);
     status = response?.status() ?? null;
     for (let check = 0; check < options.challengeChecksPerAttempt; check += 1) {
       await sleep(options.challengeCheckIntervalMs);
       const state = await readPageChallengeState(page);
       lastResult = {
-        ok: !isCloudflareChallenge(state.title, state.previewText) && !isBbbErrorPage(state.title, state.previewText),
+        ok:
+          !isCloudflareChallenge(state.title, state.previewText) &&
+          !isBbbErrorPage(state.title, state.previewText),
         status,
         ...state,
       };
@@ -701,7 +809,9 @@ async function gotoAccessibleBbbPage(page, url, options) {
  */
 async function readPageChallengeState(page) {
   const title = await page.title();
-  const previewText = await page.evaluate(() => document.body?.innerText?.slice(0, 500) ?? "");
+  const previewText = await page.evaluate(
+    () => document.body?.innerText?.slice(0, 500) ?? "",
+  );
   return { title, previewText };
 }
 
@@ -714,14 +824,18 @@ async function readPageChallengeState(page) {
  */
 async function snapshotPage(page, includeHtml) {
   return page.evaluate((shouldIncludeHtml) => {
-    const links = [...document.querySelectorAll("a[href]")].map((anchor) => ({
-      text: anchor.textContent?.trim().replace(/\s+/g, " ") ?? "",
-      href: /** @type {HTMLAnchorElement} */ (anchor).href,
-    })).filter((link) => link.text.length > 0 || link.href.length > 0);
+    const links = [...document.querySelectorAll("a[href]")]
+      .map((anchor) => ({
+        text: anchor.textContent?.trim().replace(/\s+/g, " ") ?? "",
+        href: /** @type {HTMLAnchorElement} */ (anchor).href,
+      }))
+      .filter((link) => link.text.length > 0 || link.href.length > 0);
     const headings = [...document.querySelectorAll("h1,h2,h3,h4")]
       .map((heading) => heading.textContent?.trim().replace(/\s+/g, " ") ?? "")
       .filter((heading) => heading.length > 0);
-    const jsonLd = [...document.querySelectorAll('script[type="application/ld+json"]')]
+    const jsonLd = [
+      ...document.querySelectorAll('script[type="application/ld+json"]'),
+    ]
       .map((script) => script.textContent ?? "")
       .filter((text) => text.trim().length > 0);
     return {
@@ -810,7 +924,10 @@ function flattenJsonLdObjects(rawJsonLd) {
  * @returns {JsonObject | null} First matching object.
  */
 function findJsonLdObjectByType(objects, typeName) {
-  return objects.find((object) => jsonLdTypeMatches(object["@type"], typeName)) ?? null;
+  return (
+    objects.find((object) => jsonLdTypeMatches(object["@type"], typeName)) ??
+    null
+  );
 }
 
 /**
@@ -851,14 +968,29 @@ function businessManagementRows(localBusiness, pageText) {
     if (name === null || name === ":") return;
     const title = readStringProperty(row, "title");
     const role = readStringProperty(row, "role");
-    const identity = [name, title, role].map((part) => part ?? "").join("|").toLowerCase();
-    if (rows.some((existing) => {
-      const existingName = readStringProperty(existing, "name") ?? joinContactName(existing);
-      const existingTitle = readStringProperty(existing, "title");
-      const existingRole = readStringProperty(existing, "role");
-      return [existingName, existingTitle, existingRole].map((part) => part ?? "").join("|").toLowerCase() === identity;
-    })) return;
-    rows.push({ ...row, ...(readStringProperty(row, "name") === null ? { name } : {}) });
+    const identity = [name, title, role]
+      .map((part) => part ?? "")
+      .join("|")
+      .toLowerCase();
+    if (
+      rows.some((existing) => {
+        const existingName =
+          readStringProperty(existing, "name") ?? joinContactName(existing);
+        const existingTitle = readStringProperty(existing, "title");
+        const existingRole = readStringProperty(existing, "role");
+        return (
+          [existingName, existingTitle, existingRole]
+            .map((part) => part ?? "")
+            .join("|")
+            .toLowerCase() === identity
+        );
+      })
+    )
+      return;
+    rows.push({
+      ...row,
+      ...(readStringProperty(row, "name") === null ? { name } : {}),
+    });
   };
   const employee = localBusiness?.employee;
   if (Array.isArray(employee)) {
@@ -868,21 +1000,44 @@ function businessManagementRows(localBusiness, pageText) {
   } else if (isJsonObject(employee)) {
     addRow(employee);
   }
-  const managementText = readSection(pageText, "Business Management", "Additional Contact Information");
+  const managementText = readSection(
+    pageText,
+    "Business Management",
+    "Additional Contact Information",
+  );
   if (managementText !== null) {
-    for (const line of managementText.split(/\n/).map((value) => value.trim()).filter(Boolean)) {
+    for (const line of managementText
+      .split(/\n/)
+      .map((value) => value.trim())
+      .filter(Boolean)) {
       const split = line.split(/,\s*/);
-      addRow({ name: split[0] ?? line, title: split.slice(1).join(", ") || null, source: "visible_text" });
+      addRow({
+        name: split[0] ?? line,
+        title: split.slice(1).join(", ") || null,
+        source: "visible_text",
+      });
     }
   }
-  for (const row of contactRowsFromSection(pageText, "Principal Contacts", "Customer Contacts", "PRINCIPAL")) addRow(row);
-  for (const row of contactRowsFromSection(pageText, "Customer Contacts", [
-    "Additional Email Addresses",
-    "Additional Websites",
-    "Social Media",
-    "Additional Information",
-    "Business Categories",
-  ], "CUSTOMER")) addRow(row);
+  for (const row of contactRowsFromSection(
+    pageText,
+    "Principal Contacts",
+    "Customer Contacts",
+    "PRINCIPAL",
+  ))
+    addRow(row);
+  for (const row of contactRowsFromSection(
+    pageText,
+    "Customer Contacts",
+    [
+      "Additional Email Addresses",
+      "Additional Websites",
+      "Social Media",
+      "Additional Information",
+      "Business Categories",
+    ],
+    "CUSTOMER",
+  ))
+    addRow(row);
   return rows;
 }
 
@@ -893,7 +1048,11 @@ function businessManagementRows(localBusiness, pageText) {
  * @returns {readonly JsonObject[]} Alternate-name rows.
  */
 function alternateNameRows(pageText) {
-  const section = readSection(pageText, "Alternate Names:", "Business Management:");
+  const section = readSection(
+    pageText,
+    "Alternate Names:",
+    "Business Management:",
+  );
   if (section === null) return [];
   return section
     .split(/\n/)
@@ -940,8 +1099,14 @@ function categoryRows(links) {
   /** @type {Map<string, JsonObject>} */
   const rowsByUrl = new Map();
   for (const link of links) {
-    if (!/\/category\//.test(link.href) && !/\/category-/.test(link.href)) continue;
-    if (link.text.length === 0 || /^Home|USA|Missouri|Florida|Data$/i.test(link.text) && !link.href.includes("/category/data")) continue;
+    if (!/\/category\//.test(link.href) && !/\/category-/.test(link.href))
+      continue;
+    if (
+      link.text.length === 0 ||
+      (/^Home|USA|Missouri|Florida|Data$/i.test(link.text) &&
+        !link.href.includes("/category/data"))
+    )
+      continue;
     rowsByUrl.set(canonicalBbbProfileUrl(link.href), {
       name: link.text,
       url: canonicalBbbProfileUrl(link.href),
@@ -961,7 +1126,8 @@ function locationRows(links, primaryProfileUrl) {
   /** @type {Map<string, JsonObject>} */
   const rowsByUrl = new Map();
   for (const link of links) {
-    if (!isBbbProfileUrl(link.href) || !link.href.includes("/addressId/")) continue;
+    if (!isBbbProfileUrl(link.href) || !link.href.includes("/addressId/"))
+      continue;
     const profileUrl = canonicalBbbProfileUrl(link.href);
     if (profileUrl === primaryProfileUrl) continue;
     const identity = parseBbbProfileUrlIdentity(profileUrl);
@@ -984,7 +1150,11 @@ function locationRows(links, primaryProfileUrl) {
  * @returns {readonly JsonObject[]} Licensing rows.
  */
 function licenseRows(pageText) {
-  const section = readSection(pageText, "Licensing information", "Additional Information");
+  const section = readSection(
+    pageText,
+    "Licensing information",
+    "Additional Information",
+  );
   if (section === null) return [];
   return [{ rawText: section, source: "visible_text" }];
 }
@@ -1007,16 +1177,27 @@ function serviceAreaRows(localBusiness, pageText) {
    * @returns {void}
    */
   const addArea = (value) => {
-    const name = typeof value === "string" ? value : isJsonObject(value) ? readStringProperty(value, "name") : null;
-    if (name !== null && !rows.some((row) => row.name === name)) rows.push({ name, source: "json_ld" });
+    const name =
+      typeof value === "string"
+        ? value
+        : isJsonObject(value)
+          ? readStringProperty(value, "name")
+          : null;
+    if (name !== null && !rows.some((row) => row.name === name))
+      rows.push({ name, source: "json_ld" });
   };
   if (Array.isArray(areaServed)) areaServed.forEach(addArea);
   else addArea(areaServed);
-  const section = readSection(pageText, "Service Area", "BBB Business Profiles")
-    ?? readSection(pageText, "Serving the following areas:", "BBB Accreditation");
+  const section =
+    readSection(pageText, "Service Area", "BBB Business Profiles") ??
+    readSection(pageText, "Serving the following areas:", "BBB Accreditation");
   if (section !== null) {
-    for (const line of section.split(/\n/).map((value) => value.trim()).filter(Boolean)) {
-      if (!rows.some((row) => row.name === line)) rows.push({ name: line, source: "visible_text" });
+    for (const line of section
+      .split(/\n/)
+      .map((value) => value.trim())
+      .filter(Boolean)) {
+      if (!rows.some((row) => row.name === line))
+        rows.push({ name: line, source: "visible_text" });
     }
   }
   return rows;
@@ -1040,12 +1221,15 @@ function imageRows(localBusiness) {
    * @returns {void}
    */
   const add = (value, mediaKind) => {
-    const url = typeof value === "string"
-      ? value
-      : isJsonObject(value)
-        ? readStringProperty(value, "url") ?? readStringProperty(value, "contentUrl")
-        : null;
-    if (url !== null) rowsByUrl.set(url, { type: mediaKind, url, source: "json_ld" });
+    const url =
+      typeof value === "string"
+        ? value
+        : isJsonObject(value)
+          ? (readStringProperty(value, "url") ??
+            readStringProperty(value, "contentUrl"))
+          : null;
+    if (url !== null)
+      rowsByUrl.set(url, { type: mediaKind, url, source: "json_ld" });
   };
   add(localBusiness.logo, "LOGO");
   const image = localBusiness.image;
@@ -1106,30 +1290,41 @@ function parseReviewsSummary(text) {
  */
 function parseReviewRows(text) {
   if (/This business has\s+0\s+reviews?/i.test(text)) return [];
-  const section = truncateBbbBoilerplate(readSection(text, "Reviews", "BBB Business Profiles") ?? text);
+  const section = truncateBbbBoilerplate(
+    readSection(text, "Reviews", "BBB Business Profiles") ?? text,
+  );
   /** @type {JsonObject[]} */
   const rows = [];
-  const starts = [...section.matchAll(/(?:^|\n)(Review from[^\n]*|Customer Review)\s*\n/g)].map((match) => match.index ?? 0);
+  const starts = [
+    ...section.matchAll(/(?:^|\n)(Review from[^\n]*|Customer Review)\s*\n/g),
+  ].map((match) => match.index ?? 0);
   for (const [index, start] of starts.entries()) {
     const end = starts[index + 1] ?? section.length;
     const block = cleanVisibleTextBlock(section.slice(start, end));
     const date = readTextAfterLabel(block, "Date");
-    const rating = readFirstNumberMatch(block, [/([\d.]+)\s*(?:out of 5\s*)?stars?/i]);
-    const reviewer = /^Review from\s+([^\n]+)/i.exec(block)?.[1]?.trim() ?? null;
-    const body = cleanVisibleTextBlock(block
-      .replace(/^Review from[^\n]*\n?/i, "")
-      .replace(/^Customer Review\n?/i, "")
-      .replace(/Date:\s*[^\n]+/i, "")
-      .replace(/[\d.]+\s*(?:out of 5\s*)?stars?/i, ""));
+    const rating = readFirstNumberMatch(block, [
+      /([\d.]+)\s*(?:out of 5\s*)?stars?/i,
+    ]);
+    const reviewer =
+      /^Review from\s+([^\n]+)/i.exec(block)?.[1]?.trim() ?? null;
+    const body = cleanVisibleTextBlock(
+      block
+        .replace(/^Review from[^\n]*\n?/i, "")
+        .replace(/^Customer Review\n?/i, "")
+        .replace(/Date:\s*[^\n]+/i, "")
+        .replace(/[\d.]+\s*(?:out of 5\s*)?stars?/i, ""),
+    );
     if (date === null && rating === null && body.length === 0) continue;
-    rows.push(stripNullish({
-      providerReviewId: `visible:${index + 1}:${hashString(block).slice(0, 16)}`,
-      reviewDate: date,
-      reviewRating: rating,
-      reviewerDisplayName: reviewer,
-      reviewText: body.length > 0 ? body : null,
-      source: "visible_text",
-    }));
+    rows.push(
+      stripNullish({
+        providerReviewId: `visible:${index + 1}:${hashString(block).slice(0, 16)}`,
+        reviewDate: date,
+        reviewRating: rating,
+        reviewerDisplayName: reviewer,
+        reviewText: body.length > 0 ? body : null,
+        source: "visible_text",
+      }),
+    );
   }
   return rows;
 }
@@ -1169,7 +1364,9 @@ function parseComplaintRows(text) {
   const startIndex = text.indexOf("Filter and sort by");
   if (startIndex < 0) return [];
   const body = truncateBbbBoilerplate(text.slice(startIndex));
-  const starts = [...body.matchAll(/(?:^|\n)Initial Complaint\s*\n/g)].map((match) => match.index ?? 0);
+  const starts = [...body.matchAll(/(?:^|\n)Initial Complaint\s*\n/g)].map(
+    (match) => match.index ?? 0,
+  );
   /** @type {JsonObject[]} */
   const rows = [];
   for (const [index, start] of starts.entries()) {
@@ -1179,12 +1376,30 @@ function parseComplaintRows(text) {
     const complaintType = readTextAfterLabel(block, "Type");
     const complaintStatus = readTextAfterLabel(block, "Status");
     const moreInfoIndex = block.indexOf("More info");
-    const eventStartIndex = findFirstComplaintEventIndex(block, moreInfoIndex < 0 ? 0 : moreInfoIndex);
-    const complaintText = moreInfoIndex < 0
-      ? null
-      : cleanVisibleTextBlock(block.slice(moreInfoIndex + "More info".length, eventStartIndex ?? undefined));
-    const events = eventStartIndex === null ? [] : parseComplaintEventRows(block.slice(eventStartIndex));
-    if (complaintDate === null && complaintType === null && complaintStatus === null && complaintText === null) continue;
+    const eventStartIndex = findFirstComplaintEventIndex(
+      block,
+      moreInfoIndex < 0 ? 0 : moreInfoIndex,
+    );
+    const complaintText =
+      moreInfoIndex < 0
+        ? null
+        : cleanVisibleTextBlock(
+            block.slice(
+              moreInfoIndex + "More info".length,
+              eventStartIndex ?? undefined,
+            ),
+          );
+    const events =
+      eventStartIndex === null
+        ? []
+        : parseComplaintEventRows(block.slice(eventStartIndex));
+    if (
+      complaintDate === null &&
+      complaintType === null &&
+      complaintStatus === null &&
+      complaintText === null
+    )
+      continue;
     const row = stripNullish({
       providerComplaintId: `visible:${index + 1}:${hashString(block).slice(0, 16)}`,
       complaintDate,
@@ -1207,7 +1422,12 @@ function parseComplaintRows(text) {
  * @returns {number | null} First event-heading index.
  */
 function findFirstComplaintEventIndex(block, fromIndex) {
-  const labels = ["Business Response", "Customer Answer", "Customer Response", "Consumer Response"];
+  const labels = [
+    "Business Response",
+    "Customer Answer",
+    "Customer Response",
+    "Consumer Response",
+  ];
   const indexes = labels
     .map((label) => block.indexOf(label, fromIndex))
     .filter((index) => index >= 0);
@@ -1223,7 +1443,8 @@ function findFirstComplaintEventIndex(block, fromIndex) {
 function parseComplaintEventRows(text) {
   /** @type {JsonObject[]} */
   const events = [];
-  const pattern = /(?:^|\n)(Business Response|Customer Answer|Customer Response|Consumer Response)\s*\n+Date:\s*([^\n]+)\s*\n+([\s\S]*?)(?=\n(?:Business Response|Customer Answer|Customer Response|Consumer Response)\s*\n+Date:|$)/g;
+  const pattern =
+    /(?:^|\n)(Business Response|Customer Answer|Customer Response|Consumer Response)\s*\n+Date:\s*([^\n]+)\s*\n+([\s\S]*?)(?=\n(?:Business Response|Customer Answer|Customer Response|Consumer Response)\s*\n+Date:|$)/g;
   for (const match of text.matchAll(pattern)) {
     const heading = match[1];
     const eventDate = match[2].trim();
@@ -1231,7 +1452,9 @@ function parseComplaintEventRows(text) {
     if (eventText.length === 0) continue;
     events.push({
       type: heading.toUpperCase().replace(/\s+/g, "_"),
-      actorRole: heading.toLowerCase().includes("business") ? "BUSINESS" : "CUSTOMER",
+      actorRole: heading.toLowerCase().includes("business")
+        ? "BUSINESS"
+        : "CUSTOMER",
       date: eventDate,
       text: eventText,
       source: "visible_text",
@@ -1247,8 +1470,9 @@ function parseComplaintEventRows(text) {
  * @returns {readonly JsonObject[]} Rating reason rows.
  */
 function parseRatingReasons(text) {
-  const section = readSection(text, "Reasons for BBB Rating", "BBB Business Profiles")
-    ?? readSection(text, "Factors that affect", "BBB Business Profiles");
+  const section =
+    readSection(text, "Reasons for BBB Rating", "BBB Business Profiles") ??
+    readSection(text, "Factors that affect", "BBB Business Profiles");
   if (section === null) return [];
   return section
     .split(/\n/)
@@ -1271,7 +1495,7 @@ function parseCliOptions(args) {
       "output-dir": { type: "string" },
       "output-s3-uri": { type: "string" },
       "chromium-executable-path": { type: "string" },
-      "headless": { type: "string" },
+      headless: { type: "string" },
       "start-page": { type: "string" },
       "max-pages": { type: "string" },
       "max-profiles": { type: "string" },
@@ -1289,22 +1513,58 @@ function parseCliOptions(args) {
     allowPositionals: false,
   });
   return {
-    categoryUrl: readStringOption(values, "category-url") ?? DEFAULT_CATEGORY_URL,
+    categoryUrl:
+      readStringOption(values, "category-url") ?? DEFAULT_CATEGORY_URL,
     outputLocation: parseOutputLocation(values),
-    chromiumExecutablePath: readStringOption(values, "chromium-executable-path") ?? process.env.CHROME_EXECUTABLE_PATH ?? "/usr/bin/chromium",
+    chromiumExecutablePath:
+      readStringOption(values, "chromium-executable-path") ??
+      process.env.CHROME_EXECUTABLE_PATH ??
+      "/usr/bin/chromium",
     headless: parseBooleanOption(readStringOption(values, "headless"), false),
-    startPage: parsePositiveIntegerOption(values["start-page"], "start-page") ?? 1,
+    startPage:
+      parsePositiveIntegerOption(values["start-page"], "start-page") ?? 1,
     maxPages: parsePositiveIntegerOption(values["max-pages"], "max-pages"),
-    maxProfiles: parsePositiveIntegerOption(values["max-profiles"], "max-profiles"),
-    partRecordLimit: parsePositiveIntegerOption(values["part-record-limit"], "part-record-limit") ?? DEFAULT_PART_RECORD_LIMIT,
-    pageDelayMs: parseNonNegativeIntegerOption(values["page-delay-ms"], "page-delay-ms") ?? DEFAULT_PAGE_DELAY_MS,
-    profileDelayMs: parseNonNegativeIntegerOption(values["profile-delay-ms"], "profile-delay-ms") ?? DEFAULT_PROFILE_DELAY_MS,
-    challengeAttempts: parsePositiveIntegerOption(values["challenge-attempts"], "challenge-attempts") ?? DEFAULT_CHALLENGE_ATTEMPTS,
-    challengeCheckIntervalMs: parseNonNegativeIntegerOption(values["challenge-check-interval-ms"], "challenge-check-interval-ms") ?? DEFAULT_CHALLENGE_CHECK_INTERVAL_MS,
-    challengeChecksPerAttempt: parsePositiveIntegerOption(values["challenge-checks-per-attempt"], "challenge-checks-per-attempt") ?? DEFAULT_CHALLENGE_CHECKS_PER_ATTEMPT,
-    navigationTimeoutMs: parsePositiveIntegerOption(values["navigation-timeout-ms"], "navigation-timeout-ms") ?? DEFAULT_NAVIGATION_TIMEOUT_MS,
+    maxProfiles: parsePositiveIntegerOption(
+      values["max-profiles"],
+      "max-profiles",
+    ),
+    partRecordLimit:
+      parsePositiveIntegerOption(
+        values["part-record-limit"],
+        "part-record-limit",
+      ) ?? DEFAULT_PART_RECORD_LIMIT,
+    pageDelayMs:
+      parseNonNegativeIntegerOption(values["page-delay-ms"], "page-delay-ms") ??
+      DEFAULT_PAGE_DELAY_MS,
+    profileDelayMs:
+      parseNonNegativeIntegerOption(
+        values["profile-delay-ms"],
+        "profile-delay-ms",
+      ) ?? DEFAULT_PROFILE_DELAY_MS,
+    challengeAttempts:
+      parsePositiveIntegerOption(
+        values["challenge-attempts"],
+        "challenge-attempts",
+      ) ?? DEFAULT_CHALLENGE_ATTEMPTS,
+    challengeCheckIntervalMs:
+      parseNonNegativeIntegerOption(
+        values["challenge-check-interval-ms"],
+        "challenge-check-interval-ms",
+      ) ?? DEFAULT_CHALLENGE_CHECK_INTERVAL_MS,
+    challengeChecksPerAttempt:
+      parsePositiveIntegerOption(
+        values["challenge-checks-per-attempt"],
+        "challenge-checks-per-attempt",
+      ) ?? DEFAULT_CHALLENGE_CHECKS_PER_ATTEMPT,
+    navigationTimeoutMs:
+      parsePositiveIntegerOption(
+        values["navigation-timeout-ms"],
+        "navigation-timeout-ms",
+      ) ?? DEFAULT_NAVIGATION_TIMEOUT_MS,
     includeHtml: values["no-html"] !== true,
-    profileSubpages: parseProfileSubpages(readStringOption(values, "profile-subpages")),
+    profileSubpages: parseProfileSubpages(
+      readStringOption(values, "profile-subpages"),
+    ),
   };
 }
 
@@ -1330,7 +1590,15 @@ function parseOutputLocation(values) {
   }
   return {
     kind: "local",
-    dir: outputDir ?? path.join(".harvest-runs", `bbb-${new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z")}`),
+    dir:
+      outputDir ??
+      path.join(
+        ".harvest-runs",
+        `bbb-${new Date()
+          .toISOString()
+          .replace(/[-:]/g, "")
+          .replace(/\.\d{3}Z$/, "Z")}`,
+      ),
   };
 }
 
@@ -1344,7 +1612,12 @@ function parseOutputLocation(values) {
  */
 async function writeJsonlRecords(outputLocation, relativePath, records) {
   const body = records.map((record) => `${JSON.stringify(record)}\n`).join("");
-  return writeOutputObject(outputLocation, relativePath, body, "application/x-ndjson");
+  return writeOutputObject(
+    outputLocation,
+    relativePath,
+    body,
+    "application/x-ndjson",
+  );
 }
 
 /**
@@ -1356,7 +1629,12 @@ async function writeJsonlRecords(outputLocation, relativePath, records) {
  * @returns {Promise<string>} Local path or S3 URI written.
  */
 async function writeJsonObject(outputLocation, relativePath, value) {
-  return writeOutputObject(outputLocation, relativePath, `${JSON.stringify(value, null, 2)}\n`, "application/json");
+  return writeOutputObject(
+    outputLocation,
+    relativePath,
+    `${JSON.stringify(value, null, 2)}\n`,
+    "application/json",
+  );
 }
 
 /**
@@ -1368,7 +1646,12 @@ async function writeJsonObject(outputLocation, relativePath, value) {
  * @param {string} contentType - MIME content type.
  * @returns {Promise<string>} Local path or S3 URI written.
  */
-async function writeOutputObject(outputLocation, relativePath, body, contentType) {
+async function writeOutputObject(
+  outputLocation,
+  relativePath,
+  body,
+  contentType,
+) {
   if (outputLocation.kind === "local") {
     const filePath = path.join(outputLocation.dir, relativePath);
     await mkdir(path.dirname(filePath), { recursive: true });
@@ -1377,12 +1660,14 @@ async function writeOutputObject(outputLocation, relativePath, body, contentType
   }
   const key = `${outputLocation.keyPrefix}/${relativePath}`.replace(/^\//, "");
   const s3 = new S3Client({});
-  await s3.send(new PutObjectCommand({
-    Bucket: outputLocation.bucket,
-    Key: key,
-    Body: body,
-    ContentType: contentType,
-  }));
+  await s3.send(
+    new PutObjectCommand({
+      Bucket: outputLocation.bucket,
+      Key: key,
+      Body: body,
+      ContentType: contentType,
+    }),
+  );
   return `s3://${outputLocation.bucket}/${key}`;
 }
 
@@ -1408,9 +1693,14 @@ function buildCategoryPageUrl(categoryUrl, pageNumber) {
  */
 function parseS3Uri(uri) {
   const parsed = new URL(uri);
-  if (parsed.protocol !== "s3:") throw new Error(`Expected s3:// URI, received ${uri}`);
-  if (parsed.hostname.length === 0) throw new Error(`S3 URI is missing bucket: ${uri}`);
-  return { bucket: parsed.hostname, key: decodeURIComponent(parsed.pathname.replace(/^\//, "")) };
+  if (parsed.protocol !== "s3:")
+    throw new Error(`Expected s3:// URI, received ${uri}`);
+  if (parsed.hostname.length === 0)
+    throw new Error(`S3 URI is missing bucket: ${uri}`);
+  return {
+    bucket: parsed.hostname,
+    key: decodeURIComponent(parsed.pathname.replace(/^\//, "")),
+  };
 }
 
 /**
@@ -1422,7 +1712,13 @@ function parseS3Uri(uri) {
  */
 function buildProviderProfileId(identity, profileUrl) {
   if (identity.providerBbbId !== null && identity.providerBusinessId !== null) {
-    return [identity.providerBbbId, identity.providerBusinessId, identity.addressId].filter(Boolean).join(":");
+    return [
+      identity.providerBbbId,
+      identity.providerBusinessId,
+      identity.addressId,
+    ]
+      .filter(Boolean)
+      .join(":");
   }
   return hashString(profileUrl).slice(0, 24);
 }
@@ -1446,9 +1742,11 @@ function isCloudflareChallenge(title, text) {
  * @returns {boolean} True when BBB rendered an error page instead of requested data.
  */
 function isBbbErrorPage(title, text) {
-  return /Error \| Better Business Bureau/i.test(title)
-    || /OOPS! WE'LL BE RIGHT BACK/i.test(text)
-    || /Loading chunk \d+ failed/i.test(text);
+  return (
+    /Error \| Better Business Bureau/i.test(title) ||
+    /OOPS! WE'LL BE RIGHT BACK/i.test(text) ||
+    /Loading chunk \d+ failed/i.test(text)
+  );
 }
 
 /**
@@ -1460,7 +1758,10 @@ function isBbbErrorPage(title, text) {
 function isBbbProfileUrl(url) {
   try {
     const parsed = new URL(url);
-    return parsed.hostname.endsWith("bbb.org") && parsed.pathname.includes("/profile/");
+    return (
+      parsed.hostname.endsWith("bbb.org") &&
+      parsed.pathname.includes("/profile/")
+    );
   } catch {
     return false;
   }
@@ -1496,7 +1797,9 @@ function canonicalBbbProfileBaseUrl(url) {
     "leave-a-review",
     "more-info",
   ]);
-  const subpageIndex = segments.findIndex((segment, index) => index > 0 && knownSubpages.has(segment));
+  const subpageIndex = segments.findIndex(
+    (segment, index) => index > 0 && knownSubpages.has(segment),
+  );
   if (subpageIndex >= 0) {
     parsed.pathname = `/${segments.slice(0, subpageIndex).join("/")}`;
   }
@@ -1512,9 +1815,15 @@ function canonicalBbbProfileBaseUrl(url) {
 function isExternalBusinessUrl(url) {
   try {
     const parsed = new URL(url);
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:")
+      return false;
     if (parsed.hostname.endsWith("bbb.org")) return false;
-    if (/facebook\.com\/sharer|twitter\.com\/intent|linkedin\.com\/shareArticle/i.test(url)) return false;
+    if (
+      /facebook\.com\/sharer|twitter\.com\/intent|linkedin\.com\/shareArticle/i.test(
+        url,
+      )
+    )
+      return false;
     return true;
   } catch {
     return false;
@@ -1533,12 +1842,38 @@ function isBbbOwnedExternalLink(link) {
     const hostname = parsed.hostname.toLowerCase();
     const pathname = parsed.pathname.toLowerCase();
     if (/^our\s+/i.test(link.text)) return true;
-    if (/BBB Institute|BBB Wise Giving|BBB National Programs|Scam Survival Kit/i.test(link.text)) return true;
-    if (hostname.endsWith("bbbmarketplacetrust.org") || hostname.endsWith("give.org") || hostname.endsWith("bbbprograms.org")) return true;
-    if (hostname.includes("facebook.com") && pathname.includes("betterbusinessbureau")) return true;
-    if ((hostname === "x.com" || hostname.includes("twitter.com")) && pathname.includes("bbb_us")) return true;
-    if (hostname.includes("linkedin.com") && pathname.includes("better-business-bureau")) return true;
-    if (hostname.includes("instagram.com") && pathname.includes("betterbusinessbureau")) return true;
+    if (
+      /BBB Institute|BBB Wise Giving|BBB National Programs|Scam Survival Kit/i.test(
+        link.text,
+      )
+    )
+      return true;
+    if (
+      hostname.endsWith("bbbmarketplacetrust.org") ||
+      hostname.endsWith("give.org") ||
+      hostname.endsWith("bbbprograms.org")
+    )
+      return true;
+    if (
+      hostname.includes("facebook.com") &&
+      pathname.includes("betterbusinessbureau")
+    )
+      return true;
+    if (
+      (hostname === "x.com" || hostname.includes("twitter.com")) &&
+      pathname.includes("bbb_us")
+    )
+      return true;
+    if (
+      hostname.includes("linkedin.com") &&
+      pathname.includes("better-business-bureau")
+    )
+      return true;
+    if (
+      hostname.includes("instagram.com") &&
+      pathname.includes("betterbusinessbureau")
+    )
+      return true;
     return false;
   } catch {
     return false;
@@ -1556,7 +1891,8 @@ function classifyExternalLink(url) {
   if (hostname.includes("facebook")) return "FACEBOOK";
   if (hostname.includes("linkedin")) return "LINKEDIN";
   if (hostname.includes("instagram")) return "INSTAGRAM";
-  if (hostname.includes("x.com") || hostname.includes("twitter")) return "TWITTER";
+  if (hostname.includes("x.com") || hostname.includes("twitter"))
+    return "TWITTER";
   return "WEBSITE";
 }
 
@@ -1567,11 +1903,16 @@ function classifyExternalLink(url) {
  * @returns {string | null} First external website URL.
  */
 function firstWebsiteUrl(links) {
-  const visitWebsite = links.find((link) => /^Visit Website$/i.test(link.text)
-    && isExternalBusinessUrl(link.href)
-    && !isBbbOwnedExternalLink(link));
+  const visitWebsite = links.find(
+    (link) =>
+      /^Visit Website$/i.test(link.text) &&
+      isExternalBusinessUrl(link.href) &&
+      !isBbbOwnedExternalLink(link),
+  );
   if (visitWebsite !== undefined) return visitWebsite.href;
-  const websiteRow = externalBusinessLinks(links).find((link) => link.kind === "WEBSITE") ?? null;
+  const websiteRow =
+    externalBusinessLinks(links).find((link) => link.kind === "WEBSITE") ??
+    null;
   return readStringProperty(websiteRow, "url");
 }
 
@@ -1582,8 +1923,11 @@ function firstWebsiteUrl(links) {
  * @returns {string | null} Email-this-business URL.
  */
 function firstEmailUrl(links) {
-  const link = links.find((candidate) => /email-this-business/i.test(candidate.href)
-    || /^Email (?:this )?Business$/i.test(candidate.text));
+  const link = links.find(
+    (candidate) =>
+      /email-this-business/i.test(candidate.href) ||
+      /^Email (?:this )?Business$/i.test(candidate.text),
+  );
   return link?.href ?? null;
 }
 
@@ -1620,7 +1964,9 @@ function firstLinkAfterText(links, text) {
 function readStringProperty(object, key) {
   if (object === null) return null;
   const value = object[key];
-  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+  return typeof value === "string" && value.trim().length > 0
+    ? value.trim()
+    : null;
 }
 
 /**
@@ -1647,7 +1993,11 @@ function joinContactName(object) {
  * @returns {string | null} Joined text, or null when all parts are empty.
  */
 function joinText(parts) {
-  const text = parts.filter((part) => part !== null).join(" ").replace(/\s+/g, " ").trim();
+  const text = parts
+    .filter((part) => part !== null)
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
   return text.length === 0 ? null : text;
 }
 
@@ -1659,7 +2009,9 @@ function joinText(parts) {
  * @returns {string | null} One-line value after the label.
  */
 function readTextAfterLabel(text, label) {
-  const match = new RegExp(`${escapeRegExp(label)}:\\s*([^\\n]+)`, "i").exec(text);
+  const match = new RegExp(`${escapeRegExp(label)}:\\s*([^\\n]+)`, "i").exec(
+    text,
+  );
   return match === null ? null : match[1].trim();
 }
 
@@ -1715,7 +2067,9 @@ function readSection(text, startLabel, endLabel) {
   if (startIndex < 0) return null;
   const bodyStart = startIndex + startLabel.length;
   const endIndex = text.indexOf(endLabel, bodyStart);
-  const section = text.slice(bodyStart, endIndex < 0 ? undefined : endIndex).trim();
+  const section = text
+    .slice(bodyStart, endIndex < 0 ? undefined : endIndex)
+    .trim();
   return section.length === 0 ? null : section;
 }
 
@@ -1746,13 +2100,17 @@ function readSectionUntilAny(text, startLabel, endLabels) {
  * @returns {string} Text before common BBB boilerplate/footer sections.
  */
 function truncateBbbBoilerplate(text) {
-  const accreditationMatch = /\n[^\n]+is BBB Accredited\.\s*\n\s*This business has committed/i.exec(text);
+  const accreditationMatch =
+    /\n[^\n]+is BBB Accredited\.\s*\n\s*This business has committed/i.exec(
+      text,
+    );
   const stopIndexes = [
     accreditationMatch?.index ?? -1,
     text.indexOf("BBB Business Profiles are provided"),
     text.indexOf("\nTM\nFor Consumers"),
   ].filter((index) => index >= 0);
-  const truncated = stopIndexes.length === 0 ? text : text.slice(0, Math.min(...stopIndexes));
+  const truncated =
+    stopIndexes.length === 0 ? text : text.slice(0, Math.min(...stopIndexes));
   return cleanVisibleTextBlock(truncated);
 }
 
@@ -1778,9 +2136,12 @@ function cleanVisibleTextBlock(text) {
  * @returns {string | null} Business profile name fallback.
  */
 function readProfileNameFromText(text) {
-  const lines = text.split(/\n/).map((line) => line.trim()).filter(Boolean);
+  const lines = text
+    .split(/\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
   const profileIndex = lines.findIndex((line) => line === "BUSINESS PROFILE");
-  return profileIndex >= 0 ? lines[profileIndex + 2] ?? null : null;
+  return profileIndex >= 0 ? (lines[profileIndex + 2] ?? null) : null;
 }
 
 /**
@@ -1870,7 +2231,11 @@ function isJsonObject(value) {
  * @returns {JsonObject} Object without nullish values.
  */
 function stripNullish(value) {
-  return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== null && entry !== undefined));
+  return Object.fromEntries(
+    Object.entries(value).filter(
+      ([, entry]) => entry !== null && entry !== undefined,
+    ),
+  );
 }
 
 /**
@@ -1938,9 +2303,11 @@ function parseBooleanOption(value, fallback) {
  */
 function parsePositiveIntegerOption(value, optionName) {
   if (value === undefined) return null;
-  if (typeof value !== "string") throw new Error(`--${optionName} expects a value`);
+  if (typeof value !== "string")
+    throw new Error(`--${optionName} expects a value`);
   const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed <= 0) throw new Error(`Invalid --${optionName}: ${value}`);
+  if (!Number.isInteger(parsed) || parsed <= 0)
+    throw new Error(`Invalid --${optionName}: ${value}`);
   return parsed;
 }
 
@@ -1953,9 +2320,11 @@ function parsePositiveIntegerOption(value, optionName) {
  */
 function parseNonNegativeIntegerOption(value, optionName) {
   if (value === undefined) return null;
-  if (typeof value !== "string") throw new Error(`--${optionName} expects a value`);
+  if (typeof value !== "string")
+    throw new Error(`--${optionName} expects a value`);
   const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed < 0) throw new Error(`Invalid --${optionName}: ${value}`);
+  if (!Number.isInteger(parsed) || parsed < 0)
+    throw new Error(`Invalid --${optionName}: ${value}`);
   return parsed;
 }
 
@@ -1966,18 +2335,32 @@ function parseNonNegativeIntegerOption(value, optionName) {
  * @returns {readonly string[]} Selected subpage names.
  */
 function parseProfileSubpages(value) {
-  if (value === null || value.trim().length === 0) return DEFAULT_PROFILE_SUBPAGES;
+  if (value === null || value.trim().length === 0)
+    return DEFAULT_PROFILE_SUBPAGES;
   if (value === "none") return [];
-  if (value === "all") return ["customer-reviews", "complaints", "more-info", "details"];
-  const selected = value.split(",").map((entry) => entry.trim()).filter(Boolean);
-  const allowed = new Set(["customer-reviews", "complaints", "more-info", "details"]);
+  if (value === "all")
+    return ["customer-reviews", "complaints", "more-info", "details"];
+  const selected = value
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  const allowed = new Set([
+    "customer-reviews",
+    "complaints",
+    "more-info",
+    "details",
+  ]);
   for (const entry of selected) {
-    if (!allowed.has(entry)) throw new Error(`Unsupported profile subpage: ${entry}`);
+    if (!allowed.has(entry))
+      throw new Error(`Unsupported profile subpage: ${entry}`);
   }
   return selected;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(process.argv[1]).href
+) {
   main().catch((error) => {
     console.error(error);
     process.exitCode = 1;

@@ -191,9 +191,7 @@ describe("Lee data extractor", () => {
         method: "GET",
         url: "http://fieldcards.leepa.org/CurrentCostCard/Folio/10217341",
       });
-      expect(tax.source_extraction_method).toBe(
-        "lee_cost_card_value_summary",
-      );
+      expect(tax.source_extraction_method).toBe("lee_cost_card_value_summary");
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }

@@ -114,7 +114,8 @@ describe("permit harvest worker message helpers", () => {
       parcelIdentifier: "08-46-25-57-00000.0130",
       requestIdentifier: "12345678",
       appraisalOutputS3Uri: "s3://example-bucket/appraisal/folio-12345678.json",
-      appraisalPreparedOutputS3Uri: "s3://example-bucket/appraisal/folio-12345678-prepared.zip",
+      appraisalPreparedOutputS3Uri:
+        "s3://example-bucket/appraisal/folio-12345678-prepared.zip",
       propertyId: "property-1",
       propertyUsageType: "Industrial",
       maxPages: 250,
@@ -133,7 +134,8 @@ describe("permit harvest worker message helpers", () => {
       normalizedParcelIdentifier: "08462557000000130",
       requestIdentifier: "12345678",
       appraisalOutputS3Uri: "s3://example-bucket/appraisal/folio-12345678.json",
-      appraisalPreparedOutputS3Uri: "s3://example-bucket/appraisal/folio-12345678-prepared.zip",
+      appraisalPreparedOutputS3Uri:
+        "s3://example-bucket/appraisal/folio-12345678-prepared.zip",
       propertyId: "property-1",
       propertyUsageType: "Industrial",
       bestPermitAddress: null,
@@ -142,7 +144,8 @@ describe("permit harvest worker message helpers", () => {
   });
 
   it("routes only commercial appraiser usage types to property-first permit retrieval", () => {
-    const eligibleUsageTypes = _private.resolvePropertyFirstPermitEligibleUsageTypes();
+    const eligibleUsageTypes =
+      _private.resolvePropertyFirstPermitEligibleUsageTypes();
 
     expect(
       _private.buildPropertyFirstPermitEligibility({
@@ -175,20 +178,27 @@ describe("permit harvest worker message helpers", () => {
       version: 1,
       jobId: "lee-property-first-seed-all-20260606",
       sourceCsvS3Uri: "s3://counties-seeds/lee.csv",
-      workflowQueueUrl: "https://sqs.us-east-1.amazonaws.com/123/elephant-workflow-queue",
-      propertyFirstPermitQueueUrl: "https://sqs.us-east-1.amazonaws.com/123/property-first",
+      workflowQueueUrl:
+        "https://sqs.us-east-1.amazonaws.com/123/elephant-workflow-queue",
+      propertyFirstPermitQueueUrl:
+        "https://sqs.us-east-1.amazonaws.com/123/property-first",
       feederQueueUrl: "https://sqs.us-east-1.amazonaws.com/123/property-first",
-      generatedSeedPrefix: "s3://example-bucket/seed-inputs/lee-property-first-seed/job",
-      workflowOutputBaseUri: "s3://example-bucket/outputs/lee-property-first-seed/job",
-      propertyFirstPermitOutputPrefix: "s3://example-bucket/permit-harvest/lee-property-first-seed",
-      stateS3Uri: "s3://example-bucket/permit-harvest/lee-property-first-seed/job/state.json",
+      generatedSeedPrefix:
+        "s3://example-bucket/seed-inputs/lee-property-first-seed/job",
+      workflowOutputBaseUri:
+        "s3://example-bucket/outputs/lee-property-first-seed/job",
+      propertyFirstPermitOutputPrefix:
+        "s3://example-bucket/permit-harvest/lee-property-first-seed",
+      stateS3Uri:
+        "s3://example-bucket/permit-harvest/lee-property-first-seed/job/state.json",
       batchSize: 25,
       maxPages: 200,
       requeueDelaySeconds: 900,
       backpressureQueues: [
         {
           name: "workflow",
-          queueUrl: "https://sqs.us-east-1.amazonaws.com/123/elephant-workflow-queue",
+          queueUrl:
+            "https://sqs.us-east-1.amazonaws.com/123/elephant-workflow-queue",
           maxMessages: 250,
         },
       ],
@@ -202,7 +212,8 @@ describe("permit harvest worker message helpers", () => {
     expect(_private.resolveBackpressureQueues(message)).toEqual([
       {
         name: "workflow",
-        queueUrl: "https://sqs.us-east-1.amazonaws.com/123/elephant-workflow-queue",
+        queueUrl:
+          "https://sqs.us-east-1.amazonaws.com/123/elephant-workflow-queue",
         maxMessages: 250,
       },
     ]);
@@ -216,7 +227,7 @@ describe("permit harvest worker message helpers", () => {
         },
       ),
     ).toBe(
-      "parcel_id,address,source_identifier\n154527L4000030160,\"680 BELL BOULEVARD SOUTH, LEHIGH ACRES, FL 33974\",10635900\n",
+      'parcel_id,address,source_identifier\n154527L4000030160,"680 BELL BOULEVARD SOUTH, LEHIGH ACRES, FL 33974",10635900\n',
     );
   });
 
@@ -326,13 +337,15 @@ describe("permit harvest worker message helpers", () => {
       },
     };
 
-    await expect(_private.linkPropertyFirstPermits(client, target)).resolves.toEqual({
+    await expect(
+      _private.linkPropertyFirstPermits(client, target),
+    ).resolves.toEqual({
       matchedPermitRows: 2,
       linkedPermitRows: 2,
     });
-    expect(_private.normalizeParcelDigits(target.normalizedParcelIdentifier)).toBe(
-      "294627409001339",
-    );
+    expect(
+      _private.normalizeParcelDigits(target.normalizedParcelIdentifier),
+    ).toBe("294627409001339");
     expect(queries.map((query) => query.params)).toEqual([
       [null, "10635528", "294627L40900A1339", "294627409001339"],
       ["294627L40900A1339", "294627409001339"],
@@ -383,7 +396,9 @@ describe("permit harvest worker message helpers", () => {
     ).toBe("postgresql://user:pass@example.test/neondb?sslmode=require");
     expect(
       _private.readDatabaseUrlFromSecretString(
-        JSON.stringify({ DATABASE_URL: "postgres://user:pass@example.test/db" }),
+        JSON.stringify({
+          DATABASE_URL: "postgres://user:pass@example.test/db",
+        }),
       ),
     ).toBe("postgres://user:pass@example.test/db");
   });

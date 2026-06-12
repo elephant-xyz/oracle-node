@@ -1,9 +1,14 @@
 #!/usr/bin/env node
-import { GetObjectCommand, ListObjectsV2Command, S3Client } from "@aws-sdk/client-s3";
+import {
+  GetObjectCommand,
+  ListObjectsV2Command,
+  S3Client,
+} from "@aws-sdk/client-s3";
 import { parseArgs } from "node:util";
 
 const DEFAULT_BUCKET = "elephant-oracle-node-environmentbucket-mmsoo3xbdi80";
-const DEFAULT_PREFIX = "permit-harvest/lee-permit-backfill-20260525/lee/permit-lists/";
+const DEFAULT_PREFIX =
+  "permit-harvest/lee-permit-backfill-20260525/lee/permit-lists/";
 const DEFAULT_START_DATE = "1990-01-01";
 const DEFAULT_END_DATE = "2026-05-25";
 const DEFAULT_RECENT_MINUTES = 60;
@@ -93,7 +98,8 @@ function addDays(date, days) {
  */
 function createDayIndex(overallStartDate) {
   const start = parseDate(overallStartDate);
-  return (date) => Math.floor((parseDate(date).getTime() - start.getTime()) / 86_400_000);
+  return (date) =>
+    Math.floor((parseDate(date).getTime() - start.getTime()) / 86_400_000);
 }
 
 /**
@@ -104,7 +110,9 @@ function createDayIndex(overallStartDate) {
  */
 function sortedNumberMapToObject(map) {
   return Object.fromEntries(
-    [...map.entries()].sort((left, right) => left[0] - right[0]).map(([key, value]) => [String(key), value]),
+    [...map.entries()]
+      .sort((left, right) => left[0] - right[0])
+      .map(([key, value]) => [String(key), value]),
   );
 }
 
@@ -136,7 +144,8 @@ function readStringOption(values, optionName, defaultValue) {
 function readPositiveIntegerOption(values, optionName, defaultValue) {
   const value = values[optionName];
   if (value === undefined) return defaultValue;
-  if (typeof value !== "string") throw new Error(`--${optionName} must be a positive integer`);
+  if (typeof value !== "string")
+    throw new Error(`--${optionName} must be a positive integer`);
   const parsed = Number.parseInt(value, 10);
   if (!Number.isInteger(parsed) || parsed <= 0) {
     throw new Error(`--${optionName} must be a positive integer`);
@@ -168,9 +177,21 @@ function parseOptions() {
     prefix: readStringOption(values, "prefix", DEFAULT_PREFIX),
     startDate: readStringOption(values, "start-date", DEFAULT_START_DATE),
     endDate: readStringOption(values, "end-date", DEFAULT_END_DATE),
-    recentMinutes: readPositiveIntegerOption(values, "recent-minutes", DEFAULT_RECENT_MINUTES),
-    concurrency: readPositiveIntegerOption(values, "concurrency", DEFAULT_CONCURRENCY),
-    splitThreshold: readPositiveIntegerOption(values, "split-threshold", DEFAULT_SPLIT_THRESHOLD),
+    recentMinutes: readPositiveIntegerOption(
+      values,
+      "recent-minutes",
+      DEFAULT_RECENT_MINUTES,
+    ),
+    concurrency: readPositiveIntegerOption(
+      values,
+      "concurrency",
+      DEFAULT_CONCURRENCY,
+    ),
+    splitThreshold: readPositiveIntegerOption(
+      values,
+      "split-threshold",
+      DEFAULT_SPLIT_THRESHOLD,
+    ),
   };
 }
 
@@ -217,13 +238,20 @@ async function listSummaryObjects(s3, options) {
  * @returns {Promise<EnrichedWindowSummary>} Enriched summary.
  */
 async function readWindowSummary(s3, options, object, inclusiveDaySpan) {
-  const response = await s3.send(new GetObjectCommand({ Bucket: options.bucket, Key: object.key }));
+  const response = await s3.send(
+    new GetObjectCommand({ Bucket: options.bucket, Key: object.key }),
+  );
   if (!response.Body || typeof response.Body.transformToString !== "function") {
     throw new Error(`S3 body is not readable for ${object.key}`);
   }
-  const parsed = /** @type {LeePermitListSummary} */ (JSON.parse(await response.Body.transformToString()));
+  const parsed = /** @type {LeePermitListSummary} */ (
+    JSON.parse(await response.Body.transformToString())
+  );
   const span = inclusiveDaySpan(parsed.startDate, parsed.endDate);
-  const splitRequired = parsed.reportedTotal !== null && parsed.reportedTotal >= options.splitThreshold && span > 1;
+  const splitRequired =
+    parsed.reportedTotal !== null &&
+    parsed.reportedTotal >= options.splitThreshold &&
+    span > 1;
   return {
     key: object.key,
     lastModified: object.lastModified,
@@ -257,10 +285,14 @@ async function readWindowSummaries(s3, options, objects, inclusiveDaySpan) {
     while (cursor < objects.length) {
       const object = objects[cursor];
       cursor += 1;
-      summaries.push(await readWindowSummary(s3, options, object, inclusiveDaySpan));
+      summaries.push(
+        await readWindowSummary(s3, options, object, inclusiveDaySpan),
+      );
     }
   }
-  await Promise.all(Array.from({ length: options.concurrency }, () => worker()));
+  await Promise.all(
+    Array.from({ length: options.concurrency }, () => worker()),
+  );
   return summaries;
 }
 
@@ -290,18 +322,26 @@ async function main() {
    * @param {string} endDate - Inclusive end date.
    * @returns {number} Inclusive number of days in the date range.
    */
-  const inclusiveDaySpan = (startDate, endDate) => dayIndex(endDate) - dayIndex(startDate) + 1;
+  const inclusiveDaySpan = (startDate, endDate) =>
+    dayIndex(endDate) - dayIndex(startDate) + 1;
   const totalDays = inclusiveDaySpan(options.startDate, options.endDate);
   const s3 = new S3Client({ region: process.env.AWS_REGION ?? "us-east-1" });
   const objects = await listSummaryObjects(s3, options);
-  const summaries = await readWindowSummaries(s3, options, objects, inclusiveDaySpan);
+  const summaries = await readWindowSummaries(
+    s3,
+    options,
+    objects,
+    inclusiveDaySpan,
+  );
 
   const spanCounts = new Map();
   const terminalSpanCounts = new Map();
   const splitRequiredSpanCounts = new Map();
   for (const summary of summaries) {
     spanCounts.set(summary.span, (spanCounts.get(summary.span) ?? 0) + 1);
-    const target = summary.terminal ? terminalSpanCounts : splitRequiredSpanCounts;
+    const target = summary.terminal
+      ? terminalSpanCounts
+      : splitRequiredSpanCounts;
     target.set(summary.span, (target.get(summary.span) ?? 0) + 1);
   }
 
@@ -312,7 +352,10 @@ async function main() {
     const end = Math.min(totalDays - 1, dayIndex(summary.endDate));
     for (let index = start; index <= end; index += 1) {
       const currentLastModified = terminalDayTime[index];
-      if (!currentLastModified || (summary.lastModified && summary.lastModified < currentLastModified)) {
+      if (
+        !currentLastModified ||
+        (summary.lastModified && summary.lastModified < currentLastModified)
+      ) {
         terminalDayTime[index] = summary.lastModified;
       }
     }
@@ -320,75 +363,127 @@ async function main() {
 
   const terminalCoveredDays = terminalDayTime.filter(Boolean).length;
   const remainingDays = totalDays - terminalCoveredDays;
-  const cutoff = new Date(Date.now() - options.recentMinutes * 60_000).toISOString();
+  const cutoff = new Date(
+    Date.now() - options.recentMinutes * 60_000,
+  ).toISOString();
   const writtenInRecentWindow = summaries.filter(
     (summary) => summary.lastModified && summary.lastModified >= cutoff,
   ).length;
   const terminalWrittenInRecentWindow = summaries.filter(
-    (summary) => summary.terminal && summary.lastModified && summary.lastModified >= cutoff,
+    (summary) =>
+      summary.terminal &&
+      summary.lastModified &&
+      summary.lastModified >= cutoff,
   ).length;
   const splitWrittenInRecentWindow = summaries.filter(
-    (summary) => summary.splitRequired && summary.lastModified && summary.lastModified >= cutoff,
+    (summary) =>
+      summary.splitRequired &&
+      summary.lastModified &&
+      summary.lastModified >= cutoff,
   ).length;
-  const recentNewTerminalDays = terminalDayTime.filter((value) => value && value >= cutoff).length;
+  const recentNewTerminalDays = terminalDayTime.filter(
+    (value) => value && value >= cutoff,
+  ).length;
 
-  const initialRootCount = summaries.filter((summary) => summary.span >= 30 || summary.windowKey === "20260522_20260525").length;
-  const estimatedTotalSplitTreeWindows = estimateTotalSplitTreeNodes(totalDays, initialRootCount);
-  const estimatedRemainingSplitTreeWindows = Math.max(0, estimatedTotalSplitTreeWindows - summaries.length);
-  const estimatedSplitTreeEtaHours = writtenInRecentWindow > 0
-    ? estimatedRemainingSplitTreeWindows / (writtenInRecentWindow / (options.recentMinutes / 60))
-    : null;
+  const initialRootCount = summaries.filter(
+    (summary) =>
+      summary.span >= 30 || summary.windowKey === "20260522_20260525",
+  ).length;
+  const estimatedTotalSplitTreeWindows = estimateTotalSplitTreeNodes(
+    totalDays,
+    initialRootCount,
+  );
+  const estimatedRemainingSplitTreeWindows = Math.max(
+    0,
+    estimatedTotalSplitTreeWindows - summaries.length,
+  );
+  const estimatedSplitTreeEtaHours =
+    writtenInRecentWindow > 0
+      ? estimatedRemainingSplitTreeWindows /
+        (writtenInRecentWindow / (options.recentMinutes / 60))
+      : null;
 
   let prefixCoveredThrough = null;
   for (let index = 0; index < totalDays; index += 1) {
     if (!terminalDayTime[index]) break;
-    prefixCoveredThrough = toDateString(addDays(parseDate(options.startDate), index));
+    prefixCoveredThrough = toDateString(
+      addDays(parseDate(options.startDate), index),
+    );
   }
 
   let suffixCoveredFrom = null;
   for (let index = totalDays - 1; index >= 0; index -= 1) {
     if (!terminalDayTime[index]) break;
-    suffixCoveredFrom = toDateString(addDays(parseDate(options.startDate), index));
+    suffixCoveredFrom = toDateString(
+      addDays(parseDate(options.startDate), index),
+    );
   }
 
   const latestWindows = summaries
     .slice()
-    .sort((left, right) => (right.lastModified ?? "").localeCompare(left.lastModified ?? ""))
+    .sort((left, right) =>
+      (right.lastModified ?? "").localeCompare(left.lastModified ?? ""),
+    )
     .slice(0, 20)
-    .map(({ lastModified, windowKey, startDate, endDate, span, reportedTotal, terminal, splitRequired }) => ({
-      lastModified,
-      windowKey,
-      startDate,
-      endDate,
-      span,
-      reportedTotal,
-      terminal,
-      splitRequired,
-    }));
+    .map(
+      ({
+        lastModified,
+        windowKey,
+        startDate,
+        endDate,
+        span,
+        reportedTotal,
+        terminal,
+        splitRequired,
+      }) => ({
+        lastModified,
+        windowKey,
+        startDate,
+        endDate,
+        span,
+        reportedTotal,
+        terminal,
+        splitRequired,
+      }),
+    );
 
-  console.log(JSON.stringify({
-    generatedAt: new Date().toISOString(),
-    sourcePrefix: `s3://${options.bucket}/${options.prefix}`,
-    sourceDateRange: { startDate: options.startDate, endDate: options.endDate, totalDays },
-    linksJsonCount: summaries.length,
-    spanCounts: sortedNumberMapToObject(spanCounts),
-    terminalSpanCounts: sortedNumberMapToObject(terminalSpanCounts),
-    splitRequiredSpanCounts: sortedNumberMapToObject(splitRequiredSpanCounts),
-    terminalCoveredDays,
-    terminalCoveragePercent: Number(((terminalCoveredDays / totalDays) * 100).toFixed(2)),
-    remainingDays,
-    prefixCoveredThrough,
-    suffixCoveredFrom,
-    recentMinutes: options.recentMinutes,
-    writtenInRecentWindow,
-    terminalWrittenInRecentWindow,
-    splitWrittenInRecentWindow,
-    recentNewTerminalDays,
-    estimatedTotalSplitTreeWindows,
-    estimatedRemainingSplitTreeWindows,
-    estimatedSplitTreeEtaHours,
-    latestWindows,
-  }, null, 2));
+  console.log(
+    JSON.stringify(
+      {
+        generatedAt: new Date().toISOString(),
+        sourcePrefix: `s3://${options.bucket}/${options.prefix}`,
+        sourceDateRange: {
+          startDate: options.startDate,
+          endDate: options.endDate,
+          totalDays,
+        },
+        linksJsonCount: summaries.length,
+        spanCounts: sortedNumberMapToObject(spanCounts),
+        terminalSpanCounts: sortedNumberMapToObject(terminalSpanCounts),
+        splitRequiredSpanCounts: sortedNumberMapToObject(
+          splitRequiredSpanCounts,
+        ),
+        terminalCoveredDays,
+        terminalCoveragePercent: Number(
+          ((terminalCoveredDays / totalDays) * 100).toFixed(2),
+        ),
+        remainingDays,
+        prefixCoveredThrough,
+        suffixCoveredFrom,
+        recentMinutes: options.recentMinutes,
+        writtenInRecentWindow,
+        terminalWrittenInRecentWindow,
+        splitWrittenInRecentWindow,
+        recentNewTerminalDays,
+        estimatedTotalSplitTreeWindows,
+        estimatedRemainingSplitTreeWindows,
+        estimatedSplitTreeEtaHours,
+        latestWindows,
+      },
+      null,
+      2,
+    ),
+  );
 }
 
 main().catch((error) => {

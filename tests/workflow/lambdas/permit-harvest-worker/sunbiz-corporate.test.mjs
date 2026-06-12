@@ -30,7 +30,9 @@ import {
  * @returns {void}
  */
 function writeField(buffer, start, length, value) {
-  const text = String(value ?? "").padEnd(length, " ").slice(0, length);
+  const text = String(value ?? "")
+    .padEnd(length, " ")
+    .slice(0, length);
   for (let index = 0; index < length; index += 1) {
     buffer[start - 1 + index] = text[index];
   }
@@ -78,8 +80,24 @@ function buildCorporateLine(fields, officers = []) {
   writeField(buffer, 660, 9, fields.registeredAgentZip);
 
   const officerOffsets = [
-    { title: 669, type: 673, name: 674, address: 716, city: 758, state: 786, zip: 788 },
-    { title: 797, type: 801, name: 802, address: 844, city: 886, state: 914, zip: 916 },
+    {
+      title: 669,
+      type: 673,
+      name: 674,
+      address: 716,
+      city: 758,
+      state: 786,
+      zip: 788,
+    },
+    {
+      title: 797,
+      type: 801,
+      name: 802,
+      address: 844,
+      city: 886,
+      state: 914,
+      zip: 916,
+    },
   ];
   for (const [index, officer] of officers.entries()) {
     const offsets = officerOffsets[index];
@@ -100,9 +118,9 @@ describe("sunbiz corporate bulk helpers", () => {
   it("normalizes dates and address text", () => {
     expect(parseSunbizDate("19400124")).toBe("1940-01-24");
     expect(parseSunbizDate("20240231")).toBeNull();
-    expect(normalizeAddressForMatch("4980 Bayline Drive, North Fort Myers FL")).toBe(
-      "4980 BAYLINE DR N FORT MYERS FL",
-    );
+    expect(
+      normalizeAddressForMatch("4980 Bayline Drive, North Fort Myers FL"),
+    ).toBe("4980 BAYLINE DR N FORT MYERS FL");
   });
 
   it("parses fixed-width corporate records with addresses, agent, and officers", () => {

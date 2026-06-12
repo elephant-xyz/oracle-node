@@ -277,7 +277,9 @@ async function parseArgs(argv) {
       ) ?? 1000,
     maxRecords: parsePositiveInteger(
       "--max-records",
-      typeof values["max-records"] === "string" ? values["max-records"] : undefined,
+      typeof values["max-records"] === "string"
+        ? values["max-records"]
+        : undefined,
       undefined,
     ),
     dryRun: values.dryRun === true,

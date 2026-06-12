@@ -113,7 +113,9 @@ describe("Elephant Express workflow branch selection", () => {
     expect(definition.States.Transform.ResultSelector).toMatchObject({
       "propertyFirstPermitEligibility.$": "$.propertyFirstPermitEligibility",
     });
-    expect(definition.States.ChoosePropertyFirstPermitEligibility).toMatchObject({
+    expect(
+      definition.States.ChoosePropertyFirstPermitEligibility,
+    ).toMatchObject({
       Type: "Choice",
       Choices: [
         {

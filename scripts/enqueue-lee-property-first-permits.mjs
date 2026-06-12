@@ -122,7 +122,9 @@ function parseNonNegativeInteger(name, value, fallback) {
   if (value === undefined) return fallback;
   const parsed = Number.parseInt(value, 10);
   if (!Number.isFinite(parsed) || parsed < 0) {
-    throw new Error(`${name} must be a non-negative integer, received ${value}`);
+    throw new Error(
+      `${name} must be a non-negative integer, received ${value}`,
+    );
   }
   return parsed;
 }
@@ -313,7 +315,9 @@ function normalizeParcelIdentifier(value) {
  * @returns {string | undefined} Address base when available.
  */
 function buildAddressBase(normalizedAddressKey, unnormalizedAddress) {
-  const source = readOptionalString(normalizedAddressKey) ?? readOptionalString(unnormalizedAddress);
+  const source =
+    readOptionalString(normalizedAddressKey) ??
+    readOptionalString(unnormalizedAddress);
   if (source === undefined) return undefined;
   return source
     .replace(/\b(UNIT|STE|SUITE|APT|#)\b.*$/i, "")
@@ -384,7 +388,8 @@ async function readCandidateProperties(pool, options) {
     property_usage_type: readOptionalString(row.property_usage_type) ?? null,
     property_type: readOptionalString(row.property_type) ?? null,
     unnormalized_address: readOptionalString(row.unnormalized_address) ?? null,
-    normalized_address_key: readOptionalString(row.normalized_address_key) ?? null,
+    normalized_address_key:
+      readOptionalString(row.normalized_address_key) ?? null,
     linked_permit_count:
       typeof row.linked_permit_count === "number" ? row.linked_permit_count : 0,
   }));
@@ -412,7 +417,10 @@ function buildMessage(options, row) {
     propertyUsageType: readOptionalString(row.property_usage_type),
     propertyType: readOptionalString(row.property_type),
     bestPermitAddress,
-    addressBase: buildAddressBase(row.normalized_address_key, row.unnormalized_address),
+    addressBase: buildAddressBase(
+      row.normalized_address_key,
+      row.unnormalized_address,
+    ),
     outputPrefix: options.outputPrefix,
     maxPages: options.maxPages,
     skipExisting: true,
@@ -443,7 +451,9 @@ async function main() {
   await loadEnvFile(options.envFile);
   const databaseUrl = readOptionalString(process.env.DATABASE_URL);
   if (databaseUrl === undefined) {
-    throw new Error(`DATABASE_URL is required; expected it in ${options.envFile} or the environment`);
+    throw new Error(
+      `DATABASE_URL is required; expected it in ${options.envFile} or the environment`,
+    );
   }
 
   const queueUrl = await resolveQueueUrl(options);

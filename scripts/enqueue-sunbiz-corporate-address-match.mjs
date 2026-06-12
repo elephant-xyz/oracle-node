@@ -165,7 +165,9 @@ function parseArgs(argv) {
       typeof outputPrefixValue === "string" ? outputPrefixValue : undefined,
     batchSize: parsePositiveInteger(
       "--batch-size",
-      typeof values["batch-size"] === "string" ? values["batch-size"] : undefined,
+      typeof values["batch-size"] === "string"
+        ? values["batch-size"]
+        : undefined,
       50,
     ),
     maxMatchesPerAddress: parsePositiveInteger(

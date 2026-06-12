@@ -174,7 +174,8 @@ describe("Sunbiz corporate lexicon transform", () => {
         matched_zip_prefixes: ["33916"],
       },
       {
-        request_identifier: "sunbiz:N92000000500:business_registration_address:mailing",
+        request_identifier:
+          "sunbiz:N92000000500:business_registration_address:mailing",
         source_system: "SUNBIZ",
         document_number: "N92000000500",
         address_role: "MAILING",
@@ -207,7 +208,11 @@ describe("Sunbiz corporate lexicon transform", () => {
         unnormalized_address: "3123 LAFAYETTE ST. FT. MYERS FL 33916",
       }),
     );
-    expect(bundle.relationships.map((relationship) => relationship.relationship_type).sort()).toEqual([
+    expect(
+      bundle.relationships
+        .map((relationship) => relationship.relationship_type)
+        .sort(),
+    ).toEqual([
       "business_registration_address_has_address",
       "business_registration_address_has_address",
       "business_registration_has_address",
@@ -275,10 +280,12 @@ describe("Sunbiz corporate lexicon transform", () => {
       },
     ];
 
-    expect(collectMatchedZipPrefixes(matches, "officerAddress", 1)).toEqual(["33901"]);
-    expect(collectMatchedZipPrefixes(matches, "registeredAgentAddress", null)).toEqual([
+    expect(collectMatchedZipPrefixes(matches, "officerAddress", 1)).toEqual([
       "33901",
     ]);
+    expect(
+      collectMatchedZipPrefixes(matches, "registeredAgentAddress", null),
+    ).toEqual(["33901"]);
   });
 
   it("parses S3 URIs", () => {

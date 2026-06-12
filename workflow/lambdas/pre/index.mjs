@@ -43,11 +43,13 @@ const s3 = new S3Client({});
 async function csvToJson(csvPath) {
   try {
     const csvContent = await fs.readFile(csvPath, "utf8");
-    const records = /** @type {Record<string, string | undefined>[]} */ (parse(csvContent, {
-      columns: true,
-      skip_empty_lines: true,
-      trim: true,
-    }));
+    const records = /** @type {Record<string, string | undefined>[]} */ (
+      parse(csvContent, {
+        columns: true,
+        skip_empty_lines: true,
+        trim: true,
+      })
+    );
     return records;
   } catch (error) {
     return [];
@@ -94,8 +96,11 @@ export const handler = async (event) => {
         ? rec.output_base_uri.trim()
         : null;
     const outputPrefix =
-      (requestedOutputBaseUri || process.env.OUTPUT_BASE_URI || `s3://${bucket}/outputs`)
-        .replace(/\/$/, "") + `/${fileBase}`;
+      (
+        requestedOutputBaseUri ||
+        process.env.OUTPUT_BASE_URI ||
+        `s3://${bucket}/outputs`
+      ).replace(/\/$/, "") + `/${fileBase}`;
     const inputS3Uri = `s3://${bucket}/${key}`;
 
     // Download CSV and create seed input.zip

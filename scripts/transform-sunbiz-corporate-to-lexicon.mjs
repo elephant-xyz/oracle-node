@@ -308,9 +308,7 @@ function cleanText(value) {
 function uniqueSortedStrings(values) {
   return Array.from(
     new Set(
-      values
-        .map((value) => cleanText(value))
-        .filter((value) => value !== null),
+      values.map((value) => cleanText(value)).filter((value) => value !== null),
     ),
   ).sort();
 }
@@ -322,7 +320,11 @@ function uniqueSortedStrings(values) {
  * @returns {string} First 24 hex characters of a SHA-256 digest.
  */
 function shortHash(parts) {
-  return crypto.createHash("sha256").update(JSON.stringify(parts)).digest("hex").slice(0, 24);
+  return crypto
+    .createHash("sha256")
+    .update(JSON.stringify(parts))
+    .digest("hex")
+    .slice(0, 24);
 }
 
 /**
@@ -368,10 +370,10 @@ function hasAddressContent(address) {
   if (!address) return false;
   return Boolean(
     cleanText(address.singleLine) ||
-      cleanText(address.line1) ||
-      cleanText(address.city) ||
-      cleanText(address.state) ||
-      cleanText(address.zip),
+    cleanText(address.line1) ||
+    cleanText(address.city) ||
+    cleanText(address.state) ||
+    cleanText(address.zip),
   );
 }
 
@@ -384,7 +386,14 @@ function hasAddressContent(address) {
 function toSingleLineAddress(address) {
   return (
     cleanText(address.singleLine) ??
-    [address.line1, address.line2, address.city, address.state, address.zip, address.country]
+    [
+      address.line1,
+      address.line2,
+      address.city,
+      address.state,
+      address.zip,
+      address.country,
+    ]
       .map((part) => cleanText(part))
       .filter((part) => part !== null)
       .join(" ")
@@ -398,7 +407,8 @@ function toSingleLineAddress(address) {
  * @returns {string} Stable address request identifier.
  */
 export function stableAddressIdentifier(address) {
-  const normalized = cleanText(address.normalized) ?? toSingleLineAddress(address).toUpperCase();
+  const normalized =
+    cleanText(address.normalized) ?? toSingleLineAddress(address).toUpperCase();
   const state = cleanText(address.state)?.toUpperCase() ?? "";
   const zip = cleanText(address.zip) ?? "";
   const country = cleanText(address.country)?.toUpperCase() ?? "";
@@ -442,7 +452,11 @@ export function toLexiconAddress(address) {
  * @param {number | null} officerOrdinal - Officer ordinal to match when role is officerAddress.
  * @returns {string[]} Unique sorted ZIP prefixes.
  */
-export function collectMatchedZipPrefixes(matchedAddresses, role, officerOrdinal = null) {
+export function collectMatchedZipPrefixes(
+  matchedAddresses,
+  role,
+  officerOrdinal = null,
+) {
   return uniqueSortedStrings(
     matchedAddresses
       .filter((match) => {
@@ -494,7 +508,9 @@ export function transformSunbizRecord(record, options = {}) {
   const report1 = annualReports[0] ?? { year: null, date: null };
   const report2 = annualReports[1] ?? { year: null, date: null };
   const report3 = annualReports[2] ?? { year: null, date: null };
-  const matchedAddressRoles = uniqueSortedStrings(record.matchedAddresses.map((match) => match.role));
+  const matchedAddressRoles = uniqueSortedStrings(
+    record.matchedAddresses.map((match) => match.role),
+  );
   const matchedZipPrefixes = uniqueSortedStrings(
     record.matchedAddresses.map((match) => match.matchedZipPrefix),
   );
@@ -514,7 +530,9 @@ export function transformSunbizRecord(record, options = {}) {
         source_system: SOURCE_SYSTEM,
         source_data_uri: options.sourceDataUri ?? null,
         source_file_name: cleanText(record.sourceFileName),
-        source_line_number: Number.isInteger(record.sourceLineNumber) ? record.sourceLineNumber : null,
+        source_line_number: Number.isInteger(record.sourceLineNumber)
+          ? record.sourceLineNumber
+          : null,
         document_number: documentNumber,
         entity_name: cleanText(entity.entityName),
         status_code: cleanText(entity.statusCode),
@@ -532,7 +550,9 @@ export function transformSunbizRecord(record, options = {}) {
         annual_report_3_year: cleanText(report3.year),
         annual_report_3_date: cleanText(report3.date),
         more_than_six_officers: entity.moreThanSixOfficers,
-        raw_record_length: Number.isInteger(entity.rawRecordLength) ? entity.rawRecordLength : null,
+        raw_record_length: Number.isInteger(entity.rawRecordLength)
+          ? entity.rawRecordLength
+          : null,
         matched_address_roles: matchedAddressRoles,
         matched_zip_prefixes: matchedZipPrefixes,
       },
@@ -549,8 +569,20 @@ export function transformSunbizRecord(record, options = {}) {
     ],
   };
 
-  addRegistrationAddress(bundle, record, "PRINCIPAL", "principalAddress", entity.principalAddress);
-  addRegistrationAddress(bundle, record, "MAILING", "mailingAddress", entity.mailingAddress);
+  addRegistrationAddress(
+    bundle,
+    record,
+    "PRINCIPAL",
+    "principalAddress",
+    entity.principalAddress,
+  );
+  addRegistrationAddress(
+    bundle,
+    record,
+    "MAILING",
+    "mailingAddress",
+    entity.mailingAddress,
+  );
   addRegisteredAgent(bundle, record);
   for (const officer of entity.officers ?? []) {
     addOfficer(bundle, record, officer);
@@ -569,14 +601,24 @@ export function transformSunbizRecord(record, options = {}) {
  * @param {SunbizAddress} address - Sunbiz address to emit.
  * @returns {void}
  */
-function addRegistrationAddress(bundle, record, addressRole, matchedRole, address) {
+function addRegistrationAddress(
+  bundle,
+  record,
+  addressRole,
+  matchedRole,
+  address,
+) {
   const addressRecord = toLexiconAddress(address);
   if (!addressRecord) return;
 
   const documentNumber = record.entity.documentNumber;
   const registrationIdentifier = `sunbiz:${documentNumber}:business_registration`;
   const bridgeIdentifier = `sunbiz:${documentNumber}:business_registration_address:${addressRole.toLowerCase()}`;
-  const matchedZipPrefixes = collectMatchedZipPrefixes(record.matchedAddresses, matchedRole, null);
+  const matchedZipPrefixes = collectMatchedZipPrefixes(
+    record.matchedAddresses,
+    matchedRole,
+    null,
+  );
 
   bundle.addresses.push(addressRecord);
   bundle.businessRegistrationAddresses.push({
@@ -614,10 +656,9 @@ function addRegisteredAgent(bundle, record) {
 
   const documentNumber = record.entity.documentNumber;
   const registrationIdentifier = `sunbiz:${documentNumber}:business_registration`;
-  const partyIdentifier = `sunbiz:${documentNumber}:party:registered_agent:${shortHash([
-    agentName,
-    cleanText(agent.type) ?? "",
-  ])}`;
+  const partyIdentifier = `sunbiz:${documentNumber}:party:registered_agent:${shortHash(
+    [agentName, cleanText(agent.type) ?? ""],
+  )}`;
   const matchedZipPrefixes = collectMatchedZipPrefixes(
     record.matchedAddresses,
     "registeredAgentAddress",
@@ -669,11 +710,13 @@ function addOfficer(bundle, record, officer) {
 
   const documentNumber = record.entity.documentNumber;
   const registrationIdentifier = `sunbiz:${documentNumber}:business_registration`;
-  const partyIdentifier = `sunbiz:${documentNumber}:party:officer:${officer.ordinal}:${shortHash([
-    officerName,
-    cleanText(officer.title) ?? "",
-    cleanText(officer.type) ?? "",
-  ])}`;
+  const partyIdentifier = `sunbiz:${documentNumber}:party:officer:${officer.ordinal}:${shortHash(
+    [
+      officerName,
+      cleanText(officer.title) ?? "",
+      cleanText(officer.type) ?? "",
+    ],
+  )}`;
   const matchedZipPrefixes = collectMatchedZipPrefixes(
     record.matchedAddresses,
     "officerAddress",
@@ -744,7 +787,8 @@ function createTransformState() {
  */
 function incrementEntityCounter(counters, dataset) {
   if (dataset === "classes/company") counters.companyCount += 1;
-  else if (dataset === "classes/business_registration") counters.businessRegistrationCount += 1;
+  else if (dataset === "classes/business_registration")
+    counters.businessRegistrationCount += 1;
   else if (dataset === "classes/business_registration_address") {
     counters.businessRegistrationAddressCount += 1;
   } else if (dataset === "classes/business_registration_party") {
@@ -762,7 +806,13 @@ function incrementEntityCounter(counters, dataset) {
  * @param {Record<string, unknown>} value - Entity record to write.
  * @returns {Promise<void>}
  */
-async function writeUniqueEntity(state, writers, dataset, requestIdentifier, value) {
+async function writeUniqueEntity(
+  state,
+  writers,
+  dataset,
+  requestIdentifier,
+  value,
+) {
   const key = `${dataset}:${requestIdentifier}`;
   const shouldDedupe = dataset === "classes/address";
   if (shouldDedupe && state.emittedEntities.has(key)) return;
@@ -870,7 +920,10 @@ function isSunbizZipExtractedRecord(value) {
   if (typeof value.sourceLineNumber !== "number") return false;
   if (!Array.isArray(value.matchedAddresses)) return false;
   if (!isObjectRecord(value.entity)) return false;
-  return typeof value.entity.documentNumber === "string" && value.entity.documentNumber.length > 0;
+  return (
+    typeof value.entity.documentNumber === "string" &&
+    value.entity.documentNumber.length > 0
+  );
 }
 
 /**
@@ -882,7 +935,9 @@ function isSunbizZipExtractedRecord(value) {
  */
 async function readS3ObjectText(s3Client, s3Uri) {
   const { bucket, key } = parseS3Uri(s3Uri);
-  const response = await s3Client.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+  const response = await s3Client.send(
+    new GetObjectCommand({ Bucket: bucket, Key: key }),
+  );
   const body = response.Body;
   if (!body || typeof body.transformToString !== "function") {
     throw new Error(`S3 object body is not readable: ${s3Uri}`);
@@ -1019,7 +1074,13 @@ async function writeOutputJson(s3Client, outputLocation, name, value) {
  * @param {number} params.partRecordLimit - Maximum records per JSONL part.
  * @returns {JsonlDatasetWriter} Rotating dataset writer.
  */
-function createJsonlDatasetWriter({ s3Client, outputLocation, dataset, tempDir, partRecordLimit }) {
+function createJsonlDatasetWriter({
+  s3Client,
+  outputLocation,
+  dataset,
+  tempDir,
+  partRecordLimit,
+}) {
   /** @type {import("fs").WriteStream | null} */
   let stream = null;
   /** @type {string | null} */
@@ -1036,7 +1097,8 @@ function createJsonlDatasetWriter({ s3Client, outputLocation, dataset, tempDir, 
    */
   async function openPart() {
     const partName = `part-${String(partIndex).padStart(5, "0")}.jsonl`;
-    const baseDir = outputLocation.kind === "local" ? outputLocation.dir : tempDir;
+    const baseDir =
+      outputLocation.kind === "local" ? outputLocation.dir : tempDir;
     const nextPath = path.join(baseDir, dataset, partName);
     await mkdir(path.dirname(nextPath), { recursive: true });
     stream = createWriteStream(nextPath, { encoding: "utf8" });
@@ -1071,11 +1133,15 @@ function createJsonlDatasetWriter({ s3Client, outputLocation, dataset, tempDir, 
     }
 
     if (outputLocation.kind === "s3") {
-      const key = `${outputLocation.keyPrefix}/${dataset}/part-${String(closedIndex).padStart(
-        5,
-        "0",
-      )}.jsonl`;
-      await uploadJsonlPartToS3(s3Client, closedPath, outputLocation.bucket, key);
+      const key = `${outputLocation.keyPrefix}/${dataset}/part-${String(
+        closedIndex,
+      ).padStart(5, "0")}.jsonl`;
+      await uploadJsonlPartToS3(
+        s3Client,
+        closedPath,
+        outputLocation.bucket,
+        key,
+      );
       receipts.push({
         dataset,
         partIndex: closedIndex,
@@ -1099,7 +1165,8 @@ function createJsonlDatasetWriter({ s3Client, outputLocation, dataset, tempDir, 
         await closeCurrentPart();
         await openPart();
       }
-      if (!stream) throw new Error(`Writer did not open for dataset ${dataset}`);
+      if (!stream)
+        throw new Error(`Writer did not open for dataset ${dataset}`);
       const canContinue = stream.write(`${JSON.stringify(value)}\n`);
       currentRecordCount += 1;
       if (!canContinue) {
@@ -1122,7 +1189,12 @@ function createJsonlDatasetWriter({ s3Client, outputLocation, dataset, tempDir, 
  * @param {number} partRecordLimit - Maximum records per JSONL part.
  * @returns {Record<string, JsonlDatasetWriter>} Dataset writers keyed by dataset name.
  */
-function createDatasetWriters(s3Client, outputLocation, tempDir, partRecordLimit) {
+function createDatasetWriters(
+  s3Client,
+  outputLocation,
+  tempDir,
+  partRecordLimit,
+) {
   const datasetNames = [
     "classes/company",
     "classes/business_registration",
@@ -1195,7 +1267,10 @@ export async function processSunbizManifest(options) {
       const lines = text.split(/\r?\n/);
       for (const line of lines) {
         if (!line.trim()) continue;
-        if (options.maxRecords !== null && state.counters.sourceRecordCount >= options.maxRecords) {
+        if (
+          options.maxRecords !== null &&
+          state.counters.sourceRecordCount >= options.maxRecords
+        ) {
           stopAfterRecordLimit = true;
           break;
         }
@@ -1205,7 +1280,9 @@ export async function processSunbizManifest(options) {
           state.counters.invalidRecordCount += 1;
           continue;
         }
-        const bundle = transformSunbizRecord(parsed, { sourceDataUri: chunk.sourceDataUri });
+        const bundle = transformSunbizRecord(parsed, {
+          sourceDataUri: chunk.sourceDataUri,
+        });
         await writeBundle(state, writers, bundle);
         state.counters.transformedRecordCount += 1;
       }
@@ -1219,7 +1296,8 @@ export async function processSunbizManifest(options) {
       sourceManifestS3Uri: options.manifestS3Uri,
       sourceJobId: jobId,
       stoppedAfterMaxChunks:
-        options.maxChunks !== null && state.counters.sourceChunkCount >= options.maxChunks,
+        options.maxChunks !== null &&
+        state.counters.sourceChunkCount >= options.maxChunks,
       stoppedAfterMaxRecords: stopAfterRecordLimit,
       partRecordLimit: options.partRecordLimit,
       counters: state.counters,
@@ -1242,7 +1320,12 @@ export async function processSunbizManifest(options) {
         ],
       },
     };
-    await writeOutputJson(options.s3Client, options.outputLocation, "summary.json", summary);
+    await writeOutputJson(
+      options.s3Client,
+      options.outputLocation,
+      "summary.json",
+      summary,
+    );
     return summary;
   } finally {
     await rm(tempDir, { recursive: true, force: true });
@@ -1258,7 +1341,8 @@ export async function processSunbizManifest(options) {
  */
 function parseOptionalPositiveInteger(value, optionName) {
   if (value === undefined) return null;
-  if (typeof value !== "string") throw new Error(`--${optionName} must be a number`);
+  if (typeof value !== "string")
+    throw new Error(`--${optionName} must be a number`);
   const parsed = Number.parseInt(value, 10);
   if (!Number.isInteger(parsed) || parsed <= 0) {
     throw new Error(`--${optionName} must be a positive integer`);
@@ -1294,7 +1378,9 @@ function parseOutputLocation(values) {
     throw new Error("Use only one of --output-s3-uri or --output-dir");
   }
   if (typeof outputS3Uri === "string") {
-    const { bucket, key } = parseS3Uri(outputS3Uri.replace(/\/$/, "/_placeholder"));
+    const { bucket, key } = parseS3Uri(
+      outputS3Uri.replace(/\/$/, "/_placeholder"),
+    );
     const keyPrefix = key.replace(/\/_placeholder$/, "").replace(/\/$/, "");
     return { kind: "s3", bucket, keyPrefix };
   }
@@ -1325,11 +1411,19 @@ export async function main() {
 
   const manifestS3Uri = requireStringOption(values, "manifest-s3-uri");
   const outputLocation = parseOutputLocation(values);
-  const maxChunks = parseOptionalPositiveInteger(values["max-chunks"], "max-chunks");
-  const maxRecords = parseOptionalPositiveInteger(values["max-records"], "max-records");
+  const maxChunks = parseOptionalPositiveInteger(
+    values["max-chunks"],
+    "max-chunks",
+  );
+  const maxRecords = parseOptionalPositiveInteger(
+    values["max-records"],
+    "max-records",
+  );
   const partRecordLimit =
-    parseOptionalPositiveInteger(values["part-record-limit"], "part-record-limit") ??
-    DEFAULT_PART_RECORD_LIMIT;
+    parseOptionalPositiveInteger(
+      values["part-record-limit"],
+      "part-record-limit",
+    ) ?? DEFAULT_PART_RECORD_LIMIT;
 
   const summary = await processSunbizManifest({
     s3Client: new S3Client({}),
@@ -1343,7 +1437,10 @@ export async function main() {
   console.log(JSON.stringify(summary, null, 2));
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(process.argv[1]).href
+) {
   main().catch((error) => {
     console.error(error);
     process.exitCode = 1;

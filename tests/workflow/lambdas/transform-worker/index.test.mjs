@@ -89,9 +89,13 @@ describe("transform-worker handler", () => {
       scriptsZipPath: "/tmp/scripts.zip",
       md5: "abc123",
     });
-    mockTransform.mockImplementation(createSuccessfulTransformMock("Commercial"));
+    mockTransform.mockImplementation(
+      createSuccessfulTransformMock("Commercial"),
+    );
     mockUploadToS3.mockImplementation(async (_localPath, location) => {
-      const uploadLocation = /** @type {{ bucket: string, key: string }} */ (location);
+      const uploadLocation = /** @type {{ bucket: string, key: string }} */ (
+        location
+      );
       return `s3://${uploadLocation.bucket}/${uploadLocation.key}`;
     });
 
@@ -412,7 +416,9 @@ describe("transform-worker handler", () => {
   });
 
   it("should return correct result from workerFn on success", async () => {
-    mockTransform.mockImplementation(createSuccessfulTransformMock("Industrial"));
+    mockTransform.mockImplementation(
+      createSuccessfulTransformMock("Industrial"),
+    );
 
     let capturedWorkerFn = null;
     mockExecuteWithTaskToken.mockImplementation(async ({ workerFn }) => {
@@ -451,7 +457,9 @@ describe("transform-worker handler", () => {
   });
 
   it("marks residential transformed appraisals ineligible for property-first permit retrieval", async () => {
-    mockTransform.mockImplementation(createSuccessfulTransformMock("Residential"));
+    mockTransform.mockImplementation(
+      createSuccessfulTransformMock("Residential"),
+    );
 
     const { handler } =
       await import("../../../../workflow/lambdas/transform-worker/index.mjs");

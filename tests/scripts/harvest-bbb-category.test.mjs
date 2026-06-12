@@ -12,9 +12,11 @@ import {
 
 describe("BBB category harvester", () => {
   it("parses stable BBB profile URL identity parts", () => {
-    expect(parseBbbProfileUrlIdentity(
-      "https://www.bbb.org/us/il/south-holland/profile/utility-contractors/cypher-logic-inc-0654-88239819/addressId/106122/customer-reviews",
-    )).toEqual({
+    expect(
+      parseBbbProfileUrlIdentity(
+        "https://www.bbb.org/us/il/south-holland/profile/utility-contractors/cypher-logic-inc-0654-88239819/addressId/106122/customer-reviews",
+      ),
+    ).toEqual({
       providerBbbId: "0654",
       providerBusinessId: "88239819",
       addressId: "106122",
@@ -30,13 +32,19 @@ describe("BBB category harvester", () => {
       headings: [],
       links: [
         { text: "Page 2", href: "https://www.bbb.org/us/category/data?page=2" },
-        { text: "Page 15", href: "https://www.bbb.org/us/category/data?page=15" },
+        {
+          text: "Page 15",
+          href: "https://www.bbb.org/us/category/data?page=15",
+        },
       ],
       jsonLd: [],
       html: null,
     };
 
-    expect(parseCategoryCounts(snapshot)).toEqual({ totalResults: 556, pageCount: 15 });
+    expect(parseCategoryCounts(snapshot)).toEqual({
+      totalResults: 556,
+      pageCount: 15,
+    });
   });
 
   it("promotes visible BBB profile, subpage, and raw evidence fields into query-db-ready JSON", () => {
@@ -95,34 +103,48 @@ BBB Business Profiles are provided solely to assist you in exercising your own b
       headings: ["Example Electric LLC"],
       links: [
         { text: "Visit Website", href: "https://example-electric.invalid/" },
-        { text: "Email Business", href: "https://www.bbb.org/us/fl/example/profile/electrician/example-electric-0633-12345678/email-this-business?email=primary" },
-        { text: "Electrician", href: "https://www.bbb.org/us/fl/example/category/electrician" },
-        { text: "Data", href: "https://www.bbb.org/us/fl/example/category/data" },
+        {
+          text: "Email Business",
+          href: "https://www.bbb.org/us/fl/example/profile/electrician/example-electric-0633-12345678/email-this-business?email=primary",
+        },
+        {
+          text: "Electrician",
+          href: "https://www.bbb.org/us/fl/example/category/electrician",
+        },
+        {
+          text: "Data",
+          href: "https://www.bbb.org/us/fl/example/category/data",
+        },
         { text: "Facebook", href: "https://www.facebook.com/exampleelectric" },
         { text: "BBB National Programs", href: "https://bbbprograms.org/" },
-        { text: "our Facebook (opens in a new tab)", href: "https://www.facebook.com/BetterBusinessBureau" },
+        {
+          text: "our Facebook (opens in a new tab)",
+          href: "https://www.facebook.com/BetterBusinessBureau",
+        },
       ],
-      jsonLd: [JSON.stringify({
-        "@context": "https://schema.org",
-        "@type": "LocalBusiness",
-        name: "Example Electric LLC",
-        telephone: "+1-555-0100",
-        address: {
-          "@type": "PostalAddress",
-          streetAddress: "1 Example Way",
-          addressLocality: "Example City",
-          addressRegion: "FL",
-          postalCode: "33999",
-          addressCountry: "US",
-        },
-        employee: {
-          "@type": "Person",
-          givenName: "Ada",
-          familyName: "Lovelace",
-          jobTitle: "Owner",
-        },
-        image: "https://example-electric.invalid/logo.png",
-      })],
+      jsonLd: [
+        JSON.stringify({
+          "@context": "https://schema.org",
+          "@type": "LocalBusiness",
+          name: "Example Electric LLC",
+          telephone: "+1-555-0100",
+          address: {
+            "@type": "PostalAddress",
+            streetAddress: "1 Example Way",
+            addressLocality: "Example City",
+            addressRegion: "FL",
+            postalCode: "33999",
+            addressCountry: "US",
+          },
+          employee: {
+            "@type": "Person",
+            givenName: "Ada",
+            familyName: "Lovelace",
+            jobTitle: "Owner",
+          },
+          image: "https://example-electric.invalid/logo.png",
+        }),
+      ],
       html: null,
     };
     const moreInfoPage = {
@@ -192,8 +214,22 @@ This business has committed to upholding the BBB Standards for Trust.
       },
       mainPage,
       subpages: [
-        { kind: "more-info", url: moreInfoPage.url, status: 200, ok: true, page: moreInfoPage, error: null },
-        { kind: "complaints", url: complaintsPage.url, status: 200, ok: true, page: complaintsPage, error: null },
+        {
+          kind: "more-info",
+          url: moreInfoPage.url,
+          status: 200,
+          ok: true,
+          page: moreInfoPage,
+          error: null,
+        },
+        {
+          kind: "complaints",
+          url: complaintsPage.url,
+          status: 200,
+          ok: true,
+          page: complaintsPage,
+          error: null,
+        },
       ],
       retrievedAt: "2026-06-08T00:00:00.000Z",
     });
@@ -206,20 +242,33 @@ This business has committed to upholding the BBB Standards for Trust.
       name: "Example Electric LLC",
       phone: "+1-555-0100",
       websiteUrl: "https://example-electric.invalid/",
-      emailUrl: "https://www.bbb.org/us/fl/example/profile/electrician/example-electric-0633-12345678/email-this-business?email=primary",
+      emailUrl:
+        "https://www.bbb.org/us/fl/example/profile/electrician/example-electric-0633-12345678/email-this-business?email=primary",
       bbbRating: "A+",
       entityType: "Limited Liability Company (LLC)",
     });
     expect(record.links).toEqual([
-      { kind: "WEBSITE", url: "https://example-electric.invalid/", label: "Visit Website" },
-      { kind: "FACEBOOK", url: "https://www.facebook.com/exampleelectric", label: "Facebook" },
+      {
+        kind: "WEBSITE",
+        url: "https://example-electric.invalid/",
+        label: "Visit Website",
+      },
+      {
+        kind: "FACEBOOK",
+        url: "https://www.facebook.com/exampleelectric",
+        label: "Facebook",
+      },
     ]);
     expect(record.alternateNames).toEqual([
       { name: "Example Data", source: "visible_text" },
       { name: "Example Low Voltage", source: "visible_text" },
     ]);
     expect(record.businessManagement).toContainEqual(
-      expect.objectContaining({ name: "Ms. Grace Hopper", title: "Operations", role: "CUSTOMER" }),
+      expect.objectContaining({
+        name: "Ms. Grace Hopper",
+        title: "Operations",
+        role: "CUSTOMER",
+      }),
     );
     expect(record.businessManagement).not.toContainEqual(
       expect.objectContaining({ name: "Additional Websites" }),
@@ -233,7 +282,8 @@ This business has committed to upholding the BBB Standards for Trust.
       complaintDate: "12/06/2024",
       complaintType: "Service or Repair Issues",
       complaintStatus: "Resolved",
-      complaintText: "Customer reported an unresolved low-voltage repair issue.",
+      complaintText:
+        "Customer reported an unresolved low-voltage repair issue.",
       events: [
         {
           type: "BUSINESS_RESPONSE",

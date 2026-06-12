@@ -284,12 +284,60 @@ const CORPORATE_FIELDS = [
 
 /** @type {OfficerFieldOffsets[]} */
 const OFFICER_FIELD_OFFSETS = [
-  { title: 669, type: 673, name: 674, address: 716, city: 758, state: 786, zip: 788 },
-  { title: 797, type: 801, name: 802, address: 844, city: 886, state: 914, zip: 916 },
-  { title: 925, type: 929, name: 930, address: 972, city: 1014, state: 1042, zip: 1044 },
-  { title: 1053, type: 1057, name: 1058, address: 1100, city: 1142, state: 1170, zip: 1172 },
-  { title: 1181, type: 1185, name: 1186, address: 1228, city: 1270, state: 1298, zip: 1300 },
-  { title: 1309, type: 1313, name: 1314, address: 1356, city: 1398, state: 1426, zip: 1428 },
+  {
+    title: 669,
+    type: 673,
+    name: 674,
+    address: 716,
+    city: 758,
+    state: 786,
+    zip: 788,
+  },
+  {
+    title: 797,
+    type: 801,
+    name: 802,
+    address: 844,
+    city: 886,
+    state: 914,
+    zip: 916,
+  },
+  {
+    title: 925,
+    type: 929,
+    name: 930,
+    address: 972,
+    city: 1014,
+    state: 1042,
+    zip: 1044,
+  },
+  {
+    title: 1053,
+    type: 1057,
+    name: 1058,
+    address: 1100,
+    city: 1142,
+    state: 1170,
+    zip: 1172,
+  },
+  {
+    title: 1181,
+    type: 1185,
+    name: 1186,
+    address: 1228,
+    city: 1270,
+    state: 1298,
+    zip: 1300,
+  },
+  {
+    title: 1309,
+    type: 1313,
+    name: 1314,
+    address: 1356,
+    city: 1398,
+    state: 1426,
+    zip: 1428,
+  },
 ];
 
 const STATUS_LABELS = new Map([
@@ -318,7 +366,9 @@ const FILING_TYPE_LABELS = new Map([
  * @returns {string | null} Collapsed text or null.
  */
 function cleanText(value) {
-  const text = String(value ?? "").replace(/\s+/g, " ").trim();
+  const text = String(value ?? "")
+    .replace(/\s+/g, " ")
+    .trim();
   return text ? text : null;
 }
 
@@ -531,10 +581,10 @@ export function parseCorporateDataRecord(line) {
     documentNumber,
     entityName: cleanText(fields.entityName),
     statusCode,
-    status: statusCode ? STATUS_LABELS.get(statusCode) ?? statusCode : null,
+    status: statusCode ? (STATUS_LABELS.get(statusCode) ?? statusCode) : null,
     filingTypeCode,
     filingType: filingTypeCode
-      ? FILING_TYPE_LABELS.get(filingTypeCode) ?? filingTypeCode
+      ? (FILING_TYPE_LABELS.get(filingTypeCode) ?? filingTypeCode)
       : null,
     principalAddress: buildAddress({
       line1: cleanText(fields.address1),
@@ -558,9 +608,18 @@ export function parseCorporateDataRecord(line) {
     lastTransactionDate: parseSunbizDate(fields.lastTransactionDate),
     stateCountry: cleanText(fields.stateCountry),
     annualReports: [
-      { year: cleanText(fields.reportYear1), date: parseSunbizDate(fields.reportDate1) },
-      { year: cleanText(fields.reportYear2), date: parseSunbizDate(fields.reportDate2) },
-      { year: cleanText(fields.reportYear3), date: parseSunbizDate(fields.reportDate3) },
+      {
+        year: cleanText(fields.reportYear1),
+        date: parseSunbizDate(fields.reportDate1),
+      },
+      {
+        year: cleanText(fields.reportYear2),
+        date: parseSunbizDate(fields.reportDate2),
+      },
+      {
+        year: cleanText(fields.reportYear3),
+        date: parseSunbizDate(fields.reportDate3),
+      },
     ],
     registeredAgent: {
       name: cleanText(fields.registeredAgentName),
@@ -627,7 +686,10 @@ function tokensAppearInOrder(queryTokens, candidateTokens) {
  */
 export function isSunbizAddressMatch(input, address) {
   if (!address.normalized) return false;
-  if (input.city && !normalizeAddressForMatch(address.city).includes(input.city)) {
+  if (
+    input.city &&
+    !normalizeAddressForMatch(address.city).includes(input.city)
+  ) {
     return false;
   }
   if (input.state && normalizeAddressForMatch(address.state) !== input.state) {
@@ -707,7 +769,9 @@ export function normalizeZipPrefixes(zipPrefixes) {
     ),
   ];
   if (normalized.length === 0) {
-    throw new Error("At least one ZIP prefix is required for Sunbiz extraction");
+    throw new Error(
+      "At least one ZIP prefix is required for Sunbiz extraction",
+    );
   }
   return normalized;
 }
@@ -798,7 +862,10 @@ export function findZipMatchedAddresses(record, zipPrefixes) {
   }
 
   for (const officer of record.officers) {
-    const officerAddressMatch = getAddressZipMatch(officer.address, zipPrefixes);
+    const officerAddressMatch = getAddressZipMatch(
+      officer.address,
+      zipPrefixes,
+    );
     if (!officerAddressMatch) continue;
     matches.push({
       role: "officerAddress",
@@ -844,7 +911,9 @@ export async function extractCorporateDataLinesByZip({
   }
   const normalizedChunkRecordLimit = Math.floor(chunkRecordLimit);
   const normalizedMaxRecords =
-    typeof maxRecords === "number" && Number.isFinite(maxRecords) && maxRecords > 0
+    typeof maxRecords === "number" &&
+    Number.isFinite(maxRecords) &&
+    maxRecords > 0
       ? Math.floor(maxRecords)
       : null;
 
@@ -950,7 +1019,10 @@ export function matchCorporateDataLines({
   const targets = addressInputs.map(normalizeAddressInput);
   /** @type {Map<string, SunbizAddressMatch[]>} */
   const matchesByInputId = new Map(
-    targets.map((target) => [target.inputId, /** @type {SunbizAddressMatch[]} */ ([])]),
+    targets.map((target) => [
+      target.inputId,
+      /** @type {SunbizAddressMatch[]} */ ([]),
+    ]),
   );
   /** @type {Set<string>} */
   const truncatedInputIds = new Set();
@@ -1065,7 +1137,9 @@ async function downloadSourceToTempFile({ s3, sourceDataS3Uri, sourceFormat }) {
     directory,
     `${safeKeyPart(path.basename(key))}-${shortHash(sourceDataS3Uri)}.${extension}`,
   );
-  const response = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+  const response = await s3.send(
+    new GetObjectCommand({ Bucket: bucket, Key: key }),
+  );
   await writeBodyToFile(response.Body, filePath);
   return filePath;
 }
@@ -1150,7 +1224,10 @@ async function processZipTextLines(filePath, onLine) {
           return;
         }
         stream.on("error", reject);
-        const reader = readline.createInterface({ input: stream, crlfDelay: Infinity });
+        const reader = readline.createInterface({
+          input: stream,
+          crlfDelay: Infinity,
+        });
         reader.on("line", (line) => onLine(line, entry.fileName));
         reader.on("close", () => zipFile.readEntry());
       });
@@ -1245,7 +1322,10 @@ export async function matchCorporateDataS3Object({
   const targets = addressInputs.map(normalizeAddressInput);
   /** @type {Map<string, SunbizAddressMatch[]>} */
   const matchesByInputId = new Map(
-    targets.map((target) => [target.inputId, /** @type {SunbizAddressMatch[]} */ ([])]),
+    targets.map((target) => [
+      target.inputId,
+      /** @type {SunbizAddressMatch[]} */ ([]),
+    ]),
   );
   /** @type {Set<string>} */
   const truncatedInputIds = new Set();
@@ -1378,7 +1458,9 @@ export async function extractCorporateDataS3ObjectByZip({
   }
   const normalizedChunkRecordLimit = Math.floor(chunkRecordLimit);
   const normalizedMaxRecords =
-    typeof maxRecords === "number" && Number.isFinite(maxRecords) && maxRecords > 0
+    typeof maxRecords === "number" &&
+    Number.isFinite(maxRecords) &&
+    maxRecords > 0
       ? Math.floor(maxRecords)
       : null;
 

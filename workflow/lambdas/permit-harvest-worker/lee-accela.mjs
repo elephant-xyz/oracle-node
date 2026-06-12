@@ -446,7 +446,9 @@ function readPermitRecordNumber(value) {
  */
 function isRelatedRecordTreeTable(table) {
   const tableId = table.attr("id") ?? "";
-  const caption = collapseText(table.find("caption").first().text()).toLowerCase();
+  const caption = collapseText(
+    table.find("caption").first().text(),
+  ).toLowerCase();
   return /tableCapTreeList/i.test(tableId) || caption === "related records";
 }
 
@@ -485,7 +487,10 @@ export function extractCurrentDetailPermitLinkFromHtml({
       ? pageUrl
       : normalizeAccelaUrl(formAction);
   const recordStatus = cleanRecordStatus(
-    matchText(text, /Record Status:\s*(.*?)\s+Click here for more information/i) ??
+    matchText(
+      text,
+      /Record Status:\s*(.*?)\s+Click here for more information/i,
+    ) ??
       matchText(text, /Record Status:\s*(.*?)\s+Create a New Collection/i) ??
       matchText(text, /Record Status:\s*(.*?)\s+Add to Existing Collection/i) ??
       matchText(text, /Record Status:\s*(.*?)\s+Record Info/i) ??
@@ -790,7 +795,8 @@ export async function searchLeePermitParcel({
   maxPages,
   logger,
 }) {
-  const normalizedParcelIdentifier = normalizeParcelSearchValue(parcelIdentifier);
+  const normalizedParcelIdentifier =
+    normalizeParcelSearchValue(parcelIdentifier);
   if (normalizedParcelIdentifier === null) {
     throw new Error(`Invalid Lee parcel identifier: ${parcelIdentifier}`);
   }
@@ -1027,10 +1033,12 @@ export function cleanRecordStatus(value) {
   if (typeof value !== "string") return null;
   const text = collapseText(value);
   if (text.length === 0) return null;
-  const boundary = /\s+(?:Click here for more information|Create a New Collection|Add to Existing Collection|Record Info|Record Details|Processing Status|Related Records|Work Location)\b/i.exec(
-    text,
-  );
-  const status = boundary === null ? text : text.slice(0, boundary.index).trim();
+  const boundary =
+    /\s+(?:Click here for more information|Create a New Collection|Add to Existing Collection|Record Info|Record Details|Processing Status|Related Records|Work Location)\b/i.exec(
+      text,
+    );
+  const status =
+    boundary === null ? text : text.slice(0, boundary.index).trim();
   return status.length > 0 ? status : null;
 }
 
@@ -1061,7 +1069,7 @@ function isUnavailableAccelaDetailText(text) {
  */
 function inferRecordTypeFromRecordNumber(recordNumber) {
   const prefix = /^[A-Z]+/i.exec(recordNumber)?.[0]?.toUpperCase() ?? null;
-  return prefix === null ? null : RECORD_TYPE_BY_PREFIX.get(prefix) ?? null;
+  return prefix === null ? null : (RECORD_TYPE_BY_PREFIX.get(prefix) ?? null);
 }
 
 /**
@@ -1104,7 +1112,9 @@ export function buildUnavailablePermitDetail({
   rawText,
   errorMessage,
 }) {
-  const inferredRecordType = inferRecordTypeFromRecordNumber(permit.recordNumber);
+  const inferredRecordType = inferRecordTypeFromRecordNumber(
+    permit.recordNumber,
+  );
   const evidence = compactStringRecord({
     recordNumber: permit.recordNumber,
     detailUrl: permit.url,
@@ -1339,9 +1349,7 @@ export async function captureLeePermitDetail({ browser, permit, logger }) {
     await sleep(2500);
     const html = await page.content();
     const text = htmlToText(html);
-    if (
-      isUnavailableAccelaDetailText(text)
-    ) {
+    if (isUnavailableAccelaDetailText(text)) {
       const errorMessage = `Accela returned unavailable detail page for ${permit.recordNumber}: ${text.slice(0, 500)}`;
       logger.warn("lee_detail_unavailable_fallback", {
         recordNumber: permit.recordNumber,

@@ -22,7 +22,7 @@ import {
   mapAppraisalTransformedFile,
   mapLeePermitDetail,
   upsertPreparedRows,
-} from "@elephant-xyz/query-db/loader";
+} from "./query-db-loader/index.js";
 import { Pool } from "pg";
 import {
   buildPermitOutputStem,
@@ -232,7 +232,7 @@ import {
  */
 
 /**
- * @typedef {import("@elephant-xyz/query-db/loader").PreparedRow} PreparedRow
+ * @typedef {import("./query-db-loader/index.js").PreparedRow} PreparedRow
  */
 
 /**
@@ -257,7 +257,8 @@ const secretsManager = new SecretsManagerClient({});
 const DEFAULT_OUTPUT_PREFIX = process.env.PERMIT_HARVEST_OUTPUT_PREFIX;
 const QUEUE_URL = process.env.PERMIT_HARVEST_QUEUE_URL;
 const QUERY_DB_DATABASE_URL = process.env.QUERY_DB_DATABASE_URL;
-const QUERY_DB_DATABASE_URL_SECRET_ARN = process.env.QUERY_DB_DATABASE_URL_SECRET_ARN;
+const QUERY_DB_DATABASE_URL_SECRET_ARN =
+  process.env.QUERY_DB_DATABASE_URL_SECRET_ARN;
 const PROPERTY_FIRST_DETAIL_CAPTURE_ATTEMPTS = parsePositiveIntegerEnv(
   process.env.PROPERTY_FIRST_DETAIL_CAPTURE_ATTEMPTS,
   3,
@@ -360,7 +361,9 @@ function parsePositiveIntegerEnv(value, fallback) {
   if (value === undefined || value.trim().length === 0) return fallback;
   const parsed = Number.parseInt(value, 10);
   if (!Number.isFinite(parsed) || parsed <= 0) {
-    throw new Error(`Expected positive integer environment value, received ${value}`);
+    throw new Error(
+      `Expected positive integer environment value, received ${value}`,
+    );
   }
   return parsed;
 }
@@ -511,7 +514,9 @@ function resolvePropertyFirstPermitEligibleUsageTypes() {
     .split(",")
     .map((value) => value.trim())
     .filter((value) => value.length > 0);
-  return values.length > 0 ? values : [...DEFAULT_PROPERTY_FIRST_PERMIT_ELIGIBLE_USAGE_TYPES];
+  return values.length > 0
+    ? values
+    : [...DEFAULT_PROPERTY_FIRST_PERMIT_ELIGIBLE_USAGE_TYPES];
 }
 
 /**
@@ -547,7 +552,8 @@ function buildPropertyFirstPermitEligibility({
   );
   const propertyUsageTypeKey = normalizePropertyUsageTypeKey(propertyUsageType);
   const shouldEnqueue =
-    propertyUsageTypeKey !== null && eligibleUsageTypeKeys.has(propertyUsageTypeKey);
+    propertyUsageTypeKey !== null &&
+    eligibleUsageTypeKeys.has(propertyUsageTypeKey);
   const reason = shouldEnqueue
     ? "eligible_property_usage_type"
     : readError !== null
@@ -638,7 +644,9 @@ async function resolvePropertyFirstPermitEligibility(target) {
  * @returns {PreparedRow[]} Sorted prepared rows.
  */
 function sortPreparedRows(rows, tableOrder) {
-  const order = new Map(tableOrder.map((tableName, index) => [tableName, index]));
+  const order = new Map(
+    tableOrder.map((tableName, index) => [tableName, index]),
+  );
   return [...rows].sort((left, right) => {
     const leftOrder = order.get(left.tableName) ?? Number.MAX_SAFE_INTEGER;
     const rightOrder = order.get(right.tableName) ?? Number.MAX_SAFE_INTEGER;
@@ -654,9 +662,7 @@ function sortPreparedRows(rows, tableOrder) {
  * @returns {string} S3-safe key segment.
  */
 function safeS3KeyPart(value, fallback) {
-  const safe = value
-    .replace(/[^A-Za-z0-9._=-]+/g, "-")
-    .replace(/^-+|-+$/g, "");
+  const safe = value.replace(/[^A-Za-z0-9._=-]+/g, "-").replace(/^-+|-+$/g, "");
   return safe.length > 0 ? safe.slice(0, 96) : fallback;
 }
 
@@ -665,7 +671,7 @@ function safeS3KeyPart(value, fallback) {
  *
  * @param {object} params - Media file row parameters.
  * @param {number} params.index - One-based media record index.
- * @param {import("@elephant-xyz/query-db/loader").LeeAppraisalMediaLink} params.link - Lee media link metadata.
+ * @param {import("./query-db-loader/index.js").LeeAppraisalMediaLink} params.link - Lee media link metadata.
  * @param {string} params.requestIdentifier - Lee Appraiser request/Folio identifier.
  * @param {string | null} params.storageUri - S3 URI of the copied media object, or null when download failed.
  * @param {string | null} params.contentSha256 - SHA-256 digest of copied bytes, or null when unavailable.
@@ -714,7 +720,7 @@ function buildAppraisalMediaFileRecord({
  * @param {object} params - Media copy parameters.
  * @param {ReturnType<typeof resolveOutputPrefix>} params.output - Resolved S3 output prefix.
  * @param {PropertyFirstTarget} params.target - Property-first target metadata.
- * @param {import("@elephant-xyz/query-db/loader").LeeAppraisalMediaLink} params.link - Media link to copy.
+ * @param {import("./query-db-loader/index.js").LeeAppraisalMediaLink} params.link - Media link to copy.
  * @returns {Promise<{ storageUri: string | null, contentSha256: string | null, contentType: string | null, error: string | null }>} Storage result.
  */
 async function copyLeeAppraisalMediaToS3({ output, target, link }) {
@@ -772,12 +778,20 @@ async function readAppraisalMediaRowsFromS3({
   output,
 }) {
   if (preparedOutputS3Uri === null || target.requestIdentifier === null) {
-    return { rows: [], discoveredCount: 0, storedCount: 0, skippedRecordCount: 0 };
+    return {
+      rows: [],
+      discoveredCount: 0,
+      storedCount: 0,
+      skippedRecordCount: 0,
+    };
   }
   const zip = new AdmZip(await readBufferFromS3(preparedOutputS3Uri));
   const htmlEntries = zip
     .getEntries()
-    .filter((entry) => entry.isDirectory === false && /\.html?$/i.test(entry.entryName))
+    .filter(
+      (entry) =>
+        entry.isDirectory === false && /\.html?$/i.test(entry.entryName),
+    )
     .sort((left, right) => left.entryName.localeCompare(right.entryName));
   const mediaLinksByIdentity = new Map();
   for (const entry of htmlEntries) {
@@ -844,7 +858,10 @@ async function readAppraisalRowsFromS3(appraisalOutputS3Uri) {
   let skippedRecordCount = 0;
   const entries = zip
     .getEntries()
-    .filter((entry) => entry.isDirectory === false && /^data\/.+\.json$/.test(entry.entryName))
+    .filter(
+      (entry) =>
+        entry.isDirectory === false && /^data\/.+\.json$/.test(entry.entryName),
+    )
     .sort((left, right) => left.entryName.localeCompare(right.entryName));
 
   for (const entry of entries) {
@@ -1009,10 +1026,12 @@ function normalizeCsvHeader(header) {
  * @returns {value is NodeJS.ReadableStream} True when `pipe` is available.
  */
 function isNodeReadableStream(value) {
-  return typeof value === "object" &&
+  return (
+    typeof value === "object" &&
     value !== null &&
     "pipe" in value &&
-    typeof /** @type {{ pipe?: unknown }} */ (value).pipe === "function";
+    typeof (/** @type {{ pipe?: unknown }} */ (value).pipe) === "function"
+  );
 }
 
 /**
@@ -1083,11 +1102,16 @@ function buildOneRowSeedCsv(columns, row) {
  * @returns {boolean} True for 404-style missing object errors.
  */
 function isMissingS3ObjectError(error) {
-  if (error instanceof Error && (error.name === "NotFound" || error.name === "NoSuchKey")) {
+  if (
+    error instanceof Error &&
+    (error.name === "NotFound" || error.name === "NoSuchKey")
+  ) {
     return true;
   }
   if (error && typeof error === "object" && "$metadata" in error) {
-    const metadata = /** @type {{ $metadata?: { httpStatusCode?: number } }} */ (error).$metadata;
+    const metadata =
+      /** @type {{ $metadata?: { httpStatusCode?: number } }} */ (error)
+        .$metadata;
     return metadata?.httpStatusCode === 404;
   }
   return false;
@@ -1124,32 +1148,48 @@ async function readLeePropertyFirstSeedFeederState(message) {
   try {
     const parsed = await readJsonFromS3(message.stateS3Uri);
     if (!isRecord(parsed)) {
-      throw new Error(`Seed feeder state is not a JSON object: ${message.stateS3Uri}`);
+      throw new Error(
+        `Seed feeder state is not a JSON object: ${message.stateS3Uri}`,
+      );
     }
-    if (parsed.schemaVersion !== "permit-harvest.lee-property-first-seed-feeder-state.v1") {
-      throw new Error(`Unsupported seed feeder state schema: ${String(parsed.schemaVersion)}`);
+    if (
+      parsed.schemaVersion !==
+      "permit-harvest.lee-property-first-seed-feeder-state.v1"
+    ) {
+      throw new Error(
+        `Unsupported seed feeder state schema: ${String(parsed.schemaVersion)}`,
+      );
     }
-    const nextSourceRowNumber = typeof parsed.nextSourceRowNumber === "number" &&
+    const nextSourceRowNumber =
+      typeof parsed.nextSourceRowNumber === "number" &&
       Number.isFinite(parsed.nextSourceRowNumber) &&
       parsed.nextSourceRowNumber > 0
-      ? Math.trunc(parsed.nextSourceRowNumber)
-      : 1;
+        ? Math.trunc(parsed.nextSourceRowNumber)
+        : 1;
     return {
       schemaVersion: "permit-harvest.lee-property-first-seed-feeder-state.v1",
       jobId: readOptionalString(parsed.jobId) ?? message.jobId,
-      sourceCsvS3Uri: readOptionalString(parsed.sourceCsvS3Uri) ?? message.sourceCsvS3Uri,
+      sourceCsvS3Uri:
+        readOptionalString(parsed.sourceCsvS3Uri) ?? message.sourceCsvS3Uri,
       nextSourceRowNumber,
-      enqueuedCount: typeof parsed.enqueuedCount === "number" && Number.isFinite(parsed.enqueuedCount)
-        ? Math.trunc(parsed.enqueuedCount)
-        : 0,
-      skippedExistingCount: typeof parsed.skippedExistingCount === "number" && Number.isFinite(parsed.skippedExistingCount)
-        ? Math.trunc(parsed.skippedExistingCount)
-        : 0,
-      skippedInvalidCount: typeof parsed.skippedInvalidCount === "number" && Number.isFinite(parsed.skippedInvalidCount)
-        ? Math.trunc(parsed.skippedInvalidCount)
-        : 0,
+      enqueuedCount:
+        typeof parsed.enqueuedCount === "number" &&
+        Number.isFinite(parsed.enqueuedCount)
+          ? Math.trunc(parsed.enqueuedCount)
+          : 0,
+      skippedExistingCount:
+        typeof parsed.skippedExistingCount === "number" &&
+        Number.isFinite(parsed.skippedExistingCount)
+          ? Math.trunc(parsed.skippedExistingCount)
+          : 0,
+      skippedInvalidCount:
+        typeof parsed.skippedInvalidCount === "number" &&
+        Number.isFinite(parsed.skippedInvalidCount)
+          ? Math.trunc(parsed.skippedInvalidCount)
+          : 0,
       sourceExhausted: parsed.sourceExhausted === true,
-      updatedAt: readOptionalString(parsed.updatedAt) ?? new Date().toISOString(),
+      updatedAt:
+        readOptionalString(parsed.updatedAt) ?? new Date().toISOString(),
       lastRun: isRecord(parsed.lastRun) ? parsed.lastRun : null,
     };
   } catch (error) {
@@ -1186,7 +1226,10 @@ async function writeLeePropertyFirstSeedFeederState(message, state) {
  */
 async function readExistingLeeAppraiserIdentifiers(skipExistingNeon) {
   if (!skipExistingNeon) {
-    return { requestIdentifiers: new Set(), normalizedParcelIdentifiers: new Set() };
+    return {
+      requestIdentifiers: new Set(),
+      normalizedParcelIdentifiers: new Set(),
+    };
   }
   const pool = await getQueryDatabasePool();
   const result = await pool.query(
@@ -1205,8 +1248,11 @@ async function readExistingLeeAppraiserIdentifiers(skipExistingNeon) {
     const record = /** @type {Record<string, unknown>} */ (row);
     const requestIdentifier = readOptionalString(record.request_identifier);
     if (requestIdentifier !== null) requestIdentifiers.add(requestIdentifier);
-    const parcelIdentifier = normalizeSeedParcelIdentifier(record.parcel_identifier);
-    if (parcelIdentifier !== null) normalizedParcelIdentifiers.add(parcelIdentifier);
+    const parcelIdentifier = normalizeSeedParcelIdentifier(
+      record.parcel_identifier,
+    );
+    if (parcelIdentifier !== null)
+      normalizedParcelIdentifiers.add(parcelIdentifier);
   }
   return { requestIdentifiers, normalizedParcelIdentifiers };
 }
@@ -1220,11 +1266,17 @@ async function readExistingLeeAppraiserIdentifiers(skipExistingNeon) {
  */
 function isExistingLeeAppraiserSeedRow(row, existing) {
   const requestIdentifier = readOptionalString(row.source_identifier);
-  if (requestIdentifier !== null && existing.requestIdentifiers.has(requestIdentifier)) {
+  if (
+    requestIdentifier !== null &&
+    existing.requestIdentifiers.has(requestIdentifier)
+  ) {
     return true;
   }
   const parcelIdentifier = normalizeSeedParcelIdentifier(row.parcel_id);
-  return parcelIdentifier !== null && existing.normalizedParcelIdentifiers.has(parcelIdentifier);
+  return (
+    parcelIdentifier !== null &&
+    existing.normalizedParcelIdentifiers.has(parcelIdentifier)
+  );
 }
 
 /**
@@ -1245,13 +1297,24 @@ async function readBackpressureQueueDepth(queue) {
     }),
   );
   const attributes = response.Attributes ?? {};
-  const visibleMessages = Number.parseInt(attributes.ApproximateNumberOfMessages ?? "0", 10);
-  const notVisibleMessages = Number.parseInt(attributes.ApproximateNumberOfMessagesNotVisible ?? "0", 10);
-  const delayedMessages = Number.parseInt(attributes.ApproximateNumberOfMessagesDelayed ?? "0", 10);
+  const visibleMessages = Number.parseInt(
+    attributes.ApproximateNumberOfMessages ?? "0",
+    10,
+  );
+  const notVisibleMessages = Number.parseInt(
+    attributes.ApproximateNumberOfMessagesNotVisible ?? "0",
+    10,
+  );
+  const delayedMessages = Number.parseInt(
+    attributes.ApproximateNumberOfMessagesDelayed ?? "0",
+    10,
+  );
   return {
     ...queue,
     visibleMessages: Number.isFinite(visibleMessages) ? visibleMessages : 0,
-    notVisibleMessages: Number.isFinite(notVisibleMessages) ? notVisibleMessages : 0,
+    notVisibleMessages: Number.isFinite(notVisibleMessages)
+      ? notVisibleMessages
+      : 0,
     delayedMessages: Number.isFinite(delayedMessages) ? delayedMessages : 0,
     totalMessages:
       (Number.isFinite(visibleMessages) ? visibleMessages : 0) +
@@ -1267,10 +1330,15 @@ async function readBackpressureQueueDepth(queue) {
  * @returns {LeePropertyFirstSeedBackpressureQueue[]} Queues to inspect.
  */
 function resolveBackpressureQueues(message) {
-  if (message.backpressureQueues !== undefined && message.backpressureQueues.length > 0) {
+  if (
+    message.backpressureQueues !== undefined &&
+    message.backpressureQueues.length > 0
+  ) {
     return message.backpressureQueues;
   }
-  return [{ name: "workflow", queueUrl: message.workflowQueueUrl, maxMessages: 250 }];
+  return [
+    { name: "workflow", queueUrl: message.workflowQueueUrl, maxMessages: 250 },
+  ];
 }
 
 /**
@@ -1300,7 +1368,13 @@ async function sendJsonMessageToQueue({ queueUrl, message, delaySeconds }) {
  */
 async function rescheduleLeePropertyFirstSeedFeeder(message) {
   const delaySeconds = Math.min(
-    Math.max(Math.trunc(message.requeueDelaySeconds ?? DEFAULT_LEE_PROPERTY_FIRST_SEED_REQUEUE_DELAY_SECONDS), 0),
+    Math.max(
+      Math.trunc(
+        message.requeueDelaySeconds ??
+          DEFAULT_LEE_PROPERTY_FIRST_SEED_REQUEUE_DELAY_SECONDS,
+      ),
+      0,
+    ),
     MAX_SQS_DELAY_SECONDS,
   );
   await sendJsonMessageToQueue({
@@ -1331,7 +1405,9 @@ async function uploadSeedAndEnqueueWorkflowFromFeeder({
   const seedPrefix = parseS3Uri(message.generatedSeedPrefix);
   const parcelIdentifier = normalizeSeedParcelIdentifier(row.parcel_id);
   if (parcelIdentifier === null) {
-    throw new Error(`Source row ${String(sourceRowNumber)} is missing parcel_id`);
+    throw new Error(
+      `Source row ${String(sourceRowNumber)} is missing parcel_id`,
+    );
   }
   const requestIdentifier = readOptionalString(row.source_identifier);
   const requestKeyPart = safeSeedKeyPart(requestIdentifier, "unknown-folio");
@@ -1361,7 +1437,8 @@ async function uploadSeedAndEnqueueWorkflowFromFeeder({
       propertyFirstPermitQueueUrl: message.propertyFirstPermitQueueUrl,
       propertyFirstPermitJobId: message.jobId,
       propertyFirstPermitOutputPrefix: message.propertyFirstPermitOutputPrefix,
-      propertyFirstPermitMaxPages: message.maxPages ?? DEFAULT_LEE_PROPERTY_FIRST_SEED_MAX_PAGES,
+      propertyFirstPermitMaxPages:
+        message.maxPages ?? DEFAULT_LEE_PROPERTY_FIRST_SEED_MAX_PAGES,
       sourceSeedS3Uri: message.sourceCsvS3Uri,
       sourceSeedRowNumber: sourceRowNumber,
       sourceSeedEnqueuedIndex: enqueuedIndex,
@@ -1385,21 +1462,27 @@ async function enqueueLeePropertyFirstSeedBatch({ message, state, existing }) {
     new GetObjectCommand({ Bucket: source.bucket, Key: source.key }),
   );
   if (!isNodeReadableStream(response.Body)) {
-    throw new Error(`S3 object body is not a Node readable stream: ${message.sourceCsvS3Uri}`);
+    throw new Error(
+      `S3 object body is not a Node readable stream: ${message.sourceCsvS3Uri}`,
+    );
   }
 
   /** @type {string[]} */
   let columns = [];
-  const parser = response.Body.pipe(parse({
-    columns: (header) => {
-      columns = normalizeCsvHeader(header);
-      return columns;
-    },
-    relax_column_count: true,
-    skip_empty_lines: true,
-    trim: false,
-  }));
-  const batchSize = Math.trunc(message.batchSize ?? DEFAULT_LEE_PROPERTY_FIRST_SEED_BATCH_SIZE);
+  const parser = response.Body.pipe(
+    parse({
+      columns: (header) => {
+        columns = normalizeCsvHeader(header);
+        return columns;
+      },
+      relax_column_count: true,
+      skip_empty_lines: true,
+      trim: false,
+    }),
+  );
+  const batchSize = Math.trunc(
+    message.batchSize ?? DEFAULT_LEE_PROPERTY_FIRST_SEED_BATCH_SIZE,
+  );
   let sourceRowNumber = 0;
   let scannedRows = 0;
   let enqueued = 0;
@@ -1495,8 +1578,13 @@ function validateMessage(value) {
     return /** @type {LeePermitDetailBatchMessage} */ (message);
   }
   if (message.type === "lee-property-first-permit-parcel") {
-    if (typeof message.parcelIdentifier !== "string" || !message.parcelIdentifier.trim()) {
-      throw new Error("lee-property-first-permit-parcel requires parcelIdentifier");
+    if (
+      typeof message.parcelIdentifier !== "string" ||
+      !message.parcelIdentifier.trim()
+    ) {
+      throw new Error(
+        "lee-property-first-permit-parcel requires parcelIdentifier",
+      );
     }
     if (
       message.maxPages !== undefined &&
@@ -1504,7 +1592,9 @@ function validateMessage(value) {
         !Number.isFinite(message.maxPages) ||
         message.maxPages <= 0)
     ) {
-      throw new Error("lee-property-first-permit-parcel maxPages must be a positive number");
+      throw new Error(
+        "lee-property-first-permit-parcel maxPages must be a positive number",
+      );
     }
     return /** @type {LeePropertyFirstPermitParcelMessage} */ (message);
   }
@@ -1519,7 +1609,10 @@ function validateMessage(value) {
       "propertyFirstPermitOutputPrefix",
       "stateS3Uri",
     ]) {
-      if (typeof message[fieldName] !== "string" || !message[fieldName].trim()) {
+      if (
+        typeof message[fieldName] !== "string" ||
+        !message[fieldName].trim()
+      ) {
         throw new Error(`lee-property-first-seed-feeder requires ${fieldName}`);
       }
     }
@@ -1529,35 +1622,51 @@ function validateMessage(value) {
         value !== undefined &&
         (typeof value !== "number" || !Number.isFinite(value) || value <= 0)
       ) {
-        throw new Error(`lee-property-first-seed-feeder ${fieldName} must be a positive number`);
+        throw new Error(
+          `lee-property-first-seed-feeder ${fieldName} must be a positive number`,
+        );
       }
     }
     if (
       message.sendDelayMs !== undefined &&
-      (typeof message.sendDelayMs !== "number" || !Number.isFinite(message.sendDelayMs) || message.sendDelayMs < 0)
+      (typeof message.sendDelayMs !== "number" ||
+        !Number.isFinite(message.sendDelayMs) ||
+        message.sendDelayMs < 0)
     ) {
-      throw new Error("lee-property-first-seed-feeder sendDelayMs must be a non-negative number");
+      throw new Error(
+        "lee-property-first-seed-feeder sendDelayMs must be a non-negative number",
+      );
     }
     if (message.backpressureQueues !== undefined) {
       if (!Array.isArray(message.backpressureQueues)) {
-        throw new Error("lee-property-first-seed-feeder backpressureQueues must be an array");
+        throw new Error(
+          "lee-property-first-seed-feeder backpressureQueues must be an array",
+        );
       }
       for (const item of message.backpressureQueues) {
         if (!isRecord(item)) {
-          throw new Error("lee-property-first-seed-feeder backpressure queue entries must be objects");
+          throw new Error(
+            "lee-property-first-seed-feeder backpressure queue entries must be objects",
+          );
         }
         if (typeof item.name !== "string" || !item.name.trim()) {
-          throw new Error("lee-property-first-seed-feeder backpressure queue requires name");
+          throw new Error(
+            "lee-property-first-seed-feeder backpressure queue requires name",
+          );
         }
         if (typeof item.queueUrl !== "string" || !item.queueUrl.trim()) {
-          throw new Error("lee-property-first-seed-feeder backpressure queue requires queueUrl");
+          throw new Error(
+            "lee-property-first-seed-feeder backpressure queue requires queueUrl",
+          );
         }
         if (
           typeof item.maxMessages !== "number" ||
           !Number.isFinite(item.maxMessages) ||
           item.maxMessages <= 0
         ) {
-          throw new Error("lee-property-first-seed-feeder backpressure queue requires positive maxMessages");
+          throw new Error(
+            "lee-property-first-seed-feeder backpressure queue requires positive maxMessages",
+          );
         }
       }
     }
@@ -1565,13 +1674,19 @@ function validateMessage(value) {
   }
   if (message.type === "sunbiz-corporate-address-match") {
     if (typeof message.sourceDataS3Uri !== "string") {
-      throw new Error("sunbiz-corporate-address-match requires sourceDataS3Uri");
+      throw new Error(
+        "sunbiz-corporate-address-match requires sourceDataS3Uri",
+      );
     }
     if (typeof message.addressBatchKey !== "string") {
-      throw new Error("sunbiz-corporate-address-match requires addressBatchKey");
+      throw new Error(
+        "sunbiz-corporate-address-match requires addressBatchKey",
+      );
     }
     if (!Array.isArray(message.addressInputs)) {
-      throw new Error("sunbiz-corporate-address-match requires addressInputs array");
+      throw new Error(
+        "sunbiz-corporate-address-match requires addressInputs array",
+      );
     }
     return /** @type {SunbizCorporateAddressMatchMessage} */ (message);
   }
@@ -1583,10 +1698,14 @@ function validateMessage(value) {
       throw new Error("sunbiz-corporate-zip-extract requires extractKey");
     }
     if (!Array.isArray(message.zipPrefixes)) {
-      throw new Error("sunbiz-corporate-zip-extract requires zipPrefixes array");
+      throw new Error(
+        "sunbiz-corporate-zip-extract requires zipPrefixes array",
+      );
     }
     if (!message.zipPrefixes.every((item) => typeof item === "string")) {
-      throw new Error("sunbiz-corporate-zip-extract zipPrefixes must be strings");
+      throw new Error(
+        "sunbiz-corporate-zip-extract zipPrefixes must be strings",
+      );
     }
     return /** @type {SunbizCorporateZipExtractMessage} */ (message);
   }
@@ -1605,7 +1724,9 @@ function resolveSunbizSourceFormat(message) {
   if (message.sourceFormat === "text" || message.sourceFormat === "zip") {
     return message.sourceFormat;
   }
-  return message.sourceDataS3Uri.toLowerCase().endsWith(".zip") ? "zip" : "text";
+  return message.sourceDataS3Uri.toLowerCase().endsWith(".zip")
+    ? "zip"
+    : "text";
 }
 
 /**
@@ -1629,7 +1750,9 @@ async function processLeePropertyFirstSeedFeeder(message) {
   }
 
   const queueSnapshots = await Promise.all(
-    resolveBackpressureQueues(message).map((queue) => readBackpressureQueueDepth(queue)),
+    resolveBackpressureQueues(message).map((queue) =>
+      readBackpressureQueueDepth(queue),
+    ),
   );
   const blockedQueues = queueSnapshots.filter(
     (snapshot) => snapshot.totalMessages >= snapshot.maxMessages,
@@ -1656,8 +1779,14 @@ async function processLeePropertyFirstSeedFeeder(message) {
     return;
   }
 
-  const existing = await readExistingLeeAppraiserIdentifiers(message.skipExistingNeon !== false);
-  const batch = await enqueueLeePropertyFirstSeedBatch({ message, state, existing });
+  const existing = await readExistingLeeAppraiserIdentifiers(
+    message.skipExistingNeon !== false,
+  );
+  const batch = await enqueueLeePropertyFirstSeedBatch({
+    message,
+    state,
+    existing,
+  });
   const nextState = {
     ...state,
     nextSourceRowNumber: batch.nextSourceRowNumber,
@@ -1888,7 +2017,8 @@ async function writeLeePermitDetails({
       });
     } catch (error) {
       if (!continueOnPermitError) throw error;
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
       results.push({
         recordNumber: permit.recordNumber,
         extractedJsonS3Uri: null,
@@ -1958,16 +2088,22 @@ async function processLeePermitDetailBatch(message) {
  * @returns {PropertyFirstTarget} Normalized target metadata.
  */
 function buildPropertyFirstTarget(message) {
-  const normalizedParcelIdentifier = normalizeParcelSearchValue(message.parcelIdentifier);
+  const normalizedParcelIdentifier = normalizeParcelSearchValue(
+    message.parcelIdentifier,
+  );
   if (normalizedParcelIdentifier === null) {
-    throw new Error(`Invalid Lee parcel identifier: ${message.parcelIdentifier}`);
+    throw new Error(
+      `Invalid Lee parcel identifier: ${message.parcelIdentifier}`,
+    );
   }
   return {
     parcelIdentifier: message.parcelIdentifier,
     normalizedParcelIdentifier,
     requestIdentifier: readOptionalString(message.requestIdentifier),
     appraisalOutputS3Uri: readOptionalString(message.appraisalOutputS3Uri),
-    appraisalPreparedOutputS3Uri: readOptionalString(message.appraisalPreparedOutputS3Uri),
+    appraisalPreparedOutputS3Uri: readOptionalString(
+      message.appraisalPreparedOutputS3Uri,
+    ),
     propertyId: readOptionalString(message.propertyId),
     propertyUsageType: readOptionalString(message.propertyUsageType),
     bestPermitAddress: readOptionalString(message.bestPermitAddress),
@@ -2005,7 +2141,9 @@ function withPropertyFirstParcel(extraction, target) {
     extraction.parcelIdentifier.trim().length > 0
       ? extraction.parcelIdentifier
       : null;
-  const moreDetails = isRecord(extraction.moreDetails) ? extraction.moreDetails : {};
+  const moreDetails = isRecord(extraction.moreDetails)
+    ? extraction.moreDetails
+    : {};
   return {
     ...extraction,
     parcelIdentifier: existingParcel ?? target.normalizedParcelIdentifier,
@@ -2052,7 +2190,8 @@ async function retryAsyncOperation({
     try {
       return await operation(attempt);
     } catch (caught) {
-      const errorMessage = caught instanceof Error ? caught.message : String(caught);
+      const errorMessage =
+        caught instanceof Error ? caught.message : String(caught);
       if (attempt >= maxAttempts) throw caught;
       onRetry?.({ attempt, maxAttempts, errorMessage });
       await delay(delayMs);
@@ -2092,7 +2231,11 @@ async function writeLeePropertyFirstPermitDetails({
     const jsonKey = `${output.key}/lee/extracted/permits/${stem}.json`;
     const htmlKey = `${output.key}/lee/raw/permit-details/${stem}.html`;
 
-    for (let attempt = 1; attempt <= PROPERTY_FIRST_DETAIL_CAPTURE_ATTEMPTS; attempt += 1) {
+    for (
+      let attempt = 1;
+      attempt <= PROPERTY_FIRST_DETAIL_CAPTURE_ATTEMPTS;
+      attempt += 1
+    ) {
       try {
         if (skipExisting && (await objectExists(output.bucket, jsonKey))) {
           results.push({
@@ -2152,7 +2295,8 @@ async function writeLeePropertyFirstPermitDetails({
         });
         break;
       } catch (caught) {
-        const message = caught instanceof Error ? caught.message : String(caught);
+        const message =
+          caught instanceof Error ? caught.message : String(caught);
         if (attempt < PROPERTY_FIRST_DETAIL_CAPTURE_ATTEMPTS) {
           consoleLogger.warn("lee_property_first_detail_capture_retrying", {
             recordNumber: permit.recordNumber,
@@ -2196,14 +2340,25 @@ async function writeLeePropertyFirstPermitDetails({
  */
 function readDatabaseUrlFromSecretString(secretString) {
   const trimmed = secretString.trim();
-  if (trimmed.startsWith("postgres://") || trimmed.startsWith("postgresql://")) {
+  if (
+    trimmed.startsWith("postgres://") ||
+    trimmed.startsWith("postgresql://")
+  ) {
     return trimmed;
   }
   const parsed = /** @type {unknown} */ (JSON.parse(trimmed));
   if (!isRecord(parsed)) {
-    throw new Error("Query DB secret must be a connection string or JSON object");
+    throw new Error(
+      "Query DB secret must be a connection string or JSON object",
+    );
   }
-  for (const key of ["DATABASE_URL", "POSTGRES_URL", "databaseUrl", "connectionString", "url"]) {
+  for (const key of [
+    "DATABASE_URL",
+    "POSTGRES_URL",
+    "databaseUrl",
+    "connectionString",
+    "url",
+  ]) {
     const value = readOptionalString(parsed[key]);
     if (value !== null) return value;
   }
@@ -2234,7 +2389,9 @@ async function getQueryDatabaseUrl() {
   if (typeof response.SecretString !== "string") {
     throw new Error(`Query DB secret ${secretArn} did not return SecretString`);
   }
-  cachedQueryDatabaseUrl = readDatabaseUrlFromSecretString(response.SecretString);
+  cachedQueryDatabaseUrl = readDatabaseUrlFromSecretString(
+    response.SecretString,
+  );
   return cachedQueryDatabaseUrl;
 }
 
@@ -2348,9 +2505,10 @@ async function linkPropertyFirstPermits(client, target) {
     ],
   );
   const matchedRow = matchedResult.rows[0];
-  const matchedPermitRows = isRecord(matchedRow) && typeof matchedRow.matched_permit_rows === "number"
-    ? matchedRow.matched_permit_rows
-    : 0;
+  const matchedPermitRows =
+    isRecord(matchedRow) && typeof matchedRow.matched_permit_rows === "number"
+      ? matchedRow.matched_permit_rows
+      : 0;
   return {
     matchedPermitRows,
     linkedPermitRows: updateResult.rowCount ?? 0,
@@ -2421,7 +2579,8 @@ async function loadPropertyFirstPermitsToQueryDb({
       appraisalPreparedRowCount:
         appraisalLoad.rows.length + appraisalMediaLoad.rows.length,
       appraisalSkippedRecordCount:
-        appraisalLoad.skippedRecordCount + appraisalMediaLoad.skippedRecordCount,
+        appraisalLoad.skippedRecordCount +
+        appraisalMediaLoad.skippedRecordCount,
       permitArtifactCount: permitRecords.length,
       permitPreparedRowCount: permitRows.length,
       permitSkippedRecordCount,
@@ -2468,7 +2627,10 @@ async function processLeePropertyFirstPermitParcel(message) {
   }
 
   const permitEligibility = await resolvePropertyFirstPermitEligibility(target);
-  if (target.propertyUsageType === null && permitEligibility.propertyUsageType !== null) {
+  if (
+    target.propertyUsageType === null &&
+    permitEligibility.propertyUsageType !== null
+  ) {
     target.propertyUsageType = permitEligibility.propertyUsageType;
   }
   if (!permitEligibility.shouldEnqueue) {
@@ -2511,13 +2673,14 @@ async function processLeePropertyFirstPermitParcel(message) {
     const searchResult = await retryAsyncOperation({
       maxAttempts: PROPERTY_FIRST_SEARCH_ATTEMPTS,
       delayMs: PROPERTY_FIRST_SEARCH_RETRY_DELAY_MS,
-      operation: async () => searchLeePermitParcel({
-        browser,
-        parcelIdentifier: target.normalizedParcelIdentifier,
-        portalUrl: message.portalUrl,
-        maxPages: message.maxPages ?? 200,
-        logger: consoleLogger,
-      }),
+      operation: async () =>
+        searchLeePermitParcel({
+          browser,
+          parcelIdentifier: target.normalizedParcelIdentifier,
+          portalUrl: message.portalUrl,
+          maxPages: message.maxPages ?? 200,
+          logger: consoleLogger,
+        }),
       onRetry: ({ attempt, maxAttempts, errorMessage }) => {
         consoleLogger.warn("lee_property_first_parcel_search_retrying", {
           jobId: message.jobId,
@@ -2581,20 +2744,25 @@ async function processLeePropertyFirstPermitParcel(message) {
       permits: searchResult.permits,
       skipExisting: message.skipExisting !== false,
     });
-    const detailErrors = detailResults.filter((result) => result.error !== null);
+    const detailErrors = detailResults.filter(
+      (result) => result.error !== null,
+    );
     await putTextObject({
       bucket: output.bucket,
       key: `${output.key}/lee/permit-parcel-details/${searchResult.searchKey}/summary.json`,
       body: JSON.stringify(
         {
-          schemaVersion: "permit-harvest.lee-accela.property-first-detail-summary.v1",
+          schemaVersion:
+            "permit-harvest.lee-accela.property-first-detail-summary.v1",
           jobId: message.jobId,
           searchKey: searchResult.searchKey,
           parcelIdentifier: target.parcelIdentifier,
           normalizedParcelIdentifier: target.normalizedParcelIdentifier,
           processedAt: new Date().toISOString(),
           requestedCount: searchResult.permits.length,
-          processedCount: detailResults.filter((result) => !result.skipped && result.error === null).length,
+          processedCount: detailResults.filter(
+            (result) => !result.skipped && result.error === null,
+          ).length,
           skippedCount: detailResults.filter((result) => result.skipped).length,
           errorCount: detailErrors.length,
           results: detailResults,
@@ -2605,29 +2773,33 @@ async function processLeePropertyFirstPermitParcel(message) {
       contentType: "application/json; charset=utf-8",
     });
     if (detailErrors.length > 0) {
-      const failedRecordNumbers = detailErrors.map((result) => result.recordNumber).join(", ");
+      const failedRecordNumbers = detailErrors
+        .map((result) => result.recordNumber)
+        .join(", ");
       throw new Error(
         `Parcel ${target.parcelIdentifier} is missing ${String(detailErrors.length)} permit detail artifact(s): ${failedRecordNumbers}`,
       );
     }
 
-    const loadSummary = message.loadToNeon === false || searchResult.permits.length === 0
-      ? null
-      : await loadPropertyFirstPermitsToQueryDb({
-          detailResults,
-          target,
-          output,
-          loadAppraisalToNeon: message.loadAppraisalToNeon !== false,
-        });
+    const loadSummary =
+      message.loadToNeon === false || searchResult.permits.length === 0
+        ? null
+        : await loadPropertyFirstPermitsToQueryDb({
+            detailResults,
+            target,
+            output,
+            loadAppraisalToNeon: message.loadAppraisalToNeon !== false,
+          });
     const stateUri = await putTextObject({
       bucket: output.bucket,
       key: stateKey,
       body: JSON.stringify(
         {
           schemaVersion: "permit-harvest.lee-property-first-state.v1",
-          event: searchResult.permits.length === 0
-            ? "property_first_no_permits"
-            : "property_first_permits_loaded",
+          event:
+            searchResult.permits.length === 0
+              ? "property_first_no_permits"
+              : "property_first_permits_loaded",
           completedAt: new Date().toISOString(),
           jobId: message.jobId,
           target,
@@ -2637,9 +2809,10 @@ async function processLeePropertyFirstPermitParcel(message) {
           noResults: searchResult.noResults,
           detailResults,
           loadSummary,
-          neonLoadSkippedReason: searchResult.permits.length === 0
-            ? "no_permits_found_for_property"
-            : null,
+          neonLoadSkippedReason:
+            searchResult.permits.length === 0
+              ? "no_permits_found_for_property"
+              : null,
         },
         null,
         2,
@@ -2742,7 +2915,11 @@ async function processSunbizCorporateZipExtract(message) {
         recordCount: chunk.recordCount,
         uri,
       });
-      return { chunkIndex: chunk.chunkIndex, recordCount: chunk.recordCount, uri };
+      return {
+        chunkIndex: chunk.chunkIndex,
+        recordCount: chunk.recordCount,
+        uri,
+      };
     },
   });
 
