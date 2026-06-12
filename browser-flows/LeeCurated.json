@@ -1,0 +1,100 @@
+{
+  "starts_at": "open_search_page",
+  "states": {
+    "open_search_page": {
+      "type": "open_page",
+      "input": {
+        "url": "{{=it.url}}",
+        "timeout": 30000,
+        "wait_until": "domcontentloaded"
+      },
+      "next": "wait_for_strap_input"
+    },
+    "wait_for_strap_input": {
+      "type": "wait_for_selector",
+      "input": {
+        "selector": "#ctl00_BodyContentPlaceHolder_WebTab1_tmpl0_STRAPTextBox",
+        "timeout": 30000,
+        "visible": true
+      },
+      "next": "enter_strap"
+    },
+    "enter_strap": {
+      "type": "type",
+      "input": {
+        "selector": "#ctl00_BodyContentPlaceHolder_WebTab1_tmpl0_STRAPTextBox",
+        "value": "{{=it.request_identifier}}",
+        "delay": 50,
+        "clear": true
+      },
+      "next": "click_search"
+    },
+    "click_search": {
+      "type": "click",
+      "input": {
+        "selector": "#ctl00_BodyContentPlaceHolder_WebTab1_tmpl0_SubmitPropertySearch"
+      },
+      "next": "race_detail_or_result_link"
+    },
+    "race_detail_or_result_link": {
+      "type": "wait_for_selector_race",
+      "input": {
+        "selectors": [
+          {
+            "selector": "#PropertyDetailsCurrent, #PropertyDetails, #valueGrid, #SalesDetails",
+            "label": "detail_page",
+            "timeout": 60000
+          },
+          {
+            "selector": "a[href*='DisplayParcel.aspx']",
+            "label": "result_link",
+            "timeout": 60000
+          }
+        ],
+        "visible": true
+      },
+      "next_map": {
+        "detail_page": "capture_detail_page",
+        "result_link": "capture_result_page"
+      },
+      "end": true
+    },
+    "capture_detail_page": {
+      "type": "wait_for_selector",
+      "input": {
+        "selector": "#PropertyDetailsCurrent, #PropertyDetails, #valueGrid, #SalesDetails",
+        "timeout": 5000,
+        "visible": false
+      },
+      "end": true
+    },
+    "capture_result_page": {
+      "type": "wait_for_selector",
+      "input": {
+        "selector": "a[href*='DisplayParcel.aspx']",
+        "timeout": 5000,
+        "visible": true
+      },
+      "end": true
+    },
+    "click_first_result": {
+      "type": "click",
+      "input": {
+        "selector": "a[href*='DisplayParcel.aspx']"
+      },
+      "next": "wait_for_detail_page"
+    },
+    "wait_for_detail_page": {
+      "type": "wait_for_selector",
+      "input": {
+        "selector": "#PropertyDetailsCurrent, #PropertyDetails, #valueGrid, #SalesDetails",
+        "timeout": 60000,
+        "visible": true
+      },
+      "end": true
+    }
+  },
+  "capture": {
+    "type": "page"
+  }
+}

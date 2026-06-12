@@ -1,6 +1,7 @@
 import { promises as fs } from "fs";
 import path from "path";
 import os from "os";
+import AdmZip from "adm-zip";
 import { transform } from "@elephant-xyz/cli/lib";
 import {
   executeWithTaskToken,
@@ -25,12 +26,38 @@ const transformScriptsManager = createTransformScriptsManager({
   persistentCacheRoot: PERSISTENT_TRANSFORM_CACHE_DIR,
 });
 
+const DEFAULT_PROPERTY_FIRST_PERMIT_ELIGIBLE_USAGE_TYPES = [
+  "AutoSalesRepair",
+  "Commercial",
+  "DepartmentStore",
+  "FinancialInstitution",
+  "Hotel",
+  "Industrial",
+  "LightManufacturing",
+  "MobileHomePark",
+  "OfficeBuilding",
+  "PrivateHospital",
+  "Restaurant",
+  "ShoppingCenterCommunity",
+  "ShoppingCenterRegional",
+  "Supermarket",
+];
+
 /**
  * @typedef {object} TransformInput
  * @property {string} inputS3Uri - S3 URI of the input zip file (merged/prepared input).
  * @property {string} county - County name for transform scripts lookup.
  * @property {string} outputPrefix - S3 URI prefix for output files.
  * @property {string} executionId - Unique execution identifier.
+ */
+
+/**
+ * @typedef {object} PropertyFirstPermitEligibility
+ * @property {boolean} shouldEnqueue - Whether the appraisal property should be sent to Accela permit retrieval.
+ * @property {string} reason - Stable reason for the routing decision.
+ * @property {string | null} propertyUsageType - Appraiser usage type read from transformed `data/property.json`.
+ * @property {string[]} eligibleUsageTypes - Usage types treated as commercial/permit-priority for this run.
+ * @property {string} manifestS3Uri - S3 URI of the persisted routing decision manifest.
  */
 
 /**
@@ -47,6 +74,7 @@ const transformScriptsManager = createTransformScriptsManager({
  * @property {string} transformedOutputS3Uri - S3 URI of the transformed output zip.
  * @property {string} county - County name.
  * @property {string} executionId - Execution identifier.
+ * @property {PropertyFirstPermitEligibility} propertyFirstPermitEligibility - Property-first permit routing decision.
  */
 
 /**
@@ -70,6 +98,151 @@ function resolveTransformLocation({ countyName, transformPrefixUri }) {
   const normalizedPrefix = key.replace(/\/$/, "");
   const transformKey = `${normalizedPrefix}/${countyName.toLowerCase()}.zip`;
   return { transformBucket: bucket, transformKey };
+}
+
+/**
+ * Return true when an unknown JSON value is a string-keyed object.
+ *
+ * @param {unknown} value - Candidate JSON value.
+ * @returns {value is Record<string, unknown>} True for non-array objects.
+ */
+function isRecord(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Read a trimmed string from an unknown JSON field.
+ *
+ * @param {unknown} value - Candidate field value.
+ * @returns {string | null} Trimmed non-empty string, or null.
+ */
+function readOptionalString(value) {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+/**
+ * Resolve appraisal usage types that should continue to property-first permit retrieval.
+ *
+ * @returns {string[]} Commercial/permit-priority appraiser usage types.
+ */
+function resolvePropertyFirstPermitEligibleUsageTypes() {
+  const raw = process.env.PROPERTY_FIRST_PERMIT_ELIGIBLE_USAGE_TYPES;
+  if (raw === undefined || raw.trim().length === 0) {
+    return [...DEFAULT_PROPERTY_FIRST_PERMIT_ELIGIBLE_USAGE_TYPES];
+  }
+  const values = raw
+    .split(",")
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0);
+  return values.length > 0
+    ? values
+    : [...DEFAULT_PROPERTY_FIRST_PERMIT_ELIGIBLE_USAGE_TYPES];
+}
+
+/**
+ * Extract the Lee Appraiser property usage type from a transformed output zip.
+ *
+ * @param {string} outputZipLocal - Local transformed output zip path.
+ * @returns {{ propertyUsageType: string | null, readError: string | null }} Extracted usage type and optional read error.
+ */
+function readPropertyUsageTypeFromTransformedZip(outputZipLocal) {
+  try {
+    const zip = new AdmZip(outputZipLocal);
+    const propertyEntry = zip.getEntry("data/property.json");
+    if (propertyEntry === null) {
+      return {
+        propertyUsageType: null,
+        readError: "missing data/property.json in transformed output",
+      };
+    }
+    const propertyJson = JSON.parse(propertyEntry.getData().toString("utf8"));
+    if (!isRecord(propertyJson)) {
+      return {
+        propertyUsageType: null,
+        readError: "data/property.json is not an object",
+      };
+    }
+    return {
+      propertyUsageType: readOptionalString(propertyJson.property_usage_type),
+      readError: null,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { propertyUsageType: null, readError: message };
+  }
+}
+
+/**
+ * Build and upload the property-first permit routing manifest for a transformed appraisal artifact.
+ *
+ * @param {object} params - Eligibility manifest parameters.
+ * @param {string} params.outputZipLocal - Local transformed output zip path.
+ * @param {string} params.outputBucket - S3 bucket containing the transformed output.
+ * @param {string} params.outputKey - S3 key for `transformed_output.zip`.
+ * @param {string} params.transformedOutputS3Uri - S3 URI for `transformed_output.zip`.
+ * @param {ReturnType<typeof createLogger>} params.log - Structured logger.
+ * @returns {Promise<PropertyFirstPermitEligibility>} Persisted routing decision.
+ */
+async function buildAndUploadPropertyFirstPermitEligibility({
+  outputZipLocal,
+  outputBucket,
+  outputKey,
+  transformedOutputS3Uri,
+  log,
+}) {
+  const eligibleUsageTypes = resolvePropertyFirstPermitEligibleUsageTypes();
+  const eligibleUsageTypeSet = new Set(eligibleUsageTypes);
+  const { propertyUsageType, readError } =
+    readPropertyUsageTypeFromTransformedZip(outputZipLocal);
+  const shouldEnqueue =
+    propertyUsageType !== null && eligibleUsageTypeSet.has(propertyUsageType);
+  const reason = shouldEnqueue
+    ? "eligible_property_usage_type"
+    : readError !== null
+      ? "property_usage_type_read_failed"
+      : propertyUsageType === null
+        ? "missing_property_usage_type"
+        : "non_commercial_property_usage_type";
+  const manifestKey = outputKey.replace(
+    /transformed_output\.zip$/,
+    "property_first_permit_eligibility.json",
+  );
+  const manifestLocalPath = path.join(
+    path.dirname(outputZipLocal),
+    "property_first_permit_eligibility.json",
+  );
+  const manifest = {
+    schemaVersion: "oracle-node.property-first-permit-eligibility.v1",
+    evaluatedAt: new Date().toISOString(),
+    shouldEnqueue,
+    reason,
+    propertyUsageType,
+    eligibleUsageTypes,
+    transformedOutputS3Uri,
+    ...(readError === null ? {} : { readError }),
+  };
+  await fs.writeFile(manifestLocalPath, JSON.stringify(manifest, null, 2));
+  const manifestS3Uri = await uploadToS3(
+    manifestLocalPath,
+    { bucket: outputBucket, key: manifestKey },
+    log,
+    "application/json; charset=utf-8",
+  );
+  log("info", "property_first_permit_eligibility_resolved", {
+    shouldEnqueue,
+    reason,
+    propertyUsageType,
+    manifestS3Uri,
+  });
+  return {
+    shouldEnqueue,
+    reason,
+    propertyUsageType,
+    eligibleUsageTypes,
+    manifestS3Uri,
+  };
 }
 
 /**
@@ -168,11 +341,20 @@ async function runTransform({
       { bucket: outputBucket, key: outputKey },
       log,
     );
+    const propertyFirstPermitEligibility =
+      await buildAndUploadPropertyFirstPermitEligibility({
+        outputZipLocal,
+        outputBucket,
+        outputKey,
+        transformedOutputS3Uri,
+        log,
+      });
 
     return {
       transformedOutputS3Uri,
       county,
       executionId,
+      propertyFirstPermitEligibility,
     };
   } finally {
     // Cleanup

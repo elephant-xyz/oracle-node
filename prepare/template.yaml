@@ -1361,6 +1361,8 @@ Resources:
                   - !GetAtt UploadQueue.Arn
                   # Wildcard for per-county prepare queues (created via scripts/create-county-prepare-queue.sh)
                   - !Sub "arn:aws:sqs:${AWS::Region}:${AWS::AccountId}:${AWS::StackName}-prepare-queue-*"
+                  # Dedicated queue owned by the permit-harvest stack for property-first Lee permit loads.
+                  - !Sub "arn:aws:sqs:${AWS::Region}:${AWS::AccountId}:elephant-oracle-node-property-first-permit-queue"
               - Effect: Allow
                 Action:
                   - ssm:GetParameter

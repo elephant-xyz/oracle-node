@@ -209,6 +209,17 @@ const parseBudgetMessage = (message: string): BudgetAlertMessage | null => {
   }
 };
 
+/**
+ * Determines whether a budget alert is allowed to perform the destructive
+ * emergency-stop action. The handler defaults to alert-only mode so budget
+ * notifications cannot stop ingestion unless an operator explicitly opts in.
+ *
+ * @returns True only when emergency-stop behavior is explicitly enabled.
+ */
+const isEmergencyStopEnabled = (): boolean => {
+  return process.env.EMERGENCY_STOP_ENABLED === "true";
+};
+
 async function discoverStackResources(
   stackName: string,
 ): Promise<{ lambdaFunctionArns: string[]; stateMachineArns: string[] }> {
@@ -498,9 +509,10 @@ export const handler: SNSHandler = async (event: SNSEvent): Promise<void> => {
     }
   }
 
+  const emergencyStopEnabled = isEmergencyStopEnabled();
   const prepareStackName = process.env.PREPARE_STACK_NAME;
 
-  if (prepareStackName) {
+  if (emergencyStopEnabled && prepareStackName) {
     try {
       const summary = await emergencyStop(prepareStackName);
 
@@ -519,6 +531,13 @@ export const handler: SNSHandler = async (event: SNSEvent): Promise<void> => {
 
       throw error;
     }
+  } else if (!emergencyStopEnabled) {
+    console.warn(
+      createLogEntry("emergency_stop_skipped", {
+        reason: "EMERGENCY_STOP_ENABLED is not true",
+        prepareStackNameConfigured: Boolean(prepareStackName),
+      }),
+    );
   } else {
     console.warn(
       createLogEntry("emergency_stop_skipped", {

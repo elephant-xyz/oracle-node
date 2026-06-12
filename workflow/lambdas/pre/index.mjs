@@ -19,6 +19,7 @@ import { parse } from "csv-parse/sync";
  *
  * @typedef {object} S3Event
  * @property {{ bucket: S3Bucket, object: S3Object }} s3
+ * @property {string | undefined} [output_base_uri] - Optional S3 base URI for workflow outputs.
  *
  * @typedef {Object} PreOutput
  * @property {string} input_s3_uri - S3 URI of input created for prepare step
@@ -27,6 +28,9 @@ import { parse } from "csv-parse/sync";
  * @property {string} county_prep_input_s3_uri - S3 URI to county prep input archive
  * @property {string} county_name - County jurisdiction name extracted from seed metadata
  * @property {string} county_key - County key derived from `county_name` by replacing spaces with underscores
+ * @property {string | null} parcel_identifier - Seed parcel identifier used by property-first permit harvesting.
+ * @property {string | null} request_identifier - Seed request/Folio identifier used by Lee Appraiser.
+ * @property {string | null} best_permit_address - Seed situs address used as permit provenance.
  */
 
 const s3 = new S3Client({});
@@ -34,20 +38,36 @@ const s3 = new S3Client({});
 /**
  * Convert CSV file to JSON array
  * @param {string} csvPath - Path to CSV file
- * @returns {Promise<Object[]>} - Array of objects representing CSV rows
+ * @returns {Promise<Record<string, string | undefined>[]>} - Array of objects representing CSV rows
  */
 async function csvToJson(csvPath) {
   try {
     const csvContent = await fs.readFile(csvPath, "utf8");
-    const records = parse(csvContent, {
-      columns: true,
-      skip_empty_lines: true,
-      trim: true,
-    });
+    const records = /** @type {Record<string, string | undefined>[]} */ (
+      parse(csvContent, {
+        columns: true,
+        skip_empty_lines: true,
+        trim: true,
+      })
+    );
     return records;
   } catch (error) {
     return [];
   }
+}
+
+/**
+ * Return a trimmed string value from a parsed seed row.
+ *
+ * @param {Record<string, string | undefined> | undefined} row - Parsed seed CSV row.
+ * @param {string} key - Column name to read.
+ * @returns {string | null} Trimmed value, or null when absent or blank.
+ */
+function readSeedString(row, key) {
+  const value = row?.[key];
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
 }
 
 /**
@@ -70,11 +90,17 @@ export const handler = async (event) => {
     const bucket = rec.s3.bucket.name;
     const key = decodeURIComponent(rec.s3.object.key.replace(/\+/g, " "));
     const fileBase = path.posix.basename(key, path.extname(key));
+    const requestedOutputBaseUri =
+      typeof rec.output_base_uri === "string" &&
+      rec.output_base_uri.trim().length > 0
+        ? rec.output_base_uri.trim()
+        : null;
     const outputPrefix =
-      (process.env.OUTPUT_BASE_URI || `s3://${bucket}/outputs`).replace(
-        /\/$/,
-        "",
-      ) + `/${fileBase}`;
+      (
+        requestedOutputBaseUri ||
+        process.env.OUTPUT_BASE_URI ||
+        `s3://${bucket}/outputs`
+      ).replace(/\/$/, "") + `/${fileBase}`;
     const inputS3Uri = `s3://${bucket}/${key}`;
 
     // Download CSV and create seed input.zip
@@ -86,6 +112,8 @@ export const handler = async (event) => {
     const csvBytes = await get.Body?.transformToByteArray();
     if (!csvBytes) throw new Error("Failed to download input CSV");
     await fs.writeFile(csvPath, Buffer.from(csvBytes));
+    const seedRows = await csvToJson(csvPath);
+    const seedRow = seedRows[0];
     const seedInputZip = path.join(tmp, "input.zip");
     const inZip = new AdmZip();
     inZip.addLocalFile(csvPath, "", "seed.csv");
@@ -229,6 +257,9 @@ export const handler = async (event) => {
       county_prep_input_s3_uri: `s3://${cpBucket}/${cpParts.join("/")}`,
       county_name: countyName,
       county_key: countyKey,
+      parcel_identifier: readSeedString(seedRow, "parcel_id"),
+      request_identifier: readSeedString(seedRow, "source_identifier"),
+      best_permit_address: readSeedString(seedRow, "address"),
     };
     console.log(
       JSON.stringify({ ...base, level: "info", msg: "prepared", out }),

@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import AdmZip from "adm-zip";
 import { mockClient } from "aws-sdk-client-mock";
 import {
   SFNClient,
@@ -20,7 +21,7 @@ const mockParseS3Uri = vi.fn((uri) => {
   return match ? { bucket: match[1], key: match[2] } : null;
 });
 const mockDownloadS3Object = vi.fn();
-const mockUploadToS3 = vi.fn().mockResolvedValue("s3://bucket/output.zip");
+const mockUploadToS3 = vi.fn();
 const mockCreateLogger = vi.fn(() => vi.fn());
 const mockEmitWorkflowEvent = vi.fn();
 vi.mock("shared", () => ({
@@ -52,6 +53,26 @@ vi.mock(
 describe("transform-worker handler", () => {
   const originalEnv = process.env;
 
+  /**
+   * Create a transform mock that writes the minimal transformed property artifact
+   * needed by the property-first permit eligibility filter.
+   *
+   * @param {string} propertyUsageType - Appraiser property usage type to embed in the transformed artifact.
+   * @returns {(options: unknown) => Promise<{ success: true }>} Transform mock implementation.
+   */
+  function createSuccessfulTransformMock(propertyUsageType) {
+    return async (options) => {
+      const transformOptions = /** @type {{ outputZip: string }} */ (options);
+      const zip = new AdmZip();
+      zip.addFile(
+        "data/property.json",
+        Buffer.from(JSON.stringify({ property_usage_type: propertyUsageType })),
+      );
+      zip.writeZip(transformOptions.outputZip);
+      return { success: true };
+    };
+  }
+
   beforeEach(() => {
     vi.clearAllMocks();
     sfnMock.reset();
@@ -67,6 +88,15 @@ describe("transform-worker handler", () => {
     mockEnsureScriptsForCounty.mockResolvedValue({
       scriptsZipPath: "/tmp/scripts.zip",
       md5: "abc123",
+    });
+    mockTransform.mockImplementation(
+      createSuccessfulTransformMock("Commercial"),
+    );
+    mockUploadToS3.mockImplementation(async (_localPath, location) => {
+      const uploadLocation = /** @type {{ bucket: string, key: string }} */ (
+        location
+      );
+      return `s3://${uploadLocation.bucket}/${uploadLocation.key}`;
     });
 
     vi.spyOn(console, "log").mockImplementation(() => {});
@@ -386,8 +416,9 @@ describe("transform-worker handler", () => {
   });
 
   it("should return correct result from workerFn on success", async () => {
-    mockTransform.mockResolvedValue({ success: true });
-    mockUploadToS3.mockResolvedValue("s3://output-bucket/transformed.zip");
+    mockTransform.mockImplementation(
+      createSuccessfulTransformMock("Industrial"),
+    );
 
     let capturedWorkerFn = null;
     mockExecuteWithTaskToken.mockImplementation(async ({ workerFn }) => {
@@ -410,10 +441,45 @@ describe("transform-worker handler", () => {
     const successCall = mockExecuteWithTaskToken.mock.calls[0];
     const workerFnResult = await successCall[0].workerFn();
 
-    expect(workerFnResult).toEqual({
-      transformedOutputS3Uri: "s3://output-bucket/transformed.zip",
+    expect(workerFnResult).toMatchObject({
+      transformedOutputS3Uri:
+        "s3://output-bucket/outputs/exec-workerfn/transformed_output.zip",
       county: "workerfn-county",
       executionId: "exec-workerfn",
+      propertyFirstPermitEligibility: {
+        shouldEnqueue: true,
+        reason: "eligible_property_usage_type",
+        propertyUsageType: "Industrial",
+        manifestS3Uri:
+          "s3://output-bucket/outputs/exec-workerfn/property_first_permit_eligibility.json",
+      },
+    });
+  });
+
+  it("marks residential transformed appraisals ineligible for property-first permit retrieval", async () => {
+    mockTransform.mockImplementation(
+      createSuccessfulTransformMock("Residential"),
+    );
+
+    const { handler } =
+      await import("../../../../workflow/lambdas/transform-worker/index.mjs");
+
+    const directEvent = {
+      directInvocation: true,
+      inputS3Uri: "s3://input-bucket/direct-input.zip",
+      county: "lee",
+      outputPrefix: "s3://output-bucket/outputs/",
+      executionId: "exec-residential",
+    };
+
+    const result = await handler(directEvent);
+
+    expect(result?.propertyFirstPermitEligibility).toMatchObject({
+      shouldEnqueue: false,
+      reason: "non_commercial_property_usage_type",
+      propertyUsageType: "Residential",
+      manifestS3Uri:
+        "s3://output-bucket/outputs/exec-residential/property_first_permit_eligibility.json",
     });
   });
 

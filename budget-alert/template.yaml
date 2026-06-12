@@ -18,6 +18,14 @@ Parameters:
     Type: String
     Default: ""
 
+  EmergencyStopEnabled:
+    Description: Whether budget alerts are allowed to disable SQS triggers and stop executions. Keep false for uninterrupted ingestion.
+    Type: String
+    Default: "false"
+    AllowedValues:
+      - "true"
+      - "false"
+
 Globals:
   Function:
     Timeout: 300
@@ -85,6 +93,7 @@ Resources:
       Environment:
         Variables:
           PREPARE_STACK_NAME: !Ref PrepareStackName
+          EMERGENCY_STOP_ENABLED: !Ref EmergencyStopEnabled
       Policies:
         - AWSLambdaBasicExecutionRole
         - Version: "2012-10-17"
