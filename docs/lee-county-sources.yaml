@@ -25,8 +25,8 @@ sources:
     category: property
     name: Lee County Property Appraiser (LeePA)
     base_urls:
-      - https://leepa.org/Display/DisplayParcel.aspx          # parcel detail
-      - http://fieldcards.leepa.org/CurrentCostCard/Folio/     # cost card by folio
+      - https://leepa.org/Display/DisplayParcel.aspx # parcel detail
+      - http://fieldcards.leepa.org/CurrentCostCard/Folio/ # cost card by folio
     access_pattern:
       mode: browser-scrape
       tooling: elephant-cli Browser Flow v2 + Transform v2
@@ -46,8 +46,8 @@ sources:
     category: permits
     name: Lee County Accela Citizen Access (ACA)
     base_urls:
-      - https://aca-prod.accela.com/LEECO/Cap/CapHome.aspx     # General Search
-      - https://aca-prod.accela.com/LEECO/Cap/CapDetail.aspx   # permit detail
+      - https://aca-prod.accela.com/LEECO/Cap/CapHome.aspx # General Search
+      - https://aca-prod.accela.com/LEECO/Cap/CapDetail.aspx # permit detail
     access_pattern:
       mode: browser-scrape
       tooling: elephant-cli Browser Flow v2 + Transform v2
@@ -79,8 +79,8 @@ sources:
     category: business-registration
     name: Florida Sunbiz corporate registrations (FL Dept. of State)
     base_urls:
-      - https://dos.fl.gov/sunbiz/other-services/data-downloads/            # bulk downloads index
-      - https://search.sunbiz.org/Inquiry/corporationsearch/SearchResults   # live search (secondary)
+      - https://dos.fl.gov/sunbiz/other-services/data-downloads/ # bulk downloads index
+      - https://search.sunbiz.org/Inquiry/corporationsearch/SearchResults # live search (secondary)
     access_pattern:
       mode: batch-bulk-download (primary) + live address search (secondary enrichment)
       tooling: Data Access Portal (doc/quarterly/cor) via headless Chromium; fixed-width parser
@@ -94,8 +94,8 @@ sources:
         entries to S3, then process with sourceFormat=text.
     data:
       files:
-        - cordata.zip   # quarterly corporate, ~1.74 GB compressed
-        - corevent.zip  # quarterly events, ~187 MB compressed (not yet processed)
+        - cordata.zip # quarterly corporate, ~1.74 GB compressed
+        - corevent.zip # quarterly events, ~187 MB compressed (not yet processed)
       format: fixed-width ASCII, no headers, 1440-char corporate record
       match: Lee-area ZIP prefixes across principal / mailing / registered-agent / officer addresses
     refresh:
@@ -111,7 +111,7 @@ sources:
     category: business-reputation
     name: Better Business Bureau (BBB) contractor reputation
     base_urls:
-      - https://www.bbb.org/us/category/data   # category harvest entry point
+      - https://www.bbb.org/us/category/data # category harvest entry point
     access_pattern:
       mode: browser-scrape
       tooling: Puppeteer (headless Chromium)
