@@ -1,0 +1,133 @@
+# Lee County, FL — public data source registry
+#
+# Consolidated source metadata for the four Oracle ingestion categories.
+# Identifies each public data source (property, permits, Sunbiz, BBB) and stores
+# its access metadata: base URLs, access pattern, identifier, and refresh method.
+# Infra identifiers (AWS account, bucket, SQS) are intentionally NOT recorded here —
+# this registry describes external sources only.
+#
+# Out of scope this milestone: IPFS publishing, on-chain/blockchain-style indexing,
+# MCP exposure, NEO rewiring (separate story: Asana 1215644141347714).
+
+county:
+  name: Lee County
+  state: FL
+  fips: "12071"
+  parcel_identifier:
+    name: STRAP
+    description: >-
+      Section-Township-Range-Area-Block-Parcel. 17-digit numeric; punctuation is
+      stripped to form the portal search id (e.g. 02442401000090000). "Folio" is
+      used by the appraiser cost-card endpoint.
+
+sources:
+  - key: property-appraisal
+    category: property
+    name: Lee County Property Appraiser (LeePA)
+    base_urls:
+      - https://leepa.org/Display/DisplayParcel.aspx          # parcel detail
+      - http://fieldcards.leepa.org/CurrentCostCard/Folio/     # cost card by folio
+    access_pattern:
+      mode: browser-scrape
+      tooling: elephant-cli Browser Flow v2 + Transform v2
+      auth: public (no login / CAPTCHA)
+      anti_bot: none observed
+    refresh:
+      method: on-demand per-parcel scrape (seed-driven); Structured Archive to S3
+      cadence: on-demand / re-run per refresh
+    implemented_by:
+      browser_flows:
+        - browser-flows/LeeCurated.json
+        - browser-flows/LeeCostCard.json
+      transform: transform/lee/
+      skill: county-appraisal-onboarding
+
+  - key: permits
+    category: permits
+    name: Lee County Accela Citizen Access (ACA)
+    base_urls:
+      - https://aca-prod.accela.com/LEECO/Cap/CapHome.aspx     # General Search
+      - https://aca-prod.accela.com/LEECO/Cap/CapDetail.aspx   # permit detail
+    access_pattern:
+      mode: browser-scrape
+      tooling: elephant-cli Browser Flow v2 + Transform v2
+      auth: public (no login / CAPTCHA)
+      anti_bot: >-
+        none; clear the General Search Start/End date fields rather than typing
+        01/01/1900 (typed old dates trigger an Accela DateTime parse error).
+        Do not pass a full detail URL with an empty multiValueQueryString — the
+        CLI strips the real query string and Accela returns Error.aspx.
+      strategies:
+        - date-window list harvest (opened-date windows; split when >= 100 results)
+        - parcel-by-parcel search (punctuation-stripped searchParcelId)
+    refresh:
+      method: batch harvest by opened-date window (+ on-demand parcel search)
+      cadence: batch backfill 1990-01-01 -> present; incremental windows thereafter
+      note: >-
+        Keep the batched DB source even though permits can be fetched on-demand —
+        the Neo site sorts its list by permit counts. On-demand latency is acceptable.
+    implemented_by:
+      worker: workflow/lambdas/permit-harvest-worker/lee-accela.mjs
+      scripts:
+        - scripts/harvest-lee-permits-by-parcel.mjs
+        - scripts/enqueue-lee-permit-harvest.mjs
+        - scripts/enqueue-lee-property-first-permits.mjs
+      skill: county-permit-adapter
+      stack: elephant-permit-harvest
+
+  - key: sunbiz
+    category: business-registration
+    name: Florida Sunbiz corporate registrations (FL Dept. of State)
+    base_urls:
+      - https://dos.fl.gov/sunbiz/other-services/data-downloads/            # bulk downloads index
+      - https://search.sunbiz.org/Inquiry/corporationsearch/SearchResults   # live search (secondary)
+    access_pattern:
+      mode: batch-bulk-download (primary) + live address search (secondary enrichment)
+      tooling: Data Access Portal (doc/quarterly/cor) via headless Chromium; fixed-width parser
+      auth: >-
+        Data Access Portal public access account; credentials supplied out-of-band,
+        never committed to the repo.
+      anti_bot: Cloudflare managed challenge on plain curl -> use headless Chromium
+      gotcha: >-
+        cordata.zip uses ZIP compression method 9 (Deflate64); the yauzl reader cannot
+        stream it. Expand locally with system unzip and upload the fixed-width .txt
+        entries to S3, then process with sourceFormat=text.
+    data:
+      files:
+        - cordata.zip   # quarterly corporate, ~1.74 GB compressed
+        - corevent.zip  # quarterly events, ~187 MB compressed (not yet processed)
+      format: fixed-width ASCII, no headers, 1440-char corporate record
+      match: Lee-area ZIP prefixes across principal / mailing / registered-agent / officer addresses
+    refresh:
+      method: quarterly bulk corporate download -> ZIP-prefix extract -> lexicon transform
+      cadence: quarterly
+    implemented_by:
+      worker_mode: sunbiz-corporate-zip-extract
+      script: scripts/transform-sunbiz-corporate-to-lexicon.mjs
+      skill: sunbiz-corporate-ingest
+      runbook: docs/sunbiz-bulk-download-runbook.md
+
+  - key: bbb
+    category: business-reputation
+    name: Better Business Bureau (BBB) contractor reputation
+    base_urls:
+      - https://www.bbb.org/us/category/data   # category harvest entry point
+    access_pattern:
+      mode: browser-scrape
+      tooling: Puppeteer (headless Chromium)
+      auth: public
+      anti_bot: Cloudflare challenge -> challenge-retry loop in the harvester
+      crawl: category page -> profile listings -> profile subpages (customer-reviews, complaints, more-info)
+    output_schema: oracle-node.bbb-category-harvest.v1
+    refresh:
+      method: category harvest for contractor reputation/quality enrichment
+      cadence: on-demand / periodic
+    implemented_by:
+      script: scripts/harvest-bbb-category.mjs
+      skill: bbb-harvest
+
+notes:
+  - All four sources land in S3 (Structured Archive) and reconcile into the Neon query DB
+    (read via @elephant-xyz/query-db / the use-elephant-query-db skill).
+  - Completeness is validated per source against source availability (validate-county-transform,
+    monitoring-county-ingestion, query-db-loading-matching).
