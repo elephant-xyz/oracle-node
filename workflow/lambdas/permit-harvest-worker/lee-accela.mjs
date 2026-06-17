@@ -972,7 +972,15 @@ export async function searchLeePermitParcel({
       await page.waitForFunction(
         (previousSummary) => {
           const text = document.body?.innerText ?? "";
-          if (/Your search returned no results|No records found/i.test(text)) {
+          // Resolve immediately on no-results or any Accela error-page pattern.
+          // Without this, an error page would spin the full 90s timeout on every
+          // retry instead of fast-failing to the loop body's error detection.
+          // Patterns mirror waitForAccelaSearchOutcome and the loop body guard.
+          if (
+            /Your search returned no results|No records found|error\(s\) occurred on current page|unable to proceed|Object reference not set/i.test(
+              text,
+            )
+          ) {
             return true;
           }
           const match =
