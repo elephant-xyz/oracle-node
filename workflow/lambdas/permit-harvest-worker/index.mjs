@@ -2827,6 +2827,46 @@ async function processLeePropertyFirstPermitParcel(message) {
       stateUri,
       loadSummary,
     });
+  } catch (error) {
+    // Resilience: a single parcel failure (Accela search timeout, an
+    // incomplete-capture guard, or a missing-detail guard) must not dead-letter
+    // the message and stall the whole property-first run. Record the failure to
+    // a queryable failures ledger and return WITHOUT writing the completion
+    // state object, so the parcel stays "not completed" and is re-driven on the
+    // next run. No partial data is loaded to Neon (all guards throw before the
+    // load step).
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    const failureKey = `${output.key}/lee/permit-parcel-failures/${searchKey}.json`;
+    await putTextObject({
+      bucket: output.bucket,
+      key: failureKey,
+      body: JSON.stringify(
+        {
+          schemaVersion: "permit-harvest.lee-property-first-state.v1",
+          event: "property_first_permit_failed",
+          failedAt: new Date().toISOString(),
+          jobId: message.jobId,
+          target,
+          error: errorMessage,
+        },
+        null,
+        2,
+      ),
+      contentType: "application/json; charset=utf-8",
+    }).catch((writeError) => {
+      consoleLogger.error("lee_property_first_parcel_failure_record_failed", {
+        jobId: message.jobId,
+        parcelIdentifier: target.parcelIdentifier,
+        error:
+          writeError instanceof Error ? writeError.message : String(writeError),
+      });
+    });
+    consoleLogger.error("lee_property_first_parcel_failed", {
+      jobId: message.jobId,
+      parcelIdentifier: target.parcelIdentifier,
+      normalizedParcelIdentifier: target.normalizedParcelIdentifier,
+      error: errorMessage,
+    });
   } finally {
     await browser.close().catch(() => undefined);
   }

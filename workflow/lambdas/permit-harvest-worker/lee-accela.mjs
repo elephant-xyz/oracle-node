@@ -473,13 +473,43 @@ export function extractCurrentDetailPermitLinkFromHtml({
   sourcePage,
 }) {
   const text = htmlToText(html);
+  const $ = cheerio.load(html);
+
+  // Structural discriminator: distinguish a genuine single-record detail page
+  // from a results-list page that may contain a record preview in its message
+  // bar (which would otherwise false-match PERMIT_RECORD_HEADER_PATTERN and
+  // prematurely break pagination).
+  //
+  // Key markers verified against real Accela HTML:
+  //   - `divRecordStatus`   — present on detail pages; absent on list pages.
+  //   - `gdvPermitList`     — the main permit results grid; present on list
+  //                           pages; absent on detail pages.
+  //
+  // Decision:
+  //   1. If divRecordStatus is found → definitely a detail page; proceed.
+  //   2. If gdvPermitList is found (and divRecordStatus is absent) → results
+  //      list; return null.
+  //   3. Neither marker present → fall through to PERMIT_RECORD_HEADER_PATTERN
+  //      (belt-and-suspenders for pages that predate or omit these markers).
+  //
+  // Text-only "Showing X-Y of Z" guards were intentionally removed: ~12.5% of
+  // real detail pages carry that banner inside a related-records or conditions
+  // sub-grid (e.g. gdvGeneralConditionsList), so text matching is unreliable.
+  const hasDetailMarker = $("[id*='divRecordStatus']").length > 0;
+  const hasListGrid = $("[id*='gdvPermitList']").length > 0;
+
+  if (hasDetailMarker) {
+    // Confirmed detail page — skip the null-return checks below.
+  } else if (hasListGrid) {
+    return null;
+  }
+  // else: neither marker; fall through and let PERMIT_RECORD_HEADER_PATTERN decide.
+
   const recordHeader = PERMIT_RECORD_HEADER_PATTERN.exec(text);
   if (recordHeader === null) return null;
 
   const recordNumber = readPermitRecordNumber(recordHeader[1]);
   if (recordNumber === null) return null;
-
-  const $ = cheerio.load(html);
   const formAction = $("form#aspnetForm").attr("action") ?? null;
   const sourceUrl = /CapDetail\.aspx/i.test(pageUrl)
     ? pageUrl
@@ -517,21 +547,32 @@ export function extractCurrentDetailPermitLinkFromHtml({
  * @param {string} html - Search result HTML.
  * @param {string} windowKey - Date-window key that produced this page.
  * @param {number} pageNumber - One-based page number.
+ * @param {Logger} [logger] - Structured logger used to surface zero-link diagnostics.
  * @returns {PermitLink[]} Extracted permit links.
  */
-export function extractPermitLinksFromSearchHtml(html, windowKey, pageNumber) {
+export function extractPermitLinksFromSearchHtml(
+  html,
+  windowKey,
+  pageNumber,
+  logger = consoleLogger,
+) {
   const $ = cheerio.load(html);
   /** @type {PermitLink[]} */
   const links = [];
+  const capDetailAnchors = $("a[href*='CapDetail.aspx']");
+  let relatedRecordFilteredCount = 0;
 
-  $("a[href*='CapDetail.aspx']").each((_, element) => {
+  capDetailAnchors.each((_, element) => {
     const anchor = $(element);
     const href = anchor.attr("href");
     if (!href) return;
 
     const row = anchor.closest("tr");
     const table = row.closest("table");
-    if (isRelatedRecordTreeTable(table)) return;
+    if (isRelatedRecordTreeTable(table)) {
+      relatedRecordFilteredCount += 1;
+      return;
+    }
 
     const cells = row
       .find("td")
@@ -576,6 +617,19 @@ export function extractPermitLinksFromSearchHtml(html, windowKey, pageNumber) {
       sourcePage: pageNumber,
     });
   });
+
+  // Distinguish "0 links because every CapDetail link was inside a
+  // related-record tree" from "genuinely 0 CapDetail links on the page".
+  // The former points at an Accela table-structure change that defeats
+  // isRelatedRecordTreeTable; the latter is an expected empty/no-results page.
+  if (links.length === 0 && relatedRecordFilteredCount > 0) {
+    logger.warn("lee_search_links_all_filtered_as_related_records", {
+      windowKey,
+      pageNumber,
+      capDetailAnchorCount: capDetailAnchors.length,
+      relatedRecordFilteredCount,
+    });
+  }
 
   return links;
 }
@@ -710,6 +764,7 @@ export async function searchLeePermitWindow({
         html,
         windowKey,
         pageNumber,
+        logger,
       );
       logger.info("lee_window_page_captured", {
         windowKey,
@@ -892,6 +947,7 @@ export async function searchLeePermitParcel({
         html,
         searchKey,
         pageNumber,
+        logger,
       );
       logger.info("lee_parcel_search_page_captured", {
         searchKey,
@@ -904,16 +960,38 @@ export async function searchLeePermitParcel({
       permits.push(...pageLinks);
 
       if (noResults) break;
+      // Snapshot the current page's result summary before clicking "Next >".
+      // The click triggers an ASP.NET UpdatePanel partial postback (no full
+      // navigation), so we must wait for the "Showing X-Y of Z" banner to
+      // CHANGE from this value before re-reading the DOM. Waiting only on
+      // waitForAccelaSearchOutcome here is unsafe: the stale prior-page banner
+      // still satisfies it, causing page.content() to re-read the old page.
+      const priorSummary = summary;
       const clicked = await clickNextResultPage(page);
       if (!clicked) break;
-      await Promise.race([
-        page.waitForNavigation({
-          waitUntil: "domcontentloaded",
-          timeout: 45000,
-        }),
-        sleep(6000),
-      ]).catch(() => undefined);
-      await waitForAccelaSearchOutcome(page);
+      await page.waitForFunction(
+        (previousSummary) => {
+          const text = document.body?.innerText ?? "";
+          // Resolve immediately on no-results or any Accela error-page pattern.
+          // Without this, an error page would spin the full 90s timeout on every
+          // retry instead of fast-failing to the loop body's error detection.
+          // Patterns mirror waitForAccelaSearchOutcome and the loop body guard.
+          if (
+            /Your search returned no results|No records found|error\(s\) occurred on current page|unable to proceed|Object reference not set/i.test(
+              text,
+            )
+          ) {
+            return true;
+          }
+          const match =
+            /Showing\s+([0-9,]+\s*-\s*[0-9,]+\s+of\s+([0-9,]+))/i.exec(text);
+          if (match === null) return false;
+          const currentSummary = match[1].replace(/\s+/g, " ").trim();
+          return previousSummary === null || currentSummary !== previousSummary;
+        },
+        { timeout: 90000 },
+        priorSummary,
+      );
       await sleep(2000);
     }
   } finally {
