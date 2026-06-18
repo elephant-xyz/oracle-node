@@ -11,8 +11,8 @@ The change is contained because CIDs are computed locally by `@elephant-xyz/cli`
 ## Architecture
 
 - **CID generation** stays local and unchanged (`hash` → CID v0).
-- **Upload** swaps the hard-coded Pinata path for a pluggable `StorageProvider` whose first implementation targets Filebase. The two call sites are `elephant-cli` `upload` (service instantiation) and `oracle-node` `upload-worker` (credential env var). Built in the publish subtask.
-- **Durable index** is a public newline-delimited JSON manifest (`datasets-manifest.jsonl`) in the store — one record per published dataset. The existing envio-subgraph indexes on-chain `DataSubmitted` events only and is therefore not usable for an off-chain index. Built in the index subtask.
+- **Upload** swaps the hard-coded Pinata path for a pluggable `StorageProvider` whose first implementation targets Filebase. Two changes are required: in `elephant-cli`, the `upload` command instantiates the provider behind the interface; in `oracle-node` `upload-worker`, the `upload()` call signature itself changes — today it passes a named `pinataJwt` parameter (`upload({ ..., pinataJwt })`), which becomes the Filebase credential shape — along with the corresponding env var (`ELEPHANT_PINATA_JWT` → Filebase credentials). It is not an env-var-only swap. Built in the publish subtask.
+- **Durable index** is a set of per-dataset records in the store, plus a public newline-delimited JSON manifest (`datasets-manifest.jsonl`) as a queryable view. Each published dataset writes **one immutable record object** keyed deterministically by `(county, source, dataGroup, cid)` (e.g. `index/<county>/<source>/<dataGroup>/<cid>.json`). The manifest is **compiled from those record objects** (prefix-listed), not appended to concurrently — this is race-free by construction and is the chosen design specifically because oracle-node can publish multiple counties concurrently and object stores (S3/Filebase) offer no compare-and-swap for appends, so a single shared appended file would silently drop overlapping writers' records. The existing envio-subgraph indexes on-chain `DataSubmitted` events only and is therefore not usable for an off-chain index. Built in the index subtask.
 - **Provenance and freshness** are carried by the manifest record: `{ schemaVersion, cid, county, source, dataGroup, collectedAt, publishedAt, oracle }`.
 - **MCP access** is additive tools over the manifest (query by county/source, resolve provenance/freshness), layered on the existing `elephant-mcp` server without changing its architecture. Built in the MCP subtask.
 
@@ -20,6 +20,7 @@ The change is contained because CIDs are computed locally by `@elephant-xyz/cli`
 
 - Storage is provider-pluggable behind a `StorageProvider` interface; Filebase today, other IPFS/S3 providers later without changing callers (forward-compatible agent access).
 - Datasets remain content-addressed, so any future consumer can fetch a CID from any IPFS gateway independent of the provider.
-- The durable index is purpose-built off-chain (manifest), decoupled from the Polygon contract and envio-subgraph; no on-chain submission is added or required by this milestone.
+- The durable index is purpose-built off-chain (per-dataset record objects + a compiled manifest), decoupled from the Polygon contract and envio-subgraph; no on-chain submission is added or required by this milestone.
+- Index writes are immutable per-dataset objects keyed by `(county, source, dataGroup, cid)`, so concurrent publishes never race; the `datasets-manifest.jsonl` is a derived view recompiled from those objects, not a concurrently appended file.
 - The manifest is versioned (`schemaVersion`) and evolves additively; agents resolve datasets by `(county, source, dataGroup)` → CID.
 - Filebase account and credentials are a prerequisite before the publish step can run.
