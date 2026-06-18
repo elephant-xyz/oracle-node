@@ -3,7 +3,8 @@
 Records the completeness reconciliation, scope definition, future-compatibility
 seams, and explicit exclusions for the _Oracle Agent Public Data Discovery and
 Refresh_ milestone (Lee County, FL). Closes acceptance criteria **#9, #12, #13**
-and documents the permit side of **#10/#11**.
+and completes **#10/#11** across all four sources, with the 22 high-permit
+parcels (below) documented as a known gap.
 
 ## Scope
 
