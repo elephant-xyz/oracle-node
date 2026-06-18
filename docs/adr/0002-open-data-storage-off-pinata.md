@@ -1,26 +1,30 @@
-# Open-data storage moves off Pinata to an S3-compatible IPFS store
+# Open data: consolidate per-property and publish to Filebase/IPFS
 
-Oracle's collected datasets must become openly published, durably indexed, and agent-queryable (Oracle #2 milestone). This ADR records the storage architecture and the storage selection — the decision deliverable. On-chain submission is **out of scope** for this milestone; the goal is publish-to-storage plus a durable queryable index. Elephant.xyz UI is excluded.
+Oracle's collected datasets must become openly published, durably indexed, and agent-queryable so any coding agent (NEO and others) can build on them permissionlessly (Oracle #2 milestone). This ADR records the storage + data-model decision. On-chain submission and the Elephant.xyz UI are out of scope for this milestone.
 
-## Storage selection: S3-compatible IPFS provider (Filebase)
+## Decision
 
-Public storage moves off **Pinata** to **Filebase**, an S3-compatible provider that pins content to IPFS. Filebase is selected because it satisfies both requirements at once: it is **IPFS-compatible** (content-addressed; objects are pinned and resolvable by CID through any IPFS gateway) **and** exposes an **S3 API** (the "S2"/S3-compatible option). Plain AWS S3 fails the IPFS-compatible requirement; web3.storage/Filecoin/Lighthouse fail the S3-compatible requirement.
+Keep **IPFS** as the storage layer (via **Filebase**), and fix the scaling problem in the **data model**: consolidate each property's graph into **one file per property**, then publish those files to IPFS.
 
-The change is contained because CIDs are computed locally by `@elephant-xyz/cli` `hash` **before** upload, so the CID scheme is identical regardless of storage provider and no downstream consumer breaks. `oracle-node` already depends on `@aws-sdk/client-s3` in its workflow lambdas, so publishing to Filebase is a `PutObject` against the provider endpoint rather than a new transport.
+- **IPFS is mandatory.** The data must be open/permissionless/decentralized — anyone can fetch it by CID and scale their own reads. A database or object store *we* host would make us responsible for scaling and would be permissioned, which defeats the goal.
+- **The fix is granularity, not the provider.** Elephant's data is a graph; published per-node it explodes into **billions of sub-1KB objects** even for one county. That is unscalable to retrieve/index on *any* IPFS provider (per-object DHT/metadata cost; plus the ~256 KB block floor wastes space), and it is what failed on Pinata. Consolidating all of a property's data (permits, tenants/Sunbiz, reviews/BBB, appraisal) into **one file** drops the object count to **~300k (one per property)** — tractable to pin, fetch, and index.
+- **Filebase** is the IPFS provider: S3-compatible API *and* genuinely distributed (unlike Pinata, which was effectively a single hosted service that throttled reads).
 
 ## Architecture
 
-- **CID generation** stays local and unchanged (`hash` → CID v0).
-- **Upload** swaps the hard-coded Pinata path for a pluggable `StorageProvider` whose first implementation targets Filebase. Two changes are required: in `elephant-cli`, the `upload` command instantiates the provider behind the interface; in `oracle-node` `upload-worker`, the `upload()` call signature itself changes — today it passes a named `pinataJwt` parameter (`upload({ ..., pinataJwt })`), which becomes the Filebase credential shape — along with the corresponding env var (`ELEPHANT_PINATA_JWT` → Filebase credentials). It is not an env-var-only swap. Built in the publish subtask.
-- **Durable index** is a set of per-dataset records in the store, plus a public newline-delimited JSON manifest (`datasets-manifest.jsonl`) as a queryable view. Each published dataset writes **one immutable record object** keyed deterministically by `(county, source, dataGroup, cid)` (e.g. `index/<county>/<source>/<dataGroup>/<cid>.json`). The manifest is **compiled from those record objects** (prefix-listed), not appended to concurrently — this is race-free by construction and is the chosen design specifically because oracle-node can publish multiple counties concurrently and object stores (S3/Filebase) offer no compare-and-swap for appends, so a single shared appended file would silently drop overlapping writers' records. The existing envio-subgraph indexes on-chain `DataSubmitted` events only and is therefore not usable for an off-chain index. Built in the index subtask.
-- **Provenance and freshness** are carried by the manifest record: `{ schemaVersion, cid, county, source, dataGroup, collectedAt, publishedAt, oracle }`.
-- **MCP access** is additive tools over the manifest (query by county/source, resolve provenance/freshness), layered on the existing `elephant-mcp` server without changing its architecture. Built in the MCP subtask.
+- **Consolidate at publish time:** from the query-db, for each property, assemble one consolidated JSON (relationships nested). Implemented as the `elephant-query-db` per-property consolidation exporter (batched so memory stays flat).
+- **Address + publish:** each file gets an IPFS CIDv0 (computed locally; verified to equal the CID Filebase returns on upload). Files are uploaded to a Filebase bucket and pinned to IPFS.
+- **Registry = a manifest** mapping property → CID, with provenance/freshness (`county`, `source`, `collectedAt`), published alongside the data. This is the durable, queryable index for this milestone.
+- **MCP access** exposes the manifest so agents discover properties and resolve CIDs/provenance, layered on the existing `elephant-mcp` server.
+- **NEO** (`elephant-xyz/catalog`) is rewired to read the open IPFS data via MCP instead of bundled files.
 
 ## Consequences
 
-- Storage is provider-pluggable behind a `StorageProvider` interface; Filebase today, other IPFS/S3 providers later without changing callers (forward-compatible agent access).
-- Datasets remain content-addressed, so any future consumer can fetch a CID from any IPFS gateway independent of the provider.
-- The durable index is purpose-built off-chain (per-dataset record objects + a compiled manifest), decoupled from the Polygon contract and envio-subgraph; no on-chain submission is added or required by this milestone.
-- Index writes are immutable per-dataset objects keyed by `(county, source, dataGroup, cid)`, so concurrent publishes never race; the `datasets-manifest.jsonl` is a derived view recompiled from those objects, not a concurrently appended file.
-- The manifest is versioned (`schemaVersion`) and evolves additively; agents resolve datasets by `(county, source, dataGroup)` → CID.
-- Filebase account and credentials are a prerequisite before the publish step can run.
+- Reads/scaling are owned by **consumers**: they fetch files by CID and index on their own side; we only publish. Filebase (distributed) serves availability — we are not the central query server.
+- Data stays **content-addressed**, so any consumer can fetch a CID from any IPFS gateway, independent of provider.
+- The registry is **off-chain** for this milestone (a published manifest). The fully-decentralized registry remains the blockchain (CIDs anchored on-chain → indexers like The Graph/Envio); consolidation **re-enables** that path (anchoring ~300k per-property CIDs is tractable, billions were not) as a follow-up — explicitly out of scope here.
+- Per-county scoping (Sunbiz/BBB are address/contractor-matched, not a simple column) is deferred until a second county lands; the first cut publishes the full query-db (currently Lee-only).
+
+## Status
+
+Implemented and **executed for Lee** (verified 2026-06-18): 4,664 consolidated per-property files + manifest published to Filebase bucket `elephant-oracle-open-data` and confirmed retrievable from the public `ipfs.io` gateway by CID. Consolidation exporter: `elephant-query-db` PR. Remaining: MCP access + rewiring/validating NEO.
