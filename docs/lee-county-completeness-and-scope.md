@@ -12,7 +12,11 @@ County — not a full-county load. The query database
 (`elephant-xyz/elephant-query-db`) is loaded via a scope manifest
 (`curated-commercial-final-1000-success-manifest.json`, ~1,007 seed parcels,
 expanded by the property-first pipeline) that links the four sources across the
-same commercial parcels.
+same commercial parcels. Permit completeness below uses a denominator of
+**1,233** — the permit-eligible (commercial/industrial) subset of the loaded
+curated properties that was enqueued for the property-first refresh (seed ~1,007
+→ 1,233 eligible after the property-first / incremental-industrial-scope
+expansion).
 
 "Complete against source availability" (AC #9) therefore means complete **within
 the curated scope** — each curated parcel's appraisal, permits, address-matched
@@ -89,12 +93,12 @@ Layer_):
 
 ## Acceptance criteria status
 
-| AC                                 | Status                                                                             |
-| ---------------------------------- | ---------------------------------------------------------------------------------- |
-| #1–#6                              | Done                                                                               |
-| #7 batch ingestion / #8 scraping   | Done (Sunbiz bulk; property/permit/BBB scrape)                                     |
-| #9 complete vs source availability | Done within curated scope (permits 1,211/1,233; 22 high-permit parcels documented) |
-| #10 store in local DB              | Done (all four sources in Neon)                                                    |
-| #11 complete refresh, all four     | Done (property, permits, Sunbiz, BBB)                                              |
-| #12 future-compat seams            | Done (this document)                                                               |
-| #13 exclusions                     | Done (this document)                                                               |
+| AC                                 | Status                                                                                   |
+| ---------------------------------- | ---------------------------------------------------------------------------------------- |
+| #1–#6                              | Done                                                                                     |
+| #7 batch ingestion / #8 scraping   | Done (Sunbiz bulk; property/permit/BBB scrape)                                           |
+| #9 complete vs source availability | Done within curated scope (permits 1,211/1,233; 22 high-permit parcels documented)       |
+| #10 store in local DB              | Done — all four sources in Neon; permits 1,211/1,233 (22 parcels documented above)       |
+| #11 complete refresh, all four     | Done — all four refreshed; permits 1,211/1,233 (22 high-permit parcels documented above) |
+| #12 future-compat seams            | Done (this document)                                                                     |
+| #13 exclusions                     | Done (this document)                                                                     |
