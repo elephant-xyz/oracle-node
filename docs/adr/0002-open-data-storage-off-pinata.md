@@ -6,9 +6,9 @@ Oracle's collected datasets must become openly published, durably indexed, and a
 
 Keep **IPFS** as the storage layer (via **Filebase**), and fix the scaling problem in the **data model**: consolidate each property's graph into **one file per property**, then publish those files to IPFS.
 
-- **IPFS is mandatory.** The data must be open/permissionless/decentralized — anyone can fetch it by CID and scale their own reads. A database or object store *we* host would make us responsible for scaling and would be permissioned, which defeats the goal.
-- **The fix is granularity, not the provider.** Elephant's data is a graph; published per-node it explodes into **billions of sub-1KB objects** even for one county. That is unscalable to retrieve/index on *any* IPFS provider (per-object DHT/metadata cost; plus the ~256 KB block floor wastes space), and it is what failed on Pinata. Consolidating all of a property's data (permits, tenants/Sunbiz, reviews/BBB, appraisal) into **one file** drops the object count to **~300k (one per property)** — tractable to pin, fetch, and index.
-- **Filebase** is the IPFS provider: S3-compatible API *and* genuinely distributed (unlike Pinata, which was effectively a single hosted service that throttled reads).
+- **IPFS is mandatory.** The data must be open/permissionless/decentralized — anyone can fetch it by CID and scale their own reads. A database or object store _we_ host would make us responsible for scaling and would be permissioned, which defeats the goal.
+- **The fix is granularity, not the provider.** Elephant's data is a graph; published per-node it explodes into **billions of sub-1KB objects** even for one county. That is unscalable to retrieve/index on _any_ IPFS provider (per-object DHT/metadata cost; plus the ~256 KB block floor wastes space), and it is what failed on Pinata. Consolidating all of a property's data (permits, tenants/Sunbiz, reviews/BBB, appraisal) into **one file** drops the object count to **~300k (one per property)** — tractable to pin, fetch, and index.
+- **Filebase** is the IPFS provider: S3-compatible API _and_ genuinely distributed (unlike Pinata, which was effectively a single hosted service that throttled reads).
 
 ## Architecture
 
