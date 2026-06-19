@@ -9,6 +9,151 @@ All resources are defined in `template.yaml` as an AWS SAM application.
 
 ---
 
+## Migration: Backfill Workflow-State for In-Flight Executions
+
+After deploying the new `workflow-state` DynamoDB table, you need to backfill execution state for any RUNNING Step Functions executions. This ensures dashboards and queries have an accurate snapshot immediately after deployment.
+
+### Overview
+
+The migration script (`scripts/migrate-workflow-state.js`) discovers RUNNING executions, extracts their current phase/step/status from execution history, and writes execution state + aggregates to DynamoDB with **strict no-overwrite protection**.
+
+**Safety guarantee**: The migration **never overwrites** a newer status already written by the live EventBridge handler. It uses conditional writes with `lastEventTime < eventTime` (strictly less than) to ensure this.
+
+### Prerequisites
+
+- AWS CLI configured with appropriate credentials
+- Node.js installed (for running the migration script)
+- Required IAM permissions:
+  - `cloudformation:DescribeStacks` (to discover resources)
+  - `states:ListExecutions` (to list RUNNING executions)
+  - `states:GetExecutionHistory` (to extract current status)
+  - `dynamodb:GetItem` (to read existing execution state)
+  - `dynamodb:TransactWriteItems` (to write execution state + aggregates)
+
+### Usage
+
+#### Step 1: Deploy the workflow-events stack
+
+Deploy the new changes using your standard deployment process:
+
+```bash
+# Deploy infrastructure (includes workflow-events stack)
+./scripts/deploy-infra.sh
+```
+
+#### Step 2: Run the migration
+
+**Always start with a dry run** to see what would be migrated:
+
+```bash
+# Dry run (no writes to DynamoDB)
+node scripts/migrate-workflow-state.js --dry-run
+```
+
+Review the output to ensure it looks correct. Then run the actual migration:
+
+```bash
+# Real migration
+node scripts/migrate-workflow-state.js
+```
+
+### Command-Line Options
+
+```bash
+node scripts/migrate-workflow-state.js [options]
+
+Options:
+  --prepare-stack <name>          CloudFormation stack name for prepare infrastructure
+                                  (default: elephant-oracle-node)
+  --workflow-events-stack <name>  CloudFormation stack name for workflow-events
+                                  (default: workflow-events-stack)
+  --region <region>               AWS region (default: us-east-1)
+  --state-machine-arn <arn>       Override: State machine ARN (skips CloudFormation lookup)
+  --table-name <name>             Override: DynamoDB table name (skips CloudFormation lookup)
+  --dry-run                       Perform a dry run without writing to DynamoDB
+  --concurrency <number>         Maximum concurrent migrations (default: 10)
+  --max-executions <number>       Maximum number of executions to process (no limit by default)
+  --help                          Show help text
+```
+
+### Example Output
+
+```
+[INFO] Starting workflow-state migration...
+[INFO]   Dry run: false
+[INFO]   Region: us-east-1
+[INFO] Discovering resources from stacks...
+[INFO]   State machine ARN: arn:aws:states:us-east-1:123456789012:stateMachine:...
+[INFO]   Table name: MWAAEnvironment-workflow-state
+[INFO] Listing RUNNING executions for state machine...
+[INFO]   Found 5 RUNNING execution(s)
+[INFO] Processing 5 execution(s) with concurrency 10...
+[INFO]   ✓ execution-001
+[INFO]   ✓ execution-002
+[WARN]   ⊘ execution-003 (newer exists)
+[WARN]   ⊘ execution-004 (no data)
+[INFO]   ✓ execution-005
+
+Migration Summary:
+  Total RUNNING: 5
+  Updated: 3
+  Skipped (newer exists): 1
+  Skipped (no data): 1
+  Failed: 0
+```
+
+### How It Works
+
+1. **Resource Discovery**: Reads CloudFormation stack outputs to find:
+   - `ElephantExpressStateMachineArn` from the prepare stack
+   - `WorkflowStateTableName` from the workflow-events stack
+
+2. **Execution Listing**: Lists all RUNNING executions using `ListExecutions` API with pagination.
+
+3. **Status Extraction**: For each execution:
+   - **Primary method**: Searches execution history (newest-first) for `TaskScheduled` events with `arn:aws:states:::events:putEvents` resource. Extracts `WorkflowEventDetail` from the task parameters.
+   - **Fallback method**: If no `putEvents` found, uses the latest `StateEntered` event and maps state name to phase/step using a predefined mapping table.
+
+4. **Safe Write**: Before writing:
+   - Reads existing execution state from DynamoDB
+   - **Skips if** `existing.lastEventTime >= candidate.eventTime` (newer status already exists)
+   - Uses `TransactWriteItems` with strict condition: `lastEventTime < eventTime` (not `<=`) to prevent overwriting equal-or-newer updates
+   - Atomically updates execution state + step aggregates
+
+### Troubleshooting
+
+**"Skipped (no data)"**: The execution history doesn't contain enough information to extract phase/step/status. This can happen if:
+
+- The execution just started and hasn't reached any `putEvents` states yet
+- The execution is in an unexpected state not covered by the fallback mapping
+
+**"Skipped (newer exists)"**: A newer status was already written by the live EventBridge handler. This is expected and safe—the migration correctly avoids overwriting newer data.
+
+**"Failed"**: Check the error message. Common causes:
+
+- DynamoDB throttling (reduce `--concurrency`)
+- Missing IAM permissions
+- Invalid execution ARN or table name
+
+### Verification
+
+After migration, verify the results:
+
+1. **Check CloudWatch Dashboard**: The "Workflow Phase Aggregates" widget should show non-empty counts for phases with RUNNING executions.
+
+2. **Query DynamoDB directly**:
+
+   ```bash
+   aws dynamodb query \
+     --table-name <WORKFLOW_STATE_TABLE_NAME> \
+     --key-condition-expression "PK = :pk" \
+     --expression-attribute-values '{":pk": {"S": "EXECUTION#<execution-id>"}}'
+   ```
+
+3. **Re-run with `--dry-run`**: Should show all executions as "skipped (newer exists)" if migration was successful.
+
+---
+
 ## Event Sources and Triggers
 
 ### EventBridge rule for `workflow-event-handler`
