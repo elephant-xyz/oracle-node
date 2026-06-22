@@ -1,8 +1,17 @@
+import { createRequire } from "module";
 import { promises as fs } from "fs";
 import path from "path";
 import os from "os";
 import AdmZip from "adm-zip";
 import { transform } from "@elephant-xyz/cli/lib";
+
+// Patch Node's built-in fs with graceful-fs so that any EMFILE errors from
+// the CLI transform library (which may open 400+ files simultaneously on heavy
+// parcels) are automatically queued and retried rather than thrown immediately.
+// This must run before the transform() call at module init time.
+const require = createRequire(import.meta.url);
+const gracefulFs = require("graceful-fs");
+gracefulFs.gracefulify(require("fs"));
 import {
   executeWithTaskToken,
   parseS3Uri,
@@ -42,6 +51,7 @@ const DEFAULT_PROPERTY_FIRST_PERMIT_ELIGIBLE_USAGE_TYPES = [
   "ShoppingCenterRegional",
   "Supermarket",
 ];
+const ALL_PROPERTY_FIRST_PERMIT_USAGE_TYPES_SENTINEL = "__ALL__";
 
 /**
  * @typedef {object} TransformInput
@@ -142,6 +152,20 @@ function resolvePropertyFirstPermitEligibleUsageTypes() {
 }
 
 /**
+ * Return true when the configured permit coverage scope should include every appraiser usage type.
+ *
+ * @param {string[]} eligibleUsageTypes - Parsed eligible usage type configuration.
+ * @returns {boolean} True when full property-first permit coverage is enabled.
+ */
+function isFullPropertyFirstPermitCoverageEnabled(eligibleUsageTypes) {
+  return eligibleUsageTypes.some(
+    (usageType) =>
+      usageType.trim().toUpperCase() ===
+      ALL_PROPERTY_FIRST_PERMIT_USAGE_TYPES_SENTINEL,
+  );
+}
+
+/**
  * Extract the Lee Appraiser property usage type from a transformed output zip.
  *
  * @param {string} outputZipLocal - Local transformed output zip path.
@@ -197,7 +221,8 @@ async function buildAndUploadPropertyFirstPermitEligibility({
   const { propertyUsageType, readError } =
     readPropertyUsageTypeFromTransformedZip(outputZipLocal);
   const shouldEnqueue =
-    propertyUsageType !== null && eligibleUsageTypeSet.has(propertyUsageType);
+    isFullPropertyFirstPermitCoverageEnabled(eligibleUsageTypes) ||
+    (propertyUsageType !== null && eligibleUsageTypeSet.has(propertyUsageType));
   const reason = shouldEnqueue
     ? "eligible_property_usage_type"
     : readError !== null
