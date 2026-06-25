@@ -67,13 +67,19 @@ describe("Elephant Express workflow branch selection", () => {
     });
   });
 
-  it("routes the default post-transform branch to Structured Archive", async () => {
+  it("routes the default post-transform branch through the SVL gate to Structured Archive", async () => {
     const definition = await loadStateMachine();
 
     expect(definition.States.EmitTransformSucceeded.Next).toBe(
       "ChoosePostTransformBranch",
     );
+    // Non-minting (default) branches now pass through the archive SVL gate first,
+    // then resume to Structured Archive once SVL passes.
     expect(definition.States.ChoosePostTransformBranch).toMatchObject({
+      Type: "Choice",
+      Default: "EmitArchiveSvlScheduled",
+    });
+    expect(definition.States.ChooseArchivePostSvl).toMatchObject({
       Type: "Choice",
       Default: "EmitStructuredArchiveSucceeded",
     });
@@ -105,7 +111,9 @@ describe("Elephant Express workflow branch selection", () => {
   it("routes seeded property-first appraisal executions to the permit queue after transform", async () => {
     const definition = await loadStateMachine();
 
-    expect(definition.States.ChoosePostTransformBranch.Choices).toContainEqual({
+    // Post-transform, non-minting branches now pass through the archive SVL gate first;
+    // the property-first permit routing resumes in ChooseArchivePostSvl (after SVL passes).
+    expect(definition.States.ChooseArchivePostSvl.Choices).toContainEqual({
       Variable: "$.message.propertyFirstPermitQueueUrl",
       IsPresent: true,
       Next: "ChoosePropertyFirstPermitEligibility",
@@ -184,6 +192,32 @@ describe("Elephant Express workflow branch selection", () => {
         ],
       },
       Next: "WorkflowComplete",
+    });
+  });
+
+  it("emits an SVL SUCCEEDED event on the archive happy path before resuming routing", async () => {
+    const definition = await loadStateMachine();
+
+    // Mirrors the minting EmitSvlSucceeded so monitors see archive/property-first
+    // parcels complete SVL instead of appearing stuck at SCHEDULED.
+    expect(definition.States.CheckArchiveSvlResult.Default).toBe(
+      "EmitArchiveSvlSucceeded",
+    );
+    expect(definition.States.EmitArchiveSvlSucceeded).toMatchObject({
+      Type: "Task",
+      Resource: "arn:aws:states:::events:putEvents",
+      Parameters: {
+        Entries: [
+          {
+            Detail: {
+              status: "SUCCEEDED",
+              phase: "SVL",
+              step: "SVL",
+            },
+          },
+        ],
+      },
+      Next: "ChooseArchivePostSvl",
     });
   });
 });
