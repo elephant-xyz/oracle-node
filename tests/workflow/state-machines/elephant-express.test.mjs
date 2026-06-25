@@ -67,13 +67,19 @@ describe("Elephant Express workflow branch selection", () => {
     });
   });
 
-  it("routes the default post-transform branch to Structured Archive", async () => {
+  it("routes the default post-transform branch through the SVL gate to Structured Archive", async () => {
     const definition = await loadStateMachine();
 
     expect(definition.States.EmitTransformSucceeded.Next).toBe(
       "ChoosePostTransformBranch",
     );
+    // Non-minting (default) branches now pass through the archive SVL gate first,
+    // then resume to Structured Archive once SVL passes.
     expect(definition.States.ChoosePostTransformBranch).toMatchObject({
+      Type: "Choice",
+      Default: "EmitArchiveSvlScheduled",
+    });
+    expect(definition.States.ChooseArchivePostSvl).toMatchObject({
       Type: "Choice",
       Default: "EmitStructuredArchiveSucceeded",
     });
@@ -105,7 +111,9 @@ describe("Elephant Express workflow branch selection", () => {
   it("routes seeded property-first appraisal executions to the permit queue after transform", async () => {
     const definition = await loadStateMachine();
 
-    expect(definition.States.ChoosePostTransformBranch.Choices).toContainEqual({
+    // Post-transform, non-minting branches now pass through the archive SVL gate first;
+    // the property-first permit routing resumes in ChooseArchivePostSvl (after SVL passes).
+    expect(definition.States.ChooseArchivePostSvl.Choices).toContainEqual({
       Variable: "$.message.propertyFirstPermitQueueUrl",
       IsPresent: true,
       Next: "ChoosePropertyFirstPermitEligibility",
