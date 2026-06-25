@@ -194,4 +194,30 @@ describe("Elephant Express workflow branch selection", () => {
       Next: "WorkflowComplete",
     });
   });
+
+  it("emits an SVL SUCCEEDED event on the archive happy path before resuming routing", async () => {
+    const definition = await loadStateMachine();
+
+    // Mirrors the minting EmitSvlSucceeded so monitors see archive/property-first
+    // parcels complete SVL instead of appearing stuck at SCHEDULED.
+    expect(definition.States.CheckArchiveSvlResult.Default).toBe(
+      "EmitArchiveSvlSucceeded",
+    );
+    expect(definition.States.EmitArchiveSvlSucceeded).toMatchObject({
+      Type: "Task",
+      Resource: "arn:aws:states:::events:putEvents",
+      Parameters: {
+        Entries: [
+          {
+            Detail: {
+              status: "SUCCEEDED",
+              phase: "SVL",
+              step: "SVL",
+            },
+          },
+        ],
+      },
+      Next: "ChooseArchivePostSvl",
+    });
+  });
 });

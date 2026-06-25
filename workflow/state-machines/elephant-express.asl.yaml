@@ -516,7 +516,29 @@ States:
       - Variable: $.svl.validationPassed
         BooleanEquals: false
         Next: WaitForSvlValidationResolution
-    Default: ChooseArchivePostSvl
+    Default: EmitArchiveSvlSucceeded
+
+  EmitArchiveSvlSucceeded:
+    Type: Task
+    Resource: arn:aws:states:::events:putEvents
+    Comment: "Emit SUCCEEDED event for SVL step on the archive / property-first branch, mirroring the minting EmitSvlSucceeded so monitors observe archive parcels completing SVL (not stuck at SCHEDULED)"
+    Parameters:
+      Entries:
+        - Source: elephant.workflow
+          DetailType: WorkflowEvent
+          Detail:
+            executionId.$: $$.Execution.Name
+            county.$: $.pre.county_name
+            status: SUCCEEDED
+            phase: SVL
+            step: SVL
+            dataGroupLabel: County
+    ResultPath: $.eventResult
+    Next: ChooseArchivePostSvl
+    Catch:
+      - ErrorEquals: [States.ALL]
+        ResultPath: $.eventError
+        Next: ChooseArchivePostSvl
 
   ChooseArchivePostSvl:
     Type: Choice
