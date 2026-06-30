@@ -105,11 +105,17 @@ import {
  */
 
 /**
- * @typedef {object} LeePropertyFirstSeedFeederMessage
- * @property {"lee-property-first-seed-feeder"} type - Message discriminator.
+ * County-generic property-first seed feeder message. The handler routes any
+ * message whose `type` matches `<county-slug>-property-first-seed-feeder` (e.g.
+ * `lee-property-first-seed-feeder`, `palm-beach-property-first-seed-feeder`)
+ * through the same config-driven feeder; per-parcel workflow routing comes from
+ * the seed CSV's `county` column, not this message.
+ *
+ * @typedef {object} PropertyFirstSeedFeederMessage
+ * @property {"lee-property-first-seed-feeder"} type - Canonical discriminant kept as a literal so the `PermitHarvestMessage` union still narrows; at runtime the handler routes any `<county-slug>-property-first-seed-feeder` type (see `isPropertyFirstSeedFeederType`).
  * @property {1} version - Message version.
  * @property {string} jobId - Stable job identifier shared by generated appraisal workflow messages.
- * @property {string} sourceCsvS3Uri - Lee county seed CSV S3 URI.
+ * @property {string} sourceCsvS3Uri - County seed CSV S3 URI.
  * @property {string} workflowQueueUrl - Existing appraisal workflow starter queue URL.
  * @property {string} propertyFirstPermitQueueUrl - Existing property-first permit queue URL, passed into appraisal workflow messages.
  * @property {string} feederQueueUrl - Queue URL where the feeder reschedules itself with an SQS delay.
@@ -117,12 +123,20 @@ import {
  * @property {string} workflowOutputBaseUri - S3 base URI for appraisal workflow outputs.
  * @property {string} propertyFirstPermitOutputPrefix - S3 prefix consumed by property-first permit workers; worker appends jobId.
  * @property {string} stateS3Uri - S3 JSON state/checkpoint URI used to resume the next source row.
+ * @property {string | undefined} [sourceSystem] - Neon `properties.source_system` value used by the `skipExistingNeon` dedup. Defaults to `lee_appraiser` for backward compatibility.
  * @property {LeePropertyFirstSeedBackpressureQueue[] | undefined} [backpressureQueues] - Queues that must be below their thresholds before enqueueing more work.
  * @property {number | undefined} [batchSize] - Maximum new source rows to enqueue during one feeder wakeup.
  * @property {number | undefined} [maxPages] - Maximum Accela parcel-search pages per property.
  * @property {number | undefined} [requeueDelaySeconds] - SQS delay before the next feeder wakeup.
  * @property {number | undefined} [sendDelayMs] - Optional delay between workflow SQS sends.
- * @property {boolean | undefined} [skipExistingNeon] - Skip source rows already loaded from Lee Appraiser into Neon. Defaults true.
+ * @property {boolean | undefined} [skipExistingNeon] - Skip source rows already loaded for this `sourceSystem` into Neon. Defaults true.
+ */
+
+/**
+ * Backward-compatible alias for {@link PropertyFirstSeedFeederMessage}; other
+ * code and JSDoc still reference the original Lee-specific name.
+ *
+ * @typedef {PropertyFirstSeedFeederMessage} LeePropertyFirstSeedFeederMessage
  */
 
 /**
@@ -168,7 +182,7 @@ import {
 
 /**
  * @typedef {object} LeePropertyFirstSeedFeederState
- * @property {"permit-harvest.lee-property-first-seed-feeder-state.v1"} schemaVersion - State schema marker.
+ * @property {"permit-harvest.property-first-seed-feeder-state.v2" | "permit-harvest.lee-property-first-seed-feeder-state.v1"} schemaVersion - State schema marker (v2 generic; v1 legacy Lee, accepted on read).
  * @property {string} jobId - Job identifier associated with the checkpoint.
  * @property {string} sourceCsvS3Uri - Source seed CSV associated with the checkpoint.
  * @property {number} nextSourceRowNumber - One-based CSV data row number to inspect on the next wakeup.
@@ -283,6 +297,53 @@ const DEFAULT_LEE_PROPERTY_FIRST_SEED_BATCH_SIZE = 100;
 const DEFAULT_LEE_PROPERTY_FIRST_SEED_MAX_PAGES = 200;
 const DEFAULT_LEE_PROPERTY_FIRST_SEED_REQUEUE_DELAY_SECONDS = 900;
 const MAX_SQS_DELAY_SECONDS = 900;
+/** County-generic feeder checkpoint schema written by this worker. */
+const PROPERTY_FIRST_SEED_FEEDER_STATE_SCHEMA_VERSION =
+  "permit-harvest.property-first-seed-feeder-state.v2";
+/** Legacy Lee-specific checkpoint schema still accepted on read for resume. */
+const LEGACY_LEE_PROPERTY_FIRST_SEED_FEEDER_STATE_SCHEMA_VERSION =
+  "permit-harvest.lee-property-first-seed-feeder-state.v1";
+/** Default Neon source_system used when a feeder message omits sourceSystem. */
+const DEFAULT_PROPERTY_FIRST_SEED_FEEDER_SOURCE_SYSTEM = "lee_appraiser";
+/** Matches `<county-slug>-property-first-seed-feeder` message discriminators. */
+const PROPERTY_FIRST_SEED_FEEDER_TYPE_PATTERN =
+  /^[a-z0-9-]+-property-first-seed-feeder$/;
+
+/**
+ * Return true when a message `type` is a property-first seed feeder discriminator.
+ *
+ * @param {unknown} type - Candidate message type.
+ * @returns {boolean} True for any `<county-slug>-property-first-seed-feeder` type.
+ */
+function isPropertyFirstSeedFeederType(type) {
+  return (
+    typeof type === "string" &&
+    PROPERTY_FIRST_SEED_FEEDER_TYPE_PATTERN.test(type)
+  );
+}
+
+/**
+ * Narrow a validated permit-harvest message to a property-first seed feeder.
+ *
+ * @param {PermitHarvestMessage} message - Validated permit-harvest message.
+ * @returns {message is LeePropertyFirstSeedFeederMessage} True for feeder messages.
+ */
+function isPropertyFirstSeedFeederMessage(message) {
+  return isPropertyFirstSeedFeederType(message.type);
+}
+
+/**
+ * Resolve the Neon `properties.source_system` used for feeder dedup.
+ *
+ * @param {PropertyFirstSeedFeederMessage} message - Feeder message.
+ * @returns {string} Source system, defaulting to Lee for backward compatibility.
+ */
+function resolveFeederSourceSystem(message) {
+  return (
+    readOptionalString(message.sourceSystem) ??
+    DEFAULT_PROPERTY_FIRST_SEED_FEEDER_SOURCE_SYSTEM
+  );
+}
 const DEFAULT_PROPERTY_FIRST_PERMIT_ELIGIBLE_USAGE_TYPES = [
   "AutoSalesRepair",
   "Commercial",
@@ -299,6 +360,7 @@ const DEFAULT_PROPERTY_FIRST_PERMIT_ELIGIBLE_USAGE_TYPES = [
   "ShoppingCenterRegional",
   "Supermarket",
 ];
+const ALL_PROPERTY_FIRST_PERMIT_USAGE_TYPES_SENTINEL = "__ALL__";
 
 const APPRAISAL_TABLE_ORDER = [
   "unnormalized_addresses",
@@ -532,6 +594,20 @@ function normalizePropertyUsageTypeKey(propertyUsageType) {
 }
 
 /**
+ * Return true when the configured permit coverage scope should include every appraiser usage type.
+ *
+ * @param {string[]} eligibleUsageTypes - Parsed eligible usage type configuration.
+ * @returns {boolean} True when full property-first permit coverage is enabled.
+ */
+function isFullPropertyFirstPermitCoverageEnabled(eligibleUsageTypes) {
+  return eligibleUsageTypes.some(
+    (usageType) =>
+      usageType.trim().toUpperCase() ===
+      ALL_PROPERTY_FIRST_PERMIT_USAGE_TYPES_SENTINEL,
+  );
+}
+
+/**
  * Build the permit-routing decision from an already-resolved appraiser usage type.
  *
  * @param {object} params - Routing-decision parameters.
@@ -552,8 +628,9 @@ function buildPropertyFirstPermitEligibility({
   );
   const propertyUsageTypeKey = normalizePropertyUsageTypeKey(propertyUsageType);
   const shouldEnqueue =
-    propertyUsageTypeKey !== null &&
-    eligibleUsageTypeKeys.has(propertyUsageTypeKey);
+    isFullPropertyFirstPermitCoverageEnabled(eligibleUsageTypes) ||
+    (propertyUsageTypeKey !== null &&
+      eligibleUsageTypeKeys.has(propertyUsageTypeKey));
   const reason = shouldEnqueue
     ? "eligible_property_usage_type"
     : readError !== null
@@ -1125,7 +1202,7 @@ function isMissingS3ObjectError(error) {
  */
 function createInitialLeePropertyFirstSeedFeederState(message) {
   return {
-    schemaVersion: "permit-harvest.lee-property-first-seed-feeder-state.v1",
+    schemaVersion: PROPERTY_FIRST_SEED_FEEDER_STATE_SCHEMA_VERSION,
     jobId: message.jobId,
     sourceCsvS3Uri: message.sourceCsvS3Uri,
     nextSourceRowNumber: 1,
@@ -1154,7 +1231,9 @@ async function readLeePropertyFirstSeedFeederState(message) {
     }
     if (
       parsed.schemaVersion !==
-      "permit-harvest.lee-property-first-seed-feeder-state.v1"
+        PROPERTY_FIRST_SEED_FEEDER_STATE_SCHEMA_VERSION &&
+      parsed.schemaVersion !==
+        LEGACY_LEE_PROPERTY_FIRST_SEED_FEEDER_STATE_SCHEMA_VERSION
     ) {
       throw new Error(
         `Unsupported seed feeder state schema: ${String(parsed.schemaVersion)}`,
@@ -1167,7 +1246,7 @@ async function readLeePropertyFirstSeedFeederState(message) {
         ? Math.trunc(parsed.nextSourceRowNumber)
         : 1;
     return {
-      schemaVersion: "permit-harvest.lee-property-first-seed-feeder-state.v1",
+      schemaVersion: PROPERTY_FIRST_SEED_FEEDER_STATE_SCHEMA_VERSION,
       jobId: readOptionalString(parsed.jobId) ?? message.jobId,
       sourceCsvS3Uri:
         readOptionalString(parsed.sourceCsvS3Uri) ?? message.sourceCsvS3Uri,
@@ -1218,13 +1297,17 @@ async function writeLeePropertyFirstSeedFeederState(message, state) {
 }
 
 /**
- * Read existing Lee Appraiser identifiers from Neon so the feeder does not queue
- * properties already loaded by earlier runs.
+ * Read existing appraiser identifiers from Neon so the feeder does not queue
+ * properties already loaded by earlier runs for the same source system.
  *
  * @param {boolean} skipExistingNeon - Whether to query Neon for existing identifiers.
+ * @param {string} sourceSystem - Neon `properties.source_system` to dedup against.
  * @returns {Promise<ExistingLeeAppraiserIdentifiers>} Existing request and parcel identifiers.
  */
-async function readExistingLeeAppraiserIdentifiers(skipExistingNeon) {
+async function readExistingLeeAppraiserIdentifiers(
+  skipExistingNeon,
+  sourceSystem,
+) {
   if (!skipExistingNeon) {
     return {
       requestIdentifiers: new Set(),
@@ -1236,9 +1319,9 @@ async function readExistingLeeAppraiserIdentifiers(skipExistingNeon) {
     `
       select request_identifier, parcel_identifier
       from properties
-      where source_system = 'lee_appraiser'
+      where source_system = $1
     `,
-    [],
+    [sourceSystem],
   );
   /** @type {Set<string>} */
   const requestIdentifiers = new Set();
@@ -1598,7 +1681,8 @@ function validateMessage(value) {
     }
     return /** @type {LeePropertyFirstPermitParcelMessage} */ (message);
   }
-  if (message.type === "lee-property-first-seed-feeder") {
+  if (isPropertyFirstSeedFeederType(message.type)) {
+    const messageType = String(message.type);
     for (const fieldName of [
       "sourceCsvS3Uri",
       "workflowQueueUrl",
@@ -1613,8 +1697,15 @@ function validateMessage(value) {
         typeof message[fieldName] !== "string" ||
         !message[fieldName].trim()
       ) {
-        throw new Error(`lee-property-first-seed-feeder requires ${fieldName}`);
+        throw new Error(`${messageType} requires ${fieldName}`);
       }
+    }
+    if (
+      message.sourceSystem !== undefined &&
+      (typeof message.sourceSystem !== "string" ||
+        !message.sourceSystem.trim())
+    ) {
+      throw new Error(`${messageType} sourceSystem must be a non-empty string`);
     }
     for (const fieldName of ["batchSize", "maxPages", "requeueDelaySeconds"]) {
       const value = message[fieldName];
@@ -1623,7 +1714,7 @@ function validateMessage(value) {
         (typeof value !== "number" || !Number.isFinite(value) || value <= 0)
       ) {
         throw new Error(
-          `lee-property-first-seed-feeder ${fieldName} must be a positive number`,
+          `${messageType} ${fieldName} must be a positive number`,
         );
       }
     }
@@ -1634,29 +1725,25 @@ function validateMessage(value) {
         message.sendDelayMs < 0)
     ) {
       throw new Error(
-        "lee-property-first-seed-feeder sendDelayMs must be a non-negative number",
+        `${messageType} sendDelayMs must be a non-negative number`,
       );
     }
     if (message.backpressureQueues !== undefined) {
       if (!Array.isArray(message.backpressureQueues)) {
-        throw new Error(
-          "lee-property-first-seed-feeder backpressureQueues must be an array",
-        );
+        throw new Error(`${messageType} backpressureQueues must be an array`);
       }
       for (const item of message.backpressureQueues) {
         if (!isRecord(item)) {
           throw new Error(
-            "lee-property-first-seed-feeder backpressure queue entries must be objects",
+            `${messageType} backpressure queue entries must be objects`,
           );
         }
         if (typeof item.name !== "string" || !item.name.trim()) {
-          throw new Error(
-            "lee-property-first-seed-feeder backpressure queue requires name",
-          );
+          throw new Error(`${messageType} backpressure queue requires name`);
         }
         if (typeof item.queueUrl !== "string" || !item.queueUrl.trim()) {
           throw new Error(
-            "lee-property-first-seed-feeder backpressure queue requires queueUrl",
+            `${messageType} backpressure queue requires queueUrl`,
           );
         }
         if (
@@ -1665,7 +1752,7 @@ function validateMessage(value) {
           item.maxMessages <= 0
         ) {
           throw new Error(
-            "lee-property-first-seed-feeder backpressure queue requires positive maxMessages",
+            `${messageType} backpressure queue requires positive maxMessages`,
           );
         }
       }
@@ -1779,8 +1866,10 @@ async function processLeePropertyFirstSeedFeeder(message) {
     return;
   }
 
+  const sourceSystem = resolveFeederSourceSystem(message);
   const existing = await readExistingLeeAppraiserIdentifiers(
     message.skipExistingNeon !== false,
+    sourceSystem,
   );
   const batch = await enqueueLeePropertyFirstSeedBatch({
     message,
@@ -3013,7 +3102,7 @@ export const handler = async (event) => {
       await processLeePermitDetailBatch(message);
     } else if (message.type === "lee-property-first-permit-parcel") {
       await processLeePropertyFirstPermitParcel(message);
-    } else if (message.type === "lee-property-first-seed-feeder") {
+    } else if (isPropertyFirstSeedFeederMessage(message)) {
       await processLeePropertyFirstSeedFeeder(message);
     } else if (message.type === "sunbiz-corporate-address-match") {
       await processSunbizCorporateAddressMatch(message);
