@@ -38,14 +38,27 @@ const COUNTY = {
 const DEFAULT_STACK_NAME = "elephant-oracle-node";
 const DEFAULT_PERMIT_STACK_NAME = "elephant-permit-harvest";
 const DEFAULT_SOURCE_CSV_S3_URI = "s3://counties-seeds/palm_beach.csv";
-const DEFAULT_JOB_ID = `palm-beach-property-first-seed-all-${new Date()
-  .toISOString()
-  .slice(0, 10)
-  .replace(/-/g, "")}`;
+/**
+ * Suggested (NOT default) jobId following the run-naming convention. Returned only in
+ * usage/error text so the operator can copy it. Deliberately NOT applied automatically:
+ * a date-derived jobId silently splits a multi-day run — a re-send after 00:00 UTC (manual
+ * or by the watchdog) would build a new date and start a BRAND-NEW job from row 0 instead
+ * of resuming the frozen one. A fixed `--job-id` is therefore REQUIRED (see parseArgs).
+ *
+ * @returns {string} A convention-following jobId for today's date.
+ */
+function suggestedJobId() {
+  const date = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+  return `palm-beach-property-first-seed-all-${date}`;
+}
 
-const DEFAULT_BATCH_SIZE = 100;
-const DEFAULT_REQUEUE_DELAY_SECONDS = 900;
-const DEFAULT_WORKFLOW_MAX_MESSAGES = 250;
+// Seed CSV is ~282 MiB / 654k rows and the worker re-streams it from row 1 each
+// wakeup to skip to the checkpoint. Use a LARGE batch so that expensive scan is
+// amortized over many enqueues per wakeup (not re-paid per 200 rows). 2000 rows
+// of seed-upload + workflow-enqueue fits comfortably inside the 900s/4GB worker.
+const DEFAULT_BATCH_SIZE = 2000;
+const DEFAULT_REQUEUE_DELAY_SECONDS = 45;
+const DEFAULT_WORKFLOW_MAX_MESSAGES = 2000;
 const DEFAULT_PREPARE_MAX_MESSAGES = 5000;
 
 const cloudFormation = new CloudFormationClient({});
@@ -56,7 +69,8 @@ const sqs = new SQSClient({});
  * @property {string} stackName - Oracle-node CloudFormation stack name.
  * @property {string} permitStackName - Permit-harvest CloudFormation stack name.
  * @property {string} sourceCsvS3Uri - Palm Beach seed CSV S3 URI.
- * @property {string} jobId - Stable run identifier used for S3 partitioning.
+ * @property {string} jobId - REQUIRED fixed run identifier used for S3 partitioning; must
+ *   stay constant across every (re-)send so the run resumes instead of splitting.
  * @property {boolean} dryRun - Print the feeder message without sending it.
  */
 
@@ -69,14 +83,16 @@ function showUsage() {
   console.log(`
 Usage:
   AWS_PROFILE=elephant-oracle-node AWS_REGION=us-east-1 \
-    node scripts/send-palm-beach-seed-feeder.mjs [--dry-run] [--job-id <id>]
+    node scripts/send-palm-beach-seed-feeder.mjs --job-id <id> [--dry-run]
 
 Options:
   --stack <name>          Oracle-node stack. Default: ${DEFAULT_STACK_NAME}
   --permit-stack <name>   Permit-harvest stack. Default: ${DEFAULT_PERMIT_STACK_NAME}
   --source-csv-s3-uri <s3uri>
                           Palm Beach seed CSV. Default: ${DEFAULT_SOURCE_CSV_S3_URI}
-  --job-id <id>           Stable run id. Default: ${DEFAULT_JOB_ID}
+  --job-id <id>           REQUIRED. Stable run id, FIXED for the whole run. Do not rely on a
+                          date default: a re-send after 00:00 UTC would start a new job from
+                          row 0 and silently split the run. Suggested: ${suggestedJobId()}
   --dry-run               Print the feeder message JSON without sending to SQS.
   --help                  Show this help.
 
@@ -129,6 +145,16 @@ function parseArgs(argv) {
     index += 1;
   }
 
+  const jobId = readOptionalString(values["job-id"]);
+  if (!jobId) {
+    throw new Error(
+      "--job-id is REQUIRED and must be FIXED for the whole run. Do not rely on a date " +
+        "default: a re-send after 00:00 UTC (manual or by the watchdog) would start a " +
+        "BRAND-NEW job from row 0 and silently split the run. " +
+        `Suggested: --job-id ${suggestedJobId()}`,
+    );
+  }
+
   return {
     stackName: readOptionalString(values.stack) ?? DEFAULT_STACK_NAME,
     permitStackName:
@@ -136,7 +162,7 @@ function parseArgs(argv) {
     sourceCsvS3Uri:
       readOptionalString(values["source-csv-s3-uri"]) ??
       DEFAULT_SOURCE_CSV_S3_URI,
-    jobId: readOptionalString(values["job-id"]) ?? DEFAULT_JOB_ID,
+    jobId,
     dryRun: values.dryRun === true,
   };
 }
@@ -212,16 +238,16 @@ function buildFeederMessage({
     stateS3Uri: `s3://${environmentBucketName}/permit-harvest/${cli.jobId}/feeder-state.json`,
     batchSize: DEFAULT_BATCH_SIZE,
     requeueDelaySeconds: DEFAULT_REQUEUE_DELAY_SECONDS,
+    // NOTE: prepare-queue backpressure intentionally omitted — the permit-harvest
+    // worker role lacks sqs:GetQueueAttributes on the per-county PB prepare queue
+    // (would crash the feeder with AccessDenied). Workflow-queue backpressure
+    // (the starter that feeds prepare) still governs overall flow. Re-add the
+    // prepare entry once the role is granted GetQueueAttributes on the PB queue.
     backpressureQueues: [
       {
         name: "workflow",
         queueUrl: workflowQueueUrl,
         maxMessages: DEFAULT_WORKFLOW_MAX_MESSAGES,
-      },
-      {
-        name: "prepare",
-        queueUrl: prepareQueueUrl,
-        maxMessages: DEFAULT_PREPARE_MAX_MESSAGES,
       },
     ],
   };
