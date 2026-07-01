@@ -26,13 +26,17 @@ const MAX_CONCURRENCY = 4;
 const BROWSER_USER_AGENT =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36";
 
-// Playwright is not a dependency of oracle-node; it is reused from the catalog
-// workspace, with the cached headless-shell chromium binary. Both are loaded lazily
-// so a missing browser degrades to static-only certification rather than crashing.
+// Playwright is not a dependency of oracle-node; it is loaded lazily so a missing
+// browser degrades to static-only certification rather than crashing. Both the
+// module location and the chromium binary are env-configurable so any machine or CI
+// runner can point at its own install:
+//   PLAYWRIGHT_MODULE_PATH   - path to a playwright module (defaults to normal
+//                              node resolution of the bare "playwright" specifier).
+//   CHROMIUM_EXECUTABLE_PATH - path to a chromium binary (defaults to letting
+//                              Playwright resolve its own downloaded chromium).
 const PLAYWRIGHT_MODULE_PATH =
-  "/Users/stefanmicic/Desktop/Klijenti/elephant/catalog/node_modules/playwright/index.js";
-const CHROMIUM_EXECUTABLE_PATH =
-  "/Users/stefanmicic/Library/Caches/ms-playwright/chromium_headless_shell-1223/chrome-headless-shell-mac-arm64/chrome-headless-shell";
+  process.env.PLAYWRIGHT_MODULE_PATH ?? "playwright";
+const CHROMIUM_EXECUTABLE_PATH = process.env.CHROMIUM_EXECUTABLE_PATH ?? null;
 const RENDER_NAVIGATION_TIMEOUT_MS = 45_000;
 const RENDER_SETTLE_MS = 3_500;
 
@@ -188,7 +192,10 @@ async function certifyRow(row, renderer) {
       detected.key !== "unknown" &&
       !permitEvidence);
   if (needsRender) {
-    const renderedHtml = await renderer.render(reach.finalUrl, row.jurisdiction);
+    const renderedHtml = await renderer.render(
+      reach.finalUrl,
+      row.jurisdiction,
+    );
     if (renderedHtml !== null) {
       verifiedVia = "rendered";
       detected = classifyVendor({ url: reach.finalUrl, html: renderedHtml });
@@ -317,7 +324,10 @@ async function launchChromium() {
   const { chromium } = pw;
   return chromium.launch({
     headless: true,
-    executablePath: CHROMIUM_EXECUTABLE_PATH,
+    // Omit executablePath when unset so Playwright resolves its own chromium.
+    ...(CHROMIUM_EXECUTABLE_PATH !== null && {
+      executablePath: CHROMIUM_EXECUTABLE_PATH,
+    }),
   });
 }
 
@@ -375,7 +385,8 @@ export async function fetchPortal(url) {
       signal: controller.signal,
       headers: {
         "User-Agent": BROWSER_USER_AGENT,
-        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        Accept:
+          "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
       },
     });
     const html = await safeReadText(response);

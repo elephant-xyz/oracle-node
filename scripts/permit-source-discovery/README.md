@@ -11,14 +11,14 @@ Cataloging them is the bottleneck for permit ingestion.
 ## The split: LLM agent vs. deterministic helper
 
 This directory is the **deterministic, certifiable core**. It does the parts that
-must be reproducible and provable. It is *not* the whole agent.
+must be reproducible and provable. It is _not_ the whole agent.
 
-| Concern | Owner | Why |
-| --- | --- | --- |
-| Find a city's official website from its name; read its "permits" page; disambiguate; follow web-search results | **LLM agent** | Open-ended judgement, web search, reading prose — not deterministic |
-| Recognize the vendor behind a known portal URL/HTML | `vendors.mjs` | A fixed signature table; pure and unit-testable |
-| Re-fetch and re-classify every cataloged portal to prove it | `certify.mjs` | Reproducible verification — this is what proves "the agent can discover sources" |
-| Resolve + classify candidate URLs from common host shapes, flag misses | `discover.mjs` | Cheap deterministic first pass; misses are handed back to the LLM agent |
+| Concern                                                                                                        | Owner          | Why                                                                              |
+| -------------------------------------------------------------------------------------------------------------- | -------------- | -------------------------------------------------------------------------------- |
+| Find a city's official website from its name; read its "permits" page; disambiguate; follow web-search results | **LLM agent**  | Open-ended judgement, web search, reading prose — not deterministic              |
+| Recognize the vendor behind a known portal URL/HTML                                                            | `vendors.mjs`  | A fixed signature table; pure and unit-testable                                  |
+| Re-fetch and re-classify every cataloged portal to prove it                                                    | `certify.mjs`  | Reproducible verification — this is what proves "the agent can discover sources" |
+| Resolve + classify candidate URLs from common host shapes, flag misses                                         | `discover.mjs` | Cheap deterministic first pass; misses are handed back to the LLM agent          |
 
 The agent supplies verified portal URLs (into the catalog or into `discover.mjs`);
 these scripts prove and re-prove them. **They never invent data** — they only
@@ -52,7 +52,7 @@ jurisdiction | http | reachable | catalogVendor | detectedVendor | permitEvidenc
 and a summary line `(N/total certified, R review, K unreachable, S skipped (needs-review))`.
 A row is **PASS** only when the detected vendor matches the catalog AND the page shows
 permit-domain evidence (`permitEvidence: yes`) — this is what proves the URL is a live
-*permit* portal of the stated vendor, not merely a reachable vendor-branded host. A
+_permit_ portal of the stated vendor, not merely a reachable vendor-branded host. A
 vendor mismatch or missing permit evidence is **REVIEW** (a warning). Catalog rows
 with no `portal` (the needs-review small towns) are **SKIPPED** — not probed, not
 failed. Exit code is non-zero **only** when a portal is UNREACHABLE, because discovery
@@ -60,7 +60,7 @@ is best-effort (challenged or JS-only portals are expected).
 
 **SPA / bot-block Playwright fallback.** Plain `fetch` is the fast primary path. Many
 modern permit portals (Civic Access, eHub, OpenGov permitting, Tyler tylerhost/EDEN,
-MGO, CityView) are JS single-page apps whose *static* HTML lacks permit markers, or
+MGO, CityView) are JS single-page apps whose _static_ HTML lacks permit markers, or
 they bot-block plain fetch. Certify renders with Playwright (the chromium reused from
 the catalog workspace) and re-evaluates when EITHER a reachable HTTP 200 page
 classifies to a vendor but shows no static permit evidence, OR the page is a bot

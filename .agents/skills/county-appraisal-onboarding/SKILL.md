@@ -89,16 +89,16 @@ The default `TransformWorkerFunction` config (512 MB / 300 s) is **too low for h
 parcels** (400+ data files in `output.zip`). Two failure modes observed in Lee full-county
 ingestion:
 
-| Failure | Root cause | Fix |
-|---------|-----------|-----|
-| 300 s TIMEOUT | 512 MB = too little CPU allocation; transform takes 30–180 s on arm64 at 512 MB | Bump MemorySize (more RAM = more vCPU) |
+| Failure                      | Root cause                                                                        | Fix                                          |
+| ---------------------------- | --------------------------------------------------------------------------------- | -------------------------------------------- |
+| 300 s TIMEOUT                | 512 MB = too little CPU allocation; transform takes 30–180 s on arm64 at 512 MB   | Bump MemorySize (more RAM = more vCPU)       |
 | EMFILE "too many open files" | CLI's `transform()` opens 400+ files concurrently, hitting Lambda's 1024-fd limit | `graceful-fs` patch queues retries on EMFILE |
 
 **Production settings (in `prepare/template.yaml`, `TransformWorkerFunction`):**
 
 ```yaml
-MemorySize: 3008   # was 512 — more RAM = proportionally more vCPU on Lambda
-Timeout: 900       # was 300 — max allowed; covers worst-case heavy parcels
+MemorySize: 3008 # was 512 — more RAM = proportionally more vCPU on Lambda
+Timeout: 900 # was 300 — max allowed; covers worst-case heavy parcels
 ```
 
 **EMFILE fix (in `workflow/lambdas/transform-worker/index.mjs`):**

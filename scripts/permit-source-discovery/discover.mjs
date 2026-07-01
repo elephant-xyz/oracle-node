@@ -217,7 +217,10 @@ async function mergeIntoCatalog(outPath, rows) {
   const existing = await readCatalog(outPath);
   const permits = Array.isArray(existing.permits) ? [...existing.permits] : [];
   const indexByJurisdiction = new Map(
-    permits.map((row, index) => [normalizeJurisdiction(row?.jurisdiction), index]),
+    permits.map((row, index) => [
+      normalizeJurisdiction(row?.jurisdiction),
+      index,
+    ]),
   );
 
   for (const row of rows) {
@@ -250,7 +253,11 @@ async function readCatalog(outPath) {
     const parsed = parse(raw);
     return parsed !== null && typeof parsed === "object" ? parsed : {};
   } catch (caught) {
-    if (caught instanceof Error && "code" in caught && caught.code === "ENOENT") {
+    if (
+      caught instanceof Error &&
+      "code" in caught &&
+      caught.code === "ENOENT"
+    ) {
       return {};
     }
     throw caught;
@@ -282,9 +289,7 @@ export async function loadJurisdictions(source) {
   const raw = await readFile(source, "utf8");
   const parsed = JSON.parse(raw);
   if (!Array.isArray(parsed)) {
-    throw new Error(
-      `Expected a JSON array of jurisdiction names in ${source}`,
-    );
+    throw new Error(`Expected a JSON array of jurisdiction names in ${source}`);
   }
   return parsed
     .map((entry) => (typeof entry === "string" ? entry.trim() : ""))
@@ -334,7 +339,8 @@ async function fetchPortal(url) {
       signal: controller.signal,
       headers: {
         "User-Agent": BROWSER_USER_AGENT,
-        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        Accept:
+          "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
       },
     });
     let html = "";

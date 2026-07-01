@@ -89,10 +89,7 @@ function parseArgs(argv) {
       usage();
       process.exit(0);
     }
-    if (
-      token === "--dry-run" ||
-      token === "--reset-checkpoint"
-    ) {
+    if (token === "--dry-run" || token === "--reset-checkpoint") {
       values[token.slice(2)] = true;
       continue;
     }
@@ -178,16 +175,23 @@ async function putJson(bucket, key, data) {
     new PutObjectCommand({
       Bucket: bucket,
       Key: key,
-      Body: JSON.stringify({ ...data, updatedAt: new Date().toISOString() }, null, 2),
+      Body: JSON.stringify(
+        { ...data, updatedAt: new Date().toISOString() },
+        null,
+        2,
+      ),
       ContentType: "application/json; charset=utf-8",
     }),
   );
 }
 
 async function getJson(bucket, key) {
-  const response = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+  const response = await s3.send(
+    new GetObjectCommand({ Bucket: bucket, Key: key }),
+  );
   const body = await response.Body?.transformToString();
-  if (body === undefined) throw new Error(`Empty S3 body: s3://${bucket}/${key}`);
+  if (body === undefined)
+    throw new Error(`Empty S3 body: s3://${bucket}/${key}`);
   return JSON.parse(body);
 }
 
@@ -219,8 +223,12 @@ async function readCheckpoint(stateS3Uri, resetCheckpoint) {
   return {
     schemaVersion: SCHEMA_VERSION,
     doneRows: Array.isArray(raw.doneRows) ? raw.doneRows : [],
-    processedCount: Number.isFinite(raw.processedCount) ? raw.processedCount : 0,
-    succeededCount: Number.isFinite(raw.succeededCount) ? raw.succeededCount : 0,
+    processedCount: Number.isFinite(raw.processedCount)
+      ? raw.processedCount
+      : 0,
+    succeededCount: Number.isFinite(raw.succeededCount)
+      ? raw.succeededCount
+      : 0,
     failedCount: Number.isFinite(raw.failedCount) ? raw.failedCount : 0,
     verifiedCount: Number.isFinite(raw.verifiedCount) ? raw.verifiedCount : 0,
     failures: Array.isArray(raw.failures) ? raw.failures.slice(-200) : [],
@@ -277,7 +285,10 @@ async function enumerateTargets(bucket, outputsPrefix, doneRowSet) {
       const rest = relative.slice(slashIdx + 1);
 
       if (!rows.has(rowFolder)) {
-        rows.set(rowFolder, { hasOutputZip: false, hasTransformedOutputZip: false });
+        rows.set(rowFolder, {
+          hasOutputZip: false,
+          hasTransformedOutputZip: false,
+        });
       }
       const entry = rows.get(rowFolder);
 
@@ -292,13 +303,19 @@ async function enumerateTargets(bucket, outputsPrefix, doneRowSet) {
 
     pageCount += 1;
     if (pageCount % 50 === 0) {
-      console.log(`  ... ${pageCount} pages scanned, ${rows.size} row folders seen so far`);
+      console.log(
+        `  ... ${pageCount} pages scanned, ${rows.size} row folders seen so far`,
+      );
     }
 
-    continuationToken = response.IsTruncated ? response.NextContinuationToken : undefined;
+    continuationToken = response.IsTruncated
+      ? response.NextContinuationToken
+      : undefined;
   } while (continuationToken !== undefined);
 
-  console.log(`Enumeration complete: ${rows.size} total row folders across ${pageCount} pages`);
+  console.log(
+    `Enumeration complete: ${rows.size} total row folders across ${pageCount} pages`,
+  );
 
   const targets = [];
   for (const [rowFolder, { hasOutputZip, hasTransformedOutputZip }] of rows) {
@@ -361,7 +378,12 @@ async function invokeTransform(bucket, outputsPrefix, rowFolder, transformFn) {
  * Verify that transformed_output.zip was written for the given row folder.
  * The transform worker writes to <outputPrefix>/<executionId>/transformed_output.zip.
  */
-async function verifyTransformOutput(bucket, outputsPrefix, rowFolder, executionId) {
+async function verifyTransformOutput(
+  bucket,
+  outputsPrefix,
+  rowFolder,
+  executionId,
+) {
   const key = `${outputsPrefix}/${rowFolder}/${executionId}/transformed_output.zip`;
   return objectExists(bucket, key);
 }
@@ -394,8 +416,9 @@ async function runWithConcurrency(tasks, concurrency, onComplete) {
     }
   }
 
-  const workers = Array.from({ length: Math.min(concurrency, tasks.length) }, () =>
-    worker(),
+  const workers = Array.from(
+    { length: Math.min(concurrency, tasks.length) },
+    () => worker(),
   );
   await Promise.all(workers);
   return results;
@@ -428,7 +451,10 @@ async function main() {
   );
 
   // Load checkpoint
-  const state = await readCheckpoint(options.stateS3Uri, options.resetCheckpoint);
+  const state = await readCheckpoint(
+    options.stateS3Uri,
+    options.resetCheckpoint,
+  );
   const doneRowSet = new Set(state.doneRows);
   console.log(
     `Checkpoint loaded: ${doneRowSet.size} already done, ${state.processedCount} total processed so far`,
@@ -440,7 +466,9 @@ async function main() {
     options.outputsPrefix,
     doneRowSet,
   );
-  console.log(`Targets remaining (output.zip present, no transformed_output.zip, not done): ${allTargets.length}`);
+  console.log(
+    `Targets remaining (output.zip present, no transformed_output.zip, not done): ${allTargets.length}`,
+  );
 
   if (options.dryRun) {
     console.log(
@@ -451,7 +479,9 @@ async function main() {
           alreadyDone: doneRowSet.size,
           checkpointUri: options.stateS3Uri,
           estimatedDurationHours:
-            Math.ceil((allTargets.length * 30) / options.concurrency / 3600 * 10) / 10,
+            Math.ceil(
+              ((allTargets.length * 30) / options.concurrency / 3600) * 10,
+            ) / 10,
         },
         null,
         2,
@@ -463,7 +493,9 @@ async function main() {
   // Apply --limit
   const targets =
     options.limit > 0 ? allTargets.slice(0, options.limit) : allTargets;
-  console.log(`Will process ${targets.length} parcels at concurrency ${options.concurrency}`);
+  console.log(
+    `Will process ${targets.length} parcels at concurrency ${options.concurrency}`,
+  );
 
   let completedCount = 0;
 
@@ -512,7 +544,9 @@ async function main() {
           ...state.failures,
           { rowFolder, error: result.error, at: new Date().toISOString() },
         ].slice(-200);
-        console.error(`[${completedCount}/${targets.length}] FAIL row=${rowFolder} error=${result.error}`);
+        console.error(
+          `[${completedCount}/${targets.length}] FAIL row=${rowFolder} error=${result.error}`,
+        );
       }
 
       if (completedCount % options.checkpointEvery === 0) {

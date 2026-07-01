@@ -41,7 +41,8 @@ export const VENDORS = [
     urlPatterns: [/\.accela\.com\//i, /aca-?prod/i],
     htmlMarkers: ["Accela"],
     searchByParcel: null,
-    notes: "Accela Citizen Access (ACA). Search capabilities vary per deployment.",
+    notes:
+      "Accela Citizen Access (ACA). Search capabilities vary per deployment.",
   },
   {
     key: "tyler_epl",
@@ -67,7 +68,8 @@ export const VENDORS = [
       "Self Service",
     ],
     searchByParcel: false,
-    notes: "Tyler Technologies EnerGov / Civic Access / Munis / EDEN. Typically searches by address or permit #.",
+    notes:
+      "Tyler Technologies EnerGov / Civic Access / Munis / EDEN. Typically searches by address or permit #.",
   },
   {
     key: "click2gov",
@@ -75,7 +77,8 @@ export const VENDORS = [
     urlPatterns: [/click2gov/i, /aspgov\.com/i],
     htmlMarkers: ["Click2Gov"],
     searchByParcel: false,
-    notes: "Central Square Click2Gov (often hosted on *.aspgov.com). Address / application # search.",
+    notes:
+      "Central Square Click2Gov (often hosted on *.aspgov.com). Address / application # search.",
   },
   {
     key: "opengov",
@@ -91,7 +94,8 @@ export const VENDORS = [
     urlPatterns: [/centralsquare/i, /\beHub\b/i, /esuite/i, /eSuite\.Permits/i],
     htmlMarkers: ["CentralSquare", "eHub"],
     searchByParcel: null,
-    notes: "CentralSquare community development suite (eHub / eSuite portals). CentralSquare owns Click2Gov.",
+    notes:
+      "CentralSquare community development suite (eHub / eSuite portals). CentralSquare owns Click2Gov.",
   },
   {
     key: "epzb",
@@ -99,7 +103,8 @@ export const VENDORS = [
     urlPatterns: [/epzb/i, /ipzb/i],
     htmlMarkers: ["ePZB"],
     searchByParcel: true,
-    notes: "Palm Beach County custom ePZB/iPZB system. Searches by address or PCN.",
+    notes:
+      "Palm Beach County custom ePZB/iPZB system. Searches by address or PCN.",
   },
   {
     key: "govaccess",

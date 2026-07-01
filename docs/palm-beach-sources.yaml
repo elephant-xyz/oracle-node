@@ -5,16 +5,16 @@
 county: Palm Beach
 state: FL
 parcel_id:
-  name: PCN  # Property Control Number
+  name: PCN # Property Control Number
   digits: 17
-  municipality_digits: "1-2"   # 00 = unincorporated
+  municipality_digits: "1-2" # 00 = unincorporated
   example: "00424414630111105"
 
 # ---- countywide sources (one each) ----
 appraisal:
   source: Palm Beach County Property Appraiser (PAPA)
   host: https://pbcpao.gov
-  access: plain-http                # no browser / no Cloudflare (tested)
+  access: plain-http # no browser / no Cloudflare (tested)
   search_api:
     method: POST
     url: https://pbcpao.gov/AutoComplete/SearchAutoComplete
@@ -22,20 +22,20 @@ appraisal:
     header: "X-Requested-With: XMLHttpRequest"
     returns: '[{ text: "<owner> | <address>", pcn: "P:<17-digit>" }]'
   detail_url: "https://pbcpao.gov/Property/Details?parcelId=<PCN>"
-  parcel_count_2025: 659119        # AC test number (reconcile vs seed at load)
+  parcel_count_2025: 659119 # AC test number (reconcile vs seed at load)
   market_value_2025: 513305769954
 sunbiz:
   source: FL Division of Corporations (statewide)
-  bulk: https://dos.fl.gov/sunbiz/other-services/data-downloads/   # 200 OK plain
-  live_search: https://search.sunbiz.org/   # Cloudflare challenge -> headless browser
+  bulk: https://dos.fl.gov/sunbiz/other-services/data-downloads/ # 200 OK plain
+  live_search: https://search.sunbiz.org/ # Cloudflare challenge -> headless browser
   note: reuse Lee toolchain; only the PB ZIP-prefix list is new
 bbb:
   source: Better Business Bureau (national)
   note: reuse Lee category harvest, filter to PB area
 gis:
   rest: https://maps.co.palm-beach.fl.us/arcgis/rest/services
-  municipalities_layer: /PZB/Municipalities/MapServer/0   # 40 features
-  parcels_layer: /Parcels/Parcels/MapServer/0             # CACHED tile - not countable
+  municipalities_layer: /PZB/Municipalities/MapServer/0 # 40 features
+  parcels_layer: /Parcels/Parcels/MapServer/0 # CACHED tile - not countable
 
 # ---- permit portals (fragmented: 39 municipalities + unincorporated) ----
 # 40/40 triaged 2026-06-29 via the permit-source-discovery agent (parallel web-search find
@@ -59,7 +59,11 @@ permits:
     status: discovered
   - jurisdiction: West Palm Beach
     portal: https://permit-planner.wpb.org/
-    legacy: [https://onestopshop.wpbgov.com/eGovPlus, https://byb2-egov.aspgov.com/Click2GovBP]
+    legacy:
+      [
+        https://onestopshop.wpbgov.com/eGovPlus,
+        https://byb2-egov.aspgov.com/Click2GovBP,
+      ]
     vendor: Tyler EPL / Civic Access
     search: address | permit #
     status: discovered
@@ -83,7 +87,7 @@ permits:
     status: discovered
   - jurisdiction: Jupiter
     portal: https://cds.jupiter.fl.us/EnerGov_Prod/SelfService
-    vendor: Tyler EPL / Civic Access   # JCDS branding over Tyler EnerGov
+    vendor: Tyler EPL / Civic Access # JCDS branding over Tyler EnerGov
     search: address | permit #
     status: discovered
   - jurisdiction: Wellington
@@ -93,12 +97,12 @@ permits:
     status: discovered
   - jurisdiction: Riviera Beach
     portal: https://rivierabeachflcitizens.munisselfservice.com/default.aspx
-    vendor: Tyler EPL / Civic Access   # Tyler Munis CSS
+    vendor: Tyler EPL / Civic Access # Tyler Munis CSS
     search: address | parcel | permit #
     status: discovered
   - jurisdiction: Palm Beach
     portal: https://eden.townofpalmbeach.com/Default.aspx?Build=PM.pmPermit.SearchForm&utask=normalview
-    vendor: Tyler EPL / Civic Access   # Tyler EDEN ePL
+    vendor: Tyler EPL / Civic Access # Tyler EDEN ePL
     search: address | permit #
     status: discovered
   # --- Click2Gov ---
@@ -126,8 +130,8 @@ permits:
     status: discovered
   - jurisdiction: Gulf Stream
     portal: https://www.mgoconnect.org/
-    deep_link: https://mgoconnect.org/cp?JID=466   # unverified JID
-    vendor: MyGovernmentOnline (MGO)   # inter-local w/ Highland Beach
+    deep_link: https://mgoconnect.org/cp?JID=466 # unverified JID
+    vendor: MyGovernmentOnline (MGO) # inter-local w/ Highland Beach
     search: address | permit #
     status: discovered
   - jurisdiction: Loxahatchee Groves
@@ -200,7 +204,7 @@ permits:
     status: discovered
   - jurisdiction: Lake Park
     portal: https://cap.geocivix.com/secure/
-    vendor: GeoCivix   # via CAP outsourced building official
+    vendor: GeoCivix # via CAP outsourced building official
     search: address | permit #
     status: discovered
   - jurisdiction: Westlake

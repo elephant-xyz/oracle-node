@@ -1702,8 +1702,7 @@ function validateMessage(value) {
     }
     if (
       message.sourceSystem !== undefined &&
-      (typeof message.sourceSystem !== "string" ||
-        !message.sourceSystem.trim())
+      (typeof message.sourceSystem !== "string" || !message.sourceSystem.trim())
     ) {
       throw new Error(`${messageType} sourceSystem must be a non-empty string`);
     }

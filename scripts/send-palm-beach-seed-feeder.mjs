@@ -4,11 +4,7 @@ import {
   CloudFormationClient,
   DescribeStacksCommand,
 } from "@aws-sdk/client-cloudformation";
-import {
-  GetQueueUrlCommand,
-  SendMessageCommand,
-  SQSClient,
-} from "@aws-sdk/client-sqs";
+import { SendMessageCommand, SQSClient } from "@aws-sdk/client-sqs";
 
 /**
  * Palm Beach property-first seed-feeder sender.
@@ -31,7 +27,10 @@ const COUNTY = {
   sourceSystem: "palm_beach_appraiser",
   /** Slug used for generated S3 prefixes so the loader prefix is predictable. */
   slug: "palm-beach-property-first-seed",
-  /** Per-county prepare queue name resolved for backpressure. */
+  /**
+   * Per-county prepare queue name. Kept for documentation / future re-add of
+   * prepare-queue backpressure — see the omission note in buildFeederMessage.
+   */
   prepareQueueName: "elephant-oracle-node-prepare-queue-palm-beach",
 };
 
@@ -188,22 +187,6 @@ async function getStackOutput(stackName, outputKey) {
 }
 
 /**
- * Resolve an SQS queue URL from its name.
- *
- * @param {string} queueName - SQS queue name.
- * @returns {Promise<string>} Queue URL.
- */
-async function getQueueUrl(queueName) {
-  const response = await sqs.send(
-    new GetQueueUrlCommand({ QueueName: queueName }),
-  );
-  if (!response.QueueUrl) {
-    throw new Error(`Could not resolve queue URL for ${queueName}`);
-  }
-  return response.QueueUrl;
-}
-
-/**
  * Build the Palm Beach property-first seed-feeder message from resolved infra.
  *
  * @param {object} params - Message build parameters.
@@ -212,7 +195,6 @@ async function getQueueUrl(queueName) {
  * @param {string} params.workflowQueueUrl - Appraisal workflow starter queue URL.
  * @param {string} params.propertyFirstPermitQueueUrl - Property-first permit queue URL.
  * @param {string} params.feederQueueUrl - Permit-harvest queue the feeder reschedules onto.
- * @param {string} params.prepareQueueUrl - Palm Beach prepare queue URL for backpressure.
  * @returns {Record<string, unknown>} Feeder message body.
  */
 function buildFeederMessage({
@@ -221,7 +203,6 @@ function buildFeederMessage({
   workflowQueueUrl,
   propertyFirstPermitQueueUrl,
   feederQueueUrl,
-  prepareQueueUrl,
 }) {
   return {
     type: COUNTY.feederType,
@@ -265,13 +246,17 @@ async function main() {
     workflowQueueUrl,
     propertyFirstPermitQueueUrl,
     feederQueueUrl,
-    prepareQueueUrl,
   ] = await Promise.all([
     getStackOutput(cli.stackName, "EnvironmentBucketName"),
     getStackOutput(cli.stackName, "WorkflowQueueUrl"),
     getStackOutput(cli.permitStackName, "PropertyFirstPermitQueueUrl"),
     getStackOutput(cli.permitStackName, "PermitHarvestQueueUrl"),
-    getQueueUrl(COUNTY.prepareQueueName),
+    // NOTE: the PB prepare queue URL is intentionally NOT resolved here — prepare-
+    // queue backpressure is omitted because the permit-harvest worker role lacks
+    // sqs:GetQueueAttributes on the per-county PB prepare queue (see the omission
+    // note in buildFeederMessage). To re-add once the role is granted the
+    // permission, resolve it with getQueueUrl(COUNTY.prepareQueueName) and thread
+    // it into buildFeederMessage's backpressureQueues.
   ]);
 
   const feederMessage = buildFeederMessage({
@@ -280,16 +265,11 @@ async function main() {
     workflowQueueUrl,
     propertyFirstPermitQueueUrl,
     feederQueueUrl,
-    prepareQueueUrl,
   });
 
   if (cli.dryRun) {
     console.log(
-      JSON.stringify(
-        { dryRun: true, feederQueueUrl, feederMessage },
-        null,
-        2,
-      ),
+      JSON.stringify({ dryRun: true, feederQueueUrl, feederMessage }, null, 2),
     );
     return;
   }

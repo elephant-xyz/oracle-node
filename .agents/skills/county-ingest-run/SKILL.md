@@ -128,6 +128,7 @@ Adapt `--job-id`, `--bucket`, `--transform-fn` for other counties.
    ```
 
 ### Key parameters
+
 - `--concurrency <n>` — parallel Lambda invocations (default 100; Lambda fn has no
   reserved-concurrency cap, event-source map MaxConcurrency=100).
 - `--limit <n>` — stop after N parcels (0 = unlimited).
@@ -135,17 +136,20 @@ Adapt `--job-id`, `--bucket`, `--transform-fn` for other counties.
 - `--reset-checkpoint` — restart from row 0, ignoring existing checkpoint.
 
 ### Checkpoint
+
 Written to `s3://<bucket>/permit-harvest/<jobId>/transform-redrive-state.json`.
 Resume a partial run by re-running the same command (checkpoint skips already-done rows
 automatically). Full run at concurrency 100 takes ~5.8 h for ~70k missing parcels (~$18).
 
 ### Verified pilot (2026-06-22)
+
 20/20 parcels succeeded at rows 200000-200019. Each wrote
 `<row>/<executionId>/transformed_output.zip` + `property_first_permit_eligibility.json`.
 Per-parcel duration 24-39 s (avg ~30 s). `directInvocation=true` confirmed transform-only
 — no permit harvest triggered.
 
 ### Monitoring
+
 ```bash
 # Watch the log (detached run)
 tail -f oracle-node/.redrive-logs/transform-redrive.log
@@ -158,6 +162,7 @@ aws s3 cp s3://<bucket>/permit-harvest/<jobId>/transform-redrive-state.json - \
 ```
 
 ### After the transform redrive completes
+
 Load results to Neon via the `query-db-loading-matching` skill.
 
 ## 4. Ramp-up

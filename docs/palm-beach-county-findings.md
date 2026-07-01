@@ -13,12 +13,12 @@ Palm Beach is the deliberate stress test for **source discovery** (Soofi, 2026-0
 
 From `https://publicrecords.netronline.com/state/FL/county/palm_beach`:
 
-| Office | Official URL | Role |
-|---|---|---|
-| Property Appraiser (PAPA) | https://www.pbcgov.org/PAPA/index.htm | appraisal / property (seed) |
-| Tax Collector | https://pbctax.publicaccessnow.com/PropertyTax.aspx | tax roll |
-| Clerk / Recorder | https://www.mypalmbeachclerk.com/records/official-records | deeds, mortgages, liens |
-| Mapping / GIS | https://maps.co.palm-beach.fl.us/cwgis/papa.html | parcel geometry, parcel count |
+| Office                    | Official URL                                              | Role                          |
+| ------------------------- | --------------------------------------------------------- | ----------------------------- |
+| Property Appraiser (PAPA) | https://www.pbcgov.org/PAPA/index.htm                     | appraisal / property (seed)   |
+| Tax Collector             | https://pbctax.publicaccessnow.com/PropertyTax.aspx       | tax roll                      |
+| Clerk / Recorder          | https://www.mypalmbeachclerk.com/records/official-records | deeds, mortgages, liens       |
+| Mapping / GIS             | https://maps.co.palm-beach.fl.us/cwgis/papa.html          | parcel geometry, parcel count |
 
 ## 1. Appraiser portal (property) — SOLVED (Playwright-probed, plain-HTTP scrapeable)
 
@@ -50,8 +50,8 @@ From `https://publicrecords.netronline.com/state/FL/county/palm_beach`:
 
 - **PCN = Property Control Number**, **17 digits**. Segments (from `pbcpao.gov/pcn-info.htm`):
   `MM RR TT SS UU BBB LLLL` →
-  - digits **1–2** = municipality (**`00` = unincorporated PBC**) — *encodes the permit
-    jurisdiction directly, useful for routing.*
+  - digits **1–2** = municipality (**`00` = unincorporated PBC**) — _encodes the permit
+    jurisdiction directly, useful for routing._
   - 3–8 range/township/section, 9–10 subdivision, 11–13 block, 14–17 lot.
   - Example: `00424414630111105` (no punctuation) = `00-42-44-14-63-011-1105` (with dashes).
   - In the autocomplete API the PCN comes prefixed `P:` (strip it).
@@ -85,7 +85,7 @@ From `https://publicrecords.netronline.com/state/FL/county/palm_beach`:
   discovered + catalogued by the agent (not hand-probed). Recipe per jurisdiction:
   1. find the official permit portal URL (city site → "permits/building" → online search);
   2. classify vendor by URL/page shape; 3. record search-by-parcel/address support +
-  session needs; 4. write the row to the source catalog (see `palm-beach-sources.yaml`).
+     session needs; 4. write the row to the source catalog (see `palm-beach-sources.yaml`).
 
 ## 4. Sunbiz (business registration) — reuse Lee toolchain
 
@@ -100,13 +100,13 @@ From `https://publicrecords.netronline.com/state/FL/county/palm_beach`:
 
 Empirically tested 2026-06-29 from a Serbian (RS) egress IP — **no geo-blocking**:
 
-| Source | Status from RS IP | Note |
-|---|---|---|
-| PAPA home (`pbcpao.gov`) | **200 OK** | real content served |
-| PAPA parcel detail | 500 (app error) | wrong guessed PCN, not a block — reachable |
-| Sunbiz **live search** | 403 "Just a moment…" | **Cloudflare bot challenge** (headless browser solves; same anywhere — NOT geo) |
-| Sunbiz **data downloads** (bulk) | **200 OK** | the path we actually ingest from |
-| County GIS REST | **200 OK** | reachable |
+| Source                           | Status from RS IP    | Note                                                                            |
+| -------------------------------- | -------------------- | ------------------------------------------------------------------------------- |
+| PAPA home (`pbcpao.gov`)         | **200 OK**           | real content served                                                             |
+| PAPA parcel detail               | 500 (app error)      | wrong guessed PCN, not a block — reachable                                      |
+| Sunbiz **live search**           | 403 "Just a moment…" | **Cloudflare bot challenge** (headless browser solves; same anywhere — NOT geo) |
+| Sunbiz **data downloads** (bulk) | **200 OK**           | the path we actually ingest from                                                |
+| County GIS REST                  | **200 OK**           | reachable                                                                       |
 
 **Conclusion:** the earlier "US VPN required" assumption was wrong for Palm Beach. The
 only friction is **Cloudflare bot challenges** on JS-heavy pages (Sunbiz live search,
@@ -119,6 +119,7 @@ Proxies (`PROXY_FILE` / `PERMIT_HARVEST_PROXY_URL`) remain worth having for the
   (account `848665034107`), `counties-seeds/` reachable. No PB seed there yet.
 
 ## Next: real local Playwright probe (no proxy needed)
+
 - PAPA: exact detail-page URL pattern + a real PCN (format/digits) via the search flow.
 - Permit portals: county/unincorporated `iPZB` session + per-municipality portal discovery
   (candidates so far: `discover.pbcgov.org` 200; `epzb`/`pzbservices` hosts unresolved).
