@@ -240,7 +240,7 @@ describe("permit harvest worker message helpers", () => {
     });
 
     expect(state).toMatchObject({
-      schemaVersion: "permit-harvest.lee-property-first-seed-feeder-state.v1",
+      schemaVersion: "permit-harvest.property-first-seed-feeder-state.v2",
       jobId: "lee-property-first-seed-all-20260606",
       sourceCsvS3Uri: "s3://counties-seeds/lee.csv",
       nextSourceRowNumber: 1,

@@ -956,8 +956,8 @@ Resources:
       Runtime: nodejs22.x
       Architectures:
         - arm64
-      MemorySize: 512
-      Timeout: 300
+      MemorySize: 3008
+      Timeout: 900
       EphemeralStorage:
         Size: 2048
       CodeUri: ../workflow/lambdas/transform-worker

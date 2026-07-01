@@ -363,6 +363,7 @@ vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 
 elephant-cli*.log
+.redrive-logs/
 
 
 .aws-sam/

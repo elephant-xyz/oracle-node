@@ -1,0 +1,270 @@
+# Palm Beach County, FL — source catalog (machine-readable registry)
+# The maintained map of {jurisdiction -> data/permit source}. First population of the
+# source-discovery deliverable (Soofi, 2026-06-29). status: discovery complete (40/40
+# jurisdictions triaged); certify with scripts/permit-source-discovery/certify.mjs.
+county: Palm Beach
+state: FL
+parcel_id:
+  name: PCN # Property Control Number
+  digits: 17
+  municipality_digits: "1-2" # 00 = unincorporated
+  example: "00424414630111105"
+
+# ---- countywide sources (one each) ----
+appraisal:
+  source: Palm Beach County Property Appraiser (PAPA)
+  host: https://pbcpao.gov
+  access: plain-http # no browser / no Cloudflare (tested)
+  search_api:
+    method: POST
+    url: https://pbcpao.gov/AutoComplete/SearchAutoComplete
+    body: "propertyType=RE&searchText=<query>"
+    header: "X-Requested-With: XMLHttpRequest"
+    returns: '[{ text: "<owner> | <address>", pcn: "P:<17-digit>" }]'
+  detail_url: "https://pbcpao.gov/Property/Details?parcelId=<PCN>"
+  parcel_count_2025: 659119 # AC test number (reconcile vs seed at load)
+  market_value_2025: 513305769954
+sunbiz:
+  source: FL Division of Corporations (statewide)
+  bulk: https://dos.fl.gov/sunbiz/other-services/data-downloads/ # 200 OK plain
+  live_search: https://search.sunbiz.org/ # Cloudflare challenge -> headless browser
+  note: reuse Lee toolchain; only the PB ZIP-prefix list is new
+bbb:
+  source: Better Business Bureau (national)
+  note: reuse Lee category harvest, filter to PB area
+gis:
+  rest: https://maps.co.palm-beach.fl.us/arcgis/rest/services
+  municipalities_layer: /PZB/Municipalities/MapServer/0 # 40 features
+  parcels_layer: /Parcels/Parcels/MapServer/0 # CACHED tile - not countable
+
+# ---- permit portals (fragmented: 39 municipalities + unincorporated) ----
+# 40/40 triaged 2026-06-29 via the permit-source-discovery agent (parallel web-search find
+# + certify). vendor adapters reused/built via county-permit-adapter skill.
+# Vendor concentration (adapter leverage): MGO/MyGovernmentOnline = 10 towns;
+# Tyler (EnerGov/Civic Access/Munis/EDEN) = 7; Click2Gov = 2; BS&A = 2.
+#
+# CERTIFICATION (certify.mjs, 2026-06-29): 23 PASS, 3 REVIEW, 4 UNREACHABLE, 10 SKIPPED.
+#   REVIEW (reachable+vendor ok, no permit markers on landing -> need deeper search-page URL):
+#     Riviera Beach, Lake Worth Beach, Atlantis.
+#   UNREACHABLE (bot-blocked even headless -> need team proxy / residential IP):
+#     Delray Beach + Wellington (tylerhost.net 403), Palm Beach (eden), Westlake (CityView).
+#   SKIPPED: the 10 needs-review towns with no online portal.
+permits:
+  # --- already certified (first pass) ---
+  - jurisdiction: Unincorporated Palm Beach County
+    portal: https://pbc.gov/ePZB.Admin.WebSPA/
+    apply: https://pbcgov.com/epzb
+    vendor: ePZB (county custom)
+    search: address | PCN
+    status: discovered
+  - jurisdiction: West Palm Beach
+    portal: https://permit-planner.wpb.org/
+    legacy:
+      [
+        https://onestopshop.wpbgov.com/eGovPlus,
+        https://byb2-egov.aspgov.com/Click2GovBP,
+      ]
+    vendor: Tyler EPL / Civic Access
+    search: address | permit #
+    status: discovered
+  - jurisdiction: Boca Raton
+    portal: https://www.myboca.us/2235/Boca-eHub
+    alt: https://boca-egov.aspgov.com/Click2GovBP/
+    vendor: CentralSquare / eHub
+    search: address | application # | keyword
+    status: discovered
+  # --- Tyler family (EnerGov / Civic Access / Munis / EDEN) ---
+  - jurisdiction: Delray Beach
+    portal: https://cityofdelraybeachfl-energovweb.tylerhost.net/apps/selfservice
+    vendor: Tyler EPL / Civic Access
+    search: address | parcel | permit #
+    status: discovered
+  - jurisdiction: Palm Beach Gardens
+    portal: https://palmbeachgardensfl-energovweb.tylerhost.net/apps/SelfService
+    legacy: [https://egov.pbgfl.com/edenweb]
+    vendor: Tyler EPL / Civic Access
+    search: address | parcel | permit #
+    status: discovered
+  - jurisdiction: Jupiter
+    portal: https://cds.jupiter.fl.us/EnerGov_Prod/SelfService
+    vendor: Tyler EPL / Civic Access # JCDS branding over Tyler EnerGov
+    search: address | permit #
+    status: discovered
+  - jurisdiction: Wellington
+    portal: https://wellingtonfl-energovweb.tylerhost.net/apps/SelfService
+    vendor: Tyler EPL / Civic Access
+    search: address | parcel | permit #
+    status: discovered
+  - jurisdiction: Riviera Beach
+    portal: https://rivierabeachflcitizens.munisselfservice.com/default.aspx
+    vendor: Tyler EPL / Civic Access # Tyler Munis CSS
+    search: address | parcel | permit #
+    status: discovered
+  - jurisdiction: Palm Beach
+    portal: https://eden.townofpalmbeach.com/Default.aspx?Build=PM.pmPermit.SearchForm&utask=normalview
+    vendor: Tyler EPL / Civic Access # Tyler EDEN ePL
+    search: address | permit #
+    status: discovered
+  # --- Click2Gov ---
+  - jurisdiction: Lake Worth Beach
+    portal: https://lkwo-egov.aspgov.com/Click2GovBP/index.html
+    vendor: Click2Gov
+    search: address | permit #
+    status: discovered
+  - jurisdiction: Royal Palm Beach
+    portal: https://click2gov.royalpalmbeach.com/Click2GovBP/index.html
+    vendor: Click2Gov
+    search: address | permit #
+    status: discovered
+  # --- CentralSquare eSuite ---
+  - jurisdiction: Greenacres
+    portal: https://esuite.greenacresfl.gov/eSuite.Permits/AdvancedSearchPage/AdvancedSearch.aspx
+    vendor: CentralSquare / eHub
+    search: service address | permit type+number
+    status: discovered
+  # --- MyGovernmentOnline (MGO) — shared platform, 10 towns ---
+  - jurisdiction: Palm Beach Shores
+    portal: https://www.mgoconnect.org/
+    vendor: MyGovernmentOnline (MGO)
+    search: address | permit #
+    status: discovered
+  - jurisdiction: Gulf Stream
+    portal: https://www.mgoconnect.org/
+    deep_link: https://mgoconnect.org/cp?JID=466 # unverified JID
+    vendor: MyGovernmentOnline (MGO) # inter-local w/ Highland Beach
+    search: address | permit #
+    status: discovered
+  - jurisdiction: Loxahatchee Groves
+    portal: https://mgoconnect.org/cp/portal
+    vendor: MyGovernmentOnline (MGO)
+    search: address | permit #
+    status: discovered
+  - jurisdiction: North Palm Beach
+    portal: https://mgoconnect.org/cp/portal
+    vendor: MyGovernmentOnline (MGO)
+    search: address | permit #
+    status: discovered
+  - jurisdiction: South Palm Beach
+    portal: https://mgoconnect.org/cp/portal
+    vendor: MyGovernmentOnline (MGO)
+    search: address | permit #
+    status: discovered
+  - jurisdiction: Lake Clarke Shores
+    portal: https://mgoconnect.org/cp/portal
+    vendor: MyGovernmentOnline (MGO)
+    search: address | permit #
+    status: discovered
+  - jurisdiction: Highland Beach
+    portal: https://mgoconnect.org/cp?JID=462
+    vendor: MyGovernmentOnline (MGO)
+    search: address | permit #
+    status: discovered
+  - jurisdiction: Manalapan
+    portal: https://www.mgoconnect.org/
+    vendor: MyGovernmentOnline (MGO)
+    search: address | permit #
+    status: discovered
+  - jurisdiction: Jupiter Inlet Colony
+    portal: https://www.mgoconnect.org/
+    vendor: MyGovernmentOnline (MGO)
+    search: address | permit #
+    status: discovered
+  - jurisdiction: Juno Beach
+    portal: https://www.mgoconnect.org/cp/search-permits
+    vendor: MyGovernmentOnline (MGO)
+    search: address | permit #
+    status: discovered
+  # --- BS&A Online ---
+  - jurisdiction: Ocean Ridge
+    portal: https://bsaonline.com/Contractors/?uid=3051
+    vendor: BS&A Online
+    search: address | parcel-PCN | name | record #
+    status: discovered
+  - jurisdiction: Tequesta
+    portal: https://bsaonline.com/?uid=2607
+    vendor: BS&A Online
+    search: address | owner name | parcel #
+    status: discovered
+  # --- single-vendor towns ---
+  - jurisdiction: Boynton Beach
+    portal: https://www.sagesgov.com/boyntonbeach-fl
+    legacy: [https://byb2-egov.aspgov.com/Click2GovBP/index.html]
+    vendor: SagesGov
+    search: address | permit #
+    status: discovered
+  - jurisdiction: Atlantis
+    portal: https://atlantisfl.municipalonlinepayments.com/atlantisfl
+    vendor: Municipal Online
+    search: address | account
+    status: discovered
+  - jurisdiction: Palm Springs
+    portal: https://h9.maintstar.co/palmsprings/portal/
+    vendor: MaintStar
+    search: address | permit #
+    status: discovered
+  - jurisdiction: Lake Park
+    portal: https://cap.geocivix.com/secure/
+    vendor: GeoCivix # via CAP outsourced building official
+    search: address | permit #
+    status: discovered
+  - jurisdiction: Westlake
+    portal: https://cityviewportal.westlakegov.com/
+    vendor: CityView (Harris)
+    search: address | permit # | planning application
+    status: discovered
+  - jurisdiction: Pahokee
+    portal: https://pahokee.portal.iworq.net/pahokee/permits/600
+    vendor: iWorq
+    search: address | permit # | date range
+    status: discovered
+  # --- needs-review: no online portal found (paper/in-person small towns) ---
+  - jurisdiction: South Bay
+    portal: null
+    vendor: null
+    status: needs-review
+    note: forms-only download; own building dept; confirm by phone
+  - jurisdiction: Belle Glade
+    portal: null
+    vendor: null
+    status: needs-review
+    note: forms-only; historical permits offline
+  - jurisdiction: Golf
+    portal: null
+    vendor: null
+    status: needs-review
+    note: online portal exists (outsourced admin) but live URL not surfaced; deeper probe
+  - jurisdiction: Mangonia Park
+    portal: null
+    vendor: null
+    status: needs-review
+    note: downloadable PDF forms only; paper/in-person
+  - jurisdiction: Haverhill
+    portal: null
+    vendor: null
+    status: needs-review
+    note: apply at Town Hall; no online portal
+  - jurisdiction: Lantana
+    portal: null
+    vendor: null
+    status: needs-review
+    note: mail/in-person/email only; no online payments
+  - jurisdiction: Briny Breezes
+    portal: null
+    vendor: null
+    status: needs-review
+    note: ~600 pop; paper forms to corporate office
+  - jurisdiction: Glen Ridge
+    portal: null
+    vendor: null
+    status: needs-review
+    note: ~220 pop; downloadable forms + phone
+  - jurisdiction: Hypoluxo
+    portal: null
+    vendor: null
+    status: needs-review
+    note: in-person submittal; an unconfirmed Citizenserve link exists
+  - jurisdiction: Cloud Lake
+    portal: null
+    vendor: null
+    status: needs-review
+    note: ~135 pop; via Town Clerk/contracted building official
