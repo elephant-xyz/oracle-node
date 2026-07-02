@@ -1,0 +1,237 @@
+# Orange County, FL — public data source registry
+#
+# Consolidated source metadata for the Oracle ingestion categories.
+# Identifies each public data source (property, permits, Sunbiz, BBB) and stores
+# its access metadata: base URLs, access pattern, identifier, and refresh method.
+# Infra identifiers (AWS account, bucket, SQS) are intentionally NOT recorded here —
+# this registry describes external sources only. No secrets / account ids / connection
+# strings appear in this file.
+#
+# Out of scope this milestone: IPFS publishing, on-chain/blockchain-style indexing,
+# MCP exposure, NEO rewiring (separate story: Asana 1215644141347714).
+
+county:
+  name: Orange County
+  state: FL
+  fips: "12095"
+  seed:
+    location: s3://counties-seeds/orange.csv
+    parcels: 490529
+    geometry_in_seed:
+      - parcel_polygon
+      - longitude
+      - latitude
+      - building_polygon
+  parcel_identifier:
+    name: PID
+    description: >-
+      Orange County Property Appraiser (OCPA) "PID": 15 digits, digits-only
+      (e.g. 272003843803710). Format is Section-Township-Range-Subdivision-Block-Lot.
+    seed_normalization: >-
+      CRITICAL: the seed's parcel_id is 14 digits (a leading zero was stripped by
+      numeric formatting) and returns [] against the API. Normalization required:
+      zero-pad the seed id to 15 digits, call
+      QuickSearch/GetSearchInfoByParcel?pid=<15-digit> to obtain the canonical
+      parcelId, THEN fan out PRC/* with that canonical id. Skip this and all 490,529
+      parcels 404. Verified: seed 12027000000001 -> pad 012027000000001 -> canonical
+      272001000000001; seed 12228145000820 -> pad 012228145000820 -> canonical
+      282201145000820.
+
+sources:
+  - key: property-appraisal
+    category: property
+    name: Orange County Property Appraiser (OCPA)
+    public_spa: https://ocpaweb.ocpafl.org/parcelsearch # Angular / ArcGIS SPA (human UI)
+    base_urls:
+      - https://ocpa-mainsite-afd-standard.azurefd.net/api/ # REAL data API (plain GET JSON)
+    endpoints:
+      resolve:
+        - QuickSearch/GetSearchInfoByParcel?pid=<15-digit> # + ByAddress/ByOwnerName/ByInstrumentNumber/ByBookPage
+      record_fanout: # PRC/* called with the canonical parcelId
+        - PRC/GetPRCGeneralInfo # owner/address/mailing/dorCode+dorDescription/prcTaxYear
+        - PRC/GetPRCPropertyValues # land/building/market/assessed/exemptions/sohCap
+        - PRC/GetPRCPropFeatBldg # (+Subareas) beds/baths/floors/grossArea/livingArea/extWall/dateBuilt/estNewCost/bldgValue
+        - PRC/GetPRCPropFeatLand # (+Area) zoning/landQty/unitPrice
+        - PRC/GetPRCPropFeatLegal # propertyDescription
+        - PRC/GetPRCPropFeatXfob # extra features
+        - PRC/GetPRCSales # (+Subs) saleDate/saleAmt/instrNum/book/page/seller/buyer/deedDesc
+        - PRC/GetPRCCertifiedTaxes
+        - PRC/GetPRCNonAdValorem
+        - PRC/GetPRCTotalTaxes
+        - PRC/GetPRCPortValue
+        - PRC/GetPRCIncomeModel
+        - PRC/GetPRCStats
+      freshness:
+        - Parcel/GetSystemRefreshDate # returned 07/01/2026
+      usage_codes:
+        - PropertyUseSearch/GetDORDescriptionList?dorGroupID=<n>
+        - QuickSearch/GetSearchInfoByPropertyType?useCode=<dorCode>
+      images:
+        - https://ocpaimages.ocpafl.org/api/Image/GetPIDImage
+        - https://ocpaimages.ocpafl.org/api/Image/GetPIDSketch
+    decoys: # do NOT use
+      - https://ocpaweb.ocpafl.org/api # returns 406 (decoy)
+      - ocpaservices .../ParcelInfoPrinterFriendly.aspx # 404'd, unreliable
+    access_pattern:
+      mode: plain-http-json-api # Palm-Beach-style; NO Browser Flow required
+      tooling: plain GET fan-out (resolve -> PRC/*); reuse Counties-trasform-scripts/orange transform
+      auth: public (no login / cookie / CAPTCHA)
+      anti_bot: none observed; not geo-blocked
+      caveat: >-
+        -1 value masking: for the current UNCERTIFIED tax year, value fields return -1
+        (isCertified:false). Use the certified year (GetPRCGeneralInfo.prcTaxYear,
+        currently 2025) for real dollar values.
+    refresh:
+      method: on-demand per-parcel fan-out (seed-driven); Structured Archive to S3
+      cadence: on-demand / re-run per refresh
+      source_freshness: 07/01/2026 (Parcel/GetSystemRefreshDate)
+    implemented_by:
+      transform: Counties-trasform-scripts/orange/scripts/ # data_extractor.js + owner/structure/layout/utility mapping
+      transform_caveat: >-
+        currently references lakecopropappr.com (Lake County) — per-field validation
+        owed at the validate stage (validate-county-transform).
+      skill: county-appraisal-onboarding
+
+  - key: permits
+    category: permits
+    name: Orange County municipal permit portals (fragmented, ~13 systems / ~9 vendors)
+    access_pattern:
+      mode: on-demand runtime retrieval (NOT bulk) # per Lee/PB pattern
+      tooling: one adapter per vendor via county-permit-adapter
+      note: >-
+        Highest-leverage reusable adapter is Tyler EnerGov Civic Access (2 Orange munis
+        and the most common vendor statewide). Build OC FastTrack + Orlando RelayView
+        first (biggest volume).
+    jurisdictions:
+      - jurisdiction: Orange County (unincorporated)
+        vendor: OC FastTrack (custom county ASP.NET)
+        url: https://fasttrack.ocfl.net/OnlineServices/PermitsAllTypes.aspx
+        search: permit# / address / parcel
+        anti_bot: none (plain 200)
+        status: discovered
+        priority: build-first # biggest volume
+      - jurisdiction: City of Orlando
+        vendor: RelayView
+        url: https://cityoforlandofl-permits.myrelayview.com/
+        anti_bot: 403 bot-challenge (needs browser session; NOT geo-block)
+        status: needs-browser-session
+        priority: build-first # 2nd biggest
+      - jurisdiction: Apopka
+        vendor: OpenGov
+        url: https://apopkafl.portal.opengov.com
+        status: discovered
+      - jurisdiction: Winter Park
+        vendor: Tyler EnerGov / Civic Access
+        url: https://selfservice.cityofwinterpark.org/energov_prod
+        status: discovered
+      - jurisdiction: Maitland
+        vendor: Tyler EnerGov
+        url: https://maitlandfl-energovpub.tylerhost.net
+        status: discovered
+      - jurisdiction: Ocoee
+        vendor: SagesGov / Clear Village
+        url: https://permits.ocoee.org
+        status: discovered
+      - jurisdiction: Winter Garden
+        vendor: BS&A Online
+        url: https://bsaonline.com # uid=3123
+        status: discovered
+      - jurisdiction: Windermere + Oakland
+        vendor: PDCS LLC
+        url: https://pdcsllc.com
+        status: discovered
+      - jurisdiction: Belle Isle
+        vendor: UES / teamues
+        status: needs-review
+      - jurisdiction: Bay Lake + Lake Buena Vista
+        vendor: Accela ACA (CFTOD)
+        url: https://ca.rcid.org/CitizenAccess
+        anti_bot: bot-challenge (needs browser session)
+        status: needs-browser-session
+      - jurisdiction: Eatonville
+        vendor: none
+        status: no-online-portal
+      - jurisdiction: Edgewood
+        vendor: rides Orange County
+        status: needs-review
+    refresh:
+      method: on-demand parcel/address lookup per vendor adapter
+      cadence: on-demand
+    implemented_by:
+      skill: county-permit-adapter
+      highest_leverage_adapter: Tyler EnerGov Civic Access
+
+  - key: sunbiz
+    category: business-registration
+    name: Florida Sunbiz corporate registrations (FL Dept. of State)
+    base_urls:
+      - https://dos.fl.gov/sunbiz/other-services/data-downloads/ # bulk downloads index
+      - https://search.sunbiz.org/Inquiry/corporationsearch/SearchResults # live search (secondary)
+    access_pattern:
+      mode: batch-bulk-download (primary) + live address search (secondary enrichment)
+      tooling: reuse Lee/PB toolchain; statewide dataset, shared
+      auth: Data Access Portal public account; credentials out-of-band, never committed
+      anti_bot: Cloudflare managed challenge on plain curl -> headless Chromium
+      per_county_input: >-
+        the only new per-county input is the Orange County ZIP-prefix list — collect
+        Orange ZIPs and match across principal / mailing / registered-agent / officer
+        addresses.
+    refresh:
+      method: quarterly bulk corporate download -> ZIP-prefix extract -> lexicon transform
+      cadence: quarterly
+    implemented_by:
+      skill: sunbiz-corporate-ingest
+      runbook: docs/sunbiz-bulk-download-runbook.md
+
+  - key: bbb
+    category: business-reputation
+    name: Better Business Bureau (BBB) contractor reputation
+    base_urls:
+      - https://www.bbb.org/us/category/data # category harvest entry point
+    access_pattern:
+      mode: browser-scrape # national/complete set, shared across counties
+      tooling: Puppeteer (headless Chromium)
+      auth: public
+      anti_bot: Cloudflare challenge -> challenge-retry loop in the harvester
+    refresh:
+      method: category harvest for contractor reputation/quality enrichment
+      cadence: on-demand / periodic
+    implemented_by:
+      skill: bbb-harvest
+
+bulk_geometry:
+  - key: gis-parcels
+    name: Orange County GIS parcels (geometry)
+    url: https://ocgis4.ocfl.net/arcgis/rest/services/Public_Base/MapServer/32/query
+    query: PARCEL='<15-digit pid>' # field PARCEL, returnGeometry=true
+    note: geometry also rides in the seed CSV; the transform reads it (like Palm Beach).
+
+additional_sources:
+  - key: recorder
+    name: Orange County Comptroller (recorder / official records — deeds, mortgages, liens)
+    status: available (noted; not in scope this milestone)
+
+feasibility:
+  property-appraisal: >-
+    plain-HTTP JSON API, no browser, no anti-bot -> full bulk collection feasible from
+    AWS us-east-1 (like Palm Beach). Estimate ~490,529 parcels x (1 resolve + ~10 PRC
+    calls). TODO: benchmark p50/p95 latency + safe concurrency at a pilot before
+    committing to a full-download plan.
+  permits: on-demand only (fragmented vendors); throughput measured per vendor adapter.
+  sunbiz: bulk, already-solved toolchain.
+  bbb: bulk, already-solved toolchain.
+
+risks:
+  - -1 value masking on uncertified tax years -> use the certified year (prcTaxYear).
+  - seed 14 -> 15-digit PID normalization -> must pad + resolve or every parcel 404s.
+  - Orlando (RelayView) + rcid.org (Accela) permit portals issue bot challenges ->
+    need browser/residential-proxy session (bot challenge, NOT geo-block).
+  - non-US local egress (Serbia) irrelevant for prod -> scraping runs from AWS us-east-1;
+    OCPA appraiser API confirmed not geo-blocked.
+
+notes:
+  - Discovery stage only; no live ingest/deploy, no PR, no push performed this run.
+  - All sources land in S3 (Structured Archive) and reconcile into the Neon query DB
+    (read via @elephant-xyz/query-db).
+  - Completeness is validated per source (validate-county-transform,
+    monitoring-county-ingestion, query-db-loading-matching).
