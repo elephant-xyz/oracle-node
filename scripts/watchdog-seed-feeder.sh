@@ -53,14 +53,17 @@ while true; do
     # Checkpoint not present yet (feeder still spinning up) OR a transient read error.
     # Do NOT re-send immediately — at startup that spawns a duplicate feeder. But if it
     # stays missing past MISSING_GRACE, the initial feeder likely died before its first
-    # write, so recover with ONE cooldown-protected re-send rather than waiting forever.
+    # write, so recover with a cooldown-rate-limited re-send retry (not a one-shot: if the
+    # re-sent feeder also dies before writing, we retry again after the next full window).
     NOW=$(date +%s)
     [ "$MISSING_SINCE" -eq 0 ] && MISSING_SINCE=$NOW
     MISSING_FOR=$(( NOW - MISSING_SINCE )); SINCE_RESEND=$(( NOW - LAST_RESEND ))
     if [ "$MISSING_FOR" -gt "$MISSING_GRACE" ] && [ "$SINCE_RESEND" -ge "$RESEND_COOLDOWN" ]; then
-      echo "$(date -u +%H:%M:%S) WARN: no checkpoint after ${MISSING_FOR}s (feeder may have crashed before first write) — RE-SENDING once"
+      echo "$(date -u +%H:%M:%S) WARN: no checkpoint after ${MISSING_FOR}s (feeder may have crashed before first write) — re-sending (rate-limited retry)"
       eval "$SENDER_CMD" 2>&1 | grep -o '"messageId":"[^"]*"' | head -1
-      LAST_RESEND=$NOW
+      # Reset BOTH windows so the next retry must wait the full grace AND cooldown again —
+      # otherwise MISSING_FOR keeps growing and fires every cooldown, piling up feeders.
+      LAST_RESEND=$NOW; MISSING_SINCE=$NOW
     else
       echo "$(date -u +%H:%M:%S) WARN: checkpoint not readable yet (${MISSING_FOR}s missing) — waiting"
     fi
