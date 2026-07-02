@@ -13,7 +13,7 @@
     "@aws-sdk/client-eventbridge": "^3.879.0",
     "@aws-sdk/client-s3": "^3.879.0",
     "@aws-sdk/client-sfn": "^3.879.0",
-    "@elephant-xyz/cli": "github:elephant-xyz/elephant-cli#44fd046cfdc205a223cc7a62df5bfcaf003a395b",
+    "@elephant-xyz/cli": "github:elephant-xyz/elephant-cli#8dd5f01f78d97bfed24065d69f31801613faca2f",
     "adm-zip": "^0.5.10",
     "csv-parse": "^5.6.0"
   },
