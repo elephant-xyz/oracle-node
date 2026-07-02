@@ -25,10 +25,17 @@ POLL_SECONDS="${POLL_SECONDS:-120}"
 # deadlocks the worker). A single re-send normally revives within a minute.
 RESEND_COOLDOWN="${RESEND_COOLDOWN:-900}"
 LAST_RESEND=0
+# If the checkpoint NEVER appears (initial feeder crashed before its first write),
+# recover after this grace window instead of waiting forever. Long enough that a
+# normally-starting feeder writes its checkpoint first, so we don't re-spawn at startup.
+MISSING_GRACE="${MISSING_GRACE:-$STALE_SECONDS}"
+MISSING_SINCE=0
 
 # Detect a WORKING python interpreter. Windows registers "python3"/"python" App
 # Execution aliases that merely print an install prompt and exit non-zero, so we
 # execution-test each candidate rather than trusting `command -v`. Override with PYBIN.
+# NOTE: $PYBIN is intentionally unquoted at the call site so "py -3" word-splits into
+# two args; do not point PYBIN at an interpreter path containing spaces (symlink it).
 if [ -z "${PYBIN:-}" ]; then
   for _c in python3 python "py -3"; do
     if $_c -c "import sys" >/dev/null 2>&1; then PYBIN="$_c"; break; fi
@@ -44,10 +51,22 @@ while true; do
   STATE="$(aws s3 cp "$STATE_S3_URI" - 2>/dev/null)"
   if [ -z "$STATE" ]; then
     # Checkpoint not present yet (feeder still spinning up) OR a transient read error.
-    # Do NOT create/re-send — that would spawn a duplicate feeder. Just wait and re-check.
-    echo "$(date -u +%H:%M:%S) WARN: checkpoint not readable yet — waiting (not re-sending)"
+    # Do NOT re-send immediately — at startup that spawns a duplicate feeder. But if it
+    # stays missing past MISSING_GRACE, the initial feeder likely died before its first
+    # write, so recover with ONE cooldown-protected re-send rather than waiting forever.
+    NOW=$(date +%s)
+    [ "$MISSING_SINCE" -eq 0 ] && MISSING_SINCE=$NOW
+    MISSING_FOR=$(( NOW - MISSING_SINCE )); SINCE_RESEND=$(( NOW - LAST_RESEND ))
+    if [ "$MISSING_FOR" -gt "$MISSING_GRACE" ] && [ "$SINCE_RESEND" -ge "$RESEND_COOLDOWN" ]; then
+      echo "$(date -u +%H:%M:%S) WARN: no checkpoint after ${MISSING_FOR}s (feeder may have crashed before first write) — RE-SENDING once"
+      eval "$SENDER_CMD" 2>&1 | grep -o '"messageId":"[^"]*"' | head -1
+      LAST_RESEND=$NOW
+    else
+      echo "$(date -u +%H:%M:%S) WARN: checkpoint not readable yet (${MISSING_FOR}s missing) — waiting"
+    fi
     sleep "$POLL_SECONDS"; continue
   fi
+  MISSING_SINCE=0
   read -r EXHAUSTED ENQUEUED AGE < <(echo "$STATE" | $PYBIN -c "
 import sys,json,datetime as dt
 d=json.load(sys.stdin)
