@@ -6,7 +6,8 @@
 # is "re-send the same feeder message" (idempotent — it resumes from the S3
 # checkpoint). This automates that: poll the feeder-state checkpoint, and if it
 # has gone stale (and the county is not yet exhausted), re-send via the county
-# sender. Run detached (nohup + caffeinate) so it survives overnight.
+# sender. Run detached so it survives overnight (macOS: nohup + caffeinate;
+# Windows/Linux: nohup or a background job + keep the machine awake).
 #
 # County-generic via env vars:
 #   STATE_S3_URI   s3://.../permit-harvest/<jobId>/feeder-state.json
@@ -25,17 +26,32 @@ POLL_SECONDS="${POLL_SECONDS:-120}"
 RESEND_COOLDOWN="${RESEND_COOLDOWN:-900}"
 LAST_RESEND=0
 
-echo "$(date -u +%H:%M:%S) watchdog start | state=$STATE_S3_URI stale=${STALE_SECONDS}s poll=${POLL_SECONDS}s cooldown=${RESEND_COOLDOWN}s"
+# Detect a WORKING python interpreter. Windows registers "python3"/"python" App
+# Execution aliases that merely print an install prompt and exit non-zero, so we
+# execution-test each candidate rather than trusting `command -v`. Override with PYBIN.
+if [ -z "${PYBIN:-}" ]; then
+  for _c in python3 python "py -3"; do
+    if $_c -c "import sys" >/dev/null 2>&1; then PYBIN="$_c"; break; fi
+  done
+fi
+if [ -z "${PYBIN:-}" ]; then
+  echo "$(date -u +%H:%M:%S) FATAL: no working python interpreter found (tried python3, python, py -3). Set PYBIN." >&2
+  exit 1
+fi
+
+echo "$(date -u +%H:%M:%S) watchdog start | state=$STATE_S3_URI stale=${STALE_SECONDS}s poll=${POLL_SECONDS}s cooldown=${RESEND_COOLDOWN}s py='$PYBIN'"
 while true; do
   STATE="$(aws s3 cp "$STATE_S3_URI" - 2>/dev/null)"
   if [ -z "$STATE" ]; then
-    echo "$(date -u +%H:%M:%S) WARN: could not read state; re-sending to be safe"; eval "$SENDER_CMD" >/dev/null 2>&1
+    # Checkpoint not present yet (feeder still spinning up) OR a transient read error.
+    # Do NOT create/re-send — that would spawn a duplicate feeder. Just wait and re-check.
+    echo "$(date -u +%H:%M:%S) WARN: checkpoint not readable yet — waiting (not re-sending)"
     sleep "$POLL_SECONDS"; continue
   fi
-  read -r EXHAUSTED ENQUEUED AGE < <(echo "$STATE" | python3 -c "
+  read -r EXHAUSTED ENQUEUED AGE < <(echo "$STATE" | $PYBIN -c "
 import sys,json,datetime as dt
 d=json.load(sys.stdin)
-u=d.get('updatedAt');
+u=d.get('updatedAt') or d.get('lastUpdatedAt') or d.get('updated_at');
 age=999999
 if u:
     try:
@@ -43,7 +59,7 @@ if u:
         age=int((dt.datetime.now(dt.timezone.utc)-t).total_seconds())
     except: pass
 print(str(d.get('sourceExhausted')).lower(), d.get('enqueuedCount',0), age)
-")
+" | tr -d '\r')
   if [ "$EXHAUSTED" = "true" ]; then
     echo "$(date -u +%H:%M:%S) DONE: sourceExhausted=true enqueued=$ENQUEUED — watchdog exiting"; exit 0
   fi
