@@ -331,15 +331,22 @@ aws events put-rule \
   --schedule-expression "rate(5 minutes)" \
   --state ENABLED >/dev/null
 
-# Allow EventBridge to invoke the Lambda (idempotent — ignore "already exists").
-if ! aws_lambda add-permission \
+# Allow EventBridge to invoke the Lambda. Idempotent, but tolerate ONLY the
+# "statement already exists" conflict — any other failure (bad ARN, missing
+# permissions) must surface, not be silently swallowed.
+if add_perm_err="$(aws_lambda add-permission \
   --function-name "$LAMBDA_NAME" \
   --statement-id "${RULE_NAME}-invoke" \
   --action "lambda:InvokeFunction" \
   --principal "events.amazonaws.com" \
   --source-arn "arn:aws:events:${AWS_REGION}:${ACCOUNT_ID}:rule/${RULE_NAME}" \
-  >/dev/null 2>&1; then
-  echo "Invoke permission already present (or add-permission not needed)." >&2
+  2>&1 >/dev/null)"; then
+  :
+elif printf '%s' "$add_perm_err" | grep -q 'ResourceConflictException'; then
+  echo "Invoke permission already present." >&2
+else
+  echo "ERROR: add-permission failed: $add_perm_err" >&2
+  exit 1
 fi
 
 aws events put-targets \

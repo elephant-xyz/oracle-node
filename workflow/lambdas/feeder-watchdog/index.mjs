@@ -11,7 +11,7 @@
 //   STATE_BUCKET, STATE_KEY  — feeder-state.json location
 //   FEEDER_QUEUE_URL         — permit-harvest queue the feeder is sent to
 //   FEEDER_MESSAGE           — exact feeder message JSON (from sender --dry-run)
-//   STALE_SECONDS            — re-send if checkpoint older than this (default 360)
+//   STALE_SECONDS            — re-send if checkpoint older than this (default 900)
 //
 // Uses the AWS SDK v3 bundled in the nodejs22.x managed runtime (no node_modules).
 import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
@@ -24,7 +24,7 @@ const STATE_BUCKET = process.env.STATE_BUCKET;
 const STATE_KEY = process.env.STATE_KEY;
 const FEEDER_QUEUE_URL = process.env.FEEDER_QUEUE_URL;
 const FEEDER_MESSAGE = process.env.FEEDER_MESSAGE;
-const STALE_SECONDS = Number.parseInt(process.env.STALE_SECONDS ?? "360", 10);
+const STALE_SECONDS = Number.parseInt(process.env.STALE_SECONDS ?? "900", 10);
 
 /**
  * Re-send the feeder message to resume the run from its S3 checkpoint.
