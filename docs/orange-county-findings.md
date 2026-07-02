@@ -23,7 +23,7 @@ Scope this run: **discovery only.** No live ingest/deploy, no PR, no push.
 >    zero-pad the seed id to 15, call `GetSearchInfoByParcel` to get the **canonical**
 >    `parcelId`, then fan out `PRC/*` with that canonical id. Skip this and **all 490,529
 >    parcels 404**.
-> 2. **`-1` value masking on uncertified tax years.** For the current *uncertified* tax
+> 2. **`-1` value masking on uncertified tax years.** For the current _uncertified_ tax
 >    year OCPA returns value fields as **`-1`** (`isCertified:false`). Use the **certified
 >    year** (`GetPRCGeneralInfo.prcTaxYear`, currently **2025**) for real dollar values.
 
@@ -76,20 +76,20 @@ Permits are **municipal and fragmented** across ~13 systems / ~9 vendors. Per th
 pattern, permits are **on-demand, NOT bulk** — build adapters via `county-permit-adapter`,
 one adapter per vendor.
 
-| Jurisdiction | Portal / vendor | URL | Status |
-| --- | --- | --- | --- |
-| Orange County (unincorporated) | **OC FastTrack** (custom county ASP.NET) | `https://fasttrack.ocfl.net/OnlineServices/PermitsAllTypes.aspx` | plain 200; search by permit# / address / parcel. **Biggest volume — build first** |
-| City of Orlando | **RelayView** | `https://cityoforlandofl-permits.myrelayview.com/` | 403 bot-challenge (needs browser session, **not** geo). **2nd biggest — build first** |
-| Apopka | OpenGov | `apopkafl.portal.opengov.com` | discovered |
-| Winter Park | **Tyler EnerGov / Civic Access** | `selfservice.cityofwinterpark.org/energov_prod` | discovered |
-| Maitland | **Tyler EnerGov** | `maitlandfl-energovpub.tylerhost.net` | discovered |
-| Ocoee | SagesGov / Clear Village | `permits.ocoee.org` | discovered |
-| Winter Garden | BS&A Online | `bsaonline.com` (uid=3123) | discovered |
-| Windermere + Oakland | PDCS LLC | `pdcsllc.com` | discovered |
-| Belle Isle | UES / teamues | — | needs-review |
-| Bay Lake + Lake Buena Vista | **Accela ACA** (CFTOD) | `ca.rcid.org/CitizenAccess` | discovered (bot-challenge) |
-| Eatonville | no online portal | — | none |
-| Edgewood | rides Orange County | — | needs-review |
+| Jurisdiction                   | Portal / vendor                          | URL                                                              | Status                                                                                |
+| ------------------------------ | ---------------------------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| Orange County (unincorporated) | **OC FastTrack** (custom county ASP.NET) | `https://fasttrack.ocfl.net/OnlineServices/PermitsAllTypes.aspx` | plain 200; search by permit# / address / parcel. **Biggest volume — build first**     |
+| City of Orlando                | **RelayView**                            | `https://cityoforlandofl-permits.myrelayview.com/`               | 403 bot-challenge (needs browser session, **not** geo). **2nd biggest — build first** |
+| Apopka                         | OpenGov                                  | `apopkafl.portal.opengov.com`                                    | discovered                                                                            |
+| Winter Park                    | **Tyler EnerGov / Civic Access**         | `selfservice.cityofwinterpark.org/energov_prod`                  | discovered                                                                            |
+| Maitland                       | **Tyler EnerGov**                        | `maitlandfl-energovpub.tylerhost.net`                            | discovered                                                                            |
+| Ocoee                          | SagesGov / Clear Village                 | `permits.ocoee.org`                                              | discovered                                                                            |
+| Winter Garden                  | BS&A Online                              | `bsaonline.com` (uid=3123)                                       | discovered                                                                            |
+| Windermere + Oakland           | PDCS LLC                                 | `pdcsllc.com`                                                    | discovered                                                                            |
+| Belle Isle                     | UES / teamues                            | —                                                                | needs-review                                                                          |
+| Bay Lake + Lake Buena Vista    | **Accela ACA** (CFTOD)                   | `ca.rcid.org/CitizenAccess`                                      | discovered (bot-challenge)                                                            |
+| Eatonville                     | no online portal                         | —                                                                | none                                                                                  |
+| Edgewood                       | rides Orange County                      | —                                                                | needs-review                                                                          |
 
 - **Highest-leverage reusable adapter: Tyler EnerGov Civic Access** — 2 Orange munis and
   the most common vendor statewide. Build this adapter to maximize downstream reuse.

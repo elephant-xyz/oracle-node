@@ -15,21 +15,21 @@ import { readFile } from "fs/promises";
 import { Pool } from "pg";
 
 /**
- * Palm Beach county configuration. This file is a parameterized clone of
+ * Orange county configuration. This file is a parameterized clone of
  * scripts/enqueue-lee-appraisal-property-first-from-seed.mjs; only the values
  * below differ from the Lee run.
  *
  * The prepare state machine derives the per-county prepare queue name from the
  * seed CSV's `county` column (lowercased, spaces -> '-', '.' removed), NOT from
- * this object. With a seed `county` value of "Palm Beach" the state machine
- * targets `elephant-oracle-node-prepare-queue-palm-beach`, which already exists.
+ * this object. With a seed `county` value of "Orange" the state machine
+ * targets `elephant-oracle-node-prepare-queue-orange`, which already exists.
  */
 const COUNTY = {
   /** Human-readable county name used in log lines. */
   name: "Orange",
   /** Snake-case county key used in log message identifiers. */
   key: "orange",
-  /** Neon properties.source_system value for the Palm Beach appraiser source. */
+  /** Neon properties.source_system value for the Orange appraiser source. */
   sourceSystem: "orange_appraiser",
   /** Postgres application_name used for the dedup connection. */
   applicationName: "orange-appraisal-seed-enqueue",
@@ -68,7 +68,7 @@ async function readOnlyRows(filePath) {
 
 /**
  * @typedef {object} CliOptions
- * @property {string} sourceCsvS3Uri - Source Palm Beach county seed CSV S3 URI.
+ * @property {string} sourceCsvS3Uri - Source Orange county seed CSV S3 URI.
  * @property {string} stackName - Oracle-node CloudFormation stack name.
  * @property {string} permitStackName - Permit-harvest CloudFormation stack name.
  * @property {string | undefined} workflowQueueUrl - Explicit workflow starter queue URL.
@@ -83,7 +83,7 @@ async function readOnlyRows(filePath) {
  * @property {number} sendDelayMs - Optional delay between SQS sends.
  * @property {number} concurrency - Number of seed uploads/workflow SQS sends to run concurrently.
  * @property {string} envFile - Local env file used when skipping properties already in Neon.
- * @property {boolean} skipExistingNeon - Skip rows whose Palm Beach Appraiser property is already present in Neon.
+ * @property {boolean} skipExistingNeon - Skip rows whose Orange Appraiser property is already present in Neon.
  * @property {boolean} dryRun - Print candidate workflow messages without uploading seeds or sending SQS messages.
  * @property {string | undefined} onlyRowsFile - Optional path to a newline-delimited list of 1-based source data-row numbers; only those rows are enqueued. Preserves the original sourceRowNumber so re-prepared outputs land in the existing row-* folders.
  */
@@ -110,8 +110,8 @@ async function readOnlyRows(filePath) {
 
 /**
  * @typedef {object} ExistingNeonIdentifiers
- * @property {Set<string>} requestIdentifiers - Existing Palm Beach Appraiser request/Folio identifiers.
- * @property {Set<string>} normalizedParcelIdentifiers - Existing normalized Palm Beach Appraiser parcel identifiers.
+ * @property {Set<string>} requestIdentifiers - Existing Orange Appraiser request/Folio identifiers.
+ * @property {Set<string>} normalizedParcelIdentifiers - Existing normalized Orange Appraiser parcel identifiers.
  */
 
 /**
@@ -145,7 +145,7 @@ Usage:
       --limit 0 --send-delay-ms 50
 
 Options:
-  --source-csv-s3-uri <s3uri>       Full Palm Beach seed CSV. Default: ${DEFAULT_SOURCE_CSV_S3_URI}
+  --source-csv-s3-uri <s3uri>       Full Orange seed CSV. Default: ${DEFAULT_SOURCE_CSV_S3_URI}
   --stack <name>                    Oracle-node stack. Default: ${DEFAULT_STACK_NAME}
   --permit-stack <name>             Permit-harvest stack. Default: ${DEFAULT_PERMIT_STACK_NAME}
   --workflow-queue-url <url>        WorkflowQueueUrl override.
@@ -400,20 +400,23 @@ async function loadEnvFile(envFile) {
 }
 
 /**
- * Normalize a Palm Beach parcel identifier (PCN) for duplicate checks and S3 key
+ * Normalize a Orange parcel identifier (PCN) for duplicate checks and S3 key
  * names.
  *
- * Palm Beach PCNs are 17-digit numeric strings that may arrive with separators
- * (dots/dashes) or leading/trailing whitespace. Only non-digit characters are
- * stripped, so distinct PCNs can never be collapsed together; separator and
- * whitespace differences normalize away while every digit is preserved.
+ * Orange parcel ids (PIDs) are 15-digit numeric strings that may arrive with
+ * separators (dashes) or leading/trailing whitespace, and the seed frequently
+ * carries a 14-digit value (a leading zero stripped by numeric CSV storage).
+ * Non-digit characters are stripped and the result is zero-padded to 15 so it
+ * matches the canonical 15-digit PID the workflow resolves and stores in Neon —
+ * otherwise the skipExistingNeon dedup never matches and every parcel is
+ * re-enqueued. Separator/whitespace differences normalize away; digits preserved.
  *
  * @param {unknown} value - Raw parcel identifier.
- * @returns {string | undefined} Digits-only parcel identifier.
+ * @returns {string | undefined} Canonical 15-digit parcel identifier.
  */
 function normalizeParcelIdentifier(value) {
   const normalized = String(value ?? "").replace(/[^0-9]/g, "");
-  return normalized.length > 0 ? normalized : undefined;
+  return normalized.length > 0 ? normalized.padStart(15, "0") : undefined;
 }
 
 /**
@@ -465,7 +468,7 @@ function normalizeCsvHeader(header) {
 }
 
 /**
- * Read existing Palm Beach Appraiser identifiers from Neon so the S3 seed file
+ * Read existing Orange Appraiser identifiers from Neon so the S3 seed file
  * can be used to queue only new properties instead of replaying already-loaded
  * rows.
  *
@@ -523,7 +526,7 @@ async function readExistingNeonIdentifiers(cli) {
  * Return whether a source seed row is already present in Neon.
  *
  * @param {SeedRow} row - Parsed source seed row.
- * @param {ExistingNeonIdentifiers} existing - Existing Palm Beach Appraiser identifiers from Neon.
+ * @param {ExistingNeonIdentifiers} existing - Existing Orange Appraiser identifiers from Neon.
  * @returns {boolean} True when the row should be skipped as already loaded.
  */
 function isExistingNeonRow(row, existing) {
@@ -726,7 +729,7 @@ async function waitForAllPendingUploads(state) {
  * Stream the source seed CSV, generate one-property seeds, and enqueue workflow messages.
  *
  * @param {ResolvedOptions} options - Fully resolved options.
- * @param {ExistingNeonIdentifiers} existing - Existing Palm Beach Appraiser identifiers used for duplicate skips.
+ * @param {ExistingNeonIdentifiers} existing - Existing Orange Appraiser identifiers used for duplicate skips.
  * @param {Set<number> | undefined} onlyRows - When set, only these 1-based source data-row numbers are enqueued.
  * @returns {Promise<void>} Resolves when the requested rows have been processed.
  */

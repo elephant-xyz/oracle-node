@@ -7,18 +7,18 @@ import {
 import { SendMessageCommand, SQSClient } from "@aws-sdk/client-sqs";
 
 /**
- * Palm Beach property-first seed-feeder sender.
+ * Orange property-first seed-feeder sender.
  *
- * Builds and sends ONE Palm Beach feeder message to the permit-harvest queue.
- * The feeder is the self-requeuing full-run trigger: it drips the whole Palm
- * Beach seed CSV through the appraisal -> permit pipeline with backpressure,
+ * Builds and sends ONE Orange feeder message to the permit-harvest queue.
+ * The feeder is the self-requeuing full-run trigger: it drips the whole Orange
+ * seed CSV through the appraisal -> permit pipeline with backpressure,
  * checkpointing progress in S3 and rescheduling itself with an SQS delay until
  * the county is exhausted.
  *
  * Queue URLs and the environment bucket are resolved from the same
  * CloudFormation stacks the enqueue scripts use. Per-parcel workflow routing is
  * derived by the prepare state machine from the seed CSV's `county` column
- * (-> `elephant-oracle-node-prepare-queue-palm-beach`), not from this message.
+ * (-> `elephant-oracle-node-prepare-queue-orange`), not from this message.
  */
 const COUNTY = {
   /** Feeder message discriminator routed by the permit-harvest worker. */
@@ -67,7 +67,7 @@ const sqs = new SQSClient({});
  * @typedef {object} CliOptions
  * @property {string} stackName - Oracle-node CloudFormation stack name.
  * @property {string} permitStackName - Permit-harvest CloudFormation stack name.
- * @property {string} sourceCsvS3Uri - Palm Beach seed CSV S3 URI.
+ * @property {string} sourceCsvS3Uri - Orange seed CSV S3 URI.
  * @property {string} jobId - REQUIRED fixed run identifier used for S3 partitioning; must
  *   stay constant across every (re-)send so the run resumes instead of splitting.
  * @property {boolean} dryRun - Print the feeder message without sending it.
@@ -88,7 +88,7 @@ Options:
   --stack <name>          Oracle-node stack. Default: ${DEFAULT_STACK_NAME}
   --permit-stack <name>   Permit-harvest stack. Default: ${DEFAULT_PERMIT_STACK_NAME}
   --source-csv-s3-uri <s3uri>
-                          Palm Beach seed CSV. Default: ${DEFAULT_SOURCE_CSV_S3_URI}
+                          Orange seed CSV. Default: ${DEFAULT_SOURCE_CSV_S3_URI}
   --job-id <id>           REQUIRED. Stable run id, FIXED for the whole run. Do not rely on a
                           date default: a re-send after 00:00 UTC would start a new job from
                           row 0 and silently split the run. Suggested: ${suggestedJobId()}
@@ -96,7 +96,7 @@ Options:
   --help                  Show this help.
 
 Sends ONE feeder message to the permit-harvest queue. The worker then self-
-requeues, dripping the whole Palm Beach seed through the pipeline with workflow
+requeues, dripping the whole Orange seed through the pipeline with workflow
 and prepare backpressure until the county is exhausted.
 `);
 }
@@ -187,7 +187,7 @@ async function getStackOutput(stackName, outputKey) {
 }
 
 /**
- * Build the Palm Beach property-first seed-feeder message from resolved infra.
+ * Build the Orange property-first seed-feeder message from resolved infra.
  *
  * @param {object} params - Message build parameters.
  * @param {CliOptions} params.cli - Parsed CLI options.
