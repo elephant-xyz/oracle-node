@@ -244,15 +244,31 @@ function createInitialCheckpoint() {
   };
 }
 
+// The done-row set can reach ~488k entries (~25 MB). Keep it OUT of the
+// frequently-written checkpoint so that write stays tiny; it lives in a sibling
+// object written on a much coarser cadence. A crash re-does at most one coarse
+// interval of rows, which is idempotent.
+function doneRowsUriFor(stateS3Uri) {
+  return stateS3Uri.replace(/\.json$/i, ".done-rows.json");
+}
+
 async function readCheckpoint(stateS3Uri, resetCheckpoint) {
   const { bucket, key } = parseS3Uri(stateS3Uri);
   if (resetCheckpoint || !(await objectExists(bucket, key))) {
     return createInitialCheckpoint();
   }
   const raw = await getJson(bucket, key);
+  // doneRows now lives in a sibling object; fall back to an inline array for
+  // back-compat with older checkpoints that embedded it.
+  let doneRows = Array.isArray(raw.doneRows) ? raw.doneRows : [];
+  const { bucket: db, key: dk } = parseS3Uri(doneRowsUriFor(stateS3Uri));
+  if (await objectExists(db, dk)) {
+    const rawDone = await getJson(db, dk);
+    doneRows = Array.isArray(rawDone) ? rawDone : rawDone.doneRows ?? [];
+  }
   return {
     schemaVersion: SCHEMA_VERSION,
-    doneRows: Array.isArray(raw.doneRows) ? raw.doneRows : [],
+    doneRows,
     processedCount: Number.isFinite(raw.processedCount)
       ? raw.processedCount
       : 0,
@@ -265,9 +281,17 @@ async function readCheckpoint(stateS3Uri, resetCheckpoint) {
   };
 }
 
+// Writes only the small counts/failures — never the (large) doneRows array.
 async function writeCheckpoint(stateS3Uri, state) {
   const { bucket, key } = parseS3Uri(stateS3Uri);
-  await putJson(bucket, key, state);
+  const { doneRows: _omit, ...counts } = state;
+  await putJson(bucket, key, counts);
+}
+
+// Writes the large done-row list to its sibling object (coarse cadence + final).
+async function writeDoneRows(stateS3Uri, state) {
+  const { bucket, key } = parseS3Uri(doneRowsUriFor(stateS3Uri));
+  await putJson(bucket, key, { doneRows: state.doneRows });
 }
 
 // ---------------------------------------------------------------------------
@@ -603,11 +627,18 @@ async function main() {
       if (completedCount % options.checkpointEvery === 0) {
         await writeCheckpoint(options.stateS3Uri, state);
       }
+      // The done-row list is large, so persist it on a much coarser cadence than
+      // the tiny counts checkpoint. A crash between done-row writes re-does at
+      // most this interval of already-transformed rows (idempotent).
+      if (completedCount % (options.checkpointEvery * 25) === 0) {
+        await writeDoneRows(options.stateS3Uri, state);
+      }
     },
   );
 
-  // Final checkpoint
+  // Final checkpoint (counts + the full done-row list)
   await writeCheckpoint(options.stateS3Uri, state);
+  await writeDoneRows(options.stateS3Uri, state);
 
   const succeeded = results.filter((r) => r.ok).length;
   const failed = results.filter((r) => !r.ok).length;
