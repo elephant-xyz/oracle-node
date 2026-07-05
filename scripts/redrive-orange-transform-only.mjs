@@ -264,7 +264,7 @@ async function readCheckpoint(stateS3Uri, resetCheckpoint) {
   const { bucket: db, key: dk } = parseS3Uri(doneRowsUriFor(stateS3Uri));
   if (await objectExists(db, dk)) {
     const rawDone = await getJson(db, dk);
-    doneRows = Array.isArray(rawDone) ? rawDone : rawDone.doneRows ?? [];
+    doneRows = Array.isArray(rawDone) ? rawDone : (rawDone.doneRows ?? []);
   }
   return {
     schemaVersion: SCHEMA_VERSION,
