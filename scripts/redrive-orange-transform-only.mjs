@@ -78,10 +78,15 @@ process.on("unhandledRejection", (reason) => {
   );
 });
 process.on("uncaughtException", (err) => {
+  // Unlike unhandledRejection, Node docs say it is NOT safe to resume after an
+  // uncaughtException — the heap may be inconsistent, so continuing risks
+  // persisting corrupted state. Log and exit; the watchdog / a re-run resumes
+  // cleanly from the checkpoint.
   console.error(
-    "uncaughtException (continuing):",
-    err instanceof Error ? err.message : err,
+    "uncaughtException (exiting — heap may be inconsistent):",
+    err instanceof Error ? (err.stack ?? err.message) : err,
   );
+  process.exit(1);
 });
 
 // ---------------------------------------------------------------------------
