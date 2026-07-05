@@ -442,7 +442,16 @@ async function runWithConcurrency(tasks, concurrency, onComplete) {
           error: error instanceof Error ? error.message : String(error),
         };
       }
-      if (onComplete) onComplete(i, results[i]);
+      // onComplete is async (it awaits writeCheckpoint) and is intentionally not
+      // awaited here; catch its rejection so a transient checkpoint-write error
+      // can't surface as a process-killing unhandled rejection.
+      if (onComplete)
+        onComplete(i, results[i]).catch((err) =>
+          console.error(
+            "onComplete error (continuing):",
+            err instanceof Error ? err.message : err,
+          ),
+        );
     }
   }
 
