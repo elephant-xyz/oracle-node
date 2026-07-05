@@ -66,6 +66,24 @@ const requestHandler = new NodeHttpHandler({
 const s3 = new S3Client({ region: DEFAULT_REGION, requestHandler });
 const lambda = new LambdaClient({ region: DEFAULT_REGION, requestHandler });
 
+// The concurrency pool calls the checkpoint writer in onComplete WITHOUT awaiting
+// it, so a transient S3 write error surfaces as an unhandled rejection — which
+// exits the process by default. Log-and-continue so the run never dies on a
+// transient error (the checkpoint self-heals on the next write, and the whole
+// run is idempotent + resumable anyway).
+process.on("unhandledRejection", (reason) => {
+  console.error(
+    "unhandledRejection (continuing):",
+    reason instanceof Error ? reason.message : reason,
+  );
+});
+process.on("uncaughtException", (err) => {
+  console.error(
+    "uncaughtException (continuing):",
+    err instanceof Error ? err.message : err,
+  );
+});
+
 // ---------------------------------------------------------------------------
 // CLI argument parsing
 // ---------------------------------------------------------------------------
