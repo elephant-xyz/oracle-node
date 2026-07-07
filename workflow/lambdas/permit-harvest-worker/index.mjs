@@ -95,6 +95,7 @@ import {
  * @property {boolean | undefined} [skipCompleted] - Skip parcels with an existing property-first completion state object.
  * @property {boolean | undefined} [loadToNeon] - Merge captured permit details into Neon and link them to the appraiser property. Defaults true.
  * @property {boolean | undefined} [loadAppraisalToNeon] - Merge appraisalOutputS3Uri into Neon in the same transaction as permits. Defaults true when appraisalOutputS3Uri is present.
+ * @property {boolean | undefined} [onDemand] - On-demand MCP harvest. When true, the parcel harvests regardless of appraiser usage-type eligibility and a missing appraiser property row links zero permits instead of rolling back the permit upsert. Defaults false/absent (bulk/seed behavior).
  */
 
 /**
@@ -234,6 +235,7 @@ import {
  * @property {number} unchangedRows - Number of prepared rows skipped because their source hash was unchanged.
  * @property {number} matchedPermitRows - Lee Accela permit rows in Neon matching this parcel after load.
  * @property {number} linkedPermitRows - Lee Accela permit rows linked to the appraiser property by this invocation.
+ * @property {boolean} [propertyMissing] - True only on the on-demand path when the appraiser property was not yet loaded, so linking was deferred. Absent/false otherwise.
  */
 
 /**
@@ -645,6 +647,22 @@ function buildPropertyFirstPermitEligibility({
     eligibleUsageTypes,
     readError,
   };
+}
+
+/**
+ * Decide whether a property-first parcel should be skipped as ineligible.
+ *
+ * Bulk/seed work honors the appraiser usage-type gate. On-demand MCP harvests
+ * always proceed so donphan can serve their permits regardless of usage type.
+ *
+ * @param {object} params - Gate parameters.
+ * @param {PropertyFirstPermitEligibility} params.eligibility - Resolved routing decision.
+ * @param {boolean} params.onDemand - Whether this is an on-demand MCP harvest.
+ * @returns {boolean} True when the parcel should be skipped as ineligible.
+ */
+function shouldSkipIneligiblePropertyFirstParcel({ eligibility, onDemand }) {
+  if (onDemand) return false;
+  return !eligibility.shouldEnqueue;
 }
 
 /**
@@ -1679,6 +1697,14 @@ function validateMessage(value) {
         "lee-property-first-permit-parcel maxPages must be a positive number",
       );
     }
+    if (
+      message.onDemand !== undefined &&
+      typeof message.onDemand !== "boolean"
+    ) {
+      throw new Error(
+        "lee-property-first-permit-parcel onDemand must be a boolean",
+      );
+    }
     return /** @type {LeePropertyFirstPermitParcelMessage} */ (message);
   }
   if (isPropertyFirstSeedFeederType(message.type)) {
@@ -2506,9 +2532,10 @@ async function getQueryDatabasePool() {
  *
  * @param {import("pg").PoolClient} client - Transaction-bound Postgres client.
  * @param {PropertyFirstTarget} target - Property-first target metadata.
- * @returns {Promise<{ matchedPermitRows: number, linkedPermitRows: number }>} Link counters.
+ * @param {boolean} [onDemand] - On-demand MCP harvest. When true and no matching appraiser property exists, return zero link counters instead of throwing so the permit upsert still commits. Defaults false.
+ * @returns {Promise<{ matchedPermitRows: number, linkedPermitRows: number, propertyMissing?: boolean }>} Link counters. `propertyMissing` is true only on the on-demand deferred-link path where the appraiser property was not yet loaded.
  */
-async function linkPropertyFirstPermits(client, target) {
+async function linkPropertyFirstPermits(client, target, onDemand = false) {
   const targetAlphanumericParcelIdentifier = target.normalizedParcelIdentifier;
   const targetNumericParcelIdentifier = normalizeParcelDigits(
     target.normalizedParcelIdentifier,
@@ -2539,6 +2566,18 @@ async function linkPropertyFirstPermits(client, target) {
   );
   const propertyRow = propertyResult.rows[0];
   if (!isRecord(propertyRow)) {
+    if (onDemand) {
+      // On-demand harvests may run before the appraiser property is loaded.
+      // Return zero link counters so the caller's transaction still commits the
+      // permit upsert instead of rolling it back on this throw. Flag
+      // propertyMissing so the caller can defer writing the completed.json state
+      // and let a future run link these permits once the property exists.
+      return {
+        matchedPermitRows: 0,
+        linkedPermitRows: 0,
+        propertyMissing: true,
+      };
+    }
     throw new Error(
       `No loaded Lee Appraiser property found for parcel ${targetAlphanumericParcelIdentifier}`,
     );
@@ -2604,6 +2643,24 @@ async function linkPropertyFirstPermits(client, target) {
 }
 
 /**
+ * Decide whether a property-first parcel should write its completed.json state.
+ *
+ * The completed state is what `skipCompleted` uses to skip a parcel on later
+ * runs. On the on-demand path, a harvest can find permits before the appraiser
+ * property is loaded, in which case linking is deferred (propertyMissing) even
+ * though the permit rows committed. In that single case we must NOT mark the
+ * parcel completed, so a future run re-processes and links the permits once the
+ * property exists. Every other case (bulk, or on-demand with the property
+ * present) writes the completed state exactly as before.
+ *
+ * @param {{ onDemand?: boolean, propertyMissing?: boolean }} params - Decision inputs.
+ * @returns {boolean} True when completed.json should be written.
+ */
+function shouldWritePropertyFirstCompletedState({ onDemand, propertyMissing }) {
+  return !(onDemand === true && propertyMissing === true);
+}
+
+/**
  * Read captured permit artifacts from S3, merge them into Neon, and link the scoped parcel.
  *
  * @param {object} params - Load parameters.
@@ -2611,6 +2668,7 @@ async function linkPropertyFirstPermits(client, target) {
  * @param {PropertyFirstTarget} params.target - Property-first target metadata.
  * @param {ReturnType<typeof resolveOutputPrefix>} params.output - Resolved output prefix used for copied media artifacts.
  * @param {boolean} params.loadAppraisalToNeon - Whether to merge the appraisal artifact before permit rows.
+ * @param {boolean} [params.onDemand] - On-demand MCP harvest. When true, a missing appraiser property links zero permits instead of throwing, so the permit upsert still commits. Defaults false.
  * @returns {Promise<QueryDbLoadSummary>} Neon load and link summary.
  */
 async function loadPropertyFirstPermitsToQueryDb({
@@ -2618,6 +2676,7 @@ async function loadPropertyFirstPermitsToQueryDb({
   target,
   output,
   loadAppraisalToNeon,
+  onDemand = false,
 }) {
   const artifactUris = detailResults
     .map((result) => result.extractedJsonS3Uri)
@@ -2658,7 +2717,11 @@ async function loadPropertyFirstPermitsToQueryDb({
     const counters = await upsertPreparedRows(client, rows, {
       missingReferenceBehavior: "omit",
     });
-    const linkCounters = await linkPropertyFirstPermits(client, target);
+    const linkCounters = await linkPropertyFirstPermits(
+      client,
+      target,
+      onDemand,
+    );
     await client.query("commit", []);
     return {
       appraisalArtifactCount: appraisalLoad.artifactCount,
@@ -2683,6 +2746,7 @@ async function loadPropertyFirstPermitsToQueryDb({
       unchangedRows: counters.unchangedRows,
       matchedPermitRows: linkCounters.matchedPermitRows,
       linkedPermitRows: linkCounters.linkedPermitRows,
+      propertyMissing: linkCounters.propertyMissing === true,
     };
   } catch (error) {
     await client.query("rollback", []).catch(() => undefined);
@@ -2721,7 +2785,12 @@ async function processLeePropertyFirstPermitParcel(message) {
   ) {
     target.propertyUsageType = permitEligibility.propertyUsageType;
   }
-  if (!permitEligibility.shouldEnqueue) {
+  if (
+    shouldSkipIneligiblePropertyFirstParcel({
+      eligibility: permitEligibility,
+      onDemand: message.onDemand === true,
+    })
+  ) {
     const stateUri = await putTextObject({
       bucket: output.bucket,
       key: stateKey,
@@ -2877,7 +2946,30 @@ async function processLeePropertyFirstPermitParcel(message) {
             target,
             output,
             loadAppraisalToNeon: message.loadAppraisalToNeon !== false,
+            onDemand: message.onDemand === true,
           });
+    if (
+      !shouldWritePropertyFirstCompletedState({
+        onDemand: message.onDemand === true,
+        propertyMissing: loadSummary?.propertyMissing === true,
+      })
+    ) {
+      // On-demand harvest found permits before the appraiser property was
+      // loaded, so linking was deferred (permit rows are already committed
+      // inside loadPropertyFirstPermitsToQueryDb). Do NOT write the
+      // completed.json state: leaving the parcel "not completed" lets a future
+      // run re-process and link these permits once the property exists.
+      consoleLogger.info(
+        "lee_property_first_parcel_deferred_property_not_loaded",
+        {
+          jobId: message.jobId,
+          parcelIdentifier: target.parcelIdentifier,
+          normalizedParcelIdentifier: target.normalizedParcelIdentifier,
+          discoveredPermitCount: searchResult.permits.length,
+        },
+      );
+      return;
+    }
     const stateUri = await putTextObject({
       bucket: output.bucket,
       key: stateKey,
@@ -3128,11 +3220,13 @@ export const _private = {
   buildOneRowSeedCsv,
   buildLeePermitDetailBatchMessages,
   buildPropertyFirstPermitEligibility,
+  shouldSkipIneligiblePropertyFirstParcel,
   buildPropertyFirstStateKey,
   buildPropertyFirstTarget,
   createInitialLeePropertyFirstSeedFeederState,
   isExistingLeeAppraiserSeedRow,
   linkPropertyFirstPermits,
+  shouldWritePropertyFirstCompletedState,
   normalizeParcelDigits,
   resolvePropertyFirstPermitEligibleUsageTypes,
   readDatabaseUrlFromSecretString,

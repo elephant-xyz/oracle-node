@@ -172,6 +172,83 @@ describe("permit harvest worker message helpers", () => {
     });
   });
 
+  it("bypasses the appraiser usage-type gate for on-demand MCP harvests only", () => {
+    const eligibleUsageTypes =
+      _private.resolvePropertyFirstPermitEligibleUsageTypes();
+    const ineligible = _private.buildPropertyFirstPermitEligibility({
+      propertyUsageType: "Residential",
+      readError: null,
+      eligibleUsageTypes,
+    });
+    const eligible = _private.buildPropertyFirstPermitEligibility({
+      propertyUsageType: "Industrial",
+      readError: null,
+      eligibleUsageTypes,
+    });
+
+    // Bulk/seed path (onDemand false) still skips ineligible parcels.
+    expect(
+      _private.shouldSkipIneligiblePropertyFirstParcel({
+        eligibility: ineligible,
+        onDemand: false,
+      }),
+    ).toBe(true);
+
+    // On-demand path harvests the ineligible parcel anyway.
+    expect(
+      _private.shouldSkipIneligiblePropertyFirstParcel({
+        eligibility: ineligible,
+        onDemand: true,
+      }),
+    ).toBe(false);
+
+    // Eligible parcels are never skipped, regardless of onDemand.
+    expect(
+      _private.shouldSkipIneligiblePropertyFirstParcel({
+        eligibility: eligible,
+        onDemand: false,
+      }),
+    ).toBe(false);
+    expect(
+      _private.shouldSkipIneligiblePropertyFirstParcel({
+        eligibility: eligible,
+        onDemand: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("validates the optional onDemand flag on property-first parcel messages", () => {
+    expect(
+      _private.validateMessage({
+        type: "lee-property-first-permit-parcel",
+        version: 1,
+        jobId: "mcp-on-demand-12071-1",
+        parcelIdentifier: "294627L40900A1339",
+        onDemand: true,
+      }),
+    ).toMatchObject({ onDemand: true });
+
+    // Absent onDemand preserves current (bulk/seed) behavior.
+    expect(
+      _private.validateMessage({
+        type: "lee-property-first-permit-parcel",
+        version: 1,
+        jobId: "seed-12071-1",
+        parcelIdentifier: "294627L40900A1339",
+      }).onDemand,
+    ).toBeUndefined();
+
+    expect(() =>
+      _private.validateMessage({
+        type: "lee-property-first-permit-parcel",
+        version: 1,
+        jobId: "bad-onDemand",
+        parcelIdentifier: "294627L40900A1339",
+        onDemand: "yes",
+      }),
+    ).toThrow("onDemand must be a boolean");
+  });
+
   it("validates seed feeder messages and preserves one-row Lee seed CSVs", () => {
     const message = _private.validateMessage({
       type: "lee-property-first-seed-feeder",
@@ -353,6 +430,88 @@ describe("permit harvest worker message helpers", () => {
     ]);
     expect(queries[1].sql).toContain("[^[:alnum:]]");
     expect(queries[1].sql).toContain("[^0-9]");
+  });
+
+  it("commits on-demand permits with zero link counters when no appraiser property matches", async () => {
+    const target = _private.buildPropertyFirstTarget({
+      type: "lee-property-first-permit-parcel",
+      version: 1,
+      jobId: "mcp-on-demand-test",
+      parcelIdentifier: "294627L40900A1339",
+    });
+    const buildClient = () => {
+      const queries = [];
+      return {
+        queries,
+        query: async (sql, params) => {
+          queries.push({ sql, params });
+          if (sql.includes("from properties")) {
+            // No appraiser property loaded yet for this parcel.
+            return { rows: [], rowCount: 0 };
+          }
+          if (sql.includes("select count(*)::int as matched_permit_rows")) {
+            return { rows: [{ matched_permit_rows: 0 }], rowCount: 1 };
+          }
+          return { rows: [], rowCount: 0 };
+        },
+      };
+    };
+
+    // On-demand: returns zero counters plus propertyMissing:true (so the caller
+    // can defer writing completed.json) and never runs the match/update queries.
+    const onDemandClient = buildClient();
+    await expect(
+      _private.linkPropertyFirstPermits(onDemandClient, target, true),
+    ).resolves.toEqual({
+      matchedPermitRows: 0,
+      linkedPermitRows: 0,
+      propertyMissing: true,
+    });
+    expect(onDemandClient.queries).toHaveLength(1);
+    expect(onDemandClient.queries[0].sql).toContain("from properties");
+
+    // Non-onDemand: still throws exactly as before, which rolls back the upsert.
+    const bulkClient = buildClient();
+    await expect(
+      _private.linkPropertyFirstPermits(bulkClient, target, false),
+    ).rejects.toThrow("No loaded Lee Appraiser property found");
+    await expect(
+      _private.linkPropertyFirstPermits(bulkClient, target),
+    ).rejects.toThrow("No loaded Lee Appraiser property found");
+  });
+
+  it("defers completed-state only for on-demand harvests where the appraiser property is missing", () => {
+    // Deferred: on-demand harvest linked no property yet -> do NOT mark
+    // completed, so a future run links the permits once the property loads.
+    expect(
+      _private.shouldWritePropertyFirstCompletedState({
+        onDemand: true,
+        propertyMissing: true,
+      }),
+    ).toBe(false);
+
+    // On-demand but property present -> completed state written as before.
+    expect(
+      _private.shouldWritePropertyFirstCompletedState({
+        onDemand: true,
+        propertyMissing: false,
+      }),
+    ).toBe(true);
+
+    // Non-onDemand (bulk) always writes completed state, even in the (unreached)
+    // propertyMissing case -> bulk behavior is unchanged.
+    expect(
+      _private.shouldWritePropertyFirstCompletedState({
+        onDemand: false,
+        propertyMissing: true,
+      }),
+    ).toBe(true);
+    expect(
+      _private.shouldWritePropertyFirstCompletedState({
+        onDemand: false,
+        propertyMissing: false,
+      }),
+    ).toBe(true);
   });
 
   it("retries transient async operations before surfacing failure", async () => {
