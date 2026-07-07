@@ -457,11 +457,16 @@ describe("permit harvest worker message helpers", () => {
       };
     };
 
-    // On-demand: returns zero counters and never runs the match/update queries.
+    // On-demand: returns zero counters plus propertyMissing:true (so the caller
+    // can defer writing completed.json) and never runs the match/update queries.
     const onDemandClient = buildClient();
     await expect(
       _private.linkPropertyFirstPermits(onDemandClient, target, true),
-    ).resolves.toEqual({ matchedPermitRows: 0, linkedPermitRows: 0 });
+    ).resolves.toEqual({
+      matchedPermitRows: 0,
+      linkedPermitRows: 0,
+      propertyMissing: true,
+    });
     expect(onDemandClient.queries).toHaveLength(1);
     expect(onDemandClient.queries[0].sql).toContain("from properties");
 
@@ -473,6 +478,40 @@ describe("permit harvest worker message helpers", () => {
     await expect(
       _private.linkPropertyFirstPermits(bulkClient, target),
     ).rejects.toThrow("No loaded Lee Appraiser property found");
+  });
+
+  it("defers completed-state only for on-demand harvests where the appraiser property is missing", () => {
+    // Deferred: on-demand harvest linked no property yet -> do NOT mark
+    // completed, so a future run links the permits once the property loads.
+    expect(
+      _private.shouldWritePropertyFirstCompletedState({
+        onDemand: true,
+        propertyMissing: true,
+      }),
+    ).toBe(false);
+
+    // On-demand but property present -> completed state written as before.
+    expect(
+      _private.shouldWritePropertyFirstCompletedState({
+        onDemand: true,
+        propertyMissing: false,
+      }),
+    ).toBe(true);
+
+    // Non-onDemand (bulk) always writes completed state, even in the (unreached)
+    // propertyMissing case -> bulk behavior is unchanged.
+    expect(
+      _private.shouldWritePropertyFirstCompletedState({
+        onDemand: false,
+        propertyMissing: true,
+      }),
+    ).toBe(true);
+    expect(
+      _private.shouldWritePropertyFirstCompletedState({
+        onDemand: false,
+        propertyMissing: false,
+      }),
+    ).toBe(true);
   });
 
   it("retries transient async operations before surfacing failure", async () => {
