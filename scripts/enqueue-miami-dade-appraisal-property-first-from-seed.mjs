@@ -122,7 +122,7 @@ async function readOnlyRows(filePath) {
 
 const DEFAULT_STACK_NAME = "elephant-oracle-node";
 const DEFAULT_PERMIT_STACK_NAME = "elephant-permit-harvest";
-const DEFAULT_SOURCE_CSV_S3_URI = "s3://counties-seeds/palm_beach.csv";
+const DEFAULT_SOURCE_CSV_S3_URI = "s3://counties-seeds/miami-dade.csv";
 const DEFAULT_ENV_FILE = "../elephant-query-db/.env.local";
 const DEFAULT_JOB_ID = `${COUNTY.slug}-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}`;
 
@@ -522,22 +522,21 @@ async function readExistingNeonIdentifiers(cli) {
 /**
  * Return whether a source seed row is already present in Neon.
  *
+ * Miami-Dade dedup is BY FOLIO (`request_identifier`) only. The normalized
+ * `parcel_identifier` is NOT a cardinality key — distinct folios can share or
+ * collide on it — so a parcel-only fallback would silently skip valid folios in
+ * a catch-up run. See `docs/miami-dade-county-findings.md` and the folio warning
+ * in the `query-db-loading-matching` skill.
+ *
  * @param {SeedRow} row - Parsed source seed row.
- * @param {ExistingNeonIdentifiers} existing - Existing Palm Beach Appraiser identifiers from Neon.
+ * @param {ExistingNeonIdentifiers} existing - Existing Miami-Dade Appraiser identifiers from Neon.
  * @returns {boolean} True when the row should be skipped as already loaded.
  */
 function isExistingNeonRow(row, existing) {
   const requestIdentifier = readOptionalString(row.source_identifier);
-  if (
+  return (
     requestIdentifier !== undefined &&
     existing.requestIdentifiers.has(requestIdentifier)
-  ) {
-    return true;
-  }
-  const parcelIdentifier = normalizeParcelIdentifier(row.parcel_id);
-  return (
-    parcelIdentifier !== undefined &&
-    existing.normalizedParcelIdentifiers.has(parcelIdentifier)
   );
 }
 
