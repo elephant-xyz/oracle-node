@@ -1,0 +1,106 @@
+# Miami-Dade County, FL — public data source registry
+#
+# Consolidated source metadata for Oracle ingestion categories.
+# Infra identifiers (AWS account, bucket ARNs) are intentionally NOT recorded here.
+# No secrets / connection strings in this file.
+
+county:
+  name: Miami-Dade County
+  state: FL
+  fips: "12086"
+  slug: miami-dade # MCP + export --county + donphan county arg (hyphen)
+  source_system: miami_dade_appraiser # Neon properties.source_system (underscore)
+  seed:
+    location: s3://counties-seeds/miami-dade.csv
+    parcels: 933532 # seed roll; reconcile distinct folio at load
+  parcel_identifier:
+    name: folio
+    description: >-
+      MDCPA folio (e.g. 0101000000020). Cardinality key is request_identifier (folio),
+      NOT digits-only normalized parcel_identifier.
+    example: "0101000000020"
+  neon_reconcile:
+    distinct_folios: 933087
+    as_of: "2026-07-07"
+
+sources:
+  - key: appraisal
+    category: property
+    name: Miami-Dade County Property Appraiser (MDCPA)
+    base_urls:
+      - https://apps.miamidadepa.gov/PApublicServiceProxy/PaServicesProxy.ashx
+      - https://www.miamidade.gov/Apps/PA/PropertySearch/#/
+    access_pattern:
+      mode: plain-http-api # primary; browser flow optional for legacy HTML
+      tooling: elephant-cli prepare + Counties-trasform-scripts/miami dade/scripts/
+      auth: public
+    data:
+      refresh:
+        method: seed-driven property-first appraisal prepare → transform → S3 archive
+        cadence: on-demand / full county via seed feeder
+    implemented_by:
+      transform: Counties-trasform-scripts/miami dade/scripts/data_extractor.js
+      enqueue_script: scripts/enqueue-miami-dade-appraisal-property-first-from-seed.mjs
+      feeder_script: scripts/send-miami-dade-seed-feeder.mjs
+      prepare_queue: elephant-oracle-node-prepare-queue-miami-dade
+      skill: county-appraisal-onboarding
+
+  - key: permits
+    category: permit
+    name: Municipal permit portals (fragmented)
+    access_pattern:
+      mode: on-demand # NOT county-wide bulk like Lee Accela
+      note: >-
+        ~30+ municipalities; catalog via county-permit-adapter after discovery.
+        Property-first can skip permits (appraisal-only) via __NONE__ eligibility.
+    status: discovery-pending
+
+  - key: sunbiz
+    category: business-registration
+    name: Florida Sunbiz corporate registrations (statewide)
+    base_urls:
+      - https://dos.fl.gov/sunbiz/other-services/data-downloads/
+    access_pattern:
+      mode: batch-bulk-download
+      tooling: cordata.zip → ZIP-prefix extract → lexicon transform
+      match: Miami-Dade ZIP prefixes in scripts/miami-dade-county-zips.json
+    implemented_by:
+      extract_script: scripts/enqueue-miami-dade-sunbiz-extract-all.mjs
+      transform_script: scripts/transform-miami-dade-sunbiz-per-cordata.mjs
+      manifest_script: scripts/build-miami-dade-sunbiz-manifest.mjs
+      skill: sunbiz-corporate-ingest
+      runbook: docs/sunbiz-bulk-download-runbook.md
+
+  - key: bbb
+    category: business-reputation
+    name: Better Business Bureau (national)
+    base_urls:
+      - https://www.bbb.org/us/category/data
+    access_pattern:
+      mode: browser-scrape
+      tooling: scripts/harvest-bbb-category.mjs
+    implemented_by:
+      skill: bbb-harvest
+
+publish:
+  query_table:
+    ipns_label: oracle-query-table-miami-dade
+    ipns_key: k51qzi5uqu5dgqktver4htb060qxfnaytjhybcxlfkp22vtgygbx2lb4t1h1xs
+    gateway: https://ipfs.filebase.io/ipns/k51qzi5uqu5dgqktver4htb060qxfnaytjhybcxlfkp22vtgygbx2lb4t1h1xs
+    rows_with_cid: 933087
+  open_data:
+    ipns_label: oracle-open-data-miami-dade
+    ipns_key: k51qzi5uqu5dk9i59xxm579a5bziprxpygv8wyi01n2ivd5kj9h5u90g1tzn1d
+    bucket: elephant-oracle-open-data-miami-dade # Filebase, not AWS S3
+
+mcp:
+  bundled_maps:
+    PROPERTY_QUERY_TABLE_MAP_key: miami-dade
+    ORACLE_OPEN_DATA_IPNS_MAP_key: miami-dade
+  note: >-
+    Cursor/donphan uses bundled soofi-xyz plugin mcp.json (stdio), not Vercel env alone.
+
+notes:
+  - docs/miami-dade-county-findings.md — human-readable index
+  - Query-table livable_floor_area 0% until loader/transform maps building sqft
+  - NEO requires property_cid in query-table export (--manifest from consolidation)
