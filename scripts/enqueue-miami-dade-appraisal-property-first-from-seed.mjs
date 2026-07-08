@@ -68,7 +68,7 @@ async function readOnlyRows(filePath) {
 
 /**
  * @typedef {object} CliOptions
- * @property {string} sourceCsvS3Uri - Source Palm Beach county seed CSV S3 URI.
+ * @property {string} sourceCsvS3Uri - Source Miami-Dade county seed CSV S3 URI.
  * @property {string} stackName - Oracle-node CloudFormation stack name.
  * @property {string} permitStackName - Permit-harvest CloudFormation stack name.
  * @property {string | undefined} workflowQueueUrl - Explicit workflow starter queue URL.
@@ -83,7 +83,7 @@ async function readOnlyRows(filePath) {
  * @property {number} sendDelayMs - Optional delay between SQS sends.
  * @property {number} concurrency - Number of seed uploads/workflow SQS sends to run concurrently.
  * @property {string} envFile - Local env file used when skipping properties already in Neon.
- * @property {boolean} skipExistingNeon - Skip rows whose Palm Beach Appraiser property is already present in Neon.
+ * @property {boolean} skipExistingNeon - Skip rows whose Miami-Dade Appraiser property is already present in Neon.
  * @property {boolean} dryRun - Print candidate workflow messages without uploading seeds or sending SQS messages.
  * @property {string | undefined} onlyRowsFile - Optional path to a newline-delimited list of 1-based source data-row numbers; only those rows are enqueued. Preserves the original sourceRowNumber so re-prepared outputs land in the existing row-* folders.
  */
@@ -110,8 +110,8 @@ async function readOnlyRows(filePath) {
 
 /**
  * @typedef {object} ExistingNeonIdentifiers
- * @property {Set<string>} requestIdentifiers - Existing Palm Beach Appraiser request/Folio identifiers.
- * @property {Set<string>} normalizedParcelIdentifiers - Existing normalized Palm Beach Appraiser parcel identifiers.
+ * @property {Set<string>} requestIdentifiers - Existing Miami-Dade Appraiser request/Folio identifiers.
+ * @property {Set<string>} normalizedParcelIdentifiers - Existing normalized Miami-Dade Appraiser parcel identifiers.
  */
 
 /**
@@ -139,13 +139,13 @@ function showUsage() {
   console.log(`
 Usage:
   AWS_PROFILE=elephant-oracle-node AWS_REGION=us-east-1 \
-    node scripts/enqueue-palm-beach-appraisal-property-first-from-seed.mjs \
-      --source-csv-s3-uri s3://counties-seeds/palm_beach.csv \
+    node scripts/enqueue-miami-dade-appraisal-property-first-from-seed.mjs \
+      --source-csv-s3-uri s3://counties-seeds/miami-dade.csv \
       --job-id ${COUNTY.slug}-YYYYMMDD \
       --limit 0 --send-delay-ms 50
 
 Options:
-  --source-csv-s3-uri <s3uri>       Full Palm Beach seed CSV. Default: ${DEFAULT_SOURCE_CSV_S3_URI}
+  --source-csv-s3-uri <s3uri>       Full Miami-Dade seed CSV. Default: ${DEFAULT_SOURCE_CSV_S3_URI}
   --stack <name>                    Oracle-node stack. Default: ${DEFAULT_STACK_NAME}
   --permit-stack <name>             Permit-harvest stack. Default: ${DEFAULT_PERMIT_STACK_NAME}
   --workflow-queue-url <url>        WorkflowQueueUrl override.
@@ -400,13 +400,13 @@ async function loadEnvFile(envFile) {
 }
 
 /**
- * Normalize a Palm Beach parcel identifier (PCN) for duplicate checks and S3 key
- * names.
+ * Normalize a Miami-Dade parcel identifier (folio) for S3 key names.
  *
- * Palm Beach PCNs are 17-digit numeric strings that may arrive with separators
+ * Miami-Dade folios are numeric strings that may arrive with separators
  * (dots/dashes) or leading/trailing whitespace. Only non-digit characters are
- * stripped, so distinct PCNs can never be collapsed together; separator and
- * whitespace differences normalize away while every digit is preserved.
+ * stripped, so distinct folios can never be collapsed together; separator and
+ * whitespace differences normalize away while every digit is preserved. NOTE:
+ * dedup is by folio (`request_identifier`), not this normalized parcel value.
  *
  * @param {unknown} value - Raw parcel identifier.
  * @returns {string | undefined} Digits-only parcel identifier.
@@ -465,7 +465,7 @@ function normalizeCsvHeader(header) {
 }
 
 /**
- * Read existing Palm Beach Appraiser identifiers from Neon so the S3 seed file
+ * Read existing Miami-Dade Appraiser identifiers from Neon so the S3 seed file
  * can be used to queue only new properties instead of replaying already-loaded
  * rows.
  *
@@ -725,7 +725,7 @@ async function waitForAllPendingUploads(state) {
  * Stream the source seed CSV, generate one-property seeds, and enqueue workflow messages.
  *
  * @param {ResolvedOptions} options - Fully resolved options.
- * @param {ExistingNeonIdentifiers} existing - Existing Palm Beach Appraiser identifiers used for duplicate skips.
+ * @param {ExistingNeonIdentifiers} existing - Existing Miami-Dade Appraiser identifiers used for duplicate skips.
  * @param {Set<number> | undefined} onlyRows - When set, only these 1-based source data-row numbers are enqueued.
  * @returns {Promise<void>} Resolves when the requested rows have been processed.
  */
