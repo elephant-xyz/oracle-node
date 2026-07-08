@@ -219,9 +219,12 @@ async function uploadLocalOutput(s3Client, localOutputDir, cordataIndex) {
   const datasetDirs = await readdir(localOutputDir, { withFileTypes: true });
   for (const datasetDir of datasetDirs) {
     if (!datasetDir.isDirectory()) continue;
-    const classDirs = await readdir(path.join(localOutputDir, datasetDir.name), {
-      withFileTypes: true,
-    });
+    const classDirs = await readdir(
+      path.join(localOutputDir, datasetDir.name),
+      {
+        withFileTypes: true,
+      },
+    );
     for (const classDir of classDirs) {
       if (!classDir.isDirectory()) continue;
       const dataset = `${datasetDir.name}/${classDir.name}`;
@@ -306,7 +309,11 @@ async function transformCordataFile(s3Client, index, workRoot, uploadOnly) {
     }
   }
 
-  const uploadedParts = await uploadLocalOutput(s3Client, localOutputDir, index);
+  const uploadedParts = await uploadLocalOutput(
+    s3Client,
+    localOutputDir,
+    index,
+  );
   return {
     cordataIndex: index,
     summary,
@@ -330,7 +337,11 @@ async function main() {
 
   /** @type {Array<Record<string, unknown>>} */
   const perFileSummaries = [];
-  for (let index = runOptions.startIndex; index <= runOptions.endIndex; index += 1) {
+  for (
+    let index = runOptions.startIndex;
+    index <= runOptions.endIndex;
+    index += 1
+  ) {
     console.log(
       JSON.stringify({
         level: "info",
@@ -364,21 +375,18 @@ async function main() {
       sourceManifestS3Uri: `s3://${BUCKET}/permit-harvest/${JOB_ID}/sunbiz/corporate-by-zip/manifest.json`,
       transformedAt: new Date().toISOString(),
       perFileSummaries,
-      counters: perFileSummaries.reduce(
-        (accumulator, entry) => {
-          /** @type {{ summary?: { counters?: Record<string, number> } }} */
-          const wrapped = entry;
-          const counters = wrapped.summary?.counters;
-          if (!counters || typeof counters !== "object") return accumulator;
-          for (const [key, value] of Object.entries(counters)) {
-            if (typeof value === "number") {
-              accumulator[key] = (accumulator[key] ?? 0) + value;
-            }
+      counters: perFileSummaries.reduce((accumulator, entry) => {
+        /** @type {{ summary?: { counters?: Record<string, number> } }} */
+        const wrapped = entry;
+        const counters = wrapped.summary?.counters;
+        if (!counters || typeof counters !== "object") return accumulator;
+        for (const [key, value] of Object.entries(counters)) {
+          if (typeof value === "number") {
+            accumulator[key] = (accumulator[key] ?? 0) + value;
           }
-          return accumulator;
-        },
-        /** @type {Record<string, number>} */ ({}),
-      ),
+        }
+        return accumulator;
+      }, /** @type {Record<string, number>} */ ({})),
     };
 
     const summaryKey = `${OUTPUT_S3_PREFIX}/summary.json`;

@@ -54,10 +54,10 @@ after cataloguing portals. Property-first pipeline can run **appraisal-only** vi
 
 ## 5. Index + publish (query table + open data)
 
-| Artifact | IPNS label | Notes |
-|----------|------------|-------|
-| Query table Parquet | `oracle-query-table-miami-dade` | donphan SQL via `queryProperties` |
-| Open-data consolidation | `oracle-open-data-miami-dade` | `getOracleProperty` / NEO shards |
+| Artifact                | IPNS label                      | Notes                             |
+| ----------------------- | ------------------------------- | --------------------------------- |
+| Query table Parquet     | `oracle-query-table-miami-dade` | donphan SQL via `queryProperties` |
+| Open-data consolidation | `oracle-open-data-miami-dade`   | `getOracleProperty` / NEO shards  |
 
 **County slug:** always **`miami-dade`** (hyphen) in MCP maps, export `--county`, and donphan
 `county` arg. DB `source_system` is `miami_dade_appraiser` (underscore — automatic from
@@ -74,12 +74,12 @@ after cataloguing portals. Property-first pipeline can run **appraisal-only** vi
 
 **Column coverage gaps (query table, 2026-07-07):**
 
-| Column | Coverage | Notes |
-|--------|----------|-------|
-| `lot_area_sqft` | ~61% | Partial |
-| `livable_floor_area` | **0%** | Loader/transform gap — building sqft not mapped to export columns |
-| `exterior_wall_material` | sparse | Do not assume material filters work |
-| `hoa_flag` | NULL everywhere | Reserved placeholder (all counties) |
+| Column                   | Coverage        | Notes                                                             |
+| ------------------------ | --------------- | ----------------------------------------------------------------- |
+| `lot_area_sqft`          | ~61%            | Partial                                                           |
+| `livable_floor_area`     | **0%**          | Loader/transform gap — building sqft not mapped to export columns |
+| `exterior_wall_material` | sparse          | Do not assume material filters work                               |
+| `hoa_flag`               | NULL everywhere | Reserved placeholder (all counties)                               |
 
 Report these honestly in donphan answers; do not invent acreage/material coverage.
 
