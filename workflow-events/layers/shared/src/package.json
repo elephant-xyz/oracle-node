@@ -12,6 +12,8 @@
     "./keys": "./keys.mjs",
     "./keys.js": "./keys.mjs",
     "./repository": "./repository.mjs",
-    "./repository.js": "./repository.mjs"
+    "./repository.js": "./repository.mjs",
+    "./workflow-state-client": "./workflow-state-client.mjs",
+    "./workflow-state-client.js": "./workflow-state-client.mjs"
   }
 }
