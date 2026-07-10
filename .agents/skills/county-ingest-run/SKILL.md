@@ -175,7 +175,19 @@ Load results to Neon via the `query-db-loading-matching` skill.
 4. Check after every step: Lambda `Errors`/`Throttles` = 0, DLQ depth = 0, Neon insert
    rate moving, app-level prepare failure rate not climbing.
 
-## 4. Failure handling
+## 5. Incremental coverage publish
+
+For streamed county runs, the query DB publish path must advance both public IPNS pointers after
+each load/index refresh window:
+
+- `oracle-query-table-<county>` for the partial query-table Parquet.
+- `oracle-dataset-coverage-<county>` for `dataset-coverage.json`, consumed by MCP
+  `getOracleDatasetInfo` and Miranda's website.
+
+The coverage JSON is a public Filebase/IPFS contract only; do not point donphan, Miranda, or end
+users at an AWS S3 URL for coverage. S3 remains internal to the ingestion/load orchestration.
+
+## 6. Failure handling
 
 - DLQ messages: inspect, fix root cause, redrive (`scripts/auto-fix-queue.sh`,
   `scripts/resolve-error.sh`; error records in DynamoDB clear via `ElephantErrorResolved`).
@@ -186,7 +198,7 @@ Load results to Neon via the `query-db-loading-matching` skill.
 - Geo-block/outage: prepare failures spike — pause (disable mapping), restore network/VPN
   or proxies, re-enable; SQS redelivery resumes work.
 
-## 6. Wrap-up
+## 7. Wrap-up
 
 - Feeder reports `sourceExhausted`; queues drain to 0; reconcile counts: seed rows vs
   archived artifacts vs Neon properties vs permit-eligible vs permits loaded. Record final
