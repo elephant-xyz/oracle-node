@@ -187,6 +187,27 @@ each load/index refresh window:
 The coverage JSON is a public Filebase/IPFS contract only; do not point donphan, Miranda, or end
 users at an AWS S3 URL for coverage. S3 remains internal to the ingestion/load orchestration.
 
+After both public pointers are verified, upsert the county in the repository-owned canonical
+catalog and include that catalog change in the county publication PR:
+
+```bash
+npm run catalog:update -- \
+  --county-key "<lower-kebab-county>" \
+  --county-name "<Display Name>" \
+  --state-code "<STATE>" \
+  --county-fips "<five-digit FIPS>" \
+  --query-table-url "<public IPNS URL>" \
+  --dataset-coverage-url "<public IPNS URL>" \
+  --updated-at "<latest dataset timestamp>"
+```
+
+The updater reads both required public artifacts back and rejects a coverage/county mismatch.
+Use `--permit-query-table-url` when a separate permit table is published. The tracked
+`catalog/published-counties.json` file is the authoritative enumeration contract consumed by
+Elephant MCP `listPublishedCounties` and scheduled consumers such as Watchog. Never add a county
+before its public URLs have been read back and validated. A county publication is incomplete
+until the catalog PR is merged.
+
 ## 6. Failure handling
 
 - DLQ messages: inspect, fix root cause, redrive (`scripts/auto-fix-queue.sh`,
