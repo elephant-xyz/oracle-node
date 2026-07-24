@@ -74,6 +74,32 @@ describe("published county catalog", () => {
     ]);
   });
 
+  it("rejects a FIPS code already assigned to another county", () => {
+    expect(() =>
+      upsertCounty(
+        validateCatalog(baseCatalog),
+        {
+          ...baseCatalog.counties[0],
+          countyKey: "orange",
+        },
+        "2026-07-24T10:01:00.000Z",
+      ),
+    ).toThrow("countyFips '12071' is already assigned to 'lee'");
+  });
+
+  it("rejects changing the FIPS identity of an existing county", () => {
+    expect(() =>
+      upsertCounty(
+        validateCatalog(baseCatalog),
+        {
+          ...baseCatalog.counties[0],
+          countyFips: "12095",
+        },
+        "2026-07-24T10:01:00.000Z",
+      ),
+    ).toThrow("countyKey 'lee' is already assigned to FIPS '12071'");
+  });
+
   it("rejects duplicate county keys", () => {
     expect(() =>
       validateCatalog({

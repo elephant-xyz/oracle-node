@@ -180,10 +180,24 @@ export function validateCatalog(input) {
  * @returns {PublishedCountyCatalog} Updated validated catalog.
  */
 export function upsertCounty(catalog, county, generatedAt) {
+  const keyMatch = catalog.counties.find(
+    (entry) => entry.countyKey === county.countyKey,
+  );
+  if (keyMatch !== undefined && keyMatch.countyFips !== county.countyFips) {
+    throw new Error(
+      `countyKey '${county.countyKey}' is already assigned to FIPS '${keyMatch.countyFips}'`,
+    );
+  }
+  const fipsMatch = catalog.counties.find(
+    (entry) => entry.countyFips === county.countyFips,
+  );
+  if (fipsMatch !== undefined && fipsMatch.countyKey !== county.countyKey) {
+    throw new Error(
+      `countyFips '${county.countyFips}' is already assigned to '${fipsMatch.countyKey}'`,
+    );
+  }
   const counties = catalog.counties.filter(
-    (entry) =>
-      entry.countyKey !== county.countyKey &&
-      entry.countyFips !== county.countyFips,
+    (entry) => entry.countyKey !== county.countyKey,
   );
   counties.push(county);
   return validateCatalog({
