@@ -205,7 +205,11 @@ function parseArgs(argv) {
   for (let index = 0; index < argv.length; index += 2) {
     const flag = argv[index];
     const value = argv[index + 1];
-    if (!flag?.startsWith("--") || value === undefined) {
+    if (
+      !flag?.startsWith("--") ||
+      value === undefined ||
+      value.startsWith("--")
+    ) {
       throw new Error(
         `Expected --flag value pairs; invalid argument '${flag ?? ""}'`,
       );
@@ -273,6 +277,18 @@ export async function verifyPublishedCountyArtifacts(
     throw new Error(
       `dataset coverage county '${coverageCounty}' does not match '${county.countyKey}'`,
     );
+  }
+
+  if (county.permitQueryTableUrl !== null) {
+    const permitResponse = await fetchImpl(county.permitQueryTableUrl, {
+      method: "HEAD",
+      redirect: "follow",
+    });
+    if (!permitResponse.ok) {
+      throw new Error(
+        `permit query table verification failed with HTTP ${permitResponse.status}`,
+      );
+    }
   }
 }
 

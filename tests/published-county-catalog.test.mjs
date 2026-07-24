@@ -36,7 +36,7 @@ describe("published county catalog", () => {
 
     const result = validateCatalog(tracked);
 
-    expect(result.counties).toHaveLength(4);
+    expect(result.counties.length).toBeGreaterThan(0);
     expect(result.counties.map((county) => county.countyKey)).toEqual([
       "lee",
       "miami-dade",
@@ -134,6 +134,28 @@ describe("published county catalog", () => {
       { url: "https://example.com/lee.parquet", method: "HEAD" },
       { url: "https://example.com/lee-coverage.json", method: "GET" },
     ]);
+  });
+
+  it("verifies an optional permit query table", async () => {
+    const requests = [];
+    const fetchImpl = async (url, init) => {
+      requests.push({ url: String(url), method: init?.method ?? "GET" });
+      if (init?.method === "HEAD") {
+        return new Response(null, { status: 200 });
+      }
+      return new Response(JSON.stringify({ county: "Lee" }), { status: 200 });
+    };
+    const county = {
+      ...validateCatalog(baseCatalog).counties[0],
+      permitQueryTableUrl: "https://example.com/lee-permits.parquet",
+    };
+
+    await verifyPublishedCountyArtifacts(county, fetchImpl);
+
+    expect(requests.at(-1)).toEqual({
+      url: "https://example.com/lee-permits.parquet",
+      method: "HEAD",
+    });
   });
 
   it("rejects coverage for a different county", async () => {
