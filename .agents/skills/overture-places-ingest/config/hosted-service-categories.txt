@@ -1,0 +1,32 @@
+# Hosted-service categories — categories that describe a service offered INSIDE another
+# business rather than a business occupying a location of its own.
+#
+# Sets `business_locations.is_hosted_service = true` and records
+# `hosted_service_rule = 'hosted-service-categories@<taxonomy release>'`.
+# Advisory only: places are never excluded from ingestion on the strength of this list, and
+# consumers may ignore it. See SKILL.md, "Hosted services".
+#
+# ⚠️ THIS LIST IS A SEED, NOT THE LIST.
+#
+# The scoping research counted roughly 250 of Lee County's 1,244 categories as hosted
+# services, but it counted them against `categories.primary` — the vocabulary Overture
+# deprecates and removes in the September 2026 release. The five entries below are the ones
+# named explicitly in that research. The remaining ~245 were never enumerated, and the
+# vocabulary they were enumerated in is going away.
+#
+# Rebuild against `taxonomy.hierarchy` before treating this file as complete:
+#   1. Extract one county at the target release.
+#   2. `SELECT DISTINCT taxonomy_primary, taxonomy_hierarchy ... ORDER BY count(*) DESC`.
+#   3. Review the head of that list by hand and record the judgement per entry.
+#   4. Re-review whenever the taxonomy moves (quarterly: March, June, September, December).
+#
+# Format: one taxonomy path per line, `/`-delimited, L0 first. `#` starts a comment.
+# Matching is on the full path so a rename at one level does not silently widen the rule.
+# Paths below are the OLD flat `categories.primary` labels and DO NOT YET have their new
+# hierarchy paths resolved — that is step 2 above.
+
+atms
+rental_kiosks
+propane_supplier
+money_transfer_services
+trusts
