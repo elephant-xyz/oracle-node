@@ -1,7 +1,6 @@
 -- Boundary-clipped Overture places extraction for one county.
 --
--- Keep in sync with scripts/extract-county-places.sql and
--- scripts/overture-places-lib.mjs `buildExtractCopySql`.
+-- Keep in sync with scripts/overture-places-lib.mjs `buildExtractCopySql`.
 -- Field names and the release path were read from Overture's published schema
 -- on 2026-08-12. Key on taxonomy.hierarchy, not categories.primary.
 --

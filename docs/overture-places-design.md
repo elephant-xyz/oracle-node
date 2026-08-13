@@ -28,6 +28,12 @@ from a public S3 bucket. It goes in the oracle pipeline rather than being captur
 Watchog, so it lands in Neon and publishes to IPFS like every other source and any consumer can
 use it.
 
+Watchog is the first consumer but not the intended only one, so nothing here is shaped to its
+fact classes. What it needs from this source is a category and a point per business, at a
+density that supports counting co-occurrences within a few hundred metres. Its own writeup of
+why the existing sources could not supply that is in `docs/business-poi-data-brief.md` in the
+`agent-watchog-intelligence-layer` repository.
+
 ## Decision 1 — a new `business_location` concept, not `companies` and not `nearby_location`
 
 **Recommendation:** new tables (`business_locations` and children) in the query DB, a documented
@@ -163,8 +169,9 @@ to public IPFS, that is a shipping obligation, not a README line. Three location
    terms.
 
 The obligation is also made enforceable rather than trusted: `business_location_sources` stores
-every `sources[]` entry, and the run asserts `DISTINCT dataset` is a subset of the nine approved
-providers. If `osm` or an unknown provider ever appears, the publish stops — Overture's bridge
+every `sources[]` entry, and the run asserts `DISTINCT dataset` is a subset of the approved
+providers (attribution-page nine plus `Overture` / `Overture-signals` by human decision
+2026-08-12). If `osm` or any other unknown provider ever appears, the publish stops — Overture's bridge
 files already list OSM as a bridged source for the places theme even though the attribution page
 does not, so this is a live risk rather than a hypothetical one.
 
@@ -210,12 +217,26 @@ it has to be upstreamed with a lock entry or the next skills sync will not know 
 
 ## Open questions for the team
 
-- County order. Coverage exists for Lee, Orange, Miami-Dade, Palm Beach and Santa Clara; only
-  Lee has a boundary-clipped count.
-- Does the human-run PII gate apply? Overture states places excludes records containing PII, but
-  the schema carries `emails` and `phones`, which for a sole trader may be personal. Assumed yes
-  until decided.
-- Should `basic_category` be mapped onto an Elephant vocabulary, or passed through as Overture's
-  labels?
-- Is a places record worth publishing for counties with no parcel boundaries, given the
-  parcel link stays empty?
+**Answered for this pass (do not reopen county order):**
+
+- **County order:** Lee County only (`12071`). Orange, Miami-Dade, Palm Beach, and Santa Clara
+  are not ingested here. Reconcile the Lee clip against the design-note baseline of **40,190**
+  for release `2026-07-22.0`.
+- **Extraction location (assumed, not a permanent decision):** laptop for the first county. A
+  full-county DuckDB read is minutes, not hours, so a laptop is defensible. Load and publish
+  still inherit the in-region Fargate warning from `county-open-data-publish`.
+- **PII gate:** approved 2026-08-12 to publish the Lee artifact as-is, including Overture
+  business `emails` and `phones` as public business-contact fields.
+- **`basic_category`:** pass Overture labels through; do not invent an Elephant vocabulary
+  mapping.
+- **Counties with no parcel boundaries:** N/A for Lee (Lee has parcel boundaries).
+  `business_location_parcel_links` is a later step, not ingest — schema stub only.
+
+**Still open (humans):**
+
+- Permanent extraction location after the Lee pilot (laptop vs in-region Fargate).
+- Whether the Lee PII approval should extend to later county publications.
+- Whether anything downstream later needs `basic_category` mapped onto an Elephant vocabulary.
+- Whether a places record is worth publishing for counties with no parcel boundaries, given the
+  parcel link stays empty.
+- Lexicon PR for `business_location` (not opened in this pass; Sunbiz precedent dropped).

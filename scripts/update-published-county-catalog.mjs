@@ -19,6 +19,7 @@ const ISO_TIMESTAMP_PATTERN =
  * @property {string} queryTableUrl Public query-table Parquet URL.
  * @property {string} datasetCoverageUrl Public dataset coverage URL.
  * @property {string | null} permitQueryTableUrl Public permit query-table URL.
+ * @property {string | null} placesTableUrl Public Overture places-table URL.
  * @property {string} updatedAt ISO-8601 timestamp of the latest published data change.
  */
 
@@ -143,6 +144,13 @@ export function validateCatalog(input) {
       `counties[${index}].permitQueryTableUrl`,
       true,
     );
+    const placesTableUrl =
+      row.placesTableUrl === undefined ? null : row.placesTableUrl;
+    assertUrl(
+      placesTableUrl,
+      `counties[${index}].placesTableUrl`,
+      true,
+    );
     if (
       typeof row.updatedAt !== "string" ||
       !ISO_TIMESTAMP_PATTERN.test(row.updatedAt)
@@ -160,6 +168,7 @@ export function validateCatalog(input) {
       queryTableUrl: row.queryTableUrl,
       datasetCoverageUrl: row.datasetCoverageUrl,
       permitQueryTableUrl: row.permitQueryTableUrl,
+      placesTableUrl,
       updatedAt: row.updatedAt,
     });
   });
@@ -304,6 +313,18 @@ export async function verifyPublishedCountyArtifacts(
       );
     }
   }
+
+  if (county.placesTableUrl !== null) {
+    const placesResponse = await fetchImpl(county.placesTableUrl, {
+      method: "HEAD",
+      redirect: "follow",
+    });
+    if (!placesResponse.ok) {
+      throw new Error(
+        `places table verification failed with HTTP ${placesResponse.status}`,
+      );
+    }
+  }
 }
 
 /**
@@ -341,6 +362,7 @@ export async function main(argv) {
     queryTableUrl: args["query-table-url"],
     datasetCoverageUrl: args["dataset-coverage-url"],
     permitQueryTableUrl: optionalUrl(args["permit-query-table-url"]),
+    placesTableUrl: optionalUrl(args["places-table-url"]),
     updatedAt: args["updated-at"],
   });
   validateCatalog({

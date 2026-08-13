@@ -19,11 +19,11 @@ Design decisions and their rationale — why a new `business_location` concept r
 attribution obligation — are in `docs/overture-places-design.md`. **Read that first**; this
 skill is the runbook, that doc is the reasoning.
 
-> **STATUS: SPEC, NOT YET IMPLEMENTED.** No county has been ingested. Commands below name
-> scripts that do not exist yet; treat them as the interface to build. Everything marked
-> **VERIFIED** was read from Overture's published schema/docs or from this repo on
-> 2026-08-12. Everything marked **UNVERIFIED** has not been executed and must be confirmed
-> by the implementer.
+> **STATUS: LEE PILOT PUBLISHED.** Extract/export/validate/catalog/query-db load scripts exist.
+> Lee `2026-07-22.0` clipped to **40,191** (baseline 40,190). Licence gate: `osm` absent;
+> `Overture` / `Overture-signals` allowed by human decision 2026-08-12. PII gate **2026-08-12:
+> publish as-is**, including business `emails` and `phones`. Lee places Filebase/IPNS publish
+> completed. Parcel linking is not run.
 
 ## Source facts (verified 2026-08-12)
 
@@ -118,9 +118,11 @@ SELECT DISTINCT s.dataset FROM business_location_sources s WHERE ...
 ```
 
 must be a subset of `meta, microsoft, foursquare, pinmeto, krick, rendersEO, dac, brightquery,
-alltheplaces` (**VERIFIED** against the Overture attribution page 2026-08-12). **If `osm` — or
-any unknown dataset — appears, stop and do not publish.** A new provider may carry a different
-licence and the published NOTICE would be wrong.
+alltheplaces, Overture, Overture-signals`. The first nine were **VERIFIED** against the
+Overture attribution page 2026-08-12. `Overture` and `Overture-signals` are Overture's own
+lineage, **allowed by human decision 2026-08-12** — not OSM and not an unknown third-party
+licence. **If `osm` — or any other unknown dataset — appears, stop and do not publish.** A new
+provider may carry a different licence and the published NOTICE would be wrong.
 
 ## 3. Load into Neon
 
@@ -367,16 +369,15 @@ a separate tracked PR.
 
 ## Open questions
 
-- Which counties get places, and in what order? Coverage exists for Lee, Orange, Miami-Dade,
-  Palm Beach and Santa Clara, but only Lee has a boundary-clipped count.
+- Which county follows Lee? Coverage exists for Orange, Miami-Dade, Palm Beach and Santa Clara,
+  but none has a boundary-clipped count.
 - Where does the extraction run? A full-county DuckDB read is minutes, not hours, so a laptop
   is defensible for the first county — but the load and publish inherit the
   `EADDRNOTAVAIL`/cross-Atlantic warnings in `county-open-data-publish` and should run
   in-region on the `open-data-publish` Fargate cluster.
-- Is the places table PII-bearing for the purposes of the human-run publish gate? Overture
-  states it excludes places containing PII, but the records carry `emails` and `phones` which
-  for a sole trader may be personal. **Assume the human gate applies until someone decides
-  otherwise.**
+- Should Lee's 2026-08-12 PII approval extend to later county publications? Lee was approved
+  to publish as-is, including Overture business `emails` and `phones` as public
+  business-contact fields.
 - Does anything downstream need `basic_category` mapped onto Elephant's own vocabulary, or is
   passing Overture's labels through sufficient?
 
