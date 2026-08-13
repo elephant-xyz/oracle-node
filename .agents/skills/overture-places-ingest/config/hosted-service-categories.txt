@@ -1,4 +1,4 @@
-# Hosted-service categories — services offered INSIDE another business rather
+# Hosted-service categories — services offered inside another business rather
 # than a business occupying a location of its own.
 #
 # Sets `business_locations.is_hosted_service = true` and records
@@ -6,7 +6,7 @@
 # Advisory only: places are never excluded from ingestion on the strength of
 # this list, and consumers may ignore it.
 #
-# Format: one taxonomy path per line, `/`-delimited, L0 first.
+# Format: one taxonomy.hierarchy path per line, `/`-delimited, L0 first.
 # Matching is on the FULL path so a rename at one level does not silently widen.
 #
 # Rebuilt from the Lee County extract of Overture 2026-07-22.0 against
@@ -17,9 +17,9 @@
 # plural (`atms`, `rental_kiosks`, `money_transfer_services`); the July 2026
 # taxonomy uses singular leaves (`atm`, `rental_kiosk`, `money_transfer_service`).
 # Do not silently expand to ~250 hosted-looking categories — those were counted
-# against the deprecated vocab and were never enumerated as paths.
+# against the deprecated vocabulary and were never enumerated as paths.
 #
-# Not committed (reviewed, rejected for this pass):
+# Reviewed and rejected for this pass:
 # - shopping/kiosk — may occupy its own location
 # - .../vending_machine_supplier — B2B supplier, not a hosted machine
 # - .../wills_trusts_and_probate — a law firm, not a hosted trust desk

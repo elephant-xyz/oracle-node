@@ -1,16 +1,16 @@
 -- Boundary-clipped Overture places extraction for one county.
 --
--- Keep in sync with scripts/extract-county-places.sql and
--- scripts/overture-places-lib.mjs `buildExtractCopySql`.
--- Field names and the release path were read from Overture's published schema
--- on 2026-08-12. Key on taxonomy.hierarchy, not categories.primary.
+-- Keep in sync with oracle-node/scripts/overture-places-lib.mjs
+-- `buildExtractCopySql`.
+-- Field names and the release path were verified against Overture's published
+-- schema on 2026-08-12. Key on taxonomy.hierarchy, not categories.primary.
 --
 -- Usage: the Node extract script substitutes quoted literals for $RELEASE,
 -- $COUNTY_FIPS, $BOUNDARY_PATH, $PLACES_GLOB and $OUT.
 --
--- Two-stage filter is deliberate: the bbox predicate prunes parquet row groups
--- cheaply, ST_Within is the actual county test. Never report the bbox count as
--- the county count.
+-- Two-stage filtering is deliberate: the bbox predicate prunes Parquet row
+-- groups cheaply; ST_Within is the actual county test. Never report the bbox
+-- count as the county count.
 
 LOAD spatial;
 LOAD httpfs;
@@ -39,7 +39,7 @@ COPY (
     p.taxonomy.alternates               AS taxonomy_alternate,
     p.basic_category                    AS basic_category,
     -- Deprecated: removed in the September 2026 release. Retained only so the
-    -- scoping numbers stay reconcilable. Drop this column once September lands.
+    -- scoping numbers stay reconcilable. Drop once the source no longer has it.
     p.categories.primary                AS legacy_category_primary,
     p.operating_status                  AS operating_status,
     p.confidence                        AS confidence,
@@ -75,8 +75,8 @@ COPY (
     AND ST_Within(p.geometry, c.geometry)
 ) TO $OUT (FORMAT PARQUET);
 
--- Run-record counters (honest numbers; none of them is an expected_count):
---   SELECT count(*) FROM read_parquet($OUT);                          -- clip count
+-- Run-record counters (honest numbers; none is an expected_count):
+--   SELECT count(*) FROM read_parquet($OUT);                         -- clip count
 --   SELECT count(DISTINCT taxonomy_primary) FROM read_parquet($OUT);
 --   SELECT operating_status, count(*) FROM read_parquet($OUT) GROUP BY 1;
---   SELECT DISTINCT unnest(sources).dataset FROM read_parquet($OUT);  -- licence gate
+--   SELECT DISTINCT unnest(sources).dataset FROM read_parquet($OUT); -- source gate
