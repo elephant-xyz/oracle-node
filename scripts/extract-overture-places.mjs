@@ -106,7 +106,9 @@ export async function runExtract(argv) {
     const duckdbTempDir = path.resolve(options.cacheDir, "duckdb-tmp");
     await mkdir(duckdbTempDir, { recursive: true });
     await db.exec("INSTALL spatial; INSTALL httpfs;");
-    await db.exec(`SET temp_directory = ${duckdbStringLiteral(duckdbTempDir)};`);
+    await db.exec(
+      `SET temp_directory = ${duckdbStringLiteral(duckdbTempDir)};`,
+    );
     const counts = await runCountQuery(db, sqlParams);
     if (options.countsOnly) {
       const summary = buildCountsOnlySummary({
@@ -157,7 +159,10 @@ export async function runExtract(argv) {
             /** @type {JsonObject} */ (row).taxonomy_hierarchy,
           ),
         )
-        .filter(/** @type {(value: string | null) => value is string} */ (value) => value !== null),
+        .filter(
+          /** @type {(value: string | null) => value is string} */ (value) =>
+            value !== null,
+        ),
     );
     const hostedRebuild = rebuildHostedServicePaths({
       observedPaths: taxonomyPaths,
@@ -181,11 +186,18 @@ export async function runExtract(argv) {
       parquetPath: options.keepParquet ? parquetPath : null,
     });
     await writeSummary(options.outputLocation, summary);
-    await writeHostedServiceRebuild(options.outputLocation, release, hostedRebuild);
+    await writeHostedServiceRebuild(
+      options.outputLocation,
+      release,
+      hostedRebuild,
+    );
     if (options.outputLocation.kind === "s3") {
       await uploadLocalTree(localRoot, options.outputLocation);
     }
-    logJson({ event: "overture_places_extract_finished", ...summarizeForLog(summary) });
+    logJson({
+      event: "overture_places_extract_finished",
+      ...summarizeForLog(summary),
+    });
     if (!licenceGate.passed) {
       const error = new Error(licenceGate.message);
       error.name = "LicenceGateError";
@@ -207,9 +219,15 @@ export async function discoverRelease(catalogUrl) {
   const retrievedAt = new Date().toISOString();
   const response = await fetch(catalogUrl);
   if (!response.ok) {
-    throw new Error(`STAC catalog fetch failed: HTTP ${response.status} from ${catalogUrl}`);
+    throw new Error(
+      `STAC catalog fetch failed: HTTP ${response.status} from ${catalogUrl}`,
+    );
   }
-  return parseOvertureStacCatalog(await response.json(), catalogUrl, retrievedAt);
+  return parseOvertureStacCatalog(
+    await response.json(),
+    catalogUrl,
+    retrievedAt,
+  );
 }
 
 /**
@@ -232,7 +250,9 @@ export async function ensureTigerShapefile(cacheDir, tiger) {
   const zipPath = path.join(dir, `${tiger.stem}.zip`);
   const response = await fetch(tiger.zipUrl);
   if (!response.ok) {
-    throw new Error(`TIGER download failed: HTTP ${response.status} from ${tiger.zipUrl}`);
+    throw new Error(
+      `TIGER download failed: HTTP ${response.status} from ${tiger.zipUrl}`,
+    );
   }
   const body = response.body;
   if (body === null) throw new Error("TIGER download returned an empty body");
@@ -320,7 +340,8 @@ async function writeJsonlChunks(params) {
    */
   const flush = async (flushRemaining) => {
     if (buffer.length === 0) return;
-    if (!flushRemaining && buffer.length < params.options.partRecordLimit) return;
+    if (!flushRemaining && buffer.length < params.options.partRecordLimit)
+      return;
     const relativePath = placesPartPath(partNumber);
     const filePath = path.join(params.localRoot, relativePath);
     await mkdir(path.dirname(filePath), { recursive: true });
@@ -465,7 +486,9 @@ function buildExtractSummary(params) {
   );
   const distinctPrimary = uniqueSorted(
     params.rows
-      .map((row) => String(/** @type {JsonObject} */ (row).taxonomy_primary ?? "").trim())
+      .map((row) =>
+        String(/** @type {JsonObject} */ (row).taxonomy_primary ?? "").trim(),
+      )
       .filter((value) => value.length > 0),
   );
   return {
@@ -520,7 +543,11 @@ function buildExtractSummary(params) {
  * @param {import("./overture-places-lib.mjs").HostedServiceRebuild} hostedRebuild Rebuild result.
  * @returns {Promise<void>}
  */
-async function writeHostedServiceRebuild(outputLocation, release, hostedRebuild) {
+async function writeHostedServiceRebuild(
+  outputLocation,
+  release,
+  hostedRebuild,
+) {
   const body = formatHostedServiceCategoryList({
     release,
     resolved: hostedRebuild.resolved,
@@ -528,7 +555,10 @@ async function writeHostedServiceRebuild(outputLocation, release, hostedRebuild)
     reviewCandidates: hostedRebuild.reviewCandidates,
   });
   const localRoot = await localOutputRoot(outputLocation);
-  const filePath = path.join(localRoot, "manifest/hosted-service-categories.rebuilt.txt");
+  const filePath = path.join(
+    localRoot,
+    "manifest/hosted-service-categories.rebuilt.txt",
+  );
   await mkdir(path.dirname(filePath), { recursive: true });
   await writeFile(filePath, body, "utf8");
 }
@@ -635,7 +665,9 @@ function asStringArray(value) {
     return trimmed.length > 0 ? [trimmed] : [];
   }
   if (!Array.isArray(value)) return [];
-  return value.flatMap((item) => (typeof item === "string" && item.trim() ? [item.trim()] : []));
+  return value.flatMap((item) =>
+    typeof item === "string" && item.trim() ? [item.trim()] : [],
+  );
 }
 
 /**
@@ -669,7 +701,8 @@ function summarizeForLog(summary) {
     overtureRelease: summary.overtureRelease,
     clipCount: summary.clipCount,
     bboxCount: summary.bboxCount,
-    licenceGatePassed: /** @type {LicenceGateResult} */ (summary.licenceGate).passed,
+    licenceGatePassed: /** @type {LicenceGateResult} */ (summary.licenceGate)
+      .passed,
     durationMs: summary.durationMs,
   };
 }
@@ -687,7 +720,10 @@ if (
 ) {
   runExtract(process.argv.slice(2)).catch((caught) => {
     const message = caught instanceof Error ? caught.message : String(caught);
-    process.stderr.write(`${JSON.stringify({ event: "overture_places_extract_failed", error: message })}\n`);
-    process.exitCode = caught instanceof Error && caught.name === "LicenceGateError" ? 2 : 1;
+    process.stderr.write(
+      `${JSON.stringify({ event: "overture_places_extract_failed", error: message })}\n`,
+    );
+    process.exitCode =
+      caught instanceof Error && caught.name === "LicenceGateError" ? 2 : 1;
   });
 }

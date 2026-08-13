@@ -1,12 +1,12 @@
 # Overture Places sources
 
-Global business/POI points from the Overture Maps Foundation places theme,
-clipped per county at extraction. This is the licence / publication record —
-the same `license` / `publication: open-with-attribution` / `bulk_terms.decision`
-shape as `docs/rock-island-sources.yaml`.
-
-These terms were read from Overture's published documentation on 2026-08-12 and
-have **not been reviewed by counsel**.
+# Global business/POI points from the Overture Maps Foundation places theme,
+# clipped per county at extraction. This is the licence / publication record —
+# the same `license` / `publication: open-with-attribution` / `bulk_terms.decision`
+# shape as `docs/rock-island-sources.yaml`.
+#
+# These terms were read from Overture's published documentation on 2026-08-12 and
+# have not been reviewed by counsel.
 
 source:
   key: overture-places
@@ -28,13 +28,13 @@ source:
   category_fields:
     current: taxonomy.hierarchy
     also: taxonomy.primary, taxonomy.alternate, basic_category
-    deprecated: categories.primary  # removed September 2026; stored as legacy_category_primary
+    deprecated: categories.primary # removed September 2026; stored as legacy_category_primary
   license: CDLA-Permissive-2.0 and Apache-2.0 per record; no OpenStreetMap lineage in the places theme
   publication: open-with-attribution
   attribution:
     notice_artifact: NOTICE.txt at the root of the published places bucket
     foursquare: "Copyright 2024 Foursquare Labs, Inc. All rights reserved."
-    elephant_change_statement: Elephant's own change date, not Overture's Changed: 2026-03-18
+    elephant_change_statement: "Elephant's own change date, not Overture's Changed: 2026-03-18"
   approved_datasets:
     - meta
     - microsoft
@@ -55,7 +55,7 @@ pilot:
   county_fips: "12071"
   scoping_baseline_release: "2026-07-22.0"
   scoping_baseline_clip_count: 40190
-  extraction_location: laptop  # defensible for the first county; load/publish should run in-region later
+  extraction_location: laptop # defensible for the first county; load/publish should run in-region later
   pii_publish_gate: approved-2026-08-12-publish-as-is-including-emails-and-phones
   basic_category: pass-through-overture-labels
   parcel_links: later-step-not-ingest

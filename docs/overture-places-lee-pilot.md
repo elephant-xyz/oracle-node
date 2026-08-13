@@ -102,21 +102,21 @@ Never commit extracted place data.
 
 Laptop extract of release `2026-07-22.0`, TIGER `tl_2024_us_county` (2024), 2026-08-12.
 
-| Field | Value |
-|---|---|
-| Overture release | `2026-07-22.0` |
-| STAC latest at run time | `2026-07-22.0` |
-| TIGER vintage | `tl_2024_us_county` (year 2024) |
-| bbox count (do not publish) | 40,517 |
-| **clip count** | **40,191** (+1 vs 40,190 baseline) |
-| distinct `taxonomy.primary` | 1,195 |
-| distinct `taxonomy.hierarchy` paths | 1,194 |
-| distinct `sources[].dataset` | AllThePlaces, BrightQuery, DAC, Foursquare, meta, Microsoft, Overture, Overture-signals, PinMeTo, RenderSEO |
-| `operating_status` counts | open 25,049; (blank) 14,698; permanently_closed 444 |
-| `is_hosted_service` flag count | 956 (after restamping JSONL against the rebuilt five-path list) |
-| duration | 363,985 ms (~6.1 min) including the two-stage count + COPY + JSONL |
-| extraction location | laptop |
-| address-vs-geometry county discrepancy | 0 |
+| Field                                  | Value                                                                                                       |
+| -------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| Overture release                       | `2026-07-22.0`                                                                                              |
+| STAC latest at run time                | `2026-07-22.0`                                                                                              |
+| TIGER vintage                          | `tl_2024_us_county` (year 2024)                                                                             |
+| bbox count (do not publish)            | 40,517                                                                                                      |
+| **clip count**                         | **40,191** (+1 vs 40,190 baseline)                                                                          |
+| distinct `taxonomy.primary`            | 1,195                                                                                                       |
+| distinct `taxonomy.hierarchy` paths    | 1,194                                                                                                       |
+| distinct `sources[].dataset`           | AllThePlaces, BrightQuery, DAC, Foursquare, meta, Microsoft, Overture, Overture-signals, PinMeTo, RenderSEO |
+| `operating_status` counts              | open 25,049; (blank) 14,698; permanently_closed 444                                                         |
+| `is_hosted_service` flag count         | 956 (after restamping JSONL against the rebuilt five-path list)                                             |
+| duration                               | 363,985 ms (~6.1 min) including the two-stage count + COPY + JSONL                                          |
+| extraction location                    | laptop                                                                                                      |
+| address-vs-geometry county discrepancy | 0                                                                                                           |
 
 The +1 vs the design-note 40,190 is real for this TIGER 2024 clip of `2026-07-22.0`. Do not treat 40,190 as `expected_count`.
 
@@ -126,13 +126,13 @@ Committed at `config/hosted-service-categories.txt` (and the skill copy): **5 fu
 
 Old flat leaves → observed `taxonomy.hierarchy` (L0 first):
 
-| Old `categories.primary` leaf | Observed path | Lee count |
-|---|---|---|
-| `atms` | `services_and_business/financial_service/atm` | 323 |
-| `rental_kiosks` | `services_and_business/real_estate/real_estate_service/rental_service/rental_kiosk` | 83 |
-| `propane_supplier` | `services_and_business/b2b_service/supplier_or_distributor/propane_supplier` | 99 |
-| `money_transfer_services` | `services_and_business/financial_service/money_transfer_service` | 351 |
-| `trusts` | `services_and_business/financial_service/trusts` | 100 |
+| Old `categories.primary` leaf | Observed path                                                                       | Lee count |
+| ----------------------------- | ----------------------------------------------------------------------------------- | --------- |
+| `atms`                        | `services_and_business/financial_service/atm`                                       | 323       |
+| `rental_kiosks`               | `services_and_business/real_estate/real_estate_service/rental_service/rental_kiosk` | 83        |
+| `propane_supplier`            | `services_and_business/b2b_service/supplier_or_distributor/propane_supplier`        | 99        |
+| `money_transfer_services`     | `services_and_business/financial_service/money_transfer_service`                    | 351       |
+| `trusts`                      | `services_and_business/financial_service/trusts`                                    | 100       |
 
 The July 2026 taxonomy uses singular leaves (`atm`, not `atms`). No other paths were committed. The scoping research's ~250 hosted-looking `categories.primary` values were never enumerated as hierarchy paths; expanding to that size without evidence was refused.
 
@@ -170,26 +170,26 @@ COPY of the 750 MB stage CSV plus merges ran until ~01:35Z; the post-load
 `is_current` correlated update took the remaining ~15 min (rewritten afterward
 to a grouped `max(last_seen_release)` join for re-runs).
 
-| Table | Count | Notes |
-|---|---|---|
-| `business_locations` | **40,191** | Lee, release `2026-07-22.0`. **No gap** vs JSONL clip count. |
-| `business_location_categories` | 38,137 | |
-| `business_location_sources` | 297,856 | licence gate **PASS** on distinct `dataset` values |
-| `overture_place_extractions` | 1 | Lee / `2026-07-22.0` from `manifest/summary.json` |
-| `business_location_parcel_links` | 0 | not populated (later step) |
-| `company_id` non-null | 0 | never written |
-| `addresses` linked | 39,143 of 40,191 | 1,048 places have no resolvable address; not a location gap |
-| geometry filled | 40,191 | `ST_MakePoint` 4326 after merge |
+| Table                            | Count            | Notes                                                        |
+| -------------------------------- | ---------------- | ------------------------------------------------------------ |
+| `business_locations`             | **40,191**       | Lee, release `2026-07-22.0`. **No gap** vs JSONL clip count. |
+| `business_location_categories`   | 38,137           |                                                              |
+| `business_location_sources`      | 297,856          | licence gate **PASS** on distinct `dataset` values           |
+| `overture_place_extractions`     | 1                | Lee / `2026-07-22.0` from `manifest/summary.json`            |
+| `business_location_parcel_links` | 0                | not populated (later step)                                   |
+| `company_id` non-null            | 0                | never written                                                |
+| `addresses` linked               | 39,143 of 40,191 | 1,048 places have no resolvable address; not a location gap  |
+| geometry filled                  | 40,191           | `ST_MakePoint` 4326 after merge                              |
 
 `oracle_dataset_coverage` row (`source = overture_places`, county `lee`):
 
-| Field | Value |
-|---|---|
-| `ingested_count` | 40,191 |
-| `expected_count` | **NULL** (Santa Clara pattern) |
-| `first_loaded_at` / `last_loaded_at` | 2026-08-13T01:35:33.757Z |
-| `cid` | `bafybeicfvfm5reer2ugipirxufpu6u3tmseoezsdfyhseysoo6p5r2mj4a` |
-| `ipns_label` | `oracle-open-data-lee-places` |
+| Field                                | Value                                                         |
+| ------------------------------------ | ------------------------------------------------------------- |
+| `ingested_count`                     | 40,191                                                        |
+| `expected_count`                     | **NULL** (Santa Clara pattern)                                |
+| `first_loaded_at` / `last_loaded_at` | 2026-08-13T01:35:33.757Z                                      |
+| `cid`                                | `bafybeicfvfm5reer2ugipirxufpu6u3tmseoezsdfyhseysoo6p5r2mj4a` |
+| `ipns_label`                         | `oracle-open-data-lee-places`                                 |
 
 Loaded `business_location_sources` distinct datasets (licence gate passed,
 `osmPresent: false`, `unknownDatasets: []`): AllThePlaces, BrightQuery, DAC,
@@ -207,23 +207,23 @@ Parcel links were not populated.
 
 Dedicated places family (not shared with property, query-table, or permit artifacts):
 
-| Field | Value |
-|---|---|
-| Filebase bucket | `elephant-oracle-open-data-lee-places` |
-| IPNS label | `oracle-open-data-lee-places` |
-| Directory CID | `bafybeicfvfm5reer2ugipirxufpu6u3tmseoezsdfyhseysoo6p5r2mj4a` |
-| IPNS name (`network_key`) | `k51qzi5uqu5djfa3kbhcxedqlh7kiuyi22bd60he1nsa0wr2jrseo6vvxvwke5` |
+| Field                        | Value                                                                                                                   |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| Filebase bucket              | `elephant-oracle-open-data-lee-places`                                                                                  |
+| IPNS label                   | `oracle-open-data-lee-places`                                                                                           |
+| Directory CID                | `bafybeicfvfm5reer2ugipirxufpu6u3tmseoezsdfyhseysoo6p5r2mj4a`                                                           |
+| IPNS name (`network_key`)    | `k51qzi5uqu5djfa3kbhcxedqlh7kiuyi22bd60he1nsa0wr2jrseo6vvxvwke5`                                                        |
 | Canonical public parquet URL | `https://ipfs.filebase.io/ipns/k51qzi5uqu5djfa3kbhcxedqlh7kiuyi22bd60he1nsa0wr2jrseo6vvxvwke5/lee/places-table.parquet` |
-| Gateway verification | **2026-08-13T03:59:11Z** (UTC) |
+| Gateway verification         | **2026-08-13T03:59:11Z** (UTC)                                                                                          |
 
 Artifact root published into the DAG (so IPNS resolves the full family):
 `downloads/overture-places/lee/2026-07-22.0/publish/` (gitignored).
 
-| File | Size |
-|---|---|
-| `lee/places-table.parquet` | 15,167,639 bytes (~14 MB) |
-| `lee/index.json` | attribution sibling; `published: true`; `piiGate: approved-2026-08-12-publish-as-is-including-emails-and-phones` |
-| `NOTICE.txt` | 1,572 bytes (artifact root) |
+| File                       | Size                                                                                                             |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `lee/places-table.parquet` | 15,167,639 bytes (~14 MB)                                                                                        |
+| `lee/index.json`           | attribution sibling; `published: true`; `piiGate: approved-2026-08-12-publish-as-is-including-emails-and-phones` |
+| `NOTICE.txt`               | 1,572 bytes (artifact root)                                                                                      |
 
 Export queried current Neon `business_locations` (`is_current`, Lee, `2026-07-22.0`)
 via `DATABASE_URL_UNPOOLED`. Standalone validator re-read the parquet and re-queried

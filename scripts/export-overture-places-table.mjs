@@ -158,12 +158,14 @@ export function parseExportCli(argv) {
   });
   const fromNeon = values["from-neon"] === true;
   const county = typeof values.county === "string" ? values.county : "lee";
-  const release = typeof values.release === "string" ? values.release : "2026-07-22.0";
+  const release =
+    typeof values.release === "string" ? values.release : "2026-07-22.0";
   const envFile =
     typeof values["env-file"] === "string"
       ? values["env-file"]
       : "../elephant-query-db/.env.local";
-  const inputDir = typeof values["input-dir"] === "string" ? values["input-dir"] : "";
+  const inputDir =
+    typeof values["input-dir"] === "string" ? values["input-dir"] : "";
   if (!fromNeon && inputDir.trim().length === 0) {
     throw new Error("--input-dir is required unless --from-neon is set");
   }
@@ -333,12 +335,14 @@ export async function runValidate(argv) {
     throw new Error("--parquet is required");
   }
   const county = typeof values.county === "string" ? values.county : "lee";
-  const release = typeof values.release === "string" ? values.release : "2026-07-22.0";
+  const release =
+    typeof values.release === "string" ? values.release : "2026-07-22.0";
   const envFile =
     typeof values["env-file"] === "string"
       ? values["env-file"]
       : "../elephant-query-db/.env.local";
-  const inputDir = typeof values["input-dir"] === "string" ? values["input-dir"] : "";
+  const inputDir =
+    typeof values["input-dir"] === "string" ? values["input-dir"] : "";
   if (!fromNeon && inputDir.trim().length === 0) {
     throw new Error("--input-dir is required unless --from-neon is set");
   }
@@ -412,8 +416,13 @@ export async function inspectPlacesParquet(parquetPath) {
       const hierarchy = record.taxonomy_hierarchy;
       if (typeof hierarchy === "string" && hierarchy.trim().length > 0) {
         hierarchyPresentCount += 1;
-        if (!isValidTaxonomyHierarchyScalar(hierarchy)) invalidHierarchyCount += 1;
-      } else if (hierarchy !== undefined && hierarchy !== null && hierarchy !== "") {
+        if (!isValidTaxonomyHierarchyScalar(hierarchy))
+          invalidHierarchyCount += 1;
+      } else if (
+        hierarchy !== undefined &&
+        hierarchy !== null &&
+        hierarchy !== ""
+      ) {
         invalidHierarchyCount += 1;
       }
     }
@@ -525,7 +534,9 @@ export async function loadPlacesFromNeon(options) {
     );
     const datasets = datasetsResult.rows.map((row) => String(row.dataset));
     const licenceGate = assertApprovedPlaceDatasets(datasets);
-    const accessedDate = accessedDateFromExtraction(extractionResult.rows[0]?.source_payload);
+    const accessedDate = accessedDateFromExtraction(
+      extractionResult.rows[0]?.source_payload,
+    );
     return {
       records: rowsResult.rows.map((row) => neonRowToPlaceRecord(row)),
       businessLocationRowCount,
@@ -545,9 +556,11 @@ export async function loadPlacesFromNeon(options) {
  */
 export function resolveUnpooledDatabaseUrl() {
   const unpooled = process.env.DATABASE_URL_UNPOOLED;
-  if (typeof unpooled === "string" && unpooled.trim().length > 0) return unpooled.trim();
+  if (typeof unpooled === "string" && unpooled.trim().length > 0)
+    return unpooled.trim();
   const pooled = process.env.DATABASE_URL;
-  if (typeof pooled === "string" && pooled.trim().length > 0) return pooled.trim();
+  if (typeof pooled === "string" && pooled.trim().length > 0)
+    return pooled.trim();
   return null;
 }
 
@@ -561,7 +574,11 @@ export function loadEnvFile(envFile) {
   try {
     text = readFileSync(envFile, "utf8");
   } catch (caught) {
-    if (caught instanceof Error && "code" in caught && caught.code === "ENOENT") {
+    if (
+      caught instanceof Error &&
+      "code" in caught &&
+      caught.code === "ENOENT"
+    ) {
       return;
     }
     throw caught;
@@ -590,7 +607,9 @@ export function loadEnvFile(envFile) {
  */
 async function loadPlacesFromJsonl(inputDir) {
   const records = await readPlaceJsonl(inputDir);
-  const datasets = records.flatMap((record) => collectDatasetsFromSources(record.sources));
+  const datasets = records.flatMap((record) =>
+    collectDatasetsFromSources(record.sources),
+  );
   const licenceGate = assertApprovedPlaceDatasets(datasets);
   const summary = await readSummary(inputDir);
   return {
@@ -598,7 +617,10 @@ async function loadPlacesFromJsonl(inputDir) {
     businessLocationRowCount: records.length,
     licenceGate,
     overtureRelease: String(summary.overtureRelease ?? "unknown"),
-    accessedDate: String(summary.finishedAt ?? new Date().toISOString()).slice(0, 10),
+    accessedDate: String(summary.finishedAt ?? new Date().toISOString()).slice(
+      0,
+      10,
+    ),
   };
 }
 
@@ -641,7 +663,11 @@ function neonRowToPlaceRecord(row) {
  * @returns {string} ISO date (YYYY-MM-DD).
  */
 function accessedDateFromExtraction(payload) {
-  if (payload !== null && typeof payload === "object" && !Array.isArray(payload)) {
+  if (
+    payload !== null &&
+    typeof payload === "object" &&
+    !Array.isArray(payload)
+  ) {
     const finishedAt = payload.finishedAt;
     if (typeof finishedAt === "string" && finishedAt.length >= 10) {
       return finishedAt.slice(0, 10);
@@ -691,7 +717,8 @@ async function writePublicationSidecars(params) {
           overtureRelease: params.overtureRelease,
           accessedDate: params.accessedDate,
           elephantChangedDate,
-          foursquareCopyright: "Copyright 2024 Foursquare Labs, Inc. All rights reserved.",
+          foursquareCopyright:
+            "Copyright 2024 Foursquare Labs, Inc. All rights reserved.",
           themeLicence:
             "CDLA-Permissive-2.0 and Apache-2.0 per record, with no OpenStreetMap lineage",
           licenceGate: params.licenceGate,
@@ -710,7 +737,9 @@ async function writePublicationSidecars(params) {
  */
 async function readPlaceJsonl(inputDir) {
   const placesDir = path.join(inputDir, "places");
-  const names = (await readdir(placesDir)).filter((name) => name.endsWith(".jsonl")).sort();
+  const names = (await readdir(placesDir))
+    .filter((name) => name.endsWith(".jsonl"))
+    .sort();
   /** @type {JsonObject[]} */
   const records = [];
   for (const name of names) {
@@ -732,7 +761,9 @@ async function readPlaceJsonl(inputDir) {
  */
 async function readSummary(inputDir) {
   try {
-    return JSON.parse(await readFile(path.join(inputDir, "manifest/summary.json"), "utf8"));
+    return JSON.parse(
+      await readFile(path.join(inputDir, "manifest/summary.json"), "utf8"),
+    );
   } catch {
     return {};
   }
@@ -745,7 +776,9 @@ async function readSummary(inputDir) {
 function joinScalar(value) {
   if (typeof value === "string") return value;
   if (!Array.isArray(value)) return null;
-  const parts = value.filter((item) => typeof item === "string" && item.trim().length > 0);
+  const parts = value.filter(
+    (item) => typeof item === "string" && item.trim().length > 0,
+  );
   return parts.length > 0 ? parts.join("|") : null;
 }
 
@@ -754,7 +787,8 @@ if (
   fileURLToPath(import.meta.url) === path.resolve(process.argv[1])
 ) {
   const command = process.argv[2];
-  const argv = command === "validate" ? process.argv.slice(3) : process.argv.slice(2);
+  const argv =
+    command === "validate" ? process.argv.slice(3) : process.argv.slice(2);
   const run = command === "validate" ? runValidate : runExport;
   run(argv).catch((caught) => {
     const message = caught instanceof Error ? caught.message : String(caught);

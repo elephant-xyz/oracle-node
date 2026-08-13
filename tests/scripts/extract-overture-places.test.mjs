@@ -98,7 +98,11 @@ describe("licence gate", () => {
       "Overture",
       "Overture-signals",
     ]);
-    const passing = assertApprovedPlaceDatasets(["meta", "foursquare", "microsoft"]);
+    const passing = assertApprovedPlaceDatasets([
+      "meta",
+      "foursquare",
+      "microsoft",
+    ]);
     expect(passing.passed).toBe(true);
     expect(passing.osmPresent).toBe(false);
 
@@ -118,7 +122,11 @@ describe("licence gate", () => {
     ]);
     expect(titleCase.passed).toBe(true);
 
-    const overtureSelf = assertApprovedPlaceDatasets(["meta", "Overture", "Overture-signals"]);
+    const overtureSelf = assertApprovedPlaceDatasets([
+      "meta",
+      "Overture",
+      "Overture-signals",
+    ]);
     expect(overtureSelf.passed).toBe(true);
     expect(overtureSelf.unknownDatasets).toEqual([]);
   });
@@ -142,7 +150,11 @@ retail/rental_kiosks
 `);
     expect(list).toEqual(["financial/atm/atms", "retail/rental_kiosks"]);
     expect(
-      matchHostedService("financial/atm/atms", list, "hosted-service-categories@2026-07-22.0"),
+      matchHostedService(
+        "financial/atm/atms",
+        list,
+        "hosted-service-categories@2026-07-22.0",
+      ),
     ).toEqual({
       isHostedService: true,
       hostedServiceRule: "hosted-service-categories@2026-07-22.0",
@@ -191,7 +203,11 @@ retail/rental_kiosks
 
   it("joins hierarchy arrays with slashes, L0 first", () => {
     expect(
-      taxonomyHierarchyToPath(["food_and_drink", "restaurant", "casual_eatery"]),
+      taxonomyHierarchyToPath([
+        "food_and_drink",
+        "restaurant",
+        "casual_eatery",
+      ]),
     ).toBe("food_and_drink/restaurant/casual_eatery");
     expect(hostedServiceRuleId("2026-07-22.0")).toBe(
       "hosted-service-categories@2026-07-22.0",

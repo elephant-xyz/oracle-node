@@ -34,7 +34,7 @@ skill is the runbook, that doc is the reasoning.
 - Do **not** hard-code the release date in the scripts. Overture publishes a STAC catalog for
   release discovery; pin the resolved release into the run record so a re-run is reproducible.
 - Observed volumes (**UNVERIFIED** beyond the original probe): Lee **40,190** places clipped to
-  the county boundary in ~4 s; Orange **104,223** and Miami-Dade **154,075** by *bounding box*,
+  the county boundary in ~4 s; Orange **104,223** and Miami-Dade **154,075** by _bounding box_,
   which runs a few percent high. A two-county bbox query took 79 s. Never publish a bbox count.
 
 ### ⚠️ `categories` is deprecated and disappears in the September 2026 release
@@ -100,7 +100,7 @@ Reference query in `scripts/extract-county-places.sql`. Output is chunked JSONL 
 `profiles/` + `manifest/summary.json` layout `bbb-harvest` produces.
 
 **Keep every place. Do not filter by `confidence` at extraction.** Overture already drops
-places scoring ≤ 0.2, and confidence is explicitly *not calibrated across providers* — a
+places scoring ≤ 0.2, and confidence is explicitly _not calibrated across providers_ — a
 second threshold here would silently vary by which provider happens to dominate a county.
 Store the score and let consumers threshold. Same reasoning as the pipeline ground rule that
 raw HTML is always captured and unmapped fields are preserved.
@@ -131,13 +131,13 @@ bulk loader with a new `--tracks places` track. All house rules from
 `query-db-loading-matching` apply unchanged: idempotent `ON CONFLICT DO UPDATE` merges,
 `sourceMetadataColumns()`, full payload retained in `source_payload`.
 
-| Table | Grain | Notes |
-|---|---|---|
-| `business_locations` | one row per GERS id per county | the place itself |
-| `business_location_categories` | one row per category | `is_primary` flag; holds `taxonomy.alternate` |
-| `business_location_sources` | one row per `sources[]` entry | `dataset`, `record_id`, `update_time`, `confidence`, `license` — this is what makes §2's licence gate and re-identification possible |
-| `overture_place_extractions` | one row per (county, release) run | the honest denominators; see §4 |
-| `business_location_parcel_links` | one row per accepted match | **later step, not ingest**; see §5 |
+| Table                            | Grain                             | Notes                                                                                                                                |
+| -------------------------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `business_locations`             | one row per GERS id per county    | the place itself                                                                                                                     |
+| `business_location_categories`   | one row per category              | `is_primary` flag; holds `taxonomy.alternate`                                                                                        |
+| `business_location_sources`      | one row per `sources[]` entry     | `dataset`, `record_id`, `update_time`, `confidence`, `license` — this is what makes §2's licence gate and re-identification possible |
+| `overture_place_extractions`     | one row per (county, release) run | the honest denominators; see §4                                                                                                      |
+| `business_location_parcel_links` | one row per accepted match        | **later step, not ingest**; see §5                                                                                                   |
 
 Keys and indexes on `business_locations`:
 
@@ -198,7 +198,7 @@ guarantee the number cannot support.
 One company operates several locations; one location hosts several companies over time.
 Collapsing them is the single most expensive mistake available here.
 
-- **Never** load places into `companies`. That table is the shared *party* role used by
+- **Never** load places into `companies`. That table is the shared _party_ role used by
   appraisal owners, Sunbiz registrants, BBB profiles and permit contractors (~5.5M rows); 40k
   Lee places would pollute a parent every other track FKs into and make the company count
   meaningless.
@@ -341,7 +341,7 @@ name, request identifier, source request) and is the conflation error in §5.
 **`nearby_location` looks like the answer and is not** — it is property-relative
 (`distance_miles`, `is_walkable`), its `location_type` is a closed 13-value lifestyle enum
 (Shopping, Dining, Nature…), and it has no identity, geometry or operating status of its own.
-It is a marketing projection *derived from* places, not a home for them.
+It is a marketing projection _derived from_ places, not a home for them.
 
 Follow the Sunbiz precedent: land the tables in Neon now, record the gap in
 `elephant-query-db/docs/open-lexicon-gaps.md`, and raise the new class in the `lexicon` repo as

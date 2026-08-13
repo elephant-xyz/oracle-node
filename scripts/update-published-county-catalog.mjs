@@ -146,11 +146,7 @@ export function validateCatalog(input) {
     );
     const placesTableUrl =
       row.placesTableUrl === undefined ? null : row.placesTableUrl;
-    assertUrl(
-      placesTableUrl,
-      `counties[${index}].placesTableUrl`,
-      true,
-    );
+    assertUrl(placesTableUrl, `counties[${index}].placesTableUrl`, true);
     if (
       typeof row.updatedAt !== "string" ||
       !ISO_TIMESTAMP_PATTERN.test(row.updatedAt)

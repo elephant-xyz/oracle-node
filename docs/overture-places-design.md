@@ -47,7 +47,7 @@ are not reconcilable in a single table, and collapsing them destroys both.
 
 **Rejected: load places into `companies`.** Superficially attractive because Sunbiz companies
 already land there and it avoids new tables. It fails on three counts. `companies` is the shared
-*party* role — appraisal owners, Sunbiz registrants, BBB profiles and permit contractors all FK
+_party_ role — appraisal owners, Sunbiz registrants, BBB profiles and permit contractors all FK
 into it, at roughly 5.5M rows — so adding 40k Lee places pollutes a parent every track depends
 on, in the table `query-db-loading-matching` already flags as the deadlock and
 `TRUNCATE … CASCADE` danger zone. It also has nowhere to put a point geometry, an operating
@@ -61,8 +61,8 @@ class exists, its description is explicitly about points of interest, and it has
 `location_type` is a closed 13-value lifestyle enum (Shopping, Dining, Entertainment, Nature,
 Fitness, Beach, Historical Site, Park, Museum, Recreation, Pet Services, Wellness, Tourist
 Attraction) that cannot express ~2,300 Overture categories. It has no stable identifier, no
-geometry and no operating status. `nearby_location` is a marketing-facing projection *derived
-from* a places dataset; storing places in it would mean materialising one row per
+geometry and no operating status. `nearby_location` is a marketing-facing projection _derived
+from_ a places dataset; storing places in it would mean materialising one row per
 (property, place) pair and losing the place's own identity. If NEO wants nearby locations for a
 property, that is a spatial query over `business_locations`, computed on demand.
 

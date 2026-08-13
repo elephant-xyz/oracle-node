@@ -21,10 +21,7 @@ import {
 
 describe("places publication layout", () => {
   it("puts NOTICE at the artifact root and index.json beside the parquet", () => {
-    const paths = resolvePlacesPublicationPaths(
-      "/tmp/publish",
-      "lee",
-    );
+    const paths = resolvePlacesPublicationPaths("/tmp/publish", "lee");
     expect(paths.publicationRoot).toBe("/tmp/publish");
     expect(paths.parquetPath).toBe("/tmp/publish/lee/places-table.parquet");
     expect(paths.indexPath).toBe("/tmp/publish/lee/index.json");
@@ -66,9 +63,12 @@ describe("places Neon export CLI", () => {
     process.env.DATABASE_URL_UNPOOLED = "postgresql://unpooled.example/db";
     process.env.DATABASE_URL = "postgresql://pooled.example/db";
     try {
-      expect(resolveUnpooledDatabaseUrl()).toBe("postgresql://unpooled.example/db");
+      expect(resolveUnpooledDatabaseUrl()).toBe(
+        "postgresql://unpooled.example/db",
+      );
     } finally {
-      if (previousUnpooled === undefined) delete process.env.DATABASE_URL_UNPOOLED;
+      if (previousUnpooled === undefined)
+        delete process.env.DATABASE_URL_UNPOOLED;
       else process.env.DATABASE_URL_UNPOOLED = previousUnpooled;
       if (previousUrl === undefined) delete process.env.DATABASE_URL;
       else process.env.DATABASE_URL = previousUrl;
@@ -96,10 +96,16 @@ describe("places parquet row mapping", () => {
 
 describe("taxonomy hierarchy scalar gate", () => {
   it("accepts /-delimited paths and rejects JSON or Postgres array literals", () => {
-    expect(isValidTaxonomyHierarchyScalar("beauty_and_spa/nail_salon")).toBe(true);
+    expect(isValidTaxonomyHierarchyScalar("beauty_and_spa/nail_salon")).toBe(
+      true,
+    );
     expect(isValidTaxonomyHierarchyScalar("atm")).toBe(true);
-    expect(isValidTaxonomyHierarchyScalar('["beauty_and_spa","nail_salon"]')).toBe(false);
-    expect(isValidTaxonomyHierarchyScalar("{beauty_and_spa,nail_salon}")).toBe(false);
+    expect(
+      isValidTaxonomyHierarchyScalar('["beauty_and_spa","nail_salon"]'),
+    ).toBe(false);
+    expect(isValidTaxonomyHierarchyScalar("{beauty_and_spa,nail_salon}")).toBe(
+      false,
+    );
   });
 
   it("fails the publish gate when hierarchy serialization is absent or invalid", () => {

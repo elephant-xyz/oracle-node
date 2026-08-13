@@ -16,7 +16,8 @@ export const SCOPING_BASELINE_RELEASE = "2026-07-22.0";
 export const SCOPING_BASELINE_CLIP_COUNT = 40_190;
 
 /** Overture STAC catalog used to discover the latest release id. */
-export const OVERTURE_STAC_CATALOG_URL = "https://stac.overturemaps.org/catalog.json";
+export const OVERTURE_STAC_CATALOG_URL =
+  "https://stac.overturemaps.org/catalog.json";
 
 /**
  * Providers allowed through the places licence gate. The first nine are the
@@ -62,12 +63,16 @@ export const PLACE_DATASET_LICENCES = Object.freeze({
   brightquery: "CDLA-Permissive-2.0",
   alltheplaces: "CDLA-Permissive-2.0",
   Overture: "CDLA-Permissive-2.0 and Apache-2.0 (Overture theme lineage)",
-  "Overture-signals": "CDLA-Permissive-2.0 and Apache-2.0 (Overture theme lineage)",
+  "Overture-signals":
+    "CDLA-Permissive-2.0 and Apache-2.0 (Overture theme lineage)",
 });
 
 /** Case-insensitive licence lookup for live TitleCase dataset names. */
 const PLACE_DATASET_LICENCE_BY_LOWER = new Map(
-  Object.entries(PLACE_DATASET_LICENCES).map(([name, licence]) => [name.toLowerCase(), licence]),
+  Object.entries(PLACE_DATASET_LICENCES).map(([name, licence]) => [
+    name.toLowerCase(),
+    licence,
+  ]),
 );
 
 /**
@@ -287,7 +292,10 @@ export function taxonomyHierarchyToPath(hierarchy) {
  */
 export function taxonomyPathToHierarchy(path) {
   if (path === null || path.trim().length === 0) return [];
-  return path.split("/").map((part) => part.trim()).filter((part) => part.length > 0);
+  return path
+    .split("/")
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
 }
 
 /**
@@ -329,21 +337,25 @@ export function parseExtractCli(argv) {
   if (outputDir !== null && outputS3Uri !== null) {
     throw new Error("Use only one of --output-dir or --output-s3-uri");
   }
-  const partRecordLimit = parsePositiveInteger(
-    optionalString(values["part-record-limit"]),
-    "--part-record-limit",
-  ) ?? DEFAULT_PART_RECORD_LIMIT;
+  const partRecordLimit =
+    parsePositiveInteger(
+      optionalString(values["part-record-limit"]),
+      "--part-record-limit",
+    ) ?? DEFAULT_PART_RECORD_LIMIT;
   const limit = parsePositiveInteger(optionalString(values.limit), "--limit");
   return {
     county,
     countyFips,
     countyName: optionalString(values["county-name"]),
     release: optionalString(values.release),
-    boundarySource: optionalString(values["boundary-source"]) ?? "tiger/tl_2024_us_county",
-    stacCatalogUrl: optionalString(values["stac-catalog-url"]) ?? OVERTURE_STAC_CATALOG_URL,
+    boundarySource:
+      optionalString(values["boundary-source"]) ?? "tiger/tl_2024_us_county",
+    stacCatalogUrl:
+      optionalString(values["stac-catalog-url"]) ?? OVERTURE_STAC_CATALOG_URL,
     cacheDir: optionalString(values["cache-dir"]) ?? DEFAULT_CACHE_DIR,
     hostedServiceListPath:
-      optionalString(values["hosted-service-list"]) ?? DEFAULT_HOSTED_SERVICE_LIST,
+      optionalString(values["hosted-service-list"]) ??
+      DEFAULT_HOSTED_SERVICE_LIST,
     outputLocation: parseOutputLocation(outputDir, outputS3Uri, county),
     countsOnly: values["counts-only"] === true,
     keepParquet: values["no-keep-parquet"] === true ? false : true,
@@ -361,7 +373,11 @@ export function parseExtractCli(argv) {
  * @returns {OvertureStacDiscovery} Latest release plus child release ids.
  */
 export function parseOvertureStacCatalog(catalog, catalogUrl, retrievedAt) {
-  if (catalog === null || typeof catalog !== "object" || Array.isArray(catalog)) {
+  if (
+    catalog === null ||
+    typeof catalog !== "object" ||
+    Array.isArray(catalog)
+  ) {
     throw new Error("Overture STAC catalog is not a JSON object");
   }
   const record = /** @type {Record<string, unknown>} */ (catalog);
@@ -373,7 +389,8 @@ export function parseOvertureStacCatalog(catalog, catalogUrl, retrievedAt) {
   const fromLinks = [];
   if (Array.isArray(record.links)) {
     for (const link of record.links) {
-      if (link === null || typeof link !== "object" || Array.isArray(link)) continue;
+      if (link === null || typeof link !== "object" || Array.isArray(link))
+        continue;
       const rel = /** @type {Record<string, unknown>} */ (link).rel;
       const href = /** @type {Record<string, unknown>} */ (link).href;
       if (rel !== "child" || typeof href !== "string") continue;
@@ -381,7 +398,9 @@ export function parseOvertureStacCatalog(catalog, catalogUrl, retrievedAt) {
       if (match !== null && match[1] !== undefined) fromLinks.push(match[1]);
     }
   }
-  const releases = [...new Set([latest, ...fromLinks])].sort((a, b) => a.localeCompare(b));
+  const releases = [...new Set([latest, ...fromLinks])].sort((a, b) =>
+    a.localeCompare(b),
+  );
   return { latest, releases, catalogUrl, retrievedAt };
 }
 
@@ -420,7 +439,8 @@ export function collectDatasetsFromSources(sources) {
   const datasets = [];
   const seen = new Set();
   for (const entry of parsed) {
-    if (entry === null || typeof entry !== "object" || Array.isArray(entry)) continue;
+    if (entry === null || typeof entry !== "object" || Array.isArray(entry))
+      continue;
     const dataset = /** @type {Record<string, unknown>} */ (entry).dataset;
     if (typeof dataset !== "string" || dataset.trim().length === 0) continue;
     const name = dataset.trim();
@@ -442,13 +462,15 @@ export function collectDatasetsFromSources(sources) {
  * @returns {LicenceGateResult} Pass/fail plus the datasets that caused failure.
  */
 export function assertApprovedPlaceDatasets(datasets) {
-  const distinctDatasets = [...new Set(datasets.map((value) => value.trim()).filter(Boolean))].sort(
-    (a, b) => a.localeCompare(b),
-  );
+  const distinctDatasets = [
+    ...new Set(datasets.map((value) => value.trim()).filter(Boolean)),
+  ].sort((a, b) => a.localeCompare(b));
   const unknownDatasets = distinctDatasets.filter(
     (dataset) => !APPROVED_PLACE_DATASET_BY_LOWER.has(dataset.toLowerCase()),
   );
-  const osmPresent = distinctDatasets.some((dataset) => dataset.toLowerCase() === "osm");
+  const osmPresent = distinctDatasets.some(
+    (dataset) => dataset.toLowerCase() === "osm",
+  );
   const passed = unknownDatasets.length === 0;
   const message = passed
     ? `licence gate passed: ${distinctDatasets.join(", ") || "(no datasets)"}`
@@ -518,7 +540,9 @@ export function rebuildHostedServicePaths(params) {
       }
     }
   }
-  const unresolvedLeaves = params.seedLeaves.filter((leaf) => !resolvedSeeds.has(leaf));
+  const unresolvedLeaves = params.seedLeaves.filter(
+    (leaf) => !resolvedSeeds.has(leaf),
+  );
   const resolvedSet = new Set(resolved);
   const reviewCandidates = params.observedPaths.filter((observedPath) => {
     if (resolvedSet.has(observedPath)) return false;
@@ -567,7 +591,9 @@ export function formatHostedServiceCategoryList(params) {
   }
   if (params.reviewCandidates.length > 0) {
     lines.push("");
-    lines.push("# Review candidates (hosted-looking leaves, not auto-committed):");
+    lines.push(
+      "# Review candidates (hosted-looking leaves, not auto-committed):",
+    );
     for (const path of params.reviewCandidates) lines.push(`# ${path}`);
   }
   lines.push("");
@@ -589,7 +615,8 @@ export function buildCountyAssignment(params) {
   const address = parseJsonObject(params.address0);
   const addressCounty = readAddressCounty(address);
   const discrepancy =
-    addressCounty !== null && !countiesMatch(addressCounty, params.countyName, params.countyKey);
+    addressCounty !== null &&
+    !countiesMatch(addressCounty, params.countyName, params.countyKey);
   return {
     assignedBy: "geometry",
     assignedCountyFips: params.countyFips,
@@ -761,12 +788,18 @@ export function validatePlacesTable(params) {
   if (!params.licenceGate.passed) {
     errors.push(params.licenceGate.message);
   }
-  if (params.invalidHierarchyCount !== undefined && params.invalidHierarchyCount > 0) {
+  if (
+    params.invalidHierarchyCount !== undefined &&
+    params.invalidHierarchyCount > 0
+  ) {
     errors.push(
       `${params.invalidHierarchyCount} rows have invalid taxonomy.hierarchy scalar serialization`,
     );
   }
-  if (params.hierarchyPresentCount !== undefined && params.hierarchyPresentCount <= 0) {
+  if (
+    params.hierarchyPresentCount !== undefined &&
+    params.hierarchyPresentCount <= 0
+  ) {
     errors.push("taxonomy.hierarchy scalar serialization is absent");
   }
   return { passed: errors.length === 0, errors };
@@ -813,10 +846,13 @@ export function coerceFiniteNumber(value) {
  */
 export function renderPlacesNotice(params) {
   const datasets =
-    params.distinctDatasets.length > 0 ? params.distinctDatasets.join(", ") : "(none)";
+    params.distinctDatasets.length > 0
+      ? params.distinctDatasets.join(", ")
+      : "(none)";
   const licenceLines = params.distinctDatasets.map((dataset) => {
     const licence =
-      PLACE_DATASET_LICENCE_BY_LOWER.get(dataset.toLowerCase()) ?? "UNKNOWN — do not publish";
+      PLACE_DATASET_LICENCE_BY_LOWER.get(dataset.toLowerCase()) ??
+      "UNKNOWN — do not publish";
     return `- ${dataset}: ${licence}`;
   });
   return [
@@ -902,7 +938,10 @@ function parseOutputLocation(outputDir, outputS3Uri, county) {
     return {
       kind: "s3",
       bucket: parsed.hostname,
-      keyPrefix: decodeURIComponent(parsed.pathname.replace(/^\//, "")).replace(/\/$/, ""),
+      keyPrefix: decodeURIComponent(parsed.pathname.replace(/^\//, "")).replace(
+        /\/$/,
+        "",
+      ),
     };
   }
   return {
@@ -972,7 +1011,8 @@ function parseJsonValue(value) {
  */
 function parseJsonObject(value) {
   const parsed = parseJsonValue(value);
-  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed))
+    return null;
   return /** @type {Record<string, unknown>} */ (parsed);
 }
 
@@ -984,7 +1024,8 @@ function readAddressCounty(address) {
   if (address === null) return null;
   for (const key of ["county", "county_name", "countyName"]) {
     const value = address[key];
-    if (typeof value === "string" && value.trim().length > 0) return value.trim();
+    if (typeof value === "string" && value.trim().length > 0)
+      return value.trim();
   }
   return null;
 }
