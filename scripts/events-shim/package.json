@@ -1,0 +1,9 @@
+{
+  "name": "events-shim",
+  "version": "3.3.0",
+  "private": true,
+  "description": "Typed shim so the npm `events` package does not shadow Node builtins during lambda checkJs.",
+  "type": "commonjs",
+  "main": "./index.js",
+  "types": "./index.d.ts"
+}
