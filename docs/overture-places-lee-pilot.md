@@ -256,12 +256,12 @@ Close agreement is evidence of sector coverage. It is **not** an `expected_count
 - Permanent extraction location after the Lee pilot (this run was laptop).
 - PII gate for Lee places is answered: **2026-08-12 publish as-is**, including `emails`/`phones`.
 - Whether anything downstream later needs `basic_category` mapped onto an Elephant vocabulary (pass-through for now).
-- Lexicon PR for `business_location` (not opened; Sunbiz precedent dropped).
+- Lexicon proposal for `business_location`: [`elephant-xyz/lexicon#173`](https://github.com/elephant-xyz/lexicon/pull/173).
 - Parcel-link step after ingest.
 - Whether a places record is worth publishing for counties with no parcel boundaries.
 
 ## Left unimplemented on purpose
 
 - `business_location_parcel_links` population
-- Lexicon class PR
+- Lexicon class PR merge/release ([`elephant-xyz/lexicon#173`](https://github.com/elephant-xyz/lexicon/pull/173))
 - Counties other than Lee

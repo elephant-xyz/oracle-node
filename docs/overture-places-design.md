@@ -239,4 +239,4 @@ it has to be upstreamed with a lock entry or the next skills sync will not know 
 - Whether anything downstream later needs `basic_category` mapped onto an Elephant vocabulary.
 - Whether a places record is worth publishing for counties with no parcel boundaries, given the
   parcel link stays empty.
-- Lexicon PR for `business_location` (not opened in this pass; Sunbiz precedent dropped).
+- Lexicon proposal for `business_location`: [`elephant-xyz/lexicon#173`](https://github.com/elephant-xyz/lexicon/pull/173).
