@@ -1,0 +1,917 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Manual-first monthly Overture places refresh for Lee County
+
+Parameters:
+  ServiceName:
+    Type: String
+    Default: oracle-overture-places-refresh
+  OracleImageUri:
+    Type: String
+    Description: Immutable oracle-node refresh image URI
+  QueryDbImageUri:
+    Type: String
+    Description: Immutable elephant-query-db image URI with places load/publish support
+  ClusterArn:
+    Type: String
+    Description: Existing ECS cluster ARN
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+  SecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+  AssignPublicIp:
+    Type: String
+    Default: ENABLED
+    AllowedValues: [ENABLED, DISABLED]
+  WorkBucketName:
+    Type: String
+    Description: Existing private AWS S3 bucket for run artifacts
+  DatabaseSecretArn:
+    Type: String
+    Description: Secrets Manager ARN whose value is the direct Neon URL
+  FilebaseSecretArn:
+    Type: String
+    Description: Secrets Manager ARN with S3_ENDPOINT, S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY, and FILEBASE_API_TOKEN
+  ScheduleExpression:
+    Type: String
+    Default: cron(0 8 2 * ? *)
+    Description: Monthly UTC schedule; the schedule resource is always deployed disabled
+  FailureNotificationTopicArn:
+    Type: String
+    Default: ""
+    Description: Optional existing SNS topic for failed execution alarms
+
+Conditions:
+  HasFailureNotificationTopic: !Not [!Equals [!Ref FailureNotificationTopicArn, ""]]
+
+Resources:
+  RefreshLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/ecs/${ServiceName}"
+      RetentionInDays: 30
+
+  RefreshLockTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: lock_key
+          AttributeType: S
+      KeySchema:
+        - AttributeName: lock_key
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: expires_at
+        Enabled: true
+
+  TaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: PullLogAndReadSecrets
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ecr:GetAuthorizationToken
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchGetImage
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub "${RefreshLogGroup.Arn}:*"
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource:
+                  - !Ref DatabaseSecretArn
+                  - !Ref FilebaseSecretArn
+
+  RefreshTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: RefreshArtifactsAndCallbacks
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:ListBucket
+                Resource: !Sub "arn:${AWS::Partition}:s3:::${WorkBucketName}"
+                Condition:
+                  StringLike:
+                    s3:prefix:
+                      - overture-places-refresh/*
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                Resource: !Sub "arn:${AWS::Partition}:s3:::${WorkBucketName}/overture-places-refresh/*"
+              - Effect: Allow
+                Action:
+                  - states:SendTaskSuccess
+                  - states:SendTaskFailure
+                  - states:SendTaskHeartbeat
+                Resource: "*"
+
+  OracleTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub "${ServiceName}-oracle"
+      Cpu: "4096"
+      Memory: "16384"
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [FARGATE]
+      ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt RefreshTaskRole.Arn
+      ContainerDefinitions:
+        - Name: oracle-refresh
+          Image: !Ref OracleImageUri
+          Essential: true
+          Secrets:
+            - Name: DATABASE_URL_UNPOOLED
+              ValueFrom: !Ref DatabaseSecretArn
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref RefreshLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: oracle
+
+  LoadTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub "${ServiceName}-load"
+      Cpu: "4096"
+      Memory: "16384"
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [FARGATE]
+      ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt RefreshTaskRole.Arn
+      ContainerDefinitions:
+        - Name: places-load
+          Image: !Ref QueryDbImageUri
+          Essential: true
+          EntryPoint: [sh, scripts/reload-appraisal-entrypoint.sh]
+          Secrets:
+            - Name: DATABASE_URL
+              ValueFrom: !Ref DatabaseSecretArn
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref RefreshLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: load
+
+  PublishTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub "${ServiceName}-publish"
+      Cpu: "1024"
+      Memory: "2048"
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [FARGATE]
+      ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt RefreshTaskRole.Arn
+      ContainerDefinitions:
+        - Name: places-publish
+          Image: !Ref QueryDbImageUri
+          Essential: true
+          EntryPoint:
+            - node_modules/.bin/tsx
+            - scripts/run-places-refresh-publish.ts
+          Secrets:
+            - Name: S3_ENDPOINT
+              ValueFrom: !Sub "${FilebaseSecretArn}:S3_ENDPOINT::"
+            - Name: S3_ACCESS_KEY_ID
+              ValueFrom: !Sub "${FilebaseSecretArn}:S3_ACCESS_KEY_ID::"
+            - Name: S3_SECRET_ACCESS_KEY
+              ValueFrom: !Sub "${FilebaseSecretArn}:S3_SECRET_ACCESS_KEY::"
+            - Name: FILEBASE_API_TOKEN
+              ValueFrom: !Sub "${FilebaseSecretArn}:FILEBASE_API_TOKEN::"
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref RefreshLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: publish
+
+  StateMachineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: states.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: RunRefresh
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: ecs:RunTask
+                Resource:
+                  - !Ref OracleTaskDefinition
+                  - !Ref LoadTaskDefinition
+                  - !Ref PublishTaskDefinition
+              - Effect: Allow
+                Action:
+                  - ecs:StopTask
+                  - ecs:DescribeTasks
+                Resource: "*"
+              - Effect: Allow
+                Action: iam:PassRole
+                Resource:
+                  - !GetAtt TaskExecutionRole.Arn
+                  - !GetAtt RefreshTaskRole.Arn
+                Condition:
+                  StringEquals:
+                    iam:PassedToService: ecs-tasks.amazonaws.com
+              - Effect: Allow
+                Action:
+                  - events:PutTargets
+                  - events:PutRule
+                  - events:DescribeRule
+                Resource: !Sub "arn:${AWS::Partition}:events:${AWS::Region}:${AWS::AccountId}:rule/StepFunctionsGetEventsForECSTaskRule"
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:DeleteItem
+                Resource: !GetAtt RefreshLockTable.Arn
+
+  RefreshStateMachine:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: !Ref ServiceName
+      RoleArn: !GetAtt StateMachineRole.Arn
+      DefinitionSubstitutions:
+        ClusterArn: !Ref ClusterArn
+        OracleTaskDefinition: !Ref OracleTaskDefinition
+        LoadTaskDefinition: !Ref LoadTaskDefinition
+        PublishTaskDefinition: !Ref PublishTaskDefinition
+        Subnet0: !Select [0, !Ref SubnetIds]
+        SecurityGroupId: !Ref SecurityGroupId
+        AssignPublicIp: !Ref AssignPublicIp
+        WorkBucketName: !Ref WorkBucketName
+        LockTableName: !Ref RefreshLockTable
+      DefinitionString: |
+        {
+          "Comment": "Manual-first, idempotent Overture places refresh. Public publish requires explicit input approval.",
+          "StartAt": "Plan",
+          "States": {
+            "Plan": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::ecs:runTask.waitForTaskToken",
+              "TimeoutSeconds": 1800,
+              "Parameters": {
+                "Cluster": "${ClusterArn}",
+                "TaskDefinition": "${OracleTaskDefinition}",
+                "LaunchType": "FARGATE",
+                "NetworkConfiguration": {
+                  "AwsvpcConfiguration": {
+                    "Subnets": ["${Subnet0}"],
+                    "SecurityGroups": ["${SecurityGroupId}"],
+                    "AssignPublicIp": "${AssignPublicIp}"
+                  }
+                },
+                "Overrides": {
+                  "ContainerOverrides": [{
+                    "Name": "oracle-refresh",
+                    "Command": ["--stage", "plan"],
+                    "Environment": [
+                      { "Name": "TASK_TOKEN", "Value.$": "$$.Task.Token" },
+                      {
+                        "Name": "WORKFLOW_INPUT",
+                        "Value.$": "States.JsonToString(States.JsonMerge($, States.StringToJson('{\"workBucket\":\"${WorkBucketName}\"}'), false))"
+                      },
+                      { "Name": "REFRESH_STAGE", "Value": "plan" }
+                    ]
+                  }]
+                }
+              },
+              "Retry": [{
+                "ErrorEquals": ["ECS.AmazonECSException", "ECS.ECSException", "States.Timeout"],
+                "IntervalSeconds": 20,
+                "MaxAttempts": 2,
+                "BackoffRate": 2,
+                "JitterStrategy": "FULL"
+              }],
+              "Next": "PlanDecision"
+            },
+            "PlanDecision": {
+              "Type": "Choice",
+              "Choices": [
+                { "Variable": "$.action", "StringEquals": "noop", "Next": "NoOp" },
+                { "Variable": "$.dryRun", "BooleanEquals": true, "Next": "DryRunComplete" },
+                { "Variable": "$.withinCostCeiling", "BooleanEquals": false, "Next": "CostGateStopped" }
+              ],
+              "Default": "AcquireCountyLock"
+            },
+            "NoOp": { "Type": "Succeed" },
+            "DryRunComplete": { "Type": "Succeed" },
+            "CostGateStopped": {
+              "Type": "Fail",
+              "Error": "CostGateError",
+              "Cause": "Estimated refresh cost exceeds maxEstimatedCostUsd"
+            },
+            "AcquireCountyLock": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::aws-sdk:dynamodb:putItem",
+              "Parameters": {
+                "TableName": "${LockTableName}",
+                "Item": {
+                  "lock_key": { "S.$": "$.county" },
+                  "execution_id": { "S.$": "$$.Execution.Id" },
+                  "release": { "S.$": "$.release" },
+                  "idempotency_key": { "S.$": "$.idempotencyKey" },
+                  "expires_at": { "N.$": "States.Format('{}', $.lockExpiresAtEpoch)" }
+                },
+                "ConditionExpression": "attribute_not_exists(lock_key) OR expires_at < :now",
+                "ExpressionAttributeValues": {
+                  ":now": { "N.$": "States.Format('{}', $.lockNowEpoch)" }
+                }
+              },
+              "ResultPath": null,
+              "Catch": [
+                {
+                  "ErrorEquals": ["DynamoDb.ConditionalCheckFailedException"],
+                  "ResultPath": "$.failure",
+                  "Next": "AlreadyRunning"
+                },
+                {
+                  "ErrorEquals": ["States.ALL"],
+                  "ResultPath": "$.failure",
+                  "Next": "InfrastructureFailure"
+                }
+              ],
+              "Next": "Extract"
+            },
+            "AlreadyRunning": {
+              "Type": "Fail",
+              "Error": "CountyRefreshAlreadyRunning",
+              "Cause": "Another refresh holds the county lock"
+            },
+            "InfrastructureFailure": {
+              "Type": "Fail",
+              "Error": "RefreshInfrastructureFailure",
+              "Cause": "Could not acquire the county refresh lock"
+            },
+            "Extract": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::ecs:runTask.waitForTaskToken",
+              "TimeoutSeconds": 7200,
+              "Parameters": {
+                "Cluster": "${ClusterArn}",
+                "TaskDefinition": "${OracleTaskDefinition}",
+                "LaunchType": "FARGATE",
+                "NetworkConfiguration": {
+                  "AwsvpcConfiguration": {
+                    "Subnets": ["${Subnet0}"],
+                    "SecurityGroups": ["${SecurityGroupId}"],
+                    "AssignPublicIp": "${AssignPublicIp}"
+                  }
+                },
+                "Overrides": {
+                  "ContainerOverrides": [{
+                    "Name": "oracle-refresh",
+                    "Command": ["--stage", "extract"],
+                    "Environment": [
+                      { "Name": "TASK_TOKEN", "Value.$": "$$.Task.Token" },
+                      { "Name": "WORKFLOW_INPUT", "Value.$": "States.JsonToString($)" },
+                      { "Name": "REFRESH_STAGE", "Value": "extract" }
+                    ]
+                  }]
+                }
+              },
+              "Retry": [{
+                "ErrorEquals": ["Error", "ECS.AmazonECSException", "ECS.ECSException", "States.Timeout"],
+                "IntervalSeconds": 30,
+                "MaxAttempts": 2,
+                "BackoffRate": 2,
+                "JitterStrategy": "FULL"
+              }],
+              "ResultPath": "$.extraction",
+              "Catch": [{
+                "ErrorEquals": ["States.ALL"],
+                "ResultPath": "$.failure",
+                "Next": "ReleaseFailureLock"
+              }],
+              "Next": "ValidateIncoming"
+            },
+            "ValidateIncoming": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::ecs:runTask.waitForTaskToken",
+              "TimeoutSeconds": 900,
+              "Parameters": {
+                "Cluster": "${ClusterArn}",
+                "TaskDefinition": "${OracleTaskDefinition}",
+                "LaunchType": "FARGATE",
+                "NetworkConfiguration": {
+                  "AwsvpcConfiguration": {
+                    "Subnets": ["${Subnet0}"],
+                    "SecurityGroups": ["${SecurityGroupId}"],
+                    "AssignPublicIp": "${AssignPublicIp}"
+                  }
+                },
+                "Overrides": {
+                  "ContainerOverrides": [{
+                    "Name": "oracle-refresh",
+                    "Command": ["--stage", "validate"],
+                    "Environment": [
+                      { "Name": "TASK_TOKEN", "Value.$": "$$.Task.Token" },
+                      { "Name": "WORKFLOW_INPUT", "Value.$": "States.JsonToString($)" },
+                      { "Name": "REFRESH_STAGE", "Value": "validate" }
+                    ]
+                  }]
+                }
+              },
+              "ResultPath": "$.validation",
+              "Catch": [{
+                "ErrorEquals": ["States.ALL"],
+                "ResultPath": "$.failure",
+                "Next": "ReleaseFailureLock"
+              }],
+              "Next": "LoadShape"
+            },
+            "LoadShape": {
+              "Type": "Choice",
+              "Choices": [{
+                "Variable": "$.action",
+                "StringEquals": "incremental",
+                "Next": "LoadIncremental"
+              }],
+              "Default": "LoadFull"
+            },
+            "LoadIncremental": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::ecs:runTask.sync",
+              "TimeoutSeconds": 7200,
+              "Parameters": {
+                "Cluster": "${ClusterArn}",
+                "TaskDefinition": "${LoadTaskDefinition}",
+                "LaunchType": "FARGATE",
+                "NetworkConfiguration": {
+                  "AwsvpcConfiguration": {
+                    "Subnets": ["${Subnet0}"],
+                    "SecurityGroups": ["${SecurityGroupId}"],
+                    "AssignPublicIp": "${AssignPublicIp}"
+                  }
+                },
+                "Overrides": {
+                  "ContainerOverrides": [{
+                    "Name": "places-load",
+                    "Environment": [
+                      { "Name": "TRACKS", "Value": "places" },
+                      { "Name": "STEP", "Value": "load" },
+                      { "Name": "SKIP_CLEAR", "Value": "1" },
+                      { "Name": "APPRAISAL_PREFIX", "Value": "unused" },
+                      { "Name": "APPRAISAL_BUCKET", "Value.$": "$.workBucket" },
+                      { "Name": "PLACES_PREFIX", "Value.$": "$.runPrefix" },
+                      { "Name": "PLACES_RELEASE", "Value.$": "$.release" },
+                      {
+                        "Name": "PLACES_DEACTIVATION_MANIFEST",
+                        "Value.$": "States.Format('s3://{}/{}/manifest/deactivation.json', $.workBucket, $.runPrefix)"
+                      },
+                      { "Name": "JURISDICTION_KEY", "Value.$": "$.county" },
+                      { "Name": "BATCH_SIZE", "Value": "0" }
+                    ]
+                  }]
+                }
+              },
+              "Retry": [{
+                "ErrorEquals": ["States.TaskFailed", "ECS.AmazonECSException", "ECS.ECSException"],
+                "IntervalSeconds": 30,
+                "MaxAttempts": 2,
+                "BackoffRate": 2,
+                "JitterStrategy": "FULL"
+              }],
+              "ResultPath": null,
+              "Catch": [{
+                "ErrorEquals": ["States.ALL"],
+                "ResultPath": "$.failure",
+                "Next": "ReleaseFailureLock"
+              }],
+              "Next": "ExportFullCurrent"
+            },
+            "LoadFull": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::ecs:runTask.sync",
+              "TimeoutSeconds": 7200,
+              "Parameters": {
+                "Cluster": "${ClusterArn}",
+                "TaskDefinition": "${LoadTaskDefinition}",
+                "LaunchType": "FARGATE",
+                "NetworkConfiguration": {
+                  "AwsvpcConfiguration": {
+                    "Subnets": ["${Subnet0}"],
+                    "SecurityGroups": ["${SecurityGroupId}"],
+                    "AssignPublicIp": "${AssignPublicIp}"
+                  }
+                },
+                "Overrides": {
+                  "ContainerOverrides": [{
+                    "Name": "places-load",
+                    "Environment": [
+                      { "Name": "TRACKS", "Value": "places" },
+                      { "Name": "STEP", "Value": "load" },
+                      { "Name": "SKIP_CLEAR", "Value": "1" },
+                      { "Name": "APPRAISAL_PREFIX", "Value": "unused" },
+                      { "Name": "APPRAISAL_BUCKET", "Value.$": "$.workBucket" },
+                      { "Name": "PLACES_PREFIX", "Value.$": "$.runPrefix" },
+                      { "Name": "PLACES_RELEASE", "Value.$": "$.release" },
+                      { "Name": "JURISDICTION_KEY", "Value.$": "$.county" },
+                      { "Name": "BATCH_SIZE", "Value": "0" }
+                    ]
+                  }]
+                }
+              },
+              "Retry": [{
+                "ErrorEquals": ["States.TaskFailed", "ECS.AmazonECSException", "ECS.ECSException"],
+                "IntervalSeconds": 30,
+                "MaxAttempts": 2,
+                "BackoffRate": 2,
+                "JitterStrategy": "FULL"
+              }],
+              "ResultPath": null,
+              "Catch": [{
+                "ErrorEquals": ["States.ALL"],
+                "ResultPath": "$.failure",
+                "Next": "ReleaseFailureLock"
+              }],
+              "Next": "ExportFullCurrent"
+            },
+            "ExportFullCurrent": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::ecs:runTask.waitForTaskToken",
+              "TimeoutSeconds": 3600,
+              "Parameters": {
+                "Cluster": "${ClusterArn}",
+                "TaskDefinition": "${OracleTaskDefinition}",
+                "LaunchType": "FARGATE",
+                "NetworkConfiguration": {
+                  "AwsvpcConfiguration": {
+                    "Subnets": ["${Subnet0}"],
+                    "SecurityGroups": ["${SecurityGroupId}"],
+                    "AssignPublicIp": "${AssignPublicIp}"
+                  }
+                },
+                "Overrides": {
+                  "ContainerOverrides": [{
+                    "Name": "oracle-refresh",
+                    "Command": ["--stage", "export"],
+                    "Environment": [
+                      { "Name": "TASK_TOKEN", "Value.$": "$$.Task.Token" },
+                      { "Name": "WORKFLOW_INPUT", "Value.$": "States.JsonToString($)" },
+                      { "Name": "REFRESH_STAGE", "Value": "export" }
+                    ]
+                  }]
+                }
+              },
+              "Retry": [{
+                "ErrorEquals": ["Error", "ECS.AmazonECSException", "ECS.ECSException"],
+                "IntervalSeconds": 30,
+                "MaxAttempts": 2,
+                "BackoffRate": 2,
+                "JitterStrategy": "FULL"
+              }],
+              "ResultPath": "$.export",
+              "Catch": [{
+                "ErrorEquals": ["States.ALL"],
+                "ResultPath": "$.failure",
+                "Next": "ReleaseFailureLock"
+              }],
+              "Next": "PublicationApproved"
+            },
+            "PublicationApproved": {
+              "Type": "Choice",
+              "Choices": [{
+                "Variable": "$.publishApproved",
+                "BooleanEquals": true,
+                "Next": "Publish"
+              }],
+              "Default": "ReleaseValidationOnlyLock"
+            },
+            "ReleaseValidationOnlyLock": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::aws-sdk:dynamodb:deleteItem",
+              "Parameters": {
+                "TableName": "${LockTableName}",
+                "Key": { "lock_key": { "S.$": "$.county" } },
+                "ConditionExpression": "execution_id = :execution",
+                "ExpressionAttributeValues": {
+                  ":execution": { "S.$": "$$.Execution.Id" }
+                }
+              },
+              "ResultPath": null,
+              "Next": "ValidationOnlyComplete"
+            },
+            "ValidationOnlyComplete": { "Type": "Succeed" },
+            "Publish": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::ecs:runTask.waitForTaskToken",
+              "TimeoutSeconds": 1800,
+              "Parameters": {
+                "Cluster": "${ClusterArn}",
+                "TaskDefinition": "${PublishTaskDefinition}",
+                "LaunchType": "FARGATE",
+                "NetworkConfiguration": {
+                  "AwsvpcConfiguration": {
+                    "Subnets": ["${Subnet0}"],
+                    "SecurityGroups": ["${SecurityGroupId}"],
+                    "AssignPublicIp": "${AssignPublicIp}"
+                  }
+                },
+                "Overrides": {
+                  "ContainerOverrides": [{
+                    "Name": "places-publish",
+                    "Environment": [
+                      { "Name": "TASK_TOKEN", "Value.$": "$$.Task.Token" },
+                      {
+                        "Name": "WORKFLOW_INPUT",
+                        "Value.$": "States.JsonToString(States.JsonMerge(States.StringToJson(States.Format('{\"county\":\"{}\"}', $.county)), States.StringToJson(States.Format('{\"artifactS3Uri\":\"{}\"}', $.export.artifactS3Uri)), false))"
+                      }
+                    ]
+                  }]
+                }
+              },
+              "Retry": [{
+                "ErrorEquals": ["Error", "ECS.AmazonECSException", "ECS.ECSException", "States.Timeout"],
+                "IntervalSeconds": 30,
+                "MaxAttempts": 2,
+                "BackoffRate": 2,
+                "JitterStrategy": "FULL"
+              }],
+              "ResultPath": "$.publishResult",
+              "Catch": [{
+                "ErrorEquals": ["States.ALL"],
+                "ResultPath": "$.failure",
+                "Next": "ReleaseFailureLock"
+              }],
+              "Next": "VerifyPublishedPointer"
+            },
+            "VerifyPublishedPointer": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::ecs:runTask.waitForTaskToken",
+              "TimeoutSeconds": 1800,
+              "Parameters": {
+                "Cluster": "${ClusterArn}",
+                "TaskDefinition": "${OracleTaskDefinition}",
+                "LaunchType": "FARGATE",
+                "NetworkConfiguration": {
+                  "AwsvpcConfiguration": {
+                    "Subnets": ["${Subnet0}"],
+                    "SecurityGroups": ["${SecurityGroupId}"],
+                    "AssignPublicIp": "${AssignPublicIp}"
+                  }
+                },
+                "Overrides": {
+                  "ContainerOverrides": [{
+                    "Name": "oracle-refresh",
+                    "Command": ["--stage", "verify"],
+                    "Environment": [
+                      { "Name": "TASK_TOKEN", "Value.$": "$$.Task.Token" },
+                      { "Name": "WORKFLOW_INPUT", "Value.$": "States.JsonToString($)" },
+                      { "Name": "REFRESH_STAGE", "Value": "verify" }
+                    ]
+                  }]
+                }
+              },
+              "Retry": [{
+                "ErrorEquals": ["Error", "ECS.AmazonECSException", "ECS.ECSException"],
+                "IntervalSeconds": 30,
+                "MaxAttempts": 4,
+                "BackoffRate": 2,
+                "JitterStrategy": "FULL"
+              }],
+              "ResultPath": "$.publishResult",
+              "Catch": [{
+                "ErrorEquals": ["States.ALL"],
+                "ResultPath": "$.failure",
+                "Next": "RollbackDecision"
+              }],
+              "Next": "Finalize"
+            },
+            "Finalize": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::ecs:runTask.waitForTaskToken",
+              "TimeoutSeconds": 900,
+              "Parameters": {
+                "Cluster": "${ClusterArn}",
+                "TaskDefinition": "${OracleTaskDefinition}",
+                "LaunchType": "FARGATE",
+                "NetworkConfiguration": {
+                  "AwsvpcConfiguration": {
+                    "Subnets": ["${Subnet0}"],
+                    "SecurityGroups": ["${SecurityGroupId}"],
+                    "AssignPublicIp": "${AssignPublicIp}"
+                  }
+                },
+                "Overrides": {
+                  "ContainerOverrides": [{
+                    "Name": "oracle-refresh",
+                    "Command": ["--stage", "finalize"],
+                    "Environment": [
+                      { "Name": "TASK_TOKEN", "Value.$": "$$.Task.Token" },
+                      { "Name": "WORKFLOW_INPUT", "Value.$": "States.JsonToString($)" },
+                      { "Name": "REFRESH_STAGE", "Value": "finalize" }
+                    ]
+                  }]
+                }
+              },
+              "Retry": [{
+                "ErrorEquals": ["Error", "ECS.AmazonECSException", "ECS.ECSException"],
+                "IntervalSeconds": 20,
+                "MaxAttempts": 3,
+                "BackoffRate": 2,
+                "JitterStrategy": "FULL"
+              }],
+              "ResultPath": "$.final",
+              "Catch": [{
+                "ErrorEquals": ["States.ALL"],
+                "ResultPath": "$.failure",
+                "Next": "RollbackDecision"
+              }],
+              "Next": "ReleaseSuccessLock"
+            },
+            "RollbackDecision": {
+              "Type": "Choice",
+              "Choices": [{
+                "Variable": "$.publishResult.previousCid",
+                "IsString": true,
+                "Next": "RollbackPublishedPointer"
+              }],
+              "Default": "ReleaseFailureLock"
+            },
+            "RollbackPublishedPointer": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::ecs:runTask.waitForTaskToken",
+              "TimeoutSeconds": 900,
+              "Parameters": {
+                "Cluster": "${ClusterArn}",
+                "TaskDefinition": "${PublishTaskDefinition}",
+                "LaunchType": "FARGATE",
+                "NetworkConfiguration": {
+                  "AwsvpcConfiguration": {
+                    "Subnets": ["${Subnet0}"],
+                    "SecurityGroups": ["${SecurityGroupId}"],
+                    "AssignPublicIp": "${AssignPublicIp}"
+                  }
+                },
+                "Overrides": {
+                  "ContainerOverrides": [{
+                    "Name": "places-publish",
+                    "Environment": [
+                      { "Name": "TASK_TOKEN", "Value.$": "$$.Task.Token" },
+                      {
+                        "Name": "WORKFLOW_INPUT",
+                        "Value.$": "States.JsonToString(States.StringToJson(States.Format('{\"mode\":\"rollback\",\"county\":\"{}\",\"previousCid\":\"{}\"}', $.county, $.publishResult.previousCid)))"
+                      }
+                    ]
+                  }]
+                }
+              },
+              "Retry": [{
+                "ErrorEquals": ["Error", "ECS.AmazonECSException", "ECS.ECSException"],
+                "IntervalSeconds": 20,
+                "MaxAttempts": 3,
+                "BackoffRate": 2,
+                "JitterStrategy": "FULL"
+              }],
+              "ResultPath": "$.rollback",
+              "Catch": [{
+                "ErrorEquals": ["States.ALL"],
+                "ResultPath": "$.rollbackFailure",
+                "Next": "ReleaseFailureLock"
+              }],
+              "Next": "ReleaseFailureLock"
+            },
+            "ReleaseSuccessLock": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::aws-sdk:dynamodb:deleteItem",
+              "Parameters": {
+                "TableName": "${LockTableName}",
+                "Key": { "lock_key": { "S.$": "$.county" } },
+                "ConditionExpression": "execution_id = :execution",
+                "ExpressionAttributeValues": {
+                  ":execution": { "S.$": "$$.Execution.Id" }
+                }
+              },
+              "ResultPath": null,
+              "Next": "Succeeded"
+            },
+            "Succeeded": { "Type": "Succeed" },
+            "ReleaseFailureLock": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::aws-sdk:dynamodb:deleteItem",
+              "Parameters": {
+                "TableName": "${LockTableName}",
+                "Key": { "lock_key": { "S.$": "$.county" } },
+                "ConditionExpression": "execution_id = :execution",
+                "ExpressionAttributeValues": {
+                  ":execution": { "S.$": "$$.Execution.Id" }
+                }
+              },
+              "ResultPath": null,
+              "Catch": [{
+                "ErrorEquals": ["States.ALL"],
+                "ResultPath": null,
+                "Next": "Failed"
+              }],
+              "Next": "Failed"
+            },
+            "Failed": {
+              "Type": "Fail",
+              "Error": "OverturePlacesRefreshFailed",
+              "Cause": "A refresh stage failed; public finalization did not run"
+            }
+          }
+        }
+
+  SchedulerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: scheduler.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: StartRefresh
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: states:StartExecution
+                Resource: !Ref RefreshStateMachine
+
+  MonthlySchedule:
+    Type: AWS::Scheduler::Schedule
+    Properties:
+      Name: !Sub "${ServiceName}-monthly"
+      Description: Disabled until an explicit post-validation approval enables Lee publication
+      State: DISABLED
+      ScheduleExpression: !Ref ScheduleExpression
+      FlexibleTimeWindow:
+        Mode: "OFF"
+      Target:
+        Arn: !Ref RefreshStateMachine
+        RoleArn: !GetAtt SchedulerRole.Arn
+        Input: >-
+          {"county":"lee","countyFips":"12071","boundarySource":"tiger/tl_2024_us_county","dryRun":false,"publishApproved":false,"costCeilingUsd":10}
+
+  RefreshFailureAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: Overture places refresh state machine execution failed
+      Namespace: AWS/States
+      MetricName: ExecutionsFailed
+      Dimensions:
+        - Name: StateMachineArn
+          Value: !Ref RefreshStateMachine
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      DatapointsToAlarm: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: !If
+        - HasFailureNotificationTopic
+        - [!Ref FailureNotificationTopicArn]
+        - !Ref AWS::NoValue
+
+Outputs:
+  StateMachineArn:
+    Value: !Ref RefreshStateMachine
+  ScheduleName:
+    Value: !Ref MonthlySchedule
+  ScheduleState:
+    Value: DISABLED
+  LockTableName:
+    Value: !Ref RefreshLockTable

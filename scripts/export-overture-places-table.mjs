@@ -474,9 +474,8 @@ export async function loadPlacesFromNeon(options) {
        FROM business_locations
        WHERE source_system = 'overture_places'
          AND county_key = $1
-         AND last_seen_release = $2
          AND is_current = true`,
-      [options.county, options.release],
+      [options.county],
     );
     const businessLocationRowCount = Number(countResult.rows[0]?.n ?? 0);
     const rowsResult = await client.query(
@@ -509,10 +508,9 @@ export async function loadPlacesFromNeon(options) {
        FROM business_locations
        WHERE source_system = 'overture_places'
          AND county_key = $1
-         AND last_seen_release = $2
          AND is_current = true
        ORDER BY gers_id`,
-      [options.county, options.release],
+      [options.county],
     );
     const datasetsResult = await client.query(
       `SELECT DISTINCT s.dataset
@@ -520,10 +518,9 @@ export async function loadPlacesFromNeon(options) {
        JOIN business_locations l ON l.business_location_id = s.business_location_id
        WHERE l.source_system = 'overture_places'
          AND l.county_key = $1
-         AND l.last_seen_release = $2
          AND l.is_current = true
        ORDER BY 1`,
-      [options.county, options.release],
+      [options.county],
     );
     const extractionResult = await client.query(
       `SELECT source_payload
@@ -668,7 +665,8 @@ function accessedDateFromExtraction(payload) {
     typeof payload === "object" &&
     !Array.isArray(payload)
   ) {
-    const finishedAt = payload.finishedAt;
+    const finishedAt =
+      /** @type {Record<string, unknown>} */ (payload).finishedAt;
     if (typeof finishedAt === "string" && finishedAt.length >= 10) {
       return finishedAt.slice(0, 10);
     }
