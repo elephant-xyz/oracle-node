@@ -665,8 +665,8 @@ function accessedDateFromExtraction(payload) {
     typeof payload === "object" &&
     !Array.isArray(payload)
   ) {
-    const finishedAt =
-      /** @type {Record<string, unknown>} */ (payload).finishedAt;
+    const finishedAt = /** @type {Record<string, unknown>} */ (payload)
+      .finishedAt;
     if (typeof finishedAt === "string" && finishedAt.length >= 10) {
       return finishedAt.slice(0, 10);
     }

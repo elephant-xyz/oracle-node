@@ -11,13 +11,7 @@
 
 import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { createRequire } from "node:module";
-import {
-  mkdir,
-  readFile,
-  readdir,
-  rm,
-  writeFile,
-} from "node:fs/promises";
+import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import * as path from "node:path";
 
 import {
@@ -40,7 +34,10 @@ import {
   classifyPlaceChanges,
   overturePlacesChangelogGlobs,
 } from "./overture-places-refresh-lib.mjs";
-import { ensureTigerShapefile, mapPlaceRow } from "./extract-overture-places.mjs";
+import {
+  ensureTigerShapefile,
+  mapPlaceRow,
+} from "./extract-overture-places.mjs";
 
 const require = createRequire(import.meta.url);
 const duckdb = require("duckdb");
@@ -104,7 +101,9 @@ export async function runIncrementalPlacesExtract(options) {
   try {
     const duckdbTempDir = path.join(runRoot, "duckdb-tmp");
     await mkdir(duckdbTempDir, { recursive: true });
-    await db.exec("INSTALL spatial; INSTALL httpfs; LOAD spatial; LOAD httpfs;");
+    await db.exec(
+      "INSTALL spatial; INSTALL httpfs; LOAD spatial; LOAD httpfs;",
+    );
     await db.exec("SET s3_region = 'us-west-2';");
     await db.exec(
       `SET temp_directory = ${duckdbStringLiteral(duckdbTempDir)};`,
@@ -121,9 +120,9 @@ export async function runIncrementalPlacesExtract(options) {
       typeof row.column_name === "string" ? [row.column_name] : [],
     );
     const changelogSchema = assertOvertureChangelogSchema(changelogColumns);
-    const currentCountyIds = (await db.all("SELECT id FROM current_county")).map(
-      (row) => String(row.id),
-    );
+    const currentCountyIds = (
+      await db.all("SELECT id FROM current_county")
+    ).map((row) => String(row.id));
     const changelogRows = (
       await db.all(
         `SELECT DISTINCT c.id, c.change_type
@@ -213,9 +212,7 @@ export async function runIncrementalPlacesExtract(options) {
       hostedServicePaths,
     );
     const incomingDatasets = uniqueSorted(
-      changedRows.flatMap((row) =>
-        collectDatasetsFromSources(row.sources),
-      ),
+      changedRows.flatMap((row) => collectDatasetsFromSources(row.sources)),
     );
     const licenceGate = assertApprovedPlaceDatasets(incomingDatasets);
     const finishedAt = new Date();
@@ -392,10 +389,11 @@ function mapIncrementalPlaceRow(params) {
       overture_release: params.options.release,
       county_fips: params.options.countyFips,
     },
-    options: /** @type {import("./overture-places-lib.mjs").ExtractCliOptions} */ ({
-      county: params.options.county,
-      countyFips: params.options.countyFips,
-    }),
+    options:
+      /** @type {import("./overture-places-lib.mjs").ExtractCliOptions} */ ({
+        county: params.options.county,
+        countyFips: params.options.countyFips,
+      }),
     countyName: params.options.countyName,
     hostedServicePaths: params.hostedServicePaths,
     ruleId: hostedServiceRuleId(params.options.release),

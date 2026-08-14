@@ -31,7 +31,7 @@ aws stepfunctions start-execution \
 Use `releaseOverride` only for a deliberate replay:
 
 ```json
-{"releaseOverride":"2026-08-19.0"}
+{ "releaseOverride": "2026-08-19.0" }
 ```
 
 Publication requires `publishApproved:true` on a separate manual execution.

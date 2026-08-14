@@ -82,7 +82,7 @@ describe("Overture places refresh infrastructure", () => {
     );
     expect(template).not.toContain("FilterExpression");
     expect(template).toContain(
-      "ConditionExpression\": \"attribute_not_exists(lock_key) OR expires_at < :now",
+      'ConditionExpression": "attribute_not_exists(lock_key) OR expires_at < :now',
     );
   });
 });

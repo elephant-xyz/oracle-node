@@ -180,9 +180,7 @@ export function parseRefreshInput(value) {
     throw new Error("countyFips must be five digits");
   }
   if (boundarySource === null || !BOUNDARY_PATTERN.test(boundarySource)) {
-    throw new Error(
-      "boundarySource must look like tiger/tl_2024_us_county",
-    );
+    throw new Error("boundarySource must look like tiger/tl_2024_us_county");
   }
   if (releaseOverride !== null) parseOvertureReleaseId(releaseOverride);
   if (costCeilingUsd === null || costCeilingUsd < 0) {
@@ -524,7 +522,7 @@ function taxonomyLeaf(path) {
  * @returns {string[]} Sorted unique non-empty values.
  */
 function uniqueSorted(values) {
-  return [
-    ...new Set(values.map((value) => value.trim()).filter(Boolean)),
-  ].sort((a, b) => a.localeCompare(b));
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))].sort(
+    (a, b) => a.localeCompare(b),
+  );
 }

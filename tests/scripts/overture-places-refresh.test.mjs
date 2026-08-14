@@ -24,12 +24,8 @@ const LEE_INPUT = {
 
 describe("Overture release planning", () => {
   it("orders revisions numerically and rejects rollbacks", () => {
-    expect(
-      compareOvertureReleases("2026-08-19.10", "2026-08-19.2"),
-    ).toBe(1);
-    expect(
-      compareOvertureReleases("2026-07-22.0", "2026-08-19.0"),
-    ).toBe(-1);
+    expect(compareOvertureReleases("2026-08-19.10", "2026-08-19.2")).toBe(1);
+    expect(compareOvertureReleases("2026-07-22.0", "2026-08-19.0")).toBe(-1);
     expect(() =>
       buildRefreshPlan({
         input: LEE_INPUT,
@@ -103,9 +99,9 @@ describe("Overture changelog contract", () => {
         "filename",
       ]),
     ).toMatchObject({ passed: true });
-    expect(() =>
-      assertOvertureChangelogSchema(["id", "change_type"]),
-    ).toThrow(/bbox/);
+    expect(() => assertOvertureChangelogSchema(["id", "change_type"])).toThrow(
+      /bbox/,
+    );
   });
 });
 

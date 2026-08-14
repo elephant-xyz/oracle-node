@@ -13,12 +13,7 @@ import {
   SFNClient,
 } from "@aws-sdk/client-sfn";
 import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
-import {
-  mkdir,
-  readFile,
-  readdir,
-  rm,
-} from "node:fs/promises";
+import { mkdir, readFile, readdir, rm } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -26,10 +21,7 @@ import { parseArgs } from "node:util";
 import pg from "pg";
 
 import { runExport } from "./export-overture-places-table.mjs";
-import {
-  discoverRelease,
-  runExtract,
-} from "./extract-overture-places.mjs";
+import { discoverRelease, runExtract } from "./extract-overture-places.mjs";
 import { runIncrementalPlacesExtract } from "./extract-overture-places-changelog.mjs";
 import {
   buildRefreshPlan,
@@ -516,7 +508,9 @@ async function assertCatalogPointerStable(params) {
     );
   }
   if (!params.parquetUrl.includes(params.ipnsName)) {
-    throw new Error("Published parquet URL does not use the verified IPNS name");
+    throw new Error(
+      "Published parquet URL does not use the verified IPNS name",
+    );
   }
 }
 
@@ -590,9 +584,7 @@ async function uploadDirectoryToS3(params) {
   const walk = async (dir, relative) => {
     const entries = await readdir(dir, { withFileTypes: true });
     for (const entry of entries) {
-      const childRelative = relative
-        ? `${relative}/${entry.name}`
-        : entry.name;
+      const childRelative = relative ? `${relative}/${entry.name}` : entry.name;
       const childPath = path.join(dir, entry.name);
       if (entry.isDirectory()) {
         await walk(childPath, childRelative);
@@ -768,7 +760,8 @@ if (
 ) {
   main(process.argv.slice(2)).catch(async (caught) => {
     const message = caught instanceof Error ? caught.message : String(caught);
-    const errorName = caught instanceof Error ? caught.name : "RefreshStageError";
+    const errorName =
+      caught instanceof Error ? caught.name : "RefreshStageError";
     const taskToken = process.env.TASK_TOKEN;
     if (typeof taskToken === "string" && taskToken.length > 0) {
       await new SFNClient({})

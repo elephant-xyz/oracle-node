@@ -41,7 +41,8 @@ Parameters:
     Description: Optional existing SNS topic for failed execution alarms
 
 Conditions:
-  HasFailureNotificationTopic: !Not [!Equals [!Ref FailureNotificationTopicArn, ""]]
+  HasFailureNotificationTopic:
+    !Not [!Equals [!Ref FailureNotificationTopicArn, ""]]
 
 Resources:
   RefreshLogGroup:
