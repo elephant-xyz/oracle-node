@@ -1,0 +1,891 @@
+# Rock Island County, IL acquisition-source registry.
+# Discovery only: no AWS identifiers, credentials, secrets, or raw owner records.
+
+county:
+  key: rock-island
+  name: Rock Island County
+  state: IL
+  fips: "17161"
+  discovery_date: "2026-08-01"
+  permit_discovery_refreshed_at: "2026-08-14T21:50:52.602Z"
+  scope: acquisition-mvp
+  working_parcel_denominator:
+    value: 65806
+    definition: Distinct canonical ten-digit PINs after duplicate-source-record consolidation
+    verified_at: "2026-08-03"
+    source_record_count: 65956
+    caveat: 126 placeholder/non-canonical PIN records are quarantined; 24 extra records across 23 duplicate-PIN groups are consolidated.
+  parcel_identifier:
+    name: PIN
+    source_field: PIN
+    type: string
+    observed_length: 10
+    normalization: Preserve exactly as text; never coerce to a number or remove leading zeroes.
+    aliases_to_validate:
+      - parcel_number
+      - alternate_parcel_number
+      - RICO_PARCE
+
+publication:
+  status: permission-request-required
+  request_document: docs/rock-island-open-data-request.md
+  public_after_approval:
+    - PIN
+    - polygon_geometry
+    - GIS_acres_num
+    - site_address
+    - Site_City
+    - Site_State
+    - Site_Zip
+    - class
+    - Zoning
+    - EAV
+    - EMV
+    - taxbill_year
+    - source_provenance
+    - source_revision
+  restricted_pending_explicit_approval:
+    - owner1_name
+    - owner1_address1
+    - owner1_address2
+    - owner1_csz
+    - Owner_city
+    - Owner_state
+    - Owner_Zip
+    - taxbill_name
+    - taxbill_addr1
+    - taxbill_addr2
+    - taxbill_csz
+    - Taxbill_CS
+    - Taxbill_zip
+  always_private:
+    - purchased_email
+    - purchased_phone
+    - contact_suppression
+    - campaign_history
+    - owner_responses
+    - asking_price
+    - acquisition_status
+  prohibited_until_approval:
+    - full_county_download
+    - public_dataset_mirror
+    - public_ipfs_upload
+    - owner_or_taxbill_publication
+
+crm_handoff:
+  join_key:
+    name: parcelIdentifier
+    source: PIN
+    type: string
+  open_parcel_feature:
+    format: GeoJSON Feature
+    geometry:
+      types:
+        - Polygon
+        - MultiPolygon
+      crs: EPSG:4326
+    properties:
+      objectId:
+        source: OBJECTID
+        type: integer
+        identity: false
+      countyFips:
+        constant: "17161"
+        type: string
+      parcelIdentifier:
+        source: PIN
+        type: string
+      acreage:
+        source: GIS_acres_num
+        type: number
+      acreageProvenance:
+        constant: GIS_acres_num
+        type: string
+      siteAddress:
+        source: site_address
+        type: nullable-string
+      siteCity:
+        source: Site_City
+        type: nullable-string
+      siteZip:
+        source: Site_Zip
+        type: nullable-string
+      zoning:
+        source: Zoning
+        type: nullable-string
+      landUse:
+        source: class
+        type: nullable-string
+        caveat: Preserve the raw code until the county class dictionary is obtained.
+      assessedValue:
+        source: EAV
+        type: nullable-number
+      marketValue:
+        source: EMV
+        type: nullable-number
+      taxableValue:
+        source: null
+        type: unavailable
+        caveat: Do not copy EAV into taxableValue.
+      longitude:
+        source: X_longitude-or-geometry-centroid
+        type: number
+      latitude:
+        source: Y_latitude-or-geometry-centroid
+        type: number
+      sourceUrl:
+        source: feature_layer_url
+        type: string
+      sourceRevision:
+        source: item_modified-and-taxbill_year
+        type: string
+      snapshotAt:
+        source: ingestion-clock
+        type: date-time
+  restricted_owner_enrichment:
+    storage: private CRM only unless explicitly approved for publication
+    records:
+      owner:
+        source_role: owner1
+        fields:
+          - owner1_name
+          - owner1_address1
+          - owner1_address2
+          - owner1_csz
+          - Owner_city
+          - Owner_state
+          - Owner_Zip
+      taxbill_recipient:
+        source_role: taxbill
+        fields:
+          - taxbill_name
+          - taxbill_addr1
+          - taxbill_addr2
+          - taxbill_csz
+          - Taxbill_CS
+          - Taxbill_zip
+    rule: Never silently treat the tax-bill recipient as the owner.
+  private_contact_enrichment:
+    system_of_record: parcel-crm
+    encryption_required: true
+    fields:
+      - email
+      - phone
+      - vendor
+      - confidence
+      - purchased_at
+      - suppression_state
+      - compliance_metadata
+
+sources:
+  - key: county-parcel-gis
+    category: property
+    name: Rock Island County GIS Parcels
+    authority: Rock Island County GIS
+    viewer_url: "https://ricogis.maps.arcgis.com/apps/webappviewer/index.html?id=f53cd25919f0443080b68c45e3144741"
+    item_url: "https://www.arcgis.com/home/item.html?id=9cae8a64ab0e4cea99758f741ca43b3c"
+    item_metadata_url: "https://www.arcgis.com/sharing/rest/content/items/9cae8a64ab0e4cea99758f741ca43b3c?f=pjson"
+    feature_layer_url: "https://services9.arcgis.com/6FnscPPlUa9DXXOk/ArcGIS/rest/services/Parcels/FeatureServer/0"
+    service_item_id: 9cae8a64ab0e4cea99758f741ca43b3c
+    access_pattern:
+      mode: arcgis-rest-query
+      auth: none
+      capabilities:
+        - Query
+      query_formats:
+        - JSON
+        - geoJSON
+        - PBF
+      max_record_count: 2000
+      native_wkid: 102672
+      latest_native_wkid: 3436
+      crm_output_wkid: 4326
+      anti_bot: none observed on FeatureServer
+      browser_inventory: not performed
+    rights:
+      item_access: public
+      item_license_text: For use by the general public
+      county_pricing_url: "https://www.rockislandcountyil.gov/DocumentCenter/View/944"
+      county_release_policy_url: "https://www.rockislandcountyil.gov/DocumentCenter/View/1159/Data-Release-PDF"
+      public_redistribution: unconfirmed
+      decision: Private proof only; obtain written permission before bulk use or public mirroring.
+    freshness:
+      item_modified: "2026-07-14"
+      assessment_years:
+        - 2025
+        - null
+      snapshot_verified_at: "2026-08-01"
+    fields:
+      identity:
+        - PIN
+        - parcel_number
+        - alternate_parcel_number
+        - RICO_PARCE
+      geometry_and_location:
+        - Shape
+        - GIS_acres_num
+        - gross_acres
+        - X_longitude
+        - Y_latitude
+        - site_address
+        - Site_City
+        - Site_State
+        - Site_Zip
+      assessment:
+        - EAV
+        - EMV
+        - farm_land
+        - farm_building
+        - non_farm_land
+        - non_farm_building
+        - taxbill_year
+        - assessed_last
+      classification:
+        - class
+        - Zoning
+        - township
+        - municipality
+        - Jurisdiction
+      owner_role:
+        - owner1_name
+        - owner1_address1
+        - owner1_address2
+        - owner1_csz
+        - Owner_city
+        - Owner_state
+        - Owner_Zip
+      taxbill_role:
+        - taxbill_name
+        - taxbill_addr1
+        - taxbill_addr2
+        - taxbill_csz
+        - Taxbill_CS
+        - Taxbill_zip
+    coverage_checks:
+      polygon_and_pin_count: 65956
+      pin_null_count: 0
+      gis_acres_null_count: 0
+      eav_null_count: 151
+      emv_null_count: 151
+      owner_name_null_count: 151
+      taxbill_name_null_count: 151
+      taxbill_year_null_count: 151
+      zoning_null_or_blank_count: 1108
+    pilot:
+      sample_path: downloads/rock-island/rock-island-validation-sample.csv
+      captures_path: downloads/rock-island/rock-island-validation-captures.zip
+      validation_summary_path: downloads/rock-island/appraisal-validation/summary.json
+      gitignored: true
+      public: false
+      feature_count: 25
+      unique_pin_count: 25
+      capture_bytes: 161121
+      prepare_wall_seconds: 7.28
+      transform_wall_seconds: 51.06
+      transforms_passed: 25
+      lexicon_validations_passed: 25
+      validation_issues: 0
+      schema_cache:
+        root_cid: bafkreicdfrzfiygzjaqrz4i2ao4yxspcxsksvbuljxx7ruqrp5m36kddxq
+        verified_schema_count: 65
+        verified_bytes: 156575
+        populate_wall_seconds: 214.084
+        integrity: Every exact response was verified against its CID multihash before cache write; TLS verification remained enabled.
+      local_gateway_diagnosis:
+        configured_gateways_refused: 4
+        note: ipfs.io, gateway.ipfs.io, and dweb.link resolved to 192.168.4.1 locally; w3s.link resolved publicly but was also refused.
+      geometry:
+        strategy: One geometry entity per Polygon or MultiPolygon component.
+        exact_topology_retention: Full GeoJSON, including interior rings, is retained in data/source_payload.ndjson.
+      source_payload:
+        sidecar: data/source_payload.ndjson
+        query_loader: Nested into each logical row source_payload when the sidecar is present.
+      variability:
+        - raw-class-code coverage without semantic inference
+        - blank class and zoning
+        - consolidated duplicate PIN
+        - missing site address
+        - incomplete assessment
+        - improved and no-recorded-structure parcels
+    implemented_by:
+      discovery_skill: county-discovery
+      transform: Counties-trasform-scripts/rock island/scripts/
+      prepare_flow: multi-request-flows/Rock_Island.json
+      future_crm_provider: parcel-crm/src/server/providers/county/
+
+  - key: assessment-search
+    category: property-assessment
+    name: Rock Island County Online Assessment Search
+    url: "https://www.rockislandcountyil.gov/176/Assessment-Search"
+    access_pattern:
+      mode: human-individual-inquiry-only
+      automation: prohibited
+      downstream_vendor: DevNet
+    decision: Do not scrape, replay hidden endpoints, or build a browser flow.
+
+  - key: property-tax-search
+    category: property-tax
+    name: Rock Island County Online Property Tax Search
+    url: "https://www.rockislandcountyil.gov/350/Property-Tax-Search"
+    access_pattern:
+      mode: human-individual-inquiry-only
+      automation: prohibited
+      downstream_vendor: DevNet
+    decision: Do not scrape, replay hidden endpoints, or build a browser flow.
+
+  - key: township-assessors
+    category: property-record-custodians
+    name: Rock Island County Township Assessors
+    url: "https://www.rockislandcountyil.gov/213/Township-Assessors"
+    jurisdiction_count: 18
+    note: Township assessors determine values and maintain property cards; county offices consolidate countywide records.
+
+  - key: hifld-transmission-lines
+    category: power-transmission
+    name: HIFLD U.S. Electric Power Transmission Lines
+    catalog_url: "https://catalog.data.gov/dataset/electric-power-transmission-lines"
+    service_url: "https://services2.arcgis.com/LYMgRMwHfrWWEg3s/arcgis/rest/services/HIFLD_US_Electric_Power_Transmission_Lines/FeatureServer/0"
+    access_level: public
+    license: "https://www.usa.gov/government-works"
+    source_date: "2022-10-24"
+    publication: open-with-attribution
+    role: screening-only
+    caveat: Archived geometry may be incomplete or stale and does not establish deliverable capacity.
+
+  - key: eia-power-plants
+    category: power-generation
+    name: EIA-860 and EIA-860M Power Plant Inventories
+    annual_url: "https://www.eia.gov/electricity/data/eia860/"
+    monthly_url: "https://www.eia.gov/electricity/data/eia860m/"
+    access_level: public
+    coverage: U.S. plants with at least 1 MW combined nameplate capacity
+    location_fields:
+      - latitude
+      - longitude
+      - county
+      - state
+    role: screening-only
+    caveat: Plant proximity does not establish transmission capacity or interconnection feasibility.
+
+  - key: icc-midamerican-docket-2014-0494
+    category: power-regulatory-context
+    name: ICC Docket P2014-0494
+    url: "https://icc.illinois.gov/docket/P2014-0494"
+    operator: MidAmerican Energy Company
+    documented_assets:
+      - Oak Grove Substation context
+      - 345 kV transmission route
+      - 161 kV transmission work
+    publication: cite-filing-only
+    role: qualitative-context
+    caveat: Do not convert filing maps into an open coordinate layer without a rights review.
+
+  - key: midamerican-service-territory
+    category: electric-utility
+    name: MidAmerican Energy Service Territory
+    url: "https://www.midamericanenergy.com/territory-communitylist"
+    role: service-territory-context
+    caveat: Territory coverage does not establish site capacity, redundancy, cost, or schedule.
+
+  - key: national-substation-archive
+    category: power-substations
+    name: Legacy national ArcGIS substation fallback
+    service_url: "https://services5.arcgis.com/HDRa0B57OVrv2E1q/ArcGIS/rest/services/Electric_Substations/FeatureServer/0"
+    access_level: rights-review-required
+    publication: prohibited
+    role: qualified-screening-only
+    caveat: Current EIA guidance says EIA and HIFLD do not publish substation locations.
+
+deferred_sources:
+  - key: permits
+    reason: Acquisition MVP excludes fragmented county and municipal permit systems.
+    starting_url: "https://www.rockislandcountyil.gov/363/Zoning-Building-Safety"
+  - key: illinois-business-registration
+    reason: Corporate enrichment is not required for the first parcel/power proof.
+  - key: contact-vendors
+    reason: Vendor selection and purchased contact matching belong in the private CRM phase.
+
+source_feasibility:
+  county-parcel-gis:
+    technical: A full export is technically feasible in at least 33 pages of 2000 records.
+    benchmark: Concurrency 2 completed five sampled pages and 10000 records in 294 ms with zero failures; the full PII-free seed then completed in 19.123 seconds.
+    recommended_mode: One-shot rate-limited ArcGIS export using the approved non-PII field allow-list; do not duplicate it with a full per-parcel crawl.
+  assessment-search:
+    technical: Not evaluated because automation is expressly prohibited.
+    recommended_mode: County-authorized GIS or bulk assessment artifact only.
+  power:
+    technical: HIFLD lines and EIA plants are usable public screening inputs.
+    gap: No approved open substation-coordinate source.
+
+next_phase_gates:
+  - County class-code dictionary
+  - PIN alias reconciliation
+  - Restore AWS profile access, sync and hash-check the Rock Island legacy scripts ZIP, then run one parcel through the current worker.
+  - Dry-run query-loader staging with jurisdiction rock_island_appraiser, county Rock Island, and state IL; do not mutate Neon before operator approval.
+  - County-generic parcel-crm provider
+  - Source-to-Neon-to-export count reconciliation and verified non-PII exporter before irreversible public/IPFS publication
+
+operator_decisions:
+  onboarding_continued_at: "2026-08-03"
+  bulk_terms:
+    decision: Proceed with internal onboarding despite unresolved bulk-use and redistribution terms.
+    requirements:
+      - Preserve Rock Island County GIS attribution.
+      - Preserve source URL, source revision, and retrieval timestamp.
+  publication:
+    decision: Human-gated non-PII publication only after source-to-Neon-to-export count reconciliation.
+    excluded_fields:
+      - owner1_name
+      - owner1_address1
+      - owner1_address2
+      - owner1_csz
+      - Owner_city
+      - Owner_state
+      - Owner_Zip
+      - taxbill_name
+      - taxbill_addr1
+      - taxbill_addr2
+      - taxbill_csz
+      - Taxbill_CS
+      - Taxbill_zip
+      - purchased_email
+      - purchased_phone
+      - contact_suppression
+      - campaign_history
+    gate: Stop before Filebase/IPFS upload unless the exporter proves all excluded fields are absent.
+
+oracle_onboarding:
+  branch: rock-island-property-first-ingest
+  aws:
+    profile: elephant-oracle-node
+    region: us-east-1
+    verification_status: blocked-local-profile-missing
+    mutation_attempted: false
+  neon:
+    target: elephant-query-db
+    connectivity: verified-select-1
+    parcels_table: verified
+    rock_island_appraiser_parcels: 0
+  appraisal:
+    mode: arcgis-rest-bulk
+    browser_flow: prohibited-for-devnet-not-required-for-feature-server
+    source: county-parcel-gis
+    owner_and_taxbill_fields_in_seed: false
+    seed_rows: 65806
+    validation_sample_rows: 25
+    validation_status: passed-local-25-of-25-awaiting-aws-worker-smoke
+    validation_report: docs/rock-island-appraisal-transform-validation.md
+  commercial_first:
+    status: blocked-pending-class-dictionary
+    reason: Raw numeric class values have no verified commercial/industrial meanings.
+
+source_benchmarks:
+  county-parcel-gis:
+    verified_at: "2026-08-03"
+    egress_country: US
+    live_record_count: 65956
+    query_page_size: 2000
+    expected_pages: 33
+    sampled_offsets:
+      - 0
+      - 12000
+      - 24000
+      - 36000
+      - 48000
+    sampled_fields:
+      - OBJECTID
+      - PIN
+      - class
+      - Zoning
+      - Jurisdiction
+    return_geometry: false
+    results:
+      - concurrency: 1
+        requests: 5
+        records: 10000
+        failures: 0
+        bytes: 1154620
+        p50_ms: 186
+        p95_ms: 208
+        wall_ms: 947
+        estimated_33_page_seconds: 6.25
+      - concurrency: 2
+        requests: 5
+        records: 10000
+        failures: 0
+        bytes: 1154620
+        p50_ms: 82
+        p95_ms: 252
+        wall_ms: 294
+        estimated_33_page_seconds: 1.94
+      - concurrency: 4
+        requests: 5
+        records: 10000
+        failures: 0
+        bytes: 1154620
+        p50_ms: 127
+        p95_ms: 557
+        wall_ms: 559
+        estimated_33_page_seconds: 3.69
+    safe_concurrency: 2
+    threshold_decision: safely-below-48-hours
+    full_seed:
+      source_records: 65956
+      output_rows: 65806
+      response_bytes: 101759335
+      elapsed_ms: 19123
+      polygon_rows: 65177
+      multipolygon_rows: 629
+    per_parcel_prepare:
+      requests: 25
+      failures: 0
+      bytes: 161121
+      wall_seconds: 7.28
+      projected_sequential_hours: 5.3
+      projected_concurrency_2_hours: 2.7
+    caveat: A per-parcel crawl duplicates facts already acquired by the bulk seed and must not start before validation gates pass.
+
+parcel_jurisdictions:
+  - jurisdiction: MOLINE CITY
+    parcel_count: 17486
+  - jurisdiction: ROCK ISLAND CITY
+    parcel_count: 15738
+  - jurisdiction: ROCK ISLAND COUNTY
+    parcel_count: 12731
+  - jurisdiction: EAST MOLINE CITY
+    parcel_count: 7834
+  - jurisdiction: SILVIS CITY
+    parcel_count: 3214
+  - jurisdiction: MILAN VILLAGE
+    parcel_count: 2447
+  - jurisdiction: COAL VALLEY VILLAGE
+    parcel_count: 1549
+  - jurisdiction: HAMPTON VILLAGE
+    parcel_count: 912
+  - jurisdiction: PORT BYRON VILLAGE
+    parcel_count: 852
+  - jurisdiction: CARBON CLIFF VILLAGE
+    parcel_count: 799
+  - jurisdiction: ANDALUSIA VILLAGE
+    parcel_count: 642
+  - jurisdiction: RAPIDS CITY VILLAGE
+    parcel_count: 586
+  - jurisdiction: CORDOVA VILLAGE
+    parcel_count: 367
+  - jurisdiction: HILLSDALE VILLAGE
+    parcel_count: 316
+  - jurisdiction: REYNOLDS VILLAGE
+    parcel_count: 269
+  - jurisdiction: null
+    parcel_count: 151
+  - jurisdiction: OAK GROVE VILLAGE
+    parcel_count: 63
+
+illinois_business_registration:
+  source: Illinois Secretary of State Business Data Transparency Act
+  portal: https://www.ilsos.gov/data/bus-serv-home.html
+  corporation_documentation: https://www.ilsos.gov/data/bs/proc_corp_data.pdf
+  sanctioned_mode: daily-fixed-width-bulk-files
+  live_search:
+    url: https://www.ilsos.gov/departments/business-services/business-searches.html
+    automation: prohibited
+    decision: Do not scrape or automate.
+  corporation_files:
+    - master
+    - company_name
+    - agent
+    - annual_report
+    - assumed_old_names
+    - stock
+    - other
+  stable_join_key: file_number
+  adapter_status: required
+  note: The Florida Sunbiz worker and transform are not reusable without an Illinois-specific parser and mapping.
+
+bbb:
+  source: Better Business Bureau
+  scope: Rock Island County contractor enrichment
+  adapter: existing-national-category-harvest
+  status: pending-appraisal-and-permit-gates
+
+permits:
+  - jurisdiction: Unincorporated Rock Island County
+    source_page: https://rockislandcountyil.gov/366/Building-Permits
+    portal: https://www.rockislandcountyil.gov/AgendaCenter
+    vendor: Rock Island County Zoning & Building Safety / CivicPlus Agenda Center
+    search: no complete record search; official agenda packets expose aggregate reports
+    status: aggregate-only
+    record_history: Verified samples for 2017-11, 2019-05, 2022-05, and 2024-02; continuous range not proven
+    record_fields:
+      - permit-category counts and fees
+      - total receipts and net revenue
+      - total project valuation
+      - fiscal-year comparisons
+      - new-residence permit numbers, square footage, valuation, and township totals
+    access_method: anonymous static county pages and agenda-packet PDFs
+    rate_limit: none published; passive packet reads only
+    bulk_ingestion: Aggregate trends and partial new-residence rows are feasible; complete permit rows are unavailable
+    adapter_status: not-implemented-incomplete-record-surface
+    checked_at: "2026-08-14"
+  - jurisdiction: Moline
+    source_page: https://www.moline.il.us/1949/Online-Permitting-System
+    portal: https://moli.csqrcloud.com/community-etrakit/
+    vendor: CentralSquare eTRAKiT
+    search: Prohibited portal path not retried; official monthly Archive Center reports are the certified alternative
+    report_index: https://www.moline.il.us/926/Permit-Reports
+    report_vendor: CivicPlus Archive Center / municipal permit-system PDF export
+    status: supported-layout-local-harvest-complete-ambiguous-reports-blocked
+    record_history: 163 links, 162 unique months from 2012-12 through 2026-06; duplicate 2017-05 and missing 2015-12
+    record_fields:
+      - permit number
+      - permit type and subtype
+      - issue date
+      - contractor name
+      - address
+      - job value
+      - legacy application year and number
+      - legacy permit code and description
+      - legacy township and parcel text
+    access_method: anonymous HTTPS index and PDFs; no portal search, authentication, CAPTCHA, or hidden endpoint
+    rate_limit: none published; validated at concurrency 1 with at least 1 second between reports
+    bulk_ingestion: Load-ready local package contains 102 reports and 22,599 unique records from supported layouts spanning 2017-01 through 2026-06; 61 reports remain excluded because identity columns are ambiguous, compacted, or contradicted by archive metadata
+    adapter: scripts/permit-source-adapters/moline-issued-permit-reports.mjs
+    harvester: scripts/harvest-moline-issued-permits.mjs
+    adapter_status: versioned-current-and-legacy-parsers-supported-eras-load-ready
+    probe:
+      archive_id: "11988"
+      report_month: "2026-06"
+      parsed_rows: 233
+      unique_loader_keys: 233
+      issue_date_range: 2026-06-01 through 2026-06-30
+      local_summary: downloads/rock-island/permit-discovery-2026-08-14/moline-2026-06/summary.json
+    harvest:
+      report_count: 102
+      parsed_source_rows: 22655
+      unique_loader_keys: 22599
+      duplicate_source_rows: 56
+      issue_date_range: 2017-01-03 through 2026-06-30
+      legacy_2017_2020_records: 9422
+      legacy_2021_2024_records: 8980
+      transition_2024_records: 549
+      current_2025_2026_records: 3648
+      exact_printed_total_reports: 67
+      printed_total_mismatch_reports: 29
+      reports_without_readable_total: 6
+      manifest: downloads/rock-island/permit-harvest/moline-archive-2026-08-14/supported-manifest.json
+      private_package: downloads/rock-island/permit-harvest/moline-archive-2026-08-14/load-ready.private.jsonl
+      public_allowlist: downloads/rock-island/permit-harvest/moline-archive-2026-08-14/public-allowlist.jsonl
+      current_only_manifest: downloads/rock-island/permit-harvest/moline-archive-2026-08-14/current-2025-manifest.json
+      current_only_private_package: downloads/rock-island/permit-harvest/moline-archive-2026-08-14/current-2025-load-ready.private.jsonl
+      current_only_public_allowlist: downloads/rock-island/permit-harvest/moline-archive-2026-08-14/current-2025-combined.public-allowlist.jsonl
+    legacy_review:
+      blocked_2012_2016_reports: 48
+      parsed_2017_2020_reports: 39
+      blocked_metadata_or_date_conflict_reports: 2
+      blocked_compacted_2020_2021_reports: 10
+      parsed_2021_2024_reports: 42
+      blocked_isolated_compacted_reports: 1
+      contradictory_archive_item_count: 1
+      decision: supported legacy records use exact official application identity; 61 ambiguous or contradictory reports remain excluded and no source identity was invented
+    checked_at: "2026-08-14T22:32:22.323Z"
+  - jurisdiction: Rock Island
+    source_page: https://www.rigov.org/634/Building-Permits-and-Contractor-Registra
+    portal: https://cityofrockislandil-energovweb.tylerhost.net/apps/selfservice#/home
+    vendor: Tyler EPL / Civic Access
+    search: anonymous exact public search previously certified; monthly issued-permit reports are the bulk source
+    report_index: https://www.rigov.org/1276/Permit-Reports
+    status: record-source-certified-no-new-reports
+    record_history: 112 monthly reports from 2017-01 through 2026-04
+    record_fields:
+      - permit number
+      - issue date
+      - permit type
+      - address
+      - description
+      - source parcel or tax-map text
+      - valuation
+      - legacy contractor and owner columns
+    access_method: anonymous official index and DocumentCenter PDFs
+    rate_limit: none published; existing harvester enforces serial downloads and at least 1 second delay
+    bulk_ingestion: Existing private package is complete through 2026-04-30; append only when a new document id appears
+    adapter: scripts/permit-source-adapters/rock-island-monthly-reports.mjs
+    adapter_status: production-local-parser-no-database-load
+    refresh:
+      checked_at: "2026-08-14T21:46:56.648Z"
+      indexed_report_count: 112
+      latest_document_id: "20365"
+      latest_issue_date: "2026-04-30"
+      new_report_count: 0
+      new_unique_loader_key_rows: 0
+      cadence: weekly index check; monthly publication is not guaranteed
+  - jurisdiction: East Moline
+    source_page: https://www.eastmoline.com/442/Permits-Contractor-Reg-Food-Beverage-Por
+    portal: https://eastmolinepermit.portal.iworq.net/portalhome/eastmolinepermit
+    vendor: iWorq
+    search: prohibited iWorQ path not retried; alternate official Agenda Center checked
+    status: no-open-record-source
+    record_history: no recurring issued-permit report found
+    record_fields: occasional narrative project references in agendas and minutes only
+    access_method: anonymous CivicPlus agenda and minute PDFs
+    rate_limit: not applicable; no record endpoint
+    bulk_ingestion: not feasible from published alternatives
+    adapter_status: blocked-by-robots-no-alternate-record-export
+    checked_at: "2026-08-14"
+  - jurisdiction: Carbon Cliff
+    source_page: https://carboncliff.gov/permits-zoning-and-floodplain
+    portal: https://eastmolinepermit.portal.iworq.net/portalhome/eastmolinepermit
+    vendor: iWorq
+    search: prohibited delegated iWorQ path not retried; alternate official documents checked
+    status: no-open-record-source
+    record_history: village code requires a permit register but does not publish it
+    record_fields: no open issued-permit rows
+    access_method: anonymous ordinance and document PDFs only
+    rate_limit: not applicable; no record endpoint
+    bulk_ingestion: not feasible from published alternatives
+    adapter_status: blocked-by-robots-no-alternate-record-export
+    note: Carbon Cliff delegates building, electrical, mechanical, and plumbing permits and inspections to East Moline after Village Hall clearance.
+    checked_at: "2026-08-14"
+  - jurisdiction: Silvis
+    source_page: https://silvisil.org/inspections.html
+    portal: null
+    vendor: paper forms / municipal inspection office
+    search: no issued-permit report, download, or API found
+    status: no-open-record-source
+    record_history: none published
+    record_fields: blank building, plumbing, mechanical, electrical, and sign applications only
+    access_method: anonymous static PDFs
+    rate_limit: not applicable; no record endpoint
+    bulk_ingestion: not feasible
+    adapter_status: not-applicable
+    checked_at: "2026-08-14"
+  - jurisdiction: Milan
+    source_page: https://www.milanil.org/contact-us
+    portal: null
+    vendor: municipal building and inspections office
+    search: meeting minutes mention an Inspector's Report but do not attach permit rows
+    status: no-open-record-source
+    record_history: public minutes sampled; underlying inspector report range unknown
+    record_fields: qualitative project and activity narrative only
+    access_method: anonymous village pages and meeting PDFs
+    rate_limit: not applicable; no record endpoint
+    bulk_ingestion: not feasible from narrative minutes
+    adapter_status: not-applicable
+    checked_at: "2026-08-14"
+  - jurisdiction: Coal Valley
+    source_page: https://www.coalvalleyil.org/for-businesses/building-permits/
+    portal: null
+    vendor: paper forms / village building inspector
+    search: no issued-permit report, download, or API found
+    status: no-open-record-source
+    record_history: board and zoning document archives exist; no permit register found
+    record_fields: applications, codes, and meeting records only
+    access_method: anonymous village pages and document browser
+    rate_limit: not applicable; no record endpoint
+    bulk_ingestion: not feasible
+    adapter_status: not-applicable
+    checked_at: "2026-08-14"
+  - jurisdiction: Hampton
+    source_page: https://hamptonil.org/info.php
+    portal: null
+    vendor: shared City of Silvis permit intake / village office
+    search: no issued-permit report, download, or API found
+    status: no-open-record-source
+    record_history: none published
+    record_fields: contractor registration and blank permit intake only
+    access_method: anonymous village page and minutes
+    rate_limit: not applicable; no record endpoint
+    bulk_ingestion: not feasible
+    adapter_status: not-applicable
+    checked_at: "2026-08-14"
+  - jurisdiction: Port Byron
+    source_page: https://www.portbyronil.com/forms-permits
+    portal: null
+    vendor: paper forms / village building inspector
+    search: no issued-permit register, report, or API found
+    status: no-open-record-source
+    record_history: board-minute links span 2020 through 2026 with gaps
+    record_fields: blank application, fee schedule, and narrative minutes only
+    access_method: anonymous Wix-hosted PDFs
+    rate_limit: not applicable; no record endpoint
+    bulk_ingestion: not feasible
+    adapter_status: not-applicable
+    checked_at: "2026-08-14"
+  - jurisdiction: Andalusia
+    source_page: https://villageofandalusiail.org/component/content/article/public-works?catid=2
+    portal: https://www.rockislandcountyil.gov/AgendaCenter
+    vendor: village zoning/public works plus Rock Island County Zoning & Building Safety
+    search: no complete permit register; county reports expose aggregate and new-residence subsets
+    status: aggregate-only
+    record_history: village minutes from 2014 through 2026; sampled county permit reports from 2017 through 2024
+    record_fields: village narrative plus county aggregate fields and partial new-residence permit numbers
+    access_method: anonymous village document PDFs and county agenda packets
+    rate_limit: none published; passive document reads only
+    bulk_ingestion: no jurisdiction-complete row-level source
+    adapter_status: not-implemented-incomplete-record-surface
+    checked_at: "2026-08-14"
+  - jurisdiction: Rapids City
+    source_page: https://www.rapidscity.us/information.php
+    portal: null
+    vendor: in-person village office
+    search: agendas reference a monthly Permit Log Report, but no log attachment was found
+    status: referenced-report-not-published
+    record_history: recurring log referenced in May, June, and July 2026 agendas; actual range unknown
+    record_fields: unknown because the log is not attached
+    access_method: anonymous static agenda PDFs; permits and payments are in-person only
+    rate_limit: not applicable; no record endpoint
+    bulk_ingestion: not feasible unless the referenced log is published
+    adapter_status: not-applicable
+    checked_at: "2026-08-14"
+  - jurisdiction: Cordova
+    source_page: https://villageofcordova.com/government
+    portal: null
+    vendor: village office / GoDaddy static files
+    search: no issued-permit report, download, or API found
+    status: no-open-record-source
+    record_history: none published
+    record_fields: blank building-permit application only
+    access_method: anonymous official page and PDF
+    rate_limit: not applicable; no record endpoint
+    bulk_ingestion: not feasible
+    adapter_status: not-applicable
+    checked_at: "2026-08-14"
+  - jurisdiction: Hillsdale
+    source_page: https://www.rockislandcountyil.gov/410/What-Is-My-Property-Zoned
+    portal: https://www.rockislandcountyil.gov/AgendaCenter
+    vendor: Rock Island County Zoning & Building Safety
+    search: county-served jurisdiction; no Hillsdale-specific issued-permit list found
+    status: aggregate-only
+    record_history: county packet samples from 2017 through 2024; Hillsdale-specific range unknown
+    record_fields: county aggregate fields and partial new-residence permit numbers only
+    access_method: anonymous county pages and agenda packets
+    rate_limit: not applicable; no complete record endpoint
+    bulk_ingestion: not feasible for Hillsdale-specific complete rows
+    adapter_status: not-implemented-incomplete-record-surface
+    checked_at: "2026-08-14"
+  - jurisdiction: Reynolds
+    source_page: null
+    portal: null
+    vendor: unknown
+    search: no official village report, download, or API found
+    status: no-verified-online-source
+    record_history: unknown
+    record_fields: unknown
+    access_method: none verified; third-party directories excluded
+    rate_limit: not applicable
+    bulk_ingestion: not feasible
+    adapter_status: not-applicable
+    note: The village spans Rock Island and Mercer Counties, so source jurisdiction must be proven before ingestion.
+    checked_at: "2026-08-14"
+  - jurisdiction: Oak Grove
+    source_page: null
+    portal: null
+    vendor: unknown
+    search: no official village report, download, or API found
+    status: no-verified-online-source
+    record_history: unknown
+    record_fields: unknown
+    access_method: none verified; third-party summaries excluded
+    rate_limit: not applicable
+    bulk_ingestion: not feasible
+    adapter_status: not-applicable
+    checked_at: "2026-08-14"

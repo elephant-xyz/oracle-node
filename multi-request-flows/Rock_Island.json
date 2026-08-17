@@ -1,0 +1,21 @@
+{
+  "requests": [
+    {
+      "key": "ParcelFeature",
+      "request": {
+        "method": "GET",
+        "url": "https://services9.arcgis.com/6FnscPPlUa9DXXOk/ArcGIS/rest/services/Parcels/FeatureServer/0/query",
+        "multiValueQueryString": {
+          "f": ["geojson"],
+          "orderByFields": ["OBJECTID"],
+          "outFields": [
+            "OBJECTID,RICO_PARCE,PIN,GIS_acres_num,X_longitude,Y_latitude,TWP_RAN_SE,parcel_number,alternate_parcel_number,site_address,site_csz,Site_City,Site_State,Site_Zip,gross_acres,class,EMV,EAV,farm_land,farm_building,non_farm_land,non_farm_building,date_last_sale,gross_sale_price,net_sale_price,legal,date_of_sale,county,municipality,Jurisdiction,township,tax_code,taxbill_year,Zoning,assessed_last,MODLNAME,YRBuilt,GarSQFT,TOTSQFT,Shape__Area,Shape__Length"
+          ],
+          "outSR": ["4326"],
+          "returnGeometry": ["true"],
+          "where": ["PIN='{{=it.request_identifier}}'"]
+        }
+      }
+    }
+  ]
+}

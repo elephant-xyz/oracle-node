@@ -91,11 +91,18 @@ export const VENDORS = [
   {
     key: "centralsquare",
     name: "CentralSquare / eHub",
-    urlPatterns: [/centralsquare/i, /\beHub\b/i, /esuite/i, /eSuite\.Permits/i],
-    htmlMarkers: ["CentralSquare", "eHub"],
+    urlPatterns: [
+      /centralsquare/i,
+      /\beHub\b/i,
+      /esuite/i,
+      /eSuite\.Permits/i,
+      /csqrcloud\.com/i,
+      /community-etrakit/i,
+    ],
+    htmlMarkers: ["CentralSquare", "eHub", "eTRAKiT"],
     searchByParcel: null,
     notes:
-      "CentralSquare community development suite (eHub / eSuite portals). CentralSquare owns Click2Gov.",
+      "CentralSquare community development suite (eHub / eSuite / eTRAKiT portals). CentralSquare owns Click2Gov.",
   },
   {
     key: "epzb",

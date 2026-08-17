@@ -13,6 +13,7 @@
 // sit behind bot challenges or render their vendor only via JS.
 
 import { readFile } from "fs/promises";
+import { pathToFileURL } from "url";
 import { parse } from "yaml";
 
 import {
@@ -573,7 +574,10 @@ function formatRow(row, widths) {
     .join(" | ");
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (
+  typeof process.argv[1] === "string" &&
+  import.meta.url === pathToFileURL(process.argv[1]).href
+) {
   main().catch((caught) => {
     console.error(caught instanceof Error ? caught.stack : String(caught));
     process.exitCode = 1;
