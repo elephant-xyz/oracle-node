@@ -1,6 +1,6 @@
 {
   "schemaVersion": "1.0",
-  "generatedAt": "2026-08-13T03:59:11.000Z",
+  "generatedAt": "2026-08-14T22:34:30.000Z",
   "counties": [
     {
       "countyKey": "lee",
@@ -49,6 +49,18 @@
       "permitQueryTableUrl": null,
       "placesTableUrl": null,
       "updatedAt": "2026-07-02T14:21:44.544Z"
+    },
+    {
+      "countyKey": "rock-island",
+      "countyName": "Rock Island",
+      "stateCode": "IL",
+      "countyFips": "17161",
+      "status": "published",
+      "queryTableUrl": "https://ipfs.filebase.io/ipns/k51qzi5uqu5djbtswq6lb4p7xbf3nu8bzdzokdtcdld1r2vx6asn7lgfuk54wt",
+      "datasetCoverageUrl": "https://k51qzi5uqu5disduz18ogkvf3f2zgdsizl20o034fu8spgh2khri8uxmeo3khv.ipns.dweb.link/",
+      "permitQueryTableUrl": "https://ipfs.filebase.io/ipns/k51qzi5uqu5di42nblo5nuk94aj7af393d9y5vhqxp5dtxikzso0wt14v3p0wa",
+      "placesTableUrl": null,
+      "updatedAt": "2026-08-14T22:34:30.000Z"
     }
   ]
 }
