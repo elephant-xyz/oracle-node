@@ -95,6 +95,7 @@ describe("Broward appraisal validation harness", () => {
         "1",
         "--skip-prepare",
         "--skip-validate",
+        "--apply-use-code-fix",
         "--output",
         "downloads/broward/test-output",
       ]),
@@ -102,6 +103,7 @@ describe("Broward appraisal validation harness", () => {
       limit: 1,
       prepareCaptures: false,
       skipValidate: true,
+      applyUseCodeFix: true,
       outputDirectory: "downloads/broward/test-output",
     });
     expect(() => parseCliOptions(["--limit", "-1"])).toThrow(

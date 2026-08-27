@@ -47,6 +47,9 @@ appraisal:
   notes:
     - Fail closed when parcelInfok__BackingField is null
     - Keep folio as text; condo folios contain letters
+    - elephant-cli requires json (not body) and content-type application/json with no charset
+    - Live useCode is often a family label (04 - Condominium); published extractor crashes until family fallback is PR'd
+    - Local prepare 25/25; published transform 16/25; patched transform 25/25
 
 gis:
   rest: https://gisweb-adapters.bcpa.net/arcgis/rest/services/BCPA_EXTERNAL_JAN26/MapServer/16

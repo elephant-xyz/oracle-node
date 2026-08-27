@@ -23,6 +23,11 @@ import {
   BROWARD_COUNTY_NAME,
   normalizeBrowardFolio,
 } from "./broward-folio.mjs";
+import {
+  BROWARD_USE_CODE_MATCHER_CJS,
+  FIXED_BROWARD_USE_CODE_MATCH,
+  PUBLISHED_BROWARD_USE_CODE_MATCH,
+} from "./broward-use-code.mjs";
 
 const DEFAULT_SEED_PATH = "downloads/broward/broward-pilot.csv";
 const DEFAULT_CAPTURES_PATH =
@@ -44,6 +49,7 @@ const DEFAULT_OUTPUT_DIRECTORY = "downloads/broward/appraisal-validation";
  * @property {number | null} limit - Optional number of seed rows to process.
  * @property {boolean} prepareCaptures - When true, run elephant-cli prepare first.
  * @property {boolean} skipValidate - When true, skip CLI Lexicon validation.
+ * @property {boolean} applyUseCodeFix - When true, patch family-level use-code matching.
  *
  * @typedef {object} BrowardParcelRecord
  * @property {string} [folioNumber] - Appraiser folio.
@@ -141,6 +147,7 @@ export function parseCliOptions(argv) {
     limit: null,
     prepareCaptures: true,
     skipValidate: false,
+    applyUseCodeFix: false,
   };
   for (let index = 0; index < argv.length; index += 1) {
     const flag = argv[index];
@@ -150,6 +157,10 @@ export function parseCliOptions(argv) {
     }
     if (flag === "--skip-validate") {
       options.skipValidate = true;
+      continue;
+    }
+    if (flag === "--apply-use-code-fix") {
+      options.applyUseCodeFix = true;
       continue;
     }
     const value = argv[index + 1];
@@ -198,6 +209,50 @@ export async function readSeedRecords(seedPath, limit) {
     columns,
     records: limit === null ? records : records.slice(0, limit),
   };
+}
+
+/**
+ * Copy published Broward scripts and patch family-level use-code matching.
+ *
+ * The live BCPA API often returns `04 - Condominium` instead of `04-01 ...`.
+ * The published extractor then reads `propertyMapping.property_type` on
+ * `undefined`. This local patch belongs in Counties-trasform-scripts before
+ * an AWS run; it is optional here so the published-script result stays honest.
+ *
+ * @param {string} scriptsDirectory - Published scripts directory.
+ * @param {string} destinationDirectory - Patched copy destination.
+ * @returns {Promise<string>} Destination directory.
+ */
+export async function applyBrowardUseCodeFix(
+  scriptsDirectory,
+  destinationDirectory,
+) {
+  await mkdir(destinationDirectory, { recursive: true });
+  const extractorName = "data_extractor.js";
+  const sourceZip = new AdmZip();
+  sourceZip.addLocalFolder(scriptsDirectory);
+  sourceZip.extractAllTo(destinationDirectory, true);
+  const extractorPath = path.join(destinationDirectory, extractorName);
+  const extractorSource = await readFile(extractorPath, "utf8");
+  if (!extractorSource.includes(PUBLISHED_BROWARD_USE_CODE_MATCH)) {
+    throw new Error(
+      "Published Broward use-code matcher not found; refuse to patch a drifted extractor",
+    );
+  }
+  await writeFile(
+    path.join(destinationDirectory, "findBrowardPropertyMapping.js"),
+    BROWARD_USE_CODE_MATCHER_CJS,
+    "utf8",
+  );
+  await writeFile(
+    extractorPath,
+    extractorSource.replace(
+      PUBLISHED_BROWARD_USE_CODE_MATCH,
+      FIXED_BROWARD_USE_CODE_MATCH,
+    ),
+    "utf8",
+  );
+  return destinationDirectory;
 }
 
 /**
@@ -537,8 +592,16 @@ export async function runValidation(options) {
   }
   const captures = new AdmZip(capturesPath);
   await mkdir(outputDirectory, { recursive: true });
+  let packagedScriptsDirectory = scriptsDirectory;
+  if (options.applyUseCodeFix) {
+    packagedScriptsDirectory = path.join(
+      outputDirectory,
+      "broward-scripts-patched",
+    );
+    await applyBrowardUseCodeFix(scriptsDirectory, packagedScriptsDirectory);
+  }
   const scriptsZipPath = path.join(outputDirectory, "broward-scripts.zip");
-  packageScripts(scriptsDirectory, scriptsZipPath);
+  packageScripts(packagedScriptsDirectory, scriptsZipPath);
 
   /** @type {ParcelValidationResult[]} */
   const results = [];

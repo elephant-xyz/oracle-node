@@ -8,8 +8,8 @@ registry: [`broward-sources.yaml`](./broward-sources.yaml).
 
 **Intake (2026-08-27):** pilot (~25 parcels) then full county if the pilot is
 clean. Sources same as Lee: appraisal + permits + Florida Sunbiz + BBB.
-Public publish only after a full-county run. Runtime is the local
-`elephant-pipeline` stack (Restate + Postgres), then publish.
+Public publish only after a full-county run. This sandbox runs
+`elephant-cli prepare` and transform locally, without AWS.
 
 A transform already exists at `Counties-trasform-scripts/broward/scripts/`
 (`data_extractor.js` + owner/structure/layout/utility mapping) and reads
@@ -220,8 +220,9 @@ ROW:
 Landed in `oracle-node`:
 
 - `multi-request-flows/Broward.json` POSTs
-  `getParcelInformation`, writes the response under key `input`, templates the
-  text `request_identifier`, and sends `taxyear: ""`.
+  `getParcelInformation` with CLI-valid `content-type: application/json` and
+  a `json` body (`taxyear: ""`, `folioNumber` templated from
+  `request_identifier`).
 - `scripts/broward-folio.mjs` preserves the canonical 12-character
   alphanumeric folio. `scripts/build-broward-seed.mjs` pages the BCPA GIS
   layer and emits the columns required by prepare, including `county=Broward`
@@ -242,18 +243,20 @@ Live source verification from this environment:
   record with `01-01 Single Family`.
 - Invalid folio `999999999999` returned a null parcel list and the capture
   command exited nonzero through `requireParcelRecords`, as required.
-- The focused Broward tests passed (10/10), the full repository suite passed
-  (687/687), and `npm run typecheck` passed.
+- Local `elephant-cli prepare` fetched **25/25** pilot folios. The published
+  Broward extractor then transformed **16/25**; the other nine crashed on
+  family-level use codes such as `04 - Condominium`. A local matcher patch
+  recovered **25/25**. Details:
+  [`broward-appraisal-local-pilot.md`](./broward-appraisal-local-pilot.md).
+- The focused Broward tests and `npm run typecheck` passed.
 
-AWS work is deliberately not claimed as complete. The optional enqueue
-dry-run could not resolve prerequisites here: the Neon env file is not
-mounted, and the `elephant-oracle-node` AWS profile has no credentials. No
-pilot messages were enqueued. Before a pilot, run
-`scripts/create-county-prepare-queue.sh broward`, deploy the stack so
-`Broward.json` is uploaded to S3, stage `s3://counties-seeds/broward.csv`, and
-rerun the 25-row enqueue dry-run with working AWS and Neon configuration.
+This environment has no AWS credentials and no Restate/Postgres stack. No
+pilot messages were enqueued. Local prepare/transform does not replace an
+AWS smoke: before that, PR the use-code matcher and multi-request unwrap
+into `Counties-trasform-scripts/broward`, run
+`scripts/create-county-prepare-queue.sh broward`, deploy so `Broward.json`
+is uploaded to S3, and stage the seed.
 
-Remaining gates are fresh-capture validation of
-`Counties-trasform-scripts/broward/scripts/`, the Broward BCS permit adapter
-and city-vendor routing, and the actual 25-parcel pilot. Do not start the
-full-county run or publish until those gates and the pilot are clean.
+Remaining gates are that transform-script PR, the Broward BCS permit
+adapter and city-vendor routing, and a clean AWS 25-parcel smoke. Do not
+start the full-county run or publish until those gates are clean.
