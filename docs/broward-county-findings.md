@@ -85,17 +85,17 @@ Permits are **municipal and fragmented**. County BCS (POSSE) covers
 unincorporated plus a county-level search; cities run their own vendors.
 Per the Lee/PB pattern, permits are **on-demand, not bulk**.
 
-| Jurisdiction        | Portal / vendor                         | URL | Probe |
-| ------------------- | --------------------------------------- | --- | ----- |
-| Unincorporated / county search | POSSE / Amanda (BCS) | `https://dpepp.broward.org/BCS/Default.aspx?PossePresentation=ParcelSearchByAddress` | 200, folio+parcel+address fields |
-| Hollywood           | Accela Citizen Access                   | `https://aca-prod.accela.com/hollywood/default.aspx` | 200 |
-| Plantation          | Accela Citizen Access                   | `https://aca.plantation.org/CitizenAccess/` | 200 |
-| Fort Lauderdale     | Accela (`FTL`, LauderBuild)             | `https://aca-prod.accela.com/FTL/Default.aspx` | 200 landing; CapHome Error.aspx — needs module/tab during adapter |
-| Coral Springs       | CentralSquare eTRAKiT                   | `https://etrakit.coralsprings.gov/eTRAKiT/Search/permit.aspx` | 200, folio search, reCAPTCHA on search |
-| Pompano Beach       | Click2Gov                               | `https://c2g.pompanobeachfl.gov/Click2GovBP/selectpermit.html` | 200, parcel number search |
-| Davie               | eSuite                                  | `https://esuite.davie-fl.gov/eSuite.Permits/WelcomePage.aspx` | 200, public address search |
-| Pembroke Pines      | Tyler EnerGov / Civic Access            | `https://pembrokepinesfl-energovweb.tylerhost.net/apps/selfservice` | 200 (redirect from `ppines.com/developmenthub`) |
-| County ePermits OneStop | apply/review hub, not a harvest search | `https://www.broward.org/epermits` | 200 |
+| Jurisdiction                   | Portal / vendor                        | URL                                                                                  | Probe                                                             |
+| ------------------------------ | -------------------------------------- | ------------------------------------------------------------------------------------ | ----------------------------------------------------------------- |
+| Unincorporated / county search | POSSE / Amanda (BCS)                   | `https://dpepp.broward.org/BCS/Default.aspx?PossePresentation=ParcelSearchByAddress` | 200, folio+parcel+address fields                                  |
+| Hollywood                      | Accela Citizen Access                  | `https://aca-prod.accela.com/hollywood/default.aspx`                                 | 200                                                               |
+| Plantation                     | Accela Citizen Access                  | `https://aca.plantation.org/CitizenAccess/`                                          | 200                                                               |
+| Fort Lauderdale                | Accela (`FTL`, LauderBuild)            | `https://aca-prod.accela.com/FTL/Default.aspx`                                       | 200 landing; CapHome Error.aspx — needs module/tab during adapter |
+| Coral Springs                  | CentralSquare eTRAKiT                  | `https://etrakit.coralsprings.gov/eTRAKiT/Search/permit.aspx`                        | 200, folio search, reCAPTCHA on search                            |
+| Pompano Beach                  | Click2Gov                              | `https://c2g.pompanobeachfl.gov/Click2GovBP/selectpermit.html`                       | 200, parcel number search                                         |
+| Davie                          | eSuite                                 | `https://esuite.davie-fl.gov/eSuite.Permits/WelcomePage.aspx`                        | 200, public address search                                        |
+| Pembroke Pines                 | Tyler EnerGov / Civic Access           | `https://pembrokepinesfl-energovweb.tylerhost.net/apps/selfservice`                  | 200 (redirect from `ppines.com/developmenthub`)                   |
+| County ePermits OneStop        | apply/review hub, not a harvest search | `https://www.broward.org/epermits`                                                   | 200                                                               |
 
 Weston and Sunrise official department pages 403'd from this egress. Catalog
 rows for the remaining cities are `needs-review` until the certify pass.
@@ -140,26 +140,26 @@ mixed). Residential and ROW should skip.
 
 ## 6. Additional data sources
 
-| Source | URL | Bulk? | In scope? |
-| ------ | --- | ----- | --------- |
-| Sunbiz (FL statewide) | `https://dos.fl.gov/sunbiz/other-services/data-downloads/` | yes | **yes** (reuse Lee; Broward ZIP prefixes only) |
-| BBB | national category harvest | yes | **yes** (filter to Broward area) |
-| Tax collector | `https://browardtax.org/` | unknown | discovery only |
-| Recorder / official records | `https://officialrecords.broward.org/` | 10-day FTP images | Cloudflare on the search UI; out of ingest unless later approved |
-| County GIS (planning) | `https://gis.browardcountyfl.org/` / `broward.org/Planning` | parcels are **fee from PA** | geometry taken from BCPA GIS instead |
-| Code enforcement | BCS `ParcelSearchForEnforcement` | on-demand | not in this run |
+| Source                      | URL                                                         | Bulk?                       | In scope?                                                        |
+| --------------------------- | ----------------------------------------------------------- | --------------------------- | ---------------------------------------------------------------- |
+| Sunbiz (FL statewide)       | `https://dos.fl.gov/sunbiz/other-services/data-downloads/`  | yes                         | **yes** (reuse Lee; Broward ZIP prefixes only)                   |
+| BBB                         | national category harvest                                   | yes                         | **yes** (filter to Broward area)                                 |
+| Tax collector               | `https://browardtax.org/`                                   | unknown                     | discovery only                                                   |
+| Recorder / official records | `https://officialrecords.broward.org/`                      | 10-day FTP images           | Cloudflare on the search UI; out of ingest unless later approved |
+| County GIS (planning)       | `https://gis.browardcountyfl.org/` / `broward.org/Planning` | parcels are **fee from PA** | geometry taken from BCPA GIS instead                             |
+| Code enforcement            | BCS `ParcelSearchForEnforcement`                            | on-demand                   | not in this run                                                  |
 
 Broward ZIP prefixes for Sunbiz (not exhaustive): `33004`, `33009`,
 `33019`–`33029`, `33060`–`33076`, `33301`–`33334`, `33351`.
 
 ## 7. Source feasibility
 
-| Source | Records | Probe | Safe conc. (start) | Est. elapsed | Mode |
-| ------ | ------- | ----- | ------------------ | ------------ | ---- |
-| Appraisal `getParcelInformation` | 556,178 | p50 ~0.35–0.40 s, 0 empties in 40 spread (1 empty in a geographic 10) | 2 | ~31 h at conc 2; ~15 h at conc 4; **~54 h at conc 1** | per-parcel HTTP; **48-hour gate: do not run full county at conc 1** |
-| GIS seed page | 557 pages × 1000 | 0.20–0.28 s/page | 1–2 | ~3 min | bulk artifact (FOLIO + polygon) |
-| County BCS permits | unknown / parcel | POSSE HTML, session | 1–2 | TBD in adapter probe | runtime per eligible parcel |
-| City Accela / Tyler / eTRAKiT | fragmented | mixed; Coral Springs has reCAPTCHA | 1–2 | TBD; likely **>48 h if all cities** | on-demand eligible parcels; ask before prefetching every city |
+| Source                           | Records          | Probe                                                                 | Safe conc. (start) | Est. elapsed                                          | Mode                                                                |
+| -------------------------------- | ---------------- | --------------------------------------------------------------------- | ------------------ | ----------------------------------------------------- | ------------------------------------------------------------------- |
+| Appraisal `getParcelInformation` | 556,178          | p50 ~0.35–0.40 s, 0 empties in 40 spread (1 empty in a geographic 10) | 2                  | ~31 h at conc 2; ~15 h at conc 4; **~54 h at conc 1** | per-parcel HTTP; **48-hour gate: do not run full county at conc 1** |
+| GIS seed page                    | 557 pages × 1000 | 0.20–0.28 s/page                                                      | 1–2                | ~3 min                                                | bulk artifact (FOLIO + polygon)                                     |
+| County BCS permits               | unknown / parcel | POSSE HTML, session                                                   | 1–2                | TBD in adapter probe                                  | runtime per eligible parcel                                         |
+| City Accela / Tyler / eTRAKiT    | fragmented       | mixed; Coral Springs has reCAPTCHA                                    | 1–2                | TBD; likely **>48 h if all cities**                   | on-demand eligible parcels; ask before prefetching every city       |
 
 Full-county appraisal at measured latency is under 48 hours only with
 concurrency ≥ 2. Permits across 32 cities are the likely >48 h source —
@@ -215,14 +215,45 @@ ROW:
 484230301500  01-01 Single Family         COCONUT CREEK
 ```
 
-## 10. Next stages (not done this commit)
+## 10. Appraisal onboarding increment (2026-08-27)
 
-1. Stage GIS seed + `broward-pilot.csv` under `elephant-pipeline/data/seeds/`.
-2. Add a Broward capture adapter in `elephant-pipeline` `Parcel.capture`
-   (currently Rock Island–only) that POSTs `getParcelInformation` into
-   `input.json` inside `capture.zip`.
-3. Sync `Counties-trasform-scripts/broward/scripts/` into
-   `elephant-pipeline/transforms/broward/`.
-4. Validate transform on ≥10 of the pilot folios (`validate-county-transform`).
-5. BCS permit adapter + Accela agency reuse; then `CountyIngest` pilot
-   job `broward-pilot-2026-08-27`.
+Landed in `oracle-node`:
+
+- `multi-request-flows/Broward.json` POSTs
+  `getParcelInformation`, writes the response under key `input`, templates the
+  text `request_identifier`, and sends `taxyear: ""`.
+- `scripts/broward-folio.mjs` preserves the canonical 12-character
+  alphanumeric folio. `scripts/build-broward-seed.mjs` pages the BCPA GIS
+  layer and emits the columns required by prepare, including `county=Broward`
+  so workflow routing selects the Broward prepare queue.
+- `scripts/capture-broward-parcel.mjs` provides a fail-closed source probe.
+  `scripts/enqueue-broward-appraisal-property-first-from-seed.mjs` and
+  `scripts/send-broward-seed-feeder.mjs` provide the pilot/direct and
+  backpressure-aware enqueue paths without Orange PID normalization.
+
+Live source verification from this environment:
+
+- `build-broward-seed.mjs --pilot` wrote 25 unique rows with no invalid
+  folios. The seed retained `504108BJ0140` and set every seed county to
+  `Broward`.
+- Commercial `474135010090` returned one parcel record with use code
+  `10-01 Vacant Commercial`; alphanumeric condo `504108BJ0140` returned one
+  record with `04 - Condominium`; residential `484109030410` returned one
+  record with `01-01 Single Family`.
+- Invalid folio `999999999999` returned a null parcel list and the capture
+  command exited nonzero through `requireParcelRecords`, as required.
+- The focused Broward tests passed (10/10), the full repository suite passed
+  (687/687), and `npm run typecheck` passed.
+
+AWS work is deliberately not claimed as complete. The optional enqueue
+dry-run could not resolve prerequisites here: the Neon env file is not
+mounted, and the `elephant-oracle-node` AWS profile has no credentials. No
+pilot messages were enqueued. Before a pilot, run
+`scripts/create-county-prepare-queue.sh broward`, deploy the stack so
+`Broward.json` is uploaded to S3, stage `s3://counties-seeds/broward.csv`, and
+rerun the 25-row enqueue dry-run with working AWS and Neon configuration.
+
+Remaining gates are fresh-capture validation of
+`Counties-trasform-scripts/broward/scripts/`, the Broward BCS permit adapter
+and city-vendor routing, and the actual 25-parcel pilot. Do not start the
+full-county run or publish until those gates and the pilot are clean.
