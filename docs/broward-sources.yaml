@@ -1,0 +1,181 @@
+# Broward County, FL — source catalog (machine-readable registry)
+# Discovery 2026-08-27. status: appraisal certified via live JSON probes;
+# permits: 8 discovered, remaining municipalities needs-review.
+# Certify later with scripts/permit-source-discovery/certify.mjs.
+county: broward
+state: FL
+fips: "12011"
+dor_county_number: 16
+parcel_id:
+  name: Folio # Property ID
+  length: 12 # characters, alphanumeric (condos include letters)
+  display_grouping: "6-2-4" # XXXXXX-XX-XXXX — do NOT send dashes to the API
+  example: "474135010090"
+  example_condo: "504108BJ0140"
+
+# ---- countywide sources ----
+appraisal:
+  source: Broward County Property Appraiser (BCPA)
+  spa: https://web.bcpa.net/BcpaClient/#/Record-Search
+  access: plain-http-json # no browser flow
+  search_api:
+    method: POST
+    url: https://web.bcpa.net/BcpaClient/search.aspx/GetData
+    content_type: application/json
+    body:
+      value: "<query>"
+      cities: ""
+      orderBy: NAME # empty orderBy returns HTTP 500
+      pageNumber: "1"
+      pageCount: "10"
+      arrayOfValues: ""
+      selectedFromList: "false"
+      totalCount: "Y"
+    returns: d.resultListk__BackingField
+  detail_api:
+    method: POST
+    url: https://web.bcpa.net/BcpaClient/search.aspx/getParcelInformation
+    body:
+      folioNumber: "<12-char undashed folio>"
+      taxyear: "" # NOT "CURRENT" — that returns a null parcel list
+      action: CURRENT
+      use: ""
+    returns: d.parcelInfok__BackingField
+  transform: Counties-trasform-scripts/broward/scripts/
+  parcel_count_gis: 556178
+  probe_p50_seconds: 0.40
+  notes:
+    - Fail closed when parcelInfok__BackingField is null
+    - Keep folio as text; condo folios contain letters
+
+gis:
+  rest: https://gisweb-adapters.bcpa.net/arcgis/rest/services/BCPA_EXTERNAL_JAN26/MapServer/16
+  fields: [FOLIO] # owner/address/value removed 2026-06-06
+  max_record_count: 1000
+  geometry: polygon
+  outSR: 4326
+  seed: folio + parcel_polygon; appraisal facts come from detail_api
+
+sunbiz:
+  source: FL Division of Corporations (statewide)
+  bulk: https://dos.fl.gov/sunbiz/other-services/data-downloads/
+  live_search: https://search.sunbiz.org/ # Cloudflare
+  note: reuse Lee toolchain; Broward ZIP prefixes only
+  zip_prefixes:
+    - "33004"
+    - "33009"
+    - "33019-33029"
+    - "33060-33076"
+    - "33301-33334"
+    - "33351"
+
+bbb:
+  source: Better Business Bureau (national)
+  note: reuse Lee category harvest, filter to Broward area
+
+tax_collector:
+  url: https://browardtax.org/
+  status: discovery-only
+
+recorder:
+  url: https://officialrecords.broward.org/
+  access: cloudflare-on-search
+  bulk: 10-day FTP images (Records/Taxes/Treasury)
+  status: discovery-only
+
+# ---- permit portals (32 municipalities + unincorporated in CitiesList) ----
+permits:
+  - jurisdiction: Unincorporated Broward County
+    portal: https://dpepp.broward.org/BCS/Default.aspx?PossePresentation=ParcelSearchByAddress
+    vendor: POSSE / Amanda
+    search: address | folio | parcel id
+    status: discovered
+  - jurisdiction: Hollywood
+    portal: https://aca-prod.accela.com/hollywood/default.aspx
+    vendor: Accela Citizen Access
+    search: Accela general search
+    status: discovered
+  - jurisdiction: Plantation
+    portal: https://aca.plantation.org/CitizenAccess/Cap/CapHome.aspx?TabName=Building&module=Building
+    vendor: Accela Citizen Access
+    search: parcel | address | record number
+    status: discovered
+  - jurisdiction: Fort Lauderdale
+    portal: https://aca-prod.accela.com/FTL/Default.aspx
+    vendor: Accela Citizen Access
+    search: needs module/tab (CapHome Error.aspx)
+    aka: LauderBuild
+    status: discovered
+  - jurisdiction: Coral Springs
+    portal: https://etrakit.coralsprings.gov/eTRAKiT/Search/permit.aspx
+    vendor: CentralSquare eTRAKiT
+    search: folio | address | permit # (reCAPTCHA)
+    status: discovered
+  - jurisdiction: Pompano Beach
+    portal: https://c2g.pompanobeachfl.gov/Click2GovBP/selectpermit.html
+    vendor: Click2Gov
+    search: address | parcel number | name
+    status: discovered
+  - jurisdiction: Davie
+    portal: https://esuite.davie-fl.gov/eSuite.Permits/WelcomePage.aspx
+    vendor: eSuite
+    search: public service address
+    status: discovered
+  - jurisdiction: Pembroke Pines
+    portal: https://pembrokepinesfl-energovweb.tylerhost.net/apps/selfservice
+    apply: https://www.ppines.com/developmenthub
+    vendor: Tyler EPL / Civic Access
+    search: folio / property ID
+    status: discovered
+  - jurisdiction: Coconut Creek
+    status: needs-review
+  - jurisdiction: Cooper City
+    status: needs-review
+  - jurisdiction: Dania Beach
+    status: needs-review
+  - jurisdiction: Deerfield Beach
+    status: needs-review
+  - jurisdiction: Hallandale Beach
+    status: needs-review
+  - jurisdiction: Hillsboro Beach
+    status: needs-review
+  - jurisdiction: Lauderdale Lakes
+    status: needs-review
+  - jurisdiction: Lauderdale-by-the-Sea
+    status: needs-review
+  - jurisdiction: Lauderhill
+    status: needs-review
+  - jurisdiction: Lazy Lake
+    status: needs-review
+  - jurisdiction: Lighthouse Point
+    status: needs-review
+  - jurisdiction: Margate
+    status: needs-review
+  - jurisdiction: Miramar
+    status: needs-review
+  - jurisdiction: North Lauderdale
+    status: needs-review
+  - jurisdiction: Oakland Park
+    status: needs-review
+  - jurisdiction: Parkland
+    status: needs-review
+  - jurisdiction: Pembroke Park
+    status: needs-review
+  - jurisdiction: Sea Ranch Lakes
+    status: needs-review
+  - jurisdiction: Southwest Ranches
+    status: needs-review
+  - jurisdiction: Sunrise
+    portal: https://www.sunrisefl.gov/openforbusiness
+    vendor: unknown
+    status: needs-review # 403 from this egress
+  - jurisdiction: Tamarac
+    status: needs-review
+  - jurisdiction: West Park
+    status: needs-review
+  - jurisdiction: Weston
+    portal: https://www.westonfl.org/government/departments-a-d/building-permits
+    vendor: unknown
+    status: needs-review # 403 from this egress
+  - jurisdiction: Wilton Manors
+    status: needs-review
