@@ -22,6 +22,14 @@ import {
  */
 
 /**
+ * @typedef {object} BrowardMultiRequestCapture
+ * @property {{
+ *   source_http_request?: Record<string, unknown>,
+ *   response?: BrowardParcelEnvelope | unknown
+ * }} [input] - elephant-cli multi-request wrapper keyed by the flow request key.
+ */
+
+/**
  * POST `getParcelInformation` for one folio.
  *
  * @param {string} folio - Normalized folio.
@@ -45,6 +53,41 @@ export async function fetchBrowardParcelEnvelope(folio) {
     );
   }
   return /** @type {BrowardParcelEnvelope} */ (await response.json());
+}
+
+/**
+ * True when the value is a non-array object.
+ *
+ * @param {unknown} value - Candidate value.
+ * @returns {value is Record<string, unknown>} Whether the value is a JSON object.
+ */
+function isRecord(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Unwrap an elephant-cli multi-request capture to the ASP.NET envelope the
+ * published Broward extractor reads as `input.json`.
+ *
+ * Prepare writes `{ input: { source_http_request, response } }`. The existing
+ * `Counties-trasform-scripts/broward` scripts expect `d.parcelInfok__BackingField`
+ * at the document root. Pass the raw envelope through unchanged.
+ *
+ * @param {unknown} payload - Prepare capture JSON.
+ * @returns {BrowardParcelEnvelope} ASP.NET parcel envelope.
+ */
+export function unwrapBrowardPrepareCapture(payload) {
+  if (!isRecord(payload)) {
+    throw new Error("Broward prepare capture is not a JSON object");
+  }
+  const wrapped = payload.input;
+  if (isRecord(wrapped) && wrapped.response !== undefined) {
+    if (!isRecord(wrapped.response)) {
+      throw new Error("Broward multi-request input.response is not a JSON object");
+    }
+    return /** @type {BrowardParcelEnvelope} */ (wrapped.response);
+  }
+  return /** @type {BrowardParcelEnvelope} */ (payload);
 }
 
 /**

@@ -16,12 +16,15 @@ describe("Broward multi-request appraisal flow", () => {
     expect(detailRequest.request.url).toBe(
       "https://web.bcpa.net/BcpaClient/search.aspx/getParcelInformation",
     );
-    expect(detailRequest.request.headers["content-type"]).toMatch(
-      /application\/json/i,
+    expect(detailRequest.request.headers["content-type"]).toBe(
+      "application/json",
     );
-    expect(detailRequest.request.body).toContain("{{=it.request_identifier}}");
-    expect(detailRequest.request.body).toContain('"taxyear":""');
-    expect(detailRequest.request.body).not.toContain('"taxyear":"CURRENT"');
-    expect(detailRequest.request.body).toContain('"action":"CURRENT"');
+    expect(detailRequest.request.body).toBeUndefined();
+    expect(detailRequest.request.json).toEqual({
+      folioNumber: "{{=it.request_identifier}}",
+      taxyear: "",
+      action: "CURRENT",
+      use: "",
+    });
   });
 });
