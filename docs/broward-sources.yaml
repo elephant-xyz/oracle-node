@@ -66,6 +66,12 @@ sunbiz:
   bulk: https://dos.fl.gov/sunbiz/other-services/data-downloads/
   live_search: https://search.sunbiz.org/ # Cloudflare
   note: Candidate ZIPs from official City/Broward GIS; require county-boundary validation because USPS ZIPs cross boundaries
+  local_preparation:
+    script: ../scripts/prepare-broward-sunbiz-local.mjs
+    runbook: ./broward-sunbiz-local-preparation.md
+    scope_gate: exact-address validation manifest with Broward FIPS 12011 evidence
+    unresolved_output: unresolved-candidates.jsonl
+    aws_required: false
   zip_candidates:
     - "33004"
     - "33009"
