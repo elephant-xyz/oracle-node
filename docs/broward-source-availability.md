@@ -28,7 +28,13 @@ Common official evidence:
   Building Code Services handles the Broward Municipal Services District and
   contracted cities.
 - [Broward BCS permit search](https://dpepp.broward.org/BCS/Default.aspx?PossePresentation=ParcelSearchByAddress)
-  exposes address/parcel search and lists every Broward municipality.
+  exposes address/parcel search and lists every Broward municipality. The city
+  dropdown is not a countywide custody claim; BCS records are bounded to
+  BMSD/unincorporated and records BCS holds for contracted services.
+- The local-only
+  [BCS POSSE adapter pilot](./broward-bcs-permit-pilot.md) documents exact
+  Parcel ID submission, explicit empty/no-match behavior, source provenance,
+  detail normalization, and hard request limits.
 - [Broward ePermits OneStop](https://www.broward.org/ePermits/Pages/Contact.aspx)
   documents the municipal/county split and links the municipal building
   officials/support route.
@@ -38,7 +44,7 @@ Common official evidence:
 
 | Jurisdiction                                         | Official record source or custodian evidence                                                                                                                                  | Status                                                                                                                   |
 | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| Broward Municipal Services District / unincorporated | [BCS parcel/address search](https://dpepp.broward.org/BCS/Default.aspx?PossePresentation=ParcelSearchByAddress)                                                               | Public search certified; first permit adapter target                                                                     |
+| Broward Municipal Services District / unincorporated | [BCS parcel/address search](https://dpepp.broward.org/BCS/Default.aspx?PossePresentation=ParcelSearchByAddress)                                                               | Public search and bounded local-only property-first adapter certified                                                     |
 | Coconut Creek                                        | [City permit-status search](https://www3.coconutcreek.gov/sd/permit/permit_status_01.asp)                                                                                     | Public permit/property/address search documented                                                                         |
 | Cooper City                                          | [City Accela Citizen Access](https://aca-prod.accela.com/COOPER/)                                                                                                             | Official city-linked Accela portal identified                                                                            |
 | Coral Springs                                        | [City eTRAKiT](https://etrakit.coralsprings.gov/eTRAKiT/Search/permit.aspx)                                                                                                   | Public search identified; reCAPTCHA blocks unattended certification                                                      |
@@ -76,5 +82,5 @@ Common official evidence:
 Every requested category now has either a first-party source or a documented
 official custodian/unavailability route. This matrix does **not** claim that
 all 32 permit jurisdictions have ingestion adapters. Only source discovery is
-closed; permit implementation remains property-first and must begin with the
-BCS adapter plus bounded vendor-specific pilots.
+closed. The first BCS adapter is local-only and property-first; municipal
+coverage still requires bounded vendor-specific pilots and city routing.
