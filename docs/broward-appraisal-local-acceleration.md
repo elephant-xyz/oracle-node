@@ -75,8 +75,9 @@ Every data-only ZIP has all three independent guards:
 The artifact inspector rejects `fact_sheet.json`, HTML/assets,
 `*_has_fact_sheet` keys, references to `index.html`, and every broken relative
 IPLD file link. Fact-sheet relationships are not generated and no dangling
-`fact_sheet` reference is retained. The accepted full pilot is used as a
-reference: every non-fact-sheet `data/*.json` filename must remain present.
+`fact_sheet` reference is retained. A full transform of the same accepted pilot
+captures is used as a reference: every non-fact-sheet `data/*.json` filename
+and canonical JSON value must remain present.
 
 The deferred outputs are explicit:
 
@@ -126,7 +127,7 @@ Validation command:
 node scripts/validate-broward-query-data-only.mjs \
   --artifacts downloads/broward/benchmark-query-data-only/query-data-only-artifacts \
   --captures /workspace/downloads/broward/broward-validation-sample-50-captures.zip \
-  --reference-artifacts /workspace/downloads/broward/appraisal-validation-50 \
+  --reference-artifacts downloads/broward/benchmark-publishable/artifacts \
   --output downloads/broward/benchmark-query-data-only-validation
 ```
 

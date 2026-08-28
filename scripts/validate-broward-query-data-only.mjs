@@ -125,8 +125,44 @@ function expectedRetainedJsonEntries(zip) {
 }
 
 /**
- * Prove that a data-only archive retained every non-fact-sheet JSON file from
- * its accepted full-transform reference.
+ * Remove only relationships introduced by the deferred fact-sheet phase and
+ * sort object keys for deterministic semantic comparison.
+ *
+ * @param {unknown} value - Parsed JSON value.
+ * @returns {unknown} Canonical JSON value without deferred relationship keys.
+ */
+function canonicalRetainedJson(value) {
+  if (Array.isArray(value)) {
+    return value.map((item) => canonicalRetainedJson(item));
+  }
+  if (typeof value !== "object" || value === null) return value;
+  const record = /** @type {Record<string, unknown>} */ (value);
+  return Object.fromEntries(
+    Object.keys(record)
+      .filter((key) => !/fact[_-]?sheet/iu.test(key))
+      .sort()
+      .map((key) => [key, canonicalRetainedJson(record[key])]),
+  );
+}
+
+/**
+ * Read one data JSON entry as a canonical semantic value.
+ *
+ * @param {AdmZip} zip - Full or data-only archive.
+ * @param {string} entryName - Exact `data/*.json` entry.
+ * @returns {unknown} Canonical parsed JSON.
+ */
+function readCanonicalEntry(zip, entryName) {
+  const entry = zip.getEntry(entryName);
+  if (entry === null) throw new Error(`Missing parity entry ${entryName}`);
+  return canonicalRetainedJson(
+    /** @type {unknown} */ (JSON.parse(entry.getData().toString("utf8"))),
+  );
+}
+
+/**
+ * Prove that a data-only archive retained every non-fact-sheet JSON file and
+ * value from its accepted full-transform reference.
  *
  * @param {AdmZip} dataOnly - Classified data-only archive.
  * @param {AdmZip} reference - Accepted full artifact for the same folio.
@@ -151,6 +187,39 @@ export function assertRetainedJsonParity(dataOnly, reference) {
       `Retained JSON mismatch; missing=${JSON.stringify(missing)}, unexpected=${JSON.stringify(unexpected)}`,
     );
   }
+  for (const entryName of expected) {
+    const actualJson = JSON.stringify(readCanonicalEntry(dataOnly, entryName));
+    const expectedJson = JSON.stringify(
+      readCanonicalEntry(reference, entryName),
+    );
+    if (actualJson !== expectedJson) {
+      throw new Error(`Semantic JSON mismatch for ${entryName}`);
+    }
+  }
+}
+
+/**
+ * Resolve a full reference artifact in either flat pilot or sharded ingest
+ * layout.
+ *
+ * @param {string} referenceDirectory - Flat validation or `artifacts` root.
+ * @param {string} folio - Canonical Broward folio.
+ * @returns {Promise<string>} Existing reference ZIP path.
+ */
+async function resolveReferenceArtifact(referenceDirectory, folio) {
+  const candidates = [
+    path.join(referenceDirectory, `${folio}.zip`),
+    path.join(referenceDirectory, folio.slice(0, 4), `${folio}.zip`),
+  ];
+  for (const candidate of candidates) {
+    try {
+      const entries = await readdir(path.dirname(candidate));
+      if (entries.includes(path.basename(candidate))) return candidate;
+    } catch {
+      // Try the next supported layout.
+    }
+  }
+  throw new Error(`Missing full reference artifact for ${folio}`);
 }
 
 /**
@@ -190,9 +259,9 @@ export async function validateQueryDataOnlyArtifacts(options) {
     const inspection = await inspectQueryDataOnlyArtifact(artifactPath);
     const { folio } = inspection.manifest;
     if (referenceArtifactDirectory !== null) {
-      const referencePath = path.join(
+      const referencePath = await resolveReferenceArtifact(
         referenceArtifactDirectory,
-        `${folio}.zip`,
+        folio,
       );
       assertRetainedJsonParity(
         new AdmZip(artifactPath),
