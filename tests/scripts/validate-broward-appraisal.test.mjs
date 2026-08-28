@@ -76,13 +76,10 @@ describe("Broward prepare capture unwrap", () => {
 
 describe("Broward appraisal validation harness", () => {
   it("renders a complete one-row seed without corrupting JSON or geometry", () => {
-    const csv = renderSeedRecord(
-      ["request_identifier", "parcel_polygon"],
-      {
-        request_identifier: "504108BJ0140",
-        parcel_polygon: `{"type":"Polygon","coordinates":[[[-80,26],[-80.1,26],[-80,26]]]}`,
-      },
-    );
+    const csv = renderSeedRecord(["request_identifier", "parcel_polygon"], {
+      request_identifier: "504108BJ0140",
+      parcel_polygon: `{"type":"Polygon","coordinates":[[[-80,26],[-80.1,26],[-80,26]]]}`,
+    });
 
     expect(csv).toContain("504108BJ0140");
     expect(csv.split("\n")).toHaveLength(3);

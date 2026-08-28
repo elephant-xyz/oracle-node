@@ -83,7 +83,9 @@ export function unwrapBrowardPrepareCapture(payload) {
   const wrapped = payload.input;
   if (isRecord(wrapped) && wrapped.response !== undefined) {
     if (!isRecord(wrapped.response)) {
-      throw new Error("Broward multi-request input.response is not a JSON object");
+      throw new Error(
+        "Broward multi-request input.response is not a JSON object",
+      );
     }
     return /** @type {BrowardParcelEnvelope} */ (wrapped.response);
   }
