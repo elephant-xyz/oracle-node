@@ -83,11 +83,14 @@ describe("Broward local appraisal ingestion", () => {
         "--query-data-only",
         "--capture-source",
         "/private/pilot-captures.zip",
+        "--start-row",
+        "2600",
       ]),
     ).toMatchObject({
       artifactMode: "query-data-only",
       captureSource: "/private/pilot-captures.zip",
       outputDirectory: "downloads/broward/query-data-only-ingestion",
+      startRow: 2600,
     });
     expect(() =>
       parseCliOptions([
@@ -96,6 +99,9 @@ describe("Broward local appraisal ingestion", () => {
         "/tmp/looks-publishable",
       ]),
     ).toThrow(/must include 'query-data-only'/);
+    expect(() => parseCliOptions(["--start-row", "2600"])).toThrow(
+      /only with --query-data-only/,
+    );
   });
 
   it("hands a free warm worker its next row without moving the ordered checkpoint", async () => {
