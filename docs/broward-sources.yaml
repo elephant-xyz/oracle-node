@@ -1,6 +1,7 @@
 # Broward County, FL — source catalog (machine-readable registry)
 # Discovery 2026-08-27. status: appraisal pilot passed 25/25 Lexicon validation;
-# permits: 8 discovered, remaining municipalities needs-review.
+# permits: all 33 jurisdictions have a public source or documented custodian;
+# adapter certification remains vendor-specific.
 # Certify later with scripts/permit-source-discovery/certify.mjs.
 county: broward
 state: FL
@@ -88,6 +89,9 @@ recorder:
   status: discovery-only
 
 # ---- permit portals (32 municipalities + unincorporated in CitiesList) ----
+permit_source_documentation:
+  official_custodian_directory: https://www.broward.org/CodeAppeals/Pages/BuildingContacts.aspx
+  availability_audit: ./broward-source-availability.md
 permits:
   - jurisdiction: Unincorporated Broward County
     portal: https://dpepp.broward.org/BCS/Default.aspx?PossePresentation=ParcelSearchByAddress
@@ -132,54 +136,72 @@ permits:
     search: folio / property ID
     status: discovered
   - jurisdiction: Coconut Creek
-    status: needs-review
+    portal: https://www3.coconutcreek.gov/sd/permit/permit_status_01.asp
+    status: public-search-documented
   - jurisdiction: Cooper City
-    status: needs-review
+    portal: https://aca-prod.accela.com/COOPER/
+    status: public-search-documented
   - jurisdiction: Dania Beach
-    status: needs-review
+    official: https://www.daniabeachfl.gov/building-division
+    status: custodian-documented
   - jurisdiction: Deerfield Beach
-    status: needs-review
+    status: custodian-documented
   - jurisdiction: Hallandale Beach
-    status: needs-review
+    official: https://cohb.org/Faq.aspx?QID=75
+    vendor: Tyler EnerGov
+    status: public-search-documented
   - jurisdiction: Hillsboro Beach
-    status: needs-review
+    status: custodian-documented
   - jurisdiction: Lauderdale Lakes
-    status: needs-review
+    status: custodian-documented
   - jurisdiction: Lauderdale-by-the-Sea
-    status: needs-review
+    official: https://www.lauderdalebythesea-fl.gov/535/e-Permits-Broward-County
+    status: custodian-documented
   - jurisdiction: Lauderhill
-    status: needs-review
+    status: custodian-documented
   - jurisdiction: Lazy Lake
-    status: needs-review
+    portal: https://dpepp.broward.org/BCS/Default.aspx?PossePresentation=ParcelSearchByAddress
+    status: delegated-bcs-documented
   - jurisdiction: Lighthouse Point
-    status: needs-review
+    official: https://lighthousepointfl.gov/352/Broward-County-ePermits-OneStop
+    status: custodian-documented
   - jurisdiction: Margate
-    status: needs-review
+    status: custodian-documented
   - jurisdiction: Miramar
-    status: needs-review
+    official: https://www.miramarfl.gov/Departments/Building-Planning-Zoning/Building-Permits-Inspections/Online-Permitting
+    status: public-search-documented
   - jurisdiction: North Lauderdale
-    status: needs-review
+    status: custodian-documented
   - jurisdiction: Oakland Park
-    status: needs-review
+    official: https://oaklandparkfl.gov/312/Permit-Access
+    vendor: Tyler EnerGov (post-2019) + legacy portal
+    status: public-search-documented
   - jurisdiction: Parkland
-    status: needs-review
+    status: custodian-documented
   - jurisdiction: Pembroke Park
-    status: needs-review
+    official: https://www.tppfl.gov/194/Online-Permitting-System
+    vendor: Gov-Easy
+    status: public-status-documented
   - jurisdiction: Sea Ranch Lakes
-    status: needs-review
+    portal: https://dpepp.broward.org/BCS/Default.aspx?PossePresentation=ParcelSearchByAddress
+    status: delegated-bcs-documented
   - jurisdiction: Southwest Ranches
-    status: needs-review
+    status: custodian-documented
   - jurisdiction: Sunrise
     portal: https://www.sunrisefl.gov/openforbusiness
-    vendor: unknown
-    status: needs-review # 403 from this egress
+    official_records: https://www.sunrisefl.gov/departments-services/community-development/building/building-records
+    status: records-request-documented # self-service returned 403 from this egress
   - jurisdiction: Tamarac
-    status: needs-review
+    portal: https://e-gov.tamarac.org/Click2GovBP/selectpermit.html
+    official: https://tamarac.gov/672/Permit-History
+    vendor: Click2Gov
+    status: public-search-documented
   - jurisdiction: West Park
-    status: needs-review
+    status: custodian-documented
   - jurisdiction: Weston
     portal: https://www.westonfl.org/government/departments-a-d/building-permits
-    vendor: unknown
-    status: needs-review # 403 from this egress
+    status: custodian-documented # page returned 403 from this egress
   - jurisdiction: Wilton Manors
-    status: needs-review
+    official: https://www.wiltonmanors.gov/DocumentCenter/View/9768/How-to-do-an-online-permit-record-search
+    vendor: Citizenserve
+    status: public-search-documented
