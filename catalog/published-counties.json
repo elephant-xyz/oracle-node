@@ -1,6 +1,6 @@
 {
   "schemaVersion": "1.0",
-  "generatedAt": "2026-08-27T20:05:00.000Z",
+  "generatedAt": "2026-08-28T15:27:37.000Z",
   "counties": [
     {
       "countyKey": "lee",
@@ -61,18 +61,6 @@
       "permitQueryTableUrl": "https://ipfs.filebase.io/ipns/k51qzi5uqu5di42nblo5nuk94aj7af393d9y5vhqxp5dtxikzso0wt14v3p0wa",
       "placesTableUrl": null,
       "updatedAt": "2026-08-14T22:34:30.000Z"
-    },
-    {
-      "countyKey": "hillsborough",
-      "countyName": "Hillsborough",
-      "stateCode": "FL",
-      "countyFips": "12057",
-      "status": "published",
-      "queryTableUrl": "https://ipfs.filebase.io/ipns/k51qzi5uqu5diqz0l68gfi22qk0w8aqhsm7pcgje535uz8vhu8p37ynm2po0fh",
-      "datasetCoverageUrl": "https://ipfs.filebase.io/ipns/k51qzi5uqu5di5jghjwbpumnr2vt1crmaycqmtx673kw8pqp8dymecuig5x8jb/",
-      "permitQueryTableUrl": null,
-      "placesTableUrl": null,
-      "updatedAt": "2026-08-27T20:05:00.000Z"
     }
   ]
 }

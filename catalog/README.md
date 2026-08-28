@@ -4,6 +4,9 @@
 datasets. Add or update an entry only after its public query-table and coverage
 URLs have been read back successfully.
 
+Pilot or partial artifacts must remain outside this catalog until full-county
+coverage is verified against a source denominator.
+
 Update it with:
 
 ```bash
