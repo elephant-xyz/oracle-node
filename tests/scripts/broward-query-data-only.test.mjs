@@ -155,4 +155,22 @@ describe("Broward query-data-only safety contract", () => {
       ),
     ).rejects.toThrow(/expected one fact-sheet call/);
   });
+
+  it("routes the exact CLI script calls through the warm executor", async () => {
+    const source = [
+      "import { spawn } from 'child_process';",
+      "async function pipeline() {",
+      "const results = await Promise.all(scripts.map((script) => execNode(script, [], workDir, timeoutMs)));",
+      "const finalRes = await execNode(extraction, [], workDir, timeoutMs);",
+      "return { results, finalRes };",
+      "}",
+    ].join("\n");
+    const loaded = await load(
+      "file:///repo/node_modules/@elephant-xyz/cli/dist/commands/transform/script-runner.js",
+      {},
+      () => Promise.resolve({ format: "module", source }),
+    );
+    expect(String(loaded.source)).toContain("warmExecNode(script");
+    expect(String(loaded.source)).toContain("warmExecNode(extraction");
+  });
 });
