@@ -8,7 +8,7 @@ Result: **PASS**
 
 | Criterion                                                               | Evidence                                                                                                                                                                | Result |
 | ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
-| Every data category has an official source or documented unavailability | [`broward-source-availability.md`](./broward-source-availability.md) covers appraisal, GIS, all 33 permit jurisdictions, Sunbiz, BBB, and deferred tax/recorder sources | PASS   |
+| Every data category has an official source or documented unavailability | [`broward-source-availability.md`](./broward-source-availability.md) covers appraisal, GIS, all 32 permit jurisdictions, Sunbiz, BBB, and deferred tax/recorder sources | PASS   |
 | Approximately 50 valid, deduplicated, diverse parcels                   | Exactly 50 unique folios; 20 usage types, 3 property types, and four polygon-complexity buckets                                                                         | PASS   |
 | Pilot prepared and ingested using Oracle                                | 50 live BCPA captures and 50 transformed Oracle artifacts                                                                                                               | PASS   |
 | Existing automated validations pass                                     | Elephant CLI Lexicon validation: 50/50                                                                                                                                  | PASS   |
@@ -90,9 +90,10 @@ and verification evidence remain private under
 ## Full-run gate
 
 The first county run was paused at its atomic checkpoint while these criteria
-were completed. With this document and the machine audit both passing, the
-appraisal run may resume from `nextRowIndex` without reprocessing prior
-artifacts.
+were completed. After the machine audit passed, it resumed from
+`nextRowIndex=2524` without reprocessing prior artifacts. The first post-resume
+checkpoint reached row 2,600 with no new source failures and zero transform
+errors.
 
 Permit ingestion, Sunbiz/BBB enrichment, database loading, and public
 publication remain separate downstream gates. The source matrix records their

@@ -1,6 +1,6 @@
 # Broward County, FL — source catalog (machine-readable registry)
-# Discovery 2026-08-27. status: appraisal pilot passed 25/25 Lexicon validation;
-# permits: all 33 jurisdictions have a public source or documented custodian;
+# Discovery 2026-08-27. status: appraisal pilot passed 50/50 Lexicon validation;
+# permits: all 32 jurisdictions have a public source or documented custodian;
 # adapter certification remains vendor-specific.
 # Certify later with scripts/permit-source-discovery/certify.mjs.
 county: broward
@@ -50,7 +50,7 @@ appraisal:
     - Keep folio as text; condo folios contain letters
     - elephant-cli requires json (not body) and content-type application/json with no charset
     - Live useCode is often a family label (04 - Condominium); the corrected extractor falls back to the family -01 row
-    - Local prepare, corrected transform, and Lexicon validation passed 25/25
+    - Local prepare, corrected transform, and Lexicon validation passed 50/50
     - Full local appraisal ingestion started from 534309 unique GIS folios
 
 gis:
@@ -65,18 +65,70 @@ sunbiz:
   source: FL Division of Corporations (statewide)
   bulk: https://dos.fl.gov/sunbiz/other-services/data-downloads/
   live_search: https://search.sunbiz.org/ # Cloudflare
-  note: reuse Lee toolchain; Broward ZIP prefixes only
-  zip_prefixes:
+  note: Candidate ZIPs from official City/Broward GIS; require county-boundary validation because USPS ZIPs cross boundaries
+  zip_candidates:
     - "33004"
     - "33009"
-    - "33019-33029"
-    - "33060-33076"
-    - "33301-33334"
+    - "33019"
+    - "33020"
+    - "33021"
+    - "33023"
+    - "33024"
+    - "33025"
+    - "33026"
+    - "33027"
+    - "33028"
+    - "33029"
+    - "33060"
+    - "33062"
+    - "33063"
+    - "33064"
+    - "33065"
+    - "33066"
+    - "33067"
+    - "33068"
+    - "33069"
+    - "33071"
+    - "33073"
+    - "33076"
+    - "33301"
+    - "33304"
+    - "33305"
+    - "33306"
+    - "33308"
+    - "33309"
+    - "33311"
+    - "33312"
+    - "33313"
+    - "33314"
+    - "33315"
+    - "33316"
+    - "33317"
+    - "33319"
+    - "33321"
+    - "33322"
+    - "33323"
+    - "33324"
+    - "33325"
+    - "33326"
+    - "33327"
+    - "33328"
+    - "33330"
+    - "33331"
+    - "33332"
+    - "33334"
     - "33351"
+    - "33388"
+    - "33394"
+    - "33441"
+    - "33442"
 
 bbb:
   source: Better Business Bureau (national)
-  note: reuse Lee category harvest, filter to Broward area
+  api: https://developer.bbb.org/
+  access: approval-required
+  restrictions: complaints and reviews are internal-use-only; site aggregation is not authorized
+  status: unavailable-without-approved-api-access
 
 tax_collector:
   url: https://browardtax.org/
@@ -85,10 +137,11 @@ tax_collector:
 recorder:
   url: https://officialrecords.broward.org/
   access: cloudflare-on-search
-  bulk: 10-day FTP images (Records/Taxes/Treasury)
+  bulk: 10 continuous days of quality-assured images and index data
+  bulk_docs: https://www.broward.org/RecordsTaxesTreasury/Records/Pages/IndexFiles-Completed.aspx
   status: discovery-only
 
-# ---- permit portals (32 municipalities + unincorporated in CitiesList) ----
+# ---- permit portals (31 municipalities + unincorporated BMSD) ----
 permit_source_documentation:
   official_custodian_directory: https://www.broward.org/CodeAppeals/Pages/BuildingContacts.aspx
   availability_audit: ./broward-source-availability.md
@@ -183,8 +236,7 @@ permits:
     vendor: Gov-Easy
     status: public-status-documented
   - jurisdiction: Sea Ranch Lakes
-    portal: https://dpepp.broward.org/BCS/Default.aspx?PossePresentation=ParcelSearchByAddress
-    status: delegated-bcs-documented
+    status: custodian-documented
   - jurisdiction: Southwest Ranches
     status: custodian-documented
   - jurisdiction: Sunrise
