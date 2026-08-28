@@ -133,7 +133,25 @@ function expectedRetainedJsonEntries(zip) {
  */
 function canonicalRetainedJson(value) {
   if (Array.isArray(value)) {
-    return value.map((item) => canonicalRetainedJson(item));
+    const canonicalItems = value.map((item) => canonicalRetainedJson(item));
+    const isRelationshipReferenceArray = canonicalItems.every(
+      (item) =>
+        typeof item === "object" &&
+        item !== null &&
+        !Array.isArray(item) &&
+        Object.keys(item).length === 1 &&
+        typeof (/** @type {Record<string, unknown>} */ (item)["/"]) ===
+          "string",
+    );
+    return isRelationshipReferenceArray
+      ? canonicalItems.sort((left, right) =>
+          String(
+            /** @type {Record<string, unknown>} */ (left)["/"],
+          ).localeCompare(
+            String(/** @type {Record<string, unknown>} */ (right)["/"]),
+          ),
+        )
+      : canonicalItems;
   }
   if (typeof value !== "object" || value === null) return value;
   const record = /** @type {Record<string, unknown>} */ (value);
