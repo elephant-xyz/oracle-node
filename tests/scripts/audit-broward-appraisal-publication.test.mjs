@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
@@ -201,11 +202,10 @@ describe("Broward appraisal privacy and publication audit", () => {
       mailing_address: expect.any(Number),
       owner_identity: expect.any(Number),
     });
-    expect(report.source.deniedFindings.examples).not.toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ reason: expect.stringContaining("Fixture") }),
-      ]),
-    );
+    const serializedReport = JSON.stringify(report);
+    expect(serializedReport).not.toContain("PRIVATE FIXTURE");
+    expect(serializedReport).not.toContain("Privacy Fixture");
+    expect(serializedReport).not.toContain("123 FIXTURE STREET");
     expect(
       report.publicDerivative?.fields.every((field) =>
         APPROVED_PUBLIC_FIELDS.includes(field),
@@ -300,5 +300,27 @@ describe("Broward appraisal privacy and publication audit", () => {
         "0",
       ]),
     ).toThrow(/positive integer/u);
+
+    const cliPath = path.resolve(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "../../scripts/audit-broward-appraisal-publication.mjs",
+    );
+    const cliResult = spawnSync(
+      process.execPath,
+      [
+        cliPath,
+        "--transformed-dir",
+        workspace.sourceDirectory,
+        "--expected-count",
+        "2",
+        "--public-dir",
+        workspace.publicDirectory,
+        "--report",
+        path.join(workspace.publicDirectory, "private-audit.json"),
+      ],
+      { encoding: "utf8" },
+    );
+    expect(cliResult.status).toBe(1);
+    expect(cliResult.stderr).toMatch(/report must be outside --public-dir/u);
   });
 });
