@@ -29,9 +29,13 @@ Repository history and read-only GitHub review did not find a second merged
 
 The acceleration here keeps the proven long-lived isolated workers. A
 fail-closed in-memory loader applies PR #186's exact one-call omission only in
-query-data-only children; it does not patch `node_modules` on disk. If the
-upstream source no longer has exactly one expected call, the worker refuses to
-run. Publishable mode never registers the loader.
+query-data-only children; it does not patch `node_modules` on disk. The same
+guard routes Elephant CLI's exact four mapping-script calls and final extractor
+call through a serialized process-warm CommonJS executor. The unchanged county
+entrypoints rerun for every parcel, but Node process startup and dependency
+reloads are removed. If the upstream source no longer contains exactly the
+expected calls, the worker refuses to run. Publishable mode never registers the
+loader or warm script executor.
 
 The old fixed four-row barrier is also replaced with continuous warm handoffs:
 as soon as a worker finishes, it receives the next row. Results are held until

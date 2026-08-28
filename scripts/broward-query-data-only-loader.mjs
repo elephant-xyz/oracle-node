@@ -14,6 +14,8 @@
 
 const TRANSFORM_MODULE_SUFFIX =
   "/@elephant-xyz/cli/dist/commands/transform/index.js";
+const SCRIPT_RUNNER_MODULE_SUFFIX =
+  "/@elephant-xyz/cli/dist/commands/transform/script-runner.js";
 const FACT_SHEET_CALL = "                await generateFactSheet(tempRoot);";
 const DATA_ONLY_REPLACEMENT = [
   '                if (process.env.BROWARD_QUERY_DATA_ONLY !== "1") {',
@@ -21,6 +23,13 @@ const DATA_ONLY_REPLACEMENT = [
   "                }",
   "                logger.info('Deferring HTML and fact-sheet generation for query-data-only output');",
 ].join("\n");
+const PARALLEL_SCRIPT_CALL =
+  "const results = await Promise.all(scripts.map((script) => execNode(script, [], workDir, timeoutMs)));";
+const FINAL_SCRIPT_CALL =
+  "const finalRes = await execNode(extraction, [], workDir, timeoutMs);";
+const WARM_RUNNER_IMPORT = `import { warmExecNode } from ${JSON.stringify(
+  new URL("./broward-warm-script-runner.mjs", import.meta.url).href,
+)};`;
 
 /**
  * Convert a Node loader source payload to UTF-8 text.
@@ -58,19 +67,46 @@ function sourceText(source) {
  */
 export async function load(url, context, nextLoad) {
   const loaded = await nextLoad(url, context);
-  if (!new URL(url).pathname.endsWith(TRANSFORM_MODULE_SUFFIX)) return loaded;
+  const modulePath = new URL(url).pathname;
+  if (
+    !modulePath.endsWith(TRANSFORM_MODULE_SUFFIX) &&
+    !modulePath.endsWith(SCRIPT_RUNNER_MODULE_SUFFIX)
+  ) {
+    return loaded;
+  }
   if (loaded.source === undefined) {
-    throw new Error("Elephant CLI transform loader returned no source");
+    throw new Error("Elephant CLI data-only loader returned no source");
   }
   const source = sourceText(loaded.source);
-  const matches = source.split(FACT_SHEET_CALL).length - 1;
-  if (matches !== 1) {
+  if (modulePath.endsWith(TRANSFORM_MODULE_SUFFIX)) {
+    const matches = source.split(FACT_SHEET_CALL).length - 1;
+    if (matches !== 1) {
+      throw new Error(
+        `Refusing query-data-only transform: expected one fact-sheet call, found ${String(matches)}`,
+      );
+    }
+    return {
+      ...loaded,
+      source: source.replace(FACT_SHEET_CALL, DATA_ONLY_REPLACEMENT),
+    };
+  }
+  const parallelMatches = source.split(PARALLEL_SCRIPT_CALL).length - 1;
+  const finalMatches = source.split(FINAL_SCRIPT_CALL).length - 1;
+  if (parallelMatches !== 1 || finalMatches !== 1) {
     throw new Error(
-      `Refusing query-data-only transform: expected one fact-sheet call, found ${String(matches)}`,
+      `Refusing warm script handoffs: expected one parallel and one final call, found ${String(parallelMatches)} and ${String(finalMatches)}`,
     );
   }
   return {
     ...loaded,
-    source: source.replace(FACT_SHEET_CALL, DATA_ONLY_REPLACEMENT),
+    source: `${WARM_RUNNER_IMPORT}\n${source
+      .replace(
+        PARALLEL_SCRIPT_CALL,
+        PARALLEL_SCRIPT_CALL.replace("execNode", "warmExecNode"),
+      )
+      .replace(
+        FINAL_SCRIPT_CALL,
+        FINAL_SCRIPT_CALL.replace("execNode", "warmExecNode"),
+      )}`,
   };
 }
