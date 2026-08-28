@@ -39,6 +39,7 @@ describe("published county catalog", () => {
 
     expect(result.counties.length).toBeGreaterThan(0);
     expect(result.counties.map((county) => county.countyKey)).toEqual([
+      "hillsborough",
       "lee",
       "miami-dade",
       "orange",
