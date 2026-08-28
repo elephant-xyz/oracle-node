@@ -1,6 +1,6 @@
 {
   "schemaVersion": "1.0",
-  "generatedAt": "2026-08-24T16:37:08.135Z",
+  "generatedAt": "2026-08-28T09:30:10.689Z",
   "counties": [
     {
       "countyKey": "lee",
@@ -49,6 +49,18 @@
       "permitQueryTableUrl": null,
       "placesTableUrl": null,
       "updatedAt": "2026-07-02T14:21:44.544Z"
+    },
+    {
+      "countyKey": "pinellas",
+      "countyName": "Pinellas",
+      "stateCode": "FL",
+      "countyFips": "12103",
+      "status": "published",
+      "queryTableUrl": "https://ipfs.filebase.io/ipns/k51qzi5uqu5dhmo3zv6xvidksgvsqkfer3nw1s4v7bcbafpl66btpyab3zv9ir",
+      "datasetCoverageUrl": "https://ipfs.filebase.io/ipns/k51qzi5uqu5djrzm8n599i98ey7rpmwpbphgk8tvo5d6zjkfeqcmbrg7lh03xl/",
+      "permitQueryTableUrl": null,
+      "placesTableUrl": null,
+      "updatedAt": "2026-08-28T09:30:10.000Z"
     },
     {
       "countyKey": "rock-island",
