@@ -44,6 +44,7 @@ describe("published county catalog", () => {
       "miami-dade",
       "orange",
       "palm-beach",
+      "pinellas",
       "rock-island",
     ]);
   });
