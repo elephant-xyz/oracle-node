@@ -243,20 +243,24 @@ Live source verification from this environment:
   record with `01-01 Single Family`.
 - Invalid folio `999999999999` returned a null parcel list and the capture
   command exited nonzero through `requireParcelRecords`, as required.
-- Local `elephant-cli prepare` fetched **25/25** pilot folios. The published
-  Broward extractor then transformed **16/25**; the other nine crashed on
-  family-level use codes such as `04 - Condominium`. A local matcher patch
-  recovered **25/25**. Details:
+- Local `elephant-cli prepare` fetched **25/25** pilot folios. After correcting
+  multi-request unwrapping, family-level use-code matching, request provenance,
+  relationships, and integer lot area, **25/25 transformed and 25/25 passed
+  CLI Lexicon validation**. Details:
   [`broward-appraisal-local-pilot.md`](./broward-appraisal-local-pilot.md).
-- The focused Broward tests and `npm run typecheck` passed.
+- The full GIS export produced **534,309 unique folios** from 556,178 parcel
+  features. The checkpointed full local appraisal ingestion started
+  2026-08-28 at concurrency four. Early burn-in had zero transform errors;
+  GIS-only appraiser misses failed closed as designed.
+- The full repository suite passed (698/698) and `npm run typecheck` passed.
 
 This environment has no AWS credentials and no Restate/Postgres stack. No
-pilot messages were enqueued. Local prepare/transform does not replace an
-AWS smoke: before that, PR the use-code matcher and multi-request unwrap
-into `Counties-trasform-scripts/broward`, run
-`scripts/create-county-prepare-queue.sh broward`, deploy so `Broward.json`
-is uploaded to S3, and stage the seed.
+AWS messages were enqueued. The complete run instead uses
+`scripts/ingest-broward-appraisal-local.mjs`, gzip captures, sharded
+transformed ZIPs, and an atomic local checkpoint.
 
-Remaining gates are that transform-script PR, the Broward BCS permit
-adapter and city-vendor routing, and a clean AWS 25-parcel smoke. Do not
-start the full-county run or publish until those gates are clean.
+Remaining gates are full-run reconciliation, database loading when a
+Postgres/Neon connection is available, the Broward BCS permit adapter and
+city-vendor routing, and privacy review. Do not publish until those gates are
+clean. The transform fix exists as local commit `5130a7f`; GitHub denied this
+bot write access to the separate transform repository.

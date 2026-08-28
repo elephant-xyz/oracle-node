@@ -1,5 +1,5 @@
 # Broward County, FL — source catalog (machine-readable registry)
-# Discovery 2026-08-27. status: appraisal certified via live JSON probes;
+# Discovery 2026-08-27. status: appraisal pilot passed 25/25 Lexicon validation;
 # permits: 8 discovered, remaining municipalities needs-review.
 # Certify later with scripts/permit-source-discovery/certify.mjs.
 county: broward
@@ -48,8 +48,9 @@ appraisal:
     - Fail closed when parcelInfok__BackingField is null
     - Keep folio as text; condo folios contain letters
     - elephant-cli requires json (not body) and content-type application/json with no charset
-    - Live useCode is often a family label (04 - Condominium); published extractor crashes until family fallback is PR'd
-    - Local prepare 25/25; published transform 16/25; patched transform 25/25
+    - Live useCode is often a family label (04 - Condominium); the corrected extractor falls back to the family -01 row
+    - Local prepare, corrected transform, and Lexicon validation passed 25/25
+    - Full local appraisal ingestion started from 534309 unique GIS folios
 
 gis:
   rest: https://gisweb-adapters.bcpa.net/arcgis/rest/services/BCPA_EXTERNAL_JAN26/MapServer/16
