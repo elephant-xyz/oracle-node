@@ -8,6 +8,7 @@ import {
 } from "../../scripts/broward-folio.mjs";
 import {
   buildFolioWhere,
+  buildObjectIdPageUrl,
   buildPageUrl,
   centroidFromGeometry,
   parseCliOptions,
@@ -40,8 +41,19 @@ describe("Broward seed builder", () => {
     expect(row?.county_fips).toBe("12011");
     expect(row?.method).toBe("POST");
     expect(row?.url).toBe(BROWARD_DETAIL_URL);
+    expect(JSON.parse(row?.headers ?? "{}")).toEqual({
+      "content-type": "application/json",
+    });
+    expect(JSON.parse(row?.json ?? "{}")).toEqual({
+      folioNumber: "504108BJ0140",
+      taxyear: "",
+      action: "CURRENT",
+      use: "",
+    });
     expect(row?.state).toBe("FL");
     expect(SEED_COLUMNS).toContain("request_identifier");
+    expect(SEED_COLUMNS).toContain("headers");
+    expect(SEED_COLUMNS).toContain("json");
     expect(JSON.parse(row?.parcel_polygon ?? "{}")).toMatchObject({
       type: "Polygon",
     });
@@ -79,8 +91,14 @@ describe("Broward seed builder", () => {
     const url = buildPageUrl(where, 0, 25);
     expect(url).toContain("outSR=4326");
     expect(url).toContain("f=geojson");
+    expect(url).toContain("orderByFields=OBJECTID");
+    expect(buildObjectIdPageUrl([2, 3])).toContain("objectIds=2%2C3");
     expect(parseCliOptions(["--pilot"]).pilot).toBe(true);
     expect(parseCliOptions(["--pilot"]).outputPath).toContain("broward-pilot");
+    expect(parseCliOptions(["--concurrency", "8"]).concurrency).toBe(8);
+    expect(() => parseCliOptions(["--concurrency", "17"])).toThrow(
+      /cannot exceed 16/,
+    );
     expect(BROWARD_PILOT_FOLIOS).toHaveLength(25);
   });
 

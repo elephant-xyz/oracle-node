@@ -30,8 +30,7 @@ import {
 } from "./broward-use-code.mjs";
 
 const DEFAULT_SEED_PATH = "downloads/broward/broward-pilot.csv";
-const DEFAULT_CAPTURES_PATH =
-  "downloads/broward/broward-pilot-captures.zip";
+const DEFAULT_CAPTURES_PATH = "downloads/broward/broward-pilot-captures.zip";
 const DEFAULT_FLOW_PATH = "multi-request-flows/Broward.json";
 const DEFAULT_SCRIPTS_DIRECTORY =
   "../Counties-trasform-scripts/broward/scripts";
@@ -281,7 +280,11 @@ function readZipJsonObject(zip, entryName) {
   if (entry === null) return null;
   try {
     const parsed = JSON.parse(entry.getData().toString("utf8"));
-    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      Array.isArray(parsed)
+    ) {
       return null;
     }
     return /** @type {Record<string, unknown>} */ (parsed);
@@ -308,7 +311,8 @@ export function readCaptureParcel(captureEntry, folio) {
 
 /**
  * Create the same root-level county-prepare input assembled by the pre and
- * downloader stages, with the capture unwrapped to the published extractor shape.
+ * downloader stages. The multi-request wrapper is preserved exactly as the
+ * downloader would pass it to the county transform.
  *
  * @param {object} params - Prepared input parameters.
  * @param {string} params.seedOutputPath - CLI seed-transform output ZIP.
@@ -316,7 +320,7 @@ export function readCaptureParcel(captureEntry, folio) {
  * @param {AdmZip.IZipEntry} params.captureEntry - Fresh prepare capture.
  * @param {string} params.folio - Canonical folio, used as the capture filename.
  * @param {string} params.destination - Prepared ZIP destination.
- * @returns {import("./capture-broward-parcel.mjs").BrowardParcelEnvelope} Unwrapped envelope written into the ZIP.
+ * @returns {void}
  */
 function createPreparedInput({
   seedOutputPath,
@@ -333,17 +337,13 @@ function createPreparedInput({
   if (unnormalizedAddress === null || propertySeed === null) {
     throw new Error("Seed transform output is missing compatibility entities");
   }
-  const { envelope } = readCaptureParcel(captureEntry, folio);
+  readCaptureParcel(captureEntry, folio);
   const prepared = new AdmZip();
   prepared.addFile("unnormalized_address.json", unnormalizedAddress.getData());
   prepared.addFile("property_seed.json", propertySeed.getData());
   prepared.addFile("input.csv", seedCsv);
-  prepared.addFile(
-    `${folio}.json`,
-    Buffer.from(`${JSON.stringify(envelope, null, 2)}\n`),
-  );
+  prepared.addFile(`${folio}.json`, captureEntry.getData());
   prepared.writeZip(destination);
-  return envelope;
 }
 
 /**
@@ -393,8 +393,7 @@ async function validateParcel({
   } catch (error) {
     return {
       ...failed,
-      transformError:
-        error instanceof Error ? error.message : String(error),
+      transformError: error instanceof Error ? error.message : String(error),
     };
   }
 
