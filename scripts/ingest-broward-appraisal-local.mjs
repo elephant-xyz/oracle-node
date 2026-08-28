@@ -18,6 +18,7 @@ import {
   readFile,
   rename,
   rm,
+  stat,
   writeFile,
 } from "fs/promises";
 import os from "os";
@@ -40,6 +41,12 @@ import {
   normalizeBrowardFolio,
 } from "./broward-folio.mjs";
 import { SEED_COLUMNS, renderCsvRow } from "./build-broward-seed.mjs";
+import {
+  PUBLISHABLE_MODE,
+  QUERY_DATA_ONLY_MODE,
+  QUERY_DATA_ONLY_SCHEMA_VERSION,
+  QUERY_DATA_ONLY_SUFFIX,
+} from "./broward-query-data-only.mjs";
 
 const gzipAsync = promisify(gzip);
 const gunzipAsync = promisify(gunzip);
@@ -47,15 +54,21 @@ const DEFAULT_SEED_PATH = "downloads/broward/broward.csv";
 const DEFAULT_SCRIPTS_DIRECTORY =
   "../Counties-trasform-scripts/broward/scripts";
 const DEFAULT_OUTPUT_DIRECTORY = "downloads/broward/full-ingestion";
+const DEFAULT_QUERY_DATA_ONLY_OUTPUT_DIRECTORY =
+  "downloads/broward/query-data-only-ingestion";
 const DEFAULT_CONCURRENCY = 2;
 const MAX_CONCURRENCY = 4;
 const SOURCE_MAX_ATTEMPTS = 4;
+const INGEST_STATE_SCHEMA_VERSION = "oracle-node.broward-local-ingest-state.v2";
+const QUERY_DATA_ONLY_RUN_MARKER = "QUERY_DATA_ONLY_DO_NOT_PUBLISH.json";
 const TRANSFORM_WORKER_PATH = fileURLToPath(
   new URL("./broward-transform-worker-child.mjs", import.meta.url),
 );
 
 /**
  * @typedef {Record<string, string | undefined>} CsvRecord
+ *
+ * @typedef {"publishable" | "query-data-only"} BrowardArtifactMode
  *
  * @typedef {object} LocalIngestOptions
  * @property {string} seedPath - Complete Broward seed CSV.
@@ -64,8 +77,16 @@ const TRANSFORM_WORKER_PATH = fileURLToPath(
  * @property {number} concurrency - Concurrent parcel pipelines.
  * @property {number | null} limit - Optional count for a bounded run.
  * @property {boolean} resetCheckpoint - Ignore prior progress state.
+ * @property {BrowardArtifactMode} artifactMode
+ *   Full publication transform or explicitly non-publishable query-data-only transform.
+ * @property {string | null} captureSource - Optional ZIP or sharded gzip capture source.
+ * @property {number} startRow - Initial source row for a new, explicitly migrated data-only run.
  *
  * @typedef {object} LocalIngestState
+ * @property {string} schemaVersion - Stable local checkpoint schema.
+ * @property {BrowardArtifactMode} artifactMode
+ *   Artifact contract guarded by this checkpoint.
+ * @property {number} initialRowIndex - Immutable first row for this output.
  * @property {string} startedAt - ISO timestamp of the first run.
  * @property {string} updatedAt - ISO timestamp of the latest checkpoint.
  * @property {number} nextRowIndex - Zero-based row offset to process next.
@@ -99,6 +120,14 @@ const TRANSFORM_WORKER_PATH = fileURLToPath(
  * @property {number} requestId - Parent correlation identifier.
  * @property {boolean} success - Whether Elephant CLI transform succeeded.
  * @property {string | null} error - Transform failure text.
+ *
+ * @typedef {object} CaptureSource
+ * @property {string} description - Resolved source identity for run evidence.
+ * @property {(folio: string) => Promise<Buffer>} read - Read one validated capture payload.
+ *
+ * @typedef {object} SeedTask
+ * @property {number} rowIndex - Zero-based source row.
+ * @property {CsvRecord} row - Parsed seed record.
  */
 
 /**
@@ -116,11 +145,19 @@ export function parseCliOptions(argv) {
     concurrency: DEFAULT_CONCURRENCY,
     limit: null,
     resetCheckpoint: false,
+    artifactMode: PUBLISHABLE_MODE,
+    captureSource: null,
+    startRow: 0,
   };
+  let outputWasSet = false;
   for (let index = 0; index < argv.length; index += 1) {
     const flag = argv[index];
     if (flag === "--reset-checkpoint") {
       options.resetCheckpoint = true;
+      continue;
+    }
+    if (flag === "--query-data-only") {
+      options.artifactMode = QUERY_DATA_ONLY_MODE;
       continue;
     }
     const value = argv[index + 1];
@@ -129,11 +166,21 @@ export function parseCliOptions(argv) {
     }
     if (flag === "--seed") options.seedPath = value;
     else if (flag === "--scripts") options.scriptsDirectory = value;
-    else if (flag === "--output") options.outputDirectory = value;
-    else if (flag === "--concurrency") {
+    else if (flag === "--output") {
+      options.outputDirectory = value;
+      outputWasSet = true;
+    } else if (flag === "--capture-source") {
+      options.captureSource = value;
+    } else if (flag === "--concurrency") {
       options.concurrency = parsePositiveInteger(flag, value);
     } else if (flag === "--limit") {
       options.limit = parsePositiveInteger(flag, value);
+    } else if (flag === "--start-row") {
+      const startRow = Number.parseInt(value, 10);
+      if (!Number.isInteger(startRow) || startRow < 0) {
+        throw new Error("--start-row must be a non-negative integer");
+      }
+      options.startRow = startRow;
     } else {
       throw new Error(`Unknown option: ${flag}`);
     }
@@ -141,6 +188,20 @@ export function parseCliOptions(argv) {
   }
   if (options.concurrency > MAX_CONCURRENCY) {
     throw new Error(`--concurrency cannot exceed ${String(MAX_CONCURRENCY)}`);
+  }
+  if (options.artifactMode === QUERY_DATA_ONLY_MODE && !outputWasSet) {
+    options.outputDirectory = DEFAULT_QUERY_DATA_ONLY_OUTPUT_DIRECTORY;
+  }
+  if (
+    options.artifactMode === QUERY_DATA_ONLY_MODE &&
+    !options.outputDirectory.toLowerCase().includes(QUERY_DATA_ONLY_MODE)
+  ) {
+    throw new Error(
+      "--query-data-only output path must include 'query-data-only'",
+    );
+  }
+  if (options.startRow > 0 && options.artifactMode !== QUERY_DATA_ONLY_MODE) {
+    throw new Error("--start-row is supported only with --query-data-only");
   }
   return options;
 }
@@ -251,19 +312,65 @@ async function pathExists(targetPath) {
  *
  * @param {string} statePath - Checkpoint file.
  * @param {boolean} reset - Ignore a prior file.
+ * @param {BrowardArtifactMode} artifactMode
+ *   Artifact contract requested by this invocation.
+ * @param {number} startRow - Immutable first row requested for this output.
  * @returns {Promise<LocalIngestState>} Ingestion state.
  */
-async function readState(statePath, reset) {
+async function readState(statePath, reset, artifactMode, startRow) {
   if (!reset && (await pathExists(statePath))) {
-    return /** @type {LocalIngestState} */ (
+    const parsed = /** @type {unknown} */ (
       JSON.parse(await readFile(statePath, "utf8"))
     );
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      Array.isArray(parsed)
+    ) {
+      throw new Error(`Invalid Broward checkpoint: ${statePath}`);
+    }
+    const candidate = /** @type {Partial<LocalIngestState>} */ (parsed);
+    const priorMode = candidate.artifactMode ?? PUBLISHABLE_MODE;
+    if (priorMode !== artifactMode) {
+      throw new Error(
+        `Checkpoint artifact mode ${priorMode} cannot resume as ${artifactMode}`,
+      );
+    }
+    const priorStartRow = candidate.initialRowIndex ?? 0;
+    if (priorStartRow !== startRow) {
+      throw new Error(
+        `Checkpoint initial row ${String(priorStartRow)} cannot resume with --start-row ${String(startRow)}`,
+      );
+    }
+    if (
+      typeof candidate.startedAt !== "string" ||
+      typeof candidate.updatedAt !== "string" ||
+      !Number.isInteger(candidate.nextRowIndex) ||
+      !Number.isInteger(candidate.attempted) ||
+      !Number.isInteger(candidate.succeeded) ||
+      !Number.isInteger(candidate.skippedExisting) ||
+      !Number.isInteger(candidate.failed) ||
+      typeof candidate.usageTypes !== "object" ||
+      candidate.usageTypes === null ||
+      Array.isArray(candidate.usageTypes)
+    ) {
+      throw new Error(`Invalid Broward checkpoint: ${statePath}`);
+    }
+    return /** @type {LocalIngestState} */ ({
+      ...candidate,
+      schemaVersion: INGEST_STATE_SCHEMA_VERSION,
+      artifactMode: priorMode,
+      initialRowIndex: priorStartRow,
+    });
   }
   const now = new Date().toISOString();
   return {
+    schemaVersion: INGEST_STATE_SCHEMA_VERSION,
+    artifactMode,
+    initialRowIndex: startRow,
     startedAt: now,
     updatedAt: now,
-    nextRowIndex: 0,
+    nextRowIndex: startRow,
     attempted: 0,
     succeeded: 0,
     skippedExisting: 0,
@@ -316,19 +423,113 @@ async function fetchEnvelopeWithRetry(folio) {
 }
 
 /**
- * Read a prior compressed capture or fetch and store a fresh one.
+ * Parse and fail-closed validate one uncompressed prepare capture.
+ *
+ * @param {Buffer} bytes - UTF-8 JSON bytes.
+ * @param {string} folio - Canonical folio expected in the envelope.
+ * @returns {Record<string, unknown>} Valid multi-request wrapper.
+ */
+function parseCapture(bytes, folio) {
+  const parsed = /** @type {unknown} */ (JSON.parse(bytes.toString("utf8")));
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new Error(`Capture for ${folio} is not a JSON object`);
+  }
+  const payload = /** @type {Record<string, unknown>} */ (parsed);
+  requireParcelRecords(unwrapBrowardPrepareCapture(payload), folio);
+  return payload;
+}
+
+/**
+ * Open an optional read-only ZIP or sharded gzip capture source.
+ *
+ * When a source is supplied, a missing folio fails instead of falling back to
+ * BCPA. This makes capture-only benchmarks and transform redrives provably
+ * zero-traffic.
+ *
+ * @param {string | null} sourcePath - ZIP archive or directory containing `{shard}/{folio}.json.gz`.
+ * @returns {Promise<CaptureSource | null>} Reusable read-only capture source.
+ */
+async function createCaptureSource(sourcePath) {
+  if (sourcePath === null) return null;
+  const resolved = path.resolve(sourcePath);
+  const sourceStat = await stat(resolved);
+  if (sourceStat.isDirectory()) {
+    return {
+      description: resolved,
+      async read(folio) {
+        const compressedPath = path.join(
+          resolved,
+          folio.slice(0, 4),
+          `${folio}.json.gz`,
+        );
+        try {
+          return await gunzipAsync(await readFile(compressedPath));
+        } catch (error) {
+          throw new Error(
+            `Capture source has no valid compressed capture for ${folio}: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+        }
+      },
+    };
+  }
+  if (!sourceStat.isFile() || path.extname(resolved).toLowerCase() !== ".zip") {
+    throw new Error(
+      "--capture-source must be a ZIP or sharded capture directory",
+    );
+  }
+  const archive = new AdmZip(resolved);
+  return {
+    description: resolved,
+    read(folio) {
+      const entry = archive.getEntry(`${folio}.json`);
+      if (entry === null) {
+        return Promise.reject(
+          new Error(`Capture archive is missing ${folio}.json`),
+        );
+      }
+      return Promise.resolve(entry.getData());
+    },
+  };
+}
+
+/**
+ * Atomically store an uncompressed capture as private gzip JSON.
+ *
+ * @param {string} capturePath - Final `.json.gz` path.
+ * @param {Buffer} bytes - Canonical uncompressed capture bytes.
+ * @returns {Promise<void>} Resolves after the compressed capture is renamed.
+ */
+async function writeCompressedCapture(capturePath, bytes) {
+  await mkdir(path.dirname(capturePath), { recursive: true, mode: 0o700 });
+  const compressed = await gzipAsync(bytes, { level: 9 });
+  const temporaryPath = `${capturePath}.${String(process.pid)}.tmp`;
+  await writeFile(temporaryPath, compressed, { mode: 0o600 });
+  await rename(temporaryPath, capturePath);
+}
+
+/**
+ * Read a prior compressed capture, import one from a read-only source, or
+ * fetch and atomically store a fresh one.
  *
  * @param {string} folio - Canonical folio.
  * @param {string} capturePath - Gzip JSON path.
+ * @param {CaptureSource | null} captureSource - Optional zero-traffic source.
  * @returns {Promise<Record<string, unknown>>} Multi-request capture wrapper.
  */
-async function ensureCapture(folio, capturePath) {
+async function ensureCapture(folio, capturePath, captureSource) {
   if (await pathExists(capturePath)) {
     const bytes = await gunzipAsync(await readFile(capturePath));
-    const payload = /** @type {Record<string, unknown>} */ (
-      JSON.parse(bytes.toString("utf8"))
+    return parseCapture(bytes, folio);
+  }
+  if (captureSource !== null) {
+    const bytes = await captureSource.read(folio);
+    const payload = parseCapture(bytes, folio);
+    await writeCompressedCapture(
+      capturePath,
+      Buffer.from(`${JSON.stringify(payload)}\n`),
     );
-    requireParcelRecords(unwrapBrowardPrepareCapture(payload), folio);
     return payload;
   }
   const sourceRequest = buildBrowardSourceRequest(folio);
@@ -340,11 +541,10 @@ async function ensureCapture(folio, capturePath) {
       response: envelope,
     },
   };
-  await mkdir(path.dirname(capturePath), { recursive: true, mode: 0o700 });
-  const bytes = await gzipAsync(Buffer.from(`${JSON.stringify(payload)}\n`), {
-    level: 9,
-  });
-  await writeFile(capturePath, bytes, { mode: 0o600 });
+  await writeCompressedCapture(
+    capturePath,
+    Buffer.from(`${JSON.stringify(payload)}\n`),
+  );
   return payload;
 }
 
@@ -415,7 +615,8 @@ function createTransformInput({ row, folio, capture, destination }) {
  *   workingDirectory: string,
  *   inputZipPath: string,
  *   outputZipPath: string,
- *   scriptsZipPath: string
+ *   scriptsZipPath: string,
+ *   folio: string
  * }) => Promise<{ success: boolean, error: string | null }>} run
  *   Run one transform in this worker.
  * @property {() => Promise<void>} close - Stop the child process.
@@ -429,9 +630,11 @@ function createTransformInput({ row, folio, capture, destination }) {
  *
  * @param {number} workerIndex - Stable worker ordinal.
  * @param {string} workerRoot - Private worker temp root.
+ * @param {BrowardArtifactMode} artifactMode
+ *   Transform behavior fixed for the lifetime of this worker.
  * @returns {Promise<TransformWorker>} Ready worker.
  */
-async function createTransformWorker(workerIndex, workerRoot) {
+async function createTransformWorker(workerIndex, workerRoot, artifactMode) {
   const workerTmp = path.join(workerRoot, String(workerIndex));
   await mkdir(workerTmp, { recursive: true, mode: 0o700 });
   const child = fork(TRANSFORM_WORKER_PATH, [], {
@@ -439,6 +642,10 @@ async function createTransformWorker(workerIndex, workerRoot) {
       ...process.env,
       BROWSERSLIST_IGNORE_OLD_DATA: "1",
       TMPDIR: workerTmp,
+      BROWARD_ARTIFACT_MODE: artifactMode,
+      ...(artifactMode === QUERY_DATA_ONLY_MODE
+        ? { BROWARD_QUERY_DATA_ONLY: "1" }
+        : {}),
     },
     stdio: ["ignore", "ignore", "pipe", "ipc"],
   });
@@ -524,6 +731,9 @@ async function createTransformWorker(workerIndex, workerRoot) {
  * @param {string} params.outputDirectory - Private output root.
  * @param {string} params.scriptsZipPath - Patched scripts ZIP.
  * @param {TransformWorker} params.transformWorker - Isolated CLI worker.
+ * @param {CaptureSource | null} params.captureSource - Optional zero-traffic capture source.
+ * @param {BrowardArtifactMode} params.artifactMode
+ *   Output artifact contract.
  * @returns {Promise<LocalIngestResult>} Parcel outcome.
  */
 async function processParcel({
@@ -532,6 +742,8 @@ async function processParcel({
   outputDirectory,
   scriptsZipPath,
   transformWorker,
+  captureSource,
+  artifactMode,
 }) {
   const started = Date.now();
   const rawIdentifier = row.request_identifier ?? row.parcel_id ?? "";
@@ -547,11 +759,19 @@ async function processParcel({
     };
   }
   const shard = folio.slice(0, 4);
+  const artifactDirectoryName =
+    artifactMode === QUERY_DATA_ONLY_MODE
+      ? "query-data-only-artifacts"
+      : "artifacts";
+  const artifactFileName =
+    artifactMode === QUERY_DATA_ONLY_MODE
+      ? `${folio}${QUERY_DATA_ONLY_SUFFIX}`
+      : `${folio}.zip`;
   const artifactPath = path.join(
     outputDirectory,
-    "artifacts",
+    artifactDirectoryName,
     shard,
-    `${folio}.zip`,
+    artifactFileName,
   );
   if (await pathExists(artifactPath)) {
     return {
@@ -571,7 +791,7 @@ async function processParcel({
   );
   let capture;
   try {
-    capture = await ensureCapture(folio, capturePath);
+    capture = await ensureCapture(folio, capturePath, captureSource);
   } catch (error) {
     return {
       rowIndex,
@@ -600,6 +820,7 @@ async function processParcel({
       inputZipPath,
       outputZipPath,
       scriptsZipPath,
+      folio,
     });
     if (!result.success) {
       return {
@@ -653,6 +874,101 @@ function applyResults(state, results) {
 }
 
 /**
+ * Keep every long-lived worker busy by handing it the next seed row as soon as
+ * its previous transform finishes.
+ *
+ * Results may finish out of order, but this pool releases only the contiguous
+ * source-order prefix to `commitResults`. Therefore the existing
+ * `nextRowIndex` checkpoint remains an atomic, resume-safe high-water mark.
+ * At most one task per worker is in flight, so source concurrency never exceeds
+ * the existing transform concurrency limit.
+ *
+ * @param {object} params - Pool dependencies.
+ * @param {readonly TransformWorker[]} params.workers - Long-lived isolated workers.
+ * @param {AsyncIterator<SeedTask>} params.taskIterator - Ordered streaming seed tasks.
+ * @param {number} params.firstRowIndex - First row eligible for checkpointing.
+ * @param {(task: SeedTask, worker: TransformWorker) => Promise<LocalIngestResult>} params.runTask
+ *   Parcel processor bound to run paths and capture policy.
+ * @param {(results: readonly LocalIngestResult[]) => Promise<boolean>} params.commitResults
+ *   Persist one contiguous result prefix and return true to stop new handoffs.
+ * @returns {Promise<{ stopped: boolean }>} Whether the commit policy stopped dispatch.
+ */
+export async function runWorkerHandoffs({
+  workers,
+  taskIterator,
+  firstRowIndex,
+  runTask,
+  commitResults,
+}) {
+  /** @type {Map<number, Promise<{ workerIndex: number, result: LocalIngestResult }>>} */
+  const inFlight = new Map();
+  /** @type {Map<number, LocalIngestResult>} */
+  const completed = new Map();
+  let nextCommitRow = firstRowIndex;
+  let sourceExhausted = false;
+  let stopDispatch = false;
+
+  /**
+   * Give one worker its next task unless the source or safety policy stopped.
+   *
+   * @param {number} workerIndex - Stable worker index.
+   * @returns {Promise<void>} Resolves after dispatch or exhaustion.
+   */
+  async function dispatch(workerIndex) {
+    if (sourceExhausted || stopDispatch) return;
+    const next = await taskIterator.next();
+    if (next.done) {
+      sourceExhausted = true;
+      return;
+    }
+    const worker = workers[workerIndex];
+    if (worker === undefined) {
+      throw new Error(`Missing transform worker ${String(workerIndex)}`);
+    }
+    inFlight.set(
+      workerIndex,
+      runTask(next.value, worker).then((result) => ({ workerIndex, result })),
+    );
+  }
+
+  for (let workerIndex = 0; workerIndex < workers.length; workerIndex += 1) {
+    await dispatch(workerIndex);
+  }
+  while (inFlight.size > 0) {
+    const completedWorker = await Promise.race(inFlight.values());
+    inFlight.delete(completedWorker.workerIndex);
+    const { result } = completedWorker;
+    if (completed.has(result.rowIndex) || result.rowIndex < nextCommitRow) {
+      throw new Error(
+        `Duplicate transform result for row ${String(result.rowIndex)}`,
+      );
+    }
+    completed.set(result.rowIndex, result);
+    /** @type {LocalIngestResult[]} */
+    const contiguous = [];
+    while (completed.has(nextCommitRow)) {
+      const orderedResult = completed.get(nextCommitRow);
+      completed.delete(nextCommitRow);
+      if (orderedResult === undefined) {
+        throw new Error(
+          `Missing completed result for row ${String(nextCommitRow)}`,
+        );
+      }
+      contiguous.push(orderedResult);
+      nextCommitRow += 1;
+    }
+    if (contiguous.length > 0 && (await commitResults(contiguous))) {
+      stopDispatch = true;
+    }
+    await dispatch(completedWorker.workerIndex);
+  }
+  if (completed.size > 0) {
+    throw new Error("Worker handoff pool ended with a checkpoint ordering gap");
+  }
+  return { stopped: stopDispatch };
+}
+
+/**
  * Execute a resumable local county ingestion.
  *
  * @param {LocalIngestOptions} options - Validated run options.
@@ -662,18 +978,66 @@ export async function runLocalIngestion(options) {
   const seedPath = path.resolve(options.seedPath);
   const scriptsDirectory = path.resolve(options.scriptsDirectory);
   const outputDirectory = path.resolve(options.outputDirectory);
+  if (
+    options.artifactMode === QUERY_DATA_ONLY_MODE &&
+    !outputDirectory.toLowerCase().includes(QUERY_DATA_ONLY_MODE)
+  ) {
+    throw new Error(
+      "Query-data-only output path must include 'query-data-only'",
+    );
+  }
   await mkdir(outputDirectory, { recursive: true, mode: 0o700 });
   await chmod(outputDirectory, 0o700);
   const statePath = path.join(outputDirectory, "state.json");
   const resultsPath = path.join(outputDirectory, "results.ndjson");
   const scriptsZipPath = path.join(outputDirectory, "broward-scripts.zip");
-  const state = await readState(statePath, options.resetCheckpoint);
+  const queryDataOnlyMarkerPath = path.join(
+    outputDirectory,
+    QUERY_DATA_ONLY_RUN_MARKER,
+  );
+  if (
+    options.artifactMode === PUBLISHABLE_MODE &&
+    (await pathExists(queryDataOnlyMarkerPath))
+  ) {
+    throw new Error(
+      `Refusing publishable mode in marked query-data-only output ${outputDirectory}`,
+    );
+  }
+  const captureSource = await createCaptureSource(options.captureSource);
+  const state = await readState(
+    statePath,
+    options.resetCheckpoint,
+    options.artifactMode,
+    options.startRow,
+  );
+  if (options.artifactMode === QUERY_DATA_ONLY_MODE) {
+    await writeFile(
+      queryDataOnlyMarkerPath,
+      `${JSON.stringify(
+        {
+          schemaVersion: QUERY_DATA_ONLY_SCHEMA_VERSION,
+          artifactMode: QUERY_DATA_ONLY_MODE,
+          publishable: false,
+          captureSource: captureSource?.description ?? "live-bcpa",
+          initialRowIndex: options.startRow,
+          sourceConcurrencyMaximum: options.concurrency,
+          artifactDirectory: "query-data-only-artifacts",
+          artifactSuffix: QUERY_DATA_ONLY_SUFFIX,
+          regeneration:
+            "Use the preserved seed and gzip captures in a separate publishable-mode output; never publish this directory.",
+        },
+        null,
+        2,
+      )}\n`,
+      { mode: 0o600 },
+    );
+  }
   packageScripts(scriptsDirectory, scriptsZipPath);
   await chmod(scriptsZipPath, 0o600);
   const workerRoot = path.join(outputDirectory, ".transform-workers");
   const transformWorkers = await Promise.all(
     Array.from({ length: options.concurrency }, (_, index) =>
-      createTransformWorker(index, workerRoot),
+      createTransformWorker(index, workerRoot, options.artifactMode),
     ),
   );
 
@@ -681,83 +1045,91 @@ export async function runLocalIngestion(options) {
     const parser = createReadStream(seedPath).pipe(
       parse({ columns: true, skip_empty_lines: true }),
     );
-    /** @type {{ rowIndex: number, row: CsvRecord }[]} */
-    let window = [];
-    let rowIndex = 0;
-    let selected = 0;
-    let consecutiveSourceFailureWindows = 0;
-
     /**
-     * Process and checkpoint the current ordered window.
+     * Stream only the uncheckpointed, bounded seed rows.
      *
-     * @returns {Promise<void>}
+     * @returns {AsyncGenerator<SeedTask, void, void>} Ordered parcel tasks.
      */
-    const flushWindow = async () => {
-      if (window.length === 0) return;
-      const tasks = window;
-      window = [];
-      const results = await Promise.all(
-        tasks.map((task, index) =>
-          processParcel({
-            ...task,
-            outputDirectory,
-            scriptsZipPath,
-            transformWorker: transformWorkers[index],
-          }),
-        ),
-      );
-      for (const result of results) {
-        await appendFile(
-          resultsPath,
-          `${JSON.stringify({
-            timestamp: new Date().toISOString(),
-            ...result,
-          })}\n`,
-          { mode: 0o600 },
-        );
-      }
-      applyResults(state, results);
-      await writeState(statePath, state);
-      consecutiveSourceFailureWindows = results.every(
-        (result) => result.status === "source_error",
-      )
-        ? consecutiveSourceFailureWindows + 1
-        : 0;
-      if (state.attempted % 100 < results.length) {
-        console.log(
-          JSON.stringify({
-            level: "info",
-            message: "broward_local_ingest_progress",
-            ...state,
-          }),
-        );
-      }
-      if (consecutiveSourceFailureWindows >= 3) {
-        throw new Error(
-          "Stopped after three all-source-error windows; resume after checking BCPA availability",
-        );
-      }
-    };
-
-    for await (const parsedRow of parser) {
-      const row = /** @type {CsvRecord} */ (parsedRow);
-      if (rowIndex < state.nextRowIndex) {
+    async function* selectedTasks() {
+      let rowIndex = 0;
+      let selected = 0;
+      for await (const parsedRow of parser) {
+        const row = /** @type {CsvRecord} */ (parsedRow);
+        if (rowIndex < state.nextRowIndex) {
+          rowIndex += 1;
+          continue;
+        }
+        if (options.limit !== null && selected >= options.limit) return;
+        yield { rowIndex, row };
+        selected += 1;
         rowIndex += 1;
-        continue;
-      }
-      if (options.limit !== null && selected >= options.limit) break;
-      window.push({ rowIndex, row });
-      selected += 1;
-      rowIndex += 1;
-      if (window.length >= options.concurrency) {
-        await flushWindow();
       }
     }
-    await flushWindow();
+
+    let consecutiveSourceErrors = 0;
+    const sourceFailureLimit = 3 * options.concurrency;
+    const handoffResult = await runWorkerHandoffs({
+      workers: transformWorkers,
+      taskIterator: selectedTasks()[Symbol.asyncIterator](),
+      firstRowIndex: state.nextRowIndex,
+      runTask(task, transformWorker) {
+        return processParcel({
+          ...task,
+          outputDirectory,
+          scriptsZipPath,
+          transformWorker,
+          captureSource,
+          artifactMode: options.artifactMode,
+        });
+      },
+      async commitResults(results) {
+        const previousAttempted = state.attempted;
+        await appendFile(
+          resultsPath,
+          results
+            .map((result) =>
+              JSON.stringify({
+                timestamp: new Date().toISOString(),
+                artifactMode: options.artifactMode,
+                ...result,
+              }),
+            )
+            .join("\n")
+            .concat("\n"),
+          { mode: 0o600 },
+        );
+        for (const result of results) {
+          consecutiveSourceErrors =
+            result.status === "source_error" ? consecutiveSourceErrors + 1 : 0;
+        }
+        applyResults(state, results);
+        await writeState(statePath, state);
+        if (
+          Math.floor(previousAttempted / 100) <
+          Math.floor(state.attempted / 100)
+        ) {
+          console.log(
+            JSON.stringify({
+              level: "info",
+              message: "broward_local_ingest_progress",
+              captureSource: captureSource?.description ?? "live-bcpa",
+              ...state,
+            }),
+          );
+        }
+        return consecutiveSourceErrors >= sourceFailureLimit;
+      },
+    });
+    if (handoffResult.stopped) {
+      throw new Error(
+        `Stopped after ${String(sourceFailureLimit)} consecutive source errors; resume after checking the capture source or BCPA availability`,
+      );
+    }
     console.log(
       JSON.stringify({
         level: "info",
         message: "broward_local_ingest_complete",
+        captureSource: captureSource?.description ?? "live-bcpa",
         ...state,
       }),
     );

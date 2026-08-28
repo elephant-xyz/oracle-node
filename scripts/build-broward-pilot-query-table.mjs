@@ -282,20 +282,51 @@ export async function buildPilotQueryTable(options = {}) {
         await readFile(path.join(validationDirectory, "summary.json"), "utf8"),
       )
     );
+  const artifacts = (summary.results ?? [])
+    .filter(
+      (result) =>
+        result.validationSuccess === true &&
+        typeof result.requestIdentifier === "string",
+    )
+    .map((result) => ({
+      folio: /** @type {string} */ (result.requestIdentifier),
+      artifactPath: path.join(
+        validationDirectory,
+        `${String(result.requestIdentifier)}.zip`,
+      ),
+    }));
+  return buildQueryTableFromArtifacts({
+    artifacts,
+    capturesPath,
+    outputDirectory,
+  });
+}
+
+/**
+ * Build the Broward query table from an explicit set of transformed archives.
+ *
+ * Explicit artifact paths let the non-publishable data-only validator exercise
+ * the same query mapping used by the accepted full pilot without renaming its
+ * safety-classified `.query-data-only.zip` files.
+ *
+ * @param {object} options - Query-loader dry-run inputs.
+ * @param {readonly { folio: string, artifactPath: string }[]} options.artifacts
+ *   Ordered transformed archives and their canonical folios.
+ * @param {string} options.capturesPath - Multi-request capture archive.
+ * @param {string} options.outputDirectory - Private Parquet output directory.
+ * @returns {Promise<{ parquetPath: string, rowCount: number }>} Build result.
+ */
+export async function buildQueryTableFromArtifacts({
+  artifacts,
+  capturesPath,
+  outputDirectory,
+}) {
   const captures = new AdmZip(capturesPath);
   /** @type {QueryTableRow[]} */
   const rows = [];
-  for (const result of summary.results ?? []) {
-    if (
-      result.validationSuccess !== true ||
-      typeof result.requestIdentifier !== "string"
-    ) {
-      continue;
-    }
-    const folio = result.requestIdentifier;
-    const transformed = new AdmZip(
-      path.join(validationDirectory, `${folio}.zip`),
-    );
+  for (const artifact of artifacts) {
+    const { folio } = artifact;
+    const transformed = new AdmZip(artifact.artifactPath);
     const property = readZipObject(transformed, "data/property.json");
     if (property === null) {
       throw new Error(`Missing data/property.json for ${folio}`);
