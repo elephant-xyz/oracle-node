@@ -1,0 +1,30 @@
+[
+  {
+    "property_id": "broward:504108BJ0140",
+    "parcel_identifier": "504108BJ0140",
+    "source_system": "broward_appraiser",
+    "county_name": "Broward",
+    "county_fips": "12011",
+    "state_code": "FL",
+    "latitude": 26.10864266,
+    "longitude": -80.27918202,
+    "property_type": "Unit",
+    "property_usage_type": "Residential",
+    "built_year": 1975,
+    "market_value": 300000
+  },
+  {
+    "property_id": "broward:474135010090",
+    "parcel_identifier": "474135010090",
+    "source_system": "broward_appraiser",
+    "county_name": "Broward",
+    "county_fips": "12011",
+    "state_code": "FL",
+    "latitude": 26.337,
+    "longitude": -80.277,
+    "property_type": "Land",
+    "property_usage_type": "Commercial",
+    "built_year": null,
+    "market_value": 125000
+  }
+]
