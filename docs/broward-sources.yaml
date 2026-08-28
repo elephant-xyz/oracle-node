@@ -148,23 +148,24 @@ permit_source_documentation:
 permits:
   - jurisdiction: Unincorporated Broward County
     portal: https://dpepp.broward.org/BCS/Default.aspx?PossePresentation=ParcelSearchByAddress
-    vendor: POSSE / Amanda
+    vendor: Computronix POSSE
     search: address | folio | parcel id
     status: discovered
   - jurisdiction: Hollywood
-    portal: https://aca-prod.accela.com/hollywood/default.aspx
-    vendor: Accela Citizen Access
-    search: Accela general search
-    status: discovered
+    portal: https://apps.hollywoodfl.org/building/PermitStatus.aspx
+    current_portal: https://aca-prod.accela.com/HOLLYWOOD/Default.aspx
+    vendor: Accela Citizen Access + legacy BCLA
+    search: address; history from 1988
+    status: split-history-documented
   - jurisdiction: Plantation
     portal: https://aca.plantation.org/CitizenAccess/Cap/CapHome.aspx?TabName=Building&module=Building
     vendor: Accela Citizen Access
     search: parcel | address | record number
     status: discovered
   - jurisdiction: Fort Lauderdale
-    portal: https://aca-prod.accela.com/FTL/Default.aspx
+    portal: https://aca3.accela.com/FTL/
     vendor: Accela Citizen Access
-    search: needs module/tab (CapHome Error.aspx)
+    search: anonymous global / permit module / parcel / address
     aka: LauderBuild
     status: discovered
   - jurisdiction: Coral Springs
@@ -196,41 +197,61 @@ permits:
     status: public-search-documented
   - jurisdiction: Dania Beach
     official: https://www.daniabeachfl.gov/building-division
-    status: custodian-documented
+    portal: https://cityofdaniabeachfl.nwerp.tylerapp.com/nwprod/eSuite.Permits/
+    vendor: Tyler eSuite
+    status: public-search-documented
   - jurisdiction: Deerfield Beach
-    status: custodian-documented
+    portal: https://apps.gov-easy.com/Home/PermitInspection/Search?clientId=dce877e0-e162-4827-a60d-7249ec4e8fe2
+    current_portal: https://deerfieldbeach.geocivix.com/secure/
+    status: split-history-documented
   - jurisdiction: Hallandale Beach
     official: https://cohb.org/Faq.aspx?QID=75
     vendor: Tyler EnerGov
     status: public-search-documented
   - jurisdiction: Hillsboro Beach
-    status: custodian-documented
+    portal: https://app.communitycore.com/app/public-portal/c98c7b46-2cba-4ba2-bbd5-7a76966f42dd
+    vendor: CommunityCore
+    status: account-search-documented
   - jurisdiction: Lauderdale Lakes
-    status: custodian-documented
+    portal: https://lauderdalelakesfl.portal.opengov.com/search
+    vendor: OpenGov
+    status: public-search-documented
   - jurisdiction: Lauderdale-by-the-Sea
     official: https://www.lauderdalebythesea-fl.gov/535/e-Permits-Broward-County
-    status: custodian-documented
+    portal: https://www6.citizenserve.com/Portal/PortalController?Action=showHomePage&ctzPagePrefix=Portal_&installationID=117
+    vendor: Citizenserve / CAP Government
+    status: public-search-documented
   - jurisdiction: Lauderhill
-    status: custodian-documented
+    portal: http://egov.lauderhill-fl.gov/eGovPlus83/permit/perm_status.aspx
+    vendor: eGovPLUS
+    status: public-search-documented
   - jurisdiction: Lazy Lake
     portal: https://dpepp.broward.org/BCS/Default.aspx?PossePresentation=ParcelSearchByAddress
     status: delegated-bcs-documented
   - jurisdiction: Lighthouse Point
     official: https://lighthousepointfl.gov/352/Broward-County-ePermits-OneStop
-    status: custodian-documented
+    portal: https://ci-lighthousepoint-fl.smartgovcommunity.com/ApplicationPublic/ApplicationHome
+    vendor: Granicus SmartGov
+    status: public-search-documented
   - jurisdiction: Margate
-    status: custodian-documented
+    portal: https://marg-egov.aspgov.com/Click2GovBP/selectpermit.html
+    vendor: Click2Gov
+    status: public-search-documented
   - jurisdiction: Miramar
     official: https://www.miramarfl.gov/Departments/Building-Planning-Zoning/Building-Permits-Inspections/Online-Permitting
     status: public-search-documented
   - jurisdiction: North Lauderdale
-    status: custodian-documented
+    portal: https://nlselfservice.nlauderdale.org/Energov_prod/SelfService#/home
+    vendor: Tyler EnerGov
+    status: login-search-documented
   - jurisdiction: Oakland Park
     official: https://oaklandparkfl.gov/312/Permit-Access
     vendor: Tyler EnerGov (post-2019) + legacy portal
     status: public-search-documented
   - jurisdiction: Parkland
-    status: custodian-documented
+    portal: https://www.mgoconnect.org/cp/portal
+    vendor: MyGovernmentOnline
+    status: account-search-documented
   - jurisdiction: Pembroke Park
     official: https://www.tppfl.gov/194/Online-Permitting-System
     vendor: Gov-Easy
@@ -238,7 +259,9 @@ permits:
   - jurisdiction: Sea Ranch Lakes
     status: custodian-documented
   - jurisdiction: Southwest Ranches
-    status: custodian-documented
+    portal: https://www6.citizenserve.com/Portal/PortalController?Action=showSearchPage&ctzPagePrefix=Portal_&installationID=117&original_contactID=0&original_iid=0
+    vendor: Citizenserve / CAP Government
+    status: public-search-documented
   - jurisdiction: Sunrise
     portal: https://www.sunrisefl.gov/openforbusiness
     official_records: https://www.sunrisefl.gov/departments-services/community-development/building/building-records
@@ -249,10 +272,14 @@ permits:
     vendor: Click2Gov
     status: public-search-documented
   - jurisdiction: West Park
-    status: custodian-documented
+    portal: https://www6.citizenserve.com/Portal/PortalController?Action=showSearchPage&ctzPagePrefix=Portal_&installationID=261&original_contactID=0&original_iid=0
+    vendor: Citizenserve / CAP Government
+    status: public-search-documented
   - jurisdiction: Weston
-    portal: https://www.westonfl.org/government/departments-a-d/building-permits
-    status: custodian-documented # page returned 403 from this egress
+    official: https://www.westonfl.org/government/building-code-services
+    portal: https://aca-prod.accela.com/weston/Cap/CapHome.aspx?TabName=Building&module=Building
+    vendor: Accela Citizen Access
+    status: public-search-documented
   - jurisdiction: Wilton Manors
     official: https://www.wiltonmanors.gov/DocumentCenter/View/9768/How-to-do-an-online-permit-record-search
     vendor: Citizenserve
