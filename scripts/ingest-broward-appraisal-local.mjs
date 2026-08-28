@@ -8,6 +8,7 @@
  */
 
 import { createReadStream } from "fs";
+import { fork } from "child_process";
 import {
   access,
   appendFile,
@@ -22,11 +23,10 @@ import {
 import os from "os";
 import path from "path";
 import { promisify } from "util";
-import { pathToFileURL } from "url";
+import { fileURLToPath, pathToFileURL } from "url";
 import { gunzip, gzip } from "zlib";
 import AdmZip from "adm-zip";
 import { parse } from "csv-parse";
-import { transform } from "@elephant-xyz/cli/lib";
 
 import {
   fetchBrowardParcelEnvelope,
@@ -50,6 +50,9 @@ const DEFAULT_OUTPUT_DIRECTORY = "downloads/broward/full-ingestion";
 const DEFAULT_CONCURRENCY = 2;
 const MAX_CONCURRENCY = 4;
 const SOURCE_MAX_ATTEMPTS = 4;
+const TRANSFORM_WORKER_PATH = fileURLToPath(
+  new URL("./broward-transform-worker-child.mjs", import.meta.url),
+);
 
 /**
  * @typedef {Record<string, string | undefined>} CsvRecord
@@ -91,6 +94,11 @@ const SOURCE_MAX_ATTEMPTS = 4;
  * @typedef {object} BrowardSeedEntities
  * @property {Record<string, unknown>} propertySeed - Legacy property seed entity.
  * @property {Record<string, unknown>} unnormalizedAddress - Legacy address entity.
+ *
+ * @typedef {object} TransformWorkerResponse
+ * @property {number} requestId - Parent correlation identifier.
+ * @property {boolean} success - Whether Elephant CLI transform succeeded.
+ * @property {string | null} error - Transform failure text.
  */
 
 /**
@@ -402,6 +410,112 @@ function createTransformInput({ row, folio, capture, destination }) {
 }
 
 /**
+ * @typedef {object} TransformWorker
+ * @property {(params: {
+ *   workingDirectory: string,
+ *   inputZipPath: string,
+ *   outputZipPath: string,
+ *   scriptsZipPath: string
+ * }) => Promise<{ success: boolean, error: string | null }>} run
+ *   Run one transform in this worker.
+ * @property {() => Promise<void>} close - Stop the child process.
+ */
+
+/**
+ * Start one long-lived Elephant CLI transform worker.
+ *
+ * Every worker has a distinct TMPDIR, preventing the fact-sheet generator's
+ * fixed `generated-htmls` subdirectory from racing across concurrent parcels.
+ *
+ * @param {number} workerIndex - Stable worker ordinal.
+ * @param {string} workerRoot - Private worker temp root.
+ * @returns {Promise<TransformWorker>} Ready worker.
+ */
+async function createTransformWorker(workerIndex, workerRoot) {
+  const workerTmp = path.join(workerRoot, String(workerIndex));
+  await mkdir(workerTmp, { recursive: true, mode: 0o700 });
+  const child = fork(TRANSFORM_WORKER_PATH, [], {
+    env: {
+      ...process.env,
+      BROWSERSLIST_IGNORE_OLD_DATA: "1",
+      TMPDIR: workerTmp,
+    },
+    stdio: ["ignore", "ignore", "pipe", "ipc"],
+  });
+  let nextRequestId = 1;
+  let stderr = "";
+  /** @type {{ requestId: number, resolve: (value: { success: boolean, error: string | null }) => void } | null} */
+  let pending = null;
+  child.stderr?.on("data", (chunk) => {
+    stderr = `${stderr}${String(chunk)}`.slice(-100_000);
+  });
+  child.on("message", (message) => {
+    if (
+      typeof message !== "object" ||
+      message === null ||
+      Array.isArray(message)
+    ) {
+      return;
+    }
+    const response = /** @type {Partial<TransformWorkerResponse>} */ (message);
+    if (
+      pending === null ||
+      response.requestId !== pending.requestId ||
+      typeof response.success !== "boolean"
+    ) {
+      return;
+    }
+    const { resolve } = pending;
+    pending = null;
+    resolve({
+      success: response.success,
+      error: typeof response.error === "string" ? response.error : null,
+    });
+  });
+  child.on("exit", (code) => {
+    if (pending === null) return;
+    const { resolve } = pending;
+    pending = null;
+    resolve({
+      success: false,
+      error:
+        stderr.trim() ||
+        `Transform worker ${String(workerIndex)} exited ${String(code)}`,
+    });
+  });
+  return {
+    run(params) {
+      if (pending !== null) {
+        return Promise.resolve({
+          success: false,
+          error: `Transform worker ${String(workerIndex)} is already busy`,
+        });
+      }
+      const requestId = nextRequestId;
+      nextRequestId += 1;
+      return new Promise((resolve) => {
+        pending = { requestId, resolve };
+        child.send({ requestId, ...params }, (error) => {
+          if (error === null || pending?.requestId !== requestId) return;
+          pending = null;
+          resolve({ success: false, error: error.message });
+        });
+      });
+    },
+    close() {
+      return new Promise((resolve) => {
+        if (child.exitCode !== null || child.killed) {
+          resolve();
+          return;
+        }
+        child.once("exit", () => resolve());
+        child.kill("SIGTERM");
+      });
+    },
+  };
+}
+
+/**
  * Process one parcel into a compressed capture and transformed artifact.
  *
  * @param {object} params - Parcel task.
@@ -409,6 +523,7 @@ function createTransformInput({ row, folio, capture, destination }) {
  * @param {CsvRecord} params.row - Seed data.
  * @param {string} params.outputDirectory - Private output root.
  * @param {string} params.scriptsZipPath - Patched scripts ZIP.
+ * @param {TransformWorker} params.transformWorker - Isolated CLI worker.
  * @returns {Promise<LocalIngestResult>} Parcel outcome.
  */
 async function processParcel({
@@ -416,6 +531,7 @@ async function processParcel({
   row,
   outputDirectory,
   scriptsZipPath,
+  transformWorker,
 }) {
   const started = Date.now();
   const rawIdentifier = row.request_identifier ?? row.parcel_id ?? "";
@@ -479,11 +595,11 @@ async function processParcel({
       capture,
       destination: inputZipPath,
     });
-    const result = await transform({
-      inputZip: inputZipPath,
-      outputZip: outputZipPath,
-      scriptsZip: scriptsZipPath,
-      cwd: temporaryDirectory,
+    const result = await transformWorker.run({
+      workingDirectory: temporaryDirectory,
+      inputZipPath,
+      outputZipPath,
+      scriptsZipPath,
     });
     if (!result.success) {
       return {
@@ -492,10 +608,7 @@ async function processParcel({
         status: "transform_error",
         durationMs: Date.now() - started,
         propertyUsageType: null,
-        error:
-          result.scriptFailure?.stderr ??
-          result.error ??
-          "Unknown transform failure",
+        error: result.error ?? "Unknown transform failure",
       };
     }
     await mkdir(path.dirname(artifactPath), {
@@ -557,90 +670,102 @@ export async function runLocalIngestion(options) {
   const state = await readState(statePath, options.resetCheckpoint);
   packageScripts(scriptsDirectory, scriptsZipPath);
   await chmod(scriptsZipPath, 0o600);
-
-  const parser = createReadStream(seedPath).pipe(
-    parse({ columns: true, skip_empty_lines: true }),
+  const workerRoot = path.join(outputDirectory, ".transform-workers");
+  const transformWorkers = await Promise.all(
+    Array.from({ length: options.concurrency }, (_, index) =>
+      createTransformWorker(index, workerRoot),
+    ),
   );
-  /** @type {{ rowIndex: number, row: CsvRecord }[]} */
-  let window = [];
-  let rowIndex = 0;
-  let selected = 0;
-  let consecutiveSourceFailureWindows = 0;
 
-  /**
-   * Process and checkpoint the current ordered window.
-   *
-   * @returns {Promise<void>}
-   */
-  const flushWindow = async () => {
-    if (window.length === 0) return;
-    const tasks = window;
-    window = [];
-    const results = await Promise.all(
-      tasks.map((task) =>
-        processParcel({
-          ...task,
-          outputDirectory,
-          scriptsZipPath,
-        }),
-      ),
+  try {
+    const parser = createReadStream(seedPath).pipe(
+      parse({ columns: true, skip_empty_lines: true }),
     );
-    for (const result of results) {
-      await appendFile(
-        resultsPath,
-        `${JSON.stringify({
-          timestamp: new Date().toISOString(),
-          ...result,
-        })}\n`,
-        { mode: 0o600 },
-      );
-    }
-    applyResults(state, results);
-    await writeState(statePath, state);
-    consecutiveSourceFailureWindows = results.every(
-      (result) => result.status === "source_error",
-    )
-      ? consecutiveSourceFailureWindows + 1
-      : 0;
-    if (state.attempted % 100 < results.length) {
-      console.log(
-        JSON.stringify({
-          level: "info",
-          message: "broward_local_ingest_progress",
-          ...state,
-        }),
-      );
-    }
-    if (consecutiveSourceFailureWindows >= 3) {
-      throw new Error(
-        "Stopped after three all-source-error windows; resume after checking BCPA availability",
-      );
-    }
-  };
+    /** @type {{ rowIndex: number, row: CsvRecord }[]} */
+    let window = [];
+    let rowIndex = 0;
+    let selected = 0;
+    let consecutiveSourceFailureWindows = 0;
 
-  for await (const parsedRow of parser) {
-    const row = /** @type {CsvRecord} */ (parsedRow);
-    if (rowIndex < state.nextRowIndex) {
+    /**
+     * Process and checkpoint the current ordered window.
+     *
+     * @returns {Promise<void>}
+     */
+    const flushWindow = async () => {
+      if (window.length === 0) return;
+      const tasks = window;
+      window = [];
+      const results = await Promise.all(
+        tasks.map((task, index) =>
+          processParcel({
+            ...task,
+            outputDirectory,
+            scriptsZipPath,
+            transformWorker: transformWorkers[index],
+          }),
+        ),
+      );
+      for (const result of results) {
+        await appendFile(
+          resultsPath,
+          `${JSON.stringify({
+            timestamp: new Date().toISOString(),
+            ...result,
+          })}\n`,
+          { mode: 0o600 },
+        );
+      }
+      applyResults(state, results);
+      await writeState(statePath, state);
+      consecutiveSourceFailureWindows = results.every(
+        (result) => result.status === "source_error",
+      )
+        ? consecutiveSourceFailureWindows + 1
+        : 0;
+      if (state.attempted % 100 < results.length) {
+        console.log(
+          JSON.stringify({
+            level: "info",
+            message: "broward_local_ingest_progress",
+            ...state,
+          }),
+        );
+      }
+      if (consecutiveSourceFailureWindows >= 3) {
+        throw new Error(
+          "Stopped after three all-source-error windows; resume after checking BCPA availability",
+        );
+      }
+    };
+
+    for await (const parsedRow of parser) {
+      const row = /** @type {CsvRecord} */ (parsedRow);
+      if (rowIndex < state.nextRowIndex) {
+        rowIndex += 1;
+        continue;
+      }
+      if (options.limit !== null && selected >= options.limit) break;
+      window.push({ rowIndex, row });
+      selected += 1;
       rowIndex += 1;
-      continue;
+      if (window.length >= options.concurrency) {
+        await flushWindow();
+      }
     }
-    if (options.limit !== null && selected >= options.limit) break;
-    window.push({ rowIndex, row });
-    selected += 1;
-    rowIndex += 1;
-    if (window.length >= options.concurrency) {
-      await flushWindow();
-    }
+    await flushWindow();
+    console.log(
+      JSON.stringify({
+        level: "info",
+        message: "broward_local_ingest_complete",
+        ...state,
+      }),
+    );
+    return state;
+  } finally {
+    await Promise.all(transformWorkers.map((worker) => worker.close()));
+    await rm(workerRoot, { recursive: true, force: true });
   }
-  await flushWindow();
-  console.log(
-    JSON.stringify({
-      level: "info",
-      message: "broward_local_ingest_complete",
-      ...state,
-    }),
-  );
-  return state;
 }
 
 if (
