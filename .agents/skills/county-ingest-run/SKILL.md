@@ -198,10 +198,15 @@ npm run catalog:update -- \
   --county-fips "<five-digit FIPS>" \
   --query-table-url "<public IPNS URL>" \
   --dataset-coverage-url "<public IPNS URL>" \
+  --publication-scope "<full|partial|pilot>" \
+  --denominator-basis "<county_total|published_subset>" \
   --updated-at "<latest dataset timestamp>"
 ```
 
-The updater reads both required public artifacts back and rejects a coverage/county mismatch.
+The updater reads both required public artifacts back and rejects a coverage/county or
+publication-scope mismatch. `full` requires a verified `county_total` denominator. Pilots use
+`published_subset`, so a 50/50 pilot is complete only within that subset and must not be described
+as full-county coverage. Missing or unsupported scope fails closed.
 Use `--permit-query-table-url` when a separate permit table is published. The tracked
 `catalog/published-counties.json` file is the authoritative enumeration contract consumed by
 Elephant MCP `listPublishedCounties` and scheduled consumers such as Watchog. Never add a county

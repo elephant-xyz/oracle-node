@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "1.0",
+  "schemaVersion": "1.1",
   "generatedAt": "2026-08-27T20:05:00.000Z",
   "counties": [
     {
@@ -8,6 +8,11 @@
       "stateCode": "FL",
       "countyFips": "12071",
       "status": "published",
+      "publicationScope": {
+        "schemaVersion": "1.0",
+        "level": "full",
+        "denominatorBasis": "county_total"
+      },
       "queryTableUrl": "https://ipfs.filebase.io/ipns/k51qzi5uqu5djd4ohcf3qm87dhlt0e270xw8ejhkyia62edr76uj0u05hrf7m5",
       "datasetCoverageUrl": "https://ipfs.filebase.io/ipns/k51qzi5uqu5dimw0elyh4agbtqe7v2fzp0jcd7b1bcu8kxs0hml7yu1no0z0vd/",
       "permitQueryTableUrl": null,
@@ -20,6 +25,11 @@
       "stateCode": "FL",
       "countyFips": "12086",
       "status": "published",
+      "publicationScope": {
+        "schemaVersion": "1.0",
+        "level": "full",
+        "denominatorBasis": "county_total"
+      },
       "queryTableUrl": "https://ipfs.filebase.io/ipns/k51qzi5uqu5dgqktver4htb060qxfnaytjhybcxlfkp22vtgygbx2lb4t1h1xs",
       "datasetCoverageUrl": "https://ipfs.filebase.io/ipns/k51qzi5uqu5djj45hvhz6z2dnsdg6pkgucds99t0f78d5gmwu19bfv8o9tygno/",
       "permitQueryTableUrl": null,
@@ -32,6 +42,11 @@
       "stateCode": "FL",
       "countyFips": "12095",
       "status": "published",
+      "publicationScope": {
+        "schemaVersion": "1.0",
+        "level": "full",
+        "denominatorBasis": "county_total"
+      },
       "queryTableUrl": "https://ipfs.filebase.io/ipns/k51qzi5uqu5dhgte20ho86rzg5b7h0ght3a2js5wz0t55i96aaf1d12wpl8efn",
       "datasetCoverageUrl": "https://ipfs.filebase.io/ipns/k51qzi5uqu5dj8n2f8nowh8kts53rvpr62zfj0mz9izc11rfzv56q7m4161lg7/",
       "permitQueryTableUrl": null,
@@ -44,6 +59,11 @@
       "stateCode": "FL",
       "countyFips": "12099",
       "status": "published",
+      "publicationScope": {
+        "schemaVersion": "1.0",
+        "level": "full",
+        "denominatorBasis": "county_total"
+      },
       "queryTableUrl": "https://ipfs.filebase.io/ipns/k51qzi5uqu5dlu7hx158su5palzzxdbl6zcm8ojh7645bxisxs0cf0s158h6h3",
       "datasetCoverageUrl": "https://ipfs.filebase.io/ipns/k51qzi5uqu5djwga4mcd8nx1gbwy4o9rks3gkoe1u5py5wi9tieea7h44nh4g2/",
       "permitQueryTableUrl": null,
@@ -56,6 +76,11 @@
       "stateCode": "IL",
       "countyFips": "17161",
       "status": "published",
+      "publicationScope": {
+        "schemaVersion": "1.0",
+        "level": "full",
+        "denominatorBasis": "county_total"
+      },
       "queryTableUrl": "https://ipfs.filebase.io/ipns/k51qzi5uqu5djbtswq6lb4p7xbf3nu8bzdzokdtcdld1r2vx6asn7lgfuk54wt",
       "datasetCoverageUrl": "https://ipfs.filebase.io/ipns/k51qzi5uqu5disduz18ogkvf3f2zgdsizl20o034fu8spgh2khri8uxmeo3khv/",
       "permitQueryTableUrl": "https://ipfs.filebase.io/ipns/k51qzi5uqu5di42nblo5nuk94aj7af393d9y5vhqxp5dtxikzso0wt14v3p0wa",
@@ -68,6 +93,11 @@
       "stateCode": "FL",
       "countyFips": "12057",
       "status": "published",
+      "publicationScope": {
+        "schemaVersion": "1.0",
+        "level": "pilot",
+        "denominatorBasis": "published_subset"
+      },
       "queryTableUrl": "https://ipfs.filebase.io/ipns/k51qzi5uqu5diqz0l68gfi22qk0w8aqhsm7pcgje535uz8vhu8p37ynm2po0fh",
       "datasetCoverageUrl": "https://ipfs.filebase.io/ipns/k51qzi5uqu5di5jghjwbpumnr2vt1crmaycqmtx673kw8pqp8dymecuig5x8jb/",
       "permitQueryTableUrl": null,

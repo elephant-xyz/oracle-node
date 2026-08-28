@@ -8,6 +8,15 @@ const STATE_CODE_PATTERN = /^[A-Z]{2}$/;
 const COUNTY_FIPS_PATTERN = /^\d{5}$/;
 const ISO_TIMESTAMP_PATTERN =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
+const PUBLICATION_SCOPE_LEVELS = new Set(["full", "partial", "pilot"]);
+const DENOMINATOR_BASES = new Set(["county_total", "published_subset"]);
+
+/**
+ * @typedef {Object} PublicationScope
+ * @property {"1.0"} schemaVersion Scope contract version.
+ * @property {"full" | "partial" | "pilot"} level Published county coverage level.
+ * @property {"county_total" | "published_subset"} denominatorBasis Meaning of source expected counts.
+ */
 
 /**
  * @typedef {Object} PublishedCounty
@@ -16,6 +25,7 @@ const ISO_TIMESTAMP_PATTERN =
  * @property {string} stateCode Two-letter uppercase state code.
  * @property {string} countyFips Stable five-digit US county FIPS code.
  * @property {"published"} status Publication state.
+ * @property {PublicationScope} publicationScope Explicit county publication scope.
  * @property {string} queryTableUrl Public query-table Parquet URL.
  * @property {string} datasetCoverageUrl Public dataset coverage URL.
  * @property {string | null} permitQueryTableUrl Public permit query-table URL.
@@ -25,7 +35,7 @@ const ISO_TIMESTAMP_PATTERN =
 
 /**
  * @typedef {Object} PublishedCountyCatalog
- * @property {"1.0"} schemaVersion Catalog schema version.
+ * @property {"1.1"} schemaVersion Catalog schema version.
  * @property {string} generatedAt ISO-8601 catalog generation timestamp.
  * @property {PublishedCounty[]} counties Published counties sorted by countyKey.
  */
@@ -68,6 +78,50 @@ function assertUrl(value, fieldName, nullable = false) {
 }
 
 /**
+ * Validate an explicit publication-scope contract.
+ *
+ * @param {unknown} value Candidate scope.
+ * @param {string} fieldName Field name for errors.
+ * @returns {asserts value is PublicationScope}
+ */
+function assertPublicationScope(value, fieldName) {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error(`${fieldName} must be an object`);
+  }
+  const scope = /** @type {Record<string, unknown>} */ (value);
+  if (scope.schemaVersion !== "1.0") {
+    throw new Error(`${fieldName}.schemaVersion must be '1.0'`);
+  }
+  if (
+    typeof scope.level !== "string" ||
+    !PUBLICATION_SCOPE_LEVELS.has(scope.level)
+  ) {
+    throw new Error(`${fieldName}.level must be full, partial, or pilot`);
+  }
+  if (
+    typeof scope.denominatorBasis !== "string" ||
+    !DENOMINATOR_BASES.has(scope.denominatorBasis)
+  ) {
+    throw new Error(
+      `${fieldName}.denominatorBasis must be county_total or published_subset`,
+    );
+  }
+  if (scope.level === "full" && scope.denominatorBasis !== "county_total") {
+    throw new Error(
+      `${fieldName} cannot declare full coverage against a published subset`,
+    );
+  }
+  if (
+    scope.level === "pilot" &&
+    scope.denominatorBasis !== "published_subset"
+  ) {
+    throw new Error(
+      `${fieldName} must declare pilot coverage against a published subset`,
+    );
+  }
+}
+
+/**
  * Validate and return a canonical published-county catalog.
  *
  * @param {unknown} input Untrusted parsed JSON.
@@ -78,8 +132,8 @@ export function validateCatalog(input) {
     throw new Error("catalog must be a JSON object");
   }
   const catalog = /** @type {Record<string, unknown>} */ (input);
-  if (catalog.schemaVersion !== "1.0") {
-    throw new Error("schemaVersion must be '1.0'");
+  if (catalog.schemaVersion !== "1.1") {
+    throw new Error("schemaVersion must be '1.1'");
   }
   if (
     typeof catalog.generatedAt !== "string" ||
@@ -137,6 +191,10 @@ export function validateCatalog(input) {
     if (row.status !== "published") {
       throw new Error(`counties[${index}].status must be 'published'`);
     }
+    assertPublicationScope(
+      row.publicationScope,
+      `counties[${index}].publicationScope`,
+    );
     assertUrl(row.queryTableUrl, `counties[${index}].queryTableUrl`);
     assertUrl(row.datasetCoverageUrl, `counties[${index}].datasetCoverageUrl`);
     assertUrl(
@@ -161,6 +219,7 @@ export function validateCatalog(input) {
       stateCode: row.stateCode,
       countyFips: row.countyFips,
       status: "published",
+      publicationScope: row.publicationScope,
       queryTableUrl: row.queryTableUrl,
       datasetCoverageUrl: row.datasetCoverageUrl,
       permitQueryTableUrl: row.permitQueryTableUrl,
@@ -170,7 +229,7 @@ export function validateCatalog(input) {
   });
 
   return {
-    schemaVersion: "1.0",
+    schemaVersion: "1.1",
     generatedAt: catalog.generatedAt,
     counties: counties.sort((a, b) => a.countyKey.localeCompare(b.countyKey)),
   };
@@ -206,7 +265,7 @@ export function upsertCounty(catalog, county, generatedAt) {
   );
   counties.push(county);
   return validateCatalog({
-    schemaVersion: "1.0",
+    schemaVersion: "1.1",
     generatedAt,
     counties,
   });
@@ -297,6 +356,21 @@ export async function verifyPublishedCountyArtifacts(
       `dataset coverage county '${coverageCounty}' does not match '${county.countyKey}'`,
     );
   }
+  const coverageScope = /** @type {Record<string, unknown>} */ (coverage)
+    .publicationScope;
+  if (coverageScope !== undefined) {
+    assertPublicationScope(coverageScope, "dataset coverage publicationScope");
+    if (
+      coverageScope.schemaVersion !== county.publicationScope.schemaVersion ||
+      coverageScope.level !== county.publicationScope.level ||
+      coverageScope.denominatorBasis !==
+        county.publicationScope.denominatorBasis
+    ) {
+      throw new Error(
+        "dataset coverage publicationScope does not match catalog publicationScope",
+      );
+    }
+  }
 
   if (county.permitQueryTableUrl !== null) {
     const permitResponse = await fetchImpl(county.permitQueryTableUrl, {
@@ -340,6 +414,8 @@ export async function main(argv) {
     "county-fips",
     "query-table-url",
     "dataset-coverage-url",
+    "publication-scope",
+    "denominator-basis",
     "updated-at",
   ];
   for (const key of required) {
@@ -355,6 +431,11 @@ export async function main(argv) {
     stateCode: args["state-code"].toUpperCase(),
     countyFips: args["county-fips"],
     status: "published",
+    publicationScope: {
+      schemaVersion: "1.0",
+      level: args["publication-scope"],
+      denominatorBasis: args["denominator-basis"],
+    },
     queryTableUrl: args["query-table-url"],
     datasetCoverageUrl: args["dataset-coverage-url"],
     permitQueryTableUrl: optionalUrl(args["permit-query-table-url"]),
@@ -362,7 +443,7 @@ export async function main(argv) {
     updatedAt: args["updated-at"],
   });
   validateCatalog({
-    schemaVersion: "1.0",
+    schemaVersion: "1.1",
     generatedAt: now,
     counties: [county],
   });
