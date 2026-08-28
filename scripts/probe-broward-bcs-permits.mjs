@@ -71,7 +71,9 @@ function readFollowingValue(args, index, flag) {
 function parseDelay(value, flag, minimum) {
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed < minimum) {
-    throw new Error(`${flag} must be an integer of at least ${String(minimum)}`);
+    throw new Error(
+      `${flag} must be an integer of at least ${String(minimum)}`,
+    );
   }
   return parsed;
 }
@@ -130,11 +132,7 @@ export function parseOptions(args) {
     }
     if (argument === "--property-delay-ms") {
       const parsed = readFollowingValue(args, index, "--property-delay-ms");
-      propertyDelayMs = parseDelay(
-        parsed.value,
-        "--property-delay-ms",
-        1_000,
-      );
+      propertyDelayMs = parseDelay(parsed.value, "--property-delay-ms", 1_000);
       index = parsed.nextIndex;
       continue;
     }
@@ -148,11 +146,7 @@ export function parseOptions(args) {
     }
     if (argument === "--detail-delay-ms") {
       const parsed = readFollowingValue(args, index, "--detail-delay-ms");
-      detailDelayMs = parseDelay(
-        parsed.value,
-        "--detail-delay-ms",
-        250,
-      );
+      detailDelayMs = parseDelay(parsed.value, "--detail-delay-ms", 250);
       index = parsed.nextIndex;
       continue;
     }
@@ -167,7 +161,7 @@ export function parseOptions(args) {
     throw new Error(`Unknown option: ${argument}`);
   }
 
-  if (pilot === (explicitParcelIds.length > 0)) {
+  if (pilot === explicitParcelIds.length > 0) {
     throw new Error(
       "Choose exactly one Broward BCS input mode: --pilot or --parcel-id",
     );

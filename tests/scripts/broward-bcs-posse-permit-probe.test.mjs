@@ -33,9 +33,7 @@ const [listHtml, emptyListHtml, masterHtml, permitHtml] = await Promise.all(
 
 describe("Broward BCS POSSE property-first permit pilot", () => {
   it("preserves letters in exact 12-character parcel IDs and enforces five lookups", () => {
-    expect(normalizeBrowardBcsParcelId(" 504108bj0140 ")).toBe(
-      "504108BJ0140",
-    );
+    expect(normalizeBrowardBcsParcelId(" 504108bj0140 ")).toBe("504108BJ0140");
     expect(() => normalizeBrowardBcsParcelId("504108-BJ-0140")).toThrow(
       "exactly 12 alphanumeric",
     );
@@ -56,10 +54,7 @@ describe("Broward BCS POSSE property-first permit pilot", () => {
       ),
     ).toThrow("approved maximum is 5");
     expect(() =>
-      validateBrowardBcsParcelIds(
-        ["504108BJ0140", "504108bj0140"],
-        5,
-      ),
+      validateBrowardBcsParcelIds(["504108BJ0140", "504108bj0140"], 5),
     ).toThrow("must be unique");
   });
 
@@ -126,7 +121,7 @@ describe("Broward BCS POSSE property-first permit pilot", () => {
         listHtml.replace("BCS - Permits", "Unexpected Page"),
         LIST_URL,
       ),
-    ).toThrow("unexpected title");
+    ).toThrow("Unexpected Broward BCS parcel-list title");
   });
 
   it("normalizes official master detail fields without copying owner data", () => {
@@ -216,23 +211,13 @@ describe("Broward BCS POSSE property-first permit pilot", () => {
   });
 
   it("reconciles source identity and rejects a mismatched detail folio", () => {
-    const permitListRecord = parseBrowardBcsPermitListHtml(
-      listHtml,
-      LIST_URL,
-    ).records[1];
+    const permitListRecord = parseBrowardBcsPermitListHtml(listHtml, LIST_URL)
+      .records[1];
     expect(permitListRecord).toBeDefined();
 
     expect(() =>
-      parseBrowardBcsDetailHtml(permitHtml, {
-        listRecord: permitListRecord,
-        parcelIdentifier: "504108BJ0140",
-        sourceSearchUrl: BROWARD_BCS_SEARCH_URL,
-        sourceListUrl: LIST_URL,
-      }),
-    ).toThrow("does not match submitted parcel");
-    expect(() =>
       parseBrowardBcsDetailHtml(
-        permitHtml.replace("04-07545", "DIFFERENT"),
+        permitHtml.replace("9318-01-3550", "111111111111"),
         {
           listRecord: permitListRecord,
           parcelIdentifier: "494318013550",
@@ -240,6 +225,14 @@ describe("Broward BCS POSSE property-first permit pilot", () => {
           sourceListUrl: LIST_URL,
         },
       ),
+    ).toThrow("does not match submitted parcel");
+    expect(() =>
+      parseBrowardBcsDetailHtml(permitHtml.replace("04-07545", "DIFFERENT"), {
+        listRecord: permitListRecord,
+        parcelIdentifier: "494318013550",
+        sourceSearchUrl: BROWARD_BCS_SEARCH_URL,
+        sourceListUrl: LIST_URL,
+      }),
     ).toThrow("detail identity differs");
   });
 

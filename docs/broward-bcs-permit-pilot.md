@@ -31,8 +31,8 @@ city source remains necessary.
 `--pilot` uses exactly five permit-priority folios already present in the
 Broward appraisal pilot or 50-parcel acceptance sample:
 
-| Parcel ID     | Appraisal validation usage |
-| ------------- | -------------------------- |
+| Parcel ID      | Appraisal validation usage |
+| -------------- | -------------------------- |
 | `474135010090` | Commercial                 |
 | `494209060010` | Warehouse                  |
 | `494318013550` | Commercial                 |
@@ -73,8 +73,15 @@ state in JavaScript and requires a session cookie. For each parcel the adapter:
    plan reviews;
 7. fetches each master/permit detail page sequentially in the same anonymous
    session; and
-8. reconciles permit number, type, and the displayed legacy folio against the
-   submitted parcel before emitting a row.
+8. reconciles permit number/type with the parcel list and validates the
+   separately displayed legacy folio before emitting a row.
+
+BCS printed legacy folio `9318-01-3550` for submitted Parcel ID
+`494318013550`. No official conversion between these identifiers was found,
+and the values are not suffix-equivalent. The adapter does not invent one: it
+retains the exact submitted Parcel ID as `parcel_identifier`, preserves BCS's
+display as `source_folio_number`, and only compares them when BCS itself prints
+a full 12-character value.
 
 Normalized local-private rows retain:
 
