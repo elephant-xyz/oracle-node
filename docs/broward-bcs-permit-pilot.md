@@ -58,6 +58,26 @@ node scripts/probe-broward-bcs-permits.mjs \
 Both files are local mode-0600 artifacts. The command imports no AWS client and
 does not enqueue, publish, load a database, or start a harvest.
 
+## Live pilot result
+
+The bounded live run completed successfully from `2026-08-28T16:02:30Z` to
+`2026-08-28T16:04:06Z`:
+
+| Parcel ID      | BCS parcel object | Source outcome | Listed | Normalized | Excluded plan reviews |
+| -------------- | ----------------: | -------------- | -----: | ---------: | --------------------: |
+| `474135010090` |               837 | no permits     |      0 |          0 |                     0 |
+| `494209060010` |            274135 | no permits     |      0 |          0 |                     0 |
+| `494318013550` |            340335 | records        |    107 |         73 |                    34 |
+| `474236140090` |              6789 | no permits     |      0 |          0 |                     0 |
+| `474236140080` |              6788 | no permits     |      0 |          0 |                     0 |
+
+All 73 supported detail pages completed and reconciled: 19 master applications
+and 54 permit rows. BCS labels the positive property's jurisdiction
+`Lauderdale by the Sea`; the records are historical BCS-held data, not a claim
+that BCS is the town's current permit custodian. The town's current official
+[Building Division page](https://www.lauderdalebythesea-fl.gov/152/Building-Division)
+identifies CAP Government for present permit and inspection services.
+
 ## Source contract and normalized detail
 
 One anonymous browser session is required because POSSE builds encrypted form
@@ -147,3 +167,21 @@ inspection, `494318013550` returned 107 rows: 19 master applications, 54
 permits, and 34 plan reviews. The adapter normalizes the 73 master/permit
 details and excludes the 34 plan reviews, fitting just below the 75-detail hard
 cap. A property above the cap fails before any detail traversal.
+
+## Remaining source blocker
+
+There was no technical blocker to the anonymous bounded pilot. The evidence
+set did not yield a positive contemporary BMSD/unincorporated permit record:
+four priority parcels resolved to explicit empty BCS parcel lists, while the
+only positive was historical Lauderdale-by-the-Sea data. Existing appraisal
+evidence includes unincorporated folio `474134000012`, but it is agricultural
+rather than permit-priority and its BCS list was also explicitly empty during
+source-contract inspection.
+
+Consequently, this pilot certifies the adapter's official search/detail
+contract and one BCS-held contract-city history. It does not yet certify a
+modern positive BMSD record, completeness for any municipality, or a current
+contract-city roster. Obtaining a known positive BMSD commercial folio from an
+official permit example or custodian remains the source-evidence follow-up;
+the adapter must not expand to municipal sources or a full harvest to guess
+around that gap.
