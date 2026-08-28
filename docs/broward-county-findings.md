@@ -264,3 +264,9 @@ Postgres/Neon connection is available, the Broward BCS permit adapter and
 city-vendor routing, and privacy review. Do not publish until those gates are
 clean. The transform fix exists as local commit `5130a7f`; GitHub denied this
 bot write access to the separate transform repository.
+
+The fail-closed local appraisal privacy/publication audit and the policy
+assumptions that require recorded human approval are documented in
+[`broward-appraisal-publication-policy.md`](./broward-appraisal-publication-policy.md).
+The transformed artifacts and the existing 50-row pilot query derivative are
+private validation data and are not approved for publication.
