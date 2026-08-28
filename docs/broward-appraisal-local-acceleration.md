@@ -206,3 +206,41 @@ Compressed captures already form a durable local capture queue:
 `--capture-source` drains it with zero BCPA traffic, while a normal run keeps at
 most four source requests in flight. Continuous worker handoffs remove local
 barrier idle time without increasing the tested source concurrency ceiling.
+
+## Live handoff record (2026-08-28)
+
+The publishable process loaded before the acceleration commits had no signal
+handler for a graceful checkpoint stop. It checkpointed only after each ordered
+four-row window. The complete process group was therefore frozen first, and
+the already atomically renamed checkpoint was used as the immutable boundary:
+
+- old `nextRowIndex` and attempted count: **39,164**;
+- old successful publishable artifacts: **38,837**;
+- old failures: **327**;
+- frozen old-state SHA-256:
+  `edd6c48681eb98670da6a985ab35ca27a805a4236d45c0fbe89e70047097c95b`;
+- no old result rows existed at or above the boundary;
+- the old artifact for row 39,164 and old captures for rows
+  39,164–39,167 remain preserved in place but are explicitly excluded from
+  reconciliation.
+
+The immutable local manifest is
+`downloads/broward/full-query-data-only-from-39164/handoff-manifest.json`
+(SHA-256
+`37394e94b61b7a46c7cc570a250da4d2786836cbb578308b7c3e8ed4e1f4f02d`).
+The post-boundary runner uses transform revision `5130a7fa2680`, live BCPA
+capture mode, four workers, and no `--capture-source`:
+
+```bash
+node scripts/ingest-broward-appraisal-local.mjs \
+  --query-data-only \
+  --start-row 39164 \
+  --seed downloads/broward/broward.csv \
+  --scripts /tmp/Counties-trasform-scripts/broward/scripts \
+  --output downloads/broward/full-query-data-only-from-39164 \
+  --concurrency 4
+```
+
+Reconciliation is half-open and non-overlapping: use old publishable outcomes
+only for `[0, 39164)` and new query-data-only outcomes only for
+`[39164, 534309)`. Never infer the boundary from artifact presence.

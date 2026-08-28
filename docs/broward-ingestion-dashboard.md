@@ -6,12 +6,23 @@ ingestion. It uses only:
 - `downloads/broward/full-ingestion/state.json`
 - `downloads/broward/full-ingestion/results.ndjson`
 - `downloads/broward/broward-full-ingestion.log` file metadata
+- the optional fixed
+  `downloads/broward/active-query-data-only-handoff.json` manifest and its
+  classified post-boundary state, results, and log metadata
 - the fixed 534,309-row county denominator
 
 It does not call AWS or another service, use a database, alter the ingestion, or
 return parcel, address, owner/contact, source payload, error-text, or log
 contents. The JSON endpoint contains aggregate counts and local file/storage
 metadata only.
+
+When the fixed handoff manifest is present, the dashboard validates that the
+frozen publishable checkpoint ends at the same row where the query-data-only
+checkpoint begins. Counts, row-index-deduplicated outcomes, usage types, and
+throughput are then combined across the two non-overlapping segments. The
+`handoff` response object reports only the boundary, aggregate old/new counts,
+post-boundary transform-error count, and counts of preserved-but-excluded old
+files. It never reports parcel identifiers or file paths.
 
 ## Start and attach
 
@@ -57,8 +68,10 @@ preview for port 47831 when the client exposes one. The endpoints are:
   after capping inactive gaps at two minutes. The ETA is processing time and
   assumes continuous execution; it is not a promise of wall-clock completion.
 - **Running/stale** combines a read-only `/proc` process check with input
-  activity. A matching process with no activity for more than two minutes is
-  stale.
+  activity for the active post-boundary segment when a handoff is configured.
+  A matching process with no activity for more than two minutes is stale.
 
 Result rows are reduced in memory to numeric status and timestamp arrays keyed
 by row index. This deduplicates resumed rows without retaining private fields.
+The pre-boundary scanner is capped by its frozen checkpoint and cannot count
+preserved old artifacts or captures at or above the handoff boundary.

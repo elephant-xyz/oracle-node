@@ -25,6 +25,8 @@ export const DEFAULT_DASHBOARD_HOST = "127.0.0.1";
 export const DEFAULT_DASHBOARD_PORT = 47_831;
 const DEFAULT_OUTPUT_DIRECTORY = "downloads/broward/full-ingestion";
 const DEFAULT_LOG_PATH = "downloads/broward/broward-full-ingestion.log";
+const DEFAULT_HANDOFF_MANIFEST_PATH =
+  "downloads/broward/active-query-data-only-handoff.json";
 const RECENT_WINDOW_MS = 15 * 60 * 1_000;
 const STALE_AFTER_MS = 2 * 60 * 1_000;
 const ACTIVE_GAP_CAP_MS = STALE_AFTER_MS;
@@ -51,6 +53,27 @@ const RESULT_TRANSFORM_ERROR = 5;
  * @property {number} skippedExisting - Number of existing transformed rows reused.
  * @property {number} failed - Combined source and transform failure count.
  * @property {Record<string, number>} usageTypes - Successful property-use aggregates.
+ * @property {string | null} artifactMode - Guarded artifact contract when recorded.
+ * @property {number | null} initialRowIndex - Immutable segment start when recorded.
+ *
+ * @typedef {object} HandoffManifest
+ * @property {number} seedRowCount - Full county row denominator.
+ * @property {"live-bcpa"} sourceMode - Uncaptured post-boundary source mode.
+ * @property {number} sourceConcurrencyMaximum - Maximum post-boundary source concurrency.
+ * @property {string} oldOutputDirectory - Pre-boundary publishable output path.
+ * @property {{ nextRowIndex: number, attempted: number }} oldCheckpoint
+ *   Immutable pre-boundary checkpoint counters.
+ * @property {string} newOutputDirectory - Post-boundary data-only output path.
+ * @property {string} newLogPath - Post-boundary runner log path.
+ * @property {"query-data-only"} newArtifactMode - Guarded post-boundary artifact mode.
+ * @property {number} newInitialRowIndex - Exact inclusive handoff row.
+ * @property {{
+ *   excludedOldAtOrAboveBoundary: {
+ *     resultRowIndexes: readonly number[],
+ *     artifactRowIndexes: readonly number[],
+ *     captureRowIndexes: readonly number[]
+ *   }
+ * }} reconciliation - Explicitly excluded old higher-row files.
  *
  * @typedef {object} ResultCounts
  * @property {number} succeeded - Deduplicated successful result rows.
@@ -120,6 +143,18 @@ const RESULT_TRANSFORM_ERROR = 5;
  * @property {{ type: string, count: number }[]} usageTypes
  *   Sanitized property-use aggregate counts sorted by count.
  * @property {StorageHealth} storage - Local filesystem and input-file health.
+ * @property {{
+ *   active: true,
+ *   boundaryRowIndex: number,
+ *   publishableAttempted: number,
+ *   publishableSucceeded: number,
+ *   dataOnlyAttempted: number,
+ *   dataOnlySucceeded: number,
+ *   dataOnlyTransformErrors: number,
+ *   excludedOldResultRows: number,
+ *   excludedOldArtifacts: number,
+ *   preservedExcludedOldCaptures: number
+ * } | undefined} handoff - Aggregate segment lineage when a handoff is active.
  *
  * @typedef {object} StatusReaderOptions
  * @property {string} outputDirectory - Fixed local ingestion output directory.
@@ -256,6 +291,14 @@ function parseIngestionState(text) {
     skippedExisting: readCount(parsed, "skippedExisting"),
     failed: readCount(parsed, "failed"),
     usageTypes,
+    artifactMode:
+      typeof parsed.artifactMode === "string" ? parsed.artifactMode : null,
+    initialRowIndex:
+      typeof parsed.initialRowIndex === "number" &&
+      Number.isInteger(parsed.initialRowIndex) &&
+      parsed.initialRowIndex >= 0
+        ? parsed.initialRowIndex
+        : null,
   };
 }
 
@@ -884,6 +927,287 @@ export function createStatusReader(options, dependencies = {}) {
 }
 
 /**
+ * Parse the fixed local handoff manifest into its aggregate-safe contract.
+ *
+ * Paths are accepted only under the Broward download root, and the new output
+ * must retain the query-data-only classification in its directory name.
+ *
+ * @param {string} text - UTF-8 handoff manifest JSON.
+ * @param {string} repositoryRoot - Absolute repository root used for path checks.
+ * @returns {HandoffManifest} Validated immutable handoff configuration.
+ */
+export function parseHandoffManifest(text, repositoryRoot) {
+  /** @type {unknown} */
+  const parsed = JSON.parse(text);
+  if (!isRecord(parsed)) throw new Error("Handoff manifest is not an object");
+  const oldCheckpoint = parsed.oldCheckpoint;
+  const reconciliation = parsed.reconciliation;
+  if (
+    !isRecord(oldCheckpoint) ||
+    !isRecord(reconciliation) ||
+    !isRecord(reconciliation.excludedOldAtOrAboveBoundary)
+  ) {
+    throw new Error("Handoff manifest checkpoint contract is invalid");
+  }
+  const excluded = reconciliation.excludedOldAtOrAboveBoundary;
+  const seedRowCount = readCount(parsed, "seedRowCount");
+  const sourceConcurrencyMaximum = readCount(
+    parsed,
+    "sourceConcurrencyMaximum",
+  );
+  const oldBoundary = readCount(oldCheckpoint, "nextRowIndex");
+  const oldAttempted = readCount(oldCheckpoint, "attempted");
+  const newInitialRowIndex = readCount(parsed, "newInitialRowIndex");
+  const oldOutputDirectory = parsed.oldOutputDirectory;
+  const newOutputDirectory = parsed.newOutputDirectory;
+  const newLogPath = parsed.newLogPath;
+  const expectedOldOutput = path.resolve(
+    repositoryRoot,
+    DEFAULT_OUTPUT_DIRECTORY,
+  );
+  const allowedRoot = path.resolve(repositoryRoot, "downloads/broward");
+  if (
+    parsed.sourceMode !== "live-bcpa" ||
+    parsed.newArtifactMode !== "query-data-only" ||
+    sourceConcurrencyMaximum < 1 ||
+    sourceConcurrencyMaximum > 4 ||
+    oldBoundary !== oldAttempted ||
+    oldBoundary !== newInitialRowIndex ||
+    oldBoundary > seedRowCount ||
+    typeof oldOutputDirectory !== "string" ||
+    path.resolve(repositoryRoot, oldOutputDirectory) !== expectedOldOutput ||
+    typeof newOutputDirectory !== "string" ||
+    !path
+      .basename(path.resolve(repositoryRoot, newOutputDirectory))
+      .toLowerCase()
+      .includes("query-data-only") ||
+    path.dirname(path.resolve(repositoryRoot, newOutputDirectory)) !==
+      allowedRoot ||
+    typeof newLogPath !== "string" ||
+    path.dirname(path.resolve(repositoryRoot, newLogPath)) !==
+      path.resolve(repositoryRoot, newOutputDirectory) ||
+    path.basename(newLogPath) !== "ingestion.log"
+  ) {
+    throw new Error("Handoff manifest migration contract is invalid");
+  }
+  for (const key of [
+    "resultRowIndexes",
+    "artifactRowIndexes",
+    "captureRowIndexes",
+  ]) {
+    const values = excluded[key];
+    if (
+      !Array.isArray(values) ||
+      values.some(
+        (value) =>
+          typeof value !== "number" ||
+          !Number.isInteger(value) ||
+          value < oldBoundary ||
+          value >= seedRowCount,
+      )
+    ) {
+      throw new Error(`Handoff manifest ${key} is invalid`);
+    }
+  }
+  return /** @type {HandoffManifest} */ (parsed);
+}
+
+/**
+ * Merge sanitized usage-type aggregates from two non-overlapping segments.
+ *
+ * @param {readonly { type: string, count: number }[]} publishableTypes
+ *   Sanitized pre-boundary usage counts.
+ * @param {readonly { type: string, count: number }[]} dataOnlyTypes
+ *   Sanitized post-boundary usage counts.
+ * @returns {{ type: string, count: number }[]} Combined sorted aggregates.
+ */
+function combineUsageTypes(publishableTypes, dataOnlyTypes) {
+  /** @type {Record<string, number>} */
+  const combined = {};
+  for (const entry of [...publishableTypes, ...dataOnlyTypes]) {
+    combined[entry.type] = (combined[entry.type] ?? 0) + entry.count;
+  }
+  return sanitizeUsageTypes(combined);
+}
+
+/**
+ * Combine two non-overlapping status snapshots at one immutable row boundary.
+ *
+ * @param {DashboardStatus} publishable - Frozen pre-boundary status.
+ * @param {DashboardStatus} dataOnly - Active post-boundary status.
+ * @param {HandoffManifest} manifest - Immutable segment and exclusion contract.
+ * @param {number} nowMs - Snapshot epoch milliseconds.
+ * @returns {DashboardStatus} Full-county aggregate status.
+ */
+export function combineHandoffStatuses(
+  publishable,
+  dataOnly,
+  manifest,
+  nowMs,
+) {
+  const boundary = manifest.newInitialRowIndex;
+  if (
+    publishable.progress.attempted !== boundary ||
+    manifest.oldCheckpoint.nextRowIndex !== boundary
+  ) {
+    throw new Error("Publishable checkpoint moved after handoff");
+  }
+  const attempted = boundary + dataOnly.progress.attempted;
+  const remaining = Math.max(0, manifest.seedRowCount - attempted);
+  const recentAttempted =
+    publishable.throughput.recentAttempted +
+    dataOnly.throughput.recentAttempted;
+  const windowMinutes = dataOnly.throughput.windowMinutes;
+  const recentPerMinute =
+    windowMinutes > 0 ? recentAttempted / windowMinutes : null;
+  const activeRuntimeSeconds =
+    publishable.throughput.activeRuntimeSeconds +
+    dataOnly.throughput.activeRuntimeSeconds;
+  const activeAveragePerMinute =
+    activeRuntimeSeconds > 0
+      ? attempted / (activeRuntimeSeconds / 60)
+      : null;
+  const etaRate =
+    recentPerMinute !== null && recentPerMinute > 0
+      ? recentPerMinute
+      : activeAveragePerMinute;
+  const etaActiveSeconds =
+    etaRate !== null && etaRate > 0 && remaining > 0
+      ? Math.round((remaining / etaRate) * 60)
+      : remaining === 0
+        ? 0
+        : null;
+  const excluded = manifest.reconciliation.excludedOldAtOrAboveBoundary;
+  return {
+    schemaVersion: 1,
+    generatedAt: new Date(nowMs).toISOString(),
+    county: "Broward",
+    denominator: manifest.seedRowCount,
+    process: dataOnly.process,
+    progress: {
+      attempted,
+      succeeded:
+        publishable.progress.succeeded + dataOnly.progress.succeeded,
+      skippedExisting:
+        publishable.progress.skippedExisting +
+        dataOnly.progress.skippedExisting,
+      sourceMisses:
+        publishable.progress.sourceMisses + dataOnly.progress.sourceMisses,
+      sourceErrors:
+        publishable.progress.sourceErrors + dataOnly.progress.sourceErrors,
+      transformErrors:
+        publishable.progress.transformErrors +
+        dataOnly.progress.transformErrors,
+      unclassifiedFailures:
+        publishable.progress.unclassifiedFailures +
+        dataOnly.progress.unclassifiedFailures,
+      failedTotal:
+        publishable.progress.failedTotal + dataOnly.progress.failedTotal,
+      remaining,
+      completionPercent: round(
+        Math.min(1, attempted / manifest.seedRowCount) * 100,
+        3,
+      ),
+    },
+    throughput: {
+      windowMinutes,
+      recentAttempted,
+      recentPerMinute:
+        recentPerMinute === null ? null : round(recentPerMinute, 2),
+      activeRuntimeSeconds,
+      activeAveragePerMinute:
+        activeAveragePerMinute === null
+          ? null
+          : round(activeAveragePerMinute, 2),
+      etaActiveSeconds,
+      etaBasis:
+        recentPerMinute !== null && recentPerMinute > 0
+          ? "recent"
+          : activeAveragePerMinute !== null && activeAveragePerMinute > 0
+            ? "active_average"
+            : null,
+      projectedCompletionAt:
+        etaActiveSeconds === null
+          ? null
+          : new Date(nowMs + etaActiveSeconds * 1_000).toISOString(),
+    },
+    checkpoint: dataOnly.checkpoint,
+    usageTypes: combineUsageTypes(
+      publishable.usageTypes,
+      dataOnly.usageTypes,
+    ),
+    storage: {
+      ...dataOnly.storage,
+      parsedResultRows:
+        publishable.storage.parsedResultRows +
+        dataOnly.storage.parsedResultRows,
+      malformedResultLines:
+        publishable.storage.malformedResultLines +
+        dataOnly.storage.malformedResultLines,
+    },
+    handoff: {
+      active: true,
+      boundaryRowIndex: boundary,
+      publishableAttempted: publishable.progress.attempted,
+      publishableSucceeded: publishable.progress.succeeded,
+      dataOnlyAttempted: dataOnly.progress.attempted,
+      dataOnlySucceeded: dataOnly.progress.succeeded,
+      dataOnlyTransformErrors: dataOnly.progress.transformErrors,
+      excludedOldResultRows: excluded.resultRowIndexes.length,
+      excludedOldArtifacts: excluded.artifactRowIndexes.length,
+      preservedExcludedOldCaptures: excluded.captureRowIndexes.length,
+    },
+  };
+}
+
+/**
+ * Build the default reader, automatically activating the fixed local handoff
+ * manifest when present and otherwise retaining the original single-run view.
+ *
+ * @param {string} repositoryRoot - Absolute repository root.
+ * @returns {Promise<() => Promise<DashboardStatus>>} Aggregate status reader.
+ */
+export async function createDefaultStatusReader(repositoryRoot) {
+  const publishableReader = createStatusReader({
+    outputDirectory: path.resolve(repositoryRoot, DEFAULT_OUTPUT_DIRECTORY),
+    logPath: path.resolve(repositoryRoot, DEFAULT_LOG_PATH),
+    denominator: BROWARD_ROW_DENOMINATOR,
+  });
+  const manifestPath = path.resolve(
+    repositoryRoot,
+    DEFAULT_HANDOFF_MANIFEST_PATH,
+  );
+  let manifestText;
+  try {
+    manifestText = await readFile(manifestPath, "utf8");
+  } catch (error) {
+    if (isMissingFileError(error)) return publishableReader;
+    throw error;
+  }
+  const manifest = parseHandoffManifest(manifestText, repositoryRoot);
+  const dataOnlyReader = createStatusReader({
+    outputDirectory: path.resolve(
+      repositoryRoot,
+      manifest.newOutputDirectory,
+    ),
+    logPath: path.resolve(repositoryRoot, manifest.newLogPath),
+    denominator: manifest.seedRowCount,
+  });
+  return async () => {
+    const [publishable, dataOnly] = await Promise.all([
+      publishableReader(),
+      dataOnlyReader(),
+    ]);
+    return combineHandoffStatuses(
+      publishable,
+      dataOnly,
+      manifest,
+      Date.now(),
+    );
+  };
+}
+
+/**
  * Write a JSON response with browser and intermediary caching disabled.
  *
  * @param {import("node:http").ServerResponse} response - HTTP response.
@@ -1384,7 +1708,7 @@ const DASHBOARD_HTML = `<!doctype html>
  * @param {DashboardCliOptions} options - Validated host and port.
  * @returns {void}
  */
-function runCli(options) {
+async function runCli(options) {
   if (options.help) {
     process.stdout.write(
       [
@@ -1398,11 +1722,7 @@ function runCli(options) {
     );
     return;
   }
-  const readStatus = createStatusReader({
-    outputDirectory: DEFAULT_OUTPUT_DIRECTORY,
-    logPath: DEFAULT_LOG_PATH,
-    denominator: BROWARD_ROW_DENOMINATOR,
-  });
+  const readStatus = await createDefaultStatusReader(process.cwd());
   const server = createDashboardServer(readStatus);
   server.listen(options.port, options.host, () => {
     process.stdout.write(
@@ -1420,12 +1740,10 @@ if (
   typeof process.argv[1] === "string" &&
   import.meta.url === pathToFileURL(process.argv[1]).href
 ) {
-  try {
-    runCli(parseDashboardCliOptions(process.argv.slice(2)));
-  } catch (error) {
+  runCli(parseDashboardCliOptions(process.argv.slice(2))).catch((error) => {
     process.stderr.write(
       `${error instanceof Error ? error.message : String(error)}\n`,
     );
     process.exitCode = 1;
-  }
+  });
 }

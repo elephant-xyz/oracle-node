@@ -8,8 +8,11 @@ import {
   DEFAULT_DASHBOARD_HOST,
   DEFAULT_DASHBOARD_PORT,
   calculateThroughput,
+  combineHandoffStatuses,
   createDashboardServer,
+  createDefaultStatusReader,
   createStatusReader,
+  parseHandoffManifest,
   parseDashboardCliOptions,
 } from "../../scripts/broward-ingestion-dashboard.mjs";
 
@@ -76,6 +79,271 @@ describe("Broward ingestion dashboard", () => {
     expect(metrics.activeRuntimeSeconds).toBeLessThan(60 * 60);
     expect(metrics.etaBasis).toBe("recent");
     expect(metrics.etaActiveSeconds).toBe(43_200);
+  });
+
+  it("validates and combines an immutable data-only handoff contract", () => {
+    const repositoryRoot = "/workspace";
+    const manifest = parseHandoffManifest(
+      JSON.stringify({
+        seedRowCount: 10,
+        sourceMode: "live-bcpa",
+        sourceConcurrencyMaximum: 4,
+        oldOutputDirectory: "downloads/broward/full-ingestion",
+        oldCheckpoint: { nextRowIndex: 4, attempted: 4 },
+        newOutputDirectory: "downloads/broward/full-query-data-only-from-4",
+        newLogPath:
+          "downloads/broward/full-query-data-only-from-4/ingestion.log",
+        newArtifactMode: "query-data-only",
+        newInitialRowIndex: 4,
+        reconciliation: {
+          excludedOldAtOrAboveBoundary: {
+            resultRowIndexes: [],
+            artifactRowIndexes: [4],
+            captureRowIndexes: [4, 5, 6, 7],
+          },
+        },
+      }),
+      repositoryRoot,
+    );
+    /** @type {Parameters<typeof combineHandoffStatuses>[0]} */
+    const baseStatus = {
+      schemaVersion: 1,
+      generatedAt: "2026-08-28T18:00:00.000Z",
+      county: "Broward",
+      denominator: 10,
+      process: {
+        status: "stopped",
+        running: false,
+        stale: false,
+        lastActivityAt: "2026-08-28T17:59:00.000Z",
+        activityAgeSeconds: 60,
+        staleAfterSeconds: 120,
+      },
+      progress: {
+        attempted: 4,
+        succeeded: 3,
+        skippedExisting: 0,
+        sourceMisses: 1,
+        sourceErrors: 0,
+        transformErrors: 0,
+        unclassifiedFailures: 0,
+        failedTotal: 1,
+        remaining: 6,
+        completionPercent: 40,
+      },
+      throughput: {
+        windowMinutes: 15,
+        recentAttempted: 2,
+        recentPerMinute: 0.13,
+        activeRuntimeSeconds: 60,
+        activeAveragePerMinute: 4,
+        etaActiveSeconds: 90,
+        etaBasis: "recent",
+        projectedCompletionAt: "2026-08-28T18:01:30.000Z",
+      },
+      checkpoint: {
+        lastCheckpointAt: "2026-08-28T17:59:00.000Z",
+        ageSeconds: 60,
+      },
+      usageTypes: [{ type: "Residential", count: 3 }],
+      storage: {
+        available: true,
+        totalBytes: 1_000,
+        freeBytes: 500,
+        usedPercent: 50,
+        files: {
+          state: {
+            available: true,
+            sizeBytes: 100,
+            modifiedAt: "2026-08-28T17:59:00.000Z",
+            ageSeconds: 60,
+          },
+          results: {
+            available: true,
+            sizeBytes: 200,
+            modifiedAt: "2026-08-28T17:59:00.000Z",
+            ageSeconds: 60,
+          },
+          log: {
+            available: true,
+            sizeBytes: 300,
+            modifiedAt: "2026-08-28T17:59:00.000Z",
+            ageSeconds: 60,
+          },
+        },
+        parsedResultRows: 4,
+        malformedResultLines: 0,
+      },
+    };
+    const dataOnlyStatus = structuredClone(baseStatus);
+    dataOnlyStatus.process.status = "running";
+    dataOnlyStatus.process.running = true;
+    dataOnlyStatus.progress.attempted = 2;
+    dataOnlyStatus.progress.succeeded = 2;
+    dataOnlyStatus.progress.sourceMisses = 0;
+    dataOnlyStatus.progress.failedTotal = 0;
+    dataOnlyStatus.throughput.recentAttempted = 2;
+    dataOnlyStatus.throughput.activeRuntimeSeconds = 30;
+    dataOnlyStatus.checkpoint.lastCheckpointAt =
+      "2026-08-28T18:00:00.000Z";
+    dataOnlyStatus.checkpoint.ageSeconds = 0;
+    dataOnlyStatus.usageTypes = [{ type: "Residential", count: 2 }];
+    dataOnlyStatus.storage.parsedResultRows = 2;
+
+    const combined = combineHandoffStatuses(
+      baseStatus,
+      dataOnlyStatus,
+      manifest,
+      Date.parse("2026-08-28T18:00:00.000Z"),
+    );
+
+    expect(combined).toMatchObject({
+      denominator: 10,
+      process: { status: "running", running: true },
+      progress: {
+        attempted: 6,
+        succeeded: 5,
+        sourceMisses: 1,
+        transformErrors: 0,
+        remaining: 4,
+        completionPercent: 60,
+      },
+      handoff: {
+        active: true,
+        boundaryRowIndex: 4,
+        publishableAttempted: 4,
+        dataOnlyAttempted: 2,
+        dataOnlyTransformErrors: 0,
+        excludedOldArtifacts: 1,
+        preservedExcludedOldCaptures: 4,
+      },
+      usageTypes: [{ type: "Residential", count: 5 }],
+      storage: { parsedResultRows: 6 },
+    });
+  });
+
+  it("reads both live segments when the fixed handoff manifest is present", async () => {
+    const root = await mkdtemp(
+      path.join(tmpdir(), "broward-dashboard-handoff-test-"),
+    );
+    temporaryDirectories.push(root);
+    const browardRoot = path.join(root, "downloads", "broward");
+    const oldOutput = path.join(browardRoot, "full-ingestion");
+    const newOutput = path.join(
+      browardRoot,
+      "full-query-data-only-from-2",
+    );
+    await mkdir(oldOutput, { recursive: true });
+    await mkdir(newOutput);
+    const oldStartedAt = "2026-08-28T17:00:00.000Z";
+    const newStartedAt = "2026-08-28T18:00:00.000Z";
+    await writeFile(
+      path.join(oldOutput, "state.json"),
+      `${JSON.stringify({
+        startedAt: oldStartedAt,
+        updatedAt: "2026-08-28T17:01:00.000Z",
+        nextRowIndex: 2,
+        attempted: 2,
+        succeeded: 2,
+        skippedExisting: 0,
+        failed: 0,
+        usageTypes: { Residential: 2 },
+      })}\n`,
+    );
+    await writeFile(
+      path.join(oldOutput, "results.ndjson"),
+      [0, 1]
+        .map((rowIndex) =>
+          JSON.stringify({
+            timestamp: "2026-08-28T17:01:00.000Z",
+            rowIndex,
+            status: "succeeded",
+            folio: `PRIVATE-OLD-${String(rowIndex)}`,
+          }),
+        )
+        .join("\n") + "\n",
+    );
+    await writeFile(
+      path.join(newOutput, "state.json"),
+      `${JSON.stringify({
+        schemaVersion: "oracle-node.broward-local-ingest-state.v2",
+        artifactMode: "query-data-only",
+        initialRowIndex: 2,
+        startedAt: newStartedAt,
+        updatedAt: "2026-08-28T18:01:00.000Z",
+        nextRowIndex: 4,
+        attempted: 2,
+        succeeded: 1,
+        skippedExisting: 0,
+        failed: 1,
+        usageTypes: { Commercial: 1 },
+      })}\n`,
+    );
+    await writeFile(
+      path.join(newOutput, "results.ndjson"),
+      [
+        {
+          timestamp: "2026-08-28T18:00:30.000Z",
+          rowIndex: 2,
+          status: "succeeded",
+          folio: "PRIVATE-NEW-2",
+        },
+        {
+          timestamp: "2026-08-28T18:01:00.000Z",
+          rowIndex: 3,
+          status: "source_error",
+          folio: "PRIVATE-NEW-3",
+          error: "HTTP 500 near PRIVATE OWNER",
+        },
+      ]
+        .map((result) => JSON.stringify(result))
+        .join("\n") + "\n",
+    );
+    await writeFile(path.join(newOutput, "ingestion.log"), "PRIVATE OWNER\n");
+    await writeFile(
+      path.join(browardRoot, "active-query-data-only-handoff.json"),
+      `${JSON.stringify({
+        seedRowCount: 10,
+        sourceMode: "live-bcpa",
+        sourceConcurrencyMaximum: 4,
+        oldOutputDirectory: "downloads/broward/full-ingestion",
+        oldCheckpoint: { nextRowIndex: 2, attempted: 2 },
+        newOutputDirectory:
+          "downloads/broward/full-query-data-only-from-2",
+        newLogPath:
+          "downloads/broward/full-query-data-only-from-2/ingestion.log",
+        newArtifactMode: "query-data-only",
+        newInitialRowIndex: 2,
+        reconciliation: {
+          excludedOldAtOrAboveBoundary: {
+            resultRowIndexes: [],
+            artifactRowIndexes: [],
+            captureRowIndexes: [],
+          },
+        },
+      })}\n`,
+    );
+
+    const readStatus = await createDefaultStatusReader(root);
+    const status = await readStatus();
+
+    expect(status).toMatchObject({
+      denominator: 10,
+      progress: {
+        attempted: 4,
+        succeeded: 3,
+        sourceErrors: 1,
+        transformErrors: 0,
+        remaining: 6,
+        completionPercent: 40,
+      },
+      handoff: {
+        boundaryRowIndex: 2,
+        publishableAttempted: 2,
+        dataOnlyAttempted: 2,
+      },
+    });
+    expect(JSON.stringify(status)).not.toContain("PRIVATE");
   });
 
   it("serves aggregate API data without private result or log fields", async () => {
