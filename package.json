@@ -11,11 +11,12 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "typecheck": "npm run typecheck --workspace=prepare/lambdas/downloader && npm run typecheck --workspace=prepare/lambdas/updater && npm run typecheck --workspace=workflow/lambdas/pre && npm run typecheck --workspace=workflow/lambdas/starter && npm run typecheck --workspace=workflow/lambdas/submit && npm run typecheck --workspace=workflow/lambdas/error-resolver && npm run typecheck --workspace=workflow/lambdas/permit-harvest-worker && npm run typecheck --workspace=workflow-events/lambdas/event-handler && npm run typecheck --workspace=workflow-events/lambdas/get-execution && npm run typecheck --workspace=workflow-events/lambdas/error-count-handler && npm run typecheck --workspace=budget-alert/lambdas/budget-handler",
+    "typecheck": "npm run typecheck --workspace=prepare/lambdas/downloader && npm run typecheck --workspace=prepare/lambdas/updater && npm run typecheck --workspace=workflow/lambdas/pre && npm run typecheck --workspace=workflow/lambdas/starter && npm run typecheck --workspace=workflow/lambdas/submit && npm run typecheck --workspace=workflow/lambdas/error-resolver && npm run typecheck --workspace=workflow/lambdas/permit-harvest-worker && npm run typecheck --workspace=workflow-events/lambdas/event-handler && npm run typecheck --workspace=workflow-events/lambdas/get-execution && npm run typecheck --workspace=workflow-events/lambdas/error-count-handler && npm run typecheck --workspace=budget-alert/lambdas/budget-handler && tsc --pretty false --noEmit -p scripts/jsconfig.broward-sunbiz.json",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "install-workspaces": "npm install --workspaces",
     "catalog:update": "node scripts/update-published-county-catalog.mjs",
+    "broward:sunbiz:prepare": "node scripts/prepare-broward-sunbiz-local.mjs",
     "query-post-logs": "node scripts/query_post_logs.js",
     "update-elephant-cli": "npm install @elephant-xyz/cli@latest --workspace=prepare/lambdas/downloader --workspace=workflow/lambdas/submit --workspace=workflow/lambdas/pre --workspace=workflow/lambdas/mvl"
   },
@@ -47,7 +48,8 @@
     "events": "file:scripts/events-shim",
     "ipfs-only-hash": "^4.0.0",
     "pdfjs-dist": "^6.2.108",
-    "pg": "^8.23.0"
+    "pg": "^8.23.0",
+    "yaml": "^2.9.0"
   },
   "overrides": {
     "events": "file:scripts/events-shim"
