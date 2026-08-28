@@ -12,6 +12,7 @@ import { createWriteStream } from "fs";
 import { mkdir } from "fs/promises";
 import path from "path";
 import { pathToFileURL } from "url";
+import arcgisToGeoJsonUtils from "@esri/arcgis-to-geojson-utils";
 
 import {
   BROWARD_COUNTY_FIPS,
@@ -31,6 +32,7 @@ const DEFAULT_CONCURRENCY = 4;
 const GIS_MAX_RECORD_COUNT = 1_000;
 const MAX_GIS_CONCURRENCY = 16;
 const GIS_MAX_ATTEMPTS = 4;
+const { arcgisToGeoJSON } = arcgisToGeoJsonUtils;
 
 /**
  * Canonical seed header. `request_identifier` is required by elephant-cli
@@ -318,7 +320,7 @@ export function buildPageUrl(where, resultOffset, pageSize) {
  * batches avoids offset drift and allows safe concurrent download.
  *
  * @param {readonly number[]} objectIds - ArcGIS OBJECTIDs.
- * @returns {string} GeoJSON query URL.
+ * @returns {string} ArcGIS JSON query URL.
  */
 export function buildObjectIdPageUrl(objectIds) {
   const params = new URLSearchParams({
@@ -327,7 +329,7 @@ export function buildObjectIdPageUrl(objectIds) {
     orderByFields: "OBJECTID",
     returnGeometry: "true",
     outSR: "4326",
-    f: "geojson",
+    f: "json",
   });
   return `${FEATURE_QUERY_URL}?${params.toString()}`;
 }
@@ -343,7 +345,7 @@ function buildObjectIdWithoutGeometryUrl(objectId) {
     objectIds: String(objectId),
     outFields: "OBJECTID,FOLIO",
     returnGeometry: "false",
-    f: "geojson",
+    f: "json",
   });
   return `${FEATURE_QUERY_URL}?${params.toString()}`;
 }
@@ -394,6 +396,52 @@ async function fetchGeoJson(url) {
   throw lastError instanceof Error
     ? lastError
     : new Error("Broward GIS GeoJSON request failed");
+}
+
+/**
+ * Fetch ArcGIS JSON and convert each Esri feature to GeoJSON.
+ *
+ * The BCPA service fails GeoJSON serialization for valid high-vertex
+ * polygons, while its native ArcGIS JSON endpoint returns those geometries.
+ *
+ * @param {string} url - ArcGIS feature query.
+ * @returns {Promise<{ features: GeoJsonFeature[] }>} Converted features.
+ */
+async function fetchArcGisFeatures(url) {
+  let lastError;
+  for (let attempt = 1; attempt <= GIS_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      const response = await fetch(url, {
+        headers: { Accept: "application/json" },
+      });
+      if (!response.ok) {
+        throw new Error(`Broward GIS returned HTTP ${String(response.status)}`);
+      }
+      const body =
+        /** @type {{ features?: unknown[], error?: { message?: string } }} */ (
+          await response.json()
+        );
+      if (body.error?.message) {
+        throw new Error(`Broward GIS error: ${body.error.message}`);
+      }
+      if (!Array.isArray(body.features)) {
+        throw new Error("Broward GIS response has no feature array");
+      }
+      return {
+        features: body.features.map((feature) => {
+          return /** @type {GeoJsonFeature} */ (arcgisToGeoJSON(feature));
+        }),
+      };
+    } catch (error) {
+      lastError = error;
+      if (attempt < GIS_MAX_ATTEMPTS) {
+        await delay(250 * 2 ** (attempt - 1));
+      }
+    }
+  }
+  throw lastError instanceof Error
+    ? lastError
+    : new Error("Broward ArcGIS JSON request failed");
 }
 
 /**
@@ -469,7 +517,7 @@ async function fetchObjectIds() {
  */
 async function fetchObjectIdBatch(objectIds) {
   try {
-    const page = await fetchGeoJson(buildObjectIdPageUrl(objectIds));
+    const page = await fetchArcGisFeatures(buildObjectIdPageUrl(objectIds));
     return page.features.sort((left, right) => {
       return (
         Number(left.properties?.OBJECTID ?? 0) -
@@ -480,7 +528,7 @@ async function fetchObjectIdBatch(objectIds) {
     if (objectIds.length <= 1) {
       const objectId = objectIds[0];
       if (objectId === undefined) return [];
-      const fallback = await fetchGeoJson(
+      const fallback = await fetchArcGisFeatures(
         buildObjectIdWithoutGeometryUrl(objectId),
       );
       console.warn(
