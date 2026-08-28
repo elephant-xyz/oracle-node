@@ -108,8 +108,7 @@ import puppeteer from "puppeteer";
 
 export const BROWARD_BCS_SEARCH_URL =
   "https://dpepp.broward.org/BCS/Default.aspx?PossePresentation=ParcelSearchByAddress";
-export const BROWARD_BCS_SOURCE_SYSTEM =
-  "broward_county_bcs_posse_permits";
+export const BROWARD_BCS_SOURCE_SYSTEM = "broward_county_bcs_posse_permits";
 export const BROWARD_BCS_SCOPE_URL =
   "https://www.broward.org/Building/Government2Government/Pages/CurrentServiceAgreements.aspx";
 
@@ -153,14 +152,17 @@ const MAX_SOURCE_HTML_BYTES = 2_000_000;
  */
 function readText(value) {
   if (typeof value !== "string") return null;
-  const normalized = value.replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim();
+  const normalized = value
+    .replace(/\u00a0/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
   return normalized.length === 0 ? null : normalized;
 }
 
 /**
  * Read one source element while preserving visual line breaks as spaces.
  *
- * @param {import("cheerio").Cheerio<import("domhandler").Node>} selection - Selected source element.
+ * @param {import("cheerio").Cheerio<import("domhandler").AnyNode>} selection - Selected source element.
  * @returns {string | null} Collapsed visual text.
  */
 function readSelectionText(selection) {
@@ -254,7 +256,7 @@ function validateBrowardBcsUrl(
   expectedPresentation,
   requireObjectId = true,
 ) {
-  const parsed = new URL(rawUrl, BROWARD_BCS_ORIGIN);
+  const parsed = new URL(rawUrl, BROWARD_BCS_SEARCH_URL);
   if (
     parsed.origin !== BROWARD_BCS_ORIGIN ||
     parsed.pathname.toLowerCase() !== BROWARD_BCS_PATH.toLowerCase() ||
@@ -402,15 +404,13 @@ function readDetailField($, fieldPrefix, objectId) {
       `Broward BCS detail has duplicate ${fieldPrefix} fields for ${objectId}`,
     );
   }
-  return matches.length === 0
-    ? null
-    : readSelectionText($(matches[0]));
+  return matches.length === 0 ? null : readSelectionText($(matches[0]));
 }
 
 /**
  * Read a generated field from one POSSE grid row.
  *
- * @param {import("cheerio").Cheerio<import("domhandler").Node>} row - Parsed grid row.
+ * @param {import("cheerio").Cheerio<import("domhandler").AnyNode>} row - Parsed grid row.
  * @param {string} fieldPrefix - Stable POSSE grid field prefix.
  * @param {string} objectId - Row object identifier.
  * @returns {string | null} Public field text.
@@ -458,12 +458,15 @@ export function parseBrowardBcsPermitListHtml(html, listUrl) {
   const rows = $("tr.possegrid")
     .toArray()
     .filter((row) =>
-      $(row).find('a[href*="PosseObjectId"]').toArray().some((anchor) => {
-        const href = $(anchor).attr("href") ?? "";
-        return /PossePresentation=(?:ViewMasterPermit|ViewPermit|ViewPlanReview)/u.test(
-          href,
-        );
-      }),
+      $(row)
+        .find('a[href*="PosseObjectId"]')
+        .toArray()
+        .some((anchor) => {
+          const href = $(anchor).attr("href") ?? "";
+          return /PossePresentation=(?:ViewMasterPermit|ViewPermit|ViewPlanReview)/u.test(
+            href,
+          );
+        }),
     );
   const hasNoPermitsMarker = bodyText.includes(SOURCE_NO_PERMITS_TEXT);
 
@@ -577,26 +580,24 @@ export function parseBrowardBcsPermitListHtml(html, listUrl) {
 }
 
 /**
- * Verify that BCS's legacy folio display belongs to the submitted parcel ID.
+ * Validate BCS's separately displayed legacy folio.
  *
  * BCS currently prints a ten-character, dashed legacy folio while its Parcel ID
- * search accepts the full 12-character BCPA key. The comparison permits only an
- * exact 12-character match or an exact ten-character suffix match; it never
- * mutates the submitted parcel identifier.
+ * search accepts the full 12-character BCPA key. No official conversion between
+ * those identifiers was found, and observed values are not suffix-equivalent.
+ * A ten-character legacy value is therefore preserved but never inferred to be
+ * the BCPA key. If BCS prints 12 characters, they must match exactly.
  *
  * @param {string} parcelIdentifier - Exact submitted 12-character parcel ID.
  * @param {string} sourceFolio - BCS legacy folio display.
  * @returns {void}
  */
 function assertMatchingSourceFolio(parcelIdentifier, sourceFolio) {
-  const compactSourceFolio = sourceFolio
-    .replace(/[-\s]/g, "")
-    .toUpperCase();
+  const compactSourceFolio = sourceFolio.replace(/[-\s]/g, "").toUpperCase();
   if (
     !/^[A-Z0-9]{10}(?:[A-Z0-9]{2})?$/u.test(compactSourceFolio) ||
-    (compactSourceFolio.length === 12
-      ? compactSourceFolio !== parcelIdentifier
-      : !parcelIdentifier.endsWith(compactSourceFolio))
+    (compactSourceFolio.length === 12 &&
+      compactSourceFolio !== parcelIdentifier)
   ) {
     throw new Error(
       `Broward BCS detail folio ${sourceFolio} does not match submitted parcel ${parcelIdentifier}`,
@@ -629,10 +630,7 @@ function parseBrowardBcsInspections($) {
       $(links[0]).attr("href") ?? "",
       "ViewInspection",
     );
-    const objectId = requireText(
-      validated.objectId,
-      "inspection object id",
-    );
+    const objectId = requireText(validated.objectId, "inspection object id");
     if (seenObjectIds.has(objectId)) {
       throw new Error(`Duplicate Broward BCS inspection object ${objectId}`);
     }
@@ -832,9 +830,7 @@ export function parseBrowardBcsDetailHtml(
       : null;
   const jobValue =
     listRecord.sourceRecordKind === "master"
-      ? parseOptionalCurrency(
-          readDetailField($, "JobValue", sourceObjectId),
-        )
+      ? parseOptionalCurrency(readDetailField($, "JobValue", sourceObjectId))
       : null;
   const squareFootage =
     listRecord.sourceRecordKind === "master"
@@ -871,11 +867,7 @@ export function parseBrowardBcsDetailHtml(
   const contractorName =
     readDetailField($, "GeneralContractor", sourceObjectId) ??
     listRecord.listContractor;
-  const roofText = [
-    recordType,
-    projectTitle,
-    projectDescription,
-  ]
+  const roofText = [recordType, projectTitle, projectDescription]
     .filter((value) => value !== null)
     .join(" ");
 
@@ -1067,9 +1059,7 @@ async function configureSearchPage(page) {
   await page.setRequestInterception(true);
   page.on("request", (request) => {
     if (
-      ["image", "stylesheet", "font", "media"].includes(
-        request.resourceType(),
-      )
+      ["image", "stylesheet", "font", "media"].includes(request.resourceType())
     ) {
       void request.abort();
       return;
@@ -1116,10 +1106,7 @@ export async function probeBrowardBcsPermits({
       `Broward BCS propertyDelayMs must be at least ${String(MIN_PROPERTY_DELAY_MS)}`,
     );
   }
-  if (
-    !Number.isInteger(detailDelayMs) ||
-    detailDelayMs < MIN_DETAIL_DELAY_MS
-  ) {
+  if (!Number.isInteger(detailDelayMs) || detailDelayMs < MIN_DETAIL_DELAY_MS) {
     throw new Error(
       `Broward BCS detailDelayMs must be at least ${String(MIN_DETAIL_DELAY_MS)}`,
     );
@@ -1170,7 +1157,9 @@ export async function probeBrowardBcsPermits({
           timeout: navigationTimeoutMs,
         });
         if ((await page.title()) !== "BCS - Search for Permit by Address") {
-          throw new Error("Broward BCS search page returned an unexpected title");
+          throw new Error(
+            "Broward BCS search page returned an unexpected title",
+          );
         }
         await page.waitForSelector(PARCEL_INPUT_SELECTOR, {
           timeout: navigationTimeoutMs,
@@ -1187,10 +1176,8 @@ export async function probeBrowardBcsPermits({
           (element) =>
             element instanceof HTMLInputElement ? element.value : null,
         );
-        const dataChanges = await page.$eval(
-          "#datachanges",
-          (element) =>
-            element instanceof HTMLInputElement ? element.value : null,
+        const dataChanges = await page.$eval("#datachanges", (element) =>
+          element instanceof HTMLInputElement ? element.value : null,
         );
         if (
           submittedValue !== parcelIdentifier ||
@@ -1212,8 +1199,7 @@ export async function probeBrowardBcsPermits({
         sourceListUrl = page.url();
         const finalUrl = new URL(sourceListUrl);
         if (
-          finalUrl.searchParams.get("PossePresentation") !==
-          "ParcelPermitList"
+          finalUrl.searchParams.get("PossePresentation") !== "ParcelPermitList"
         ) {
           const bodyText = readText(
             await page.$eval("body", (element) => element.textContent),
