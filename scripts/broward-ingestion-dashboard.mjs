@@ -160,6 +160,10 @@ const RESULT_TRANSFORM_ERROR = 5;
  * @property {string} outputDirectory - Fixed local ingestion output directory.
  * @property {string} logPath - Fixed local ingestion log path.
  * @property {number} denominator - Full county seed count.
+ * @property {string | undefined} [expectedArtifactMode]
+ *   Required checkpoint artifact mode for a classified segment.
+ * @property {number | undefined} [expectedInitialRowIndex]
+ *   Required immutable checkpoint start for a classified segment.
  *
  * @typedef {object} StatusReaderDependencies
  * @property {() => number} now - Current epoch-millisecond provider.
@@ -837,6 +841,18 @@ export function createStatusReader(options, dependencies = {}) {
   return async () => {
     const nowMs = nowProvider();
     const state = parseIngestionState(await readFile(statePath, "utf8"));
+    if (
+      options.expectedArtifactMode !== undefined &&
+      state.artifactMode !== options.expectedArtifactMode
+    ) {
+      throw new Error("Checkpoint artifact mode differs from handoff manifest");
+    }
+    if (
+      options.expectedInitialRowIndex !== undefined &&
+      state.initialRowIndex !== options.expectedInitialRowIndex
+    ) {
+      throw new Error("Checkpoint initial row differs from handoff manifest");
+    }
     await accumulator.update(state.startedAt);
     const resultCounts = accumulator.summarize(state.nextRowIndex);
     const storage = await readStorageHealth({
@@ -1192,6 +1208,8 @@ export async function createDefaultStatusReader(repositoryRoot) {
     ),
     logPath: path.resolve(repositoryRoot, manifest.newLogPath),
     denominator: manifest.seedRowCount,
+    expectedArtifactMode: manifest.newArtifactMode,
+    expectedInitialRowIndex: manifest.newInitialRowIndex,
   });
   return async () => {
     const [publishable, dataOnly] = await Promise.all([

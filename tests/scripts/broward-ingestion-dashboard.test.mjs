@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -344,6 +344,18 @@ describe("Broward ingestion dashboard", () => {
       },
     });
     expect(JSON.stringify(status)).not.toContain("PRIVATE");
+
+    const mismatchedState = JSON.parse(
+      await readFile(path.join(newOutput, "state.json"), "utf8"),
+    );
+    mismatchedState.initialRowIndex = 3;
+    await writeFile(
+      path.join(newOutput, "state.json"),
+      `${JSON.stringify(mismatchedState)}\n`,
+    );
+    await expect(readStatus()).rejects.toThrow(
+      "Checkpoint initial row differs from handoff manifest",
+    );
   });
 
   it("serves aggregate API data without private result or log fields", async () => {
