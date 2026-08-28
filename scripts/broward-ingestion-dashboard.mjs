@@ -154,7 +154,7 @@ const RESULT_TRANSFORM_ERROR = 5;
  *   excludedOldResultRows: number,
  *   excludedOldArtifacts: number,
  *   preservedExcludedOldCaptures: number
- * } | undefined} handoff - Aggregate segment lineage when a handoff is active.
+ * }} [handoff] - Aggregate segment lineage when a handoff is active.
  *
  * @typedef {object} StatusReaderOptions
  * @property {string} outputDirectory - Fixed local ingestion output directory.
@@ -1706,7 +1706,7 @@ const DASHBOARD_HTML = `<!doctype html>
  * Start the CLI server against the fixed Broward local-ingestion inputs.
  *
  * @param {DashboardCliOptions} options - Validated host and port.
- * @returns {void}
+ * @returns {Promise<void>} Resolves after the dashboard starts listening.
  */
 async function runCli(options) {
   if (options.help) {
