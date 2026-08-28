@@ -112,27 +112,53 @@ node scripts/ingest-broward-appraisal-local.mjs \
   --seed /workspace/downloads/broward/broward-validation-sample-50.csv \
   --scripts /tmp/Counties-trasform-scripts/broward/scripts \
   --capture-source /workspace/downloads/broward/broward-validation-sample-50-captures.zip \
-  --output downloads/broward/benchmark-query-data-only \
+  --output downloads/broward/benchmark-query-data-only-warm \
   --concurrency 4
 ```
 
-Measured evidence is recorded below after both modes run on the same machine,
-seed, transform revision `5130a7f`, captures, and concurrency.
+Both modes ran on the same 4-vCPU machine, seed, transform revision `5130a7f`,
+capture archive, and concurrency. Shell elapsed time includes worker startup,
+capture import/gzip, transforms, artifact writes, and checkpoints.
 
-<!-- BENCHMARK_RESULTS -->
+| Mode                                    | Elapsed | Parcels/s | Parcels/min | Relative to same-pilot full |
+| --------------------------------------- | ------: | --------: | ----------: | --------------------------: |
+| Full publishable                        | 33.653s |     1.486 |        89.1 |                       1.00× |
+| Data-only, per-script process starts    | 12.418s |     4.026 |       241.6 |                       2.71× |
+| Data-only, process-warm script handoffs |  4.589s |    10.896 |       653.7 |                       7.33× |
+
+The final path is **4.39×** the reported active-run baseline of 2.48
+parcels/s (148.8/min). The same-pilot publishable rate is lower than that live
+average because the accepted sample deliberately spans four geometry
+complexity buckets and 20 usage types; the controlled same-capture 7.33× ratio
+is the fair mode comparison.
+
+All three benchmark invocations imported the provided archive. The capture
+source has no network fallback, so BCPA request count was zero.
 
 Validation command:
 
 ```bash
 node scripts/validate-broward-query-data-only.mjs \
-  --artifacts downloads/broward/benchmark-query-data-only/query-data-only-artifacts \
+  --artifacts downloads/broward/benchmark-query-data-only-warm/query-data-only-artifacts \
   --captures /workspace/downloads/broward/broward-validation-sample-50-captures.zip \
   --reference-artifacts downloads/broward/benchmark-publishable/artifacts \
-  --output downloads/broward/benchmark-query-data-only-validation
+  --output downloads/broward/benchmark-query-data-only-warm-validation
 ```
 
-This performs structural/link checks, non-fact JSON filename parity, Elephant
-CLI Lexicon validation, and a 50-row query-table Parquet dry run.
+Result:
+
+- classified artifacts: 50/50;
+- broken or deferred fact-sheet references: 0;
+- Elephant CLI Lexicon validation: 50/50;
+- full-transform semantic parity: 50/50, covering 2,569 retained JSON files;
+- query-loader dry run: 50 rows / 50 distinct folios;
+- query-table 37-column non-null counts: identical to the accepted pilot,
+  including all 50 parcel identifiers, coordinates, property types, usage
+  types, assessed values, market values, land values, and owners.
+
+The CLI printed its existing “unknown format `percentage`” schema warnings;
+they were also present in prior Broward validation and did not produce
+validation errors.
 
 ## Resume and migration procedure
 
