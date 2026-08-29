@@ -1,0 +1,28 @@
+{
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "strict": true,
+    "noEmit": true,
+    "noImplicitAny": true,
+    "noImplicitThis": true,
+    "strictNullChecks": true,
+    "useUnknownInCatchVariables": true,
+    "exactOptionalPropertyTypes": false,
+    "noUncheckedIndexedAccess": true,
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "target": "ES2022",
+    "types": ["node"],
+    "skipLibCheck": true,
+    "maxNodeModuleJsDepth": 0
+  },
+  "include": [
+    "broward-folio.mjs",
+    "broward-permit-jurisdictions.mjs",
+    "broward-permit-query-artifact.mjs",
+    "run-broward-permit-pilot.mjs",
+    "validate-broward-permits-with-donphan.mjs",
+    "permit-source-adapters/broward-bcs-posse.mjs"
+  ]
+}
