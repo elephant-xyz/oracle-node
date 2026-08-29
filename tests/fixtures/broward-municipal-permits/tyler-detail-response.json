@@ -1,0 +1,28 @@
+{
+  "Result": {
+    "PermitId": "11111111-2222-4333-8444-555555555555",
+    "PermitNumber": "BUL-200001",
+    "PermitType": "Residential Re-Roofing",
+    "PermitStatus": "Complete",
+    "IssueDate": "2020-01-15T00:00:00",
+    "ExpireDate": "2020-07-15T00:00:00",
+    "FinalizeDate": "2020-02-01T00:00:00",
+    "ApplyDate": "2020-01-10T00:00:00",
+    "WorkClassName": "RESIDENTIAL RE-ROOF",
+    "Description": "REPLACE EXISTING ROOF",
+    "IVRNumber": "123456",
+    "MainAddress": "470 SW 198 TER PEMBROKE PINES FL 33029",
+    "MainParcelNumber": "513914101320",
+    "AssignedTo": "EXCLUDED FIXTURE ASSIGNEE",
+    "AssignedToEmail": "excluded@example.invalid",
+    "ProjectName": "ROOF PROJECT",
+    "DistrictName": "DISTRICT 1",
+    "SquareFeet": 1800,
+    "Value": 12500,
+    "Issued": true,
+    "IsLoggedIn": false
+  },
+  "Success": true,
+  "ErrorMessage": "",
+  "StatusCode": 200
+}
