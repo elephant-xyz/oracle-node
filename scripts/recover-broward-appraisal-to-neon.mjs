@@ -1360,7 +1360,9 @@ export async function runOneAheadPipeline({
   if (nextChunk.done === true) return;
 
   let slotIndex = 0;
-  let current = await prepare(nextChunk.value, slotIndex);
+  let current = /** @type {Prepared} */ (
+    await prepare(nextChunk.value, slotIndex)
+  );
   while (true) {
     nextChunk = await iterator.next();
     const nextSlotIndex = slotIndex === 0 ? 1 : 0;
@@ -1381,7 +1383,7 @@ export async function runOneAheadPipeline({
     if (nextPreparation === null) return;
     const settled = await nextPreparation;
     if (!settled.ok) throw settled.error;
-    current = settled.value;
+    current = /** @type {Prepared} */ (settled.value);
     slotIndex = nextSlotIndex;
   }
 }
@@ -1549,7 +1551,7 @@ async function commitPreparedChunk({ client, options, seedStats, prepared }) {
       committedRows = await verifyCommittedChunk(
         client,
         expected,
-        loadedFolios,
+        prepared.result.loadedFolios,
       );
       preparedRows = expected.preparedRows;
     } catch (error) {
