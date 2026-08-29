@@ -305,6 +305,10 @@ function parseBrowardBcsDate(value, fieldName) {
 
   const named = /^([A-Za-z]{3})\s+(\d{1,2}),\s+(\d{4})$/u.exec(value);
   if (named !== null) {
+    const monthName = named[1];
+    if (monthName === undefined) {
+      throw new Error(`Invalid Broward BCS ${fieldName}: ${value}`);
+    }
     const monthIndex = [
       "jan",
       "feb",
@@ -318,7 +322,7 @@ function parseBrowardBcsDate(value, fieldName) {
       "oct",
       "nov",
       "dec",
-    ].indexOf(named[1].toLowerCase());
+    ].indexOf(monthName.toLowerCase());
     if (monthIndex >= 0) {
       return validateCalendarDate(
         Number(named[3]),
@@ -424,9 +428,10 @@ function readGridField(row, fieldPrefix, objectId) {
       `Broward BCS grid has duplicate ${fieldPrefix} fields for ${objectId}`,
     );
   }
-  return matches.length === 0
+  const match = matches[0];
+  return match === undefined
     ? null
-    : readSelectionText(row.find(`#${matches[0].attribs.id}`));
+    : readSelectionText(row.find(`#${match.attribs.id}`));
 }
 
 /**
