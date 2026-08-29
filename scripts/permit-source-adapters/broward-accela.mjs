@@ -494,7 +494,7 @@ export function extractBrowardAccelaPermitLinks({
       address: cellByHeader(["address", "work location"], 2),
       description: cellByHeader(["description", "project name"], 3),
       status: cellByHeader(["status", "record status"], 4),
-      recordType: cellByHeader(["record type", "type"], 5),
+      recordType: cellByHeader(["record type", "type"], -1),
       sourceSearchKey: searchKey,
       sourcePage: pageNumber,
     });

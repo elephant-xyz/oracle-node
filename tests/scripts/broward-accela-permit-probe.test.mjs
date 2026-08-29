@@ -3,6 +3,7 @@ import {
   readFile,
   rm,
   stat,
+  writeFile,
 } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
