@@ -674,6 +674,7 @@ function matchesCitizenserveJurisdiction(recordType, config) {
  * @returns {string | null} Core permit value.
  */
 function readCitizenserveDetailRow($, label) {
+  /** @type {string | null} */
   let found = null;
   $("#permit .row").each((_, row) => {
     if (found !== null) return;

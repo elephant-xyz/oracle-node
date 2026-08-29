@@ -1161,8 +1161,8 @@ function readTylerAddress(value) {
  * @returns {number} Positive integer.
  */
 function readPositiveInteger(value, fieldName) {
-  if (!Number.isInteger(value) || value < 1) {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 1) {
     throw new Error(`${fieldName} must be a positive integer`);
   }
-  return /** @type {number} */ (value);
+  return value;
 }
