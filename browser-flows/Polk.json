@@ -1,0 +1,68 @@
+{
+  "starts_at": "open_search_page",
+  "states": {
+    "open_search_page": {
+      "type": "open_page",
+      "input": {
+        "url": "{{=it.url}}",
+        "timeout": 30000,
+        "wait_until": "domcontentloaded"
+      },
+      "next": "wait_for_parcel_input"
+    },
+    "wait_for_parcel_input": {
+      "type": "wait_for_selector",
+      "input": {
+        "selector": "#searchRE_id",
+        "timeout": 30000,
+        "visible": true
+      },
+      "next": "enter_parcel_id"
+    },
+    "enter_parcel_id": {
+      "type": "type",
+      "input": {
+        "selector": "#searchRE_id",
+        "value": "{{=it.request_identifier}}",
+        "delay": 50,
+        "clear": true
+      },
+      "next": "submit_search"
+    },
+    "submit_search": {
+      "type": "click",
+      "input": {
+        "selector": "#submitSearch"
+      },
+      "next": "wait_for_result"
+    },
+    "wait_for_result": {
+      "type": "wait_for_selector",
+      "input": {
+        "selector": "a[href*='CamaDisplay.aspx?OutputMode=Display'][href*='ParcelID=']",
+        "timeout": 30000,
+        "visible": true
+      },
+      "next": "open_result"
+    },
+    "open_result": {
+      "type": "click",
+      "input": {
+        "selector": "a[href*='CamaDisplay.aspx?OutputMode=Display'][href*='ParcelID=']"
+      },
+      "next": "wait_for_property_details"
+    },
+    "wait_for_property_details": {
+      "type": "wait_for_selector",
+      "input": {
+        "selector": "#valueSummary",
+        "timeout": 30000,
+        "visible": false
+      },
+      "end": true
+    }
+  },
+  "capture": {
+    "type": "page"
+  }
+}

@@ -39,11 +39,14 @@ describe("published county catalog", () => {
     expect(result.counties.length).toBeGreaterThan(0);
     expect(result.counties.map((county) => county.countyKey)).toEqual([
       "chester",
+      "hillsborough",
       "lee",
       "miami-dade",
       "montgomery",
       "orange",
       "palm-beach",
+      "pinellas",
+      "rock-island",
     ]);
   });
 

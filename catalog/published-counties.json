@@ -1,6 +1,6 @@
 {
   "schemaVersion": "1.0",
-  "generatedAt": "2026-08-12T21:47:39.614Z",
+  "generatedAt": "2026-08-29T20:45:00.000Z",
   "counties": [
     {
       "countyKey": "chester",
@@ -12,6 +12,18 @@
       "datasetCoverageUrl": "https://ipfs.filebase.io/ipns/k51qzi5uqu5djzghr538v7zskwn586juujd2nxzsox3fqr66konxwzlb08sebg",
       "permitQueryTableUrl": null,
       "updatedAt": "2026-08-12T21:46:00.000Z"
+    },
+    {
+      "countyKey": "hillsborough",
+      "countyName": "Hillsborough",
+      "stateCode": "FL",
+      "countyFips": "12057",
+      "status": "published",
+      "queryTableUrl": "https://ipfs.filebase.io/ipns/k51qzi5uqu5diqz0l68gfi22qk0w8aqhsm7pcgje535uz8vhu8p37ynm2po0fh",
+      "datasetCoverageUrl": "https://ipfs.filebase.io/ipns/k51qzi5uqu5di5jghjwbpumnr2vt1crmaycqmtx673kw8pqp8dymecuig5x8jb/",
+      "permitQueryTableUrl": null,
+      "placesTableUrl": null,
+      "updatedAt": "2026-08-27T20:05:00.000Z"
     },
     {
       "countyKey": "lee",
@@ -67,6 +79,30 @@
       "datasetCoverageUrl": "https://k51qzi5uqu5djwga4mcd8nx1gbwy4o9rks3gkoe1u5py5wi9tieea7h44nh4g2.ipns.dweb.link/",
       "permitQueryTableUrl": null,
       "updatedAt": "2026-07-02T14:21:44.544Z"
+    },
+    {
+      "countyKey": "pinellas",
+      "countyName": "Pinellas",
+      "stateCode": "FL",
+      "countyFips": "12103",
+      "status": "published",
+      "queryTableUrl": "https://ipfs.filebase.io/ipns/k51qzi5uqu5dhmo3zv6xvidksgvsqkfer3nw1s4v7bcbafpl66btpyab3zv9ir",
+      "datasetCoverageUrl": "https://ipfs.filebase.io/ipns/k51qzi5uqu5djrzm8n599i98ey7rpmwpbphgk8tvo5d6zjkfeqcmbrg7lh03xl/",
+      "permitQueryTableUrl": null,
+      "placesTableUrl": null,
+      "updatedAt": "2026-08-28T09:30:10.000Z"
+    },
+    {
+      "countyKey": "rock-island",
+      "countyName": "Rock Island",
+      "stateCode": "IL",
+      "countyFips": "17161",
+      "status": "published",
+      "queryTableUrl": "https://ipfs.filebase.io/ipns/k51qzi5uqu5djbtswq6lb4p7xbf3nu8bzdzokdtcdld1r2vx6asn7lgfuk54wt",
+      "datasetCoverageUrl": "https://ipfs.filebase.io/ipns/k51qzi5uqu5disduz18ogkvf3f2zgdsizl20o034fu8spgh2khri8uxmeo3khv/",
+      "permitQueryTableUrl": "https://ipfs.filebase.io/ipns/k51qzi5uqu5di42nblo5nuk94aj7af393d9y5vhqxp5dtxikzso0wt14v3p0wa",
+      "placesTableUrl": null,
+      "updatedAt": "2026-08-14T22:34:30.000Z"
     }
   ]
 }
