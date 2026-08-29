@@ -139,9 +139,11 @@ const DASHBOARD_PHASES = new Set([
  * `neon.*` settings before any schema or data mutation.
  *
  * @param {readonly string[]} argv - Arguments after the script filename.
+ * @param {NodeJS.ProcessEnv} [environment=process.env] - Trusted runtime
+ *   environment containing independently verified Neon IDs.
  * @returns {RecoveryOptions} Validated recovery configuration.
  */
-export function parseRecoveryOptions(argv) {
+export function parseRecoveryOptions(argv, environment = process.env) {
   /** @type {Partial<RecoveryOptions> & { mode?: RecoveryMode }} */
   const values = {
     seedPath: DEFAULT_SEED_PATH,
@@ -150,6 +152,8 @@ export function parseRecoveryOptions(argv) {
     workDirectory: DEFAULT_WORK_DIRECTORY,
     chunkSize: DEFAULT_CHUNK_SIZE,
     concurrency: DEFAULT_CONCURRENCY,
+    expectedBranchId: environment.BROWARD_INGEST_NEON_BRANCH_ID,
+    expectedEndpointId: environment.BROWARD_INGEST_NEON_ENDPOINT_ID,
   };
   for (let index = 0; index < argv.length; index += 1) {
     const flag = argv[index];
@@ -188,13 +192,17 @@ export function parseRecoveryOptions(argv) {
     typeof values.expectedBranchId !== "string" ||
     !/^br-[a-z0-9-]+$/u.test(values.expectedBranchId)
   ) {
-    throw new Error("--expected-branch-id must be an explicit Neon br-* ID");
+    throw new Error(
+      "BROWARD_INGEST_NEON_BRANCH_ID or --expected-branch-id must be an explicit Neon br-* ID",
+    );
   }
   if (
     typeof values.expectedEndpointId !== "string" ||
     !/^ep-[a-z0-9-]+$/u.test(values.expectedEndpointId)
   ) {
-    throw new Error("--expected-endpoint-id must be an explicit Neon ep-* ID");
+    throw new Error(
+      "BROWARD_INGEST_NEON_ENDPOINT_ID or --expected-endpoint-id must be an explicit Neon ep-* ID",
+    );
   }
   return /** @type {RecoveryOptions} */ (values);
 }

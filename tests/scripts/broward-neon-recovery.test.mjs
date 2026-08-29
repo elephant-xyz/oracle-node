@@ -67,6 +67,29 @@ describe("durable Broward Neon recovery", () => {
     );
   });
 
+  it("reads verified identity from runtime secrets without putting IDs in argv", () => {
+    const environment = {
+      BROWARD_INGEST_NEON_BRANCH_ID: "br-broward-runtime-test",
+      BROWARD_INGEST_NEON_ENDPOINT_ID: "ep-broward-runtime-test",
+    };
+    expect(parseRecoveryOptions(["--pilot"], environment)).toMatchObject({
+      mode: "pilot",
+      expectedBranchId: "br-broward-runtime-test",
+      expectedEndpointId: "ep-broward-runtime-test",
+    });
+    expect(
+      parseDashboardOptions(
+        ["--host", "0.0.0.0", "--port", "47832"],
+        environment,
+      ),
+    ).toMatchObject({
+      host: "0.0.0.0",
+      port: 47_832,
+      expectedBranchId: "br-broward-runtime-test",
+      expectedEndpointId: "ep-broward-runtime-test",
+    });
+  });
+
   it("builds a deterministic seed signature without numeric folio coercion", async () => {
     const directory = await mkdtemp(
       path.join(tmpdir(), "broward-recovery-seed-"),

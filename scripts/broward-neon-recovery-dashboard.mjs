@@ -81,11 +81,18 @@ const DEFAULT_PORT = 47_832;
  * Parse dashboard network and branch-safety options.
  *
  * @param {readonly string[]} argv - CLI arguments after the script path.
+ * @param {NodeJS.ProcessEnv} [environment=process.env] - Trusted runtime
+ *   environment containing independently verified Neon IDs.
  * @returns {DashboardOptions} Validated fixed-purpose configuration.
  */
-export function parseDashboardOptions(argv) {
+export function parseDashboardOptions(argv, environment = process.env) {
   /** @type {Partial<DashboardOptions>} */
-  const options = { host: DEFAULT_HOST, port: DEFAULT_PORT };
+  const options = {
+    host: DEFAULT_HOST,
+    port: DEFAULT_PORT,
+    expectedBranchId: environment.BROWARD_INGEST_NEON_BRANCH_ID,
+    expectedEndpointId: environment.BROWARD_INGEST_NEON_ENDPOINT_ID,
+  };
   for (let index = 0; index < argv.length; index += 2) {
     const flag = argv[index];
     const value = argv[index + 1];
@@ -118,13 +125,17 @@ export function parseDashboardOptions(argv) {
     typeof options.expectedBranchId !== "string" ||
     !/^br-[a-z0-9-]+$/u.test(options.expectedBranchId)
   ) {
-    throw new Error("--expected-branch-id must be an explicit Neon br-* ID");
+    throw new Error(
+      "BROWARD_INGEST_NEON_BRANCH_ID or --expected-branch-id must be an explicit Neon br-* ID",
+    );
   }
   if (
     typeof options.expectedEndpointId !== "string" ||
     !/^ep-[a-z0-9-]+$/u.test(options.expectedEndpointId)
   ) {
-    throw new Error("--expected-endpoint-id must be an explicit Neon ep-* ID");
+    throw new Error(
+      "BROWARD_INGEST_NEON_ENDPOINT_ID or --expected-endpoint-id must be an explicit Neon ep-* ID",
+    );
   }
   return /** @type {DashboardOptions} */ (options);
 }

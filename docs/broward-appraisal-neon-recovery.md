@@ -70,6 +70,16 @@ Required SHA-256:
 The patch applies to query-db base `15187e2` and creates two commits. The
 verified suite is 30 test files / 398 tests.
 
+The patched loader emits `geometry_rings`. Before the first load, check
+`to_regclass('public.geometry_rings')` in the same read-only identity-gated
+transaction. If absent, apply query-db migration
+`0009_rock_island_geometry_illinois_sos.sql` through the verified unpooled
+connection before running the pilot. Its required SHA-256 at the pinned
+query-db base is
+`bccbaa70e551b00ab2d983e5f82397be00472f4bbca9f80c79b1c476f823a6db`.
+The migration creates new tables and indexes; it must not update existing
+county rows. A partially present migration is a hard stop.
+
 Restore the accepted Broward live-capture transform into a fresh local checkout:
 
 ```bash
@@ -136,13 +146,13 @@ fixed failure class. Dashboard and tmux output are aggregate-only.
 The pilot uses the curated 25 folios first and deterministic official-seed
 fallbacks to replace any source folio that has disappeared. It stops only when
 the isolated branch contains exactly 50 `broward_appraiser` properties and 50
-distinct folios:
+distinct folios. The expected IDs are read directly from the
+`BROWARD_INGEST_NEON_BRANCH_ID` and `BROWARD_INGEST_NEON_ENDPOINT_ID` Runtime
+Secrets so package-manager command output cannot expose them:
 
 ```bash
 npm run broward:recover -- \
   --pilot \
-  --expected-branch-id '<verified-broward-ingest-branch-id>' \
-  --expected-endpoint-id '<verified-broward-ingest-endpoint-id>' \
   --concurrency 4 \
   --chunk-size 50
 ```
@@ -166,7 +176,7 @@ SESSION_NAME=broward-neon-recovery
 tmux -f /exec-daemon/tmux.portal.conf has-session -t "=$SESSION_NAME" 2>/dev/null ||
   tmux -f /exec-daemon/tmux.portal.conf new-session -d -s "$SESSION_NAME" -c /workspace
 tmux -f /exec-daemon/tmux.portal.conf send-keys -t "$SESSION_NAME:0.0" \
-  "npm run broward:recover -- --full --expected-branch-id '<verified-broward-ingest-branch-id>' --expected-endpoint-id '<verified-broward-ingest-endpoint-id>' --concurrency 4 --chunk-size 100" C-m
+  "npm run broward:recover -- --full --concurrency 4 --chunk-size 100" C-m
 ```
 
 Start the aggregate-only dashboard on Cloud Agent preview port 47832:
@@ -176,7 +186,7 @@ SESSION_NAME=broward-neon-recovery-dashboard
 tmux -f /exec-daemon/tmux.portal.conf has-session -t "=$SESSION_NAME" 2>/dev/null ||
   tmux -f /exec-daemon/tmux.portal.conf new-session -d -s "$SESSION_NAME" -c /workspace
 tmux -f /exec-daemon/tmux.portal.conf send-keys -t "$SESSION_NAME:0.0" \
-  "npm run broward:recovery-dashboard -- --host 0.0.0.0 --port 47832 --expected-branch-id '<verified-broward-ingest-branch-id>' --expected-endpoint-id '<verified-broward-ingest-endpoint-id>'" C-m
+  "npm run broward:recovery-dashboard -- --host 0.0.0.0 --port 47832" C-m
 ```
 
 Open `http://127.0.0.1:47832/` inside the VM or preview port 47832. The API is
