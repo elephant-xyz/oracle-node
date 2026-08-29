@@ -12,14 +12,15 @@ does not treat Broward County or Lee County as the issuing agency.
 | Adapter key        | Jurisdiction    | Accela agency | Module     | Validated pilot folio(s)             | Historical boundary |
 | ------------------ | --------------- | ------------- | ---------- | ------------------------------------ | ------------------- |
 | `hollywood`        | Hollywood       | `HOLLYWOOD`   | `Building` | `514111160200`, `514207022070`       | Current Accela start is not certified. The official BCLA address source is separately identified as 1988-present; pre-1988 records require City archives. |
-| `plantation`       | Plantation      | `PLANTATION`  | `Building` | `504108BJ0140`                       | Earliest online date is not certified. |
-| `fort-lauderdale`  | Fort Lauderdale | `FTL`         | `Building` | `494209060010`, `494212072320`       | Earliest LauderBuild online date is not certified. |
+| `plantation`       | Plantation      | `PLANTATION`  | `Building` | `504108BJ0140`                       | The portal warns that records before 2004 may be unavailable online and directs users to City microfilm. |
+| `fort-lauderdale`  | Fort Lauderdale | `FTL`         | `Permits`  | `494209060010`, `494212072320`       | Earliest LauderBuild online date is not certified. |
 | `cooper-city`      | Cooper City     | `COOPER`      | `Building` | `514106100100`                       | Historical record types are visible, but the earliest online date is not certified. |
 | `weston`           | Weston          | `WESTON`      | `Building` | `503912010490`                       | Official City documentation bounds City records to post-1997 history. |
 
 An unknown cutoff is represented as `date: null` with
 `unknown_not_certified`; it never means complete history. Weston retains the
-explicit `1997-01-01` boundary. Hollywood's current Accela records use
+explicit `1997-01-01` boundary. Plantation retains its portal's
+`2004-01-01` online-reliability boundary and microfilm route. Hollywood's current Accela records use
 `broward_hollywood_accela_permits`, while the address-only legacy source uses
 `broward_hollywood_bcla_legacy_permits`. The adapter does not query, merge, or
 deduplicate the legacy source because no official Accela/BCLA migration date
@@ -33,7 +34,8 @@ For each target, the local adapter:
    documented 6-2-4 display form;
 2. uppercases letters without numeric coercion, zero-padding, or Lee STRAP
    rewriting;
-3. opens the configured jurisdiction/module portal anonymously;
+3. opens the configured jurisdiction/module portal anonymously (including
+   Plantation's named `ACAFrame` wrapper);
 4. clears Accela's default dates and submits the exact folio in `Parcel No.`;
 5. captures each result page, follows ASP.NET `Next >` controls, reconciles
    the reported total, and rejects pagination truncated by the configured

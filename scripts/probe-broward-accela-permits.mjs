@@ -611,6 +611,22 @@ export async function runBrowardAccelaProbe(options) {
       } catch (caught) {
         failureCount += 1;
         state.status = "failed";
+        if (
+          caught instanceof BrowardAccelaSourceError &&
+          caught.responseHtml !== null
+        ) {
+          const failureCapturePath = join(
+            options.captureDirectory,
+            source.key,
+            target.parcelIdentifier,
+            "failure",
+            "latest.html",
+          );
+          await writeRawCapture(failureCapturePath, caught.responseHtml);
+          if (!state.searchCapturePaths.includes(failureCapturePath)) {
+            state.searchCapturePaths.push(failureCapturePath);
+          }
+        }
         state.error = checkpointError(caught);
         await writeBrowardAccelaCheckpoint(options.checkpointPath, checkpoint);
         consoleLogger.error("broward_accela_target_failed", {

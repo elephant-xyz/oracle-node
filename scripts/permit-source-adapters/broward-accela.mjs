@@ -24,7 +24,7 @@ import {
  */
 
 /**
- * @typedef {"unknown_not_certified" | "separate_official_source" | "outside_city_record_coverage"} HistoricalDisposition
+ * @typedef {"unknown_not_certified" | "separate_official_source" | "official_microfilm_route" | "outside_city_record_coverage"} HistoricalDisposition
  */
 
 /**
@@ -53,6 +53,7 @@ import {
  * @property {string} portalUrl - Fully qualified anonymous general-search URL.
  * @property {string} sourceSystem - Jurisdiction-specific source identity used in normalized permit records.
  * @property {string} officialEvidenceUrl - Official source/custodian URL documented in the Broward registry.
+ * @property {string | null} contentFrameName - Named frame containing Accela when a municipal wrapper page embeds Citizen Access.
  * @property {readonly string[]} pilotParcels - One or two already-validated Broward appraisal folios for bounded source probes.
  * @property {HistoricalCutoff} historicalCutoff - Explicit pre-source treatment; `null` date means unknown, not unlimited history.
  * @property {SeparateHistoricalSource | null} separateHistoricalSource - Separately queried historical source, if one is documented.
@@ -198,6 +199,7 @@ export const BROWARD_ACCELA_SOURCES = Object.freeze({
     sourceSystem: "broward_hollywood_accela_permits",
     officialEvidenceUrl:
       "https://apps.hollywoodfl.org/building/PermitStatus.aspx",
+    contentFrameName: null,
     pilotParcels: Object.freeze(["514111160200", "514207022070"]),
     historicalCutoff: Object.freeze({
       date: null,
@@ -223,11 +225,12 @@ export const BROWARD_ACCELA_SOURCES = Object.freeze({
     sourceSystem: "broward_plantation_accela_permits",
     officialEvidenceUrl:
       "https://aca.plantation.org/CitizenAccess/Cap/CapHome.aspx?TabName=Building&module=Building",
+    contentFrameName: "ACAFrame",
     pilotParcels: Object.freeze(["504108BJ0140"]),
     historicalCutoff: Object.freeze({
-      date: null,
-      disposition: "unknown_not_certified",
-      note: "No earliest online date is certified in the checked official source; an empty result cannot establish no historical City permit.",
+      date: "2004-01-01",
+      disposition: "official_microfilm_route",
+      note: "The public portal warns that records prior to 2004 may not be available online and directs users to the City microfilm department; absence before this boundary is not a no-permit claim.",
     }),
     separateHistoricalSource: null,
   }),
@@ -235,11 +238,12 @@ export const BROWARD_ACCELA_SOURCES = Object.freeze({
     key: "fort-lauderdale",
     jurisdiction: "Fort Lauderdale",
     agencyCode: "FTL",
-    module: "Building",
+    module: "Permits",
     portalUrl:
-      "https://aca3.accela.com/FTL/Cap/CapHome.aspx?module=Building&TabName=Building",
+      "https://aca-prod.accela.com/FTL/Cap/CapHome.aspx?module=Permits&TabName=Permits",
     sourceSystem: "broward_fort_lauderdale_lauderbuild_permits",
     officialEvidenceUrl: "https://aca3.accela.com/FTL/",
+    contentFrameName: null,
     pilotParcels: Object.freeze(["494209060010", "494212072320"]),
     historicalCutoff: Object.freeze({
       date: null,
@@ -257,6 +261,7 @@ export const BROWARD_ACCELA_SOURCES = Object.freeze({
       "https://aca-prod.accela.com/COOPER/Cap/CapHome.aspx?module=Building&TabName=Building",
     sourceSystem: "broward_cooper_city_accela_permits",
     officialEvidenceUrl: "https://aca-prod.accela.com/COOPER/",
+    contentFrameName: null,
     pilotParcels: Object.freeze(["514106100100"]),
     historicalCutoff: Object.freeze({
       date: null,
@@ -275,6 +280,7 @@ export const BROWARD_ACCELA_SOURCES = Object.freeze({
     sourceSystem: "broward_weston_accela_permits",
     officialEvidenceUrl:
       "https://www.westonfl.org/government/building-code-services",
+    contentFrameName: null,
     pilotParcels: Object.freeze(["503912010490"]),
     historicalCutoff: Object.freeze({
       date: "1997-01-01",
@@ -296,13 +302,15 @@ export class BrowardAccelaSourceError extends Error {
    * @param {BrowardAccelaSource} source - Jurisdiction source configuration.
    * @param {string} message - Human-readable failure explanation.
    * @param {string | null} [url] - Final source URL when available.
+   * @param {string | null} [responseHtml] - Raw source HTML retained in memory so the local runner can write failure evidence.
    */
-  constructor(code, source, message, url = null) {
+  constructor(code, source, message, url = null, responseHtml = null) {
     super(message);
     this.name = "BrowardAccelaSourceError";
     this.code = code;
     this.sourceKey = source.key;
     this.url = url;
+    this.responseHtml = responseHtml;
   }
 }
 
@@ -572,17 +580,57 @@ function matchCollapsedText(text, pattern) {
 }
 
 /**
+ * @typedef {import("puppeteer").Page | import("puppeteer").Frame} AccelaDomContext
+ */
+
+/**
+ * Resolve the DOM context that owns the Citizen Access form. Plantation wraps
+ * Accela in its named `ACAFrame`; the other configured jurisdictions render
+ * the same form in the top-level page.
+ *
+ * @param {import("puppeteer").Page} page - Top-level browser page.
+ * @param {BrowardAccelaSource} source - Jurisdiction source configuration.
+ * @returns {Promise<AccelaDomContext>} Top-level page or configured Accela frame.
+ */
+async function resolveAccelaDomContext(page, source) {
+  if (source.contentFrameName === null) return page;
+  await page.waitForFunction(
+    (frameName) =>
+      Array.from(document.querySelectorAll("iframe")).some(
+        (frame) =>
+          frame.getAttribute("name") === frameName ||
+          frame.getAttribute("id") === frameName,
+      ),
+    { timeout: 45_000 },
+    source.contentFrameName,
+  );
+  const frame = page
+    .frames()
+    .find((candidate) => candidate.name() === source.contentFrameName);
+  if (frame === undefined) {
+    throw new BrowardAccelaSourceError(
+      "unexpected_response",
+      source,
+      `${source.jurisdiction} wrapper did not expose configured frame ${source.contentFrameName}`,
+      page.url(),
+      await page.content(),
+    );
+  }
+  return frame;
+}
+
+/**
  * Set an Accela input through DOM events so ASP.NET masks and change tracking
  * receive the same value that is visibly present in the public form.
  *
- * @param {import("puppeteer").Page} page - Configured browser page.
+ * @param {AccelaDomContext} context - Page or named Accela frame.
  * @param {string} selector - Accela form selector.
  * @param {string} value - Exact value to submit.
  * @returns {Promise<void>} Resolves after the value is set and verified.
  */
-async function setAccelaInput(page, selector, value) {
-  await page.waitForSelector(selector, { timeout: 45_000 });
-  const observed = await page.evaluate(
+async function setAccelaInput(context, selector, value) {
+  await context.waitForSelector(selector, { timeout: 45_000 });
+  const observed = await context.evaluate(
     (inputSelector, inputValue) => {
       const element = document.querySelector(inputSelector);
       if (!(element instanceof HTMLInputElement)) return null;
@@ -605,11 +653,11 @@ async function setAccelaInput(page, selector, value) {
 /**
  * Wait for an Accela search form or a known source/access failure.
  *
- * @param {import("puppeteer").Page} page - Current Accela page.
+ * @param {AccelaDomContext} context - Current page or named Accela frame.
  * @returns {Promise<void>} Resolves when classification can proceed.
  */
-async function waitForSearchFormOrFailure(page) {
-  await page.waitForFunction(
+async function waitForSearchFormOrFailure(context) {
+  await context.waitForFunction(
     (parcelSelector) => {
       if (document.querySelector(parcelSelector) !== null) return true;
       const text = document.body?.innerText ?? "";
@@ -626,11 +674,11 @@ async function waitForSearchFormOrFailure(page) {
  * Wait until the submitted public search has produced a list, detail redirect,
  * explicit no-result marker, or explicit source/access failure.
  *
- * @param {import("puppeteer").Page} page - Current Accela page.
+ * @param {AccelaDomContext} context - Current page or named Accela frame.
  * @returns {Promise<void>} Resolves only on a classifiable outcome.
  */
-async function waitForSearchOutcome(page) {
-  await page.waitForFunction(
+async function waitForSearchOutcome(context) {
+  await context.waitForFunction(
     () => {
       const text = document.body?.innerText ?? "";
       return (
@@ -664,6 +712,7 @@ function requireSuccessfulPageClassification(html, source, url, context) {
       source,
       `${source.jurisdiction} Accela access blocked during ${context}: ${excerpt}`,
       url,
+      html,
     );
   }
   if (classification === "source_error") {
@@ -672,6 +721,7 @@ function requireSuccessfulPageClassification(html, source, url, context) {
       source,
       `${source.jurisdiction} Accela returned an official error during ${context}: ${excerpt}`,
       url,
+      html,
     );
   }
   if (classification === "unknown") {
@@ -680,6 +730,7 @@ function requireSuccessfulPageClassification(html, source, url, context) {
       source,
       `${source.jurisdiction} Accela returned neither records nor an explicit no-records marker during ${context}: ${excerpt}`,
       url,
+      html,
     );
   }
   return classification;
@@ -688,11 +739,11 @@ function requireSuccessfulPageClassification(html, source, url, context) {
 /**
  * Locate and click Accela's ASP.NET `Next >` result link.
  *
- * @param {import("puppeteer").Page} page - Current results page.
+ * @param {AccelaDomContext} context - Current page or named Accela frame.
  * @returns {Promise<boolean>} Whether a next-page action was started.
  */
-async function clickNextPage(page) {
-  return page.evaluate(() => {
+async function clickNextPage(context) {
+  return context.evaluate(() => {
     const next = Array.from(document.querySelectorAll("a")).find(
       (anchor) =>
         (anchor.textContent ?? "").replace(/\s+/g, " ").trim() === "Next >" &&
@@ -707,11 +758,11 @@ async function clickNextPage(page) {
 /**
  * Determine whether the current result DOM exposes another page.
  *
- * @param {import("puppeteer").Page} page - Current results page.
+ * @param {AccelaDomContext} context - Current page or named Accela frame.
  * @returns {Promise<boolean>} True when an ASP.NET `Next >` link is present.
  */
-async function hasNextPage(page) {
-  return page.evaluate(() =>
+async function hasNextPage(context) {
+  return context.evaluate(() =>
     Array.from(document.querySelectorAll("a")).some(
       (anchor) =>
         (anchor.textContent ?? "").replace(/\s+/g, " ").trim() === "Next >" &&
@@ -773,8 +824,34 @@ export async function searchBrowardAccelaParcel({
       waitUntil: "domcontentloaded",
       timeout: 60_000,
     });
-    await waitForSearchFormOrFailure(page);
-    const initialHtml = await page.content();
+    const context = await resolveAccelaDomContext(page, source);
+    try {
+      await waitForSearchFormOrFailure(context);
+    } catch (caught) {
+      const failureHtml = await context.content();
+      const failureUrl = context.url();
+      const classification = classifyBrowardAccelaPage(failureHtml);
+      if (
+        classification === "access_blocked" ||
+        classification === "source_error" ||
+        classification === "unknown"
+      ) {
+        requireSuccessfulPageClassification(
+          failureHtml,
+          source,
+          failureUrl,
+          "search form load",
+        );
+      }
+      throw new BrowardAccelaSourceError(
+        "unexpected_response",
+        source,
+        `${source.jurisdiction} Accela search form did not become ready: ${caught instanceof Error ? caught.message : String(caught)}`,
+        failureUrl,
+        failureHtml,
+      );
+    }
+    const initialHtml = await context.content();
     const initialClassification = classifyBrowardAccelaPage(initialHtml);
     if (
       initialClassification === "access_blocked" ||
@@ -783,47 +860,73 @@ export async function searchBrowardAccelaParcel({
       requireSuccessfulPageClassification(
         initialHtml,
         source,
-        page.url(),
+        context.url(),
         "search form load",
       );
     }
-    if (await page.$(DEFAULT_SELECTORS.parcel) === null) {
+    if (await context.$(DEFAULT_SELECTORS.parcel) === null) {
       throw new BrowardAccelaSourceError(
         "unexpected_response",
         source,
         `${source.jurisdiction} Accela did not expose the configured public parcel field`,
-        page.url(),
+        context.url(),
+        initialHtml,
       );
     }
 
-    await setAccelaInput(page, DEFAULT_SELECTORS.startDate, "");
-    await setAccelaInput(page, DEFAULT_SELECTORS.endDate, "");
+    await setAccelaInput(context, DEFAULT_SELECTORS.startDate, "");
+    await setAccelaInput(context, DEFAULT_SELECTORS.endDate, "");
     await setAccelaInput(
-      page,
+      context,
       DEFAULT_SELECTORS.parcel,
       normalizedParcelIdentifier,
     );
     await Promise.allSettled([
-      page.waitForNavigation({
+      context.waitForNavigation({
         waitUntil: "domcontentloaded",
         timeout: 60_000,
       }),
-      page.click(DEFAULT_SELECTORS.submit),
+      context.click(DEFAULT_SELECTORS.submit),
     ]);
-    await waitForSearchOutcome(page);
+    try {
+      await waitForSearchOutcome(context);
+    } catch (caught) {
+      const failureHtml = await context.content();
+      const failureUrl = context.url();
+      const classification = classifyBrowardAccelaPage(failureHtml);
+      if (
+        classification === "access_blocked" ||
+        classification === "source_error" ||
+        classification === "unknown"
+      ) {
+        requireSuccessfulPageClassification(
+          failureHtml,
+          source,
+          failureUrl,
+          `parcel search ${searchKey}`,
+        );
+      }
+      throw new BrowardAccelaSourceError(
+        "unexpected_response",
+        source,
+        `${source.jurisdiction} Accela search outcome did not become ready: ${caught instanceof Error ? caught.message : String(caught)}`,
+        failureUrl,
+        failureHtml,
+      );
+    }
 
     for (let pageNumber = 1; pageNumber <= maxPages; pageNumber += 1) {
-      const html = await page.content();
+      const html = await context.content();
       const text = htmlToText(html);
       const classification = requireSuccessfulPageClassification(
         html,
         source,
-        page.url(),
+        context.url(),
         `parcel search ${searchKey} page ${String(pageNumber)}`,
       );
       const directDetail = extractBrowardAccelaDirectDetailLink({
         html,
-        pageUrl: page.url(),
+        pageUrl: context.url(),
         source,
         searchKey,
         pageNumber,
@@ -831,7 +934,7 @@ export async function searchBrowardAccelaParcel({
       if (directDetail !== null) {
         pages.push({
           pageNumber,
-          url: page.url(),
+          url: context.url(),
           resultSummary: "detail page",
           html,
         });
@@ -844,7 +947,7 @@ export async function searchBrowardAccelaParcel({
       reportedTotal = reportedTotal ?? parsedSummary.total;
       pages.push({
         pageNumber,
-        url: page.url(),
+        url: context.url(),
         resultSummary: parsedSummary.summary,
         html,
       });
@@ -854,7 +957,8 @@ export async function searchBrowardAccelaParcel({
             "unexpected_response",
             source,
             `${source.jurisdiction} Accela mixed an explicit no-records marker with record pages`,
-            page.url(),
+            context.url(),
+            html,
           );
         }
         logger.info("broward_accela_parcel_no_records", {
@@ -884,7 +988,8 @@ export async function searchBrowardAccelaParcel({
           "unexpected_response",
           source,
           `${source.jurisdiction} Accela indicated records but exposed no permit detail links on page ${String(pageNumber)}`,
-          page.url(),
+          context.url(),
+          html,
         );
       }
       permits.push(...pageLinks);
@@ -896,14 +1001,15 @@ export async function searchBrowardAccelaParcel({
         reportedTotal,
       });
 
-      const nextAvailable = await hasNextPage(page);
+      const nextAvailable = await hasNextPage(context);
       if (!nextAvailable) {
         if (reportedTotal !== null && permits.length < reportedTotal) {
           throw new BrowardAccelaSourceError(
             "incomplete_pagination",
             source,
             `${source.jurisdiction} Accela exposed ${String(permits.length)} of ${String(reportedTotal)} reported records without a next page`,
-            page.url(),
+            context.url(),
+            html,
           );
         }
         break;
@@ -913,20 +1019,22 @@ export async function searchBrowardAccelaParcel({
           "incomplete_pagination",
           source,
           `${source.jurisdiction} Accela still exposed a next page at the maxPages limit ${String(maxPages)}`,
-          page.url(),
+          context.url(),
+          html,
         );
       }
 
       const priorSummary = parsedSummary.summary;
-      if (!(await clickNextPage(page))) {
+      if (!(await clickNextPage(context))) {
         throw new BrowardAccelaSourceError(
           "incomplete_pagination",
           source,
           `${source.jurisdiction} Accela next-page control disappeared before it could be clicked`,
-          page.url(),
+          context.url(),
+          html,
         );
       }
-      await page.waitForFunction(
+      await context.waitForFunction(
         (previousSummary) => {
           const bodyText = document.body?.innerText ?? "";
           if (
@@ -1220,31 +1328,57 @@ export async function captureBrowardAccelaPermitDetail({
       waitUntil: "domcontentloaded",
       timeout: 60_000,
     });
-    await page.waitForFunction(
-      (recordNumber) => {
-        const text = document.body?.innerText ?? "";
-        return (
-          text.toUpperCase().includes(String(recordNumber).toUpperCase()) ||
-          /access denied|captcha|technical difficulties|unable to proceed|Object reference not set|error\(s\) occurred on current page|temporarily unavailable/i.test(
-            text,
-          )
+    const context = await resolveAccelaDomContext(page, source);
+    try {
+      await context.waitForFunction(
+        (recordNumber) => {
+          const text = document.body?.innerText ?? "";
+          return (
+            text.toUpperCase().includes(String(recordNumber).toUpperCase()) ||
+            /access denied|captcha|technical difficulties|unable to proceed|Object reference not set|error\(s\) occurred on current page|temporarily unavailable/i.test(
+              text,
+            )
+          );
+        },
+        { timeout: 60_000 },
+        permit.recordNumber,
+      );
+    } catch (caught) {
+      const failureHtml = await context.content();
+      const failureUrl = context.url();
+      const classification = classifyBrowardAccelaPage(failureHtml);
+      if (
+        classification === "access_blocked" ||
+        classification === "source_error" ||
+        classification === "unknown"
+      ) {
+        requireSuccessfulPageClassification(
+          failureHtml,
+          source,
+          failureUrl,
+          `detail ${permit.recordNumber}`,
         );
-      },
-      { timeout: 60_000 },
-      permit.recordNumber,
-    );
-    const html = await page.content();
+      }
+      throw new BrowardAccelaSourceError(
+        "unexpected_response",
+        source,
+        `${source.jurisdiction} Accela detail did not become ready for ${permit.recordNumber}: ${caught instanceof Error ? caught.message : String(caught)}`,
+        failureUrl,
+        failureHtml,
+      );
+    }
+    const html = await context.content();
     requireSuccessfulPageClassification(
       html,
       source,
-      page.url(),
+      context.url(),
       `detail ${permit.recordNumber}`,
     );
     return {
       html,
       record: extractBrowardAccelaPermitDetail({
         html,
-        sourceUrl: page.url(),
+        sourceUrl: context.url(),
         source,
         parcelIdentifier,
         permit,

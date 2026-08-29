@@ -73,6 +73,10 @@ describe("Broward jurisdiction-specific Accela adapters", () => {
       ).size,
     ).toBe(5);
     expect(BROWARD_ACCELA_SOURCES.hollywood.module).toBe("Building");
+    expect(BROWARD_ACCELA_SOURCES.plantation.contentFrameName).toBe(
+      "ACAFrame",
+    );
+    expect(BROWARD_ACCELA_SOURCES["fort-lauderdale"].module).toBe("Permits");
     expect(
       BROWARD_ACCELA_SOURCES.hollywood.separateHistoricalSource,
     ).toMatchObject({
@@ -90,8 +94,8 @@ describe("Broward jurisdiction-specific Accela adapters", () => {
     expect(
       BROWARD_ACCELA_SOURCES.plantation.historicalCutoff,
     ).toMatchObject({
-      date: null,
-      disposition: "unknown_not_certified",
+      date: "2004-01-01",
+      disposition: "official_microfilm_route",
     });
     expect(readBrowardAccelaSource("fort-lauderdale").agencyCode).toBe("FTL");
     expect(() => readBrowardAccelaSource("lee")).toThrow(

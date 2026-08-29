@@ -159,7 +159,7 @@ permits:
     status: discovered
   - jurisdiction: Hollywood
     portal: https://apps.hollywoodfl.org/building/PermitStatus.aspx
-    current_portal: https://aca-prod.accela.com/HOLLYWOOD/Default.aspx
+    current_portal: https://aca-prod.accela.com/HOLLYWOOD/Cap/CapHome.aspx?module=Building&TabName=Building
     vendor: Accela Citizen Access + legacy BCLA
     search: address; history from 1988
     adapter: ../scripts/probe-broward-accela-permits.mjs
@@ -175,16 +175,18 @@ permits:
     adapter: ../scripts/probe-broward-accela-permits.mjs
     agency_code: PLANTATION
     module: Building
-    history_start: unknown-not-certified
+    online_history_reliability_start: "2004-01-01"
+    pre_2004_route: City microfilm department
     status: local-accela-adapter
   - jurisdiction: Fort Lauderdale
-    portal: https://aca3.accela.com/FTL/
+    portal: https://aca-prod.accela.com/FTL/Cap/CapHome.aspx?module=Permits&TabName=Permits
+    official: https://aca3.accela.com/FTL/
     vendor: Accela Citizen Access
     search: anonymous global / permit module / parcel / address
     aka: LauderBuild
     adapter: ../scripts/probe-broward-accela-permits.mjs
     agency_code: FTL
-    module: Building
+    module: Permits
     history_start: unknown-not-certified
     status: local-accela-adapter
   - jurisdiction: Coral Springs
