@@ -594,20 +594,12 @@ function matchCollapsedText(text, pattern) {
  */
 async function resolveAccelaDomContext(page, source) {
   if (source.contentFrameName === null) return page;
-  await page.waitForFunction(
-    (frameName) =>
-      Array.from(document.querySelectorAll("iframe")).some(
-        (frame) =>
-          frame.getAttribute("name") === frameName ||
-          frame.getAttribute("id") === frameName,
-      ),
-    { timeout: 45_000 },
-    source.contentFrameName,
-  );
-  const frame = page
-    .frames()
-    .find((candidate) => candidate.name() === source.contentFrameName);
-  if (frame === undefined) {
+  try {
+    return await page.waitForFrame(
+      (candidate) => candidate.name() === source.contentFrameName,
+      { timeout: 45_000 },
+    );
+  } catch {
     throw new BrowardAccelaSourceError(
       "unexpected_response",
       source,
@@ -616,7 +608,6 @@ async function resolveAccelaDomContext(page, source) {
       await page.content(),
     );
   }
-  return frame;
 }
 
 /**
@@ -647,6 +638,21 @@ async function setAccelaInput(context, selector, value) {
     throw new Error(
       `Accela form did not retain submitted value for ${selector}: ${String(observed)}`,
     );
+  }
+}
+
+/**
+ * Clear an optional Accela date field when the jurisdiction renders it. Some
+ * modules, including LauderBuild Permits, omit date inputs entirely; absence
+ * is valid because no hidden date constraint then needs to be removed.
+ *
+ * @param {AccelaDomContext} context - Page or named Accela frame.
+ * @param {string} selector - Optional date-field selector.
+ * @returns {Promise<void>} Resolves after the existing field is cleared.
+ */
+async function clearOptionalAccelaInput(context, selector) {
+  if ((await context.$(selector)) !== null) {
+    await setAccelaInput(context, selector, "");
   }
 }
 
@@ -874,8 +880,8 @@ export async function searchBrowardAccelaParcel({
       );
     }
 
-    await setAccelaInput(context, DEFAULT_SELECTORS.startDate, "");
-    await setAccelaInput(context, DEFAULT_SELECTORS.endDate, "");
+    await clearOptionalAccelaInput(context, DEFAULT_SELECTORS.startDate);
+    await clearOptionalAccelaInput(context, DEFAULT_SELECTORS.endDate);
     await setAccelaInput(
       context,
       DEFAULT_SELECTORS.parcel,
