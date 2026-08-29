@@ -1,0 +1,17 @@
+{
+  "data": {
+    "record": {
+      "id": "record-100",
+      "recordNumber": "LL-2026-100",
+      "parcelNumber": "494219AB0010",
+      "address": "4300 NW 36TH ST",
+      "applicationDate": "08/01/2026",
+      "issueDate": "08/15/2026",
+      "expirationDate": "02/15/2027",
+      "status": "Issued",
+      "recordType": "Roof",
+      "description": "COMMERCIAL RE-ROOF",
+      "valuation": "12500"
+    }
+  }
+}
