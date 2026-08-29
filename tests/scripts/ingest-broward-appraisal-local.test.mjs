@@ -3,8 +3,10 @@ import { describe, expect, it } from "vitest";
 import {
   buildBrowardSeedEntities,
   buildBrowardSourceRequest,
+  classifyRedactedFailure,
   parseCliOptions,
   runWorkerHandoffs,
+  serializeIngestResult,
 } from "../../scripts/ingest-broward-appraisal-local.mjs";
 
 describe("Broward local appraisal ingestion", () => {
@@ -85,11 +87,13 @@ describe("Broward local appraisal ingestion", () => {
         "/private/pilot-captures.zip",
         "--start-row",
         "2600",
+        "--redact-results",
       ]),
     ).toMatchObject({
       artifactMode: "query-data-only",
       captureSource: "/private/pilot-captures.zip",
       outputDirectory: "downloads/broward/query-data-only-ingestion",
+      redactResults: true,
       startRow: 2600,
     });
     expect(() =>
@@ -101,6 +105,38 @@ describe("Broward local appraisal ingestion", () => {
     ).toThrow(/must include 'query-data-only'/);
     expect(() => parseCliOptions(["--start-row", "2600"])).toThrow(
       /only with --query-data-only/,
+    );
+  });
+
+  it("removes folios and free-text errors from recovery journals", () => {
+    const sourceMiss = {
+      rowIndex: 12,
+      folio: "504108BJ0140",
+      status: "source_error",
+      durationMs: 120,
+      propertyUsageType: null,
+      error:
+        "Broward folio 504108BJ0140 returned no parcelInfok__BackingField records",
+    };
+    expect(classifyRedactedFailure(sourceMiss)).toBe("source_miss");
+    const serialized = serializeIngestResult(
+      sourceMiss,
+      "query-data-only",
+      true,
+      "2026-08-29T00:00:00.000Z",
+    );
+    expect(serialized).toEqual({
+      timestamp: "2026-08-29T00:00:00.000Z",
+      artifactMode: "query-data-only",
+      rowIndex: 12,
+      status: "source_error",
+      durationMs: 120,
+      propertyUsageType: null,
+      failureClass: "source_miss",
+    });
+    expect(JSON.stringify(serialized)).not.toContain("504108BJ0140");
+    expect(JSON.stringify(serialized)).not.toContain(
+      "parcelInfok__BackingField",
     );
   });
 

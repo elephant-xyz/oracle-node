@@ -81,6 +81,8 @@ const TRANSFORM_WORKER_PATH = fileURLToPath(
  *   Full publication transform or explicitly non-publishable query-data-only transform.
  * @property {string | null} captureSource - Optional ZIP or sharded gzip capture source.
  * @property {number} startRow - Initial source row for a new, explicitly migrated data-only run.
+ * @property {boolean} redactResults
+ *   Replace folios and free-text errors in the private result journal with aggregate-safe fields.
  *
  * @typedef {object} LocalIngestState
  * @property {string} schemaVersion - Stable local checkpoint schema.
@@ -148,6 +150,7 @@ export function parseCliOptions(argv) {
     artifactMode: PUBLISHABLE_MODE,
     captureSource: null,
     startRow: 0,
+    redactResults: false,
   };
   let outputWasSet = false;
   for (let index = 0; index < argv.length; index += 1) {
@@ -158,6 +161,10 @@ export function parseCliOptions(argv) {
     }
     if (flag === "--query-data-only") {
       options.artifactMode = QUERY_DATA_ONLY_MODE;
+      continue;
+    }
+    if (flag === "--redact-results") {
+      options.redactResults = true;
       continue;
     }
     const value = argv[index + 1];
@@ -874,6 +881,64 @@ function applyResults(state, results) {
 }
 
 /**
+ * Classify one parcel failure without retaining source text or its folio.
+ *
+ * Expected GIS-only appraiser misses have a stable marker emitted by
+ * `requireParcelRecords`. All other source and transform failures are reduced
+ * to their fixed pipeline stage. Successful results have no failure class.
+ *
+ * @param {LocalIngestResult} result - Complete in-memory parcel outcome.
+ * @returns {"source_miss" | "source_error" | "transform_error" | null}
+ *   Aggregate-safe failure category.
+ */
+export function classifyRedactedFailure(result) {
+  if (result.status === "transform_error") return "transform_error";
+  if (result.status !== "source_error") return null;
+  return typeof result.error === "string" &&
+    result.error.includes("returned no parcelInfok__BackingField")
+    ? "source_miss"
+    : "source_error";
+}
+
+/**
+ * Serialize one parcel result for the append-only local journal.
+ *
+ * Recovery mode deliberately omits `folio` and free-text `error`; `rowIndex`
+ * is sufficient for the in-process orchestrator to correlate an outcome with
+ * its bounded seed chunk. The normal legacy journal remains unchanged unless
+ * the caller explicitly enables redaction.
+ *
+ * @param {LocalIngestResult} result - Complete in-memory parcel outcome.
+ * @param {BrowardArtifactMode} artifactMode - Guarded artifact contract.
+ * @param {boolean} redactResults - Whether identifiers and source text must be omitted.
+ * @param {string} timestamp - ISO timestamp shared with the journal entry.
+ * @returns {Record<string, string | number | null>} JSON-safe journal record.
+ */
+export function serializeIngestResult(
+  result,
+  artifactMode,
+  redactResults,
+  timestamp,
+) {
+  if (!redactResults) {
+    return {
+      timestamp,
+      artifactMode,
+      ...result,
+    };
+  }
+  return {
+    timestamp,
+    artifactMode,
+    rowIndex: result.rowIndex,
+    status: result.status,
+    durationMs: result.durationMs,
+    propertyUsageType: result.propertyUsageType,
+    failureClass: classifyRedactedFailure(result),
+  };
+}
+
+/**
  * Keep every long-lived worker busy by handing it the next seed row as soon as
  * its previous transform finishes.
  *
@@ -1088,11 +1153,14 @@ export async function runLocalIngestion(options) {
           resultsPath,
           results
             .map((result) =>
-              JSON.stringify({
-                timestamp: new Date().toISOString(),
-                artifactMode: options.artifactMode,
-                ...result,
-              }),
+              JSON.stringify(
+                serializeIngestResult(
+                  result,
+                  options.artifactMode,
+                  options.redactResults,
+                  new Date().toISOString(),
+                ),
+              ),
             )
             .join("\n")
             .concat("\n"),
