@@ -1,0 +1,22 @@
+{
+  "data": {
+    "searchRecords": {
+      "edges": [
+        {
+          "node": {
+            "id": "record-100",
+            "recordNumber": "LL-2026-100",
+            "publicUrl": "https://lauderdalelakesfl.portal.opengov.com/records/record-100",
+            "address": "4300 NW 36TH ST",
+            "status": "Issued",
+            "recordType": "Roof"
+          }
+        }
+      ],
+      "pageInfo": {
+        "hasNextPage": true,
+        "endCursor": "fixture-cursor-2"
+      }
+    }
+  }
+}

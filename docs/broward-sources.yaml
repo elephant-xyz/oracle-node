@@ -183,12 +183,12 @@ permits:
     portal: https://c2g.pompanobeachfl.gov/Click2GovBP/selectpermit.html
     vendor: Click2Gov
     search: address | parcel number | name
-    status: discovered
+    status: bounded-protocol-prototype
   - jurisdiction: Davie
     portal: https://esuite.davie-fl.gov/eSuite.Permits/WelcomePage.aspx
     vendor: eSuite
     search: public service address
-    status: discovered
+    status: bounded-protocol-prototype
   - jurisdiction: Pembroke Pines
     portal: https://pembrokepinesfl-energovweb.tylerhost.net/apps/selfservice
     apply: https://www.ppines.com/developmenthub
@@ -205,11 +205,11 @@ permits:
     official: https://www.daniabeachfl.gov/building-division
     portal: https://cityofdaniabeachfl.nwerp.tylerapp.com/nwprod/eSuite.Permits/
     vendor: Tyler eSuite
-    status: public-search-documented
+    status: bounded-protocol-prototype
   - jurisdiction: Deerfield Beach
     portal: https://apps.gov-easy.com/Home/PermitInspection/Search?clientId=dce877e0-e162-4827-a60d-7249ec4e8fe2
     current_portal: https://deerfieldbeach.geocivix.com/secure/
-    status: split-history-documented
+    status: captcha-and-login-skips-documented
   - jurisdiction: Hallandale Beach
     official: https://cohb.org/Faq.aspx?QID=75
     vendor: Tyler EnerGov
@@ -221,7 +221,7 @@ permits:
   - jurisdiction: Lauderdale Lakes
     portal: https://lauderdalelakesfl.portal.opengov.com/search
     vendor: OpenGov
-    status: public-search-documented
+    status: public-landing-temporarily-unavailable
   - jurisdiction: Lauderdale-by-the-Sea
     official: https://www.lauderdalebythesea-fl.gov/535/e-Permits-Broward-County
     portal: https://www6.citizenserve.com/Portal/PortalController?Action=showHomePage&ctzPagePrefix=Portal_&installationID=117
@@ -230,7 +230,7 @@ permits:
   - jurisdiction: Lauderhill
     portal: http://egov.lauderhill-fl.gov/eGovPlus83/permit/perm_status.aspx
     vendor: eGovPLUS
-    status: public-search-documented
+    status: bounded-protocol-prototype
   - jurisdiction: Lazy Lake
     portal: https://dpepp.broward.org/BCS/Default.aspx?PossePresentation=ParcelSearchByAddress
     status: delegated-bcs-documented
@@ -238,11 +238,11 @@ permits:
     official: https://lighthousepointfl.gov/352/Broward-County-ePermits-OneStop
     portal: https://ci-lighthousepoint-fl.smartgovcommunity.com/ApplicationPublic/ApplicationHome
     vendor: Granicus SmartGov
-    status: public-search-documented
+    status: bounded-empty-result-prototype
   - jurisdiction: Margate
     portal: https://marg-egov.aspgov.com/Click2GovBP/selectpermit.html
     vendor: Click2Gov
-    status: public-search-documented
+    status: bounded-protocol-prototype
   - jurisdiction: Miramar
     official: https://www.miramarfl.gov/Departments/Building-Planning-Zoning/Building-Permits-Inspections/Online-Permitting
     status: public-search-documented
@@ -261,7 +261,7 @@ permits:
   - jurisdiction: Pembroke Park
     official: https://www.tppfl.gov/194/Online-Permitting-System
     vendor: Gov-Easy
-    status: public-status-documented
+    status: captcha-skip-documented
   - jurisdiction: Sea Ranch Lakes
     status: custodian-documented
   - jurisdiction: Southwest Ranches
@@ -271,12 +271,14 @@ permits:
   - jurisdiction: Sunrise
     portal: https://www.sunrisefl.gov/openforbusiness
     official_records: https://www.sunrisefl.gov/departments-services/community-development/building/building-records
+    official_records_form: https://www.sunrisefl.gov/home/showpublisheddocument/8444/638949136343770000
+    official_records_custodian: https://www.sunrisefl.gov/departments-services/city-clerk/public-records-lien-searches
     status: records-request-documented # self-service returned 403 from this egress
   - jurisdiction: Tamarac
     portal: https://e-gov.tamarac.org/Click2GovBP/selectpermit.html
     official: https://tamarac.gov/672/Permit-History
     vendor: Click2Gov
-    status: public-search-documented
+    status: bounded-protocol-prototype
   - jurisdiction: West Park
     portal: https://www6.citizenserve.com/Portal/PortalController?Action=showSearchPage&ctzPagePrefix=Portal_&installationID=261&original_contactID=0&original_iid=0
     vendor: Citizenserve / CAP Government

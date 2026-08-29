@@ -1,0 +1,8 @@
+{
+  "extends": "./jsconfig.json",
+  "include": [
+    "permit-source-adapters/broward-municipal-core.mjs",
+    "permit-source-adapters/broward-municipal-config.mjs",
+    "permit-source-adapters/broward-municipal-protocols.mjs"
+  ]
+}
