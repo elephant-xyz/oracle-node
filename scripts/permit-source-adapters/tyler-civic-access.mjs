@@ -211,6 +211,23 @@ function readApiResult(payload) {
 }
 
 /**
+ * Read Tyler's total-page count, accepting zero for an empty result set.
+ *
+ * @param {unknown} payload - Parsed public search response.
+ * @returns {number} Non-negative source page count.
+ */
+export function readTylerTotalPages(payload) {
+  if (
+    !isRecord(payload) ||
+    payload.Success !== true ||
+    !isRecord(payload.Result)
+  ) {
+    throw new Error("Tyler search response has no pagination result");
+  }
+  return readNonNegativeInteger(payload.Result.TotalPages, "Tyler TotalPages");
+}
+
+/**
  * Determine whether a Civic Access search entity represents a permit.
  *
  * Tyler identifies permits with search module `2`; accepting the literal `"permit"`
@@ -783,7 +800,7 @@ export async function probeBoundedTylerCivicAccess({
   /** @type {TylerBoundedPageObservation[]} */
   const observations = [];
   let reportedTotal = 0;
-  let reportedTotalPages = 1;
+  let reportedTotalPages = 0;
   let paginationTruncated = false;
   let detailsTruncated = false;
 
@@ -821,12 +838,7 @@ export async function probeBoundedTylerCivicAccess({
       }
 
       const result = readApiResult(payload);
-      const totalPages = readPositiveInteger(
-        isRecord(payload) && isRecord(payload.Result)
-          ? payload.Result.TotalPages
-          : null,
-        "Tyler TotalPages",
-      );
+      const totalPages = readTylerTotalPages(payload);
       const totalFound = result.TotalFound ?? result.EntityResults.length;
       reportedTotal = Math.max(reportedTotal, totalFound);
       reportedTotalPages = Math.max(reportedTotalPages, totalPages);
@@ -1154,15 +1166,15 @@ function readTylerAddress(value) {
 }
 
 /**
- * Require a positive integer from a public pagination envelope.
+ * Require a non-negative integer from a public pagination envelope.
  *
  * @param {unknown} value - Candidate count.
  * @param {string} fieldName - Source field used in errors.
- * @returns {number} Positive integer.
+ * @returns {number} Non-negative integer.
  */
-function readPositiveInteger(value, fieldName) {
-  if (typeof value !== "number" || !Number.isInteger(value) || value < 1) {
-    throw new Error(`${fieldName} must be a positive integer`);
+function readNonNegativeInteger(value, fieldName) {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
+    throw new Error(`${fieldName} must be a non-negative integer`);
   }
   return value;
 }

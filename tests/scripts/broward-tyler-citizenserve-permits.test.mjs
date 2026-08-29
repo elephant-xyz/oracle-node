@@ -23,7 +23,10 @@ import {
   parseCitizenservePermitDetailHtml,
   parseCitizenserveSearchResultsHtml,
 } from "../../scripts/permit-source-adapters/citizenserve.mjs";
-import { normalizeTylerPermitDetailResponse } from "../../scripts/permit-source-adapters/tyler-civic-access.mjs";
+import {
+  normalizeTylerPermitDetailResponse,
+  readTylerTotalPages,
+} from "../../scripts/permit-source-adapters/tyler-civic-access.mjs";
 import { parseOptions } from "../../scripts/probe-broward-municipal-permits.mjs";
 
 const fixtureDirectory = new URL(
@@ -174,6 +177,21 @@ describe("bounded Tyler Civic Access detail normalization", () => {
       }),
     ).toThrow("detail parcel differs");
   });
+
+  it("accepts zero Tyler pages only as a typed empty pagination count", () => {
+    expect(
+      readTylerTotalPages({
+        Success: true,
+        Result: { TotalPages: 0, EntityResults: [], TotalFound: 0 },
+      }),
+    ).toBe(0);
+    expect(() =>
+      readTylerTotalPages({
+        Success: true,
+        Result: { TotalPages: -1 },
+      }),
+    ).toThrow("non-negative integer");
+  });
 });
 
 describe("bounded Citizenserve/CAP Government parsing", () => {
@@ -233,6 +251,7 @@ describe("bounded Citizenserve/CAP Government parsing", () => {
       record_type: "Lauderdale-By-The-Sea Permit",
       work_class: "Structural",
       project_description: "RE-ROOF",
+      is_roof_permit: true,
       provenance: {
         official_source_url:
           "https://lauderdalebythesea-fl.gov/152/Building-Division",
