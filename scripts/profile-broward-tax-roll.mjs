@@ -279,6 +279,7 @@ export async function profileBrowardTaxRoll(options) {
         sourceRows -
         parcelIds.size -
         missingParcelIds -
+        malformedParcelIds -
         duplicateRowsBeyondFirst,
     },
   };
