@@ -19,6 +19,8 @@ The existing durable recovery ledger remains authoritative for recovery:
 
 - `ingest_control.broward_appraisal_chunks`
 - `ingest_control.broward_appraisal_terminal_items`
+- `ingest_control.broward_appraisal_completed_items`
+- `ingest_control.broward_appraisal_gates`
 - `ingest_control.broward_appraisal_events`
 - durable `broward_appraiser` properties after verified load commits
 
@@ -109,7 +111,7 @@ Use these mappings from the existing ledger:
 | Dashboard argument | Durable source |
 | --- | --- |
 | attempted | Unique/capped checkpoint coverage maintained by the recovery; never use an uncapped retry total |
-| succeeded | Current verified `broward_appraiser` property count |
+| succeeded | Current completed-item count after exact logical-row verification; visible property count must be at least this value |
 | source misses | Current terminal-item count |
 | source failures | Sum of `broward_appraisal_events` where stage is `source_error` |
 | transform failures | Sum where stage is `transform_error` |
