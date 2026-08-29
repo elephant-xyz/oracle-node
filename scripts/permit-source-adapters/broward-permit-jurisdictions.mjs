@@ -5,6 +5,14 @@
  */
 
 /**
+ * Existing Broward appraisal evidence safe for a one-property source probe.
+ *
+ * @typedef {object} BrowardValidatedPermitSample
+ * @property {string} folio - Exact 12-character validated folio.
+ * @property {string} address - Appraiser situs address.
+ */
+
+/**
  * @typedef {object} BrowardPermitJurisdictionConfig
  * @property {string} key - Stable CLI/configuration key.
  * @property {string} city - Issuing municipality written to normalized records.
@@ -18,9 +26,7 @@
  * @property {string | null} skipReason - Explicit reason that automated record search is disabled.
  * @property {number | null} citizenserveInstallationId - Citizenserve tenant ID, otherwise `null`.
  * @property {readonly string[]} permitTypeTokens - Citizenserve row tokens proving issuing jurisdiction.
- * @property {object | null} validatedSample - Existing Broward appraisal validation evidence.
- * @property {string} validatedSample.folio - Exact 12-character validated folio.
- * @property {string} validatedSample.address - Appraiser situs address.
+ * @property {BrowardValidatedPermitSample | null} validatedSample - Existing Broward appraisal validation evidence.
  */
 
 /**

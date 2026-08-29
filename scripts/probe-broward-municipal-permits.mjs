@@ -98,9 +98,13 @@ function parseBoundedInteger(value, flag, minimum, maximum) {
  * @returns {BrowardMunicipalPermitProbeOptions | null} Options, or `null` for help.
  */
 export function parseOptions(args) {
+  /** @type {string | null} */
   let jurisdictionKey = null;
+  /** @type {string | null} */
   let folio = null;
+  /** @type {string | null} */
   let address = null;
+  /** @type {string | null} */
   let outputDirectory = null;
   let maxPages = 1;
   let maxDetails = 3;
@@ -111,40 +115,27 @@ export function parseOptions(args) {
     const argument = args[index];
     if (argument === "--help" || argument === "-h") return null;
 
-    /** @type {{ flag: string, assign: (value: string) => void } | null} */
-    const option =
-      argument === "--jurisdiction"
-        ? {
-            flag: "--jurisdiction",
-            assign: (value) => {
-              jurisdictionKey = value;
-            },
-          }
-        : argument === "--folio"
-          ? {
-              flag: "--folio",
-              assign: (value) => {
-                folio = value;
-              },
-            }
-          : argument === "--address"
-            ? {
-                flag: "--address",
-                assign: (value) => {
-                  address = value;
-                },
-              }
-            : argument === "--output-dir"
-              ? {
-                  flag: "--output-dir",
-                  assign: (value) => {
-                    outputDirectory = value;
-                  },
-                }
-              : null;
-    if (option !== null) {
-      const parsed = readFollowingValue(args, index, option.flag);
-      option.assign(parsed.value);
+    if (argument === "--jurisdiction") {
+      const parsed = readFollowingValue(args, index, argument);
+      jurisdictionKey = parsed.value;
+      index = parsed.nextIndex;
+      continue;
+    }
+    if (argument === "--folio") {
+      const parsed = readFollowingValue(args, index, argument);
+      folio = parsed.value;
+      index = parsed.nextIndex;
+      continue;
+    }
+    if (argument === "--address") {
+      const parsed = readFollowingValue(args, index, argument);
+      address = parsed.value;
+      index = parsed.nextIndex;
+      continue;
+    }
+    if (argument === "--output-dir") {
+      const parsed = readFollowingValue(args, index, argument);
+      outputDirectory = parsed.value;
       index = parsed.nextIndex;
       continue;
     }
@@ -269,7 +260,14 @@ export async function runProbe(options) {
   const result =
     config.vendor === "tyler-civic-access"
       ? await probeBoundedTylerCivicAccess(common)
-      : await probeBoundedCitizenserve(common);
+      : await probeBoundedCitizenserve({
+          ...common,
+          config: {
+            ...config,
+            citizenserveInstallationId:
+              requireCitizenserveInstallationId(config),
+          },
+        });
 
   await writePrivateFile(
     recordsPath,
@@ -325,6 +323,22 @@ async function writePrivateFile(destination, contents) {
     mode: 0o600,
   });
   await rename(temporary, destination);
+}
+
+/**
+ * Narrow a configured Citizenserve installation before adapter dispatch.
+ *
+ * @param {import("./permit-source-adapters/broward-permit-jurisdictions.mjs").BrowardPermitJurisdictionConfig} config - Jurisdiction configuration.
+ * @returns {number} Positive Citizenserve installation ID.
+ */
+function requireCitizenserveInstallationId(config) {
+  if (
+    config.vendor !== "citizenserve" ||
+    config.citizenserveInstallationId === null
+  ) {
+    throw new Error("Citizenserve jurisdiction has no installation ID");
+  }
+  return config.citizenserveInstallationId;
 }
 
 /**
