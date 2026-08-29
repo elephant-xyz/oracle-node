@@ -9,13 +9,13 @@ Execution scope: local-only, bounded, anonymous public search
 Accela mechanism with jurisdiction-specific configuration. It deliberately
 does not treat Broward County or Lee County as the issuing agency.
 
-| Adapter key        | Jurisdiction    | Accela agency | Module     | Validated pilot folio(s)             | Historical boundary |
-| ------------------ | --------------- | ------------- | ---------- | ------------------------------------ | ------------------- |
-| `hollywood`        | Hollywood       | `HOLLYWOOD`   | `Building` | `514111160200`, `514207022070`       | Current Accela start is not certified. The official BCLA address source is separately identified as 1988-present; pre-1988 records require City archives. |
-| `plantation`       | Plantation      | `PLANTATION`  | `Building` | `504108BJ0140`                       | The portal warns that records before 2004 may be unavailable online and directs users to City microfilm. |
-| `fort-lauderdale`  | Fort Lauderdale | `FTL`         | `Permits`  | `494209060010`, `494212072320`       | Earliest LauderBuild online date is not certified. |
-| `cooper-city`      | Cooper City     | `COOPER`      | `Building` | `514106100100`                       | Historical record types are visible, but the earliest online date is not certified. |
-| `weston`           | Weston          | `WESTON`      | `Building` | `503912010490`                       | Official City documentation bounds City records to post-1997 history. |
+| Adapter key       | Jurisdiction    | Accela agency | Module     | Validated pilot folio(s)       | Historical boundary                                                                                                                                       |
+| ----------------- | --------------- | ------------- | ---------- | ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `hollywood`       | Hollywood       | `HOLLYWOOD`   | `Building` | `514111160200`, `514207022070` | Current Accela start is not certified. The official BCLA address source is separately identified as 1988-present; pre-1988 records require City archives. |
+| `plantation`      | Plantation      | `PLANTATION`  | `Building` | `504108BJ0140`                 | The portal warns that records before 2004 may be unavailable online and directs users to City microfilm.                                                  |
+| `fort-lauderdale` | Fort Lauderdale | `FTL`         | `Permits`  | `494209060010`, `494212072320` | Earliest LauderBuild online date is not certified.                                                                                                        |
+| `cooper-city`     | Cooper City     | `COOPER`      | `Building` | `514106100100`                 | Historical record types are visible, but the earliest online date is not certified.                                                                       |
+| `weston`          | Weston          | `WESTON`      | `Building` | `503912010490`                 | Official City documentation bounds City records to post-1997 history.                                                                                     |
 
 An unknown cutoff is represented as `date: null` with
 `unknown_not_certified`; it never means complete history. Weston retains the
@@ -116,14 +116,14 @@ full municipal harvest.
 Live source traffic was limited to one validated appraisal folio in Hollywood,
 Plantation, Cooper City, and Weston, and two in Fort Lauderdale:
 
-| Jurisdiction / folio | Source outcome | Listed | Excluded non-permit | Permit details captured |
-| -------------------- | -------------- | -----: | ------------------: | ----------------------: |
-| Hollywood `514111160200` | records | 1 | 0 | 1 |
-| Plantation `504108BJ0140` | records | 10 | 3 Enforcement | 7 |
-| Fort Lauderdale `494209060010` | bounded stop | 50 across 3 pages | 0 | 0 |
-| Fort Lauderdale `494212072320` | records | 7 | 0 | 7 |
-| Cooper City `514106100100` | explicit no records | 0 | 0 | 0 |
-| Weston `503912010490` | records | 6 | 0 | 6 |
+| Jurisdiction / folio           | Source outcome      |            Listed | Excluded non-permit | Permit details captured |
+| ------------------------------ | ------------------- | ----------------: | ------------------: | ----------------------: |
+| Hollywood `514111160200`       | records             |                 1 |                   0 |                       1 |
+| Plantation `504108BJ0140`      | records             |                10 |       3 Enforcement |                       7 |
+| Fort Lauderdale `494209060010` | bounded stop        | 50 across 3 pages |                   0 |                       0 |
+| Fort Lauderdale `494212072320` | records             |                 7 |                   0 |                       7 |
+| Cooper City `514106100100`     | explicit no records |                 0 |                   0 |                       0 |
+| Weston `503912010490`          | records             |                 6 |                   0 |                       6 |
 
 The completed detail records were:
 

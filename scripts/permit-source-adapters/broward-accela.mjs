@@ -585,9 +585,7 @@ export function extractBrowardAccelaDirectDetailLink({
   if (recordNumber === null) return null;
   const formAction = $("form#aspnetForm").attr("action");
   const url = normalizeSourceUrl(
-    /CapDetail\.aspx/i.test(pageUrl)
-      ? pageUrl
-      : (formAction ?? pageUrl),
+    /CapDetail\.aspx/i.test(pageUrl) ? pageUrl : (formAction ?? pageUrl),
     source,
   );
   const detailModule = new URL(url).searchParams.get("Module");
@@ -927,7 +925,7 @@ export async function searchBrowardAccelaParcel({
         "search form load",
       );
     }
-    if (await context.$(DEFAULT_SELECTORS.parcel) === null) {
+    if ((await context.$(DEFAULT_SELECTORS.parcel)) === null) {
       throw new BrowardAccelaSourceError(
         "unexpected_response",
         source,
@@ -1041,8 +1039,10 @@ export async function searchBrowardAccelaParcel({
         };
       }
 
-      const pageExcludedNonPermitCount =
-        countBrowardAccelaExcludedModuleLinks({ html, source });
+      const pageExcludedNonPermitCount = countBrowardAccelaExcludedModuleLinks({
+        html,
+        source,
+      });
       excludedNonPermitCount += pageExcludedNonPermitCount;
       const pageLinks = extractBrowardAccelaPermitLinks({
         html,
@@ -1116,9 +1116,7 @@ export async function searchBrowardAccelaParcel({
             return true;
           }
           const match =
-            /Showing\s+([0-9,]+\s*-\s*[0-9,]+\s+of\s+[0-9,]+)/i.exec(
-              bodyText,
-            );
+            /Showing\s+([0-9,]+\s*-\s*[0-9,]+\s+of\s+[0-9,]+)/i.exec(bodyText);
           const current =
             match === null ? null : match[1].replace(/\s+/g, " ").trim();
           return current !== null && current !== previousSummary;
@@ -1227,9 +1225,7 @@ function extractSourceDetailLinks(html, source) {
     ) {
       documentLinks.push(link);
     } else if (
-      /RelatedRecords|CapDetail|Inspection|Report/i.test(
-        `${href} ${link.text}`,
-      )
+      /RelatedRecords|CapDetail|Inspection|Report/i.test(`${href} ${link.text}`)
     ) {
       relatedLinks.push(link);
     }
@@ -1417,7 +1413,10 @@ export function extractBrowardAccelaPermitDetail({
     text,
     /Processing Status\s+(.*?)(?:Related Records|$)/i,
   );
-  const { documentLinks, relatedLinks } = extractSourceDetailLinks(html, source);
+  const { documentLinks, relatedLinks } = extractSourceDetailLinks(
+    html,
+    source,
+  );
   const workLocation = matchCollapsedText(
     text,
     /Work Location\s+(.*?)\s+\*\s+Record Details/i,
@@ -1649,21 +1648,14 @@ export async function readBrowardAccelaCheckpoint(checkpointPath) {
  * @param {BrowardAccelaCheckpoint} checkpoint - Complete state to persist.
  * @returns {Promise<void>} Resolves after atomic rename.
  */
-export async function writeBrowardAccelaCheckpoint(
-  checkpointPath,
-  checkpoint,
-) {
+export async function writeBrowardAccelaCheckpoint(checkpointPath, checkpoint) {
   checkpoint.updatedAt = new Date().toISOString();
   await mkdir(dirname(checkpointPath), { recursive: true });
   const temporaryPath = `${checkpointPath}.${String(process.pid)}.tmp`;
-  await writeFile(
-    temporaryPath,
-    `${JSON.stringify(checkpoint, null, 2)}\n`,
-    {
-      encoding: "utf8",
-      mode: 0o600,
-    },
-  );
+  await writeFile(temporaryPath, `${JSON.stringify(checkpoint, null, 2)}\n`, {
+    encoding: "utf8",
+    mode: 0o600,
+  });
   await rename(temporaryPath, checkpointPath);
 }
 
@@ -1689,8 +1681,6 @@ function isRecord(value) {
  */
 function isNodeError(value) {
   return (
-    value instanceof Error &&
-    "code" in value &&
-    typeof value.code === "string"
+    value instanceof Error && "code" in value && typeof value.code === "string"
   );
 }

@@ -147,11 +147,7 @@ function readFollowingValue(args, index, flag) {
  */
 function parseBoundedInteger(value, flag, minimum, maximum) {
   const parsed = Number(value);
-  if (
-    !Number.isInteger(parsed) ||
-    parsed < minimum ||
-    parsed > maximum
-  ) {
+  if (!Number.isInteger(parsed) || parsed < minimum || parsed > maximum) {
     throw new Error(
       `${flag} must be an integer between ${String(minimum)} and ${String(maximum)}`,
     );
@@ -211,7 +207,8 @@ function validateTargets(targets) {
   const counts = new Map();
   for (const target of targets) {
     const key = `${target.jurisdictionKey}:${target.parcelIdentifier}`;
-    if (seen.has(key)) throw new Error(`Duplicate Broward Accela target: ${key}`);
+    if (seen.has(key))
+      throw new Error(`Duplicate Broward Accela target: ${key}`);
     seen.add(key);
     const count = (counts.get(target.jurisdictionKey) ?? 0) + 1;
     if (count > MAX_TARGETS_PER_JURISDICTION) {
@@ -297,28 +294,20 @@ export function parseOptions(args) {
       );
     }
     if (flag === "--target-delay-ms") {
-      targetDelayMs = parseBoundedInteger(
-        parsed.value,
-        flag,
-        1_000,
-        60_000,
-      );
+      targetDelayMs = parseBoundedInteger(parsed.value, flag, 1_000, 60_000);
     }
     if (flag === "--detail-delay-ms") {
-      detailDelayMs = parseBoundedInteger(
-        parsed.value,
-        flag,
-        250,
-        60_000,
-      );
+      detailDelayMs = parseBoundedInteger(parsed.value, flag, 250, 60_000);
     }
   }
-  if (pilot === (explicitTargets.length > 0)) {
+  if (pilot === explicitTargets.length > 0) {
     throw new Error("Choose exactly one input mode: --pilot or --target");
   }
   const paths = [outputPath, summaryPath, checkpointPath, captureDirectory];
   if (paths.some((value) => value.length === 0)) {
-    throw new Error("Output, summary, checkpoint, and capture paths cannot be empty");
+    throw new Error(
+      "Output, summary, checkpoint, and capture paths cannot be empty",
+    );
   }
   if (new Set([outputPath, summaryPath, checkpointPath]).size !== 3) {
     throw new Error("Output, summary, and checkpoint must use different paths");
@@ -428,8 +417,7 @@ function checkpointError(caught) {
         ? caught.code
         : "browser_or_local_error",
     message: caught instanceof Error ? caught.message : String(caught),
-    url:
-      caught instanceof BrowardAccelaSourceError ? caught.url : null,
+    url: caught instanceof BrowardAccelaSourceError ? caught.url : null,
     failedAt: new Date().toISOString(),
   };
 }
@@ -494,9 +482,7 @@ function recordsFromCheckpoint(targets) {
  */
 export async function runBrowardAccelaProbe(options) {
   const startedAt = new Date().toISOString();
-  const checkpoint = await readBrowardAccelaCheckpoint(
-    options.checkpointPath,
-  );
+  const checkpoint = await readBrowardAccelaCheckpoint(options.checkpointPath);
   let failureCount = 0;
   let skippedCompletedCount = 0;
   const browser = await createBrowardAccelaBrowser(consoleLogger);
@@ -535,8 +521,7 @@ export async function runBrowardAccelaProbe(options) {
             logger: consoleLogger,
           });
           state.reportedTotal = searchResult.reportedTotal;
-          state.excludedNonPermitCount =
-            searchResult.excludedNonPermitCount;
+          state.excludedNonPermitCount = searchResult.excludedNonPermitCount;
           state.permits = searchResult.permits;
           state.searchCapturePaths = [];
           for (const page of searchResult.pages) {
