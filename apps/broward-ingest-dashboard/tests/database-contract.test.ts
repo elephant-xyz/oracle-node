@@ -44,7 +44,7 @@ describe("database boundary contract", () => {
       branchId: "br-isolated-broward",
       endpointId: "ep-isolated-broward",
     });
-    expect(() => requireBrowardNeonIdentity({})).toThrow(/branch/u);
+    expect(() => requireBrowardNeonIdentity({})).toThrow(/branch/iu);
     expect(() =>
       requireBrowardNeonIdentity({
         BROWARD_INGEST_NEON_BRANCH_ID: "br-isolated-broward",
