@@ -380,8 +380,9 @@ async function connectToNeon() {
  *
  * @param {import("pg").Client} client - Connected Neon client.
  * @param {RecoveryOptions} options - Explicit expected branch and endpoint IDs.
- * @returns {Promise<{ projectId: string, branchId: string, endpointId: string, propertyCount: number, distinctFolios: number }>}
- *   Safe identity and aggregate inventory.
+ * @returns {Promise<{ propertyCount: number, distinctFolios: number }>}
+ *   Aggregate inventory after the identity has been verified. Secret-sourced
+ *   expected IDs and matching server IDs are deliberately not returned.
  */
 export async function verifyNeonTarget(client, options) {
   await client.query("BEGIN READ ONLY");
@@ -447,9 +448,6 @@ export async function verifyNeonTarget(client, options) {
     }
     await client.query("ROLLBACK");
     return {
-      projectId,
-      branchId,
-      endpointId,
       propertyCount,
       distinctFolios,
     };
@@ -1696,9 +1694,8 @@ export async function runRecovery(options) {
       JSON.stringify({
         event: "broward_neon_safety_gate_passed",
         branchLabel: "broward-ingest",
-        projectId: identity.projectId,
-        branchId: identity.branchId,
-        endpointId: identity.endpointId,
+        projectId: EXPECTED_PROJECT_ID,
+        secretSourcedIdentityMatched: true,
         existingProperties: identity.propertyCount,
         existingDistinctFolios: identity.distinctFolios,
         seedRows: seedStats.rowCount,

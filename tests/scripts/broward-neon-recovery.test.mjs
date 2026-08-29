@@ -112,6 +112,59 @@ describe("durable Broward Neon recovery", () => {
     ).not.toThrow();
   });
 
+  it("does not return secret-sourced Neon identity values after verification", async () => {
+    const client = {
+      /**
+       * Return matching identity and aggregate-safe Broward inventory rows.
+       *
+       * @param {string} sql - Recovery safety query.
+       * @returns {Promise<{ rows: Record<string, unknown>[] }>} Mock query rows.
+       */
+      query(sql) {
+        if (sql.includes("neon.project_id")) {
+          return Promise.resolve({
+            rows: [
+              {
+                project_id: "raspy-frost-51580436",
+                branch_id: "br-broward-test",
+                endpoint_id: "ep-broward-test",
+              },
+            ],
+          });
+        }
+        if (sql.includes("FROM public.properties")) {
+          return Promise.resolve({
+            rows: [
+              {
+                property_count: "0",
+                distinct_folios: "0",
+                invalid_property_rows: "0",
+              },
+            ],
+          });
+        }
+        if (sql.includes("FROM public.addresses")) {
+          return Promise.resolve({
+            rows: [{ invalid_address_rows: "0" }],
+          });
+        }
+        return Promise.resolve({ rows: [] });
+      },
+    };
+    await expect(
+      verifyNeonTarget(
+        /** @type {import("pg").Client} */ (client),
+        parseRecoveryOptions([
+          "--pilot",
+          "--expected-branch-id",
+          "br-broward-test",
+          "--expected-endpoint-id",
+          "ep-broward-test",
+        ]),
+      ),
+    ).resolves.toEqual({ propertyCount: 0, distinctFolios: 0 });
+  });
+
   it("fails closed when server-side Neon identity differs", async () => {
     /** @type {{ statements: string[] }} */
     const state = { statements: [] };
