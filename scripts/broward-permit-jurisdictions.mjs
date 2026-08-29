@@ -43,8 +43,11 @@
  * @property {string | null} rawAddress - Collapsed BCPA situs-address text used for fallback matching.
  */
 
-export const BROWARD_PERMIT_REGISTRY_VERSION = "2026-08-29.1";
+export const BROWARD_PERMIT_REGISTRY_VERSION = "2026-08-29.2";
 export const BROWARD_BCS_ADAPTER_KEY = "broward-bcs-posse";
+export const BROWARD_ACCELA_ADAPTER_KEY = "broward-accela";
+export const BROWARD_TYLER_CIVIC_ACCESS_ADAPTER_KEY = "tyler-civic-access";
+export const BROWARD_CITIZENSERVE_ADAPTER_KEY = "citizenserve";
 const BCS_URL =
   "https://dpepp.broward.org/BCS/Default.aspx?PossePresentation=ParcelSearchByAddress";
 const BUILDING_CONTACTS_URL =
@@ -123,11 +126,11 @@ export const BROWARD_PERMIT_JURISDICTIONS = Object.freeze([
     primarySource: currentSource({
       sourceKey: "coconut_creek_permit_status",
       sourceName: "Coconut Creek Permit Status",
-      sourceUrl:
-        "https://www3.coconutcreek.gov/sd/permit/permit_status_01.asp",
+      sourceUrl: "https://www3.coconutcreek.gov/sd/permit/permit_status_01.asp",
       adapterKey: "coconut-creek-permit-status",
       status: "adapter_unavailable",
-      reason: "Anonymous official search is documented; no local adapter is implemented.",
+      reason:
+        "Anonymous official search is documented; no local adapter is implemented.",
     }),
   }),
   jurisdiction({
@@ -135,12 +138,14 @@ export const BROWARD_PERMIT_JURISDICTIONS = Object.freeze([
     name: "Cooper City",
     aliases: ["COOPER CITY"],
     primarySource: currentSource({
-      sourceKey: "cooper_city_accela",
+      sourceKey: "broward_cooper_city_accela_permits",
       sourceName: "Cooper City Accela Citizen Access",
-      sourceUrl: "https://aca-prod.accela.com/COOPER/",
-      adapterKey: "accela-citizen-access",
-      status: "adapter_unavailable",
-      reason: "Official Accela portal is identified; this agency adapter is not implemented.",
+      sourceUrl:
+        "https://aca-prod.accela.com/COOPER/Cap/CapHome.aspx?module=Building&TabName=Building",
+      adapterKey: BROWARD_ACCELA_ADAPTER_KEY,
+      status: "implemented",
+      reason:
+        "The bounded anonymous Cooper City Accela adapter is implemented; live evidence is an explicit no-records result only.",
     }),
   }),
   jurisdiction({
@@ -153,7 +158,8 @@ export const BROWARD_PERMIT_JURISDICTIONS = Object.freeze([
       sourceUrl: "https://etrakit.coralsprings.gov/eTRAKiT/Search/permit.aspx",
       adapterKey: "centralsquare-etrakit",
       status: "captcha_required",
-      reason: "The unattended search requires reCAPTCHA and is skipped without bypass.",
+      reason:
+        "The unattended search requires reCAPTCHA and is skipped without bypass.",
     }),
   }),
   jurisdiction({
@@ -167,7 +173,8 @@ export const BROWARD_PERMIT_JURISDICTIONS = Object.freeze([
         "https://cityofdaniabeachfl.nwerp.tylerapp.com/nwprod/eSuite.Permits/",
       adapterKey: "tyler-esuite",
       status: "adapter_unavailable",
-      reason: "Anonymous official search is documented; no eSuite adapter is implemented.",
+      reason:
+        "Anonymous official search is documented; no eSuite adapter is implemented.",
     }),
   }),
   jurisdiction({
@@ -181,7 +188,8 @@ export const BROWARD_PERMIT_JURISDICTIONS = Object.freeze([
         "https://esuite.davie-fl.gov/eSuite.Permits/AdvancedSearchPage/AdvancedSearch.aspx",
       adapterKey: "tyler-esuite",
       status: "adapter_unavailable",
-      reason: "Public address inquiry is documented; no eSuite adapter is implemented.",
+      reason:
+        "Public address inquiry is documented; no eSuite adapter is implemented.",
     }),
   }),
   jurisdiction({
@@ -189,26 +197,41 @@ export const BROWARD_PERMIT_JURISDICTIONS = Object.freeze([
     name: "Deerfield Beach",
     aliases: ["DEERFIELD", "DEERFIELD BEACH"],
     primarySource: currentSource({
-      sourceKey: "deerfield_beach_split_history",
-      sourceName: "Deerfield Beach Gov-Easy / GeoCivix",
-      sourceUrl:
-        "https://apps.gov-easy.com/Home/PermitInspection/Search?clientId=dce877e0-e162-4827-a60d-7249ec4e8fe2",
-      adapterKey: "goveasy-geocivix-split",
-      status: "adapter_unavailable",
-      reason: "Legacy and post-2025 records are split; neither bounded adapter is implemented.",
+      sourceKey: "deerfield_beach_current_geocivix",
+      sourceName: "Deerfield Beach GeoCivix",
+      sourceUrl: "https://deerfieldbeach.geocivix.com/secure/",
+      adapterKey: "geocivix",
+      status: "login_required",
+      reason:
+        "Current post-2025 GeoCivix records are login-gated; unattended login is skipped.",
     }),
+    supplementalSources: [
+      Object.freeze({
+        sourceKey: "deerfield_beach_historical_gov_easy",
+        sourceName: "Deerfield Beach legacy Gov-Easy",
+        sourceUrl:
+          "https://apps.gov-easy.com/Home/PermitInspection/Search?clientId=dce877e0-e162-4827-a60d-7249ec4e8fe2",
+        adapterKey: "gov-easy",
+        status: "captcha_required",
+        coverageKind: "historical",
+        reason:
+          "The legacy Gov-Easy search requires a numeric CAPTCHA and is skipped without bypass.",
+      }),
+    ],
   }),
   jurisdiction({
     key: "fort-lauderdale",
     name: "Fort Lauderdale",
     aliases: ["FORT LAUDERDALE", "FT LAUDERDALE", "FT. LAUDERDALE"],
     primarySource: currentSource({
-      sourceKey: "fort_lauderdale_accela",
+      sourceKey: "broward_fort_lauderdale_lauderbuild_permits",
       sourceName: "Fort Lauderdale LauderBuild",
-      sourceUrl: "https://aca3.accela.com/FTL/",
-      adapterKey: "accela-citizen-access",
-      status: "adapter_unavailable",
-      reason: "Anonymous basic search is documented; the FTL agency adapter is not implemented.",
+      sourceUrl:
+        "https://aca-prod.accela.com/FTL/Cap/CapHome.aspx?module=Permits&TabName=Permits",
+      adapterKey: BROWARD_ACCELA_ADAPTER_KEY,
+      status: "implemented",
+      reason:
+        "The bounded anonymous FTL Permits adapter is implemented; one 50-result probe remains capped before details.",
     }),
   }),
   jurisdiction({
@@ -216,12 +239,14 @@ export const BROWARD_PERMIT_JURISDICTIONS = Object.freeze([
     name: "Hallandale Beach",
     aliases: ["HALLANDALE", "HALLANDALE BEACH"],
     primarySource: currentSource({
-      sourceKey: "hallandale_beach_energov",
+      sourceKey: "broward_hallandale_beach_tyler_permits",
       sourceName: "Hallandale Beach EnerGov",
-      sourceUrl: "https://cohb.org/Faq.aspx?QID=75",
-      adapterKey: "tyler-energov",
-      status: "adapter_unavailable",
-      reason: "Official anonymous search is documented; no EnerGov adapter is implemented.",
+      sourceUrl:
+        "https://hallandalefl-energovpub.tylerhost.net/Apps/SelfService",
+      adapterKey: BROWARD_TYLER_CIVIC_ACCESS_ADAPTER_KEY,
+      status: "implemented",
+      reason:
+        "The bounded anonymous Tyler Civic Access adapter is implemented; earliest migrated history remains unverified.",
     }),
   }),
   jurisdiction({
@@ -235,7 +260,8 @@ export const BROWARD_PERMIT_JURISDICTIONS = Object.freeze([
         "https://app.communitycore.com/app/public-portal/c98c7b46-2cba-4ba2-bbd5-7a76966f42dd",
       adapterKey: "communitycore",
       status: "login_required",
-      reason: "Record status and inspection access require an account; unattended login is skipped.",
+      reason:
+        "Record status and inspection access require an account; unattended login is skipped.",
     }),
   }),
   jurisdiction({
@@ -243,12 +269,14 @@ export const BROWARD_PERMIT_JURISDICTIONS = Object.freeze([
     name: "Hollywood",
     aliases: ["HOLLYWOOD"],
     primarySource: currentSource({
-      sourceKey: "hollywood_split_history",
-      sourceName: "Hollywood Permit Status / Accela",
-      sourceUrl: "https://apps.hollywoodfl.org/building/PermitStatus.aspx",
-      adapterKey: "hollywood-legacy-accela-split",
-      status: "adapter_unavailable",
-      reason: "History is split between the city search, Accela, and archives; no complete adapter is implemented.",
+      sourceKey: "broward_hollywood_accela_permits",
+      sourceName: "Hollywood Accela Citizen Access",
+      sourceUrl:
+        "https://aca-prod.accela.com/HOLLYWOOD/Cap/CapHome.aspx?module=Building&TabName=Building",
+      adapterKey: BROWARD_ACCELA_ADAPTER_KEY,
+      status: "implemented",
+      reason:
+        "The bounded current Accela adapter is implemented; 1988-present legacy address records and older archives remain separate.",
     }),
   }),
   jurisdiction({
@@ -260,13 +288,14 @@ export const BROWARD_PERMIT_JURISDICTIONS = Object.freeze([
       "LAUD BY THE SEA",
     ],
     primarySource: currentSource({
-      sourceKey: "lauderdale_by_the_sea_citizenserve",
+      sourceKey: "broward_lauderdale_by_the_sea_citizenserve_permits",
       sourceName: "Lauderdale-by-the-Sea Citizenserve / CAP Government",
       sourceUrl:
         "https://www6.citizenserve.com/Portal/PortalController?Action=showHomePage&ctzPagePrefix=Portal_&installationID=117",
-      adapterKey: "citizenserve-cap",
-      status: "adapter_unavailable",
-      reason: "CAP Government is the current official service; no Citizenserve adapter is implemented.",
+      adapterKey: BROWARD_CITIZENSERVE_ADAPTER_KEY,
+      status: "implemented",
+      reason:
+        "The bounded current Citizenserve adapter is implemented; BCS evidence remains separately historical.",
     }),
     supplementalSources: [
       Object.freeze({
@@ -276,7 +305,8 @@ export const BROWARD_PERMIT_JURISDICTIONS = Object.freeze([
         adapterKey: BROWARD_BCS_ADAPTER_KEY,
         status: "implemented",
         coverageKind: "historical",
-        reason: "The validated BCS pilot proved historical town records; this is not current-custody coverage.",
+        reason:
+          "The validated BCS pilot proved historical town records; this is not current-custody coverage.",
       }),
     ],
   }),
@@ -290,7 +320,8 @@ export const BROWARD_PERMIT_JURISDICTIONS = Object.freeze([
       sourceUrl: "https://lauderdalelakesfl.portal.opengov.com/search",
       adapterKey: "opengov",
       status: "adapter_unavailable",
-      reason: "Public record search is documented; no OpenGov adapter is implemented.",
+      reason:
+        "Public record search is documented; no OpenGov adapter is implemented.",
     }),
   }),
   jurisdiction({
@@ -300,10 +331,12 @@ export const BROWARD_PERMIT_JURISDICTIONS = Object.freeze([
     primarySource: currentSource({
       sourceKey: "lauderhill_egovplus",
       sourceName: "Lauderhill eGovPLUS",
-      sourceUrl: "http://egov.lauderhill-fl.gov/eGovPlus83/permit/perm_status.aspx",
+      sourceUrl:
+        "http://egov.lauderhill-fl.gov/eGovPlus83/permit/perm_status.aspx",
       adapterKey: "egovplus",
       status: "adapter_unavailable",
-      reason: "Public folio/address search is documented; no eGovPLUS adapter is implemented.",
+      reason:
+        "Public folio/address search is documented; no eGovPLUS adapter is implemented.",
     }),
   }),
   jurisdiction({
@@ -330,7 +363,8 @@ export const BROWARD_PERMIT_JURISDICTIONS = Object.freeze([
         "https://ci-lighthousepoint-fl.smartgovcommunity.com/ApplicationPublic/ApplicationHome",
       adapterKey: "granicus-smartgov",
       status: "adapter_unavailable",
-      reason: "Anonymous official search is documented; no SmartGov adapter is implemented.",
+      reason:
+        "Anonymous official search is documented; no SmartGov adapter is implemented.",
     }),
   }),
   jurisdiction({
@@ -343,7 +377,8 @@ export const BROWARD_PERMIT_JURISDICTIONS = Object.freeze([
       sourceUrl: "https://marg-egov.aspgov.com/Click2GovBP/selectpermit.html",
       adapterKey: "click2gov",
       status: "adapter_unavailable",
-      reason: "Public parcel/address search is documented; no Click2Gov adapter is implemented.",
+      reason:
+        "Public parcel/address search is documented; no Click2Gov adapter is implemented.",
     }),
   }),
   jurisdiction({
@@ -351,13 +386,13 @@ export const BROWARD_PERMIT_JURISDICTIONS = Object.freeze([
     name: "Miramar",
     aliases: ["MIRAMAR"],
     primarySource: currentSource({
-      sourceKey: "miramar_online_permitting",
+      sourceKey: "broward_miramar_tyler_permits",
       sourceName: "Miramar Online Permitting",
-      sourceUrl:
-        "https://www.miramarfl.gov/Departments/Building-Planning-Zoning/Building-Permits-Inspections/Online-Permitting",
-      adapterKey: "miramar-online-permitting",
-      status: "adapter_unavailable",
-      reason: "Official search route is documented; its vendor adapter is not implemented.",
+      sourceUrl: "https://miramarfl-energovweb.tylerhost.net/apps/SelfService",
+      adapterKey: BROWARD_TYLER_CIVIC_ACCESS_ADAPTER_KEY,
+      status: "implemented",
+      reason:
+        "The bounded anonymous Tyler Civic Access adapter is implemented; the validated folio produced a typed empty result.",
     }),
   }),
   jurisdiction({
@@ -365,13 +400,14 @@ export const BROWARD_PERMIT_JURISDICTIONS = Object.freeze([
     name: "North Lauderdale",
     aliases: ["NORTH LAUDERDALE"],
     primarySource: currentSource({
-      sourceKey: "north_lauderdale_energov",
+      sourceKey: "broward_north_lauderdale_tyler_permits",
       sourceName: "North Lauderdale EnerGov CSS",
       sourceUrl:
         "https://nlselfservice.nlauderdale.org/Energov_prod/SelfService#/home",
-      adapterKey: "tyler-energov",
+      adapterKey: BROWARD_TYLER_CIVIC_ACCESS_ADAPTER_KEY,
       status: "login_required",
-      reason: "The official search requires login; unattended login is skipped.",
+      reason:
+        "The official search requires login; unattended login is skipped.",
     }),
   }),
   jurisdiction({
@@ -379,12 +415,14 @@ export const BROWARD_PERMIT_JURISDICTIONS = Object.freeze([
     name: "Oakland Park",
     aliases: ["OAKLAND PARK"],
     primarySource: currentSource({
-      sourceKey: "oakland_park_split_history",
-      sourceName: "Oakland Park Permit Access",
-      sourceUrl: "https://oaklandparkfl.gov/312/Permit-Access",
-      adapterKey: "oakland-park-legacy-tyler-split",
-      status: "adapter_unavailable",
-      reason: "Pre-2019 and Tyler post-2019 records are split; no complete adapter is implemented.",
+      sourceKey: "broward_oakland_park_tyler_permits",
+      sourceName: "Oakland Park Tyler Civic Access",
+      sourceUrl:
+        "https://oaklandparkfl-energovweb.tylerhost.net/apps/SelfService",
+      adapterKey: BROWARD_TYLER_CIVIC_ACCESS_ADAPTER_KEY,
+      status: "implemented",
+      reason:
+        "The bounded Tyler adapter is implemented for post-2019-11-01 records; earlier city records remain separate.",
     }),
   }),
   jurisdiction({
@@ -397,7 +435,8 @@ export const BROWARD_PERMIT_JURISDICTIONS = Object.freeze([
       sourceUrl: "https://www.mgoconnect.org/cp/portal",
       adapterKey: "mygovernmentonline",
       status: "login_required",
-      reason: "Permit and inspection search requires a free account; unattended login is skipped.",
+      reason:
+        "Permit and inspection search requires a free account; unattended login is skipped.",
     }),
   }),
   jurisdiction({
@@ -407,10 +446,12 @@ export const BROWARD_PERMIT_JURISDICTIONS = Object.freeze([
     primarySource: currentSource({
       sourceKey: "pembroke_park_goveasy",
       sourceName: "Pembroke Park Gov-Easy",
-      sourceUrl: "https://www.tppfl.gov/194/Online-Permitting-System",
+      sourceUrl:
+        "https://apps.gov-easy.com/Home/PermitInspection/Search?clientId=d60f9827-2c53-44a4-9037-31e1de2b3f09",
       adapterKey: "gov-easy",
-      status: "adapter_unavailable",
-      reason: "Official status search is documented; no Gov-Easy adapter is implemented.",
+      status: "captcha_required",
+      reason:
+        "The official Gov-Easy status search requires a numeric CAPTCHA and is skipped without bypass.",
     }),
   }),
   jurisdiction({
@@ -418,13 +459,14 @@ export const BROWARD_PERMIT_JURISDICTIONS = Object.freeze([
     name: "Pembroke Pines",
     aliases: ["PEMBROKE PINES"],
     primarySource: currentSource({
-      sourceKey: "pembroke_pines_tyler",
+      sourceKey: "broward_pembroke_pines_tyler_permits",
       sourceName: "Pembroke Pines Tyler Civic Access",
       sourceUrl:
         "https://pembrokepinesfl-energovweb.tylerhost.net/apps/selfservice",
-      adapterKey: "tyler-civic-access",
-      status: "adapter_unavailable",
-      reason: "Official Tyler portal is identified; this agency adapter is not implemented.",
+      adapterKey: BROWARD_TYLER_CIVIC_ACCESS_ADAPTER_KEY,
+      status: "implemented",
+      reason:
+        "The bounded anonymous Tyler Civic Access adapter is implemented; portal completeness is not inferred.",
     }),
   }),
   jurisdiction({
@@ -432,13 +474,14 @@ export const BROWARD_PERMIT_JURISDICTIONS = Object.freeze([
     name: "Plantation",
     aliases: ["PLANTATION"],
     primarySource: currentSource({
-      sourceKey: "plantation_accela",
+      sourceKey: "broward_plantation_accela_permits",
       sourceName: "Plantation Accela Citizen Access",
       sourceUrl:
         "https://aca.plantation.org/CitizenAccess/Cap/CapHome.aspx?TabName=Building&module=Building",
-      adapterKey: "accela-citizen-access",
-      status: "adapter_unavailable",
-      reason: "Official parcel/address search is identified; the agency adapter is not implemented.",
+      adapterKey: BROWARD_ACCELA_ADAPTER_KEY,
+      status: "implemented",
+      reason:
+        "The bounded framed Accela adapter is implemented; pre-2004 records may require City microfilm.",
     }),
   }),
   jurisdiction({
@@ -448,11 +491,11 @@ export const BROWARD_PERMIT_JURISDICTIONS = Object.freeze([
     primarySource: currentSource({
       sourceKey: "pompano_beach_click2gov",
       sourceName: "Pompano Beach Click2Gov",
-      sourceUrl:
-        "https://c2g.pompanobeachfl.gov/Click2GovBP/selectpermit.html",
+      sourceUrl: "https://c2g.pompanobeachfl.gov/Click2GovBP/selectpermit.html",
       adapterKey: "click2gov",
       status: "adapter_unavailable",
-      reason: "Public parcel/address search is identified; no Click2Gov adapter is implemented.",
+      reason:
+        "Public parcel/address search is identified; no Click2Gov adapter is implemented.",
     }),
   }),
   jurisdiction({
@@ -465,7 +508,8 @@ export const BROWARD_PERMIT_JURISDICTIONS = Object.freeze([
       sourceUrl: BUILDING_CONTACTS_URL,
       adapterKey: null,
       status: "custodian_only",
-      reason: "Only the official municipal custodian is certified; no anonymous record endpoint is available.",
+      reason:
+        "Only the official municipal custodian is certified; no anonymous record endpoint is available.",
     }),
   }),
   jurisdiction({
@@ -473,13 +517,14 @@ export const BROWARD_PERMIT_JURISDICTIONS = Object.freeze([
     name: "Southwest Ranches",
     aliases: ["SOUTHWEST RANCHES", "SW RANCHES"],
     primarySource: currentSource({
-      sourceKey: "southwest_ranches_citizenserve",
+      sourceKey: "broward_southwest_ranches_citizenserve_permits",
       sourceName: "Southwest Ranches Citizenserve",
       sourceUrl:
         "https://www6.citizenserve.com/Portal/PortalController?Action=showSearchPage&ctzPagePrefix=Portal_&installationID=117&original_contactID=0&original_iid=0",
-      adapterKey: "citizenserve-cap",
-      status: "adapter_unavailable",
-      reason: "Public parcel/address search is documented; no Citizenserve adapter is implemented.",
+      adapterKey: BROWARD_CITIZENSERVE_ADAPTER_KEY,
+      status: "implemented",
+      reason:
+        "The bounded anonymous Citizenserve adapter is implemented for building permits; other Town approvals remain separate.",
     }),
   }),
   jurisdiction({
@@ -492,8 +537,9 @@ export const BROWARD_PERMIT_JURISDICTIONS = Object.freeze([
       sourceUrl:
         "https://www.sunrisefl.gov/departments-services/community-development/building/building-records",
       adapterKey: null,
-      status: "egress_unavailable",
-      reason: "Official records-request custody is documented; online self-service returned HTTP 403 from this environment.",
+      status: "custodian_only",
+      reason:
+        "The official microfilm/records-request custodian route is not submitted; its page also returned HTTP 403 from this environment.",
     }),
   }),
   jurisdiction({
@@ -506,7 +552,8 @@ export const BROWARD_PERMIT_JURISDICTIONS = Object.freeze([
       sourceUrl: "https://e-gov.tamarac.org/Click2GovBP/selectpermit.html",
       adapterKey: "click2gov",
       status: "adapter_unavailable",
-      reason: "Public property permit history is documented; no Click2Gov adapter is implemented.",
+      reason:
+        "Public property permit history is documented; no Click2Gov adapter is implemented.",
     }),
   }),
   jurisdiction({
@@ -514,13 +561,14 @@ export const BROWARD_PERMIT_JURISDICTIONS = Object.freeze([
     name: "West Park",
     aliases: ["WEST PARK"],
     primarySource: currentSource({
-      sourceKey: "west_park_citizenserve",
+      sourceKey: "broward_west_park_citizenserve_permits",
       sourceName: "West Park Citizenserve",
       sourceUrl:
         "https://www6.citizenserve.com/Portal/PortalController?Action=showSearchPage&ctzPagePrefix=Portal_&installationID=261&original_contactID=0&original_iid=0",
-      adapterKey: "citizenserve-cap",
-      status: "adapter_unavailable",
-      reason: "Public parcel/address search is documented; no Citizenserve adapter is implemented.",
+      adapterKey: BROWARD_CITIZENSERVE_ADAPTER_KEY,
+      status: "implemented",
+      reason:
+        "The bounded anonymous Citizenserve search/detail adapter is implemented; account-required submission is excluded.",
     }),
   }),
   jurisdiction({
@@ -528,13 +576,14 @@ export const BROWARD_PERMIT_JURISDICTIONS = Object.freeze([
     name: "Weston",
     aliases: ["WESTON"],
     primarySource: currentSource({
-      sourceKey: "weston_accela",
+      sourceKey: "broward_weston_accela_permits",
       sourceName: "Weston Accela Citizen Access",
       sourceUrl:
         "https://aca-prod.accela.com/weston/Cap/CapHome.aspx?TabName=Building&module=Building",
-      adapterKey: "accela-citizen-access",
-      status: "adapter_unavailable",
-      reason: "Public parcel/address search is documented; the agency adapter is not implemented.",
+      adapterKey: BROWARD_ACCELA_ADAPTER_KEY,
+      status: "implemented",
+      reason:
+        "The bounded anonymous Accela adapter is implemented; City records are bounded to post-1997 history.",
     }),
   }),
   jurisdiction({
@@ -542,13 +591,14 @@ export const BROWARD_PERMIT_JURISDICTIONS = Object.freeze([
     name: "Wilton Manors",
     aliases: ["WILTON MANORS"],
     primarySource: currentSource({
-      sourceKey: "wilton_manors_citizenserve",
+      sourceKey: "broward_wilton_manors_citizenserve_permits",
       sourceName: "Wilton Manors Citizenserve",
       sourceUrl:
         "https://www.wiltonmanors.gov/DocumentCenter/View/9768/How-to-do-an-online-permit-record-search",
-      adapterKey: "citizenserve",
-      status: "adapter_unavailable",
-      reason: "Official parcel/address search is documented; no Citizenserve adapter is implemented.",
+      adapterKey: BROWARD_CITIZENSERVE_ADAPTER_KEY,
+      status: "implemented",
+      reason:
+        "The bounded anonymous Citizenserve adapter is implemented; unavailable files still require the City records route.",
     }),
   }),
 ]);
@@ -595,7 +645,9 @@ for (const entry of BROWARD_PERMIT_JURISDICTIONS) {
     }
     const existing = ALIAS_TO_JURISDICTION.get(normalizedAlias);
     if (existing !== undefined && existing.key !== entry.key) {
-      throw new Error(`Duplicate Broward jurisdiction alias: ${normalizedAlias}`);
+      throw new Error(
+        `Duplicate Broward jurisdiction alias: ${normalizedAlias}`,
+      );
     }
     ALIAS_TO_JURISDICTION.set(normalizedAlias, entry);
   }
@@ -694,7 +746,9 @@ function buildRawSitusAddress(record) {
     readOptionalString(record, "situsState"),
     readOptionalString(record, "situsZipCode"),
   ].filter((value) => value !== null);
-  return parts.length === 0 ? null : parts.join(" ").replace(/\s+/gu, " ").trim();
+  return parts.length === 0
+    ? null
+    : parts.join(" ").replace(/\s+/gu, " ").trim();
 }
 
 /**

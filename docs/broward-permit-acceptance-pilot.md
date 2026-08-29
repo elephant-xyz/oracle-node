@@ -36,21 +36,27 @@ Address fallback accepts a city only at the end of the situs address before an
 optional Florida/ZIP suffix. Unknown evidence remains unresolved; it never
 defaults to BCS.
 
-Only these current routes are marked implemented in this branch:
+The integrated registry points 15 current routes to bounded local adapter
+implementations:
 
-- BMSD/unincorporated → Broward BCS/POSSE; and
-- Lazy Lake → Broward BCS/POSSE.
+- BMSD/unincorporated and Lazy Lake → BCS/POSSE;
+- Cooper City, Fort Lauderdale, Hollywood, Plantation, and Weston → Accela;
+- Hallandale Beach, Miramar, Oakland Park, and Pembroke Pines → Tyler Civic
+  Access; and
+- Lauderdale-by-the-Sea, Southwest Ranches, West Park, and Wilton Manors →
+  Citizenserve.
 
-The current Lauderdale-by-the-Sea route is Citizenserve/CAP Government and is
-explicitly `adapter_unavailable`. A separate **historical** BCS route is enabled
-only for that town because the prior official-source pilot proved BCS-held
-records there. This distinction allows those historical records to be retained
-without representing BCS as the current town custodian.
+A separate **historical** BCS route remains enabled only for
+Lauderdale-by-the-Sea because the prior source pilot proved BCS-held town
+records. It does not represent BCS as the current town custodian. The CLI
+orchestrator's default runner set remains BCS-only; vendor-family runners can be
+supplied explicitly, and a missing runner becomes `adapter_unavailable` rather
+than silently falling back to BCS.
 
-All other routes identify their vendor adapter boundary or an explicit
-`captcha_required`, `login_required`, `custodian_only`, or
-`egress_unavailable` result. Login/CAPTCHA routes are skipped; the pilot has no
-credential or bypass code.
+The other 17 current routes retain exact `adapter_unavailable`,
+`captcha_required`, `login_required`, or `custodian_only` dispositions.
+Login/CAPTCHA/custodian routes are skipped; the pilot has no credential,
+bypass, or records-request submission code.
 
 ## Bounds and local checkpoint
 
@@ -93,21 +99,24 @@ node scripts/run-broward-permit-pilot.mjs \
   --permit-delay-ms 1000
 ```
 
-## Live pilot reconciliation
+## Live pilot reconciliation snapshot
+
+The following counts are the bounded pre-integration BCS run. They are retained
+as evidence, not recalculated claims about the expanded adapter registry.
 
 The 25-folio run represented 19 jurisdictions.
 
-| Measure | Count |
-| --- | ---: |
-| Input / BCPA attempts / valid BCPA records | 25 / 25 / 25 |
-| Jurisdictions resolved / unresolved | 25 / 0 |
-| Current + historical source outcomes | 26 |
-| Actual permit-source attempts / distinct parcels | 2 / 2 |
-| Explicit source-unavailable outcomes | 24 |
-| Official valid-parcel no-permits outcomes | 1 |
-| Source failures | 0 |
-| Raw / duplicate / conflicting permit records | 73 / 0 / 0 |
-| Unique normalized records / Donphan query rows | 73 / 73 |
+| Measure                                          |        Count |
+| ------------------------------------------------ | -----------: |
+| Input / BCPA attempts / valid BCPA records       | 25 / 25 / 25 |
+| Jurisdictions resolved / unresolved              |       25 / 0 |
+| Current + historical source outcomes             |           26 |
+| Actual permit-source attempts / distinct parcels |        2 / 2 |
+| Explicit source-unavailable outcomes             |           24 |
+| Official valid-parcel no-permits outcomes        |            1 |
+| Source failures                                  |            0 |
+| Raw / duplicate / conflicting permit records     |   73 / 0 / 0 |
+| Unique normalized records / Donphan query rows   |      73 / 73 |
 
 Unavailable source outcomes were:
 
@@ -183,20 +192,22 @@ npm exec tsx -- \
 1. Re-run the same checkpointed flow against the actual ignored
    `broward-validation-sample-50.csv` (or manifest). The current live evidence
    covers its preserved 25-folio subset, not all 50 rows.
-2. Current anonymous adapters are not implemented/certified for 30
-   jurisdiction routes. The pilot correctly records those gaps instead of
-   sending their parcels to BCS.
+2. Seventeen current routes remain transport-incomplete or access/custodian
+   blocked. The pilot records those gaps instead of sending their parcels to
+   BCS.
 3. Coral Springs requires reCAPTCHA; Hillsboro Beach, North Lauderdale, and
    Parkland require accounts. These need official bulk/custodian alternatives
    or explicit acceptance exclusions, not bypass code.
-4. Sunrise remains an official records-request/egress-unavailable route, and
-   Sea Ranch Lakes remains custodian-only.
+4. Sunrise and Sea Ranch Lakes remain custodian-only/no-submit routes.
 5. BCS has no known positive contemporary BMSD commercial example in the
    validation evidence. The current unincorporated pilot parcel is a valid
    official zero result.
-6. The 73 queryable rows are historical records for one parcel. Full permit
-   acceptance still requires representative positive/zero validation and
-   reconciliation for the implemented current municipal sources.
+6. The 73 queryable rows are historical Lauderdale-by-the-Sea BCS records for
+   one parcel. Accela's 21 details and the other bounded municipal probes are
+   separate source-certification evidence, not a unified current-county result.
+   Full permit acceptance still requires representative positive/zero
+   validation and reconciliation for the implemented current municipal
+   sources.
 
 Accordingly, the local orchestration pilot passes, but Broward's shared
 multi-category acceptance remains incomplete.

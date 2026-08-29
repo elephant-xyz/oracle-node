@@ -6,8 +6,11 @@ import { ParquetReader } from "@dsnp/parquetjs";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  BROWARD_ACCELA_ADAPTER_KEY,
   BROWARD_BCS_ADAPTER_KEY,
+  BROWARD_CITIZENSERVE_ADAPTER_KEY,
   BROWARD_PERMIT_JURISDICTIONS,
+  BROWARD_TYLER_CIVIC_ACCESS_ADAPTER_KEY,
   resolveBrowardPermitJurisdiction,
   sourcesForBrowardPermitJurisdiction,
 } from "../../scripts/broward-permit-jurisdictions.mjs";
@@ -26,6 +29,9 @@ import {
   parseDonphanToolResult,
   parseDonphanValidationOptions,
 } from "../../scripts/validate-broward-permits-with-donphan.mjs";
+import { BROWARD_ACCELA_SOURCES } from "../../scripts/permit-source-adapters/broward-accela.mjs";
+import { BROWARD_MUNICIPAL_PERMIT_JURISDICTIONS } from "../../scripts/permit-source-adapters/broward-municipal-config.mjs";
+import { BROWARD_PERMIT_JURISDICTIONS as BROWARD_TYLER_CITIZENSERVE_JURISDICTIONS } from "../../scripts/permit-source-adapters/broward-permit-jurisdictions.mjs";
 
 const temporaryDirectories = [];
 
@@ -111,8 +117,8 @@ describe("Broward 32-jurisdiction permit registry", () => {
       (entry) => entry.key === "lauderdale-by-the-sea",
     );
     expect(lbts?.primarySource).toMatchObject({
-      adapterKey: "citizenserve-cap",
-      status: "adapter_unavailable",
+      adapterKey: BROWARD_CITIZENSERVE_ADAPTER_KEY,
+      status: "implemented",
       coverageKind: "current",
     });
     expect(lbts?.supplementalSources).toEqual([
@@ -125,6 +131,99 @@ describe("Broward 32-jurisdiction permit registry", () => {
     expect(
       sourcesForBrowardPermitJurisdiction(
         /** @type {NonNullable<typeof lbts>} */ (lbts),
+      ),
+    ).toHaveLength(2);
+  });
+
+  it("reconciles every isolated vendor config into the unified registry", () => {
+    const unifiedByKey = new Map(
+      BROWARD_PERMIT_JURISDICTIONS.map((entry) => [entry.key, entry]),
+    );
+
+    expect(Object.keys(BROWARD_ACCELA_SOURCES)).toHaveLength(5);
+    for (const source of Object.values(BROWARD_ACCELA_SOURCES)) {
+      expect(unifiedByKey.get(source.key)?.primarySource).toMatchObject({
+        sourceKey: source.sourceSystem,
+        sourceUrl: source.portalUrl,
+        adapterKey: BROWARD_ACCELA_ADAPTER_KEY,
+        status: "implemented",
+      });
+    }
+
+    expect(Object.keys(BROWARD_TYLER_CITIZENSERVE_JURISDICTIONS)).toHaveLength(
+      9,
+    );
+    for (const config of Object.values(
+      BROWARD_TYLER_CITIZENSERVE_JURISDICTIONS,
+    )) {
+      const route = unifiedByKey.get(
+        config.key.replaceAll("_", "-"),
+      )?.primarySource;
+      expect(route?.sourceKey).toBe(config.sourceSystem);
+      if (config.skipReason !== null) {
+        expect(route).toMatchObject({
+          adapterKey: BROWARD_TYLER_CIVIC_ACCESS_ADAPTER_KEY,
+          status: "login_required",
+        });
+      } else {
+        expect(route).toMatchObject({
+          adapterKey:
+            config.vendor === "citizenserve"
+              ? BROWARD_CITIZENSERVE_ADAPTER_KEY
+              : BROWARD_TYLER_CIVIC_ACCESS_ADAPTER_KEY,
+          status: "implemented",
+        });
+      }
+    }
+
+    const municipalAdapterKeys = new Map([
+      ["click2gov", "click2gov"],
+      ["tyler_esuite", "tyler-esuite"],
+      ["gov_easy", "gov-easy"],
+      ["smartgov", "granicus-smartgov"],
+      ["opengov", "opengov"],
+      ["communitycore", "communitycore"],
+      ["mgo_connect", "mygovernmentonline"],
+      ["egovplus", "egovplus"],
+      ["records_request", null],
+    ]);
+    expect(BROWARD_MUNICIPAL_PERMIT_JURISDICTIONS).toHaveLength(13);
+    for (const config of BROWARD_MUNICIPAL_PERMIT_JURISDICTIONS) {
+      const jurisdiction = unifiedByKey.get(config.key.replaceAll("_", "-"));
+      const routes =
+        jurisdiction === undefined
+          ? []
+          : [jurisdiction.primarySource, ...jurisdiction.supplementalSources];
+      expect(routes).toContainEqual(
+        expect.objectContaining({
+          adapterKey: municipalAdapterKeys.get(config.protocol),
+        }),
+      );
+    }
+
+    expect(
+      BROWARD_PERMIT_JURISDICTIONS.filter(
+        (entry) => entry.primarySource.status === "implemented",
+      ),
+    ).toHaveLength(15);
+    expect(
+      BROWARD_PERMIT_JURISDICTIONS.filter(
+        (entry) => entry.primarySource.status === "adapter_unavailable",
+      ),
+    ).toHaveLength(9);
+    expect(
+      BROWARD_PERMIT_JURISDICTIONS.filter(
+        (entry) => entry.primarySource.status === "login_required",
+      ),
+    ).toHaveLength(4);
+    expect(
+      BROWARD_PERMIT_JURISDICTIONS.filter(
+        (entry) => entry.primarySource.status === "captcha_required",
+      ),
+    ).toHaveLength(2);
+    expect(
+      BROWARD_PERMIT_JURISDICTIONS.filter(
+        (entry) => entry.primarySource.status === "custodian_only",
       ),
     ).toHaveLength(2);
   });
@@ -224,21 +323,21 @@ describe("checkpointed local Broward permit pilot", () => {
     const appraisalCalls = [];
     const adapterCalls = [];
     const appraisalRecords = {
-      "474134000012": {
+      474134000012: {
         folioNumber: "474134000012",
         situsCity: "UNINCORPORATED",
         situsAddress1: "NW 81 STREET",
         situsZipCode: "33076",
         useCode: "52 - Cropland soil capability class II",
       },
-      "494318013550": {
+      494318013550: {
         folioNumber: "494318013550",
         situsCity: "LAUDERDALE BY THE SEA",
         situsAddress1: "218 E COMMERCIAL BOULEVARD",
         situsZipCode: "33308",
         useCode: "12-02 Mixed store and office",
       },
-      "484109030410": {
+      484109030410: {
         folioNumber: "484109030410",
         situsCity: "CORAL SPRINGS",
         situsAddress1: "100 TEST STREET",
@@ -305,8 +404,8 @@ describe("checkpointed local Broward permit pilot", () => {
       allRecordsAccountedFor: true,
       queryRowsMatchUniqueRecords: true,
       allJurisdictionsRegistered: true,
-      currentSourceJurisdictionsImplemented: 2,
-      currentSourceJurisdictionsBlocked: 30,
+      currentSourceJurisdictionsImplemented: 15,
+      currentSourceJurisdictionsBlocked: 17,
     });
     expect(first.acceptance).toEqual({
       localPilotPassed: true,
@@ -345,7 +444,7 @@ describe("checkpointed local Broward permit pilot", () => {
     const manifestPath = join(root, "sample.json");
     await writeFile(
       csvPath,
-      "parcel_id,parcel_polygon\n474134000012,\"{\"\"type\"\":\"\"Polygon\"\"}\"\n494318013550,\"{}\"\n",
+      'parcel_id,parcel_polygon\n474134000012,"{""type"":""Polygon""}"\n494318013550,"{}"\n',
       "utf8",
     );
     await writeFile(
@@ -370,11 +469,7 @@ describe("checkpointed local Broward permit pilot", () => {
       permitDelayMs: 1_000,
     });
     expect(() =>
-      parseBrowardPermitPilotOptions([
-        "--pilot",
-        "--permit-delay-ms",
-        "999",
-      ]),
+      parseBrowardPermitPilotOptions(["--pilot", "--permit-delay-ms", "999"]),
     ).toThrow("at least 1000");
     expect(() =>
       parseBrowardPermitPilotOptions([

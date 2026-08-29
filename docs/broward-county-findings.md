@@ -260,11 +260,14 @@ AWS messages were enqueued. The complete run instead uses
 transformed ZIPs, and an atomic local checkpoint.
 
 Remaining gates are full-run reconciliation, database loading when a
-Postgres/Neon connection is available, current municipal permit adapters, and
-privacy review. The BCS adapter and explicit 32-jurisdiction local routing
-registry now exist, but the bounded permit pilot is not full permit acceptance:
-30 current jurisdiction routes remain blocked in that branch. Do not publish
-until those gates are clean. The transform fix exists as local commit
+Postgres/Neon connection is available, remaining municipal transports, and
+privacy review. The BCS, Accela, Tyler/Citizenserve, municipal prototype suite,
+and explicit 32-jurisdiction local registry now coexist, but the bounded permit
+evidence is not full permit acceptance: 15 current routes point to local
+adapters and 17 remain transport/access/custodian blocked. The 73 queryable
+rows are historical Lauderdale-by-the-Sea BCS records, Accela produced 21
+separate bounded details, and a positive contemporary BMSD control remains
+unresolved. Do not publish until those gates are clean. The transform fix exists as local commit
 `5130a7f`; GitHub denied this bot write access to the separate transform
 repository.
 

@@ -155,8 +155,13 @@ permit_source_documentation:
   local_pilot: ../scripts/run-broward-permit-pilot.mjs
   pilot_evidence: ./broward-permit-acceptance-pilot.md
   jurisdiction_count: 32
-  current_implemented_jurisdictions: 2
-  current_blocked_jurisdictions: 30
+  current_implemented_jurisdictions: 15
+  current_blocked_jurisdictions: 17
+  bounded_evidence:
+    bcs_records: 73
+    bcs_scope: historical-lauderdale-by-the-sea-only
+    accela_details: 21
+    contemporary_bmsd_positive_control: unresolved
   county_permit_acceptance: not-passed
 permits:
   - jurisdiction: Unincorporated Broward County
@@ -216,7 +221,8 @@ permits:
     apply: https://www.ppines.com/developmenthub
     vendor: Tyler EPL / Civic Access
     search: folio / property ID
-    status: discovered
+    adapter: ../scripts/probe-broward-municipal-permits.mjs
+    status: implemented-local-bounded
   - jurisdiction: Coconut Creek
     portal: https://www3.coconutcreek.gov/sd/permit/permit_status_01.asp
     status: public-search-documented
@@ -241,7 +247,8 @@ permits:
   - jurisdiction: Hallandale Beach
     official: https://cohb.org/Faq.aspx?QID=75
     vendor: Tyler EnerGov
-    status: public-search-documented
+    adapter: ../scripts/probe-broward-municipal-permits.mjs
+    status: implemented-local-bounded
   - jurisdiction: Hillsboro Beach
     portal: https://app.communitycore.com/app/public-portal/c98c7b46-2cba-4ba2-bbd5-7a76966f42dd
     vendor: CommunityCore
@@ -254,14 +261,16 @@ permits:
     official: https://www.lauderdalebythesea-fl.gov/535/e-Permits-Broward-County
     portal: https://www6.citizenserve.com/Portal/PortalController?Action=showHomePage&ctzPagePrefix=Portal_&installationID=117
     vendor: Citizenserve / CAP Government
-    status: public-search-documented
+    adapter: ../scripts/probe-broward-municipal-permits.mjs
+    historical_supplement: Broward BCS/POSSE (73 validated rows; not current custody)
+    status: implemented-local-bounded
   - jurisdiction: Lauderhill
     portal: http://egov.lauderhill-fl.gov/eGovPlus83/permit/perm_status.aspx
     vendor: eGovPLUS
     status: bounded-protocol-prototype
   - jurisdiction: Lazy Lake
     portal: https://dpepp.broward.org/BCS/Default.aspx?PossePresentation=ParcelSearchByAddress
-    status: delegated-bcs-documented
+    status: implemented-local-bounded
   - jurisdiction: Lighthouse Point
     official: https://lighthousepointfl.gov/352/Broward-County-ePermits-OneStop
     portal: https://ci-lighthousepoint-fl.smartgovcommunity.com/ApplicationPublic/ApplicationHome
@@ -273,7 +282,8 @@ permits:
     status: bounded-protocol-prototype
   - jurisdiction: Miramar
     official: https://www.miramarfl.gov/Departments/Building-Planning-Zoning/Building-Permits-Inspections/Online-Permitting
-    status: public-search-documented
+    adapter: ../scripts/probe-broward-municipal-permits.mjs
+    status: implemented-local-bounded
   - jurisdiction: North Lauderdale
     portal: https://nlselfservice.nlauderdale.org/Energov_prod/SelfService#/home
     vendor: Tyler EnerGov
@@ -281,7 +291,8 @@ permits:
   - jurisdiction: Oakland Park
     official: https://oaklandparkfl.gov/312/Permit-Access
     vendor: Tyler EnerGov (post-2019) + legacy portal
-    status: public-search-documented
+    adapter: ../scripts/probe-broward-municipal-permits.mjs
+    status: implemented-local-bounded-post-2019
   - jurisdiction: Parkland
     portal: https://www.mgoconnect.org/cp/portal
     vendor: MyGovernmentOnline
@@ -295,7 +306,8 @@ permits:
   - jurisdiction: Southwest Ranches
     portal: https://www6.citizenserve.com/Portal/PortalController?Action=showSearchPage&ctzPagePrefix=Portal_&installationID=117&original_contactID=0&original_iid=0
     vendor: Citizenserve / CAP Government
-    status: public-search-documented
+    adapter: ../scripts/probe-broward-municipal-permits.mjs
+    status: implemented-local-bounded
   - jurisdiction: Sunrise
     portal: https://www.sunrisefl.gov/openforbusiness
     official_records: https://www.sunrisefl.gov/departments-services/community-development/building/building-records
@@ -310,7 +322,8 @@ permits:
   - jurisdiction: West Park
     portal: https://www6.citizenserve.com/Portal/PortalController?Action=showSearchPage&ctzPagePrefix=Portal_&installationID=261&original_contactID=0&original_iid=0
     vendor: Citizenserve / CAP Government
-    status: public-search-documented
+    adapter: ../scripts/probe-broward-municipal-permits.mjs
+    status: implemented-local-bounded
   - jurisdiction: Weston
     official: https://www.westonfl.org/government/building-code-services
     portal: https://aca-prod.accela.com/weston/Cap/CapHome.aspx?TabName=Building&module=Building
@@ -325,4 +338,5 @@ permits:
   - jurisdiction: Wilton Manors
     official: https://www.wiltonmanors.gov/DocumentCenter/View/9768/How-to-do-an-online-permit-record-search
     vendor: Citizenserve
-    status: public-search-documented
+    adapter: ../scripts/probe-broward-municipal-permits.mjs
+    status: implemented-local-bounded

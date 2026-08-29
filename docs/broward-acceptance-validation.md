@@ -7,15 +7,15 @@ Shared multi-category result: **INCOMPLETE — PERMIT ACCEPTANCE NOT PASSED**
 
 ## Acceptance criteria
 
-| Criterion | Evidence | Result |
-| --- | --- | --- |
-| Every data category has an official source or documented unavailability | [`broward-source-availability.md`](./broward-source-availability.md) covers appraisal, GIS, all 32 permit jurisdictions, Sunbiz, BBB, and deferred tax/recorder sources | SOURCE DISCOVERY PASS |
-| Approximately 50 valid, deduplicated, diverse appraisal parcels | Exactly 50 unique folios; 20 usage types, 3 property types, and four polygon-complexity buckets | APPRAISAL PASS |
-| Appraisal pilot prepared and ingested using Oracle | 50 live BCPA captures and 50 transformed Oracle artifacts | APPRAISAL PASS |
-| Existing appraisal validations pass | Elephant CLI Lexicon validation: 50/50 | APPRAISAL PASS |
-| Appraisal schema, completeness, geometry, failure behavior, and counts checked | Appraisal acceptance audit reports every check true | APPRAISAL PASS |
-| Appraisal pilot queryable and accurate through Donphan | Donphan property tools ran against the local 50-row property Parquet | APPRAISAL PASS |
-| Permit data ingested, validated, reconciled, and queryable | The bounded local permit pilot normalized and queried 73 historical BCS rows, but 30 current jurisdiction routes remain blocked and the ignored 50-row sample was not present in the isolated worktree | **NOT PASSED** |
+| Criterion                                                                      | Evidence                                                                                                                                                                                                                 | Result                |
+| ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------- |
+| Every data category has an official source or documented unavailability        | [`broward-source-availability.md`](./broward-source-availability.md) covers appraisal, GIS, all 32 permit jurisdictions, Sunbiz, BBB, and deferred tax/recorder sources                                                  | SOURCE DISCOVERY PASS |
+| Approximately 50 valid, deduplicated, diverse appraisal parcels                | Exactly 50 unique folios; 20 usage types, 3 property types, and four polygon-complexity buckets                                                                                                                          | APPRAISAL PASS        |
+| Appraisal pilot prepared and ingested using Oracle                             | 50 live BCPA captures and 50 transformed Oracle artifacts                                                                                                                                                                | APPRAISAL PASS        |
+| Existing appraisal validations pass                                            | Elephant CLI Lexicon validation: 50/50                                                                                                                                                                                   | APPRAISAL PASS        |
+| Appraisal schema, completeness, geometry, failure behavior, and counts checked | Appraisal acceptance audit reports every check true                                                                                                                                                                      | APPRAISAL PASS        |
+| Appraisal pilot queryable and accurate through Donphan                         | Donphan property tools ran against the local 50-row property Parquet                                                                                                                                                     | APPRAISAL PASS        |
+| Permit data ingested, validated, reconciled, and queryable                     | The bounded local permit pilot normalized and queried 73 historical BCS rows; 15 current routes now point to bounded adapters, but 17 remain transport/access/custodian blocked and no unified current-county run exists | **NOT PASSED**        |
 
 The prior unqualified `PASS` described only the appraisal category. It did not
 satisfy the shared acceptance criteria, which require permit ingestion,
@@ -109,8 +109,13 @@ That is a successful bounded orchestration pilot, not full permit acceptance:
 - the positive records are historical BCS-held Lauderdale-by-the-Sea records,
   while Citizenserve/CAP Government is the current source;
 - the current BMSD attempt was an explicit valid-parcel zero result;
-- only 2 of 32 current jurisdiction routes are implemented in this branch;
-- 24 source-unavailable outcomes were preserved for the 25-row run; and
+- the integrated registry points 15 of 32 current routes to bounded adapters,
+  but the recorded live run predates that integration and used only two BCS
+  routes;
+- 24 source-unavailable outcomes remain preserved as that run's historical
+  snapshot;
+- Accela's 21 details and the Tyler/Citizenserve/other municipal observations
+  are separate bounded probes, not evidence of complete current coverage; and
 - the actual ignored 50-row sample artifact was absent from this fresh
   isolated worktree, so its preserved 25-row subset was used for live
   execution.
