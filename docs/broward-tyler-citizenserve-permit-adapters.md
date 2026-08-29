@@ -77,16 +77,28 @@ does not certify all-history completeness or permit a full crawl.
 
 Only existing Broward appraisal validation folios were used:
 
-| Jurisdiction          | Validated folio | Initial observation                                                                                                                                                                                       |
-| --------------------- | --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Pembroke Pines        | `513914101320`  | Exact Tyler global search returned 27 mixed-module entities over three reported pages; page 1 contained seven permit entities. One public permit detail reconciled the case ID, permit number, and folio. |
-| Lauderdale-by-the-Sea | `494318013550`  | Exact Citizenserve parcel search returned 33 permits over two source pages for `218 E COMMERCIAL BLVD`. One direct public detail reconciled permit `LBS13-001986`.                                        |
-| Miramar               | `514123070029`  | The appraisal sample provides the situs `PEMBROKE ROAD`; bounded adapter probe remains to be recorded.                                                                                                    |
-| Southwest Ranches     | `504026140250`  | The appraisal sample provides the situs `GRIFFIN ROAD`; bounded adapter probe remains to be recorded.                                                                                                     |
+| Jurisdiction          | Validated folio | Initial observation                                                                                                                                                                                                                                                          |
+| --------------------- | --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Pembroke Pines        | `513914101320`  | The final one-page/one-detail runner reported 27 mixed-module results over three pages; page 1 had seven permits and normalized one reconciled detail (`22-08581`). Source-spelled address `470 SW 198 TER` reported 26 mixed-module results and also normalized one detail. |
+| Lauderdale-by-the-Sea | `494318013550`  | The final one-page/one-detail runner reported 33 permits over two pages and normalized one reconciled detail (`LBS13-001986`). Source-spelled address `218 E COMMERCIAL BLVD` produced the same 33-record total and one bounded detail.                                      |
+| Miramar               | `514123070029`  | The exact folio returned HTTP 200 with a typed empty Tyler result (`0` entities, `0` pages). That is a successful source observation, not proof that the right-of-way parcel has no records outside this portal.                                                             |
+| Southwest Ranches     | `504026140250`  | The exact folio returned Citizenserve's explicit `No records found` result (`0` rows, `0` pages). This agricultural parcel is not treated as a positive permit control.                                                                                                      |
 
 The other jurisdictions have no municipality-matched parcel in the checked-in
 25-folio validation list. No unrelated parcel was invented or looked up merely
 to force a positive result.
+
+Both vendors matched source abbreviations (`TER`, `BLVD`) but returned zero for
+the otherwise identical appraisal suffixes (`TERRACE`, `BOULEVARD`). The
+adapter deliberately does not issue automatic variant searches: an operator
+may submit a source-spelled validated situs address, while folio remains the
+preferred stable lookup. A zero-result address variant is never promoted to a
+no-permits completeness claim.
+
+Every final live run used `--max-pages 1 --max-details 1`. The positive searches
+therefore report both `paginationTruncated` and `detailsTruncated`; those flags
+are expected proof that the probe stopped at its approved ceiling, not an
+all-record result.
 
 ## Local invocation
 
