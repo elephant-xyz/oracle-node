@@ -1,10 +1,4 @@
-import {
-  mkdtemp,
-  readFile,
-  rm,
-  stat,
-  writeFile,
-} from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -33,7 +27,10 @@ import {
   renderBrowardAccelaPermitJsonl,
 } from "../../scripts/probe-broward-accela-permits.mjs";
 
-const fixtureDirectory = new URL("../fixtures/broward-accela/", import.meta.url);
+const fixtureDirectory = new URL(
+  "../fixtures/broward-accela/",
+  import.meta.url,
+);
 const [pageOneHtml, pageTwoHtml, noRecordsHtml, sourceErrorHtml, detailHtml] =
   await Promise.all(
     [
@@ -76,9 +73,7 @@ describe("Broward jurisdiction-specific Accela adapters", () => {
       ).size,
     ).toBe(5);
     expect(BROWARD_ACCELA_SOURCES.hollywood.module).toBe("Building");
-    expect(BROWARD_ACCELA_SOURCES.plantation.contentFrameName).toBe(
-      "ACAFrame",
-    );
+    expect(BROWARD_ACCELA_SOURCES.plantation.contentFrameName).toBe("ACAFrame");
     expect(BROWARD_ACCELA_SOURCES["fort-lauderdale"].module).toBe("Permits");
     expect(
       BROWARD_ACCELA_SOURCES.hollywood.separateHistoricalSource,
@@ -94,9 +89,7 @@ describe("Broward jurisdiction-specific Accela adapters", () => {
       date: "1997-01-01",
       disposition: "outside_city_record_coverage",
     });
-    expect(
-      BROWARD_ACCELA_SOURCES.plantation.historicalCutoff,
-    ).toMatchObject({
+    expect(BROWARD_ACCELA_SOURCES.plantation.historicalCutoff).toMatchObject({
       date: "2004-01-01",
       disposition: "official_microfilm_route",
     });
@@ -201,9 +194,7 @@ describe("Broward jurisdiction-specific Accela adapters", () => {
         status: "Closed",
       },
     ]);
-    expect(
-      countBrowardAccelaExcludedModuleLinks({ html, source }),
-    ).toBe(1);
+    expect(countBrowardAccelaExcludedModuleLinks({ html, source })).toBe(1);
   });
 
   it("distinguishes explicit no records from source errors and unknown pages", () => {
@@ -218,9 +209,9 @@ describe("Broward jurisdiction-specific Accela adapters", () => {
         ),
       ),
     ).toBe("records");
-    expect(classifyBrowardAccelaPage("<html><body>Loading...</body></html>")).toBe(
-      "unknown",
-    );
+    expect(
+      classifyBrowardAccelaPage("<html><body>Loading...</body></html>"),
+    ).toBe("unknown");
   });
 
   it("maps Broward value aliases and keeps expiration metadata out of permit status", () => {
@@ -291,8 +282,7 @@ describe("Broward jurisdiction-specific Accela adapters", () => {
           resultedDate: "08/20/2024",
         },
       ],
-      idempotencyKey:
-        "broward_hollywood_accela_permits:permit:BLD24-12345",
+      idempotencyKey: "broward_hollywood_accela_permits:permit:BLD24-12345",
       provenance: {
         searchMethod: "public_anonymous_parcel",
         anonymous: true,
@@ -396,9 +386,7 @@ describe("Broward jurisdiction-specific Accela adapters", () => {
     await writeBrowardAccelaCheckpoint(checkpointPath, checkpoint);
 
     const resumed = await readBrowardAccelaCheckpoint(checkpointPath);
-    expect(
-      resumed.targets["plantation:parcel:504108BJ0140"],
-    ).toMatchObject({
+    expect(resumed.targets["plantation:parcel:504108BJ0140"]).toMatchObject({
       status: "no_records",
       parcelIdentifier: "504108BJ0140",
     });
@@ -469,8 +457,8 @@ describe("Broward jurisdiction-specific Accela adapters", () => {
       ]),
     ).toThrow("exceeds the approved maximum");
     expect(() => parseOptions([])).toThrow("exactly one input mode");
-    expect(() =>
-      parseOptions(["--pilot", "--detail-delay-ms=249"]),
-    ).toThrow("between 250");
+    expect(() => parseOptions(["--pilot", "--detail-delay-ms=249"])).toThrow(
+      "between 250",
+    );
   });
 });
