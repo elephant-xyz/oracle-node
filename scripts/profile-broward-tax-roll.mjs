@@ -299,6 +299,13 @@ export async function profileBrowardTaxRoll(options) {
   return report;
 }
 
+/**
+ * Read exact folios from the existing GIS-derived seed.
+ *
+ * @param {string} seedPath - Full Broward GIS seed CSV.
+ * @returns {Promise<{folios:Set<string>,rows:number,invalid:number}>}
+ *   Unique valid folios plus aggregate row/error counts.
+ */
 async function readGisFolios(seedPath) {
   const folios = new Set();
   let rows = 0;
@@ -318,6 +325,19 @@ async function readGisFolios(seedPath) {
   return { folios, rows, invalid };
 }
 
+/**
+ * Retain at most five private examples for each required pilot category.
+ *
+ * @param {object} params - Candidate and bounded selection state.
+ * @param {CsvRecord} params.row - Complete private NAL source row.
+ * @param {string} params.parcelId - Valid canonical Broward folio.
+ * @param {number} params.sourceRowIndex - Zero-based NAL source row.
+ * @param {string} params.dorUseCode - Three-digit predominant-use code.
+ * @param {boolean} params.hasGisFolio - Exact GIS folio membership.
+ * @param {Map<SelectedPilotRow["bucket"], SelectedPilotRow[]>} params.pilotBuckets
+ *   Mutable bounded private selections by required category.
+ * @returns {void}
+ */
 function selectPilotRow({
   row,
   parcelId,
@@ -370,6 +390,18 @@ function selectPilotRow({
   });
 }
 
+/**
+ * Write optional private pilot CSV and manifest artifacts.
+ *
+ * @param {object} params - Pilot output content and destinations.
+ * @param {readonly string[]} params.columns - Original NAL header order.
+ * @param {readonly SelectedPilotRow[]} params.pilotRows - Selected private rows.
+ * @param {readonly string[]} params.gisOnlyFolios - GIS-only no-change controls.
+ * @param {string | null} params.csvPath - Optional private NAL subset path.
+ * @param {string | null} params.manifestPath - Optional private evidence path.
+ * @param {string} params.sourceSha256 - Raw official ZIP checksum.
+ * @returns {Promise<void>} Resolves after requested private files are durable locally.
+ */
 async function writePilotFiles({
   columns,
   pilotRows,
@@ -418,22 +450,48 @@ async function writePilotFiles({
   }
 }
 
+/**
+ * Hash a source artifact without buffering it in memory.
+ *
+ * @param {string} filePath - Local raw source path.
+ * @returns {Promise<string>} Lowercase SHA-256 digest.
+ */
 async function sha256File(filePath) {
   const digest = createHash("sha256");
   for await (const chunk of createReadStream(filePath)) digest.update(chunk);
   return digest.digest("hex");
 }
 
+/**
+ * Count exact string members shared by two sets.
+ *
+ * @param {ReadonlySet<string>} left - First identifier set.
+ * @param {ReadonlySet<string>} right - Second identifier set.
+ * @returns {number} Exact intersection cardinality.
+ */
 function intersectionCount(left, right) {
   let count = 0;
   for (const value of left) if (right.has(value)) count += 1;
   return count;
 }
 
+/**
+ * Increment one aggregate counter key.
+ *
+ * @param {Map<string, number>} counter - Mutable aggregate counter.
+ * @param {string} key - Aggregate-safe category key.
+ * @returns {void}
+ */
 function increment(counter, key) {
   counter.set(key, (counter.get(key) ?? 0) + 1);
 }
 
+/**
+ * Convert a string counter to a stable JSON object.
+ *
+ * @param {ReadonlyMap<string, number>} counter - Aggregate counter.
+ * @returns {Record<string, number>} Lexically ordered object.
+ */
 function sortedObject(counter) {
   return Object.fromEntries(
     [...counter.entries()].sort(([left], [right]) =>
@@ -442,11 +500,24 @@ function sortedObject(counter) {
   );
 }
 
+/**
+ * Encode one private pilot value using RFC 4180 quoting.
+ *
+ * @param {string} value - Original source cell.
+ * @returns {string} CSV-safe cell.
+ */
 function encodeCsvCell(value) {
   if (!/[",\r\n]/u.test(value)) return value;
   return `"${value.replaceAll('"', '""')}"`;
 }
 
+/**
+ * Read one mandatory CLI value.
+ *
+ * @param {ReadonlyMap<string, string>} values - Parsed option values.
+ * @param {string} name - Option name without leading dashes.
+ * @returns {string} Non-empty option value.
+ */
 function required(values, name) {
   const value = values.get(name);
   if (typeof value !== "string" || value.trim() === "") {
