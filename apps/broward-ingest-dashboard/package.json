@@ -11,7 +11,7 @@
     "build": "vite build",
     "db:migrate": "tsx scripts/migrate.ts",
     "dev": "vite",
-    "dev:mock": "vite --mode mock",
+    "dev:mock": "VITE_DASHBOARD_MOCK_MODE=true vite",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
