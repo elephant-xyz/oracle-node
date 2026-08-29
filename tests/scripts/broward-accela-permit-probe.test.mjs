@@ -16,12 +16,14 @@ import {
   buildBrowardAccelaPermitStem,
   buildBrowardAccelaSearchKey,
   classifyBrowardAccelaPage,
+  cleanBrowardAccelaRecordStatus,
   countBrowardAccelaExcludedModuleLinks,
   createBrowardAccelaCheckpoint,
   extractBrowardAccelaDirectDetailLink,
   extractBrowardAccelaPermitDetail,
   extractBrowardAccelaPermitLinks,
   normalizeBrowardPermitFolio,
+  parseBrowardAccelaMoreDetails,
   readBrowardAccelaCheckpoint,
   readBrowardAccelaSource,
   writeBrowardAccelaCheckpoint,
@@ -208,9 +210,37 @@ describe("Broward jurisdiction-specific Accela adapters", () => {
     expect(classifyBrowardAccelaPage(noRecordsHtml)).toBe("no_records");
     expect(classifyBrowardAccelaPage(sourceErrorHtml)).toBe("source_error");
     expect(classifyBrowardAccelaPage(pageOneHtml)).toBe("records");
+    expect(
+      classifyBrowardAccelaPage(
+        detailHtml.replace(
+          "</form>",
+          "<div>Related Records: No records found.</div></form>",
+        ),
+      ),
+    ).toBe("records");
     expect(classifyBrowardAccelaPage("<html><body>Loading...</body></html>")).toBe(
       "unknown",
     );
+  });
+
+  it("maps Broward value aliases and keeps expiration metadata out of permit status", () => {
+    expect(
+      parseBrowardAccelaMoreDetails(
+        "Contract Value: 24,000 Commercial / Residential: Residential Total Square Feet: 2200 Parcel Number: 494212072320 *",
+      ),
+    ).toMatchObject({
+      "Contract Value": "24,000",
+      "Estimated Job Value": "24,000",
+      "Commercial / Residential": "Residential",
+      "Comm/Res": "Residential",
+      "Total Square Feet": "2200",
+      "Estimated Sq. Ft.": "2200",
+    });
+    expect(
+      cleanBrowardAccelaRecordStatus(
+        "Issued Expiration Date: 08/28/2027 Add to Existing Collection",
+      ),
+    ).toBe("Issued");
   });
 
   it("normalizes detail data into the existing Accela permit record shape with provenance", () => {

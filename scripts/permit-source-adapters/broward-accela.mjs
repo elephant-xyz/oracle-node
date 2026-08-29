@@ -387,7 +387,6 @@ export function classifyBrowardAccelaPage(html) {
   const text = htmlToText(html);
   if (ACCESS_BLOCK_PATTERN.test(text)) return "access_blocked";
   if (SOURCE_ERROR_PATTERN.test(text)) return "source_error";
-  if (NO_RECORDS_PATTERN.test(text)) return "no_records";
   const $ = cheerio.load(html);
   if (
     $("[id*='gdvPermitList']").length > 0 ||
@@ -397,6 +396,7 @@ export function classifyBrowardAccelaPage(html) {
   ) {
     return "records";
   }
+  if (NO_RECORDS_PATTERN.test(text)) return "no_records";
   return "unknown";
 }
 
@@ -611,7 +611,7 @@ export function extractBrowardAccelaDirectDetailLink({
       /Work Location\s+(.*?)\s+\*\s+Record Details/i,
     ),
     description: collapseText(header[2]) || null,
-    status: cleanRecordStatus(
+    status: cleanBrowardAccelaRecordStatus(
       matchCollapsedText(
         text,
         /Record Status:\s*(.*?)(?:Click here for more information|Create a New Collection|Add to Existing Collection|Record Info|Work Location)/i,
@@ -1238,6 +1238,113 @@ function extractSourceDetailLinks(html, source) {
 }
 
 /**
+ * Remove expiration metadata appended to the visible status by Broward Accela
+ * templates while retaining the complete source text in `rawText`.
+ *
+ * @param {string | null | undefined} value - Raw visible record status.
+ * @returns {string | null} Concise permit status for existing permit fields.
+ */
+export function cleanBrowardAccelaRecordStatus(value) {
+  const sharedStatus = cleanRecordStatus(value);
+  if (sharedStatus === null) return null;
+  const expirationBoundary = /\s+Expiration Date:\s*/i.exec(sharedStatus);
+  const status =
+    expirationBoundary === null
+      ? sharedStatus
+      : sharedStatus.slice(0, expirationBoundary.index).trim();
+  return status.length > 0 ? status : null;
+}
+
+/**
+ * Augment the compatible Lee More Details parser with Broward field aliases
+ * that map contract/job value, residential/commercial use, and square footage
+ * into the existing permit keys. The original Broward label is also retained.
+ *
+ * @param {string | null} sectionText - Raw public More Details section.
+ * @returns {Record<string, string>} Existing permit-field dictionary plus Broward labels.
+ */
+export function parseBrowardAccelaMoreDetails(sectionText) {
+  const details = parseMoreDetails(sectionText);
+  if (sectionText === null) return details;
+  const normalizedText = collapseText(sectionText);
+  /**
+   * @type {readonly { sourceLabel: string, canonicalLabel: string, pattern: RegExp }[]}
+   */
+  const numericAliases = [
+    {
+      sourceLabel: "Contract Value",
+      canonicalLabel: "Estimated Job Value",
+      pattern: /\bContract Value:\s*\$?([\d,]+(?:\.\d+)?)\b/i,
+    },
+    {
+      sourceLabel: "Job Value",
+      canonicalLabel: "Estimated Job Value",
+      pattern: /\bJob Value:\s*\$?([\d,]+(?:\.\d+)?)\b/i,
+    },
+    {
+      sourceLabel: "Enter Job Cost",
+      canonicalLabel: "Estimated Job Value",
+      pattern: /\bEnter Job Cost:\s*\$?([\d,]+(?:\.\d+)?)\b/i,
+    },
+    {
+      sourceLabel: "Total Square Feet",
+      canonicalLabel: "Estimated Sq. Ft.",
+      pattern: /\bTotal Square Feet:\s*([\d,]+(?:\.\d+)?)\b/i,
+    },
+    {
+      sourceLabel: "Square Feet",
+      canonicalLabel: "Estimated Sq. Ft.",
+      pattern: /\bSquare Feet:\s*([\d,]+(?:\.\d+)?)\b/i,
+    },
+    {
+      sourceLabel: "Livable (SQ FT)",
+      canonicalLabel: "Estimated Sq. Ft.",
+      pattern: /\bLivable \(SQ FT\):\s*([\d,]+(?:\.\d+)?)\b/i,
+    },
+  ];
+  for (const alias of numericAliases) {
+    const value = matchCollapsedText(normalizedText, alias.pattern);
+    if (value === null) continue;
+    details[alias.sourceLabel] = value;
+    details[alias.canonicalLabel] ??= value;
+  }
+  const useMatch =
+    /\b(Commercial \/ Residential|Residential \/ Commercial):\s*([A-Za-z][A-Za-z /-]*)\b/i.exec(
+      normalizedText,
+    );
+  if (useMatch !== null) {
+    const sourceLabel = collapseText(useMatch[1]);
+    const value = collapseText(useMatch[2]).replace(
+      /\s+(?:Is this|Building|City|Application|Parcel)\b.*$/i,
+      "",
+    );
+    if (sourceLabel.length > 0 && value.length > 0) {
+      details[sourceLabel] = value;
+      details["Comm/Res"] ??= value;
+    }
+  }
+  return details;
+}
+
+/**
+ * Normalize only the documented Broward folio portion of an Accela display
+ * value. Accela commonly appends a required-field asterisk; arbitrary suffixes
+ * are rejected rather than stripped.
+ *
+ * @param {string | null | undefined} value - Public detail-page parcel display.
+ * @returns {string | null} Canonical 12-character folio when exact.
+ */
+function normalizeDisplayedBrowardPermitFolio(value) {
+  if (typeof value !== "string") return null;
+  const match =
+    /^\s*([A-Z0-9]{12}|[A-Z0-9]{6}-[A-Z0-9]{2}-[A-Z0-9]{4})(?:\s*\*)?\s*$/i.exec(
+      value,
+    );
+  if (match === null) return null;
+  return normalizeBrowardPermitFolio(match[1]);
+}
+
+/**
  * Parse one compatible public Accela detail page into the existing permit
  * artifact shape while retaining jurisdiction-specific source identity and the
  * exact submitted Broward folio.
@@ -1282,9 +1389,9 @@ export function extractBrowardAccelaPermitDetail({
     header === null ? permit.recordType : collapseText(header[2]) || null;
   const moreDetailsRawText = matchCollapsedText(
     text,
-    /More Details\s+(.*?)(?:Fees\s+\*?Fee Reductions|Inspections|Processing Status|Related Records|$)/i,
+    /More Details\s+(.*?)(?:Fees(?:\s+\*?Fee Reductions|\s+Loading|\s+Paid:|\s+Outstanding:)|Inspections|Processing Status|Related Records|$)/i,
   );
-  const moreDetails = parseMoreDetails(moreDetailsRawText);
+  const moreDetails = parseBrowardAccelaMoreDetails(moreDetailsRawText);
   const rawSourceParcel =
     moreDetails["Parcel Number"] ??
     matchCollapsedText(
@@ -1292,14 +1399,8 @@ export function extractBrowardAccelaPermitDetail({
       /Parcel (?:Information\s+)?(?:Number|No\.?):\s*([A-Z0-9-]{12,16})/i,
     );
   /** @type {string | null} */
-  let sourceParcelIdentifier = null;
-  if (rawSourceParcel !== null && rawSourceParcel !== undefined) {
-    try {
-      sourceParcelIdentifier = normalizeBrowardPermitFolio(rawSourceParcel);
-    } catch {
-      sourceParcelIdentifier = null;
-    }
-  }
+  const sourceParcelIdentifier =
+    normalizeDisplayedBrowardPermitFolio(rawSourceParcel);
   if (
     sourceParcelIdentifier !== null &&
     sourceParcelIdentifier !== canonicalParcel
@@ -1346,7 +1447,7 @@ export function extractBrowardAccelaPermitDetail({
     sourceUrl: normalizeSourceUrl(sourceUrl, source),
     recordNumber: detailRecordNumber,
     recordType,
-    recordStatus: cleanRecordStatus(
+    recordStatus: cleanBrowardAccelaRecordStatus(
       matchCollapsedText(
         text,
         /Record Status:\s*(.*?)(?:Click here for more information|Create a New Collection|Add to Existing Collection|Record Info|Work Location)/i,

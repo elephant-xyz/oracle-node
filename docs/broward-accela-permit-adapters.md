@@ -113,8 +113,47 @@ full municipal harvest.
 
 ## Bounded live evidence
 
-Live evidence is intentionally limited to one validated appraisal folio per
-configured jurisdiction. Source outcomes, discovered/captured record counts,
-record numbers, exact capture paths, and blockers are written to the private
-summary. This section is updated only from that bounded run; an empty result is
-not a completeness claim beyond the source's explicit historical boundary.
+Live source traffic was limited to one validated appraisal folio in Hollywood,
+Plantation, Cooper City, and Weston, and two in Fort Lauderdale:
+
+| Jurisdiction / folio | Source outcome | Listed | Excluded non-permit | Permit details captured |
+| -------------------- | -------------- | -----: | ------------------: | ----------------------: |
+| Hollywood `514111160200` | records | 1 | 0 | 1 |
+| Plantation `504108BJ0140` | records | 10 | 3 Enforcement | 7 |
+| Fort Lauderdale `494209060010` | bounded stop | 50 across 3 pages | 0 | 0 |
+| Fort Lauderdale `494212072320` | records | 7 | 0 | 7 |
+| Cooper City `514106100100` | explicit no records | 0 | 0 | 0 |
+| Weston `503912010490` | records | 6 | 0 | 6 |
+
+The completed detail records were:
+
+- Hollywood: `STRUC-ROOF-25-000925`.
+- Plantation: `B03-04467`, `B17-04514`, `B18-03653`, `B22-00489`,
+  `B22-03630`, `E17-01256`, and `P17-01009`.
+- Fort Lauderdale: `BLD-FEN-21120006`, `BLD-GEN-24040900`,
+  `BLD-ROOF-WT-25080033`, `PM-02030921`, `PM-02071619`, `PM-02091931`,
+  and `PM-05012277`.
+- Weston: `B24-02326`, `R17-00107`, `R17-00173`, `STR-065083-0`,
+  `STR-1222345-0`, and `STR-1633266-0`.
+
+The two private outputs contain 21 normalized permit details. Plantation's
+three `Module=Enforcement` results remain count provenance but were not
+misclassified as permits. The first LauderBuild folio was fully paginated and
+reconciled at 50 links, then failed closed before detail traversal because it
+exceeded the configured 20-detail probe cap. The second validated Fort
+Lauderdale folio supplied bounded list/detail evidence instead; the cap was
+not raised.
+
+All five official Accela portals were anonymously reachable. There was no
+login, CAPTCHA, or network access blocker. The remaining Fort Lauderdale
+blocker is the deliberate per-folio detail safety limit, not source access.
+Hollywood's legacy address source was not queried and remains separately
+scoped. Cooper City's explicit no-records result is not a historical
+completeness claim because its earliest online date is unknown.
+
+The resumable run skipped already completed Hollywood, Cooper City, and Weston
+targets, resumed Plantation after source-contract corrections, and retained
+the three LauderBuild list pages for the over-limit target. Raw HTML,
+normalized JSONL, summaries, and checkpoints stayed under
+`/tmp/broward-accela-probe-afa4/` as local private artifacts. No AWS,
+database, publication, or active appraisal process was touched.
