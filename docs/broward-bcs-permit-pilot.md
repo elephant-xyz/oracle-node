@@ -26,6 +26,15 @@ records held by BCS without making a broader coverage claim. A no-result for a
 municipal parcel is not evidence that the parcel has no municipal permits; the
 city source remains necessary.
 
+The county orchestrator added in
+[`broward-permit-acceptance-pilot.md`](./broward-permit-acceptance-pilot.md)
+does not send every BCPA parcel to this adapter. It derives jurisdiction from
+BCPA situs evidence, uses BCS as a current route only for
+BMSD/unincorporated and Lazy Lake, and preserves the proven
+Lauderdale-by-the-Sea result as a separately labelled historical supplemental
+route. All other municipalities retain their own current vendor/custodian
+outcome.
+
 ## Bounded validation set
 
 `--pilot` uses exactly five permit-priority folios already present in the

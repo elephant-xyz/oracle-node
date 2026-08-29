@@ -35,6 +35,10 @@ Common official evidence:
   [BCS POSSE adapter pilot](./broward-bcs-permit-pilot.md) documents exact
   Parcel ID submission, explicit empty/no-match behavior, source provenance,
   detail normalization, and hard request limits.
+- The executable
+  [32-jurisdiction property-first registry and acceptance pilot](./broward-permit-acceptance-pilot.md)
+  derives each route from BCPA situs evidence, preserves unavailable/login/
+  CAPTCHA/custodian outcomes, and prevents municipality-wide BCS fallback.
 - [Broward ePermits OneStop](https://www.broward.org/ePermits/Pages/Contact.aspx)
   documents the municipal/county split and links the municipal building
   officials/support route.
@@ -82,5 +86,8 @@ Common official evidence:
 Every requested category now has either a first-party source or a documented
 official custodian/unavailability route. This matrix does **not** claim that
 all 32 permit jurisdictions have ingestion adapters. Only source discovery is
-closed. The first BCS adapter is local-only and property-first; municipal
-coverage still requires bounded vendor-specific pilots and city routing.
+closed. The local property-first pilot has an explicit route for all 32 rows
+and produced 73 queryable historical BCS records, but only BMSD/unincorporated
+and Lazy Lake are current implemented BCS routes. Thirty current jurisdiction
+routes remain unavailable in this branch, so municipal permit acceptance has
+not passed.

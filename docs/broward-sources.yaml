@@ -151,12 +151,19 @@ recorder:
 permit_source_documentation:
   official_custodian_directory: https://www.broward.org/CodeAppeals/Pages/BuildingContacts.aspx
   availability_audit: ./broward-source-availability.md
+  routing_registry: ../scripts/broward-permit-jurisdictions.mjs
+  local_pilot: ../scripts/run-broward-permit-pilot.mjs
+  pilot_evidence: ./broward-permit-acceptance-pilot.md
+  jurisdiction_count: 32
+  current_implemented_jurisdictions: 2
+  current_blocked_jurisdictions: 30
+  county_permit_acceptance: not-passed
 permits:
   - jurisdiction: Unincorporated Broward County
     portal: https://dpepp.broward.org/BCS/Default.aspx?PossePresentation=ParcelSearchByAddress
     vendor: Computronix POSSE
     search: address | folio | parcel id
-    status: discovered
+    status: implemented-local-bounded
   - jurisdiction: Hollywood
     portal: https://apps.hollywoodfl.org/building/PermitStatus.aspx
     current_portal: https://aca-prod.accela.com/HOLLYWOOD/Default.aspx
