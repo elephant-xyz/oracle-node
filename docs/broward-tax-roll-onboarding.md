@@ -127,7 +127,7 @@ increase the tax-roll coverage denominator.
 
 The query-db patch is
 `docs/patches/elephant-query-db-broward-tax-roll.patch` (SHA-256
-`6e2f77d6e4bc86ae4cc89e03ccd00839fb08d7a0aca383a7f6773d89ac116d48`).
+`a911edf7e6f738840d1b6aea01925fef375d62458920c6c6d3648c1335201bdf`).
 Apply it after `elephant-query-db-broward-local-loader.patch`. It adds a
 streaming, checkpointed NAL loader and query tables for Lexicon
 `tax_exemption` and `tax_authority`.
@@ -155,6 +155,16 @@ school/county/municipal applicability overlaps. `PA_UC`, statistical strata,
 special assessments, classified-use components, portability fields, sale
 change codes, and data-management identifiers remain in the raw source payload
 when no exact query/Lexicon field exists.
+
+The pilot also exposed a Lexicon contract gap: the current `tax` schema requires
+`monthly_tax_amount`, while NAL reports assessed/taxable values but no tax bill
+or millage-derived monthly amount. The mapper deliberately leaves that field
+absent rather than inventing a tax payment. Query-db mapping and all 20 pilot
+rows are valid, but end-to-end Elephant CLI Lexicon validation cannot pass
+until the Lexicon makes that payment field optional or adds an assessment-roll
+class. The same validation found and fixed `number_of_units_type` to use the
+existing `One`/`Two`/`Three`/`Four` vocabulary. Unknown-format warnings for the
+existing percentage format are unchanged from prior county validation.
 
 ### Precedence and idempotence
 

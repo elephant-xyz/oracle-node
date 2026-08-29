@@ -1,7 +1,7 @@
 From 3120eeabbbf2a75c0275681f4f8dec6da467f316 Mon Sep 17 00:00:00 2001
 From: Cursor Agent <cursoragent@cursor.com>
 Date: Sat, 29 Aug 2026 23:02:06 +0000
-Subject: [PATCH] Add resumable Florida NAL tax-roll loader
+Subject: [PATCH 1/2] Add resumable Florida NAL tax-roll loader
 
 ---
  migrations/0010_florida_nal_tax_roll.sql | 118 ++++
@@ -2374,6 +2374,72 @@ index fad5278..64fedd9 100644
      expect(classTypes).toContain("property_improvement");
      expect(classTypes).toContain("inspection");
      expect(classTypes).toContain("business_registration");
+-- 
+2.43.0
+
+
+From 5ff4f03d99011cf8599e4939868456c683d21dd2 Mon Sep 17 00:00:00 2001
+From: Cursor Agent <cursoragent@cursor.com>
+Date: Sat, 29 Aug 2026 23:34:53 +0000
+Subject: [PATCH 2/2] Align NAL unit counts with Lexicon
+
+---
+ src/loader/florida-nal.ts | 15 +++++++++++++--
+ tests/florida-nal.test.ts |  2 ++
+ 2 files changed, 15 insertions(+), 2 deletions(-)
+
+diff --git a/src/loader/florida-nal.ts b/src/loader/florida-nal.ts
+index b4655ec..c249bb8 100644
+--- a/src/loader/florida-nal.ts
++++ b/src/loader/florida-nal.ts
+@@ -212,8 +212,9 @@ export function mapFloridaNalRow(
+           livable_floor_area: readString(row.TOT_LVG_AREA),
+           total_area: readString(row.LND_SQFOOT),
+           number_of_units: readInteger(row.NO_RES_UNTS),
+-          number_of_units_type:
+-            readInteger(row.NO_RES_UNTS) === null ? undefined : "Residential",
++          number_of_units_type: unitCountType(
++            readInteger(row.NO_RES_UNTS),
++          ),
+           source_payload: {
+             parcel_id: parcelId,
+             dor_use_code: dorUseCode,
+@@ -808,5 +809,15 @@ function nonnegativeDifference(
+   return Math.max(0, leftNumber - rightNumber);
+ }
+ 
++function unitCountType(
++  count: number | null,
++): "One" | "Two" | "Three" | "Four" | undefined {
++  if (count === 1) return "One";
++  if (count === 2) return "Two";
++  if (count === 3) return "Three";
++  if (count === 4) return "Four";
++  return undefined;
++}
++
+ const _sourceSystemTypeCheck: SourceSystem = FLORIDA_DOR_NAL_SOURCE_SYSTEM;
+ void _sourceSystemTypeCheck;
+diff --git a/tests/florida-nal.test.ts b/tests/florida-nal.test.ts
+index 0c22df8..3606904 100644
+--- a/tests/florida-nal.test.ts
++++ b/tests/florida-nal.test.ts
+@@ -103,6 +103,7 @@ describe("Florida DOR NAL mapping", () => {
+       property_type: "Unit",
+       property_usage_type: "Residential",
+       structure_form: "ApartmentUnit",
++      number_of_units_type: "One",
+     });
+ 
+     const tax = mapped.rows.find((row) => row.tableName === "taxes");
+@@ -117,6 +118,7 @@ describe("Florida DOR NAL mapping", () => {
+       tax_year: 2026,
+     });
+     expect(tax?.values).not.toHaveProperty("property_exemption_amount");
++    expect(tax?.values).not.toHaveProperty("monthly_tax_amount");
+   });
+ 
+   it("attaches NAL facts to an existing appraiser property without duplicating it", () => {
 -- 
 2.43.0
 
