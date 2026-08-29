@@ -29,6 +29,12 @@
  * @property {BrowardValidatedPermitSample | null} validatedSample - Existing Broward appraisal validation evidence.
  */
 
+/** @type {readonly ("folio" | "address")[]} */
+const PROPERTY_SEARCH_KINDS = Object.freeze(["folio", "address"]);
+
+/** @type {readonly ("folio" | "address")[]} */
+const NO_SEARCH_KINDS = Object.freeze([]);
+
 /**
  * Tyler EnerGov/Civic Access and Citizenserve/CAP Government jurisdictions in
  * the documented Broward permit matrix.
@@ -53,7 +59,7 @@ export const BROWARD_PERMIT_JURISDICTIONS = Object.freeze({
     portalBaseUrl:
       "https://pembrokepinesfl-energovweb.tylerhost.net/apps/selfservice",
     anonymousSearchCertified: true,
-    searchKinds: Object.freeze(["folio", "address"]),
+    searchKinds: PROPERTY_SEARCH_KINDS,
     coverageNote:
       "Development HUB records only; the City separately documents a records-search request for 1992-current history, so portal completeness is not inferred.",
     skipReason: null,
@@ -73,7 +79,7 @@ export const BROWARD_PERMIT_JURISDICTIONS = Object.freeze({
     portalBaseUrl:
       "https://hallandalefl-energovpub.tylerhost.net/Apps/SelfService",
     anonymousSearchCertified: true,
-    searchKinds: Object.freeze(["folio", "address"]),
+    searchKinds: PROPERTY_SEARCH_KINDS,
     coverageNote:
       "The official FAQ certifies anonymous global permit/parcel/address search; earliest and complete migrated history remain unverified.",
     skipReason: null,
@@ -91,7 +97,7 @@ export const BROWARD_PERMIT_JURISDICTIONS = Object.freeze({
     portalBaseUrl:
       "https://miramarfl-energovweb.tylerhost.net/apps/SelfService",
     anonymousSearchCertified: true,
-    searchKinds: Object.freeze(["folio", "address"]),
+    searchKinds: PROPERTY_SEARCH_KINDS,
     coverageNote:
       "Public-record search is separate from authenticated project management; no complete-history claim is made.",
     skipReason: null,
@@ -111,7 +117,7 @@ export const BROWARD_PERMIT_JURISDICTIONS = Object.freeze({
     portalBaseUrl:
       "https://oaklandparkfl-energovweb.tylerhost.net/apps/SelfService",
     anonymousSearchCertified: true,
-    searchKinds: Object.freeze(["folio", "address"]),
+    searchKinds: PROPERTY_SEARCH_KINDS,
     coverageNote:
       "Tyler contains records after 2019-11-01 only. Earlier permits remain in the City's documented legacy searches/public-record route.",
     skipReason: null,
@@ -129,7 +135,7 @@ export const BROWARD_PERMIT_JURISDICTIONS = Object.freeze({
     portalBaseUrl:
       "https://nlselfservice.nlauderdale.org/Energov_prod/SelfService",
     anonymousSearchCertified: false,
-    searchKinds: Object.freeze([]),
+    searchKinds: NO_SEARCH_KINDS,
     coverageNote:
       "Official Enterprise Permitting & Licensing CSS access requires login; property-wide records use the City public-record request route.",
     skipReason:
@@ -147,7 +153,7 @@ export const BROWARD_PERMIT_JURISDICTIONS = Object.freeze({
       "https://lauderdalebythesea-fl.gov/152/Building-Division",
     portalBaseUrl: "https://www6.citizenserve.com/Portal",
     anonymousSearchCertified: true,
-    searchKinds: Object.freeze(["folio", "address"]),
+    searchKinds: PROPERTY_SEARCH_KINDS,
     coverageNote:
       "Current CAP Government/Citizenserve records only; historical BCS-held records are a separate county source and are not merged here.",
     skipReason: null,
@@ -167,7 +173,7 @@ export const BROWARD_PERMIT_JURISDICTIONS = Object.freeze({
       "https://www.southwestranches.org/departments/building-permitting-and-inspections/",
     portalBaseUrl: "https://www6.citizenserve.com/Portal",
     anonymousSearchCertified: true,
-    searchKinds: Object.freeze(["folio", "address"]),
+    searchKinds: PROPERTY_SEARCH_KINDS,
     coverageNote:
       "CAP Government building permits only; separate Town zoning, engineering, and external-agency approvals are outside this adapter.",
     skipReason: null,
@@ -187,7 +193,7 @@ export const BROWARD_PERMIT_JURISDICTIONS = Object.freeze({
       "https://www.cityofwestpark.org/governement/departments/building-department",
     portalBaseUrl: "https://www6.citizenserve.com/Portal",
     anonymousSearchCertified: true,
-    searchKinds: Object.freeze(["folio", "address"]),
+    searchKinds: PROPERTY_SEARCH_KINDS,
     coverageNote:
       "CAP Government/Citizenserve building permits only; account-required application submission is not used.",
     skipReason: null,
@@ -204,7 +210,7 @@ export const BROWARD_PERMIT_JURISDICTIONS = Object.freeze({
       "https://www.wiltonmanors.gov/DocumentCenter/View/9768/How-to-do-an-online-permit-record-search",
     portalBaseUrl: "https://www6.citizenserve.com/Portal",
     anonymousSearchCertified: true,
-    searchKinds: Object.freeze(["folio", "address"]),
+    searchKinds: PROPERTY_SEARCH_KINDS,
     coverageNote:
       "Citizenserve search/view surface only; files unavailable in the portal require the City's official records route.",
     skipReason: null,
