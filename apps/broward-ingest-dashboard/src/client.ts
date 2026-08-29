@@ -136,14 +136,14 @@ function renderCategoryCoverage(
     const label = document.createElement("span");
     label.className = "coverage-label";
     label.textContent = formatCategory(entry.category);
-    const bar = document.createElement("span");
+    const bar = document.createElement("progress");
     bar.className = "coverage-bar";
-    bar.setAttribute("aria-hidden", "true");
-    const fill = document.createElement("span");
-    fill.style.width = `${String(
-      Math.min(100, (entry.succeeded / maximum) * 100),
-    )}%`;
-    bar.append(fill);
+    bar.max = maximum;
+    bar.value = entry.succeeded;
+    bar.setAttribute(
+      "aria-label",
+      `${formatCategory(entry.category)} category relative coverage`,
+    );
     const count = document.createElement("strong");
     count.className = "coverage-count";
     count.textContent = formatCount(entry.succeeded);
