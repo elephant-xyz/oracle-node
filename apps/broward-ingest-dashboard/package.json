@@ -1,0 +1,30 @@
+{
+  "name": "broward-ingest-dashboard",
+  "version": "1.0.0",
+  "description": "Privacy-safe Vercel dashboard for durable Broward ingestion status",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "vite build",
+    "db:migrate": "tsx scripts/migrate.ts",
+    "dev": "vite",
+    "dev:mock": "vite --mode mock",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@vercel/functions": "^3.9.5",
+    "pg": "^8.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.4.0",
+    "@types/pg": "^8.23.1",
+    "tsx": "^4.23.12",
+    "typescript": "^7.0.2",
+    "vite": "^8.2.2",
+    "vitest": "^4.1.11"
+  }
+}
