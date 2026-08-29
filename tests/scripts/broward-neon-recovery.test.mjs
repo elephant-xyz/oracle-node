@@ -62,7 +62,7 @@ describe("durable Broward Neon recovery", () => {
         "5",
       ]),
     ).toThrow(/through 4/u);
-    expect(() => parseRecoveryOptions(["--pilot"])).toThrow(
+    expect(() => parseRecoveryOptions(["--pilot"], {})).toThrow(
       /expected-branch-id/u,
     );
   });
@@ -364,6 +364,6 @@ describe("durable Broward Neon recovery", () => {
       expectedBranchId: "br-old-cloud-aqz2hqjl",
       expectedEndpointId: "ep-still-flower-aq04hhgg",
     });
-    expect(() => parseDashboardOptions([])).toThrow(/expected-branch-id/u);
+    expect(() => parseDashboardOptions([], {})).toThrow(/expected-branch-id/u);
   });
 });
