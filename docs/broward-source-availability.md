@@ -46,6 +46,10 @@ Common official evidence:
   observations, and executable login/CAPTCHA/records-request skips for the
   remaining Click2Gov, eSuite, Gov-Easy/GeoCivix, SmartGov, OpenGov,
   CommunityCore, MGO Connect, eGovPLUS, and Sunrise routes.
+- The executable
+  [32-jurisdiction property-first registry and acceptance pilot](./broward-permit-acceptance-pilot.md)
+  derives each route from BCPA situs evidence, preserves unavailable/login/
+  CAPTCHA/custodian outcomes, and prevents municipality-wide BCS fallback.
 - [Broward ePermits OneStop](https://www.broward.org/ePermits/Pages/Contact.aspx)
   documents the municipal/county split and links the municipal building
   officials/support route.
@@ -93,10 +97,12 @@ Common official evidence:
 Every requested category now has either a first-party source or a documented
 official custodian/unavailability route. This matrix does **not** claim that
 all 32 permit jurisdictions have ingestion adapters. Source discovery is
-closed, and all jurisdictions have a documented route. BCS has a local-only
-property-first adapter; five Accela jurisdictions have bounded local/private
-adapters; and remaining families have bounded parser/checkpoint prototypes or
-explicit login, CAPTCHA, and records-request skips. None of this municipal work
-is wired to AWS ingestion or publication. Production coverage still requires
-tenant-specific transport certification and positive examples for the blockers
-documented above.
+closed, and all jurisdictions have an explicit route. The local pilot produced
+73 queryable historical BCS records, but BCS routing remains bounded to
+BMSD/unincorporated and Lazy Lake. Five Accela jurisdictions have bounded
+local/private adapters, and remaining families have bounded adapters,
+parser/checkpoint prototypes, or explicit login, CAPTCHA, and records-request
+skips. None of this municipal work is wired to AWS ingestion or publication.
+Production coverage and municipal permit acceptance still require the
+tenant-specific transport certification and positive examples documented
+above.

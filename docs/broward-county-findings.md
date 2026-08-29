@@ -260,10 +260,13 @@ AWS messages were enqueued. The complete run instead uses
 transformed ZIPs, and an atomic local checkpoint.
 
 Remaining gates are full-run reconciliation, database loading when a
-Postgres/Neon connection is available, the Broward BCS permit adapter and
-city-vendor routing, and privacy review. Do not publish until those gates are
-clean. The transform fix exists as local commit `5130a7f`; GitHub denied this
-bot write access to the separate transform repository.
+Postgres/Neon connection is available, current municipal permit adapters, and
+privacy review. The BCS adapter and explicit 32-jurisdiction local routing
+registry now exist, but the bounded permit pilot is not full permit acceptance:
+30 current jurisdiction routes remain blocked in that branch. Do not publish
+until those gates are clean. The transform fix exists as local commit
+`5130a7f`; GitHub denied this bot write access to the separate transform
+repository.
 
 The fail-closed local appraisal privacy/publication audit and the policy
 assumptions that require recorded human approval are documented in
