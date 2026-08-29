@@ -41,7 +41,14 @@ Neon API credential is present. Consequently the observed branch and endpoint
 IDs cannot yet be independently mapped to the human-readable
 `broward-ingest` branch. **No database DDL, pilot load, full load, or dashboard
 has been started.** Supply authenticated read-only Neon metadata proving that
-mapping before using the IDs below in a write-capable command.
+mapping before using any ID in a write-capable command. The observed IDs above
+are evidence of the unresolved current connection, not approved command
+arguments.
+
+The persistent dashboard migration is subject to the same gate. Do not run it
+and do not configure or deploy the Vercel project until authenticated Neon
+metadata proves that both the direct migration URL and pooled runtime URL belong
+to the same branch explicitly named `broward-ingest`.
 
 ## Required query-db patch
 
@@ -116,8 +123,8 @@ distinct folios:
 ```bash
 npm run broward:recover -- \
   --pilot \
-  --expected-branch-id br-old-cloud-aqz2hqjl \
-  --expected-endpoint-id ep-still-flower-aq04hhgg \
+  --expected-branch-id '<verified-broward-ingest-branch-id>' \
+  --expected-endpoint-id '<verified-broward-ingest-endpoint-id>' \
   --concurrency 4 \
   --chunk-size 50
 ```
@@ -141,7 +148,7 @@ SESSION_NAME=broward-neon-recovery
 tmux -f /exec-daemon/tmux.portal.conf has-session -t "=$SESSION_NAME" 2>/dev/null ||
   tmux -f /exec-daemon/tmux.portal.conf new-session -d -s "$SESSION_NAME" -c /workspace
 tmux -f /exec-daemon/tmux.portal.conf send-keys -t "$SESSION_NAME:0.0" \
-  'npm run broward:recover -- --full --expected-branch-id br-old-cloud-aqz2hqjl --expected-endpoint-id ep-still-flower-aq04hhgg --concurrency 4 --chunk-size 100' C-m
+  "npm run broward:recover -- --full --expected-branch-id '<verified-broward-ingest-branch-id>' --expected-endpoint-id '<verified-broward-ingest-endpoint-id>' --concurrency 4 --chunk-size 100" C-m
 ```
 
 Start the aggregate-only dashboard on Cloud Agent preview port 47832:
@@ -151,7 +158,7 @@ SESSION_NAME=broward-neon-recovery-dashboard
 tmux -f /exec-daemon/tmux.portal.conf has-session -t "=$SESSION_NAME" 2>/dev/null ||
   tmux -f /exec-daemon/tmux.portal.conf new-session -d -s "$SESSION_NAME" -c /workspace
 tmux -f /exec-daemon/tmux.portal.conf send-keys -t "$SESSION_NAME:0.0" \
-  'npm run broward:recovery-dashboard -- --host 0.0.0.0 --port 47832 --expected-branch-id br-old-cloud-aqz2hqjl --expected-endpoint-id ep-still-flower-aq04hhgg' C-m
+  "npm run broward:recovery-dashboard -- --host 0.0.0.0 --port 47832 --expected-branch-id '<verified-broward-ingest-branch-id>' --expected-endpoint-id '<verified-broward-ingest-endpoint-id>'" C-m
 ```
 
 Open `http://127.0.0.1:47832/` inside the VM or preview port 47832. The API is
@@ -163,3 +170,10 @@ recent verified throughput, and advisory-lock process state.
 Resume uses the identical full command. Never reset or edit Neon source rows,
 terminal hashes, or chunk records. A changed official seed signature fails
 closed. Permit collection and all publishing remain outside this run.
+
+The persistent Vercel dashboard is documented separately in
+`apps/broward-ingest-dashboard/README.md`. Its migration must be applied to the
+verified branch before recovery starts. Recovery then projects aggregate status
+only after verified mode transitions and committed chunks. Durable completion
+and terminal hashes, aggregate events, chunk rows, and gates remain the recovery
+source of truth; dashboard status never authorizes skipping a seed.

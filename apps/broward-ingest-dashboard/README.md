@@ -50,33 +50,47 @@ npm run build
 
 ## Database contract
 
-Apply the migration with the direct connection string:
+Do not migrate while the current database branch identity is unresolved or
+wrong. Before migration, use authenticated Neon Console/API metadata to map the
+human-readable branch name `broward-ingest` to its immutable `br-*` branch ID
+and non-production `ep-*` primary endpoint ID. Then independently confirm that
+the direct URL reports those exact IDs through the read-only `neon.branch_id`
+and `neon.endpoint_id` settings.
+
+Only after that proof, apply the migration with the verified direct connection
+string and independently sourced IDs:
 
 ```bash
 cd apps/broward-ingest-dashboard
-DATABASE_URL_UNPOOLED='postgresql://…direct Neon host…' npm run db:migrate
+BROWARD_INGEST_NEON_BRANCH_ID='br-verified-broward-ingest' \
+BROWARD_INGEST_NEON_ENDPOINT_ID='ep-verified-broward-ingest' \
+DATABASE_URL_UNPOOLED='postgresql://…verified direct Neon host…' \
+  npm run db:migrate
 ```
 
-The migration script reads only `DATABASE_URL_UNPOOLED` and rejects a
-`-pooler` host. It never prints the URL.
+The migration script reads the database connection only from
+`DATABASE_URL_UNPOOLED` and rejects a `-pooler` host. Before executing the
+migration transaction, it opens a read-only transaction and fails closed unless
+server-reported project, branch, and endpoint metadata matches the supplied
+verified IDs. It never prints the URL or observed identity.
 
 `ingest_control.broward_ingest_status` has exactly one fixed pipeline row:
 
-| Field | Meaning |
-| --- | --- |
-| `pipeline_key` | Fixed `broward-appraisal` key |
-| `denominator_count` | Fixed county denominator, 534,309 |
-| `attempted_count` | Unique county seed rows represented by the checkpoint |
-| `succeeded_count` | Verified durable successes |
-| `source_miss_count` | Durable terminal source misses |
-| `source_failure_count` | Cumulative retryable source failure attempts |
-| `transform_failure_count` | Cumulative transform failure attempts |
-| `load_failure_count` | Cumulative load failure attempts |
-| `phase` | Fixed operational phase enum |
-| `started_at` / `heartbeat_at` | Writer timing only |
-| `stale_after_seconds` | Freshness threshold; defaults to 180 seconds |
-| `throughput_window_seconds` | Duration represented by recent throughput |
-| `throughput_attempted_count` | Attempts observed in that window |
+| Field                         | Meaning                                               |
+| ----------------------------- | ----------------------------------------------------- |
+| `pipeline_key`                | Fixed `broward-appraisal` key                         |
+| `denominator_count`           | Fixed county denominator, 534,309                     |
+| `attempted_count`             | Unique county seed rows represented by the checkpoint |
+| `succeeded_count`             | Verified durable successes                            |
+| `source_miss_count`           | Durable terminal source misses                        |
+| `source_failure_count`        | Cumulative retryable source failure attempts          |
+| `transform_failure_count`     | Cumulative transform failure attempts                 |
+| `load_failure_count`          | Cumulative load failure attempts                      |
+| `phase`                       | Fixed operational phase enum                          |
+| `started_at` / `heartbeat_at` | Writer timing only                                    |
+| `stale_after_seconds`         | Freshness threshold; defaults to 180 seconds          |
+| `throughput_window_seconds`   | Duration represented by recent throughput             |
+| `throughput_attempted_count`  | Attempts observed in that window                      |
 
 Constraints require `succeeded + source misses <= attempted <= denominator`.
 Completion is `(succeeded + source misses) / denominator`; retryable failure
@@ -97,27 +111,32 @@ Integrate after the durable-recovery work is committed; do not edit the active
 agent's worktree. Call `record_broward_ingest_status` on the recovery's existing
 database client:
 
-1. On startup, write `pilot` or `full`.
-2. Before/after long stages, write `capturing`, `transforming`, `loading`, or
-   `verifying`. A chunk should heartbeat more often than the 180-second stale
-   threshold.
-3. In the same transaction that records a verified chunk, replace the dashboard
-   snapshot.
-4. Write `paused` before a controlled shutdown, `failed` after a handled fatal
-   failure, and `complete` only after the full seed scan reconciles.
+1. After target identity, writer migration, recovery lock, seed signature, and
+   mode prerequisites are verified, project `pilot` or `full`.
+2. After each verified durable chunk transaction commits, rebuild and replace
+   the dashboard snapshot from the ledger. Never advance dashboard counts from
+   in-memory candidates or pre-commit loader output.
+3. Write `paused` only after a controlled pass finishes, `failed` after a
+   handled fatal transition, and `complete` only after the full seed scan and
+   unique durable outcome counts reconcile to 534,309.
+
+The writer is a projection, not a recovery checkpoint. Completed/terminal
+hashes, aggregate events, verified chunk rows, and the pilot gate remain the
+source of truth. A missing or stale dashboard row must never authorize skipping
+source work.
 
 Use these mappings from the existing ledger:
 
-| Dashboard argument | Durable source |
-| --- | --- |
-| attempted | Unique/capped checkpoint coverage maintained by the recovery; never use an uncapped retry total |
-| succeeded | Current completed-item count after exact logical-row verification; visible property count must be at least this value |
-| source misses | Current terminal-item count |
-| source failures | Sum of `broward_appraisal_events` where stage is `source_error` |
-| transform failures | Sum where stage is `transform_error` |
-| load failures | Sum where stage is `load_error` |
-| recent attempted | Verified chunk attempts committed inside the selected window |
-| categories | Cumulative `state.usageTypes` / verified Lexicon usage aggregates |
+| Dashboard argument | Durable source                                                                                                        |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------- |
+| attempted          | Unique completed plus terminal hashes; never use an uncapped retry total                                              |
+| succeeded          | Current completed-item count after exact logical-row verification; visible property count must be at least this value |
+| source misses      | Current terminal-item count                                                                                           |
+| source failures    | Sum of `broward_appraisal_events` where stage is `source_error`                                                       |
+| transform failures | Sum where stage is `transform_error`                                                                                  |
+| load failures      | Sum where stage is `load_error`                                                                                       |
+| recent attempted   | Unique completed/terminal outcomes durably recorded inside the selected window                                        |
+| categories         | Cumulative validated Lexicon usage aggregates stored on verified chunk rows                                           |
 
 The call shape is:
 
@@ -153,6 +172,10 @@ TO dashboard_reader;
 
 No deployment is required to build or test this package.
 
+Do not deploy while either URL's branch identity is unresolved/wrong. Migration,
+Preview, and Production must all target the same independently verified
+`broward-ingest` branch and non-production endpoint IDs.
+
 1. In Vercel, import the `oracle-node` repository as a new project.
 2. Set **Root Directory** to `apps/broward-ingest-dashboard`.
 3. Keep framework preset **Vite**. The repository supplies:
@@ -160,14 +183,19 @@ No deployment is required to build or test this package.
    - build command: `npm run build`
    - output directory: `dist`
 4. Add `DATABASE_URL` to Preview and Production as a server-side environment
-   variable. It must be the Neon pooled URL whose host contains `-pooler`.
-5. Do not add a `VITE_DATABASE_URL` variable. Every `VITE_*` variable is public
+   variable. It must be the Neon pooled URL whose host contains `-pooler`, and
+   authenticated Neon metadata must map it to the verified `broward-ingest`
+   branch.
+5. Add the independently verified `BROWARD_INGEST_NEON_BRANCH_ID` and
+   `BROWARD_INGEST_NEON_ENDPOINT_ID` as server-side environment variables. Each
+   API query fails closed unless pooled server metadata matches them.
+6. Do not add a `VITE_DATABASE_URL` variable. Every `VITE_*` variable is public
    browser configuration.
-6. Keep `DATABASE_URL_UNPOOLED` out of the deployed app. Use it only in the
+7. Keep `DATABASE_URL_UNPOOLED` out of the deployed app. Use it only in the
    trusted migration environment for `npm run db:migrate`.
-7. Leave `DASHBOARD_MOCK_MODE` unset in Production. It may be `true` in Preview
+8. Leave `DASHBOARD_MOCK_MODE` unset in Production. It may be `true` in Preview
    only when an explicitly fake preview is desired.
-8. Deploy only after the migration and ingestion heartbeat integration are in
+9. Deploy only after the migration and ingestion heartbeat integration are in
    place. A missing aggregate row or database outage returns HTTP 503 with a
    fixed `offline` response.
 

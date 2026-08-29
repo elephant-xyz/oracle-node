@@ -57,6 +57,17 @@ const MAX_CONCURRENCY = 4;
 const MAX_CHUNK_SIZE = 500;
 const PILOT_PROPERTY_COUNT = 50;
 const PILOT_FALLBACK_COUNT = 2_000;
+const DASHBOARD_THROUGHPUT_WINDOW_SECONDS = 15 * 60;
+const DASHBOARD_STATUS_PROCEDURE =
+  "ingest_control.record_broward_ingest_status(text,bigint,bigint,bigint,bigint,bigint,bigint,integer,bigint,jsonb,timestamp with time zone)";
+const DASHBOARD_CATEGORY_PATTERN = /^[A-Za-z][A-Za-z0-9]{0,63}$/u;
+const DASHBOARD_PHASES = new Set([
+  "pilot",
+  "full",
+  "paused",
+  "failed",
+  "complete",
+]);
 
 /**
  * @typedef {Record<string, string | undefined>} CsvRecord
@@ -90,6 +101,8 @@ const PILOT_FALLBACK_COUNT = 2_000;
  *   Pipeline outcome.
  * @property {"source_miss" | "source_error" | "transform_error" | null} failureClass
  *   Aggregate-safe failure category.
+ * @property {string | null} propertyUsageType
+ *   Validated Lexicon category; never a source label.
  *
  * @typedef {object} ExpectedChunkRows
  * @property {number} preparedRows - Mapper rows before per-table source-key deduplication.
@@ -107,6 +120,8 @@ const PILOT_FALLBACK_COUNT = 2_000;
  * @property {number} preparedRows - Prepared mapper rows committed for the chunk.
  * @property {readonly string[]} loadedFolios - Loaded folios retained only in process memory.
  * @property {readonly string[]} terminalFolioHashes - Terminal source-miss hashes.
+ * @property {Readonly<Record<string, number>>} usageTypeCounts
+ *   Aggregate verified-property counts by validated Lexicon usage type.
  *
  * @typedef {object} DurableCompletion
  * @property {Set<string>} loadedFolios
@@ -467,10 +482,16 @@ async function ensureControlTables(client) {
          source_miss_count integer NOT NULL CHECK (source_miss_count >= 0),
          source_error_count integer NOT NULL CHECK (source_error_count >= 0),
          transform_error_count integer NOT NULL CHECK (transform_error_count >= 0),
+         usage_type_counts jsonb NOT NULL DEFAULT '{}'::jsonb
+           CHECK (jsonb_typeof(usage_type_counts) = 'object'),
          branch_id text NOT NULL,
          endpoint_id text NOT NULL,
          committed_at timestamptz NOT NULL DEFAULT now()
        )`,
+    );
+    await client.query(
+      `ALTER TABLE ${CONTROL_SCHEMA}.broward_appraisal_chunks
+       ADD COLUMN IF NOT EXISTS usage_type_counts jsonb NOT NULL DEFAULT '{}'::jsonb`,
     );
     await client.query(
       `CREATE TABLE IF NOT EXISTS ${CONTROL_SCHEMA}.broward_appraisal_terminal_items (
@@ -553,6 +574,142 @@ async function assertSeedSignatureCompatible(client, seedSignature) {
       "Official Broward seed signature differs from durable recovery",
     );
   }
+}
+
+/**
+ * Require the separately migrated aggregate dashboard writer before recovery
+ * can mutate durable state.
+ *
+ * The procedure lookup is read-only. Its presence proves only that the
+ * versioned dashboard migration was applied; the earlier Neon identity gate
+ * remains the authority for whether this connection may write.
+ *
+ * @param {import("pg").Client} client - Identity-verified direct Neon client.
+ * @returns {Promise<void>} Resolves only when the exact writer signature exists.
+ */
+export async function assertBrowardStatusWriterInstalled(client) {
+  const result = await client.query(
+    "SELECT to_regprocedure($1)::text AS procedure_name",
+    [DASHBOARD_STATUS_PROCEDURE],
+  );
+  if (
+    typeof result.rows[0]?.procedure_name !== "string" ||
+    result.rows[0].procedure_name.length === 0
+  ) {
+    throw new Error(
+      "Broward dashboard migration is required before durable recovery",
+    );
+  }
+}
+
+/**
+ * Rebuild and publish one aggregate dashboard projection from durable truth.
+ *
+ * Completion comes only from unique completed/terminal hashes, failures come
+ * only from durable aggregate events, and category coverage comes only from
+ * verified chunk aggregates. This function receives no folio, hash, address,
+ * owner, source payload, raw error, path, or database identity value.
+ *
+ * @param {import("pg").Client} client - Identity-verified direct Neon client.
+ * @param {"pilot" | "full" | "paused" | "failed" | "complete"} phase
+ *   Verified operational phase to project.
+ * @returns {Promise<void>} Resolves after the projection transaction commits.
+ */
+export async function recordBrowardIngestStatus(client, phase) {
+  if (!DASHBOARD_PHASES.has(phase)) {
+    throw new Error("Unsupported Broward dashboard phase");
+  }
+  await client.query(
+    `WITH completion_stats AS (
+       SELECT count(*)::bigint AS succeeded_count
+       FROM ${CONTROL_SCHEMA}.broward_appraisal_completed_items
+     ),
+     terminal_stats AS (
+       SELECT count(*)::bigint AS source_miss_count
+       FROM ${CONTROL_SCHEMA}.broward_appraisal_terminal_items
+     ),
+     event_stats AS (
+       SELECT
+         COALESCE(sum(event_count) FILTER (WHERE stage = 'source_error'), 0)::bigint
+           AS source_failure_count,
+         COALESCE(sum(event_count) FILTER (WHERE stage = 'transform_error'), 0)::bigint
+           AS transform_failure_count,
+         COALESCE(sum(event_count) FILTER (WHERE stage = 'load_error'), 0)::bigint
+           AS load_failure_count
+       FROM ${CONTROL_SCHEMA}.broward_appraisal_events
+     ),
+     recent_stats AS (
+       SELECT (
+         (
+           SELECT count(*)
+           FROM ${CONTROL_SCHEMA}.broward_appraisal_completed_items
+           WHERE recorded_at >= clock_timestamp() - make_interval(secs => $2)
+         ) + (
+           SELECT count(*)
+           FROM ${CONTROL_SCHEMA}.broward_appraisal_terminal_items
+           WHERE recorded_at >= clock_timestamp() - make_interval(secs => $2)
+         )
+       )::bigint AS attempted_count
+     ),
+     category_totals AS (
+       SELECT
+         category.key AS category_key,
+         sum((category.value #>> '{}')::bigint)::bigint AS succeeded_count
+       FROM ${CONTROL_SCHEMA}.broward_appraisal_chunks AS chunk
+       CROSS JOIN LATERAL jsonb_each(chunk.usage_type_counts) AS category
+       GROUP BY category.key
+     ),
+     category_stats AS (
+       SELECT COALESCE(
+         jsonb_object_agg(category_key, succeeded_count),
+         '{}'::jsonb
+       ) AS coverage
+       FROM category_totals
+     )
+     SELECT ${CONTROL_SCHEMA}.record_broward_ingest_status(
+       $1::text,
+       completion_stats.succeeded_count + terminal_stats.source_miss_count,
+       completion_stats.succeeded_count,
+       terminal_stats.source_miss_count,
+       event_stats.source_failure_count,
+       event_stats.transform_failure_count,
+       event_stats.load_failure_count,
+       $2::integer,
+       recent_stats.attempted_count,
+       category_stats.coverage
+     )
+     FROM completion_stats, terminal_stats, event_stats, recent_stats, category_stats`,
+    [phase, DASHBOARD_THROUGHPUT_WINDOW_SECONDS],
+  );
+}
+
+/**
+ * Read exact durable completion totals for a final full-seed reconciliation.
+ *
+ * @param {import("pg").Client} client - Identity-verified direct Neon client.
+ * @returns {Promise<{ succeeded: number, sourceMisses: number }>}
+ *   Unique verified outcomes from authoritative hash tables.
+ */
+async function readDurableCompletionCounts(client) {
+  const result = await client.query(
+    `SELECT
+       (SELECT count(*) FROM ${CONTROL_SCHEMA}.broward_appraisal_completed_items)::bigint
+         AS succeeded_count,
+       (SELECT count(*) FROM ${CONTROL_SCHEMA}.broward_appraisal_terminal_items)::bigint
+         AS source_miss_count`,
+  );
+  const succeeded = Number(result.rows[0]?.succeeded_count ?? -1);
+  const sourceMisses = Number(result.rows[0]?.source_miss_count ?? -1);
+  if (
+    !Number.isSafeInteger(succeeded) ||
+    succeeded < 0 ||
+    !Number.isSafeInteger(sourceMisses) ||
+    sourceMisses < 0 ||
+    succeeded + sourceMisses > BROWARD_ROW_DENOMINATOR
+  ) {
+    throw new Error("Durable Broward completion counts do not reconcile");
+  }
+  return { succeeded, sourceMisses };
 }
 
 /**
@@ -757,6 +914,11 @@ async function readRedactedResults(resultsPath, candidateCount) {
       ].includes(String(parsed.status)) ||
       !["source_miss", "source_error", "transform_error", null].includes(
         parsed.failureClass === null ? null : String(parsed.failureClass),
+      ) ||
+      !(
+        parsed.propertyUsageType === null ||
+        (typeof parsed.propertyUsageType === "string" &&
+          DASHBOARD_CATEGORY_PATTERN.test(parsed.propertyUsageType))
       ) ||
       "folio" in parsed ||
       "error" in parsed
@@ -1065,9 +1227,10 @@ async function commitChunkCheckpoint({
          source_miss_count,
          source_error_count,
          transform_error_count,
+         usage_type_counts,
          branch_id,
          endpoint_id
-       ) VALUES ($1, $2, $3, $4, $5, $5, $6, $7, $8, $9, $10, $11, $12)
+       ) VALUES ($1, $2, $3, $4, $5, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13)
        ON CONFLICT (chunk_id) DO NOTHING`,
       [
         chunkId,
@@ -1080,6 +1243,7 @@ async function commitChunkCheckpoint({
         result.sourceMisses,
         result.sourceErrors,
         result.transformErrors,
+        JSON.stringify(result.usageTypeCounts),
         options.expectedBranchId,
         options.expectedEndpointId,
       ],
@@ -1089,6 +1253,7 @@ async function commitChunkCheckpoint({
     await client.query("ROLLBACK");
     throw error;
   }
+  await recordBrowardIngestStatus(client, options.mode);
 }
 
 /**
@@ -1144,6 +1309,8 @@ async function processChunk({ client, options, seedStats, candidates }) {
   let sourceMisses = 0;
   let sourceErrors = 0;
   let transformErrors = 0;
+  /** @type {Record<string, number>} */
+  const usageTypeCounts = {};
   for (const result of results) {
     const candidate = candidates[result.rowIndex];
     if (candidate === undefined) {
@@ -1168,6 +1335,10 @@ async function processChunk({ client, options, seedStats, candidates }) {
       await copyFile(sourcePath, canonicalPath);
       artifacts.push({ folio: candidate.folio, canonicalPath });
       loadedFolios.push(candidate.folio);
+      if (result.propertyUsageType !== null) {
+        usageTypeCounts[result.propertyUsageType] =
+          (usageTypeCounts[result.propertyUsageType] ?? 0) + 1;
+      }
     } else if (result.failureClass === "source_miss") {
       sourceMisses += 1;
       terminalFolioHashes.push(hashSeedKey(candidate.folio));
@@ -1219,6 +1390,7 @@ async function processChunk({ client, options, seedStats, candidates }) {
     preparedRows,
     loadedFolios,
     terminalFolioHashes,
+    usageTypeCounts,
   };
   await commitChunkCheckpoint({
     client,
@@ -1517,6 +1689,7 @@ export async function runRecovery(options) {
   const seedStats = await readSeedStats(resolved.seedPath);
   assertFullSeed(seedStats);
   const client = await connectToNeon();
+  let statusWriterReady = false;
   try {
     const identity = await verifyNeonTarget(client, resolved);
     console.log(
@@ -1533,24 +1706,43 @@ export async function runRecovery(options) {
         sourceConcurrencyMaximum: resolved.concurrency,
       }),
     );
+    await assertBrowardStatusWriterInstalled(client);
     await ensureControlTables(client);
     await assertSeedSignatureCompatible(client, seedStats.signature);
     await acquireRecoveryLock(client);
+    statusWriterReady = true;
     const completion = await readDurableCompletion(client);
     if (resolved.mode === "pilot") {
+      if (completion.loadedFolios.size > PILOT_PROPERTY_COUNT) {
+        throw new Error(
+          "Pilot mode refuses a branch with more than 50 Broward properties",
+        );
+      }
+      await recordBrowardIngestStatus(client, "pilot");
       await runPilot({
         client,
         options: resolved,
         seedStats,
         ...completion,
       });
+      await recordBrowardIngestStatus(client, "paused");
     } else {
+      await requirePilotCheckpoint(client, resolved, seedStats);
+      await recordBrowardIngestStatus(client, "full");
       await runFull({
         client,
         options: resolved,
         seedStats,
         ...completion,
       });
+      const finalCounts = await readDurableCompletionCounts(client);
+      await recordBrowardIngestStatus(
+        client,
+        finalCounts.succeeded + finalCounts.sourceMisses ===
+          BROWARD_ROW_DENOMINATOR
+          ? "complete"
+          : "paused",
+      );
     }
     console.log(
       JSON.stringify({
@@ -1560,6 +1752,15 @@ export async function runRecovery(options) {
         durableTerminalMisses: completion.terminalHashes.size,
       }),
     );
+  } catch (error) {
+    if (statusWriterReady) {
+      try {
+        await recordBrowardIngestStatus(client, "failed");
+      } catch {
+        // Durable hashes, chunks, and events remain authoritative.
+      }
+    }
+    throw error;
   } finally {
     await client.end();
   }

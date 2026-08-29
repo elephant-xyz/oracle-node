@@ -1,8 +1,5 @@
 import { attachDatabasePool } from "@vercel/functions";
-import {
-  Pool,
-  type QueryResultRow,
-} from "pg";
+import { Pool, type QueryResultRow } from "pg";
 
 import {
   DASHBOARD_PIPELINE_KEY,
@@ -12,6 +9,10 @@ import {
   type DashboardStatus,
   type StatusSnapshot,
 } from "../shared/status";
+import {
+  BROWARD_NEON_PROJECT_ID,
+  type BrowardNeonIdentity,
+} from "./neon-identity";
 
 interface StatusDatabaseRow extends QueryResultRow {
   readonly attempted_count: unknown;
@@ -85,9 +86,7 @@ export function getDashboardPool(
  * @param value - Candidate `DATABASE_URL` value.
  * @returns The unchanged pooled PostgreSQL connection string.
  */
-export function requirePooledDatabaseUrl(
-  value: string | undefined,
-): string {
+export function requirePooledDatabaseUrl(value: string | undefined): string {
   if (value === undefined || value.trim() === "") {
     throw new Error("Pooled DATABASE_URL is not configured");
   }
@@ -114,11 +113,13 @@ export function requirePooledDatabaseUrl(
  * or artifact metadata because those columns are absent from this contract.
  *
  * @param pool - Lifecycle-managed pooled server-side database connection.
+ * @param expectedIdentity - IDs independently mapped to `broward-ingest`.
  * @param nowMs - Current Unix epoch time in milliseconds.
  * @returns Privacy-safe status response ready for JSON serialization.
  */
 export async function readDashboardStatus(
   pool: Pool,
+  expectedIdentity: BrowardNeonIdentity,
   nowMs: number = Date.now(),
 ): Promise<DashboardStatus> {
   const result = await pool.query<StatusDatabaseRow>(
@@ -149,9 +150,23 @@ export async function readDashboardStatus(
      FROM ingest_control.broward_ingest_status AS status
      LEFT JOIN ingest_control.broward_ingest_category_coverage AS coverage
        ON coverage.pipeline_key = status.pipeline_key
+     CROSS JOIN (
+       SELECT
+         current_setting('neon.project_id', true) AS project_id,
+         current_setting('neon.branch_id', true) AS branch_id,
+         current_setting('neon.endpoint_id', true) AS endpoint_id
+     ) AS identity
      WHERE status.pipeline_key = $1
+       AND identity.project_id = $2
+       AND identity.branch_id = $3
+       AND identity.endpoint_id = $4
      GROUP BY status.pipeline_key`,
-    [DASHBOARD_PIPELINE_KEY],
+    [
+      DASHBOARD_PIPELINE_KEY,
+      BROWARD_NEON_PROJECT_ID,
+      expectedIdentity.branchId,
+      expectedIdentity.endpointId,
+    ],
   );
   const row = result.rows[0];
   if (row === undefined) {

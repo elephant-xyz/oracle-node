@@ -5,11 +5,13 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  assertBrowardStatusWriterInstalled,
   assertFullSeed,
   hashSeedKey,
   isSeedPending,
   parseRecoveryOptions,
   readSeedStats,
+  recordBrowardIngestStatus,
   verifyNeonTarget,
 } from "../../scripts/recover-broward-appraisal-to-neon.mjs";
 import {
@@ -148,6 +150,82 @@ describe("durable Broward Neon recovery", () => {
     ).rejects.toThrow(/does not match isolated/u);
     expect(state.statements[0]).toBe("BEGIN READ ONLY");
     expect(state.statements.at(-1)).toBe("ROLLBACK");
+  });
+
+  it("requires the exact migrated aggregate status writer signature", async () => {
+    const expectedSignature =
+      "ingest_control.record_broward_ingest_status(text,bigint,bigint,bigint,bigint,bigint,bigint,integer,bigint,jsonb,timestamp with time zone)";
+    const installedClient = {
+      /**
+       * Resolve the exact procedure signature without performing a write.
+       *
+       * @param {string} sql - Procedure-catalog lookup.
+       * @param {readonly unknown[]} values - Exact signature lookup value.
+       * @returns {Promise<{ rows: Record<string, unknown>[] }>} Installed writer row.
+       */
+      query(sql, values) {
+        expect(sql).toContain("to_regprocedure");
+        expect(values).toEqual([expectedSignature]);
+        return Promise.resolve({
+          rows: [{ procedure_name: expectedSignature }],
+        });
+      },
+    };
+    await expect(
+      assertBrowardStatusWriterInstalled(
+        /** @type {import("pg").Client} */ (installedClient),
+      ),
+    ).resolves.toBeUndefined();
+
+    const missingClient = {
+      /**
+       * Return a missing exact procedure signature.
+       *
+       * @returns {Promise<{ rows: Record<string, unknown>[] }>} Missing writer row.
+       */
+      query() {
+        return Promise.resolve({ rows: [{ procedure_name: null }] });
+      },
+    };
+    await expect(
+      assertBrowardStatusWriterInstalled(
+        /** @type {import("pg").Client} */ (missingClient),
+      ),
+    ).rejects.toThrow(/migration is required/u);
+  });
+
+  it("projects status from durable aggregate truth with no private arguments", async () => {
+    /** @type {{ sql: string, values: readonly unknown[] }[]} */
+    const calls = [];
+    const client = {
+      /**
+       * Capture the single aggregate status projection query.
+       *
+       * @param {string} sql - Aggregate-only projection statement.
+       * @param {readonly unknown[]} values - Phase and throughput-window values.
+       * @returns {Promise<{ rows: Record<string, unknown>[] }>} Empty command result.
+       */
+      query(sql, values) {
+        calls.push({ sql, values });
+        return Promise.resolve({ rows: [] });
+      },
+    };
+
+    await recordBrowardIngestStatus(
+      /** @type {import("pg").Client} */ (client),
+      "full",
+    );
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.values).toEqual(["full", 900]);
+    expect(calls[0]?.sql).toContain("broward_appraisal_completed_items");
+    expect(calls[0]?.sql).toContain("broward_appraisal_terminal_items");
+    expect(calls[0]?.sql).toContain("broward_appraisal_events");
+    expect(calls[0]?.sql).toContain("broward_appraisal_chunks");
+    expect(calls[0]?.sql).toContain("record_broward_ingest_status");
+    expect(calls[0]?.sql).not.toMatch(
+      /request_identifier|seed_key_hash|source_payload|owner|address|artifact_path/iu,
+    );
   });
 
   it("renders only aggregate durable progress and stage failures", () => {

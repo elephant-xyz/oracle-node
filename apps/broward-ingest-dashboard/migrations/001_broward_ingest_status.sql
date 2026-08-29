@@ -98,6 +98,12 @@ BEGIN
   ) THEN
     RAISE EXCEPTION 'Category coverage contains an invalid aggregate';
   END IF;
+  IF COALESCE((
+    SELECT sum((category.category_count #>> '{}')::bigint)
+    FROM jsonb_each(p_category_coverage) AS category(category_key, category_count)
+  ), 0) > p_succeeded_count THEN
+    RAISE EXCEPTION 'Category coverage exceeds verified successes';
+  END IF;
 
   INSERT INTO ingest_control.broward_ingest_status (
     pipeline_key,

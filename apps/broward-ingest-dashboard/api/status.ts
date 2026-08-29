@@ -1,9 +1,10 @@
-import type {
-  IncomingMessage,
-  ServerResponse,
-} from "node:http";
+import type { IncomingMessage, ServerResponse } from "node:http";
 
-import { getDashboardPool, readDashboardStatus } from "../src/server/neon-status";
+import {
+  getDashboardPool,
+  readDashboardStatus,
+} from "../src/server/neon-status";
+import { requireBrowardNeonIdentity } from "../src/server/neon-identity";
 import { createMockDashboardStatus } from "../src/shared/mock";
 import {
   DASHBOARD_SCHEMA_VERSION,
@@ -49,14 +50,9 @@ export function createStatusHandler(
     setSecurityHeaders(response);
     if (request.method !== "GET" && request.method !== "HEAD") {
       response.setHeader("allow", "GET, HEAD");
-      writeJson(
-        request,
-        response,
-        405,
-        {
-          error: "Method not allowed",
-        },
-      );
+      writeJson(request, response, 405, {
+        error: "Method not allowed",
+      });
       return;
     }
 
@@ -83,7 +79,8 @@ export function createStatusHandler(
 async function readConfiguredStatus(): Promise<DashboardStatus> {
   const nowMs = Date.now();
   if (isMockMode(process.env)) return createMockDashboardStatus(nowMs);
-  return readDashboardStatus(getDashboardPool(), nowMs);
+  const expectedIdentity = requireBrowardNeonIdentity(process.env);
+  return readDashboardStatus(getDashboardPool(), expectedIdentity, nowMs);
 }
 
 /**

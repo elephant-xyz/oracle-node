@@ -4,6 +4,13 @@ import { pathToFileURL } from "node:url";
 
 import { Client } from "pg";
 
+import {
+  assertBrowardNeonIdentity,
+  requireBrowardNeonIdentity,
+  type BrowardNeonIdentity,
+  type BrowardNeonIdentityRow,
+} from "../src/server/neon-identity";
+
 const MIGRATION_URL = new URL(
   "../migrations/001_broward_ingest_status.sql",
   import.meta.url,
@@ -19,9 +26,7 @@ const MIGRATION_URL = new URL(
  * @param value - Candidate `DATABASE_URL_UNPOOLED` value.
  * @returns The unchanged direct PostgreSQL connection string.
  */
-export function requireUnpooledMigrationUrl(
-  value: string | undefined,
-): string {
+export function requireUnpooledMigrationUrl(value: string | undefined): string {
   if (value === undefined || value.trim() === "") {
     throw new Error("DATABASE_URL_UNPOOLED is required for migrations");
   }
@@ -43,6 +48,36 @@ export function requireUnpooledMigrationUrl(
 }
 
 /**
+ * Verify the direct connection against immutable server-side Neon metadata in
+ * a read-only transaction before allowing any schema change.
+ *
+ * @param client - Connected direct PostgreSQL client.
+ * @param expected - IDs independently mapped to the `broward-ingest` branch.
+ * @returns Promise resolved only after a matching read-only identity check.
+ */
+export async function verifyMigrationTarget(
+  client: Client,
+  expected: BrowardNeonIdentity,
+): Promise<void> {
+  await client.query("BEGIN READ ONLY");
+  try {
+    const result = await client.query<BrowardNeonIdentityRow>(
+      `SELECT
+         current_setting('neon.project_id', true) AS project_id,
+         current_setting('neon.branch_id', true) AS branch_id,
+         current_setting('neon.endpoint_id', true) AS endpoint_id`,
+    );
+    assertBrowardNeonIdentity(result.rows[0], expected);
+    await client.query("ROLLBACK");
+  } catch {
+    await client.query("ROLLBACK");
+    throw new Error(
+      "Migration target is not the independently verified broward-ingest branch",
+    );
+  }
+}
+
+/**
  * Apply the versioned aggregate-status migration transaction.
  *
  * The connection string remains in process memory and is never printed.
@@ -51,6 +86,7 @@ async function migrate(): Promise<void> {
   const connectionString = requireUnpooledMigrationUrl(
     process.env.DATABASE_URL_UNPOOLED,
   );
+  const expectedIdentity = requireBrowardNeonIdentity(process.env);
   const migrationSql = await readFile(MIGRATION_URL, "utf8");
   const client = new Client({
     application_name: "broward-ingest-dashboard-migration",
@@ -60,6 +96,7 @@ async function migrate(): Promise<void> {
   });
   await client.connect();
   try {
+    await verifyMigrationTarget(client, expectedIdentity);
     await client.query(migrationSql);
     process.stdout.write(
       "Applied aggregate Broward ingestion status migration.\n",

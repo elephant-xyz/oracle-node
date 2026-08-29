@@ -3,6 +3,10 @@ import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 
 import { requireUnpooledMigrationUrl } from "../scripts/migrate";
+import {
+  assertBrowardNeonIdentity,
+  requireBrowardNeonIdentity,
+} from "../src/server/neon-identity";
 import { requirePooledDatabaseUrl } from "../src/server/neon-status";
 
 describe("database boundary contract", () => {
@@ -30,12 +34,48 @@ describe("database boundary contract", () => {
     expect(() => requireUnpooledMigrationUrl(undefined)).toThrow(/required/u);
   });
 
+  it("requires independently supplied non-production Broward branch identity", () => {
+    const expected = requireBrowardNeonIdentity({
+      BROWARD_INGEST_NEON_BRANCH_ID: "br-isolated-broward",
+      BROWARD_INGEST_NEON_ENDPOINT_ID: "ep-isolated-broward",
+    });
+
+    expect(expected).toEqual({
+      branchId: "br-isolated-broward",
+      endpointId: "ep-isolated-broward",
+    });
+    expect(() => requireBrowardNeonIdentity({})).toThrow(/branch/u);
+    expect(() =>
+      requireBrowardNeonIdentity({
+        BROWARD_INGEST_NEON_BRANCH_ID: "br-isolated-broward",
+        BROWARD_INGEST_NEON_ENDPOINT_ID: "ep-mute-leaf-production",
+      }),
+    ).toThrow(/non-production/u);
+    expect(() =>
+      assertBrowardNeonIdentity(
+        {
+          project_id: "raspy-frost-51580436",
+          branch_id: "br-wrong",
+          endpoint_id: "ep-isolated-broward",
+        },
+        expected,
+      ),
+    ).toThrow(/verified broward-ingest/u);
+    expect(() =>
+      assertBrowardNeonIdentity(
+        {
+          project_id: "raspy-frost-51580436",
+          branch_id: "br-isolated-broward",
+          endpoint_id: "ep-isolated-broward",
+        },
+        expected,
+      ),
+    ).not.toThrow();
+  });
+
   it("defines only aggregate progress, heartbeat, and category columns", async () => {
     const migration = await readFile(
-      new URL(
-        "../migrations/001_broward_ingest_status.sql",
-        import.meta.url,
-      ),
+      new URL("../migrations/001_broward_ingest_status.sql", import.meta.url),
       "utf8",
     );
 
@@ -50,6 +90,49 @@ describe("database boundary contract", () => {
     );
     expect(migration).not.toMatch(
       /\b(folio|owner|address|credential|artifact_path|error_text)\s+(?:text|json|jsonb|varchar)/iu,
+    );
+    expect(migration).toContain("Category coverage exceeds verified successes");
+  });
+
+  it("keeps migration and recovery status writes behind static safety contracts", async () => {
+    const [migrationScript, recoveryScript, readme] = await Promise.all([
+      readFile(new URL("../scripts/migrate.ts", import.meta.url), "utf8"),
+      readFile(
+        new URL(
+          "../../../scripts/recover-broward-appraisal-to-neon.mjs",
+          import.meta.url,
+        ),
+        "utf8",
+      ),
+      readFile(new URL("../README.md", import.meta.url), "utf8"),
+    ]);
+
+    expect(migrationScript).toContain('client.query("BEGIN READ ONLY")');
+    expect(migrationScript.indexOf("verifyMigrationTarget")).toBeLessThan(
+      migrationScript.indexOf("client.query(migrationSql)"),
+    );
+    expect(recoveryScript).toContain("record_broward_ingest_status(");
+    expect(recoveryScript).toContain("broward_appraisal_completed_items");
+    expect(recoveryScript).toContain("broward_appraisal_terminal_items");
+    const chunkCommit = recoveryScript.indexOf(
+      "async function commitChunkCheckpoint",
+    );
+    const durableCommit = recoveryScript.indexOf(
+      'await client.query("COMMIT")',
+      chunkCommit,
+    );
+    const statusProjection = recoveryScript.indexOf(
+      "await recordBrowardIngestStatus(client, options.mode)",
+      chunkCommit,
+    );
+    expect(chunkCommit).toBeGreaterThan(-1);
+    expect(durableCommit).toBeGreaterThan(chunkCommit);
+    expect(statusProjection).toBeGreaterThan(durableCommit);
+    expect(readme).toContain(
+      "Do not migrate while the current database branch identity is unresolved or",
+    );
+    expect(readme).toContain(
+      "Do not deploy while either URL's branch identity is unresolved/wrong.",
     );
   });
 });
