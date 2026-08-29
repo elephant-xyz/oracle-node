@@ -453,6 +453,7 @@ function initializeTargetState(existing, target, searchKey) {
     existing.status = "in_progress";
     existing.error = null;
     existing.completedAt = null;
+    existing.excludedNonPermitCount ??= 0;
     return existing;
   }
   return {
@@ -463,6 +464,7 @@ function initializeTargetState(existing, target, searchKey) {
     startedAt: new Date().toISOString(),
     completedAt: null,
     reportedTotal: null,
+    excludedNonPermitCount: 0,
     permits: [],
     details: {},
     searchCapturePaths: [],
@@ -508,7 +510,8 @@ export async function runBrowardAccelaProbe(options) {
       const completed = checkpoint.targets[searchKey];
       if (
         completed?.status === "records" ||
-        completed?.status === "no_records"
+        completed?.status === "no_records" ||
+        completed?.status === "non_permit_records_only"
       ) {
         skippedCompletedCount += 1;
         consoleLogger.info("broward_accela_target_resumed_completed", {
@@ -532,6 +535,8 @@ export async function runBrowardAccelaProbe(options) {
             logger: consoleLogger,
           });
           state.reportedTotal = searchResult.reportedTotal;
+          state.excludedNonPermitCount =
+            searchResult.excludedNonPermitCount;
           state.permits = searchResult.permits;
           state.searchCapturePaths = [];
           for (const page of searchResult.pages) {
@@ -545,8 +550,8 @@ export async function runBrowardAccelaProbe(options) {
             await writeRawCapture(capturePath, page.html);
             state.searchCapturePaths.push(capturePath);
           }
-          if (searchResult.status === "no_records") {
-            state.status = "no_records";
+          if (searchResult.status !== "records") {
+            state.status = searchResult.status;
             state.completedAt = new Date().toISOString();
             await writeBrowardAccelaCheckpoint(
               options.checkpointPath,
@@ -667,6 +672,7 @@ export async function runBrowardAccelaProbe(options) {
       separateHistoricalSource: source.separateHistoricalSource,
       outcome: state?.status ?? "not_attempted",
       reportedTotal: state?.reportedTotal ?? null,
+      excludedNonPermitCount: state?.excludedNonPermitCount ?? 0,
       discoveredRecordCount: state?.permits.length ?? 0,
       capturedRecordCount:
         state === undefined ? 0 : Object.keys(state.details).length,

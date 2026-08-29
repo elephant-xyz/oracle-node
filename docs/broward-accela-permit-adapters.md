@@ -58,7 +58,14 @@ A successful source observation is one of:
 - `records`: one or more reconciled `CapDetail.aspx` links, complete
   pagination, and all bounded details captured; or
 - `no_records`: the public portal returned an explicit Accela no-results
-  marker.
+  marker; or
+- `non_permit_records_only`: Accela returned records, but every result carried
+  an explicit different module (for example Plantation Enforcement), so none
+  was normalized as a permit.
+
+Cross-module rows remain counted in summary provenance. They are excluded from
+permit details and also count toward reconciliation with Accela's reported
+total.
 
 Access-denied/login/CAPTCHA pages, official technical-error pages, unknown
 templates, result pages with no detail links, mismatched record/folio
