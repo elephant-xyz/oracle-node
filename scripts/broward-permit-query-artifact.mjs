@@ -1,7 +1,7 @@
 // @ts-check
 
 import { createHash } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
 import { ParquetSchema, ParquetWriter } from "@dsnp/parquetjs";
@@ -224,7 +224,7 @@ export async function writeDonphanPermitParquet(parquetPath, rows) {
   } finally {
     await writer.close();
   }
-  const { readFile } = await import("node:fs/promises");
+  await chmod(parquetPath, 0o600);
   const bytes = await readFile(parquetPath);
   return {
     parquetPath,
