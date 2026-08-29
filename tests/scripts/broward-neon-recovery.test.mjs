@@ -12,6 +12,7 @@ import {
   parseRecoveryOptions,
   readSeedStats,
   recordBrowardIngestStatus,
+  runOneAheadPipeline,
   verifyNeonTarget,
 } from "../../scripts/recover-broward-appraisal-to-neon.mjs";
 import {
@@ -88,6 +89,89 @@ describe("durable Broward Neon recovery", () => {
       expectedBranchId: "br-broward-runtime-test",
       expectedEndpointId: "ep-broward-runtime-test",
     });
+  });
+
+  it("prepares one chunk ahead while preserving durable commit order", async () => {
+    /** @type {string[]} */
+    const events = [];
+    /**
+     * Yield three ordered chunks without retaining source identifiers.
+     *
+     * @returns {AsyncGenerator<readonly number[], void, void>} Numeric test chunks.
+     */
+    async function* chunks() {
+      yield [1];
+      yield [2];
+      yield [3];
+    }
+
+    await runOneAheadPipeline({
+      chunks: chunks(),
+      prepare(chunk, slotIndex) {
+        const value = chunk[0];
+        if (value === undefined) throw new Error("Test chunk is empty");
+        events.push(`prepare:${String(value)}:${String(slotIndex)}`);
+        return Promise.resolve({ value });
+      },
+      commit(prepared) {
+        events.push(`commit:${String(prepared.value)}`);
+        return Promise.resolve(prepared.value);
+      },
+      afterCommit(committed) {
+        events.push(`after:${String(committed)}`);
+      },
+    });
+
+    expect(events).toEqual([
+      "prepare:1:0",
+      "prepare:2:1",
+      "commit:1",
+      "after:1",
+      "prepare:3:0",
+      "commit:2",
+      "after:2",
+      "commit:3",
+      "after:3",
+    ]);
+  });
+
+  it("never advances a later prepared chunk after the current commit fails", async () => {
+    /** @type {string[]} */
+    const events = [];
+    /**
+     * Yield two ordered chunks for the commit-failure boundary.
+     *
+     * @returns {AsyncGenerator<readonly number[], void, void>} Numeric test chunks.
+     */
+    async function* chunks() {
+      yield [1];
+      yield [2];
+    }
+
+    await expect(
+      runOneAheadPipeline({
+        chunks: chunks(),
+        prepare(chunk, slotIndex) {
+          const value = chunk[0];
+          if (value === undefined) throw new Error("Test chunk is empty");
+          events.push(`prepare:${String(value)}:${String(slotIndex)}`);
+          return Promise.resolve({ value });
+        },
+        commit(prepared) {
+          events.push(`commit:${String(prepared.value)}`);
+          return Promise.reject(new Error("durable commit failed"));
+        },
+        afterCommit(committed) {
+          events.push(`after:${String(committed)}`);
+        },
+      }),
+    ).rejects.toThrow(/durable commit failed/u);
+
+    expect(events).toEqual([
+      "prepare:1:0",
+      "prepare:2:1",
+      "commit:1",
+    ]);
   });
 
   it("builds a deterministic seed signature without numeric folio coercion", async () => {
