@@ -70,8 +70,26 @@ Required SHA-256:
 The patch applies to query-db base `15187e2` and creates two commits. The
 verified suite is 30 test files / 398 tests.
 
-The Broward county transform checkout is
-`/tmp/Counties-trasform-scripts/broward/scripts`. It is never uploaded.
+Restore the accepted Broward live-capture transform into a fresh local checkout:
+
+```bash
+git clone https://github.com/elephant-xyz/Counties-trasform-scripts.git \
+  /tmp/Counties-trasform-scripts
+cd /tmp/Counties-trasform-scripts
+git checkout 438fe3b59fb5538ac516cb65da0c86edc5d4390c
+sha256sum \
+  /workspace/docs/patches/counties-transform-scripts-broward-live-capture.patch
+git apply --check \
+  /workspace/docs/patches/counties-transform-scripts-broward-live-capture.patch
+git am \
+  /workspace/docs/patches/counties-transform-scripts-broward-live-capture.patch
+```
+
+Required SHA-256:
+`0a5cddfc53ce778317694c8968964ec42586e6acb1588362941bb8f66c666582`.
+The runtime scripts are then available at
+`/tmp/Counties-trasform-scripts/broward/scripts`. Captures and transforms remain
+private and are never uploaded.
 
 ## Reboot-safe checkpoint
 

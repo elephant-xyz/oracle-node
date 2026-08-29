@@ -1,3 +1,6 @@
+import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
+
 import { describe, expect, it } from "vitest";
 
 import {
@@ -10,6 +13,13 @@ import {
   readCaptureParcel,
   renderSeedRecord,
 } from "../../scripts/validate-broward-appraisal.mjs";
+
+const BROWARD_TRANSFORM_PATCH_URL = new URL(
+  "../../docs/patches/counties-transform-scripts-broward-live-capture.patch",
+  import.meta.url,
+);
+const BROWARD_TRANSFORM_PATCH_SHA256 =
+  "0a5cddfc53ce778317694c8968964ec42586e6acb1588362941bb8f66c666582";
 
 describe("Broward prepare capture unwrap", () => {
   it("unwraps the elephant-cli multi-request wrapper", () => {
@@ -75,6 +85,18 @@ describe("Broward prepare capture unwrap", () => {
 });
 
 describe("Broward appraisal validation harness", () => {
+  it("preserves the complete accepted live-capture transform patch", async () => {
+    const patch = await readFile(BROWARD_TRANSFORM_PATCH_URL);
+    expect(createHash("sha256").update(patch).digest("hex")).toBe(
+      BROWARD_TRANSFORM_PATCH_SHA256,
+    );
+    const source = patch.toString("utf8");
+    expect(source).toContain("findBrowardPropertyMapping");
+    expect(source).toContain("capturedInput?.input?.response");
+    expect(source).toContain("relationship_property_has_structure.json");
+    expect(source).toContain("relationship_property_has_utility.json");
+  });
+
   it("renders a complete one-row seed without corrupting JSON or geometry", () => {
     const csv = renderSeedRecord(["request_identifier", "parcel_polygon"], {
       request_identifier: "504108BJ0140",
