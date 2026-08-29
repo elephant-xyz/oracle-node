@@ -162,18 +162,31 @@ permits:
     current_portal: https://aca-prod.accela.com/HOLLYWOOD/Default.aspx
     vendor: Accela Citizen Access + legacy BCLA
     search: address; history from 1988
-    status: split-history-documented
+    adapter: ../scripts/probe-broward-accela-permits.mjs
+    current_accela_history_start: unknown-not-certified
+    legacy_source_system: broward_hollywood_bcla_legacy_permits
+    legacy_history_start: "1988-01-01"
+    pre_1988_route: City archives
+    status: local-accela-adapter-split-history
   - jurisdiction: Plantation
     portal: https://aca.plantation.org/CitizenAccess/Cap/CapHome.aspx?TabName=Building&module=Building
     vendor: Accela Citizen Access
     search: parcel | address | record number
-    status: discovered
+    adapter: ../scripts/probe-broward-accela-permits.mjs
+    agency_code: PLANTATION
+    module: Building
+    history_start: unknown-not-certified
+    status: local-accela-adapter
   - jurisdiction: Fort Lauderdale
     portal: https://aca3.accela.com/FTL/
     vendor: Accela Citizen Access
     search: anonymous global / permit module / parcel / address
     aka: LauderBuild
-    status: discovered
+    adapter: ../scripts/probe-broward-accela-permits.mjs
+    agency_code: FTL
+    module: Building
+    history_start: unknown-not-certified
+    status: local-accela-adapter
   - jurisdiction: Coral Springs
     portal: https://etrakit.coralsprings.gov/eTRAKiT/Search/permit.aspx
     vendor: CentralSquare eTRAKiT
@@ -200,7 +213,13 @@ permits:
     status: public-search-documented
   - jurisdiction: Cooper City
     portal: https://aca-prod.accela.com/COOPER/
-    status: public-search-documented
+    vendor: Accela Citizen Access
+    search: parcel | address | record number
+    adapter: ../scripts/probe-broward-accela-permits.mjs
+    agency_code: COOPER
+    module: Building
+    history_start: unknown-not-certified
+    status: local-accela-adapter
   - jurisdiction: Dania Beach
     official: https://www.daniabeachfl.gov/building-division
     portal: https://cityofdaniabeachfl.nwerp.tylerapp.com/nwprod/eSuite.Permits/
@@ -285,7 +304,13 @@ permits:
     official: https://www.westonfl.org/government/building-code-services
     portal: https://aca-prod.accela.com/weston/Cap/CapHome.aspx?TabName=Building&module=Building
     vendor: Accela Citizen Access
-    status: public-search-documented
+    search: parcel | address | record number | contractor
+    adapter: ../scripts/probe-broward-accela-permits.mjs
+    agency_code: WESTON
+    module: Building
+    history_start: "1997-01-01"
+    pre_1997_route: outside documented City record coverage
+    status: local-accela-adapter
   - jurisdiction: Wilton Manors
     official: https://www.wiltonmanors.gov/DocumentCenter/View/9768/How-to-do-an-online-permit-record-search
     vendor: Citizenserve
