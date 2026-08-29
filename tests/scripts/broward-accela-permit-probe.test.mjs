@@ -16,6 +16,7 @@ import {
   buildBrowardAccelaPermitStem,
   buildBrowardAccelaSearchKey,
   classifyBrowardAccelaPage,
+  countBrowardAccelaExcludedModuleLinks,
   createBrowardAccelaCheckpoint,
   extractBrowardAccelaDirectDetailLink,
   extractBrowardAccelaPermitDetail,
@@ -156,6 +157,51 @@ describe("Broward jurisdiction-specific Accela adapters", () => {
     expect(buildBrowardAccelaPermitStem(firstPage[0])).toMatch(
       /^bld24-12345-[a-f0-9]{12}$/,
     );
+  });
+
+  it("reads Record No. after a date column and excludes cross-module enforcement records", () => {
+    const html = `
+      <div>Showing 1-2 of 2 records found.</div>
+      <table id="ctl00_PlaceHolderMain_dgvPermitList_gdvPermitList">
+        <thead><tr>
+          <th></th><th>Date</th><th>Record No.</th><th>Record Type</th>
+          <th>Sub Type</th><th>Description</th><th>Address</th><th>Status</th>
+        </tr></thead>
+        <tbody>
+          <tr>
+            <td></td><td>11/22/2017</td>
+            <td><a href="/CitizenAccess/Cap/CapDetail.aspx?Module=Building&capID1=17BLD">B17-04514</a></td>
+            <td>Building Project - AAC</td><td>Alteration</td><td>Kitchen</td>
+            <td>958 MOCKINGBIRD LN</td><td>Closed</td>
+          </tr>
+          <tr>
+            <td></td><td>06/10/2022</td>
+            <td><a href="/CitizenAccess/Cap/CapDetail.aspx?Module=Enforcement&capID1=22ENF">CE22-01397</a></td>
+            <td>Building Enforcement</td><td></td><td>Observed work</td>
+            <td>958 MOCKINGBIRD LN</td><td>Complied</td>
+          </tr>
+        </tbody>
+      </table>`;
+    const source = BROWARD_ACCELA_SOURCES.plantation;
+    expect(
+      extractBrowardAccelaPermitLinks({
+        html,
+        source,
+        searchKey: "plantation:parcel:504108BJ0140",
+        pageNumber: 1,
+      }),
+    ).toMatchObject([
+      {
+        recordNumber: "B17-04514",
+        recordType: "Building Project - AAC",
+        description: "Kitchen",
+        address: "958 MOCKINGBIRD LN",
+        status: "Closed",
+      },
+    ]);
+    expect(
+      countBrowardAccelaExcludedModuleLinks({ html, source }),
+    ).toBe(1);
   });
 
   it("distinguishes explicit no records from source errors and unknown pages", () => {
@@ -311,6 +357,7 @@ describe("Broward jurisdiction-specific Accela adapters", () => {
       startedAt: "2026-08-29T00:00:00.000Z",
       completedAt: "2026-08-29T00:01:00.000Z",
       reportedTotal: 0,
+      excludedNonPermitCount: 0,
       permits: [],
       details: {},
       searchCapturePaths: ["private/page-001.html"],

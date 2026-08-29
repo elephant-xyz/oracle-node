@@ -88,13 +88,14 @@ import {
 
 /**
  * @typedef {object} BrowardAccelaParcelSearchResult
- * @property {"records" | "no_records"} status - Explicit successful source outcome.
+ * @property {"records" | "no_records" | "non_permit_records_only"} status - Explicit successful source outcome.
  * @property {string} searchKey - Stable jurisdiction-and-folio search identity.
  * @property {string} parcelIdentifier - Exact normalized 12-character Broward folio submitted to Accela.
  * @property {BrowardAccelaSource} source - Jurisdiction-specific Accela source configuration.
  * @property {BrowardAccelaPermitLink[]} permits - Deduplicated permit detail links.
  * @property {BrowardAccelaSearchPage[]} pages - Raw list/detail-redirect captures.
  * @property {number | null} reportedTotal - Accela's reported result count, when displayed.
+ * @property {number} excludedNonPermitCount - Cross-module records (for example code enforcement) explicitly excluded from permit normalization.
  */
 
 /**
@@ -145,13 +146,14 @@ import {
 
 /**
  * @typedef {object} BrowardAccelaCheckpointTarget
- * @property {"in_progress" | "records" | "no_records" | "failed"} status - Resume state for one jurisdiction/folio target.
+ * @property {"in_progress" | "records" | "no_records" | "non_permit_records_only" | "failed"} status - Resume state for one jurisdiction/folio target.
  * @property {BrowardAccelaJurisdiction} jurisdictionKey - Source configuration key.
  * @property {string} parcelIdentifier - Exact submitted Broward folio.
  * @property {string} searchKey - Stable source search key.
  * @property {string | null} startedAt - First-attempt timestamp.
  * @property {string | null} completedAt - Successful completion timestamp.
  * @property {number | null} reportedTotal - Source-reported total.
+ * @property {number} excludedNonPermitCount - Cross-module records observed and excluded.
  * @property {BrowardAccelaPermitLink[]} permits - Search-result links retained for detail-level resume.
  * @property {Record<string, BrowardAccelaCheckpointDetail>} details - Successfully captured details keyed by record number.
  * @property {string[]} searchCapturePaths - Local raw result-page capture paths.
@@ -492,13 +494,23 @@ export function extractBrowardAccelaPermitLinks({
       const value = cells[index >= 0 ? index : fallbackIndex];
       return value === undefined || value.length === 0 ? null : value;
     };
-    const recordNumber = readRecordNumber(
-      cellByHeader(["record number", "record #"], 1) ?? anchor.text(),
-    );
+    const recordNumber =
+      readRecordNumber(anchor.text()) ??
+      readRecordNumber(
+        cellByHeader(["record number", "record no.", "record #"], 1),
+      );
     if (recordNumber === null) return;
+    const url = normalizeSourceUrl(href, source);
+    const detailModule = new URL(url).searchParams.get("Module");
+    if (
+      detailModule !== null &&
+      detailModule.toLowerCase() !== source.module.toLowerCase()
+    ) {
+      return;
+    }
     links.push({
       recordNumber,
-      url: normalizeSourceUrl(href, source),
+      url,
       address: cellByHeader(["address", "work location"], 2),
       description: cellByHeader(["description", "project name"], 3),
       status: cellByHeader(["status", "record status"], 4),
@@ -509,6 +521,37 @@ export function extractBrowardAccelaPermitLinks({
   });
 
   return links;
+}
+
+/**
+ * Count result links whose explicit Accela `Module` differs from the configured
+ * permit module. These records remain source-count provenance but are not
+ * normalized as permits (for example Plantation Building Enforcement cases
+ * returned alongside Building permits).
+ *
+ * @param {object} params - Result parsing parameters.
+ * @param {string} params.html - Complete result HTML.
+ * @param {BrowardAccelaSource} params.source - Jurisdiction permit source.
+ * @returns {number} Number of cross-module detail links excluded.
+ */
+export function countBrowardAccelaExcludedModuleLinks({ html, source }) {
+  const $ = cheerio.load(html);
+  let excludedCount = 0;
+  $("a[href*='CapDetail.aspx']").each((_, element) => {
+    const anchor = $(element);
+    const href = anchor.attr("href");
+    if (href === undefined) return;
+    if (isRelatedRecordTable(anchor.closest("tr").closest("table"))) return;
+    const url = normalizeSourceUrl(href, source);
+    const detailModule = new URL(url).searchParams.get("Module");
+    if (
+      detailModule !== null &&
+      detailModule.toLowerCase() !== source.module.toLowerCase()
+    ) {
+      excludedCount += 1;
+    }
+  });
+  return excludedCount;
 }
 
 /**
@@ -547,6 +590,19 @@ export function extractBrowardAccelaDirectDetailLink({
       : (formAction ?? pageUrl),
     source,
   );
+  const detailModule = new URL(url).searchParams.get("Module");
+  if (
+    detailModule !== null &&
+    detailModule.toLowerCase() !== source.module.toLowerCase()
+  ) {
+    throw new BrowardAccelaSourceError(
+      "identity_mismatch",
+      source,
+      `${source.jurisdiction} Accela redirected a ${source.module} parcel search to cross-module record ${recordNumber}`,
+      url,
+      html,
+    );
+  }
   return {
     recordNumber,
     url,
@@ -816,6 +872,7 @@ export async function searchBrowardAccelaParcel({
   const permits = [];
   /** @type {number | null} */
   let reportedTotal = null;
+  let excludedNonPermitCount = 0;
 
   try {
     logger.info("broward_accela_parcel_search_open", {
@@ -980,16 +1037,20 @@ export async function searchBrowardAccelaParcel({
           permits: [],
           pages,
           reportedTotal: 0,
+          excludedNonPermitCount: 0,
         };
       }
 
+      const pageExcludedNonPermitCount =
+        countBrowardAccelaExcludedModuleLinks({ html, source });
+      excludedNonPermitCount += pageExcludedNonPermitCount;
       const pageLinks = extractBrowardAccelaPermitLinks({
         html,
         source,
         searchKey,
         pageNumber,
       });
-      if (pageLinks.length === 0) {
+      if (pageLinks.length === 0 && pageExcludedNonPermitCount === 0) {
         throw new BrowardAccelaSourceError(
           "unexpected_response",
           source,
@@ -1004,16 +1065,20 @@ export async function searchBrowardAccelaParcel({
         parcelIdentifier: normalizedParcelIdentifier,
         pageNumber,
         pagePermitCount: pageLinks.length,
+        pageExcludedNonPermitCount,
         reportedTotal,
       });
 
       const nextAvailable = await hasNextPage(context);
       if (!nextAvailable) {
-        if (reportedTotal !== null && permits.length < reportedTotal) {
+        if (
+          reportedTotal !== null &&
+          permits.length + excludedNonPermitCount < reportedTotal
+        ) {
           throw new BrowardAccelaSourceError(
             "incomplete_pagination",
             source,
-            `${source.jurisdiction} Accela exposed ${String(permits.length)} of ${String(reportedTotal)} reported records without a next page`,
+            `${source.jurisdiction} Accela accounted for ${String(permits.length + excludedNonPermitCount)} of ${String(reportedTotal)} reported records without a next page`,
             context.url(),
             html,
           );
@@ -1077,9 +1142,22 @@ export async function searchBrowardAccelaParcel({
         source,
         `${source.jurisdiction} Accela returned conflicting detail URLs for record ${permit.recordNumber}`,
         permit.url,
+        pages.at(-1)?.html ?? null,
       );
     }
     deduped.set(key, permit);
+  }
+  if (deduped.size === 0 && excludedNonPermitCount > 0) {
+    return {
+      status: "non_permit_records_only",
+      searchKey,
+      parcelIdentifier: normalizedParcelIdentifier,
+      source,
+      permits: [],
+      pages,
+      reportedTotal,
+      excludedNonPermitCount,
+    };
   }
   if (deduped.size === 0) {
     throw new BrowardAccelaSourceError(
@@ -1089,11 +1167,14 @@ export async function searchBrowardAccelaParcel({
       source.portalUrl,
     );
   }
-  if (reportedTotal !== null && deduped.size < reportedTotal) {
+  if (
+    reportedTotal !== null &&
+    deduped.size + excludedNonPermitCount < reportedTotal
+  ) {
     throw new BrowardAccelaSourceError(
       "incomplete_pagination",
       source,
-      `${source.jurisdiction} Accela captured ${String(deduped.size)} unique records from ${String(reportedTotal)} reported records`,
+      `${source.jurisdiction} Accela accounted for ${String(deduped.size + excludedNonPermitCount)} unique permit/cross-module records from ${String(reportedTotal)} reported records`,
       source.portalUrl,
     );
   }
@@ -1105,6 +1186,7 @@ export async function searchBrowardAccelaParcel({
     permits: [...deduped.values()],
     pages,
     reportedTotal,
+    excludedNonPermitCount,
   };
 }
 
