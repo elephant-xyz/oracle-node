@@ -137,9 +137,7 @@ describe("Broward municipal permit jurisdiction routing", () => {
     ]);
     expect(
       new Set(
-        BROWARD_MUNICIPAL_PERMIT_JURISDICTIONS.map(
-          (config) => config.protocol,
-        ),
+        BROWARD_MUNICIPAL_PERMIT_JURISDICTIONS.map((config) => config.protocol),
       ),
     ).toEqual(
       new Set([
@@ -187,9 +185,8 @@ describe("Broward municipal permit jurisdiction routing", () => {
       ).reason,
     ).toBe("login_required");
     expect(
-      decideMunicipalSourceAccess(
-        getBrowardMunicipalPermitConfig("parkland"),
-      ).reason,
+      decideMunicipalSourceAccess(getBrowardMunicipalPermitConfig("parkland"))
+        .reason,
     ).toBe("login_required");
     expect(
       decideMunicipalSourceAccess(
@@ -207,9 +204,8 @@ describe("Broward municipal permit jurisdiction routing", () => {
       ).reason,
     ).toBe("landing_only");
     expect(
-      decideMunicipalSourceAccess(
-        getBrowardMunicipalPermitConfig("sunrise"),
-      ).reason,
+      decideMunicipalSourceAccess(getBrowardMunicipalPermitConfig("sunrise"))
+        .reason,
     ).toBe("records_request");
   });
 });
@@ -326,10 +322,8 @@ describe("Tyler eSuite protocol", () => {
 
   it("normalizes same-session details and bounded inspection outcomes", () => {
     const config = getBrowardMunicipalPermitConfig("davie");
-    const sourceReference = parseTylerEsuiteSearchHtml(
-      esuiteSearch,
-      config,
-    ).references[0];
+    const sourceReference = parseTylerEsuiteSearchHtml(esuiteSearch, config)
+      .references[0];
     expect(sourceReference).toBeDefined();
 
     const record = parseTylerEsuiteDetailHtml(esuiteDetail, {
@@ -570,15 +564,13 @@ describe("reusable bounded capture and checkpoints", () => {
       { kind: "permit_number", value: "26-00001234" },
     ]);
     const checkpoint = createMunicipalCheckpoint(config, queries);
-    expect(
-      validateMunicipalCheckpoint(checkpoint, config, queries),
-    ).toEqual(checkpoint);
+    expect(validateMunicipalCheckpoint(checkpoint, config, queries)).toEqual(
+      checkpoint,
+    );
     expect(() =>
-      validateMunicipalCheckpoint(
-        checkpoint,
-        config,
-        [{ kind: "permit_number", value: "DIFFERENT" }],
-      ),
+      validateMunicipalCheckpoint(checkpoint, config, [
+        { kind: "permit_number", value: "DIFFERENT" },
+      ]),
     ).toThrow("malformed or mismatched");
 
     const search = vi.fn();
@@ -605,9 +597,9 @@ describe("reusable bounded capture and checkpoints", () => {
         (record) => record.source_record_id,
       ),
     ).toEqual(["1", "2"]);
-    expect(renderMunicipalPermitJsonl([second, first, first]).split("\n")).toHaveLength(
-      3,
-    );
+    expect(
+      renderMunicipalPermitJsonl([second, first, first]).split("\n"),
+    ).toHaveLength(3);
     expect(() =>
       dedupeAndSortMunicipalPermits([
         first,

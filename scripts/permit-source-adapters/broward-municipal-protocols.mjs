@@ -84,7 +84,10 @@ function labelKey(value) {
 function collectLabeledFields($) {
   /** @type {Map<string, string>} */
   const fields = new Map();
-  const add = (/** @type {string | null} */ label, /** @type {string | null} */ value) => {
+  const add = (
+    /** @type {string | null} */ label,
+    /** @type {string | null} */ value,
+  ) => {
     if (label === null || value === null || label.length > 100) return;
     const key = labelKey(label);
     if (key.length > 0 && !fields.has(key)) fields.set(key, value);
@@ -114,9 +117,7 @@ function collectLabeledFields($) {
     let value = null;
     if (targetId !== undefined) {
       const target = $("[id]")
-        .filter(
-          (_index, element) => $(element).attr("id") === targetId,
-        )
+        .filter((_index, element) => $(element).attr("id") === targetId)
         .first();
       value =
         readText(target.attr("value")) ??
@@ -260,9 +261,10 @@ function canonicalSourceUrl(config, href) {
  */
 function mapResultRow($, row) {
   const table = row.closest("table");
-  const headerRow = table.find("tr").toArray().find((element) =>
-    $(element).children("th").toArray().length > 0,
-  );
+  const headerRow = table
+    .find("tr")
+    .toArray()
+    .find((element) => $(element).children("th").toArray().length > 0);
   if (headerRow === undefined) return new Map();
   const headers = $(headerRow)
     .children("th")
@@ -323,9 +325,10 @@ function parseInspectionTables($, maxInspections = 100) {
   const inspections = [];
   for (const tableElement of $("table").toArray()) {
     const table = $(tableElement);
-    const headerRow = table.find("tr").toArray().find((element) =>
-      $(element).children("th").toArray().length > 0,
-    );
+    const headerRow = table
+      .find("tr")
+      .toArray()
+      .find((element) => $(element).children("th").toArray().length > 0);
     if (headerRow === undefined) continue;
     const headers = $(headerRow)
       .children("th")
@@ -416,14 +419,19 @@ export function parseClick2GovSearchHtml(
     if (/no matching|no permits found|no records found/iu.test(body)) {
       return { references: [], nextPage: null };
     }
-    throw new Error(`Unexpected Click2Gov result title: ${title ?? "(missing)"}`);
+    throw new Error(
+      `Unexpected Click2Gov result title: ${title ?? "(missing)"}`,
+    );
   }
   const rows = $("tr")
     .toArray()
-    .filter((row) =>
-      $(row)
-        .find('a[href*="permit.appYearAndNumber"][href*="validatePermitView"]')
-        .toArray().length > 0,
+    .filter(
+      (row) =>
+        $(row)
+          .find(
+            'a[href*="permit.appYearAndNumber"][href*="validatePermitView"]',
+          )
+          .toArray().length > 0,
     );
   if (rows.length > maxRows) {
     throw new Error(
@@ -487,10 +495,7 @@ function normalizeClick2GovApplicationNumber(value) {
  * @param {BrowardMunicipalQuery} context.query - Query that discovered the record.
  * @returns {NormalizedBrowardMunicipalPermit} Reconciled private-staging permit.
  */
-export function parseClick2GovDetailHtml(
-  html,
-  { config, reference, query },
-) {
+export function parseClick2GovDetailHtml(html, { config, reference, query }) {
   const $ = cheerio.load(html);
   const title = requireText(readText($("title").text()), "Click2Gov title");
   if (!/Click2Gov.*Status Detail/iu.test(title)) {
@@ -582,9 +587,7 @@ export function parseTylerEsuiteSearchHtml(
   if (title !== "Public Search" && title !== "Welcome") {
     throw new Error(`Unexpected eSuite search title: ${title ?? "(missing)"}`);
   }
-  const anchors = $(
-    'a[href*="ContractorPermitDetails.aspx?id="]',
-  ).toArray();
+  const anchors = $('a[href*="ContractorPermitDetails.aspx?id="]').toArray();
   if (anchors.length > maxRows * 2) {
     throw new Error(
       `eSuite result link limit ${String(maxRows * 2)} exceeded (${String(anchors.length)})`,
@@ -644,10 +647,7 @@ export function parseTylerEsuiteSearchHtml(
  * @param {BrowardMunicipalQuery} context.query - Query that discovered the permit.
  * @returns {NormalizedBrowardMunicipalPermit} Reconciled normalized permit.
  */
-export function parseTylerEsuiteDetailHtml(
-  html,
-  { config, reference, query },
-) {
+export function parseTylerEsuiteDetailHtml(html, { config, reference, query }) {
   const $ = cheerio.load(html);
   const title = requireText(readText($("title").text()), "eSuite detail title");
   if (!/PermitDetails|Permit Details/iu.test(title)) {
@@ -740,7 +740,9 @@ export function parseSmartGovSearchHtml(
   const $ = cheerio.load(html);
   const title = readText($("title").text());
   if (title === null || !/Public Portal/iu.test(title)) {
-    throw new Error(`Unexpected SmartGov result title: ${title ?? "(missing)"}`);
+    throw new Error(
+      `Unexpected SmartGov result title: ${title ?? "(missing)"}`,
+    );
   }
   const anchors = $(
     'a[href*="/ApplicationPublic/"][href*="ApplicationDetail"], a[href*="/ApplicationPublic/Application/"]',
@@ -763,7 +765,9 @@ export function parseSmartGovSearchHtml(
       sourceRecordId === undefined ||
       !/^[A-Z0-9-]+$/iu.test(sourceRecordId)
     ) {
-      throw new Error(`SmartGov detail link has invalid identity: ${detailUrl}`);
+      throw new Error(
+        `SmartGov detail link has invalid identity: ${detailUrl}`,
+      );
     }
     const rowValues = mapResultRow($, anchor.closest("tr"));
     references.push({
@@ -806,7 +810,10 @@ export function parseSmartGovSearchHtml(
  */
 export function parseSmartGovDetailHtml(html, { config, reference, query }) {
   const $ = cheerio.load(html);
-  const title = requireText(readText($("title").text()), "SmartGov detail title");
+  const title = requireText(
+    readText($("title").text()),
+    "SmartGov detail title",
+  );
   if (!/Public Portal/iu.test(title)) {
     throw new Error(`Unexpected SmartGov detail title: ${title}`);
   }
@@ -881,11 +888,7 @@ export function parseSmartGovDetailHtml(html, { config, reference, query }) {
  * @param {number} [options.maxRows=50] - Hard source-row ceiling.
  * @returns {BrowardMunicipalSearchPage} Unique permit detail references.
  */
-export function parseEgovPlusSearchHtml(
-  html,
-  config,
-  { maxRows = 50 } = {},
-) {
+export function parseEgovPlusSearchHtml(html, config, { maxRows = 50 } = {}) {
   if (config.protocol !== "egovplus") {
     throw new Error("eGovPLUS parser received a different vendor protocol");
   }
@@ -1094,10 +1097,7 @@ export function parseOpenGovSearchPayload(
       throw new Error("OpenGov search edge is malformed");
     }
     const node = edge.node;
-    const sourceRecordId = requireText(
-      readText(node.id),
-      "OpenGov record id",
-    );
+    const sourceRecordId = requireText(readText(node.id), "OpenGov record id");
     const permitNumber = requireText(
       readText(node.recordNumber) ??
         readText(node.permitNumber) ??
@@ -1151,11 +1151,12 @@ export function normalizeOpenGovDetailPayload(
   if (!isRecord(payload)) {
     throw new Error("OpenGov detail payload must be an object");
   }
-  const record = isRecord(payload.data) && isRecord(payload.data.record)
-    ? payload.data.record
-    : isRecord(payload.record)
-      ? payload.record
-      : payload;
+  const record =
+    isRecord(payload.data) && isRecord(payload.data.record)
+      ? payload.data.record
+      : isRecord(payload.record)
+        ? payload.record
+        : payload;
   const sourceRecordId = requireText(readText(record.id), "OpenGov record id");
   const permitNumber = requireText(
     readText(record.recordNumber) ??

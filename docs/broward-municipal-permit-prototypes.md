@@ -31,18 +31,18 @@ callers cannot lower the configured delay.
 
 ## Jurisdiction routing
 
-| Protocol | Jurisdictions | Prototype capability | Operational disposition |
-| --- | --- | --- | --- |
-| Click2Gov | Pompano Beach, Tamarac, Margate | application/address/parcel result parsing; contact-expanded row dedupe; session-token removal; same-session detail parsing | bounded anonymous transport may be added |
-| Tyler/New World eSuite | Davie, Dania Beach | permit/address result parsing; numeric permit-id dedupe; numbered-page checkpoint; same-session detail and inspections | bounded anonymous transport may be added |
-| Gov-Easy | Deerfield Beach legacy, Pembroke Park | route/capability metadata only | skip: six-digit numeric CAPTCHA |
-| GeoCivix | Deerfield Beach current records | split-route metadata | skip: secure/login route |
-| SmartGov | Lighthouse Point | advanced-search result, numbered page, public detail, and inspection parsing | anonymous prototype; positive detail still needs certification |
-| OpenGov/ViewPoint | Lauderdale Lakes | GraphQL edge/detail fixture parser and opaque-cursor checkpoint support | landing-only skip while the rendered application reports itself inaccessible |
-| CommunityCore | Hillsboro Beach | official route metadata | skip: account required |
-| MGO Connect | Parkland | official route metadata | skip: account required |
-| eGovPLUS | Lauderhill | permit/folio/address results; client-all result contract; public detail and inspection parsing | bounded anonymous transport may be added |
-| Official records request | Sunrise | microfilm/building-record route, official request form, and city-clerk fallback | skip: do not send a request |
+| Protocol                 | Jurisdictions                         | Prototype capability                                                                                                       | Operational disposition                                                      |
+| ------------------------ | ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| Click2Gov                | Pompano Beach, Tamarac, Margate       | application/address/parcel result parsing; contact-expanded row dedupe; session-token removal; same-session detail parsing | bounded anonymous transport may be added                                     |
+| Tyler/New World eSuite   | Davie, Dania Beach                    | permit/address result parsing; numeric permit-id dedupe; numbered-page checkpoint; same-session detail and inspections     | bounded anonymous transport may be added                                     |
+| Gov-Easy                 | Deerfield Beach legacy, Pembroke Park | route/capability metadata only                                                                                             | skip: six-digit numeric CAPTCHA                                              |
+| GeoCivix                 | Deerfield Beach current records       | split-route metadata                                                                                                       | skip: secure/login route                                                     |
+| SmartGov                 | Lighthouse Point                      | advanced-search result, numbered page, public detail, and inspection parsing                                               | anonymous prototype; positive detail still needs certification               |
+| OpenGov/ViewPoint        | Lauderdale Lakes                      | GraphQL edge/detail fixture parser and opaque-cursor checkpoint support                                                    | landing-only skip while the rendered application reports itself inaccessible |
+| CommunityCore            | Hillsboro Beach                       | official route metadata                                                                                                    | skip: account required                                                       |
+| MGO Connect              | Parkland                              | official route metadata                                                                                                    | skip: account required                                                       |
+| eGovPLUS                 | Lauderhill                            | permit/folio/address results; client-all result contract; public detail and inspection parsing                             | bounded anonymous transport may be added                                     |
+| Official records request | Sunrise                               | microfilm/building-record route, official request form, and city-clerk fallback                                            | skip: do not send a request                                                  |
 
 Davie eSuite is explicitly legacy/public history, not complete 2026 coverage.
 The config retains the city's separate Avolve OAS submission route as
