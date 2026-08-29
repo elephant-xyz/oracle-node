@@ -21,7 +21,6 @@
     "broward:recover": "node scripts/recover-broward-appraisal-to-neon.mjs",
     "broward:recovery-dashboard": "node scripts/broward-neon-recovery-dashboard.mjs",
     "broward:permits:pilot": "node scripts/run-broward-permit-pilot.mjs",
-    "broward:permits:donphan": "node scripts/validate-broward-permits-with-donphan.mjs",
     "query-post-logs": "node scripts/query_post_logs.js",
     "update-elephant-cli": "npm install @elephant-xyz/cli@latest --workspace=prepare/lambdas/downloader --workspace=workflow/lambdas/submit --workspace=workflow/lambdas/pre --workspace=workflow/lambdas/mvl"
   },
