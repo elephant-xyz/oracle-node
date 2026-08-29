@@ -1,7 +1,7 @@
 From 3120eeabbbf2a75c0275681f4f8dec6da467f316 Mon Sep 17 00:00:00 2001
 From: Cursor Agent <cursoragent@cursor.com>
 Date: Sat, 29 Aug 2026 23:02:06 +0000
-Subject: [PATCH 1/2] Add resumable Florida NAL tax-roll loader
+Subject: [PATCH 1/3] Add resumable Florida NAL tax-roll loader
 
 ---
  migrations/0010_florida_nal_tax_roll.sql | 118 ++++
@@ -2381,7 +2381,7 @@ index fad5278..64fedd9 100644
 From 5ff4f03d99011cf8599e4939868456c683d21dd2 Mon Sep 17 00:00:00 2001
 From: Cursor Agent <cursoragent@cursor.com>
 Date: Sat, 29 Aug 2026 23:34:53 +0000
-Subject: [PATCH 2/2] Align NAL unit counts with Lexicon
+Subject: [PATCH 2/3] Align NAL unit counts with Lexicon
 
 ---
  src/loader/florida-nal.ts | 15 +++++++++++++--
@@ -2440,6 +2440,156 @@ index 0c22df8..3606904 100644
    });
  
    it("attaches NAL facts to an existing appraiser property without duplicating it", () => {
+-- 
+2.43.0
+
+
+From 0f7abe859e2df303436b1a3202ea1050e3e254fb Mon Sep 17 00:00:00 2001
+From: Cursor Agent <cursoragent@cursor.com>
+Date: Sat, 29 Aug 2026 23:39:56 +0000
+Subject: [PATCH 3/3] Support packed final NAL exemptions
+
+---
+ src/loader/florida-nal.ts | 59 +++++++++++++++++++++++++++++++++++++--
+ tests/florida-nal.test.ts | 38 +++++++++++++++++++++++++
+ 2 files changed, 95 insertions(+), 2 deletions(-)
+
+diff --git a/src/loader/florida-nal.ts b/src/loader/florida-nal.ts
+index c249bb8..a3809ac 100644
+--- a/src/loader/florida-nal.ts
++++ b/src/loader/florida-nal.ts
+@@ -669,10 +669,20 @@ function mapTaxExemptionRows(params: {
+   readonly taxSourceRecordKey: string;
+   readonly context: FloridaNalContext;
+ }): PreparedRow[] {
+-  return Object.entries(params.row).flatMap(([fieldName, rawValue]) => {
++  const explicitExemptions = Object.entries(params.row).flatMap(
++    ([fieldName, rawValue]) => {
+     if (!EXEMPTION_FIELD_PATTERN.test(fieldName)) return [];
+     const exemptionValue = readNumber(rawValue);
+     if (exemptionValue === null || exemptionValue <= 0) return [];
++      return [{ fieldName, exemptionValue }];
++    },
++  );
++  const packedExemptions =
++    explicitExemptions.length === 0
++      ? parsePackedExemptions(params.row.EXEMPTIONS)
++      : [];
++  return [...explicitExemptions, ...packedExemptions].map(
++    ({ fieldName, exemptionValue }) => {
+     const payload = {
+       exemption_type: fieldName,
+       exemption_value: exemptionValue,
+@@ -700,7 +710,52 @@ function mapTaxExemptionRows(params: {
+         }),
+       },
+     ];
+-  });
++    },
++  ).flat();
++}
++
++/**
++ * Parse DOR public-record exports that pack exemption code/value pairs into one
++ * semicolon-delimited field instead of separate `EXMPT_*` columns.
++ *
++ * @param value - Packed `EXEMPTIONS` value such as `01;25000;02;25722`.
++ * @returns Valid positive exemption code/value records.
++ */
++export function parsePackedExemptions(
++  value: unknown,
++): readonly { readonly fieldName: string; readonly exemptionValue: number }[] {
++  const text = readString(value);
++  if (text === null) return [];
++  const tokens = text.split(";").map((token) => token.trim());
++  if (tokens.length % 2 !== 0) {
++    throw new Error("Packed NAL exemptions must contain code/value pairs");
++  }
++  const seen = new Set<string>();
++  const exemptions: {
++    fieldName: string;
++    exemptionValue: number;
++  }[] = [];
++  for (let index = 0; index < tokens.length; index += 2) {
++    const code = tokens[index];
++    const rawValue = tokens[index + 1];
++    if (
++      code === undefined ||
++      !/^(?:0[1-9]|[1-4][0-9]|46|8[0-2])$/.test(code)
++    ) {
++      throw new Error("Packed NAL exemption code is invalid");
++    }
++    const exemptionValue = readNumber(rawValue);
++    if (exemptionValue === null || exemptionValue < 0) {
++      throw new Error("Packed NAL exemption value is invalid");
++    }
++    const fieldName = `EXMPT_${code}`;
++    if (seen.has(fieldName)) {
++      throw new Error("Packed NAL exemptions contain a duplicate code");
++    }
++    seen.add(fieldName);
++    if (exemptionValue > 0) exemptions.push({ fieldName, exemptionValue });
++  }
++  return exemptions;
+ }
+ 
+ function mapSaleRow(params: {
+diff --git a/tests/florida-nal.test.ts b/tests/florida-nal.test.ts
+index 3606904..8bcb92d 100644
+--- a/tests/florida-nal.test.ts
++++ b/tests/florida-nal.test.ts
+@@ -6,6 +6,7 @@ import {
+   BROWARD_DOR_COUNTY_NUMBER,
+   classifyFloridaDorUseCode,
+   mapFloridaNalRow,
++  parsePackedExemptions,
+   requireFloridaNalParcelId,
+   type FloridaNalContext,
+   type FloridaNalRawRow,
+@@ -171,6 +172,43 @@ describe("Florida DOR NAL mapping", () => {
+     });
+   });
+ 
++  it("maps packed final-roll exemptions without losing code identity", () => {
++    expect(
++      parsePackedExemptions(
++        "01;25000;02;25722;03;50000;80;845080",
++      ),
++    ).toEqual([
++      { fieldName: "EXMPT_01", exemptionValue: 25_000 },
++      { fieldName: "EXMPT_02", exemptionValue: 25_722 },
++      { fieldName: "EXMPT_03", exemptionValue: 50_000 },
++      { fieldName: "EXMPT_80", exemptionValue: 845_080 },
++    ]);
++    expect(() => parsePackedExemptions("01;25000;02")).toThrow(/code\/value/);
++    expect(() => parsePackedExemptions("01;25000;01;1")).toThrow(
++      /duplicate/,
++    );
++
++    const mapped = mapFloridaNalRow(
++      {
++        ...BASE_ROW,
++        ASMNT_YR: "2025",
++        EXMPT_01: undefined,
++        EXMPT_02: undefined,
++        EXEMPTIONS: "01;25000;02;25722",
++      },
++      {
++        ...CONTEXT,
++        rollYear: 2025,
++        certificationStatus: "initial_final",
++      },
++    );
++    expect(
++      mapped.rows
++        .filter((row) => row.tableName === "tax_exemptions")
++        .map((row) => row.values.exemption_type),
++    ).toEqual(["EXMPT_01", "EXMPT_02"]);
++  });
++
+   it("maps broad DOR categories without local-use-code guesses", () => {
+     expect(classifyFloridaDorUseCode("000", { NO_BULDNG: "0" })).toMatchObject({
+       build_status: "VacantLand",
 -- 
 2.43.0
 
