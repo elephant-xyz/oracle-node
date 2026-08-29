@@ -1309,15 +1309,12 @@ export function parseBrowardAccelaMoreDetails(sectionText) {
     details[alias.canonicalLabel] ??= value;
   }
   const useMatch =
-    /\b(Commercial \/ Residential|Residential \/ Commercial):\s*([A-Za-z][A-Za-z /-]*)\b/i.exec(
+    /\b(Commercial \/ Residential|Residential \/ Commercial):\s*([A-Za-z-]+)\b/i.exec(
       normalizedText,
     );
   if (useMatch !== null) {
     const sourceLabel = collapseText(useMatch[1]);
-    const value = collapseText(useMatch[2]).replace(
-      /\s+(?:Is this|Building|City|Application|Parcel)\b.*$/i,
-      "",
-    );
+    const value = collapseText(useMatch[2]);
     if (sourceLabel.length > 0 && value.length > 0) {
       details[sourceLabel] = value;
       details["Comm/Res"] ??= value;
