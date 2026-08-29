@@ -552,6 +552,9 @@ export async function runBrowardAccelaProbe(options) {
               options.checkpointPath,
               checkpoint,
             );
+            if (targetIndex + 1 < options.targets.length) {
+              await delay(options.targetDelayMs);
+            }
             continue;
           }
           await writeBrowardAccelaCheckpoint(

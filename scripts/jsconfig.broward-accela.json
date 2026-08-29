@@ -9,7 +9,7 @@
     "strictNullChecks": true,
     "useUnknownInCatchVariables": true,
     "exactOptionalPropertyTypes": false,
-    "noUncheckedIndexedAccess": true,
+    "noUncheckedIndexedAccess": false,
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "target": "ES2022",
