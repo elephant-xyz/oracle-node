@@ -359,7 +359,8 @@ export function parseCitizenservePermitDetailHtml(html, context) {
   }
 
   const sourceRecordId = context.candidate.permitId;
-  const recordTypeForRoof = [recordType, workClass]
+  const normalizedDescription = description ?? context.candidate.description;
+  const recordTypeForRoof = [recordType, workClass, normalizedDescription]
     .filter((value) => value !== null)
     .join(" ");
   return {
@@ -379,7 +380,7 @@ export function parseCitizenservePermitDetailHtml(html, context) {
     record_status: status ?? context.candidate.recordStatus,
     record_type: recordType ?? context.candidate.recordType,
     work_class: workClass ?? context.candidate.workClass,
-    project_description: description ?? context.candidate.description,
+    project_description: normalizedDescription,
     square_feet: null,
     job_value: null,
     is_roof_permit: /\broof(?:ing)?\b/iu.test(recordTypeForRoof),
