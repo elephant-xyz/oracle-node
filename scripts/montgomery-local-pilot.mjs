@@ -22,8 +22,14 @@ import { handler } from "../../Counties-trasform-scripts/montgomery/scripts/hand
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, "..");
-const DEFAULT_SEED_CSV = resolve(ROOT, "downloads/montgomery/pilot-seed-50.csv");
-const DEFAULT_OUTPUT_ROOT = resolve(ROOT, "downloads/montgomery/pilot-transformed");
+const DEFAULT_SEED_CSV = resolve(
+  ROOT,
+  "downloads/montgomery/pilot-seed-50.csv",
+);
+const DEFAULT_OUTPUT_ROOT = resolve(
+  ROOT,
+  "downloads/montgomery/pilot-transformed",
+);
 
 /**
  * @param {string} text
@@ -32,7 +38,9 @@ const DEFAULT_OUTPUT_ROOT = resolve(ROOT, "downloads/montgomery/pilot-transforme
 export function parseSeedCsvText(text) {
   const lines = text.trim().split("\n");
   if (lines.length < 2) return [];
-  const headers = lines[0].split(",").map((h) => h.trim().replace(/^"|"$/g, ""));
+  const headers = lines[0]
+    .split(",")
+    .map((h) => h.trim().replace(/^"|"$/g, ""));
   const rows = [];
   for (let i = 1; i < lines.length; i++) {
     const rawLine = lines[i].trim();
@@ -77,7 +85,9 @@ async function fetchPasdaFeature(taxpin) {
   const url = `${PASDA_MONTGOMERY_BASE}?where=${where}&outFields=${MONTGOMERY_GIS_FIELDS}&returnGeometry=false&f=json`;
   const response = await fetch(url);
   if (!response.ok) {
-    throw new Error(`PASDA fetch failed for ${taxpin}: HTTP ${response.status}`);
+    throw new Error(
+      `PASDA fetch failed for ${taxpin}: HTTP ${response.status}`,
+    );
   }
   const payload = await response.json();
   if (!payload.features?.length) {
@@ -164,7 +174,9 @@ async function main() {
     }
   }
 
-  console.log(`\nMontgomery County Pilot Complete: ${successCount}/${rows.length} transformed successfully.`);
+  console.log(
+    `\nMontgomery County Pilot Complete: ${successCount}/${rows.length} transformed successfully.`,
+  );
 }
 
 main().catch((err) => {

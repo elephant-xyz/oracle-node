@@ -24,8 +24,14 @@ import { parseSeedCsvText } from "../montgomery-local-pilot.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, "../..");
-const DEFAULT_SEED_CSV = resolve(ROOT, "downloads/montgomery/pilot-seed-50.csv");
-const DEFAULT_OUT = resolve(ROOT, "downloads/montgomery/pa-corp-match-pilot.json");
+const DEFAULT_SEED_CSV = resolve(
+  ROOT,
+  "downloads/montgomery/pilot-seed-50.csv",
+);
+const DEFAULT_OUT = resolve(
+  ROOT,
+  "downloads/montgomery/pa-corp-match-pilot.json",
+);
 const PA_DOS_RESOURCE = "https://data.pa.gov/resource/xvd7-5r2c.json";
 
 function buildPaDosUnnormalizedAddress(row) {
@@ -72,8 +78,12 @@ async function main() {
     }
   }
 
-  console.log(`Loaded ${propertyAddressMap.size} unique property address hashes.`);
-  console.log("Fetching sample Montgomery corporate entities from PA Department of State...");
+  console.log(
+    `Loaded ${propertyAddressMap.size} unique property address hashes.`,
+  );
+  console.log(
+    "Fetching sample Montgomery corporate entities from PA Department of State...",
+  );
 
   const rawRows = await fetchPaDosMontgomeryRows(2000);
   console.log(`Received ${rawRows.length} raw entity party rows from PA DOS.`);
@@ -98,7 +108,9 @@ async function main() {
     }
   }
 
-  console.log(`Deduped to ${dedupedEntities.size} distinct entities with valid address hashes.`);
+  console.log(
+    `Deduped to ${dedupedEntities.size} distinct entities with valid address hashes.`,
+  );
 
   const matches = [];
   for (const entity of dedupedEntities.values()) {

@@ -105,32 +105,48 @@ function parseMoney(val) {
 function transformGisRecord(attrs) {
   const taxpin = String(attrs.TAXPIN || attrs.PARCEL || "");
   const parcelId = taxpin;
-  const propertyId = createHash("sha256").update(`montgomery:${parcelId}`).digest("hex").slice(0, 32);
+  const propertyId = createHash("sha256")
+    .update(`montgomery:${parcelId}`)
+    .digest("hex")
+    .slice(0, 32);
 
   const luc = attrs.LAND_USE != null ? String(attrs.LAND_USE) : null;
   const propertyUsage = lucLabel(luc);
   const propertyType = propertyTypeFromClass(attrs.CLASS);
 
-  const street = attrs.LOCATION1 || [attrs.LOC_NO, attrs.LOC_STR, attrs.LOC_SUF].filter(Boolean).join(" ") || null;
+  const street =
+    attrs.LOCATION1 ||
+    [attrs.LOC_NO, attrs.LOC_STR, attrs.LOC_SUF].filter(Boolean).join(" ") ||
+    null;
   const city = attrs.Muni_Name ? String(attrs.Muni_Name) : null;
-  const zip = attrs.LOC_ZIP1_Z || attrs.ZIP1_ZIP2 ? String(attrs.LOC_ZIP1_Z || attrs.ZIP1_ZIP2).slice(0, 5) : null;
+  const zip =
+    attrs.LOC_ZIP1_Z || attrs.ZIP1_ZIP2
+      ? String(attrs.LOC_ZIP1_Z || attrs.ZIP1_ZIP2).slice(0, 5)
+      : null;
 
   const rawBuilt = Number(attrs.YEAR_BUILT);
   const rawCommBuilt = Number(attrs.COMM_YR_BL);
-  const builtYear = rawBuilt > 1800 && rawBuilt <= 2026 ? rawBuilt : (rawCommBuilt > 1800 && rawCommBuilt <= 2026 ? rawCommBuilt : null);
+  const builtYear =
+    rawBuilt > 1800 && rawBuilt <= 2026
+      ? rawBuilt
+      : rawCommBuilt > 1800 && rawCommBuilt <= 2026
+        ? rawCommBuilt
+        : null;
 
   const rawRem = Number(attrs.YR_REM);
   const remodelYear = rawRem > 1800 && rawRem <= 2026 ? rawRem : null;
 
   const sfla = Number(attrs.SFLA);
   const commArea = Number(attrs.COMM_AREA);
-  const livableArea = sfla > 0 ? sfla : (commArea > 0 ? commArea : null);
+  const livableArea = sfla > 0 ? sfla : commArea > 0 ? commArea : null;
 
   const landSf = Number(attrs.LAND_SF);
   const totalArea = landSf > 0 ? landSf : null;
   const landAcres = Number(attrs.LAND_ACRES);
-  const lotAcres = landAcres > 0 ? landAcres : (landSf > 0 ? landSf / 43560 : null);
-  const lotSqft = landSf > 0 ? landSf : (landAcres > 0 ? landAcres * 43560 : null);
+  const lotAcres =
+    landAcres > 0 ? landAcres : landSf > 0 ? landSf / 43560 : null;
+  const lotSqft =
+    landSf > 0 ? landSf : landAcres > 0 ? landAcres * 43560 : null;
 
   const exteriorWall = exteriorWallLabel(attrs.EXTWALL);
 
@@ -144,7 +160,9 @@ function transformGisRecord(attrs) {
   const marketVal = parseMoney(attrs.TOTAL_APPR);
   const landVal = parseMoney(attrs.OBYVAL);
 
-  const saleDate = attrs.SALE_DATE ? String(attrs.SALE_DATE).slice(0, 10) : null;
+  const saleDate = attrs.SALE_DATE
+    ? String(attrs.SALE_DATE).slice(0, 10)
+    : null;
   const salePrice = parseMoney(attrs.CONSIDERAT);
 
   return {
@@ -214,7 +232,9 @@ async function fetchPasdaPageWithRetry(offset, pageSize, maxRetries = 5) {
       return (payload.features ?? []).map((f) => f.attributes ?? {});
     } catch (err) {
       if (attempt === maxRetries) {
-        throw new Error(`Failed offset ${offset} after ${maxRetries} attempts: ${err.message}`);
+        throw new Error(
+          `Failed offset ${offset} after ${maxRetries} attempts: ${err.message}`,
+        );
       }
       const delay = Math.min(1000 * Math.pow(2, attempt - 1), 10000);
       await new Promise((resolve) => setTimeout(resolve, delay));
@@ -224,17 +244,33 @@ async function fetchPasdaPageWithRetry(offset, pageSize, maxRetries = 5) {
 }
 
 async function main() {
-  const concurrencyArg = process.argv.find((a) => a.startsWith("--concurrency="));
+  const concurrencyArg = process.argv.find((a) =>
+    a.startsWith("--concurrency="),
+  );
   const batchSizeArg = process.argv.find((a) => a.startsWith("--batch-size="));
-  const maxParcelsArg = process.argv.find((a) => a.startsWith("--max-parcels="));
+  const maxParcelsArg = process.argv.find((a) =>
+    a.startsWith("--max-parcels="),
+  );
 
-  const concurrency = concurrencyArg ? Number.parseInt(concurrencyArg.split("=")[1], 10) : 8;
-  const pageSize = batchSizeArg ? Number.parseInt(batchSizeArg.split("=")[1], 10) : 1000;
-  const maxParcels = maxParcelsArg ? Number.parseInt(maxParcelsArg.split("=")[1], 10) : null;
+  const concurrency = concurrencyArg
+    ? Number.parseInt(concurrencyArg.split("=")[1], 10)
+    : 8;
+  const pageSize = batchSizeArg
+    ? Number.parseInt(batchSizeArg.split("=")[1], 10)
+    : 1000;
+  const maxParcels = maxParcelsArg
+    ? Number.parseInt(maxParcelsArg.split("=")[1], 10)
+    : null;
 
-  console.log("================================================================================");
-  console.log("  Montgomery County, PA — Full Roll Direct Streaming Pipeline (~309,732 parcels)");
-  console.log("================================================================================\n");
+  console.log(
+    "================================================================================",
+  );
+  console.log(
+    "  Montgomery County, PA — Full Roll Direct Streaming Pipeline (~309,732 parcels)",
+  );
+  console.log(
+    "================================================================================\n",
+  );
 
   await mkdir(PUBLISH_DIR, { recursive: true });
 
@@ -244,11 +280,17 @@ async function main() {
   const countResp = await fetch(countUrl);
   const countJson = await countResp.json();
   const totalCountyParcels = countJson.count || 309732;
-  const targetParcels = maxParcels ? Math.min(maxParcels, totalCountyParcels) : totalCountyParcels;
+  const targetParcels = maxParcels
+    ? Math.min(maxParcels, totalCountyParcels)
+    : totalCountyParcels;
   const totalPages = Math.ceil(targetParcels / pageSize);
 
-  console.log(`   Total Montgomery County Roll: ${totalCountyParcels.toLocaleString()} parcels`);
-  console.log(`   Targeting: ${targetParcels.toLocaleString()} parcels across ${totalPages} pages (concurrency: ${concurrency})\n`);
+  console.log(
+    `   Total Montgomery County Roll: ${totalCountyParcels.toLocaleString()} parcels`,
+  );
+  console.log(
+    `   Targeting: ${targetParcels.toLocaleString()} parcels across ${totalPages} pages (concurrency: ${concurrency})\n`,
+  );
 
   // 2. Open Parquet Writer
   console.log(`2. Initializing direct analytical Parquet streaming writer at:`);
@@ -296,7 +338,10 @@ async function main() {
         if (row.assessed_value) totalAssessedSum += row.assessed_value;
 
         // Collect representative sample for dashboard (e.g. 1 in every 100 or up to 2,000)
-        if (sampleDashboardProperties.length < 2500 && (totalRowsStreamed % 120 === 0 || totalRowsStreamed <= 200)) {
+        if (
+          sampleDashboardProperties.length < 2500 &&
+          (totalRowsStreamed % 120 === 0 || totalRowsStreamed <= 200)
+        ) {
           const roofAge = calculateRoofAge({
             builtYear: row.built_year,
             remodelYear: row.remodel_year,
@@ -315,7 +360,9 @@ async function main() {
       const rate = Math.round(totalRowsStreamed / (elapsedSec || 1));
       const percent = ((completedPages / totalPages) * 100).toFixed(1);
       const remainingPages = totalPages - completedPages;
-      const estRemainingSec = Math.round((remainingPages / (completedPages / elapsedSec)));
+      const estRemainingSec = Math.round(
+        remainingPages / (completedPages / elapsedSec),
+      );
       const etaMin = Math.floor(estRemainingSec / 60);
       const etaSec = estRemainingSec % 60;
 
@@ -334,14 +381,26 @@ async function main() {
   await writer.close();
   const totalDurationSec = ((Date.now() - startTime) / 1000).toFixed(1);
 
-  console.log("\n================================================================================");
+  console.log(
+    "\n================================================================================",
+  );
   console.log(`  Streaming Complete!`);
-  console.log(`  Total Streamed Parcels: ${totalRowsStreamed.toLocaleString()}`);
-  console.log(`  Duration: ${totalDurationSec}s (Average throughput: ${Math.round(totalRowsStreamed / totalDurationSec)} parcels/sec)`);
-  console.log(`  Parcels with Structural Built Year: ${builtYearCount.toLocaleString()} (${((builtYearCount / totalRowsStreamed) * 100).toFixed(1)}%)`);
-  console.log(`  Total Assessed Valuation: $${Math.round(totalAssessedSum).toLocaleString()}`);
+  console.log(
+    `  Total Streamed Parcels: ${totalRowsStreamed.toLocaleString()}`,
+  );
+  console.log(
+    `  Duration: ${totalDurationSec}s (Average throughput: ${Math.round(totalRowsStreamed / totalDurationSec)} parcels/sec)`,
+  );
+  console.log(
+    `  Parcels with Structural Built Year: ${builtYearCount.toLocaleString()} (${((builtYearCount / totalRowsStreamed) * 100).toFixed(1)}%)`,
+  );
+  console.log(
+    `  Total Assessed Valuation: $${Math.round(totalAssessedSum).toLocaleString()}`,
+  );
   console.log(`  Parquet Target: ${PARQUET_PATH}`);
-  console.log("================================================================================\n");
+  console.log(
+    "================================================================================\n",
+  );
 
   // 4. Update Dashboard HTML
   console.log("4. Updating Montgomery Property & Roof Dashboard...");

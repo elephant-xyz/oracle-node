@@ -26,7 +26,10 @@ import {
   serializeSeedCsv,
 } from "./montgomery/lib.mjs";
 import { handler } from "../../Counties-trasform-scripts/montgomery/scripts/handler.js";
-import { isRoofPermit, calculateRoofAge } from "./montgomery-discovery/montgomery-permits.mjs";
+import {
+  isRoofPermit,
+  calculateRoofAge,
+} from "./montgomery-discovery/montgomery-permits.mjs";
 import { buildMontgomeryDashboardHtml } from "./montgomery/dashboard-ui.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -86,11 +89,15 @@ async function fetchPasdaPage(offset, pageSize) {
   const url = buildPasdaPageUrl(offset, pageSize, "YEAR_BUILT > 0");
   const response = await fetch(url);
   if (!response.ok) {
-    throw new Error(`PASDA fetch failed at offset ${offset}: HTTP ${response.status}`);
+    throw new Error(
+      `PASDA fetch failed at offset ${offset}: HTTP ${response.status}`,
+    );
   }
   const payload = await response.json();
   if (payload.error) {
-    throw new Error(`PASDA error at offset ${offset}: ${JSON.stringify(payload.error)}`);
+    throw new Error(
+      `PASDA error at offset ${offset}: ${JSON.stringify(payload.error)}`,
+    );
   }
   return (payload.features ?? []).map((feature) => feature.attributes ?? {});
 }
@@ -156,11 +163,15 @@ function parseMoney(val) {
 
 async function main() {
   const targetArg = process.argv.find((a) => a.startsWith("--target="));
-  const target = targetArg ? Number.parseInt(targetArg.split("=")[1], 10) : 1000;
+  const target = targetArg
+    ? Number.parseInt(targetArg.split("=")[1], 10)
+    : 1000;
 
   console.log(`=== Montgomery County Batch Pipeline (${target} parcels) ===\n`);
 
-  console.log(`1. Fetching ${target} diverse parcels from PASDA GIS REST API...`);
+  console.log(
+    `1. Fetching ${target} diverse parcels from PASDA GIS REST API...`,
+  );
   const features = [];
   const seenTaxpin = new Set();
   const seenMuni = new Map();
@@ -190,7 +201,9 @@ async function main() {
     }
 
     offset += pageSize;
-    console.log(`   Fetched ${features.length}/${target} records across ${seenMuni.size} municipalities...`);
+    console.log(
+      `   Fetched ${features.length}/${target} records across ${seenMuni.size} municipalities...`,
+    );
   }
 
   console.log(`\n2. Executing Transform v2 for ${features.length} parcels...`);
@@ -216,7 +229,9 @@ async function main() {
   const writer = await ParquetWriter.openFile(QUERY_TABLE_SCHEMA, PARQUET_PATH);
 
   const entries = await readdir(TRANSFORMED_DIR, { withFileTypes: true });
-  const rowDirs = entries.filter((e) => e.isDirectory() && e.name.startsWith("row-"));
+  const rowDirs = entries.filter(
+    (e) => e.isDirectory() && e.name.startsWith("row-"),
+  );
 
   const propertiesForDashboard = [];
   let rowCount = 0;
@@ -245,7 +260,10 @@ async function main() {
       const person = readJson("person_1");
 
       const parcelId = seed.parcel_id || dir.name.replace(/^row-/, "");
-      const propertyId = createHash("sha256").update(`montgomery:${parcelId}`).digest("hex").slice(0, 32);
+      const propertyId = createHash("sha256")
+        .update(`montgomery:${parcelId}`)
+        .digest("hex")
+        .slice(0, 32);
 
       const ownerName = company?.name || person?.full_name || null;
       const fullAddr = addr.unnormalized_address || "";
@@ -255,20 +273,33 @@ async function main() {
       const zipMatch = /\b(\d{5})\b/.exec(fullAddr);
       const postalCode = zipMatch ? zipMatch[1] : null;
 
-      const builtYear = prop.property_structure_built_year ? Number.parseInt(prop.property_structure_built_year, 10) : null;
-      const remodelYear = prop.property_structure_remodeled_year ? Number.parseInt(prop.property_structure_remodeled_year, 10) : null;
-      const livableArea = prop.livable_floor_area != null ? Number(prop.livable_floor_area) : null;
-      const totalArea = prop.total_area != null ? Number(prop.total_area) : null;
+      const builtYear = prop.property_structure_built_year
+        ? Number.parseInt(prop.property_structure_built_year, 10)
+        : null;
+      const remodelYear = prop.property_structure_remodeled_year
+        ? Number.parseInt(prop.property_structure_remodeled_year, 10)
+        : null;
+      const livableArea =
+        prop.livable_floor_area != null
+          ? Number(prop.livable_floor_area)
+          : null;
+      const totalArea =
+        prop.total_area != null ? Number(prop.total_area) : null;
       const lotSqft = lot.lot_area_sqft ? Number(lot.lot_area_sqft) : null;
       const lotAcres = lotSqft ? lotSqft / 43560 : null;
 
       // Simulated municipal permit match & roof calculation for demonstration
-      const hasPermit = (rowCount % 4 === 0) && (builtYear != null && builtYear < 2010);
+      const hasPermit =
+        rowCount % 4 === 0 && builtYear != null && builtYear < 2010;
       const permitCount = hasPermit ? 1 + (rowCount % 3) : 0;
       const reRoofYear = hasPermit ? 2015 + (rowCount % 10) : null;
-      const roofAge = calculateRoofAge({ builtYear, remodelYear, reRoofPermitYear: reRoofYear });
+      const roofAge = calculateRoofAge({
+        builtYear,
+        remodelYear,
+        reRoofPermitYear: reRoofYear,
+      });
 
-      const hasPaCorp = (rowCount % 7 === 0);
+      const hasPaCorp = rowCount % 7 === 0;
 
       const row = {
         property_id: propertyId,
@@ -288,7 +319,8 @@ async function main() {
         exterior_wall_material: prop.exterior_wall_material || null,
         roof_covering_material: "Asphalt/Comp. Shingle",
         property_type: prop.property_type || "Residential",
-        property_usage_type: prop.property_usage_type || "Single Family Residential",
+        property_usage_type:
+          prop.property_usage_type || "Single Family Residential",
         built_year: builtYear,
         livable_floor_area: livableArea,
         total_area: totalArea,
@@ -301,7 +333,9 @@ async function main() {
         owner_count: ownerName ? 1 : 0,
         owner_occupied: true,
         last_sale_date: sale.ownership_transfer_date || null,
-        last_sale_price: sale.purchase_price_amount ? Number(sale.purchase_price_amount) : null,
+        last_sale_price: sale.purchase_price_amount
+          ? Number(sale.purchase_price_amount)
+          : null,
         subdivision: prop.subdivision || null,
         has_permits: hasPermit,
         permit_count: permitCount,
@@ -331,7 +365,9 @@ async function main() {
   await writeFile(DASHBOARD_HTML_PATH, html, "utf8");
   console.log(`   Saved live Dashboard HTML to ${DASHBOARD_HTML_PATH}`);
 
-  console.log(`\n=== Batch Pipeline Succeeded: ${rowCount} Montgomery Properties Ready ===`);
+  console.log(
+    `\n=== Batch Pipeline Succeeded: ${rowCount} Montgomery Properties Ready ===`,
+  );
 }
 
 main().catch((err) => {

@@ -104,7 +104,9 @@ export function seedRowFromGisAttributes(attributes) {
   const cls = normalizeGisText(attributes.CLASS);
   const muniCode = normalizeGisText(attributes.MUNI_CODE);
   const muniName = normalizeGisText(attributes.Muni_Name);
-  const yearBuilt = String(attributes.YEAR_BUILT || attributes.COMM_YR_BL || "");
+  const yearBuilt = String(
+    attributes.YEAR_BUILT || attributes.COMM_YR_BL || "",
+  );
   const livableSqft = String(attributes.SFLA || attributes.COMM_AREA || "");
   const exteriorWall = normalizeGisText(attributes.EXTWALL);
 

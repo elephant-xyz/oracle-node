@@ -87,7 +87,9 @@ const PA_DOS_RESOURCE = "https://data.pa.gov/resource/xvd7-5r2c.json";
 
 function makeStreetZipKey(street, zip) {
   if (!street || !zip) return null;
-  const cleanStreet = street.replace(/\b(APT|STE|SUITE|UNIT|#)\s*\S+/i, "").trim();
+  const cleanStreet = street
+    .replace(/\b(APT|STE|SUITE|UNIT|#)\s*\S+/i, "")
+    .trim();
   const cleanZip = normalizePostalCode(zip);
   if (!cleanStreet || !cleanZip) return null;
   return buildNormalizedAddressKey(`${cleanStreet} PA ${cleanZip}`);
@@ -106,11 +108,14 @@ async function fetchLayer21PageWithRetry(offset, pageSize, maxRetries = 5) {
       const res = await fetch(url, { signal: AbortSignal.timeout(45000) });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const payload = await res.json();
-      if (payload.error) throw new Error(`API Error: ${JSON.stringify(payload.error)}`);
+      if (payload.error)
+        throw new Error(`API Error: ${JSON.stringify(payload.error)}`);
       return (payload.features ?? []).map((f) => f.attributes ?? {});
     } catch (err) {
       if (attempt === maxRetries) {
-        throw new Error(`Layer 21 offset ${offset} failed after ${maxRetries} attempts: ${err.message}`);
+        throw new Error(
+          `Layer 21 offset ${offset} failed after ${maxRetries} attempts: ${err.message}`,
+        );
       }
       const delay = Math.min(1000 * Math.pow(2, attempt - 1), 10000);
       await new Promise((resolve) => setTimeout(resolve, delay));
@@ -127,33 +132,55 @@ async function fetchPaDosBatch(limit = 5000, offset = 0) {
 }
 
 async function main() {
-  const concurrencyArg = process.argv.find((a) => a.startsWith("--concurrency="));
+  const concurrencyArg = process.argv.find((a) =>
+    a.startsWith("--concurrency="),
+  );
   const maxParcelsArg = process.argv.find((a) => a.startsWith("--max="));
 
-  const concurrency = concurrencyArg ? Number.parseInt(concurrencyArg.split("=")[1], 10) : 10;
-  const maxRecords = maxParcelsArg ? Number.parseInt(maxParcelsArg.split("=")[1], 10) : null;
+  const concurrency = concurrencyArg
+    ? Number.parseInt(concurrencyArg.split("=")[1], 10)
+    : 10;
+  const maxRecords = maxParcelsArg
+    ? Number.parseInt(maxParcelsArg.split("=")[1], 10)
+    : null;
 
-  console.log("================================================================================");
-  console.log("  Montgomery County, PA — Real Structural Improvement & Permit Harvester");
-  console.log("================================================================================\n");
+  console.log(
+    "================================================================================",
+  );
+  console.log(
+    "  Montgomery County, PA — Real Structural Improvement & Permit Harvester",
+  );
+  console.log(
+    "================================================================================\n",
+  );
 
   await mkdir(PUBLISH_DIR, { recursive: true });
 
   // 1. Fetch total count from Layer 21
-  console.log("1. Querying total structural improvement records from PASDA Layer 21...");
+  console.log(
+    "1. Querying total structural improvement records from PASDA Layer 21...",
+  );
   const countUrl = `${LAYER_21_BASE}?where=1%3D1&returnCountOnly=true&f=json`;
   const countResp = await fetch(countUrl);
   const countJson = await countResp.json();
   const totalLayer21Records = countJson.count || 437213;
-  const targetRecords = maxRecords ? Math.min(maxRecords, totalLayer21Records) : totalLayer21Records;
+  const targetRecords = maxRecords
+    ? Math.min(maxRecords, totalLayer21Records)
+    : totalLayer21Records;
   const pageSize = 1000;
   const totalPages = Math.ceil(targetRecords / pageSize);
 
-  console.log(`   Total Available Structure & Improvement Records: ${totalLayer21Records.toLocaleString()}`);
-  console.log(`   Targeting: ${targetRecords.toLocaleString()} across ${totalPages} pages (concurrency: ${concurrency})\n`);
+  console.log(
+    `   Total Available Structure & Improvement Records: ${totalLayer21Records.toLocaleString()}`,
+  );
+  console.log(
+    `   Targeting: ${targetRecords.toLocaleString()} across ${totalPages} pages (concurrency: ${concurrency})\n`,
+  );
 
   // 2. Fetch PA DOS Corporate Entities
-  console.log("2. Indexing PA Department of State corporate registrations for Montgomery County...");
+  console.log(
+    "2. Indexing PA Department of State corporate registrations for Montgomery County...",
+  );
   const corpAddressHashMap = new Map();
   let totalCorpFetched = 0;
   const corpBatchLimit = 5000;
@@ -182,15 +209,23 @@ async function main() {
         }
       }
     } catch (err) {
-      console.warn(`   PA DOS batch at offset ${offset} failed, continuing:`, err.message);
+      console.warn(
+        `   PA DOS batch at offset ${offset} failed, continuing:`,
+        err.message,
+      );
     }
   }
-  console.log(`   Indexed ${corpAddressHashMap.size} unique corporate address hashes from ${totalCorpFetched} filings.\n`);
+  console.log(
+    `   Indexed ${corpAddressHashMap.size} unique corporate address hashes from ${totalCorpFetched} filings.\n`,
+  );
 
   // 3. Stream Layer 21 records and write to permit Parquet table
   console.log(`3. Initializing real permit & improvement Parquet writer:`);
   console.log(`   ${PERMIT_TABLE_PATH}\n`);
-  const permitWriter = await ParquetWriter.openFile(PERMIT_QUERY_TABLE_SCHEMA, PERMIT_TABLE_PATH);
+  const permitWriter = await ParquetWriter.openFile(
+    PERMIT_QUERY_TABLE_SCHEMA,
+    PERMIT_TABLE_PATH,
+  );
 
   const startTime = Date.now();
   let completedPages = 0;
@@ -215,7 +250,10 @@ async function main() {
       try {
         attrsList = await fetchLayer21PageWithRetry(offset, pageSize);
       } catch (err) {
-        console.error(`Worker ${workerId} error at offset ${offset}:`, err.message);
+        console.error(
+          `Worker ${workerId} error at offset ${offset}:`,
+          err.message,
+        );
         continue;
       }
 
@@ -223,25 +261,36 @@ async function main() {
         const parid = String(attrs.PARID || "").trim();
         if (!parid) continue;
 
-        const structId = String(attrs.STRUCTUREI || `STR-${attrs.OBJECTID || totalRecordsStreamed}`);
+        const structId = String(
+          attrs.STRUCTUREI || `STR-${attrs.OBJECTID || totalRecordsStreamed}`,
+        );
         const desc = String(attrs.DESCRIPTIO || "").trim();
         const imprName = String(attrs.IMPRNAME || "").trim();
         const rawYrBlt = Number(attrs.YRBLT);
         const yrBlt = rawYrBlt > 1800 && rawYrBlt <= 2026 ? rawYrBlt : null;
         const cost = Number(attrs.COST) > 0 ? Number(attrs.COST) : null;
-        const category = String(attrs.Category || attrs.CLASS || "Structure").trim();
+        const category = String(
+          attrs.Category || attrs.CLASS || "Structure",
+        ).trim();
 
         const isRoof = isRoofPermit(`${desc} ${imprName}`);
         if (isRoof) roofPermitsCount++;
         if (cost) totalCostValuation += cost;
 
         const permitNumber = structId;
-        const permitType = isRoof ? "Roof Replacement / Repair" : (desc || category);
-        const workDesc = [desc, imprName].filter(Boolean).join(" - ") || `${category} Construction`;
+        const permitType = isRoof
+          ? "Roof Replacement / Repair"
+          : desc || category;
+        const workDesc =
+          [desc, imprName].filter(Boolean).join(" - ") ||
+          `${category} Construction`;
         const issueDate = yrBlt ? `${yrBlt}-06-01` : null;
 
         const permitRow = {
-          permit_id: createHash("sha256").update(`montgomery:${structId}:${parid}`).digest("hex").slice(0, 32),
+          permit_id: createHash("sha256")
+            .update(`montgomery:${structId}:${parid}`)
+            .digest("hex")
+            .slice(0, 32),
           source_system: "montgomery_cama_improvements",
           county_name: "Montgomery",
           state_code: "PA",
@@ -277,7 +326,9 @@ async function main() {
       const rate = Math.round(totalRecordsStreamed / (elapsedSec || 1));
       const percent = ((completedPages / totalPages) * 100).toFixed(1);
       const remainingPages = totalPages - completedPages;
-      const estRemainingSec = Math.round((remainingPages / (completedPages / elapsedSec)));
+      const estRemainingSec = Math.round(
+        remainingPages / (completedPages / elapsedSec),
+      );
       const etaMin = Math.floor(estRemainingSec / 60);
       const etaSec = estRemainingSec % 60;
 
@@ -296,29 +347,49 @@ async function main() {
           totalCost: totalCostValuation,
           updatedAt: new Date().toISOString(),
         };
-        await writeFile(STATUS_JSON_PATH, JSON.stringify(statusObj, null, 2), "utf8").catch(() => {});
+        await writeFile(
+          STATUS_JSON_PATH,
+          JSON.stringify(statusObj, null, 2),
+          "utf8",
+        ).catch(() => {});
       }
     }
   }
 
-  console.log("   Streaming real structural improvements from PASDA Layer 21...");
+  console.log(
+    "   Streaming real structural improvements from PASDA Layer 21...",
+  );
   const workers = Array.from({ length: concurrency }, (_, i) => worker(i + 1));
   await Promise.all(workers);
 
   await permitWriter.close();
   const totalDuration = ((Date.now() - startTime) / 1000).toFixed(1);
 
-  console.log("\n================================================================================");
+  console.log(
+    "\n================================================================================",
+  );
   console.log(`  Real Structural Improvements Harvest Complete!`);
-  console.log(`  Total Real Records Streamed: ${totalRecordsStreamed.toLocaleString()}`);
-  console.log(`  Duration: ${totalDuration}s (Average throughput: ${Math.round(totalRecordsStreamed / totalDuration)} rec/s)`);
-  console.log(`  Total Roof & Structure Improvements: ${roofPermitsCount.toLocaleString()}`);
-  console.log(`  Total Improvement Valuation Recorded: $${Math.round(totalCostValuation).toLocaleString()}`);
+  console.log(
+    `  Total Real Records Streamed: ${totalRecordsStreamed.toLocaleString()}`,
+  );
+  console.log(
+    `  Duration: ${totalDuration}s (Average throughput: ${Math.round(totalRecordsStreamed / totalDuration)} rec/s)`,
+  );
+  console.log(
+    `  Total Roof & Structure Improvements: ${roofPermitsCount.toLocaleString()}`,
+  );
+  console.log(
+    `  Total Improvement Valuation Recorded: $${Math.round(totalCostValuation).toLocaleString()}`,
+  );
   console.log(`  Permit Parquet Output: ${PERMIT_TABLE_PATH}`);
-  console.log("================================================================================\n");
+  console.log(
+    "================================================================================\n",
+  );
 
   // 4. Update Dataset Coverage
-  console.log("4. Updating official dataset-coverage.json with live real-permit metrics...");
+  console.log(
+    "4. Updating official dataset-coverage.json with live real-permit metrics...",
+  );
   const coverageData = {
     schemaVersion: "1.0",
     generatedAt: new Date().toISOString(),
@@ -371,10 +442,16 @@ async function main() {
     ],
   };
 
-  await writeFile(COVERAGE_JSON_PATH, JSON.stringify(coverageData, null, 2), "utf8");
+  await writeFile(
+    COVERAGE_JSON_PATH,
+    JSON.stringify(coverageData, null, 2),
+    "utf8",
+  );
   console.log(`   Saved live Dataset Coverage to ${COVERAGE_JSON_PATH}`);
 
-  console.log("\n=== Complete End-to-End Real Permit Harvester Execution Finished! ===");
+  console.log(
+    "\n=== Complete End-to-End Real Permit Harvester Execution Finished! ===",
+  );
 }
 
 main().catch((err) => {

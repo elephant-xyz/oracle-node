@@ -28,11 +28,15 @@ async function fetchPasdaPage(offset, pageSize) {
   const url = buildPasdaPageUrl(offset, pageSize, "YEAR_BUILT > 0");
   const response = await fetch(url);
   if (!response.ok) {
-    throw new Error(`PASDA fetch failed at offset ${offset}: HTTP ${response.status}`);
+    throw new Error(
+      `PASDA fetch failed at offset ${offset}: HTTP ${response.status}`,
+    );
   }
   const payload = await response.json();
   if (payload.error) {
-    throw new Error(`PASDA error at offset ${offset}: ${JSON.stringify(payload.error)}`);
+    throw new Error(
+      `PASDA error at offset ${offset}: ${JSON.stringify(payload.error)}`,
+    );
   }
   return (payload.features ?? []).map((feature) => feature.attributes ?? {});
 }
@@ -45,7 +49,9 @@ async function main() {
     ? outputArg.split("=")[1]
     : "downloads/montgomery/pilot-seed-50.csv";
 
-  console.log(`Fetching ${target} diverse Montgomery County parcels from PASDA...`);
+  console.log(
+    `Fetching ${target} diverse Montgomery County parcels from PASDA...`,
+  );
 
   const rows = [];
   const seenTaxpin = new Set();

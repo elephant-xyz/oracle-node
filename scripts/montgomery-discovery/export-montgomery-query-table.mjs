@@ -71,7 +71,9 @@ function parseMoney(val) {
 async function main() {
   console.log("Reading Montgomery transformed parcel outputs...");
   const entries = await readdir(TRANSFORMED_DIR, { withFileTypes: true });
-  const rowDirs = entries.filter((e) => e.isDirectory() && e.name.startsWith("row-"));
+  const rowDirs = entries.filter(
+    (e) => e.isDirectory() && e.name.startsWith("row-"),
+  );
   console.log(`Found ${rowDirs.length} transformed parcel directories.`);
 
   await mkdir(OUT_DIR, { recursive: true });
@@ -102,7 +104,10 @@ async function main() {
       const person = readJson("person_1");
 
       const parcelId = seed.parcel_id || dir.name.replace(/^row-/, "");
-      const propertyId = createHash("sha256").update(`montgomery:${parcelId}`).digest("hex").slice(0, 32);
+      const propertyId = createHash("sha256")
+        .update(`montgomery:${parcelId}`)
+        .digest("hex")
+        .slice(0, 32);
 
       const ownerName = company?.name || person?.full_name || null;
       const fullAddr = addr.unnormalized_address || "";
@@ -112,9 +117,15 @@ async function main() {
       const zipMatch = /\b(\d{5})\b/.exec(fullAddr);
       const postalCode = zipMatch ? zipMatch[1] : null;
 
-      const builtYear = prop.property_structure_built_year ? Number.parseInt(prop.property_structure_built_year, 10) : null;
-      const livableArea = prop.livable_floor_area != null ? Number(prop.livable_floor_area) : null;
-      const totalArea = prop.total_area != null ? Number(prop.total_area) : null;
+      const builtYear = prop.property_structure_built_year
+        ? Number.parseInt(prop.property_structure_built_year, 10)
+        : null;
+      const livableArea =
+        prop.livable_floor_area != null
+          ? Number(prop.livable_floor_area)
+          : null;
+      const totalArea =
+        prop.total_area != null ? Number(prop.total_area) : null;
       const lotSqft = lot.lot_area_sqft ? Number(lot.lot_area_sqft) : null;
       const lotAcres = lotSqft ? lotSqft / 43560 : null;
 
@@ -136,7 +147,8 @@ async function main() {
         exterior_wall_material: prop.exterior_wall_material || null,
         roof_covering_material: "Asphalt/Comp. Shingle",
         property_type: prop.property_type || "Residential",
-        property_usage_type: prop.property_usage_type || "Single Family Residential",
+        property_usage_type:
+          prop.property_usage_type || "Single Family Residential",
         built_year: builtYear,
         livable_floor_area: livableArea,
         total_area: totalArea,
@@ -149,7 +161,9 @@ async function main() {
         owner_count: ownerName ? 1 : 0,
         owner_occupied: true,
         last_sale_date: sale.ownership_transfer_date || null,
-        last_sale_price: sale.purchase_price_amount ? Number(sale.purchase_price_amount) : null,
+        last_sale_price: sale.purchase_price_amount
+          ? Number(sale.purchase_price_amount)
+          : null,
         subdivision: prop.subdivision || null,
         has_permits: false,
         permit_count: 0,

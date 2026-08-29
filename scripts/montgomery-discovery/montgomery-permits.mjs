@@ -48,9 +48,22 @@ export function calculateRoofAge({
   reRoofPermitYear,
   currentYear = 2026,
 }) {
-  const bYear = builtYear && Number.isFinite(Number(builtYear)) && Number(builtYear) > 1800 ? Number(builtYear) : null;
-  const rYear = remodelYear && Number.isFinite(Number(remodelYear)) && Number(remodelYear) > 1800 ? Number(remodelYear) : null;
-  const pYear = reRoofPermitYear && Number.isFinite(Number(reRoofPermitYear)) && Number(reRoofPermitYear) > 1800 ? Number(reRoofPermitYear) : null;
+  const bYear =
+    builtYear && Number.isFinite(Number(builtYear)) && Number(builtYear) > 1800
+      ? Number(builtYear)
+      : null;
+  const rYear =
+    remodelYear &&
+    Number.isFinite(Number(remodelYear)) &&
+    Number(remodelYear) > 1800
+      ? Number(remodelYear)
+      : null;
+  const pYear =
+    reRoofPermitYear &&
+    Number.isFinite(Number(reRoofPermitYear)) &&
+    Number(reRoofPermitYear) > 1800
+      ? Number(reRoofPermitYear)
+      : null;
 
   if (pYear) {
     return {

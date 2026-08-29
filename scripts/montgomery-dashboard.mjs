@@ -20,8 +20,14 @@ import { buildMontgomeryDashboardHtml } from "./montgomery/dashboard-ui.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, "..");
-const PARQUET_PATH = resolve(ROOT, "downloads/montgomery/publish/query-table.parquet");
-const DASHBOARD_HTML_PATH = resolve(ROOT, "downloads/montgomery/publish/dashboard.html");
+const PARQUET_PATH = resolve(
+  ROOT,
+  "downloads/montgomery/publish/query-table.parquet",
+);
+const DASHBOARD_HTML_PATH = resolve(
+  ROOT,
+  "downloads/montgomery/publish/dashboard.html",
+);
 
 async function loadParquetRecords(limit = 2000) {
   const reader = await ParquetReader.openFile(PARQUET_PATH);
@@ -64,7 +70,9 @@ async function main() {
 
   server.listen(port, "127.0.0.1", () => {
     const url = `http://127.0.0.1:${port}/`;
-    console.log(`\nMontgomery County Property & Roof Intelligence Dashboard is live!`);
+    console.log(
+      `\nMontgomery County Property & Roof Intelligence Dashboard is live!`,
+    );
     console.log(`URL: ${url}`);
     console.log(`Press Ctrl+C to stop.`);
 
