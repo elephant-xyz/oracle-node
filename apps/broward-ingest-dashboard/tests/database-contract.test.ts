@@ -73,11 +73,25 @@ describe("database boundary contract", () => {
     ).not.toThrow();
   });
 
-  it("defines only aggregate progress, heartbeat, and category columns", async () => {
-    const migration = await readFile(
-      new URL("../migrations/001_broward_ingest_status.sql", import.meta.url),
-      "utf8",
-    );
+  it("defines only aggregate appraisal and permit status relations", async () => {
+    const migration = (
+      await Promise.all([
+        readFile(
+          new URL(
+            "../migrations/001_broward_ingest_status.sql",
+            import.meta.url,
+          ),
+          "utf8",
+        ),
+        readFile(
+          new URL(
+            "../migrations/002_broward_permit_status.sql",
+            import.meta.url,
+          ),
+          "utf8",
+        ),
+      ])
+    ).join("\n");
 
     expect(migration).toContain(
       "CREATE TABLE IF NOT EXISTS ingest_control.broward_ingest_status",
@@ -88,6 +102,18 @@ describe("database boundary contract", () => {
     expect(migration).toContain(
       "CREATE TABLE IF NOT EXISTS ingest_control.broward_ingest_category_coverage",
     );
+    expect(migration).toContain(
+      "CREATE TABLE IF NOT EXISTS ingest_control.broward_permit_control",
+    );
+    expect(migration).toContain(
+      "CREATE TABLE IF NOT EXISTS ingest_control.broward_permit_status",
+    );
+    expect(migration).toContain(
+      "CREATE TABLE IF NOT EXISTS ingest_control.broward_permit_events",
+    );
+    expect(migration).toContain("record_broward_permit_pilot_status");
+    expect(migration).toContain("county_permit_complete");
+    expect(migration).toContain("current_source_blocked_count");
     expect(migration).not.toMatch(
       /\b(folio|owner|address|credential|artifact_path|error_text)\s+(?:text|json|jsonb|varchar)/iu,
     );
@@ -109,7 +135,7 @@ describe("database boundary contract", () => {
 
     expect(migrationScript).toContain('client.query("BEGIN READ ONLY")');
     expect(migrationScript.indexOf("verifyMigrationTarget")).toBeLessThan(
-      migrationScript.indexOf("client.query(migrationSql)"),
+      migrationScript.indexOf("client.query(statement)"),
     );
     expect(recoveryScript).toContain("record_broward_ingest_status(");
     expect(recoveryScript).toContain("broward_appraisal_completed_items");

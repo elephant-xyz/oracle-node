@@ -29,6 +29,27 @@ function snapshot(overrides: Partial<StatusSnapshot> = {}): StatusSnapshot {
     staleAfterSeconds: 180,
     startedAt: "2026-08-28T23:00:00.000Z",
     succeeded: 60,
+    permit: {
+      recordedAt: "2026-08-29T00:30:00.000Z",
+      sampleParcels: 25,
+      appraisalResolved: 25,
+      jurisdictionResolved: 25,
+      jurisdictionUnresolved: 0,
+      sourceUnavailableOutcomes: 17,
+      permitSourceAttempts: 2,
+      permitAttemptedParcels: 1,
+      sourceFailures: 0,
+      uniquePermitRecords: 73,
+      queryRows: 73,
+      allInputParcelsTerminal: true,
+      allRecordsAccountedFor: true,
+      queryRowsMatchUniqueRecords: true,
+      localPilotPassed: true,
+      countyPermitComplete: false,
+      registryJurisdictions: 32,
+      currentSourceImplemented: 15,
+      currentSourceBlocked: 17,
+    },
     throughputAttempted: 30,
     throughputWindowSeconds: 600,
     transformFailures: 2,
@@ -77,6 +98,55 @@ describe("aggregate dashboard status", () => {
           percentOfSucceeded: 16.67,
         },
       ],
+      permit: {
+        pilotState: "passed",
+        countyCompleteness: "not_complete",
+        sampleParcels: 25,
+        permitSourceAttempts: 2,
+        uniquePermitRecords: 73,
+        queryRows: 73,
+        currentSourceImplemented: 15,
+        currentSourceBlocked: 17,
+      },
+    });
+  });
+
+  it("keeps missing durable permit evidence nullable and explicit", () => {
+    const status = buildDashboardStatus(
+      snapshot({
+        permit: {
+          recordedAt: null,
+          sampleParcels: null,
+          appraisalResolved: null,
+          jurisdictionResolved: null,
+          jurisdictionUnresolved: null,
+          sourceUnavailableOutcomes: null,
+          permitSourceAttempts: null,
+          permitAttemptedParcels: null,
+          sourceFailures: null,
+          uniquePermitRecords: null,
+          queryRows: null,
+          allInputParcelsTerminal: null,
+          allRecordsAccountedFor: null,
+          queryRowsMatchUniqueRecords: null,
+          localPilotPassed: null,
+          countyPermitComplete: null,
+          registryJurisdictions: 32,
+          currentSourceImplemented: 15,
+          currentSourceBlocked: 17,
+        },
+      }),
+      NOW_MS,
+    );
+
+    expect(status.permit).toMatchObject({
+      pilotState: "not_recorded",
+      countyCompleteness: "not_established",
+      sampleParcels: null,
+      permitSourceAttempts: null,
+      uniquePermitRecords: null,
+      queryRows: null,
+      currentSourceBlocked: 17,
     });
   });
 

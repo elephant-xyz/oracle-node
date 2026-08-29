@@ -6,6 +6,8 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
+import pg from "pg";
+
 import {
   BROWARD_BCS_ADAPTER_KEY,
   BROWARD_PERMIT_JURISDICTIONS,
@@ -34,6 +36,12 @@ const MAX_ADAPTER_ATTEMPTS = 5;
 const MIN_APPRAISAL_DELAY_MS = 250;
 const MIN_PERMIT_DELAY_MS = 1_000;
 const MAX_BCPA_RESPONSE_BYTES = 2_000_000;
+const EXPECTED_NEON_PROJECT_ID = "raspy-frost-51580436";
+const PRODUCTION_ENDPOINT_PREFIX = "ep-mute-leaf";
+const PERMIT_STATUS_FUNCTION =
+  "ingest_control.record_broward_permit_pilot_status(integer,integer,integer,integer,integer,integer,integer,integer,integer,integer,integer,integer,integer,integer,integer,integer,boolean,boolean,boolean,boolean,boolean,timestamp with time zone)";
+
+const { Client } = pg;
 
 /**
  * @typedef {Record<string, unknown>} JsonObject
@@ -170,6 +178,7 @@ const MAX_BCPA_RESPONSE_BYTES = 2_000_000;
  * @property {number} maxAdapterAttempts - Permit adapter request ceiling.
  * @property {number} appraisalDelayMs - Delay between BCPA lookups.
  * @property {number} permitDelayMs - Delay between permit source requests.
+ * @property {boolean} recordNeonStatus - Persist aggregate-only pilot evidence after reconciliation.
  */
 
 const USAGE = `Usage:
@@ -183,12 +192,15 @@ Options:
   --max-adapter-attempts <1..5>    default: 5
   --appraisal-delay-ms <>=250>     default: 300
   --permit-delay-ms <>=1000>       default: 1000
+  --record-neon-status             write aggregate-only evidence to verified Neon
 
 Safety:
   --sample accepts at most 50 unique validated Broward folios. --pilot uses the
   checked-in 25-folio subset retained by the validated 50-parcel appraisal set.
   Requests are sequential, timeout-bounded, checkpointed, and never use AWS,
-  databases, credentials, publication, login, CAPTCHA solving, or bypasses.
+  publication, login, CAPTCHA solving, or bypasses. Database writes are disabled
+  unless --record-neon-status is explicit; that path sends aggregate counts only
+  after a read-only identity gate against the configured isolated Neon branch.
 `;
 
 /**
@@ -302,6 +314,7 @@ export function parseBrowardPermitPilotOptions(args) {
   let maxAdapterAttempts = MAX_ADAPTER_ATTEMPTS;
   let appraisalDelayMs = 300;
   let permitDelayMs = MIN_PERMIT_DELAY_MS;
+  let recordNeonStatus = false;
 
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index];
@@ -311,6 +324,10 @@ export function parseBrowardPermitPilotOptions(args) {
     if (argument === "--help" || argument === "-h") return null;
     if (argument === "--pilot") {
       pilot = true;
+      continue;
+    }
+    if (argument === "--record-neon-status") {
+      recordNeonStatus = true;
       continue;
     }
     const [flag, inlineValue] = argument.split("=", 2);
@@ -381,6 +398,7 @@ export function parseBrowardPermitPilotOptions(args) {
     maxAdapterAttempts,
     appraisalDelayMs,
     permitDelayMs,
+    recordNeonStatus,
   };
 }
 
@@ -1327,6 +1345,179 @@ function buildPilotReport(input) {
 }
 
 /**
+ * Require the direct Neon connection and independently configured isolated
+ * branch identity used by the explicit aggregate-status write path.
+ *
+ * @param {NodeJS.ProcessEnv} environment - Runtime secrets and expected Neon identity.
+ * @returns {{connectionString:string,expectedBranchId:string,expectedEndpointId:string}}
+ *   Validated values retained only in process memory.
+ */
+function requirePermitStatusTarget(environment) {
+  const connectionString = environment.DATABASE_URL_UNPOOLED;
+  const expectedBranchId = environment.BROWARD_INGEST_NEON_BRANCH_ID;
+  const expectedEndpointId = environment.BROWARD_INGEST_NEON_ENDPOINT_ID;
+  if (typeof connectionString !== "string" || connectionString.trim() === "") {
+    throw new Error(
+      "DATABASE_URL_UNPOOLED is required to record permit status",
+    );
+  }
+  let parsed;
+  try {
+    parsed = new URL(connectionString);
+  } catch {
+    throw new Error("DATABASE_URL_UNPOOLED is not a valid PostgreSQL URL");
+  }
+  if (
+    !["postgres:", "postgresql:"].includes(parsed.protocol) ||
+    parsed.hostname.includes("-pooler")
+  ) {
+    throw new Error(
+      "Permit status recording requires a direct PostgreSQL endpoint",
+    );
+  }
+  if (
+    typeof expectedBranchId !== "string" ||
+    !/^br-[a-z0-9-]+$/u.test(expectedBranchId)
+  ) {
+    throw new Error("BROWARD_INGEST_NEON_BRANCH_ID is required");
+  }
+  if (
+    typeof expectedEndpointId !== "string" ||
+    !/^ep-[a-z0-9-]+$/u.test(expectedEndpointId) ||
+    expectedEndpointId.startsWith(PRODUCTION_ENDPOINT_PREFIX)
+  ) {
+    throw new Error(
+      "BROWARD_INGEST_NEON_ENDPOINT_ID must identify non-production Neon",
+    );
+  }
+  return { connectionString, expectedBranchId, expectedEndpointId };
+}
+
+/**
+ * Prove the permit-status connection target using immutable Neon settings
+ * inside a read-only transaction before any aggregate write.
+ *
+ * @param {import("pg").Client} client - Connected direct Neon client.
+ * @param {{expectedBranchId:string,expectedEndpointId:string}} expected - Independently configured identity.
+ * @returns {Promise<void>} Resolves only for the isolated Broward branch.
+ */
+export async function verifyBrowardPermitStatusTarget(client, expected) {
+  await client.query("BEGIN READ ONLY");
+  try {
+    const result = await client.query(
+      `SELECT
+         current_setting('neon.project_id', true) AS project_id,
+         current_setting('neon.branch_id', true) AS branch_id,
+         current_setting('neon.endpoint_id', true) AS endpoint_id`,
+    );
+    const row = result.rows[0];
+    if (
+      row?.project_id !== EXPECTED_NEON_PROJECT_ID ||
+      row?.branch_id !== expected.expectedBranchId ||
+      row?.endpoint_id !== expected.expectedEndpointId ||
+      expected.expectedEndpointId.startsWith(PRODUCTION_ENDPOINT_PREFIX)
+    ) {
+      throw new Error("Permit status target identity mismatch");
+    }
+    await client.query("ROLLBACK");
+  } catch {
+    await client.query("ROLLBACK");
+    throw new Error(
+      "Permit status target is not the verified isolated Broward branch",
+    );
+  }
+}
+
+/**
+ * Project a reconciled pilot report into the aggregate-only Neon function.
+ * Per-parcel evidence and source payloads are intentionally not referenced.
+ *
+ * @param {import("pg").Client} client - Identity-verified direct Neon client.
+ * @param {BrowardPermitPilotReport} report - Reconciled bounded pilot report.
+ * @returns {Promise<void>} Resolves after the aggregate projection commits.
+ */
+export async function recordBrowardPermitPilotStatus(client, report) {
+  if (
+    report.mode !== "local-checkpointed-property-first-permit-pilot" ||
+    report.county.fips !== "12011" ||
+    !Number.isFinite(Date.parse(report.generatedAt))
+  ) {
+    throw new Error("Permit pilot report identity is invalid");
+  }
+  const counters = report.counters;
+  const reconciliation = report.reconciliation;
+  const acceptance = report.acceptance;
+  await client.query(
+    `SELECT ingest_control.record_broward_permit_pilot_status(
+       $1::integer, $2::integer, $3::integer, $4::integer, $5::integer,
+       $6::integer, $7::integer, $8::integer, $9::integer, $10::integer,
+       $11::integer, $12::integer, $13::integer, $14::integer, $15::integer,
+       $16::integer, $17::boolean, $18::boolean, $19::boolean, $20::boolean,
+       $21::boolean, $22::timestamptz
+     )`,
+    [
+      counters.sampleParcels,
+      counters.appraisalAttempts,
+      counters.appraisalResolved,
+      counters.jurisdictionResolved,
+      counters.jurisdictionUnresolved,
+      counters.sourceOutcomes,
+      counters.sourceUnavailableOutcomes,
+      counters.permitSourceAttempts,
+      counters.permitAttemptedParcels,
+      counters.explicitNoPermitOutcomes,
+      counters.sourceFailures,
+      counters.rawPermitRecords,
+      counters.duplicatePermitRecords,
+      counters.conflictingPermitRecords,
+      counters.uniquePermitRecords,
+      counters.queryRows,
+      reconciliation.allInputParcelsTerminal,
+      reconciliation.allRecordsAccountedFor,
+      reconciliation.queryRowsMatchUniqueRecords,
+      acceptance.localPilotPassed,
+      acceptance.countyPermitAcceptancePassed,
+      report.generatedAt,
+    ],
+  );
+}
+
+/**
+ * Open the explicit direct connection, verify its identity, and persist only
+ * aggregate permit pilot counters. Connection details are never logged.
+ *
+ * @param {BrowardPermitPilotReport} report - Reconciled bounded pilot report.
+ * @param {NodeJS.ProcessEnv} [environment=process.env] - Runtime target configuration.
+ * @returns {Promise<void>} Resolves after the safe aggregate write.
+ */
+async function persistBrowardPermitPilotStatus(
+  report,
+  environment = process.env,
+) {
+  const target = requirePermitStatusTarget(environment);
+  const client = new Client({
+    application_name: "broward-permit-pilot-status",
+    connectionString: target.connectionString,
+    connectionTimeoutMillis: 10_000,
+    statement_timeout: 30_000,
+  });
+  await client.connect();
+  try {
+    await verifyBrowardPermitStatusTarget(client, target);
+    const functionResult = await client.query(
+      "SELECT to_regprocedure($1) IS NOT NULL AS installed",
+      [PERMIT_STATUS_FUNCTION],
+    );
+    if (functionResult.rows[0]?.installed !== true) {
+      throw new Error("Aggregate permit status migration is not installed");
+    }
+    await recordBrowardPermitPilotStatus(client, report);
+  } finally {
+    await client.end();
+  }
+}
+
+/**
  * Run the parsed CLI in local-only mode.
  *
  * @returns {Promise<void>} Resolves after artifacts and one JSON summary line.
@@ -1357,6 +1548,9 @@ async function main() {
     permitDelayMs: cli.permitDelayMs,
     appraisalTimeoutMs: 30_000,
   });
+  if (cli.recordNeonStatus) {
+    await persistBrowardPermitPilotStatus(report);
+  }
   process.stdout.write(
     `${JSON.stringify({
       event: "broward_permit_pilot_completed",
@@ -1368,6 +1562,7 @@ async function main() {
       counters: report.counters,
       reconciliation: report.reconciliation,
       acceptance: report.acceptance,
+      durableStatusRecorded: cli.recordNeonStatus,
       artifacts: report.artifacts,
     })}\n`,
   );

@@ -46,6 +46,21 @@ const DEFAULT_PORT = 47_832;
  * @property {string | number} recent_properties - Properties committed in the recent window.
  * @property {string | null} last_commit_at - Latest verified chunk timestamp.
  * @property {boolean} recovery_lock_held - Whether the recovery advisory lock exists.
+ * @property {string | Date | null} permit_recorded_at - Durable pilot projection time.
+ * @property {string | number | null} permit_sample_parcels - Bounded pilot sample count.
+ * @property {string | number | null} permit_source_attempts - Bounded source requests.
+ * @property {string | number | null} permit_source_unavailable - Explicit unavailable outcomes.
+ * @property {string | number | null} permit_source_failures - Attempted source failures.
+ * @property {string | number | null} permit_unique_records - Reconciled unique records.
+ * @property {string | number | null} permit_query_rows - Queryable permit rows.
+ * @property {boolean | null} permit_all_input_terminal - Terminal-input reconciliation.
+ * @property {boolean | null} permit_all_records_accounted - Record reconciliation.
+ * @property {boolean | null} permit_query_rows_match - Query-row reconciliation.
+ * @property {boolean | null} permit_pilot_passed - Bounded pilot acceptance.
+ * @property {boolean | null} permit_county_complete - Countywide completeness.
+ * @property {string | number} permit_registry_jurisdictions - Current registry size.
+ * @property {string | number} permit_sources_implemented - Implemented current routes.
+ * @property {string | number} permit_sources_blocked - Blocked current routes.
  *
  * @typedef {object} RecoveryDashboardStatus
  * @property {1} schemaVersion - Response schema version.
@@ -75,6 +90,23 @@ const DEFAULT_PORT = 47_832;
  * }} failures - Aggregate attempt failures.
  * @property {{ windowMinutes: 15, propertiesPerMinute: number }} throughput
  *   Recent verified load throughput.
+ * @property {{
+ *   pilotState: "not_recorded" | "passed" | "failed",
+ *   countyCompleteness: "not_established" | "not_complete" | "complete",
+ *   recordedAt: string | null,
+ *   sampleParcels: number | null,
+ *   sourceAttempts: number | null,
+ *   sourceUnavailable: number | null,
+ *   sourceFailures: number | null,
+ *   uniqueRecords: number | null,
+ *   queryRows: number | null,
+ *   allInputTerminal: boolean | null,
+ *   allRecordsAccounted: boolean | null,
+ *   queryRowsMatch: boolean | null,
+ *   registryJurisdictions: number,
+ *   currentSourcesImplemented: number,
+ *   currentSourcesBlocked: number
+ * }} permit - Durable bounded-pilot evidence and honest completeness state.
  */
 
 /**
@@ -155,6 +187,120 @@ function count(value) {
 }
 
 /**
+ * Preserve an absent durable permit aggregate as null rather than zero.
+ *
+ * @param {string | number | null} value - Nullable PostgreSQL aggregate.
+ * @returns {number | null} Parsed count or null.
+ */
+function nullableCount(value) {
+  return value === null ? null : count(value);
+}
+
+/**
+ * Build the aggregate-only permit status from control and optional pilot rows.
+ *
+ * @param {RecoveryAggregateRow} row - Combined recovery dashboard row.
+ * @returns {RecoveryDashboardStatus["permit"]} Public permit status.
+ */
+function buildPermitStatus(row) {
+  const registryJurisdictions = count(row.permit_registry_jurisdictions);
+  const currentSourcesImplemented = count(row.permit_sources_implemented);
+  const currentSourcesBlocked = count(row.permit_sources_blocked);
+  if (
+    currentSourcesImplemented + currentSourcesBlocked !==
+    registryJurisdictions
+  ) {
+    throw new Error("Permit route aggregates do not reconcile");
+  }
+  const recordedAt =
+    row.permit_recorded_at instanceof Date
+      ? row.permit_recorded_at.toISOString()
+      : typeof row.permit_recorded_at === "string"
+        ? row.permit_recorded_at
+        : null;
+  const nullableValues = [
+    row.permit_sample_parcels,
+    row.permit_source_attempts,
+    row.permit_source_unavailable,
+    row.permit_source_failures,
+    row.permit_unique_records,
+    row.permit_query_rows,
+    row.permit_all_input_terminal,
+    row.permit_all_records_accounted,
+    row.permit_query_rows_match,
+    row.permit_pilot_passed,
+    row.permit_county_complete,
+  ];
+  if (recordedAt === null) {
+    if (nullableValues.some((value) => value !== null)) {
+      throw new Error("Unrecorded permit status contains inferred aggregates");
+    }
+    return {
+      pilotState: "not_recorded",
+      countyCompleteness: "not_established",
+      recordedAt: null,
+      sampleParcels: null,
+      sourceAttempts: null,
+      sourceUnavailable: null,
+      sourceFailures: null,
+      uniqueRecords: null,
+      queryRows: null,
+      allInputTerminal: null,
+      allRecordsAccounted: null,
+      queryRowsMatch: null,
+      registryJurisdictions,
+      currentSourcesImplemented,
+      currentSourcesBlocked,
+    };
+  }
+  if (
+    !Number.isFinite(Date.parse(recordedAt)) ||
+    typeof row.permit_all_input_terminal !== "boolean" ||
+    typeof row.permit_all_records_accounted !== "boolean" ||
+    typeof row.permit_query_rows_match !== "boolean" ||
+    typeof row.permit_pilot_passed !== "boolean" ||
+    typeof row.permit_county_complete !== "boolean"
+  ) {
+    throw new Error("Recorded permit status is incomplete");
+  }
+  const sourceFailures = nullableCount(row.permit_source_failures);
+  if (
+    row.permit_pilot_passed &&
+    (!row.permit_all_input_terminal ||
+      !row.permit_all_records_accounted ||
+      !row.permit_query_rows_match ||
+      sourceFailures !== 0)
+  ) {
+    throw new Error("Permit pilot pass does not reconcile");
+  }
+  if (
+    row.permit_county_complete &&
+    (!row.permit_pilot_passed || currentSourcesBlocked !== 0)
+  ) {
+    throw new Error("Permit county completeness does not reconcile");
+  }
+  return {
+    pilotState: row.permit_pilot_passed ? "passed" : "failed",
+    countyCompleteness: row.permit_county_complete
+      ? "complete"
+      : "not_complete",
+    recordedAt,
+    sampleParcels: nullableCount(row.permit_sample_parcels),
+    sourceAttempts: nullableCount(row.permit_source_attempts),
+    sourceUnavailable: nullableCount(row.permit_source_unavailable),
+    sourceFailures,
+    uniqueRecords: nullableCount(row.permit_unique_records),
+    queryRows: nullableCount(row.permit_query_rows),
+    allInputTerminal: row.permit_all_input_terminal,
+    allRecordsAccounted: row.permit_all_records_accounted,
+    queryRowsMatch: row.permit_query_rows_match,
+    registryJurisdictions,
+    currentSourcesImplemented,
+    currentSourcesBlocked,
+  };
+}
+
+/**
  * Build the public aggregate response from one database row.
  *
  * @param {RecoveryAggregateRow} row - Aggregate-only query result.
@@ -210,6 +356,7 @@ export function buildRecoveryStatus(row, nowMs) {
       windowMinutes: 15,
       propertiesPerMinute: Math.round((recentProperties / 15) * 100) / 100,
     },
+    permit: buildPermitStatus(row),
   };
 }
 
@@ -285,6 +432,30 @@ export function createRecoveryStatusReader(client) {
            COALESCE(sum(event_count) FILTER (WHERE stage = 'load_error'), 0)::bigint
              AS load_error_attempts
          FROM ${CONTROL_SCHEMA}.broward_appraisal_events
+       ),
+       permit_stats AS (
+         SELECT
+           status.recorded_at AS permit_recorded_at,
+           status.sample_parcels AS permit_sample_parcels,
+           status.permit_source_attempts AS permit_source_attempts,
+           status.source_unavailable_outcomes AS permit_source_unavailable,
+           status.source_failures AS permit_source_failures,
+           status.unique_permit_records AS permit_unique_records,
+           status.query_rows AS permit_query_rows,
+           status.all_input_parcels_terminal AS permit_all_input_terminal,
+           status.all_records_accounted_for AS permit_all_records_accounted,
+           status.query_rows_match_unique_records AS permit_query_rows_match,
+           status.local_pilot_passed AS permit_pilot_passed,
+           status.county_permit_complete AS permit_county_complete,
+           control.registry_jurisdiction_count
+             AS permit_registry_jurisdictions,
+           control.current_source_implemented_count
+             AS permit_sources_implemented,
+           control.current_source_blocked_count AS permit_sources_blocked
+         FROM ${CONTROL_SCHEMA}.broward_permit_control AS control
+         LEFT JOIN ${CONTROL_SCHEMA}.broward_permit_status AS status
+           ON status.pipeline_key = control.pipeline_key
+         WHERE control.pipeline_key = 'broward-permit'
        )
        SELECT
          property_stats.*,
@@ -292,6 +463,7 @@ export function createRecoveryStatusReader(client) {
          completed_stats.*,
          chunk_stats.*,
          event_stats.*,
+         permit_stats.*,
          EXISTS (
            SELECT 1
            FROM pg_locks
@@ -299,7 +471,12 @@ export function createRecoveryStatusReader(client) {
              AND classid = 12011
              AND objid = 1
          ) AS recovery_lock_held
-       FROM property_stats, terminal_stats, completed_stats, chunk_stats, event_stats`,
+       FROM property_stats,
+            terminal_stats,
+            completed_stats,
+            chunk_stats,
+            event_stats,
+            permit_stats`,
       [SOURCE_SYSTEM],
     );
     const row = result.rows[0];
@@ -405,8 +582,8 @@ const DASHBOARD_HTML = `<!doctype html>
   </style>
 </head>
 <body><main>
-  <h1>Broward durable appraisal recovery</h1>
-  <p>Verified Neon progress for the isolated broward-ingest branch.</p>
+  <h1>Broward durable ingestion status</h1>
+  <p>Verified appraisal progress and bounded permit evidence for the isolated broward-ingest branch.</p>
   <progress id="bar" max="100" value="0"></progress>
   <p id="summary">Loading…</p>
   <section class="grid">
@@ -420,12 +597,23 @@ const DASHBOARD_HTML = `<!doctype html>
     <article><h2>Transform errors</h2><strong id="transform-errors">—</strong></article>
     <article><h2>Load errors</h2><strong id="load-errors">—</strong></article>
   </section>
+  <h2>Bounded permit routing pilot</h2>
+  <p id="permit-summary">Loading durable permit evidence…</p>
+  <section class="grid">
+    <article><h2>Pilot status</h2><strong id="permit-pilot">—</strong></article>
+    <article><h2>County completeness</h2><strong id="permit-completeness">—</strong></article>
+    <article><h2>Pilot sample</h2><strong id="permit-sample">—</strong></article>
+    <article><h2>Bounded source attempts</h2><strong id="permit-attempts">—</strong></article>
+    <article><h2>Queryable records</h2><strong id="permit-records">—</strong></article>
+    <article><h2>Current routes</h2><strong id="permit-routes">—</strong></article>
+  </section>
   <p id="error"></p>
   <p>Only aggregate counts and timestamps are exposed. Refreshes every five seconds.</p>
 <script>
   "use strict";
   const format = new Intl.NumberFormat();
   const set = (id, value) => { const node = document.getElementById(id); if (node) node.textContent = value; };
+  const nullable = (value) => value === null ? "Not recorded" : format.format(value);
   async function refresh() {
     try {
       const response = await fetch("/api/status", { cache: "no-store" });
@@ -444,6 +632,19 @@ const DASHBOARD_HTML = `<!doctype html>
       set("source-errors", format.format(failures.sourceErrorAttempts));
       set("transform-errors", format.format(failures.transformErrorAttempts));
       set("load-errors", format.format(failures.loadErrorAttempts));
+      const permit = status.permit;
+      set("permit-pilot", permit.pilotState.replaceAll("_", " "));
+      set("permit-completeness", permit.countyCompleteness.replaceAll("_", " "));
+      set("permit-sample", nullable(permit.sampleParcels));
+      set("permit-attempts", nullable(permit.sourceAttempts));
+      set("permit-records", nullable(permit.queryRows));
+      set("permit-routes", format.format(permit.currentSourcesImplemented) + " implemented / " + format.format(permit.currentSourcesBlocked) + " blocked");
+      set(
+        "permit-summary",
+        permit.pilotState === "not_recorded"
+          ? "No durable permit pilot evidence is recorded; missing counts are not zero."
+          : "Bounded pilot " + permit.pilotState + "; countywide completeness is " + permit.countyCompleteness.replaceAll("_", " ") + ".",
+      );
       set("error", "");
     } catch { set("error", "Aggregate status is temporarily unavailable; retrying."); }
   }

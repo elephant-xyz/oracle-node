@@ -7,6 +7,7 @@ import {
   type CategorySnapshot,
   type DashboardPhase,
   type DashboardStatus,
+  type PermitStatusSnapshot,
   type StatusSnapshot,
 } from "../shared/status";
 import {
@@ -29,6 +30,25 @@ interface StatusDatabaseRow extends QueryResultRow {
   readonly throughput_attempted_count: unknown;
   readonly throughput_window_seconds: unknown;
   readonly transform_failure_count: unknown;
+  readonly permit_recorded_at: unknown;
+  readonly permit_sample_parcels: unknown;
+  readonly permit_appraisal_resolved: unknown;
+  readonly permit_jurisdiction_resolved: unknown;
+  readonly permit_jurisdiction_unresolved: unknown;
+  readonly permit_source_unavailable_outcomes: unknown;
+  readonly permit_source_attempts: unknown;
+  readonly permit_attempted_parcels: unknown;
+  readonly permit_source_failures: unknown;
+  readonly permit_unique_records: unknown;
+  readonly permit_query_rows: unknown;
+  readonly permit_all_input_terminal: unknown;
+  readonly permit_all_records_accounted: unknown;
+  readonly permit_query_rows_match: unknown;
+  readonly permit_local_pilot_passed: unknown;
+  readonly permit_county_complete: unknown;
+  readonly permit_registry_jurisdictions: unknown;
+  readonly permit_current_source_implemented: unknown;
+  readonly permit_current_source_blocked: unknown;
 }
 
 const PHASES: ReadonlySet<DashboardPhase> = new Set([
@@ -123,44 +143,79 @@ export async function readDashboardStatus(
   nowMs: number = Date.now(),
 ): Promise<DashboardStatus> {
   const result = await pool.query<StatusDatabaseRow>(
-    `SELECT
-       status.denominator_count,
-       status.attempted_count,
-       status.succeeded_count,
-       status.source_miss_count,
-       status.source_failure_count,
-       status.transform_failure_count,
-       status.load_failure_count,
-       status.phase,
-       status.started_at,
-       status.heartbeat_at,
-       status.stale_after_seconds,
-       status.throughput_window_seconds,
-       status.throughput_attempted_count,
-       COALESCE(
-         jsonb_agg(
-           jsonb_build_object(
-             'categoryKey', coverage.category_key,
-             'succeededCount', coverage.succeeded_count
-           )
-           ORDER BY coverage.succeeded_count DESC, coverage.category_key
-         ) FILTER (WHERE coverage.category_key IS NOT NULL),
-         '[]'::jsonb
-       ) AS categories
-     FROM ingest_control.broward_ingest_status AS status
-     LEFT JOIN ingest_control.broward_ingest_category_coverage AS coverage
-       ON coverage.pipeline_key = status.pipeline_key
-     CROSS JOIN (
+    `WITH appraisal AS (
        SELECT
-         current_setting('neon.project_id', true) AS project_id,
-         current_setting('neon.branch_id', true) AS branch_id,
-         current_setting('neon.endpoint_id', true) AS endpoint_id
-     ) AS identity
-     WHERE status.pipeline_key = $1
-       AND identity.project_id = $2
-       AND identity.branch_id = $3
-       AND identity.endpoint_id = $4
-     GROUP BY status.pipeline_key`,
+         status.denominator_count,
+         status.attempted_count,
+         status.succeeded_count,
+         status.source_miss_count,
+         status.source_failure_count,
+         status.transform_failure_count,
+         status.load_failure_count,
+         status.phase,
+         status.started_at,
+         status.heartbeat_at,
+         status.stale_after_seconds,
+         status.throughput_window_seconds,
+         status.throughput_attempted_count,
+         COALESCE(
+           jsonb_agg(
+             jsonb_build_object(
+               'categoryKey', coverage.category_key,
+               'succeededCount', coverage.succeeded_count
+             )
+             ORDER BY coverage.succeeded_count DESC, coverage.category_key
+           ) FILTER (WHERE coverage.category_key IS NOT NULL),
+           '[]'::jsonb
+         ) AS categories
+       FROM ingest_control.broward_ingest_status AS status
+       LEFT JOIN ingest_control.broward_ingest_category_coverage AS coverage
+         ON coverage.pipeline_key = status.pipeline_key
+       CROSS JOIN (
+         SELECT
+           current_setting('neon.project_id', true) AS project_id,
+           current_setting('neon.branch_id', true) AS branch_id,
+           current_setting('neon.endpoint_id', true) AS endpoint_id
+       ) AS identity
+       WHERE status.pipeline_key = $1
+         AND identity.project_id = $2
+         AND identity.branch_id = $3
+         AND identity.endpoint_id = $4
+       GROUP BY status.pipeline_key
+     ),
+     permit AS (
+       SELECT
+         status.recorded_at AS permit_recorded_at,
+         status.sample_parcels AS permit_sample_parcels,
+         status.appraisal_resolved AS permit_appraisal_resolved,
+         status.jurisdiction_resolved AS permit_jurisdiction_resolved,
+         status.jurisdiction_unresolved AS permit_jurisdiction_unresolved,
+         status.source_unavailable_outcomes
+           AS permit_source_unavailable_outcomes,
+         status.permit_source_attempts AS permit_source_attempts,
+         status.permit_attempted_parcels AS permit_attempted_parcels,
+         status.source_failures AS permit_source_failures,
+         status.unique_permit_records AS permit_unique_records,
+         status.query_rows AS permit_query_rows,
+         status.all_input_parcels_terminal AS permit_all_input_terminal,
+         status.all_records_accounted_for AS permit_all_records_accounted,
+         status.query_rows_match_unique_records AS permit_query_rows_match,
+         status.local_pilot_passed AS permit_local_pilot_passed,
+         status.county_permit_complete AS permit_county_complete,
+         control.registry_jurisdiction_count
+           AS permit_registry_jurisdictions,
+         control.current_source_implemented_count
+           AS permit_current_source_implemented,
+         control.current_source_blocked_count
+           AS permit_current_source_blocked
+       FROM ingest_control.broward_permit_control AS control
+       LEFT JOIN ingest_control.broward_permit_status AS status
+         ON status.pipeline_key = control.pipeline_key
+       WHERE control.pipeline_key = 'broward-permit'
+     )
+     SELECT appraisal.*, permit.*
+     FROM appraisal
+     CROSS JOIN permit`,
     [
       DASHBOARD_PIPELINE_KEY,
       BROWARD_NEON_PROJECT_ID,
@@ -200,6 +255,7 @@ function parseStatusRow(row: StatusDatabaseRow): StatusSnapshot {
     ),
     startedAt: readNullableTimestamp(row.started_at, "started_at"),
     succeeded: readSafeCount(row.succeeded_count, "succeeded_count"),
+    permit: parsePermitStatus(row),
     throughputAttempted: readSafeCount(
       row.throughput_attempted_count,
       "throughput_attempted_count",
@@ -211,6 +267,94 @@ function parseStatusRow(row: StatusDatabaseRow): StatusSnapshot {
     transformFailures: readSafeCount(
       row.transform_failure_count,
       "transform_failure_count",
+    ),
+  };
+}
+
+/**
+ * Parse fixed permit control counts and an optional durable pilot projection.
+ * Nullable pilot fields remain null when no status row has been recorded.
+ *
+ * @param row - Combined appraisal and permit aggregate database row.
+ * @returns Validated permit status snapshot for the shared response builder.
+ */
+function parsePermitStatus(row: StatusDatabaseRow): PermitStatusSnapshot {
+  return {
+    recordedAt: readNullableTimestamp(
+      row.permit_recorded_at,
+      "permit_recorded_at",
+    ),
+    sampleParcels: readNullableSafeCount(
+      row.permit_sample_parcels,
+      "permit_sample_parcels",
+    ),
+    appraisalResolved: readNullableSafeCount(
+      row.permit_appraisal_resolved,
+      "permit_appraisal_resolved",
+    ),
+    jurisdictionResolved: readNullableSafeCount(
+      row.permit_jurisdiction_resolved,
+      "permit_jurisdiction_resolved",
+    ),
+    jurisdictionUnresolved: readNullableSafeCount(
+      row.permit_jurisdiction_unresolved,
+      "permit_jurisdiction_unresolved",
+    ),
+    sourceUnavailableOutcomes: readNullableSafeCount(
+      row.permit_source_unavailable_outcomes,
+      "permit_source_unavailable_outcomes",
+    ),
+    permitSourceAttempts: readNullableSafeCount(
+      row.permit_source_attempts,
+      "permit_source_attempts",
+    ),
+    permitAttemptedParcels: readNullableSafeCount(
+      row.permit_attempted_parcels,
+      "permit_attempted_parcels",
+    ),
+    sourceFailures: readNullableSafeCount(
+      row.permit_source_failures,
+      "permit_source_failures",
+    ),
+    uniquePermitRecords: readNullableSafeCount(
+      row.permit_unique_records,
+      "permit_unique_records",
+    ),
+    queryRows: readNullableSafeCount(
+      row.permit_query_rows,
+      "permit_query_rows",
+    ),
+    allInputParcelsTerminal: readNullableBoolean(
+      row.permit_all_input_terminal,
+      "permit_all_input_terminal",
+    ),
+    allRecordsAccountedFor: readNullableBoolean(
+      row.permit_all_records_accounted,
+      "permit_all_records_accounted",
+    ),
+    queryRowsMatchUniqueRecords: readNullableBoolean(
+      row.permit_query_rows_match,
+      "permit_query_rows_match",
+    ),
+    localPilotPassed: readNullableBoolean(
+      row.permit_local_pilot_passed,
+      "permit_local_pilot_passed",
+    ),
+    countyPermitComplete: readNullableBoolean(
+      row.permit_county_complete,
+      "permit_county_complete",
+    ),
+    registryJurisdictions: readSafeCount(
+      row.permit_registry_jurisdictions,
+      "permit_registry_jurisdictions",
+    ),
+    currentSourceImplemented: readSafeCount(
+      row.permit_current_source_implemented,
+      "permit_current_source_implemented",
+    ),
+    currentSourceBlocked: readSafeCount(
+      row.permit_current_source_blocked,
+      "permit_current_source_blocked",
     ),
   };
 }
@@ -231,6 +375,38 @@ function readSafeCount(value: unknown, fieldName: string): number {
     throw new Error(`Invalid aggregate database field: ${fieldName}`);
   }
   return parsed;
+}
+
+/**
+ * Validate a count that is null until durable permit evidence is recorded.
+ *
+ * @param value - Driver value or null for an absent permit status row.
+ * @param fieldName - Fixed aggregate column name used in safe diagnostics.
+ * @returns Parsed non-negative safe integer or null.
+ */
+function readNullableSafeCount(
+  value: unknown,
+  fieldName: string,
+): number | null {
+  return value === null ? null : readSafeCount(value, fieldName);
+}
+
+/**
+ * Validate a nullable aggregate reconciliation flag.
+ *
+ * @param value - Driver boolean or null for an absent permit status row.
+ * @param fieldName - Fixed aggregate column name used in safe diagnostics.
+ * @returns Boolean evidence or null.
+ */
+function readNullableBoolean(
+  value: unknown,
+  fieldName: string,
+): boolean | null {
+  if (value === null) return null;
+  if (typeof value !== "boolean") {
+    throw new Error(`Invalid aggregate database field: ${fieldName}`);
+  }
+  return value;
 }
 
 /**

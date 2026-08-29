@@ -105,6 +105,30 @@ The migration also installs the security-invoker function
 `ingest_control.record_broward_ingest_status(...)`. One call atomically replaces
 the heartbeat, counters, recent throughput, and complete category snapshot.
 
+The second migration adds three aggregate-only permit relations:
+
+- `broward_permit_control` fixes the 50-parcel/5-source-attempt bounds and the
+  32-route registry coverage (15 implemented, 17 blocked);
+- `broward_permit_status` exists only after a reconciled bounded pilot is
+  recorded; absence remains `not_recorded` and its counters stay null in the
+  dashboard rather than being inferred as zero; and
+- `broward_permit_events` is idempotent aggregate evidence for the current
+  bounded-pilot reconciliation.
+
+`record_broward_permit_pilot_status(...)` accepts only counters, reconciliation
+flags, and a timestamp. The permit pilot calls it only with the explicit
+`--record-neon-status` option and only after the same read-only Neon identity
+gate. Per-parcel evidence and source response data remain local:
+
+```bash
+npm run broward:permits:pilot -- --pilot --record-neon-status
+```
+
+This command remains bounded and skips unavailable, login, CAPTCHA, and
+custodian-only routes. A passing local pilot is displayed separately from
+county completeness; completeness remains false while any current route is
+blocked.
+
 ## Durable-recovery integration
 
 Integrate after the durable-recovery work is committed; do not edit the active
@@ -164,7 +188,10 @@ limited to:
 GRANT USAGE ON SCHEMA ingest_control TO dashboard_reader;
 GRANT SELECT ON
   ingest_control.broward_ingest_status,
-  ingest_control.broward_ingest_category_coverage
+  ingest_control.broward_ingest_category_coverage,
+  ingest_control.broward_permit_control,
+  ingest_control.broward_permit_status,
+  ingest_control.broward_permit_events
 TO dashboard_reader;
 ```
 

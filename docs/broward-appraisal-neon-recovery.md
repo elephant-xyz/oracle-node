@@ -193,7 +193,10 @@ Open `http://127.0.0.1:47832/` inside the VM or preview port 47832. The API is
 `GET /api/status`; liveness is `GET /healthz`. It reports only visible
 properties, distinct folios, verified completion hashes, terminal source
 misses, prepared/committed row counts, source/transform/load failure attempts,
-recent verified throughput, and advisory-lock process state.
+recent verified throughput, advisory-lock process state, and the aggregate
+bounded permit pilot status installed by dashboard migration `002`. Permit
+counts remain null until a reconciled pilot is explicitly recorded, and local
+pilot acceptance is always displayed separately from countywide completeness.
 
 Resume uses the identical full command. Never reset or edit Neon source rows,
 terminal hashes, or chunk records. A changed official seed signature fails

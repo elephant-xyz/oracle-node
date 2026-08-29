@@ -28,6 +28,28 @@ export interface CategorySnapshot {
   readonly succeededCount: number;
 }
 
+export interface PermitStatusSnapshot {
+  readonly recordedAt: string | null;
+  readonly sampleParcels: number | null;
+  readonly appraisalResolved: number | null;
+  readonly jurisdictionResolved: number | null;
+  readonly jurisdictionUnresolved: number | null;
+  readonly sourceUnavailableOutcomes: number | null;
+  readonly permitSourceAttempts: number | null;
+  readonly permitAttemptedParcels: number | null;
+  readonly sourceFailures: number | null;
+  readonly uniquePermitRecords: number | null;
+  readonly queryRows: number | null;
+  readonly allInputParcelsTerminal: boolean | null;
+  readonly allRecordsAccountedFor: boolean | null;
+  readonly queryRowsMatchUniqueRecords: boolean | null;
+  readonly localPilotPassed: boolean | null;
+  readonly countyPermitComplete: boolean | null;
+  readonly registryJurisdictions: number;
+  readonly currentSourceImplemented: number;
+  readonly currentSourceBlocked: number;
+}
+
 /**
  * Aggregate-only database values used to create a public dashboard response.
  *
@@ -48,6 +70,7 @@ export interface StatusSnapshot {
   readonly staleAfterSeconds: number;
   readonly startedAt: string | null;
   readonly succeeded: number;
+  readonly permit: PermitStatusSnapshot;
   readonly throughputAttempted: number;
   readonly throughputWindowSeconds: number;
   readonly transformFailures: number;
@@ -92,6 +115,30 @@ export interface DashboardStatus {
     readonly projectedCompletionAt: string | null;
   };
   readonly categoryCoverage: readonly DashboardCategoryCoverage[];
+  readonly permit: {
+    readonly pilotState: "not_recorded" | "passed" | "failed";
+    readonly countyCompleteness:
+      | "not_established"
+      | "not_complete"
+      | "complete";
+    readonly recordedAt: string | null;
+    readonly sampleParcels: number | null;
+    readonly appraisalResolved: number | null;
+    readonly jurisdictionResolved: number | null;
+    readonly jurisdictionUnresolved: number | null;
+    readonly sourceUnavailableOutcomes: number | null;
+    readonly permitSourceAttempts: number | null;
+    readonly permitAttemptedParcels: number | null;
+    readonly sourceFailures: number | null;
+    readonly uniquePermitRecords: number | null;
+    readonly queryRows: number | null;
+    readonly allInputParcelsTerminal: boolean | null;
+    readonly allRecordsAccountedFor: boolean | null;
+    readonly queryRowsMatchUniqueRecords: boolean | null;
+    readonly registryJurisdictions: number;
+    readonly currentSourceImplemented: number;
+    readonly currentSourceBlocked: number;
+  };
 }
 
 const CATEGORY_KEY_PATTERN = /^[A-Za-z][A-Za-z0-9]{0,63}$/u;
@@ -201,6 +248,123 @@ export function buildDashboardStatus(
       snapshot.categories,
       snapshot.succeeded,
     ),
+    permit: buildPermitStatus(snapshot.permit),
+  };
+}
+
+/**
+ * Validate and expose aggregate permit-pilot evidence without converting an
+ * absent durable status row into misleading zero counts.
+ *
+ * @param permit - Aggregate permit control and optional pilot status values.
+ * @returns Public permit pilot and county-completeness status.
+ */
+function buildPermitStatus(
+  permit: PermitStatusSnapshot,
+): DashboardStatus["permit"] {
+  for (const [name, value] of [
+    ["registryJurisdictions", permit.registryJurisdictions],
+    ["currentSourceImplemented", permit.currentSourceImplemented],
+    ["currentSourceBlocked", permit.currentSourceBlocked],
+  ] as const) {
+    if (!Number.isSafeInteger(value) || value < 0) {
+      throw new Error(`Invalid permit aggregate: ${name}`);
+    }
+  }
+  if (
+    permit.currentSourceImplemented + permit.currentSourceBlocked !==
+    permit.registryJurisdictions
+  ) {
+    throw new Error("Permit route aggregates do not reconcile");
+  }
+
+  const nullableCounts = [
+    ["sampleParcels", permit.sampleParcels],
+    ["appraisalResolved", permit.appraisalResolved],
+    ["jurisdictionResolved", permit.jurisdictionResolved],
+    ["jurisdictionUnresolved", permit.jurisdictionUnresolved],
+    ["sourceUnavailableOutcomes", permit.sourceUnavailableOutcomes],
+    ["permitSourceAttempts", permit.permitSourceAttempts],
+    ["permitAttemptedParcels", permit.permitAttemptedParcels],
+    ["sourceFailures", permit.sourceFailures],
+    ["uniquePermitRecords", permit.uniquePermitRecords],
+    ["queryRows", permit.queryRows],
+  ] as const;
+  const optionalValues = [
+    ...nullableCounts.map((entry) => entry[1]),
+    permit.allInputParcelsTerminal,
+    permit.allRecordsAccountedFor,
+    permit.queryRowsMatchUniqueRecords,
+    permit.localPilotPassed,
+    permit.countyPermitComplete,
+  ];
+  const publicFields = {
+    recordedAt: permit.recordedAt,
+    sampleParcels: permit.sampleParcels,
+    appraisalResolved: permit.appraisalResolved,
+    jurisdictionResolved: permit.jurisdictionResolved,
+    jurisdictionUnresolved: permit.jurisdictionUnresolved,
+    sourceUnavailableOutcomes: permit.sourceUnavailableOutcomes,
+    permitSourceAttempts: permit.permitSourceAttempts,
+    permitAttemptedParcels: permit.permitAttemptedParcels,
+    sourceFailures: permit.sourceFailures,
+    uniquePermitRecords: permit.uniquePermitRecords,
+    queryRows: permit.queryRows,
+    allInputParcelsTerminal: permit.allInputParcelsTerminal,
+    allRecordsAccountedFor: permit.allRecordsAccountedFor,
+    queryRowsMatchUniqueRecords: permit.queryRowsMatchUniqueRecords,
+    registryJurisdictions: permit.registryJurisdictions,
+    currentSourceImplemented: permit.currentSourceImplemented,
+    currentSourceBlocked: permit.currentSourceBlocked,
+  };
+  if (permit.recordedAt === null) {
+    if (optionalValues.some((value) => value !== null)) {
+      throw new Error("Unrecorded permit pilot contains inferred aggregates");
+    }
+    return {
+      ...publicFields,
+      pilotState: "not_recorded",
+      countyCompleteness: "not_established",
+    };
+  }
+  if (!Number.isFinite(Date.parse(permit.recordedAt))) {
+    throw new Error("Invalid permit aggregate: recordedAt");
+  }
+  for (const [name, value] of nullableCounts) {
+    if (value === null || !Number.isSafeInteger(value) || value < 0) {
+      throw new Error(`Invalid permit aggregate: ${name}`);
+    }
+  }
+  if (
+    permit.allInputParcelsTerminal === null ||
+    permit.allRecordsAccountedFor === null ||
+    permit.queryRowsMatchUniqueRecords === null ||
+    permit.localPilotPassed === null ||
+    permit.countyPermitComplete === null
+  ) {
+    throw new Error("Recorded permit pilot is missing reconciliation evidence");
+  }
+  if (
+    permit.localPilotPassed &&
+    (!permit.allInputParcelsTerminal ||
+      !permit.allRecordsAccountedFor ||
+      !permit.queryRowsMatchUniqueRecords ||
+      permit.sourceFailures !== 0)
+  ) {
+    throw new Error("Permit pilot pass does not reconcile");
+  }
+  if (
+    permit.countyPermitComplete &&
+    (!permit.localPilotPassed || permit.currentSourceBlocked !== 0)
+  ) {
+    throw new Error("Permit county completeness does not reconcile");
+  }
+  return {
+    ...publicFields,
+    pilotState: permit.localPilotPassed ? "passed" : "failed",
+    countyCompleteness: permit.countyPermitComplete
+      ? "complete"
+      : "not_complete",
   };
 }
 

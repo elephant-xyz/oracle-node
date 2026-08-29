@@ -23,7 +23,9 @@ import {
   dedupeBrowardPermitPilotRecords,
   parseBrowardPermitPilotOptions,
   readBrowardPermitPilotFolios,
+  recordBrowardPermitPilotStatus,
   runBrowardPermitPilot,
+  verifyBrowardPermitStatusTarget,
 } from "../../scripts/run-broward-permit-pilot.mjs";
 import {
   parseDonphanToolResult,
@@ -414,6 +416,47 @@ describe("checkpointed local Broward permit pilot", () => {
         "Appraisal acceptance and a bounded permit pilot do not establish full permit acceptance while current municipal sources remain unavailable",
     });
     expect(adapterCalls).toEqual(["474134000012", "494318013550"]);
+    const statusWrites = [];
+    await recordBrowardPermitPilotStatus(
+      /** @type {import("pg").Client} */ ({
+        query: (sql, values) => {
+          statusWrites.push({ sql, values });
+          return Promise.resolve({ rows: [] });
+        },
+      }),
+      first,
+    );
+    expect(statusWrites).toHaveLength(1);
+    expect(statusWrites[0]?.sql).toContain(
+      "record_broward_permit_pilot_status",
+    );
+    expect(statusWrites[0]?.values).toEqual([
+      3,
+      3,
+      3,
+      3,
+      0,
+      4,
+      2,
+      2,
+      2,
+      1,
+      0,
+      1,
+      0,
+      0,
+      1,
+      1,
+      true,
+      true,
+      true,
+      true,
+      false,
+      first.generatedAt,
+    ]);
+    expect(JSON.stringify(statusWrites)).not.toMatch(
+      /474134000012|494318013550|situs|address|owner/iu,
+    );
 
     const reader = await ParquetReader.openFile(first.artifacts.parquet);
     try {
@@ -462,11 +505,14 @@ describe("checkpointed local Broward permit pilot", () => {
       "474134000012",
       "504108BJ0140",
     ]);
-    expect(parseBrowardPermitPilotOptions(["--pilot"])).toMatchObject({
+    expect(
+      parseBrowardPermitPilotOptions(["--pilot", "--record-neon-status"]),
+    ).toMatchObject({
       inputMode: "pilot",
       maxAdapterAttempts: 5,
       appraisalDelayMs: 300,
       permitDelayMs: 1_000,
+      recordNeonStatus: true,
     });
     expect(() =>
       parseBrowardPermitPilotOptions(["--pilot", "--permit-delay-ms", "999"]),
@@ -478,6 +524,39 @@ describe("checkpointed local Broward permit pilot", () => {
         "6",
       ]),
     ).toThrow("from 1 through 5");
+  });
+
+  it("verifies the aggregate permit status target read-only", async () => {
+    const calls = [];
+    const client = {
+      query: (sql) => {
+        calls.push(sql);
+        return Promise.resolve({
+          rows: sql.includes("current_setting")
+            ? [
+                {
+                  project_id: "raspy-frost-51580436",
+                  branch_id: "br-isolated-broward",
+                  endpoint_id: "ep-isolated-broward",
+                },
+              ]
+            : [],
+        });
+      },
+    };
+
+    await verifyBrowardPermitStatusTarget(
+      /** @type {import("pg").Client} */ (client),
+      {
+        expectedBranchId: "br-isolated-broward",
+        expectedEndpointId: "ep-isolated-broward",
+      },
+    );
+    expect(calls).toEqual([
+      "BEGIN READ ONLY",
+      expect.stringContaining("current_setting"),
+      "ROLLBACK",
+    ]);
   });
 });
 

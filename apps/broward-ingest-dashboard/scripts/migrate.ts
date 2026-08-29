@@ -11,10 +11,10 @@ import {
   type BrowardNeonIdentityRow,
 } from "../src/server/neon-identity";
 
-const MIGRATION_URL = new URL(
-  "../migrations/001_broward_ingest_status.sql",
-  import.meta.url,
-);
+const MIGRATION_URLS = [
+  new URL("../migrations/001_broward_ingest_status.sql", import.meta.url),
+  new URL("../migrations/002_broward_permit_status.sql", import.meta.url),
+] as const;
 
 /**
  * Validate that schema changes use the direct Neon endpoint.
@@ -87,7 +87,9 @@ async function migrate(): Promise<void> {
     process.env.DATABASE_URL_UNPOOLED,
   );
   const expectedIdentity = requireBrowardNeonIdentity(process.env);
-  const migrationSql = await readFile(MIGRATION_URL, "utf8");
+  const migrationSql = await Promise.all(
+    MIGRATION_URLS.map((migrationUrl) => readFile(migrationUrl, "utf8")),
+  );
   const client = new Client({
     application_name: "broward-ingest-dashboard-migration",
     connectionString,
@@ -97,10 +99,8 @@ async function migrate(): Promise<void> {
   await client.connect();
   try {
     await verifyMigrationTarget(client, expectedIdentity);
-    await client.query(migrationSql);
-    process.stdout.write(
-      "Applied aggregate Broward ingestion status migration.\n",
-    );
+    for (const statement of migrationSql) await client.query(statement);
+    process.stdout.write("Applied aggregate Broward status migrations.\n");
   } finally {
     await client.end();
   }

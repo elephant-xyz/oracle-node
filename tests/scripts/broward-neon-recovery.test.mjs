@@ -321,6 +321,21 @@ describe("durable Broward Neon recovery", () => {
         recent_properties: "45",
         last_commit_at: "2026-08-29T00:00:00.000Z",
         recovery_lock_held: true,
+        permit_recorded_at: "2026-08-29T00:00:30.000Z",
+        permit_sample_parcels: "25",
+        permit_source_attempts: "2",
+        permit_source_unavailable: "17",
+        permit_source_failures: "0",
+        permit_unique_records: "73",
+        permit_query_rows: "73",
+        permit_all_input_terminal: true,
+        permit_all_records_accounted: true,
+        permit_query_rows_match: true,
+        permit_pilot_passed: true,
+        permit_county_complete: false,
+        permit_registry_jurisdictions: "32",
+        permit_sources_implemented: "15",
+        permit_sources_blocked: "17",
       },
       Date.parse("2026-08-29T00:01:00.000Z"),
     );
@@ -341,6 +356,23 @@ describe("durable Broward Neon recovery", () => {
       loadErrorAttempts: 1,
     });
     expect(status.throughput.propertiesPerMinute).toBe(3);
+    expect(status.permit).toEqual({
+      pilotState: "passed",
+      countyCompleteness: "not_complete",
+      recordedAt: "2026-08-29T00:00:30.000Z",
+      sampleParcels: 25,
+      sourceAttempts: 2,
+      sourceUnavailable: 17,
+      sourceFailures: 0,
+      uniqueRecords: 73,
+      queryRows: 73,
+      allInputTerminal: true,
+      allRecordsAccounted: true,
+      queryRowsMatch: true,
+      registryJurisdictions: 32,
+      currentSourcesImplemented: 15,
+      currentSourcesBlocked: 17,
+    });
     expect(JSON.stringify(status)).not.toContain("504108BJ0140");
     expect(JSON.stringify(status)).not.toContain("owner");
     expect(JSON.stringify(status)).not.toContain("address");

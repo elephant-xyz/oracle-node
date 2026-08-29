@@ -37,6 +37,16 @@ function formatCount(value: number): string {
 }
 
 /**
+ * Format a permit aggregate while preserving missing durable evidence.
+ *
+ * @param value - Recorded count or null when no pilot status exists.
+ * @returns Human-readable count or explicit unavailable label.
+ */
+function formatNullableCount(value: number | null): string {
+  return value === null ? "Not recorded" : formatCount(value);
+}
+
+/**
  * Format a compact elapsed or estimated duration.
  *
  * @param seconds - Whole seconds or null when no reliable estimate exists.
@@ -153,6 +163,40 @@ function renderCategoryCoverage(
 }
 
 /**
+ * Render bounded permit-pilot evidence separately from county completeness.
+ *
+ * @param status - Validated aggregate status response.
+ */
+function renderPermitStatus(status: DashboardStatus): void {
+  const permit = status.permit;
+  setText("permit-pilot-state", permit.pilotState.replace("_", " "));
+  setText(
+    "permit-completeness",
+    permit.countyCompleteness.replaceAll("_", " "),
+  );
+  setText("permit-recorded-at", formatTimestamp(permit.recordedAt));
+  setText("permit-sample", formatNullableCount(permit.sampleParcels));
+  setText(
+    "permit-source-attempts",
+    formatNullableCount(permit.permitSourceAttempts),
+  );
+  setText("permit-query-rows", formatNullableCount(permit.queryRows));
+  setText(
+    "permit-route-coverage",
+    `${formatCount(permit.currentSourceImplemented)} implemented / ${formatCount(permit.currentSourceBlocked)} blocked`,
+  );
+  const notice = document.getElementById("permit-notice");
+  if (notice !== null) {
+    notice.textContent =
+      permit.pilotState === "not_recorded"
+        ? "No durable permit pilot evidence has been recorded; missing counts are not treated as zero."
+        : permit.countyCompleteness === "complete"
+          ? "All current jurisdiction routes and bounded pilot reconciliation gates are complete."
+          : `Bounded pilot ${permit.pilotState}; countywide permit completeness is not established while ${formatCount(permit.currentSourceBlocked)} current routes remain blocked.`;
+  }
+}
+
+/**
  * Render one complete aggregate status response.
  *
  * @param status - Validated API payload.
@@ -208,6 +252,7 @@ function renderStatus(status: DashboardStatus): void {
   setText("denominator", formatCount(progress.denominator));
   setText("snapshot-time", `Snapshot ${formatTimestamp(status.generatedAt)}`);
   renderCategoryCoverage(status.categoryCoverage);
+  renderPermitStatus(status);
 }
 
 /**
@@ -272,6 +317,7 @@ function parseDashboardStatus(value: unknown): DashboardStatus {
   const progress = value.progress;
   const throughput = value.throughput;
   const categories = value.categoryCoverage;
+  const permit = value.permit;
   if (
     value.schemaVersion !== 1 ||
     value.county !== "Broward" ||
@@ -303,7 +349,34 @@ function parseDashboardStatus(value: unknown): DashboardStatus {
     !isNullableFiniteNumber(throughput.attemptedPerMinute) ||
     !isNullableFiniteNumber(throughput.etaSeconds) ||
     !Array.isArray(categories) ||
-    !categories.every(isCategoryCoverage)
+    !categories.every(isCategoryCoverage) ||
+    !isRecord(permit) ||
+    !["not_recorded", "passed", "failed"].includes(String(permit.pilotState)) ||
+    !["not_established", "not_complete", "complete"].includes(
+      String(permit.countyCompleteness),
+    ) ||
+    ![
+      permit.sampleParcels,
+      permit.appraisalResolved,
+      permit.jurisdictionResolved,
+      permit.jurisdictionUnresolved,
+      permit.sourceUnavailableOutcomes,
+      permit.permitSourceAttempts,
+      permit.permitAttemptedParcels,
+      permit.sourceFailures,
+      permit.uniquePermitRecords,
+      permit.queryRows,
+    ].every(isNullableFiniteNumber) ||
+    ![
+      permit.registryJurisdictions,
+      permit.currentSourceImplemented,
+      permit.currentSourceBlocked,
+    ].every(isFiniteNumber) ||
+    ![
+      permit.allInputParcelsTerminal,
+      permit.allRecordsAccountedFor,
+      permit.queryRowsMatchUniqueRecords,
+    ].every(isNullableBoolean)
   ) {
     throw new Error("Status response has an invalid aggregate contract");
   }
@@ -338,6 +411,16 @@ function isFiniteNumber(value: unknown): value is number {
  */
 function isNullableFiniteNumber(value: unknown): value is number | null {
   return value === null || isFiniteNumber(value);
+}
+
+/**
+ * Check a nullable aggregate reconciliation flag.
+ *
+ * @param value - Candidate optional boolean.
+ * @returns Whether the value is null or boolean.
+ */
+function isNullableBoolean(value: unknown): value is boolean | null {
+  return value === null || typeof value === "boolean";
 }
 
 /**
