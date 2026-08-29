@@ -21,9 +21,9 @@ const temporaryDirectories = [];
 
 afterEach(async () => {
   await Promise.all(
-    temporaryDirectories.splice(0).map((directory) =>
-      rm(directory, { recursive: true, force: true }),
-    ),
+    temporaryDirectories
+      .splice(0)
+      .map((directory) => rm(directory, { recursive: true, force: true })),
   );
 });
 
@@ -35,12 +35,7 @@ describe("Broward ingestion dashboard", () => {
       help: false,
     });
     expect(
-      parseDashboardCliOptions([
-        "--host",
-        "0.0.0.0",
-        "--port",
-        "48191",
-      ]),
+      parseDashboardCliOptions(["--host", "0.0.0.0", "--port", "48191"]),
     ).toEqual({
       host: "0.0.0.0",
       port: 48_191,
@@ -184,8 +179,7 @@ describe("Broward ingestion dashboard", () => {
     dataOnlyStatus.progress.failedTotal = 0;
     dataOnlyStatus.throughput.recentAttempted = 2;
     dataOnlyStatus.throughput.activeRuntimeSeconds = 30;
-    dataOnlyStatus.checkpoint.lastCheckpointAt =
-      "2026-08-28T18:00:00.000Z";
+    dataOnlyStatus.checkpoint.lastCheckpointAt = "2026-08-28T18:00:00.000Z";
     dataOnlyStatus.checkpoint.ageSeconds = 0;
     dataOnlyStatus.usageTypes = [{ type: "Residential", count: 2 }];
     dataOnlyStatus.storage.parsedResultRows = 2;
@@ -229,10 +223,7 @@ describe("Broward ingestion dashboard", () => {
     temporaryDirectories.push(root);
     const browardRoot = path.join(root, "downloads", "broward");
     const oldOutput = path.join(browardRoot, "full-ingestion");
-    const newOutput = path.join(
-      browardRoot,
-      "full-query-data-only-from-2",
-    );
+    const newOutput = path.join(browardRoot, "full-query-data-only-from-2");
     await mkdir(oldOutput, { recursive: true });
     await mkdir(newOutput);
     const oldStartedAt = "2026-08-28T17:00:00.000Z";
@@ -308,8 +299,7 @@ describe("Broward ingestion dashboard", () => {
         sourceConcurrencyMaximum: 4,
         oldOutputDirectory: "downloads/broward/full-ingestion",
         oldCheckpoint: { nextRowIndex: 2, attempted: 2 },
-        newOutputDirectory:
-          "downloads/broward/full-query-data-only-from-2",
+        newOutputDirectory: "downloads/broward/full-query-data-only-from-2",
         newLogPath:
           "downloads/broward/full-query-data-only-from-2/ingestion.log",
         newArtifactMode: "query-data-only",
@@ -359,9 +349,7 @@ describe("Broward ingestion dashboard", () => {
   });
 
   it("serves aggregate API data without private result or log fields", async () => {
-    const root = await mkdtemp(
-      path.join(tmpdir(), "broward-dashboard-test-"),
-    );
+    const root = await mkdtemp(path.join(tmpdir(), "broward-dashboard-test-"));
     temporaryDirectories.push(root);
     const outputDirectory = path.join(root, "full-ingestion");
     const logPath = path.join(root, "ingestion.log");

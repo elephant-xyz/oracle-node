@@ -146,9 +146,7 @@ export function parseDonphanToolResult(result, handlerName) {
   ) {
     throw new Error(`${handlerName} returned an unexpected MCP content shape`);
   }
-  const parsed = /** @type {unknown} */ (
-    JSON.parse(result.content[0].text)
-  );
+  const parsed = /** @type {unknown} */ (JSON.parse(result.content[0].text));
   if (!isJsonObject(parsed)) {
     throw new Error(`${handlerName} did not return a JSON object`);
   }

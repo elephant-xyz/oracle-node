@@ -177,10 +177,7 @@ describe("aggregate dashboard status", () => {
 
   it("fails closed on inconsistent aggregate counters", () => {
     expect(() =>
-      buildDashboardStatus(
-        snapshot({ attempted: 10, succeeded: 11 }),
-        NOW_MS,
-      ),
+      buildDashboardStatus(snapshot({ attempted: 10, succeeded: 11 }), NOW_MS),
     ).toThrow(/do not reconcile/u);
   });
 });

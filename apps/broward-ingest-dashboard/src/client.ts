@@ -8,8 +8,7 @@ import type {
 const REFRESH_INTERVAL_MS = 10_000;
 const REQUEST_TIMEOUT_MS = 8_000;
 const LOCAL_MOCK_MODE =
-  import.meta.env.DEV &&
-  import.meta.env.VITE_DASHBOARD_MOCK_MODE === "true";
+  import.meta.env.DEV && import.meta.env.VITE_DASHBOARD_MOCK_MODE === "true";
 const numberFormatter = new Intl.NumberFormat();
 const rateFormatter = new Intl.NumberFormat(undefined, {
   maximumFractionDigits: 2,
@@ -281,13 +280,9 @@ function parseDashboardStatus(value: unknown): DashboardStatus {
     typeof value.phase !== "string" ||
     typeof value.generatedAt !== "string" ||
     !isRecord(health) ||
-    ![
-      "online",
-      "stale",
-      "offline",
-      "not_started",
-      "complete",
-    ].includes(String(health.state)) ||
+    !["online", "stale", "offline", "not_started", "complete"].includes(
+      String(health.state),
+    ) ||
     !isRecord(progress) ||
     ![
       progress.denominator,
@@ -302,10 +297,9 @@ function parseDashboardStatus(value: unknown): DashboardStatus {
       progress.completionPercent,
     ].every(isFiniteNumber) ||
     !isRecord(throughput) ||
-    ![
-      throughput.windowSeconds,
-      throughput.attemptedInWindow,
-    ].every(isFiniteNumber) ||
+    ![throughput.windowSeconds, throughput.attemptedInWindow].every(
+      isFiniteNumber,
+    ) ||
     !isNullableFiniteNumber(throughput.attemptedPerMinute) ||
     !isNullableFiniteNumber(throughput.etaSeconds) ||
     !Array.isArray(categories) ||

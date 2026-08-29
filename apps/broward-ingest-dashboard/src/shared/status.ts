@@ -143,8 +143,7 @@ export function buildDashboardStatus(
     staleAfterSeconds: snapshot.staleAfterSeconds,
   });
   const attemptedPerMinute =
-    snapshot.throughputWindowSeconds > 0 &&
-    snapshot.throughputAttempted > 0
+    snapshot.throughputWindowSeconds > 0 && snapshot.throughputAttempted > 0
       ? round(
           snapshot.throughputAttempted /
             (snapshot.throughputWindowSeconds / 60),
@@ -262,10 +261,7 @@ function determineHealthState(input: {
   readonly phase: DashboardPhase;
   readonly staleAfterSeconds: number;
 }): DashboardHealthState {
-  if (
-    input.phase === "complete" ||
-    input.completed >= input.denominator
-  ) {
+  if (input.phase === "complete" || input.completed >= input.denominator) {
     return "complete";
   }
   if (input.heartbeatAgeSeconds === null) {
@@ -313,9 +309,7 @@ function sanitizeCategoryCoverage(
     (left, right) => right[1] - left[1] || left[0].localeCompare(right[0]),
   );
   const visible = sorted.slice(0, 40);
-  otherCount += sorted
-    .slice(40)
-    .reduce((total, entry) => total + entry[1], 0);
+  otherCount += sorted.slice(40).reduce((total, entry) => total + entry[1], 0);
   if (otherCount > 0) visible.push(["Other", otherCount]);
   return visible.map(([category, succeeded]) => ({
     category,

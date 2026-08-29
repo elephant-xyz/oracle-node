@@ -9,13 +9,7 @@
  */
 
 import { createReadStream } from "node:fs";
-import {
-  readFile,
-  readdir,
-  readlink,
-  stat,
-  statfs,
-} from "node:fs/promises";
+import { readFile, readdir, readlink, stat, statfs } from "node:fs/promises";
 import { createServer } from "node:http";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -278,11 +272,7 @@ function parseIngestionState(text) {
   /** @type {Record<string, number>} */
   const usageTypes = {};
   for (const [usageType, count] of Object.entries(usageTypesValue)) {
-    if (
-      typeof count === "number" &&
-      Number.isInteger(count) &&
-      count >= 0
-    ) {
+    if (typeof count === "number" && Number.isInteger(count) && count >= 0) {
       usageTypes[usageType] = count;
     }
   }
@@ -385,10 +375,7 @@ class ResultAccumulator {
       }
       throw error;
     }
-    if (
-      this.startedAt !== startedAt ||
-      resultStat.size < this.offset
-    ) {
+    if (this.startedAt !== startedAt || resultStat.size < this.offset) {
       this.reset(startedAt);
     }
     if (resultStat.size === this.offset) return;
@@ -457,10 +444,7 @@ class ResultAccumulator {
    * @returns {ResultCounts} Aggregate outcomes and row timestamps.
    */
   summarize(nextRowIndex) {
-    const limit = Math.min(
-      Math.max(0, nextRowIndex),
-      this.denominator,
-    );
+    const limit = Math.min(Math.max(0, nextRowIndex), this.denominator);
     let succeeded = 0;
     let skippedExisting = 0;
     let sourceMisses = 0;
@@ -550,18 +534,13 @@ export function calculateThroughput({
     }
   }
   if (isActivelyRunning && nowMs >= latestTimestamp) {
-    activeRuntimeMs += Math.min(
-      nowMs - latestTimestamp,
-      ACTIVE_GAP_CAP_MS,
-    );
+    activeRuntimeMs += Math.min(nowMs - latestTimestamp, ACTIVE_GAP_CAP_MS);
   }
 
   const activeRuntimeSeconds = Math.round(activeRuntimeMs / 1_000);
   const activeMinutes = activeRuntimeMs / 60_000;
   const recentPerMinute =
-    recentAttempted > 0
-      ? recentAttempted / (RECENT_WINDOW_MS / 60_000)
-      : null;
+    recentAttempted > 0 ? recentAttempted / (RECENT_WINDOW_MS / 60_000) : null;
   const activeAveragePerMinute =
     activeMinutes > 0 && attempted > 0 ? attempted / activeMinutes : null;
   const etaRate =
@@ -587,9 +566,7 @@ export function calculateThroughput({
       recentPerMinute === null ? null : round(recentPerMinute, 2),
     activeRuntimeSeconds,
     activeAveragePerMinute:
-      activeAveragePerMinute === null
-        ? null
-        : round(activeAveragePerMinute, 2),
+      activeAveragePerMinute === null ? null : round(activeAveragePerMinute, 2),
     etaActiveSeconds,
     etaBasis,
     projectedCompletionAt:
@@ -799,8 +776,7 @@ function calculateProcessStatus({
       ? null
       : Math.max(0, Math.floor((nowMs - activityMs) / 1_000));
   const stale =
-    activityAgeSeconds !== null &&
-    activityAgeSeconds * 1_000 > STALE_AFTER_MS;
+    activityAgeSeconds !== null && activityAgeSeconds * 1_000 > STALE_AFTER_MS;
   /** @type {ProcessStatus} */
   let status = "unknown";
   if (attempted >= denominator) status = "complete";
@@ -830,13 +806,9 @@ export function createStatusReader(options, dependencies = {}) {
   const statePath = path.join(outputDirectory, "state.json");
   const resultsPath = path.join(outputDirectory, "results.ndjson");
   const logPath = path.resolve(options.logPath);
-  const accumulator = new ResultAccumulator(
-    resultsPath,
-    options.denominator,
-  );
+  const accumulator = new ResultAccumulator(resultsPath, options.denominator);
   const nowProvider = dependencies.now ?? Date.now;
-  const processProbe =
-    dependencies.probeProcess ?? probeLocalIngestionProcess;
+  const processProbe = dependencies.probeProcess ?? probeLocalIngestionProcess;
 
   return async () => {
     const nowMs = nowProvider();
@@ -875,9 +847,7 @@ export function createStatusReader(options, dependencies = {}) {
         : Date.parse(storage.files.log.modifiedAt),
     ].filter((value) => Number.isFinite(value));
     const activityMs =
-      activityTimestamps.length === 0
-        ? null
-        : Math.max(...activityTimestamps);
+      activityTimestamps.length === 0 ? null : Math.max(...activityTimestamps);
     const processStatus = calculateProcessStatus({
       processRunning,
       attempted: state.attempted,
@@ -885,10 +855,7 @@ export function createStatusReader(options, dependencies = {}) {
       activityMs,
       nowMs,
     });
-    const remaining = Math.max(
-      0,
-      options.denominator - state.attempted,
-    );
+    const remaining = Math.max(0, options.denominator - state.attempted);
     const classifiedFailures =
       resultCounts.sourceMisses +
       resultCounts.sourceErrors +
@@ -910,10 +877,7 @@ export function createStatusReader(options, dependencies = {}) {
         sourceMisses: resultCounts.sourceMisses,
         sourceErrors: resultCounts.sourceErrors,
         transformErrors: resultCounts.transformErrors,
-        unclassifiedFailures: Math.max(
-          0,
-          state.failed - classifiedFailures,
-        ),
+        unclassifiedFailures: Math.max(0, state.failed - classifiedFailures),
         failedTotal: state.failed,
         remaining,
         completionPercent: round(
@@ -1055,12 +1019,7 @@ function combineUsageTypes(publishableTypes, dataOnlyTypes) {
  * @param {number} nowMs - Snapshot epoch milliseconds.
  * @returns {DashboardStatus} Full-county aggregate status.
  */
-export function combineHandoffStatuses(
-  publishable,
-  dataOnly,
-  manifest,
-  nowMs,
-) {
+export function combineHandoffStatuses(publishable, dataOnly, manifest, nowMs) {
   const boundary = manifest.newInitialRowIndex;
   if (
     publishable.progress.attempted !== boundary ||
@@ -1080,9 +1039,7 @@ export function combineHandoffStatuses(
     publishable.throughput.activeRuntimeSeconds +
     dataOnly.throughput.activeRuntimeSeconds;
   const activeAveragePerMinute =
-    activeRuntimeSeconds > 0
-      ? attempted / (activeRuntimeSeconds / 60)
-      : null;
+    activeRuntimeSeconds > 0 ? attempted / (activeRuntimeSeconds / 60) : null;
   const etaRate =
     recentPerMinute !== null && recentPerMinute > 0
       ? recentPerMinute
@@ -1102,8 +1059,7 @@ export function combineHandoffStatuses(
     process: dataOnly.process,
     progress: {
       attempted,
-      succeeded:
-        publishable.progress.succeeded + dataOnly.progress.succeeded,
+      succeeded: publishable.progress.succeeded + dataOnly.progress.succeeded,
       skippedExisting:
         publishable.progress.skippedExisting +
         dataOnly.progress.skippedExisting,
@@ -1148,10 +1104,7 @@ export function combineHandoffStatuses(
           : new Date(nowMs + etaActiveSeconds * 1_000).toISOString(),
     },
     checkpoint: dataOnly.checkpoint,
-    usageTypes: combineUsageTypes(
-      publishable.usageTypes,
-      dataOnly.usageTypes,
-    ),
+    usageTypes: combineUsageTypes(publishable.usageTypes, dataOnly.usageTypes),
     storage: {
       ...dataOnly.storage,
       parsedResultRows:
@@ -1202,10 +1155,7 @@ export async function createDefaultStatusReader(repositoryRoot) {
   }
   const manifest = parseHandoffManifest(manifestText, repositoryRoot);
   const dataOnlyReader = createStatusReader({
-    outputDirectory: path.resolve(
-      repositoryRoot,
-      manifest.newOutputDirectory,
-    ),
+    outputDirectory: path.resolve(repositoryRoot, manifest.newOutputDirectory),
     logPath: path.resolve(repositoryRoot, manifest.newLogPath),
     denominator: manifest.seedRowCount,
     expectedArtifactMode: manifest.newArtifactMode,
@@ -1216,12 +1166,7 @@ export async function createDefaultStatusReader(repositoryRoot) {
       publishableReader(),
       dataOnlyReader(),
     ]);
-    return combineHandoffStatuses(
-      publishable,
-      dataOnly,
-      manifest,
-      Date.now(),
-    );
+    return combineHandoffStatuses(publishable, dataOnly, manifest, Date.now());
   };
 }
 
@@ -1253,10 +1198,7 @@ function writeJson(response, statusCode, payload) {
 export function createDashboardServer(readStatus) {
   return createServer((request, response) => {
     void (async () => {
-      const requestUrl = new URL(
-        request.url ?? "/",
-        "http://dashboard.local",
-      );
+      const requestUrl = new URL(request.url ?? "/", "http://dashboard.local");
       if (request.method !== "GET" && request.method !== "HEAD") {
         writeJson(response, 405, { error: "Method not allowed" });
         return;

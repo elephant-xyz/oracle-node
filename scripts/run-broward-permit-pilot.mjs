@@ -19,9 +19,7 @@ import {
   browardDetailRequestBody,
   normalizeBrowardFolio,
 } from "./broward-folio.mjs";
-import {
-  probeBrowardBcsPermits,
-} from "./permit-source-adapters/broward-bcs-posse.mjs";
+import { probeBrowardBcsPermits } from "./permit-source-adapters/broward-bcs-posse.mjs";
 import {
   DONPHAN_PERMIT_QUERY_COLUMNS,
   mapBrowardPermitToDonphanRow,
@@ -430,12 +428,18 @@ async function fetchBoundedBcpaRecord(folio, timeoutMs) {
     throw new Error(`BCPA returned an invalid parcel envelope for ${folio}`);
   }
   const records = parsed.d.parcelInfok__BackingField;
-  if (!Array.isArray(records) || records.length !== 1 || !isJsonObject(records[0])) {
+  if (
+    !Array.isArray(records) ||
+    records.length !== 1 ||
+    !isJsonObject(records[0])
+  ) {
     throw new Error(`BCPA returned no unique parcel record for ${folio}`);
   }
   const record = records[0];
   if (optionalString(record.folioNumber)?.toUpperCase() !== folio) {
-    throw new Error(`BCPA parcel identity did not match requested folio ${folio}`);
+    throw new Error(
+      `BCPA parcel identity did not match requested folio ${folio}`,
+    );
   }
   return record;
 }
@@ -518,7 +522,8 @@ async function buildParcelState(folio, fetchAppraisalRecord) {
       jurisdictionKey: null,
       jurisdictionName: null,
       jurisdictionMethod: "unresolved",
-      jurisdictionError: "Permit routing was not attempted without valid BCPA situs evidence",
+      jurisdictionError:
+        "Permit routing was not attempted without valid BCPA situs evidence",
       sourceOutcomes: [],
       records: [],
     };
@@ -687,14 +692,15 @@ function validateImplementedSourceResult(result, folio) {
     (result.status === "records" && result.records.length === 0) ||
     (result.status === "no_permits" && result.records.length !== 0)
   ) {
-    throw new Error(`Permit adapter result status/count disagreed for ${folio}`);
+    throw new Error(
+      `Permit adapter result status/count disagreed for ${folio}`,
+    );
   }
   for (const record of result.records) {
-    if (
-      !isNormalizedPermit(record) ||
-      record.parcel_identifier !== folio
-    ) {
-      throw new Error(`Permit adapter returned an invalid parcel record for ${folio}`);
+    if (!isNormalizedPermit(record) || record.parcel_identifier !== folio) {
+      throw new Error(
+        `Permit adapter returned an invalid parcel record for ${folio}`,
+      );
     }
   }
 }
@@ -761,7 +767,8 @@ export function dedupeBrowardPermitPilotRecords(records) {
     } else {
       conflicts.push({
         recordKey: record.record_key,
-        error: "Same source record key produced conflicting normalized payloads",
+        error:
+          "Same source record key produced conflicting normalized payloads",
       });
     }
   }
@@ -1215,9 +1222,8 @@ function buildPilotReport(input) {
     sourceUnavailableOutcomes: sourceOutcomes.filter((outcome) =>
       unavailableStatuses.has(outcome.status),
     ).length,
-    permitSourceAttempts: sourceOutcomes.filter(
-      (outcome) => outcome.attempted,
-    ).length,
+    permitSourceAttempts: sourceOutcomes.filter((outcome) => outcome.attempted)
+      .length,
     permitAttemptedParcels: permitAttemptedFolios.size,
     explicitNoPermitOutcomes: sourceOutcomes.filter(
       (outcome) => outcome.status === "no_permits",
@@ -1264,8 +1270,7 @@ function buildPilotReport(input) {
     counters.sourceFailures === 0 &&
     counters.conflictingPermitRecords === 0;
   const currentSourceJurisdictionsBlocked =
-    BROWARD_PERMIT_JURISDICTIONS.length -
-    currentSourceJurisdictionsImplemented;
+    BROWARD_PERMIT_JURISDICTIONS.length - currentSourceJurisdictionsImplemented;
   const countyPermitAcceptancePassed =
     localPilotPassed &&
     currentSourceJurisdictionsBlocked === 0 &&
@@ -1289,8 +1294,7 @@ function buildPilotReport(input) {
       allInputParcelsTerminal,
       allRecordsAccountedFor,
       queryRowsMatchUniqueRecords,
-      allJurisdictionsRegistered:
-        BROWARD_PERMIT_JURISDICTIONS.length === 32,
+      allJurisdictionsRegistered: BROWARD_PERMIT_JURISDICTIONS.length === 32,
       currentSourceJurisdictionsImplemented,
       currentSourceJurisdictionsBlocked,
     },
