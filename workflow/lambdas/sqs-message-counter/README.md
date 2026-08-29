@@ -1,13 +1,13 @@
 # SQS Message Counter Lambda
 
-Lambda function that counts messages in SQS queues, queries CloudWatch metrics, and optionally updates a Google Sheet.
+Lambda function that counts messages in SQS queues, queries DynamoDB workflow-state aggregates, and optionally updates a Google Sheet.
 
 ## Features
 
 - **Auto-detects account ID** - Uses STS GetCallerIdentity
 - **Auto-discovers queues** - Reads from CloudFormation stack outputs
 - **SQS Message Counting** - Counts messages in Transactions, Gas Price, and workflow queues
-- **CloudWatch Metrics Integration** - Calculates "in progress" and "failed" counts from workflow phase metrics
+- **DynamoDB Workflow-State Integration** - Calculates "in progress" and "failed" counts from workflow-state table step aggregates
 - **Google Sheets integration** - Updates counts in a Google Sheet (optional)
 - **Scheduled Execution** - Runs 3 times daily via EventBridge (8:00 AM, 4:00 PM, and midnight UTC)
 
@@ -20,12 +20,12 @@ Lambda function that counts messages in SQS queues, queries CloudWatch metrics, 
    - Gas Price DLQ
    - All `elephant-workflow-queue` queues (for "waiting for mining" count)
 
-2. **Queries CloudWatch Metrics** (for "in progress" and "failed" counts):
-   - **In Progress**: Calculates workflows currently in progress over last 30 days
-     - Prepare, Transform, Upload, Hash: `IN_PROGRESS - SUCCEEDED - FAILED`
-     - SVL, MVL: `IN_PROGRESS - SUCCEEDED`
-   - **Failed**: Sums all FAILED metrics over last 30 days
-     - Prepare, Transform, Upload, Hash, AutoRepair phases
+2. **Queries DynamoDB Workflow-State Table** (for "in progress" and "failed" counts):
+   - Retrieves workflow-state table name from `workflow-events-stack` CloudFormation outputs
+   - Queries GSI2 (sharded "list all aggregates" index) across all 16 shards
+   - **In Progress**: Sums `inProgressCount` from step aggregates for phases: prepare, transform, svl, mvl, upload, hash
+   - **Failed**: Sums `failedCount` from step aggregates for phases: prepare, transform, upload, hash, autorepair
+   - These represent **current snapshot counts** (not historical totals)
 
 3. **Updates Google Sheet** (if configured):
    - Retrieves secret from AWS Secrets Manager
@@ -34,7 +34,7 @@ Lambda function that counts messages in SQS queues, queries CloudWatch metrics, 
    - Finds the row matching the current AWS account ID in column C
    - Updates the cells with the respective counts
 
-4. **Returns Results**: JSON with account ID, queue counts, CloudWatch metrics, and totals
+4. **Returns Results**: JSON with account ID, queue counts, DynamoDB workflow-state aggregates, and totals
 
 ## Google Sheets Setup
 
@@ -195,8 +195,10 @@ The Lambda will:
 - Find or create date columns for today's date with the following formats:
   - `YYYY-MM-DD (ready to be minted)` - SQS message counts (Transactions + Gas Price queues)
   - `YYYY-MM-DD (waiting for mining)` - Workflow queue message counts
-  - `YYYY-MM-DD (in progress)` - CloudWatch metrics (workflows in progress over last 30 days)
-  - `YYYY-MM-DD (failed)` - CloudWatch metrics (failed workflows over last 30 days)
+  - `YYYY-MM-DD (in progress)` - DynamoDB workflow-state aggregates (current snapshot of workflows in progress)
+    - Includes phases: prepare, transform, svl, mvl, upload, hash
+  - `YYYY-MM-DD (failed)` - DynamoDB workflow-state aggregates (current snapshot of failed workflows)
+    - Includes phases: prepare, transform, upload, hash, autorepair
 - Find the row matching the current AWS account ID in column C
 - Update the cells with the respective counts
 - Insert new date columns to the right of existing date columns for the same date
@@ -257,11 +259,18 @@ npm run test:local
 - Make sure the Account ID is in column C
 - Verify the Account ID matches exactly (no extra spaces)
 
-### CloudWatch metrics returning 0
+### DynamoDB workflow-state table not found
 
-- Verify the Lambda has `cloudwatch:ListMetrics` and `cloudwatch:GetMetricStatistics` permissions
-- Check that metrics are being published to the `Elephant/Workflow` namespace
-- Ensure the time range (30 days) contains metric data
+- Verify the Lambda has `cloudformation:DescribeStacks` permission for the `workflow-events-stack`
+- Check that the `workflow-events-stack` exists and has the `WorkflowStateTableName` output
+- Verify the Lambda has `dynamodb:Query` and `dynamodb:DescribeTable` permissions for `*-workflow-state` tables
+- Ensure the workflow-state table exists and contains step aggregate items
+
+### Workflow counts showing 0
+
+- Verify that workflow events are being processed and step aggregates are being updated in the workflow-state table
+- Check that the workflow-events stack is deployed and the event handler Lambda is processing events
+- Ensure the phase names in DynamoDB match the expected lowercase values (prepare, transform, svl, mvl, upload, hash, autorepair)
 
 ## Security Best Practices
 

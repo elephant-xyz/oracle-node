@@ -14,6 +14,7 @@ import {
   deleteErrorsForExecution,
   markErrorsAsUnrecoverableForExecution,
   markErrorAsUnrecoverableFromAllExecutions,
+  upsertExecutionStateAndUpdateAggregates,
 } from "shared/repository.js";
 
 /**
@@ -40,6 +41,12 @@ type SupportedDetailType =
 const handleWorkflowEvent = async (
   event: EventBridgeEvent<"WorkflowEvent", WorkflowEventDetail>,
 ): Promise<void> => {
+  if (event.detail.executionId.startsWith("arn")) {
+    const extractedExecutionId = event.detail.executionId.split(":").pop();
+    if (extractedExecutionId) {
+      event.detail.executionId = extractedExecutionId;
+    }
+  }
   console.info(
     createLogEntry("received_workflow_event", event, {
       executionId: event.detail.executionId,
@@ -66,6 +73,43 @@ const handleWorkflowEvent = async (
       step: event.detail.step,
     }),
   );
+
+  // Update execution state and step aggregates in the workflow-state table
+  const stateResult = await upsertExecutionStateAndUpdateAggregates({
+    detail: event.detail,
+    eventId: event.id,
+    eventTime: event.time,
+  });
+
+  if (stateResult.success) {
+    if (stateResult.skipped) {
+      console.info(
+        createLogEntry("execution_state_skipped", event, {
+          executionId: event.detail.executionId,
+          reason: "out-of-order or duplicate event",
+        }),
+      );
+    } else {
+      console.info(
+        createLogEntry("execution_state_updated", event, {
+          executionId: event.detail.executionId,
+          previousBucket: stateResult.previousState?.bucket ?? null,
+          newBucket: stateResult.newState.bucket,
+          previousPhase: stateResult.previousState?.phase ?? null,
+          newPhase: stateResult.newState.phase,
+          previousStep: stateResult.previousState?.step ?? null,
+          newStep: stateResult.newState.step,
+        }),
+      );
+    }
+  } else {
+    console.error(
+      createLogEntry("execution_state_update_failed", event, {
+        executionId: event.detail.executionId,
+        error: stateResult.error,
+      }),
+    );
+  }
 
   const errors = event.detail.errors;
   const hasErrors = errors && errors.length > 0;
