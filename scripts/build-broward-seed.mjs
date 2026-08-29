@@ -70,12 +70,6 @@ export const SEED_COLUMNS = Object.freeze([
  */
 
 /**
- * @typedef {object} GeoJsonPosition
- * @property {number} 0 - Longitude.
- * @property {number} 1 - Latitude.
- */
-
-/**
  * @typedef {object} GeoJsonGeometry
  * @property {string} type - GeoJSON geometry type.
  * @property {unknown} coordinates - Geometry coordinates.
@@ -643,12 +637,12 @@ export async function buildBrowardSeed(options) {
       }
     }
   }
-  await new Promise((resolve, reject) => {
-    stream.end((error) => {
-      if (error) reject(error);
-      else resolve(undefined);
-    });
-  });
+  await /** @type {Promise<void>} */ (
+    new Promise((resolve, reject) => {
+      stream.once("error", reject);
+      stream.end(resolve);
+    })
+  );
   return { rowsWritten, uniqueFolios: seen.size, skippedInvalid };
 }
 

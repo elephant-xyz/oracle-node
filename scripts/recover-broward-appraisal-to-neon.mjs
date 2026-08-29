@@ -686,7 +686,7 @@ async function readPilotCandidates(seedPath) {
  * Stream uncompleted full-seed rows in official order.
  *
  * @param {string} seedPath - Full official GIS seed.
- * @param {ReadonlySet<string>} loadedFolios - Existing property identifiers.
+ * @param {ReadonlySet<string>} completedHashes - Fully verified seed-key hashes.
  * @param {ReadonlySet<string>} terminalHashes - Confirmed source-miss hashes.
  * @returns {AsyncGenerator<SeedCandidate, void, void>} Missing candidates.
  */

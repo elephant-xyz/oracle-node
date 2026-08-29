@@ -18,6 +18,7 @@
     "maxNodeModuleJsDepth": 0
   },
   "include": [
+    "arcgis-to-geojson-utils.d.ts",
     "ingest-broward-appraisal-local.mjs",
     "recover-broward-appraisal-to-neon.mjs",
     "broward-neon-recovery-dashboard.mjs"

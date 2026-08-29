@@ -73,7 +73,7 @@ const DEFAULT_PORT = 47_832;
  *   transformErrorAttempts: number,
  *   loadErrorAttempts: number
  * }} failures - Aggregate attempt failures.
- * @property {{ windowMinutes: 15, propertiesPerMinute: number }}
+ * @property {{ windowMinutes: 15, propertiesPerMinute: number }} throughput
  *   Recent verified load throughput.
  */
 
