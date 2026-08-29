@@ -95,8 +95,13 @@ export function deterministicPermitUuid(recordKey) {
     .update(`elephant:broward:permit:${recordKey}`, "utf8")
     .digest()
     .subarray(0, 16);
-  bytes[6] = (bytes[6] & 0x0f) | 0x50;
-  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const versionByte = bytes[6];
+  const variantByte = bytes[8];
+  if (versionByte === undefined || variantByte === undefined) {
+    throw new Error("SHA-256 digest did not contain 16 UUID bytes");
+  }
+  bytes[6] = (versionByte & 0x0f) | 0x50;
+  bytes[8] = (variantByte & 0x3f) | 0x80;
   const hex = bytes.toString("hex");
   return [
     hex.slice(0, 8),

@@ -307,12 +307,18 @@ export function parseBrowardPermitPilotOptions(args) {
 
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index];
+    if (argument === undefined) {
+      throw new Error("Broward permit pilot received an empty CLI argument");
+    }
     if (argument === "--help" || argument === "-h") return null;
     if (argument === "--pilot") {
       pilot = true;
       continue;
     }
     const [flag, inlineValue] = argument.split("=", 2);
+    if (flag === undefined) {
+      throw new Error(`Invalid option: ${argument}`);
+    }
     const takesValue = [
       "--sample",
       "--folio",
