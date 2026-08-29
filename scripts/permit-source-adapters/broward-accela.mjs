@@ -1,0 +1,1376 @@
+// @ts-check
+
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
+
+import * as cheerio from "cheerio";
+
+import { normalizeBrowardFolio } from "../broward-folio.mjs";
+import {
+  cleanRecordStatus,
+  collapseText,
+  createBrowser,
+  createConfiguredPage,
+  htmlToText,
+  parseCompletedInspections,
+  parseMoreDetails,
+  parseResultSummary,
+  safeKeyPart,
+  shortHash,
+} from "../../workflow/lambdas/permit-harvest-worker/lee-accela.mjs";
+
+/**
+ * @typedef {"hollywood" | "plantation" | "fort-lauderdale" | "cooper-city" | "weston"} BrowardAccelaJurisdiction
+ */
+
+/**
+ * @typedef {"unknown_not_certified" | "separate_official_source" | "outside_city_record_coverage"} HistoricalDisposition
+ */
+
+/**
+ * @typedef {object} HistoricalCutoff
+ * @property {string | null} date - ISO date at which the documented source boundary begins, or `null` when the official sources do not certify a date.
+ * @property {HistoricalDisposition} disposition - Required treatment for records before the date; an unknown date is never interpreted as all-history coverage.
+ * @property {string} note - Human-readable source-boundary evidence and operational restriction.
+ */
+
+/**
+ * @typedef {object} SeparateHistoricalSource
+ * @property {string} sourceSystem - Distinct source identity; records from this source must not be mislabeled as Accela records.
+ * @property {string} portalUrl - Official public historical portal or custodian route.
+ * @property {"address"} searchMethod - Public search key supported by the historical source.
+ * @property {string} coverageStartDate - Earliest date stated by the official source.
+ * @property {string | null} coverageEndDate - Last certified date, or `null` where overlap with Accela has not been certified.
+ * @property {string} note - Operational separation and archive guidance.
+ */
+
+/**
+ * @typedef {object} BrowardAccelaSource
+ * @property {BrowardAccelaJurisdiction} key - Stable CLI/config key.
+ * @property {string} jurisdiction - Official jurisdiction display name.
+ * @property {string} agencyCode - Accela agency path/code, never inherited from Lee County.
+ * @property {string} module - Accela module and tab used for public permit searches.
+ * @property {string} portalUrl - Fully qualified anonymous general-search URL.
+ * @property {string} sourceSystem - Jurisdiction-specific source identity used in normalized permit records.
+ * @property {string} officialEvidenceUrl - Official source/custodian URL documented in the Broward registry.
+ * @property {readonly string[]} pilotParcels - One or two already-validated Broward appraisal folios for bounded source probes.
+ * @property {HistoricalCutoff} historicalCutoff - Explicit pre-source treatment; `null` date means unknown, not unlimited history.
+ * @property {SeparateHistoricalSource | null} separateHistoricalSource - Separately queried historical source, if one is documented.
+ */
+
+/**
+ * @typedef {object} Logger
+ * @property {(message: string, details?: Record<string, unknown>) => void} info - Emit an informational event.
+ * @property {(message: string, details?: Record<string, unknown>) => void} warn - Emit a warning event.
+ * @property {(message: string, details?: Record<string, unknown>) => void} error - Emit an error event.
+ */
+
+/**
+ * @typedef {object} BrowardAccelaPermitLink
+ * @property {string} recordNumber - Record number displayed by the jurisdiction's Accela result page.
+ * @property {string} url - Absolute official Accela detail URL.
+ * @property {string | null} address - Search-result address, when present.
+ * @property {string | null} description - Search-result description or project name, when present.
+ * @property {string | null} status - Search-result status, when present.
+ * @property {string | null} recordType - Search-result record type, when present.
+ * @property {string} sourceSearchKey - Stable jurisdiction-and-folio search key.
+ * @property {number} sourcePage - One-based result page on which the record was discovered.
+ */
+
+/**
+ * @typedef {object} BrowardAccelaSearchPage
+ * @property {number} pageNumber - One-based Accela result page.
+ * @property {string} url - Final browser URL for the captured page.
+ * @property {string | null} resultSummary - Parsed Accela result summary or `detail page`.
+ * @property {string} html - Complete source HTML captured before pagination.
+ */
+
+/**
+ * @typedef {object} BrowardAccelaParcelSearchResult
+ * @property {"records" | "no_records"} status - Explicit successful source outcome.
+ * @property {string} searchKey - Stable jurisdiction-and-folio search identity.
+ * @property {string} parcelIdentifier - Exact normalized 12-character Broward folio submitted to Accela.
+ * @property {BrowardAccelaSource} source - Jurisdiction-specific Accela source configuration.
+ * @property {BrowardAccelaPermitLink[]} permits - Deduplicated permit detail links.
+ * @property {BrowardAccelaSearchPage[]} pages - Raw list/detail-redirect captures.
+ * @property {number | null} reportedTotal - Accela's reported result count, when displayed.
+ */
+
+/**
+ * @typedef {object} BrowardAccelaPermitRecord
+ * @property {"permit-harvest.accela.v1"} schemaVersion - Existing Accela permit-detail artifact contract.
+ * @property {string} source - Jurisdiction-specific source system.
+ * @property {string} sourceSystem - Jurisdiction-specific source system, repeated for local normalized-record consumers.
+ * @property {string} jurisdiction - Issuing jurisdiction configured for this official portal.
+ * @property {string} retrievedAt - ISO retrieval timestamp.
+ * @property {string} sourceUrl - Final official Accela detail URL.
+ * @property {string} recordNumber - Reconciled Accela record number.
+ * @property {string | null} recordType - Public record type.
+ * @property {string | null} recordStatus - Public record status.
+ * @property {string | null} workLocation - Public work-location text.
+ * @property {string} parcelIdentifier - Exact submitted 12-character Broward folio.
+ * @property {string | null} sourceParcelIdentifier - Parcel number printed on the detail page, if present.
+ * @property {string | null} applicant - Public applicant block.
+ * @property {string | null} licensedProfessional - Public licensed-professional block.
+ * @property {string | null} projectDescription - Public project description.
+ * @property {Record<string, string>} moreDetails - Parsed public Accela detail fields.
+ * @property {string | null} moreDetailsRawText - Raw More Details section.
+ * @property {string | null} inspectionsRawText - Raw Inspections section.
+ * @property {import("../../workflow/lambdas/permit-harvest-worker/lee-accela.mjs").InspectionRecord[]} completedInspections - Completed public inspections parsed by the shared Accela parser.
+ * @property {string | null} processingStatusRawText - Raw Processing Status section.
+ * @property {import("../../workflow/lambdas/permit-harvest-worker/lee-accela.mjs").ExtractedLink[]} documentLinks - Public document/ePlan links.
+ * @property {import("../../workflow/lambdas/permit-harvest-worker/lee-accela.mjs").ExtractedLink[]} relatedLinks - Other public detail links.
+ * @property {string} rawText - Complete collapsed detail text.
+ * @property {BrowardAccelaPermitLink} sourceSearchResult - Exact search-result evidence that led to this detail.
+ * @property {string} idempotencyKey - Jurisdiction-scoped deterministic permit identity.
+ * @property {{ searchMethod: "public_anonymous_parcel", anonymous: true, submittedParcelIdentifier: string, searchUrl: string, searchKey: string, resultPage: number, agencyCode: string, module: string, officialEvidenceUrl: string, historicalCutoff: HistoricalCutoff, separateHistoricalSource: SeparateHistoricalSource | null }} provenance - Auditable search and source-boundary provenance.
+ */
+
+/**
+ * @typedef {object} BrowardAccelaDetailCapture
+ * @property {string} html - Complete public Accela detail HTML.
+ * @property {BrowardAccelaPermitRecord} record - Normalized permit-detail record.
+ */
+
+/**
+ * @typedef {"access_blocked" | "source_error" | "unexpected_response" | "incomplete_pagination" | "identity_mismatch"} BrowardAccelaErrorCode
+ */
+
+/**
+ * @typedef {object} BrowardAccelaCheckpointDetail
+ * @property {string} capturePath - Local raw HTML capture path.
+ * @property {BrowardAccelaPermitRecord} record - Normalized captured permit record.
+ */
+
+/**
+ * @typedef {object} BrowardAccelaCheckpointTarget
+ * @property {"in_progress" | "records" | "no_records" | "failed"} status - Resume state for one jurisdiction/folio target.
+ * @property {BrowardAccelaJurisdiction} jurisdictionKey - Source configuration key.
+ * @property {string} parcelIdentifier - Exact submitted Broward folio.
+ * @property {string} searchKey - Stable source search key.
+ * @property {string | null} startedAt - First-attempt timestamp.
+ * @property {string | null} completedAt - Successful completion timestamp.
+ * @property {number | null} reportedTotal - Source-reported total.
+ * @property {BrowardAccelaPermitLink[]} permits - Search-result links retained for detail-level resume.
+ * @property {Record<string, BrowardAccelaCheckpointDetail>} details - Successfully captured details keyed by record number.
+ * @property {string[]} searchCapturePaths - Local raw result-page capture paths.
+ * @property {{ code: string, message: string, url: string | null, failedAt: string } | null} error - Explicit source/access failure; never represented as no records.
+ */
+
+/**
+ * @typedef {object} BrowardAccelaCheckpoint
+ * @property {"broward-accela-local-checkpoint.v1"} schemaVersion - Checkpoint schema marker.
+ * @property {string} updatedAt - Latest atomic update timestamp.
+ * @property {Record<string, BrowardAccelaCheckpointTarget>} targets - Target states keyed by jurisdiction and folio.
+ */
+
+const DEFAULT_SELECTORS = Object.freeze({
+  parcel: "#ctl00_PlaceHolderMain_generalSearchForm_txtGSParcelNo",
+  startDate: "#ctl00_PlaceHolderMain_generalSearchForm_txtGSStartDate",
+  endDate: "#ctl00_PlaceHolderMain_generalSearchForm_txtGSEndDate",
+  submit: "#ctl00_PlaceHolderMain_btnNewSearch",
+});
+
+const NO_RECORDS_PATTERN =
+  /Your search returned no results|No records found|No records match your search criteria/i;
+const ACCESS_BLOCK_PATTERN =
+  /access denied|captcha|verify you are human|sign in to continue|login is required|request rejected|cloudflare/i;
+const SOURCE_ERROR_PATTERN =
+  /technical difficulties|unable to proceed|Object reference not set|String was not recognized|error\(s\) occurred on current page|an unexpected error (?:has )?occurred|temporarily unavailable/i;
+const RECORD_NUMBER_PATTERN = /^[A-Z0-9][A-Z0-9./_-]{1,79}$/i;
+
+/**
+ * Official source-specific configuration. Dates are deliberately conservative:
+ * a `null` cutoff records that no date is certified instead of claiming all
+ * history. Hollywood's address-only BCLA portal has a separate source identity
+ * and is never folded into current Accela output.
+ *
+ * @type {Readonly<Record<BrowardAccelaJurisdiction, BrowardAccelaSource>>}
+ */
+export const BROWARD_ACCELA_SOURCES = Object.freeze({
+  hollywood: Object.freeze({
+    key: "hollywood",
+    jurisdiction: "Hollywood",
+    agencyCode: "HOLLYWOOD",
+    module: "Building",
+    portalUrl:
+      "https://aca-prod.accela.com/HOLLYWOOD/Cap/CapHome.aspx?module=Building&TabName=Building",
+    sourceSystem: "broward_hollywood_accela_permits",
+    officialEvidenceUrl:
+      "https://apps.hollywoodfl.org/building/PermitStatus.aspx",
+    pilotParcels: Object.freeze(["514111160200", "514207022070"]),
+    historicalCutoff: Object.freeze({
+      date: null,
+      disposition: "separate_official_source",
+      note: "The migration boundary between current Accela and the separate Hollywood BCLA address search is not certified; never infer all-history Accela coverage.",
+    }),
+    separateHistoricalSource: Object.freeze({
+      sourceSystem: "broward_hollywood_bcla_legacy_permits",
+      portalUrl: "https://apps.hollywoodfl.org/building/PermitStatus.aspx",
+      searchMethod: "address",
+      coverageStartDate: "1988-01-01",
+      coverageEndDate: null,
+      note: "Official address search states 1988-present coverage. Pre-1988 records require City archives. Query and label this source separately because no Accela/BCLA migration cutoff is certified.",
+    }),
+  }),
+  plantation: Object.freeze({
+    key: "plantation",
+    jurisdiction: "Plantation",
+    agencyCode: "PLANTATION",
+    module: "Building",
+    portalUrl:
+      "https://aca.plantation.org/CitizenAccess/Cap/CapHome.aspx?TabName=Building&module=Building",
+    sourceSystem: "broward_plantation_accela_permits",
+    officialEvidenceUrl:
+      "https://aca.plantation.org/CitizenAccess/Cap/CapHome.aspx?TabName=Building&module=Building",
+    pilotParcels: Object.freeze(["504108BJ0140"]),
+    historicalCutoff: Object.freeze({
+      date: null,
+      disposition: "unknown_not_certified",
+      note: "No earliest online date is certified in the checked official source; an empty result cannot establish no historical City permit.",
+    }),
+    separateHistoricalSource: null,
+  }),
+  "fort-lauderdale": Object.freeze({
+    key: "fort-lauderdale",
+    jurisdiction: "Fort Lauderdale",
+    agencyCode: "FTL",
+    module: "Building",
+    portalUrl:
+      "https://aca3.accela.com/FTL/Cap/CapHome.aspx?module=Building&TabName=Building",
+    sourceSystem: "broward_fort_lauderdale_lauderbuild_permits",
+    officialEvidenceUrl: "https://aca3.accela.com/FTL/",
+    pilotParcels: Object.freeze(["494209060010", "494212072320"]),
+    historicalCutoff: Object.freeze({
+      date: null,
+      disposition: "unknown_not_certified",
+      note: "LauderBuild basic search is public, but the checked official source does not certify an earliest online date.",
+    }),
+    separateHistoricalSource: null,
+  }),
+  "cooper-city": Object.freeze({
+    key: "cooper-city",
+    jurisdiction: "Cooper City",
+    agencyCode: "COOPER",
+    module: "Building",
+    portalUrl:
+      "https://aca-prod.accela.com/COOPER/Cap/CapHome.aspx?module=Building&TabName=Building",
+    sourceSystem: "broward_cooper_city_accela_permits",
+    officialEvidenceUrl: "https://aca-prod.accela.com/COOPER/",
+    pilotParcels: Object.freeze(["514106100100"]),
+    historicalCutoff: Object.freeze({
+      date: null,
+      disposition: "unknown_not_certified",
+      note: "The public portal exposes historical record types but no certified earliest online date; do not convert no results into an all-history claim.",
+    }),
+    separateHistoricalSource: null,
+  }),
+  weston: Object.freeze({
+    key: "weston",
+    jurisdiction: "Weston",
+    agencyCode: "WESTON",
+    module: "Building",
+    portalUrl:
+      "https://aca-prod.accela.com/weston/Cap/CapHome.aspx?TabName=Building&module=Building",
+    sourceSystem: "broward_weston_accela_permits",
+    officialEvidenceUrl:
+      "https://www.westonfl.org/government/building-code-services",
+    pilotParcels: Object.freeze(["503912010490"]),
+    historicalCutoff: Object.freeze({
+      date: "1997-01-01",
+      disposition: "outside_city_record_coverage",
+      note: "Official City source documentation bounds City permit history to post-1997 records; pre-1997 absence is outside this adapter's coverage.",
+    }),
+    separateHistoricalSource: null,
+  }),
+});
+
+/**
+ * Structured source error that preserves a stable distinction between public
+ * access blocks, official source errors, unexpected pages, incomplete
+ * pagination, and source-identity mismatches.
+ */
+export class BrowardAccelaSourceError extends Error {
+  /**
+   * @param {BrowardAccelaErrorCode} code - Stable failure category.
+   * @param {BrowardAccelaSource} source - Jurisdiction source configuration.
+   * @param {string} message - Human-readable failure explanation.
+   * @param {string | null} [url] - Final source URL when available.
+   */
+  constructor(code, source, message, url = null) {
+    super(message);
+    this.name = "BrowardAccelaSourceError";
+    this.code = code;
+    this.sourceKey = source.key;
+    this.url = url;
+  }
+}
+
+/**
+ * Return a source config by stable jurisdiction key.
+ *
+ * @param {unknown} value - Candidate jurisdiction key.
+ * @returns {BrowardAccelaSource} Frozen source config.
+ */
+export function readBrowardAccelaSource(value) {
+  if (typeof value !== "string" || !(value in BROWARD_ACCELA_SOURCES)) {
+    throw new Error(
+      `Unknown Broward Accela jurisdiction: ${typeof value === "string" ? value : String(value)}`,
+    );
+  }
+  return BROWARD_ACCELA_SOURCES[
+    /** @type {BrowardAccelaJurisdiction} */ (value)
+  ];
+}
+
+/**
+ * Normalize a Broward permit-search folio without Lee STRAP assumptions.
+ *
+ * Only strings are accepted so leading zeroes and condo letters cannot already
+ * have been lost to numeric coercion. The canonical 12-character form and the
+ * appraiser's documented 6-2-4 display form are accepted; all other
+ * punctuation and padding fail closed.
+ *
+ * @param {unknown} value - Raw Broward folio from CLI or a validated manifest.
+ * @returns {string} Exact uppercase 12-character alphanumeric folio.
+ */
+export function normalizeBrowardPermitFolio(value) {
+  if (typeof value !== "string") {
+    throw new Error("Broward permit folio must be supplied as a string");
+  }
+  const trimmed = value.trim().toUpperCase();
+  if (
+    !/^[A-Z0-9]{12}$/.test(trimmed) &&
+    !/^[A-Z0-9]{6}-[A-Z0-9]{2}-[A-Z0-9]{4}$/.test(trimmed)
+  ) {
+    throw new Error(
+      `Broward permit folio must be exactly 12 alphanumeric characters (optional 6-2-4 display dashes): ${value}`,
+    );
+  }
+  const normalized = normalizeBrowardFolio(trimmed);
+  if (normalized === undefined) {
+    throw new Error(`Invalid Broward permit folio: ${value}`);
+  }
+  return normalized;
+}
+
+/**
+ * Build the stable checkpoint/capture identity for one jurisdiction and folio.
+ *
+ * @param {BrowardAccelaSource} source - Jurisdiction-specific source.
+ * @param {string} parcelIdentifier - Canonical Broward folio.
+ * @returns {string} Stable key with no implied countywide agency.
+ */
+export function buildBrowardAccelaSearchKey(source, parcelIdentifier) {
+  return `${source.key}:parcel:${normalizeBrowardPermitFolio(parcelIdentifier)}`;
+}
+
+/**
+ * Classify a loaded Accela page before interpreting zero records. Access and
+ * source errors take precedence over no-result text so mixed error templates
+ * cannot silently become successful empties.
+ *
+ * @param {string} html - Complete Accela page HTML.
+ * @returns {"access_blocked" | "source_error" | "no_records" | "records" | "unknown"} Page classification.
+ */
+export function classifyBrowardAccelaPage(html) {
+  const text = htmlToText(html);
+  if (ACCESS_BLOCK_PATTERN.test(text)) return "access_blocked";
+  if (SOURCE_ERROR_PATTERN.test(text)) return "source_error";
+  if (NO_RECORDS_PATTERN.test(text)) return "no_records";
+  const $ = cheerio.load(html);
+  if (
+    $("[id*='gdvPermitList']").length > 0 ||
+    $("[id*='divRecordStatus']").length > 0 ||
+    $("a[href*='CapDetail.aspx']").length > 0 ||
+    parseResultSummary(text).total !== null
+  ) {
+    return "records";
+  }
+  return "unknown";
+}
+
+/**
+ * Convert an official Accela relative URL to the configured jurisdiction host
+ * and reject links that escape that host.
+ *
+ * @param {string} href - Source href or current page URL.
+ * @param {BrowardAccelaSource} source - Jurisdiction source configuration.
+ * @returns {string} Absolute official URL.
+ */
+function normalizeSourceUrl(href, source) {
+  const absolute = new URL(href, source.portalUrl);
+  const configured = new URL(source.portalUrl);
+  if (absolute.origin !== configured.origin) {
+    throw new BrowardAccelaSourceError(
+      "unexpected_response",
+      source,
+      `Accela link escaped configured source origin: ${absolute.toString()}`,
+      absolute.toString(),
+    );
+  }
+  return absolute.toString();
+}
+
+/**
+ * Read and validate the visible record number from a CapDetail result anchor.
+ *
+ * @param {unknown} value - Candidate anchor/cell text.
+ * @returns {string | null} Uppercase Accela record number, or `null`.
+ */
+function readRecordNumber(value) {
+  const recordNumber = collapseText(value).toUpperCase();
+  return RECORD_NUMBER_PATTERN.test(recordNumber) && /\d/.test(recordNumber)
+    ? recordNumber
+    : null;
+}
+
+/**
+ * Return true when a candidate CapDetail link belongs to the detail page's
+ * related-record tree instead of the scoped search results.
+ *
+ * @param {cheerio.Cheerio<import("domhandler").AnyNode>} table - Wrapping table.
+ * @returns {boolean} Whether the table is a related-record tree.
+ */
+function isRelatedRecordTable(table) {
+  const id = table.attr("id") ?? "";
+  const caption = collapseText(table.find("caption").first().text());
+  return /tableCapTreeList/i.test(id) || /^Related Records$/i.test(caption);
+}
+
+/**
+ * Extract jurisdiction-neutral Accela CapDetail links from one result page.
+ *
+ * @param {object} params - Result parsing parameters.
+ * @param {string} params.html - Complete result HTML.
+ * @param {BrowardAccelaSource} params.source - Jurisdiction source.
+ * @param {string} params.searchKey - Stable parcel search key.
+ * @param {number} params.pageNumber - One-based result page.
+ * @returns {BrowardAccelaPermitLink[]} Reconciled detail links in source order.
+ */
+export function extractBrowardAccelaPermitLinks({
+  html,
+  source,
+  searchKey,
+  pageNumber,
+}) {
+  const $ = cheerio.load(html);
+  /** @type {BrowardAccelaPermitLink[]} */
+  const links = [];
+
+  $("a[href*='CapDetail.aspx']").each((_, element) => {
+    const anchor = $(element);
+    const href = anchor.attr("href");
+    if (href === undefined) return;
+    const row = anchor.closest("tr");
+    if (isRelatedRecordTable(row.closest("table"))) return;
+    const cells = row
+      .find("td")
+      .toArray()
+      .map((cell) => collapseText($(cell).text()));
+    const headers = row
+      .closest("table")
+      .find("th")
+      .toArray()
+      .map((header) => collapseText($(header).text()).toLowerCase());
+
+    /**
+     * @param {readonly string[]} labels - Accepted lowercase Accela headers.
+     * @param {number} fallbackIndex - Standard Accela grid fallback index.
+     * @returns {string | null} Cell text when present.
+     */
+    const cellByHeader = (labels, fallbackIndex) => {
+      const index = headers.findIndex((header) => labels.includes(header));
+      const value = cells[index >= 0 ? index : fallbackIndex];
+      return value === undefined || value.length === 0 ? null : value;
+    };
+    const recordNumber = readRecordNumber(
+      cellByHeader(["record number", "record #"], 1) ?? anchor.text(),
+    );
+    if (recordNumber === null) return;
+    links.push({
+      recordNumber,
+      url: normalizeSourceUrl(href, source),
+      address: cellByHeader(["address", "work location"], 2),
+      description: cellByHeader(["description", "project name"], 3),
+      status: cellByHeader(["status", "record status"], 4),
+      recordType: cellByHeader(["record type", "type"], 5),
+      sourceSearchKey: searchKey,
+      sourcePage: pageNumber,
+    });
+  });
+
+  return links;
+}
+
+/**
+ * Parse a direct detail redirect returned for a single-record parcel search.
+ *
+ * @param {object} params - Detail-redirect parsing parameters.
+ * @param {string} params.html - Current page HTML.
+ * @param {string} params.pageUrl - Current browser URL.
+ * @param {BrowardAccelaSource} params.source - Jurisdiction source.
+ * @param {string} params.searchKey - Stable parcel search key.
+ * @param {number} params.pageNumber - One-based captured page.
+ * @returns {BrowardAccelaPermitLink | null} Direct result, or `null` for a list page.
+ */
+export function extractBrowardAccelaDirectDetailLink({
+  html,
+  pageUrl,
+  source,
+  searchKey,
+  pageNumber,
+}) {
+  const $ = cheerio.load(html);
+  const hasDetailMarker = $("[id*='divRecordStatus']").length > 0;
+  if (!hasDetailMarker && $("[id*='gdvPermitList']").length > 0) return null;
+  const text = htmlToText(html);
+  const header =
+    /Record\s+([A-Z0-9][A-Z0-9./_-]{1,79})\s*:\s*(.*?)\s+Record Status:/i.exec(
+      text,
+    );
+  if (header === null) return null;
+  const recordNumber = readRecordNumber(header[1]);
+  if (recordNumber === null) return null;
+  const formAction = $("form#aspnetForm").attr("action");
+  const url = normalizeSourceUrl(
+    /CapDetail\.aspx/i.test(pageUrl)
+      ? pageUrl
+      : (formAction ?? pageUrl),
+    source,
+  );
+  return {
+    recordNumber,
+    url,
+    address: matchCollapsedText(
+      text,
+      /Work Location\s+(.*?)\s+\*\s+Record Details/i,
+    ),
+    description: collapseText(header[2]) || null,
+    status: cleanRecordStatus(
+      matchCollapsedText(
+        text,
+        /Record Status:\s*(.*?)(?:Click here for more information|Create a New Collection|Add to Existing Collection|Record Info|Work Location)/i,
+      ),
+    ),
+    recordType: collapseText(header[2]) || null,
+    sourceSearchKey: searchKey,
+    sourcePage: pageNumber,
+  };
+}
+
+/**
+ * Read one collapsed regex capture from normalized page text.
+ *
+ * @param {string} text - Text to search.
+ * @param {RegExp} pattern - Pattern with a first capture group.
+ * @returns {string | null} Collapsed first capture.
+ */
+function matchCollapsedText(text, pattern) {
+  const match = pattern.exec(text);
+  return match === null ? null : collapseText(match[1]);
+}
+
+/**
+ * Set an Accela input through DOM events so ASP.NET masks and change tracking
+ * receive the same value that is visibly present in the public form.
+ *
+ * @param {import("puppeteer").Page} page - Configured browser page.
+ * @param {string} selector - Accela form selector.
+ * @param {string} value - Exact value to submit.
+ * @returns {Promise<void>} Resolves after the value is set and verified.
+ */
+async function setAccelaInput(page, selector, value) {
+  await page.waitForSelector(selector, { timeout: 45_000 });
+  const observed = await page.evaluate(
+    (inputSelector, inputValue) => {
+      const element = document.querySelector(inputSelector);
+      if (!(element instanceof HTMLInputElement)) return null;
+      element.value = inputValue;
+      element.dispatchEvent(new Event("input", { bubbles: true }));
+      element.dispatchEvent(new Event("change", { bubbles: true }));
+      element.blur();
+      return element.value;
+    },
+    selector,
+    value,
+  );
+  if (observed !== value) {
+    throw new Error(
+      `Accela form did not retain submitted value for ${selector}: ${String(observed)}`,
+    );
+  }
+}
+
+/**
+ * Wait for an Accela search form or a known source/access failure.
+ *
+ * @param {import("puppeteer").Page} page - Current Accela page.
+ * @returns {Promise<void>} Resolves when classification can proceed.
+ */
+async function waitForSearchFormOrFailure(page) {
+  await page.waitForFunction(
+    (parcelSelector) => {
+      if (document.querySelector(parcelSelector) !== null) return true;
+      const text = document.body?.innerText ?? "";
+      return /access denied|captcha|verify you are human|sign in to continue|login is required|request rejected|cloudflare|technical difficulties|unable to proceed|Object reference not set|String was not recognized|temporarily unavailable/i.test(
+        text,
+      );
+    },
+    { timeout: 45_000 },
+    DEFAULT_SELECTORS.parcel,
+  );
+}
+
+/**
+ * Wait until the submitted public search has produced a list, detail redirect,
+ * explicit no-result marker, or explicit source/access failure.
+ *
+ * @param {import("puppeteer").Page} page - Current Accela page.
+ * @returns {Promise<void>} Resolves only on a classifiable outcome.
+ */
+async function waitForSearchOutcome(page) {
+  await page.waitForFunction(
+    () => {
+      const text = document.body?.innerText ?? "";
+      return (
+        document.querySelector("[id*='gdvPermitList']") !== null ||
+        document.querySelector("[id*='divRecordStatus']") !== null ||
+        /Showing\s+\d|Your search returned no results|No records found|No records match your search criteria|access denied|captcha|technical difficulties|unable to proceed|Object reference not set|error\(s\) occurred on current page|temporarily unavailable/i.test(
+          text,
+        )
+      );
+    },
+    { timeout: 60_000 },
+  );
+}
+
+/**
+ * Throw a typed error for any classified page that is not a successful records
+ * or no-records outcome.
+ *
+ * @param {string} html - Complete source HTML.
+ * @param {BrowardAccelaSource} source - Jurisdiction source.
+ * @param {string} url - Final browser URL.
+ * @param {string} context - Search/detail context for diagnostics.
+ * @returns {"records" | "no_records"} Successful classification.
+ */
+function requireSuccessfulPageClassification(html, source, url, context) {
+  const classification = classifyBrowardAccelaPage(html);
+  const excerpt = htmlToText(html).slice(0, 500);
+  if (classification === "access_blocked") {
+    throw new BrowardAccelaSourceError(
+      "access_blocked",
+      source,
+      `${source.jurisdiction} Accela access blocked during ${context}: ${excerpt}`,
+      url,
+    );
+  }
+  if (classification === "source_error") {
+    throw new BrowardAccelaSourceError(
+      "source_error",
+      source,
+      `${source.jurisdiction} Accela returned an official error during ${context}: ${excerpt}`,
+      url,
+    );
+  }
+  if (classification === "unknown") {
+    throw new BrowardAccelaSourceError(
+      "unexpected_response",
+      source,
+      `${source.jurisdiction} Accela returned neither records nor an explicit no-records marker during ${context}: ${excerpt}`,
+      url,
+    );
+  }
+  return classification;
+}
+
+/**
+ * Locate and click Accela's ASP.NET `Next >` result link.
+ *
+ * @param {import("puppeteer").Page} page - Current results page.
+ * @returns {Promise<boolean>} Whether a next-page action was started.
+ */
+async function clickNextPage(page) {
+  return page.evaluate(() => {
+    const next = Array.from(document.querySelectorAll("a")).find(
+      (anchor) =>
+        (anchor.textContent ?? "").replace(/\s+/g, " ").trim() === "Next >" &&
+        anchor.getAttribute("href")?.includes("__doPostBack"),
+    );
+    if (!(next instanceof HTMLAnchorElement)) return false;
+    next.click();
+    return true;
+  });
+}
+
+/**
+ * Determine whether the current result DOM exposes another page.
+ *
+ * @param {import("puppeteer").Page} page - Current results page.
+ * @returns {Promise<boolean>} True when an ASP.NET `Next >` link is present.
+ */
+async function hasNextPage(page) {
+  return page.evaluate(() =>
+    Array.from(document.querySelectorAll("a")).some(
+      (anchor) =>
+        (anchor.textContent ?? "").replace(/\s+/g, " ").trim() === "Next >" &&
+        anchor.getAttribute("href")?.includes("__doPostBack"),
+    ),
+  );
+}
+
+/**
+ * Search one official Broward Accela jurisdiction by exact appraiser folio,
+ * capturing every visible page up to a deliberately bounded maximum.
+ *
+ * A zero-row page succeeds only with an exact Accela no-records marker. Source
+ * errors, access blocks, unknown templates, and truncated pagination throw
+ * typed errors and therefore cannot be checkpointed as empty.
+ *
+ * @param {object} params - Public parcel search parameters.
+ * @param {import("puppeteer").Browser} params.browser - Reused anonymous browser.
+ * @param {BrowardAccelaSource} params.source - Jurisdiction-specific config.
+ * @param {string} params.parcelIdentifier - Exact Broward folio.
+ * @param {number} params.maxPages - Hard result-page limit.
+ * @param {Logger} params.logger - Structured local logger.
+ * @returns {Promise<BrowardAccelaParcelSearchResult>} Explicit records/no-records result.
+ */
+export async function searchBrowardAccelaParcel({
+  browser,
+  source,
+  parcelIdentifier,
+  maxPages,
+  logger,
+}) {
+  const normalizedParcelIdentifier =
+    normalizeBrowardPermitFolio(parcelIdentifier);
+  if (!Number.isInteger(maxPages) || maxPages < 1 || maxPages > 10) {
+    throw new Error("Broward Accela maxPages must be between 1 and 10");
+  }
+  const searchKey = buildBrowardAccelaSearchKey(
+    source,
+    normalizedParcelIdentifier,
+  );
+  const page = await createConfiguredPage(browser);
+  /** @type {BrowardAccelaSearchPage[]} */
+  const pages = [];
+  /** @type {BrowardAccelaPermitLink[]} */
+  const permits = [];
+  /** @type {number | null} */
+  let reportedTotal = null;
+
+  try {
+    logger.info("broward_accela_parcel_search_open", {
+      sourceKey: source.key,
+      jurisdiction: source.jurisdiction,
+      agencyCode: source.agencyCode,
+      module: source.module,
+      parcelIdentifier: normalizedParcelIdentifier,
+      searchKey,
+    });
+    await page.goto(source.portalUrl, {
+      waitUntil: "domcontentloaded",
+      timeout: 60_000,
+    });
+    await waitForSearchFormOrFailure(page);
+    const initialHtml = await page.content();
+    const initialClassification = classifyBrowardAccelaPage(initialHtml);
+    if (
+      initialClassification === "access_blocked" ||
+      initialClassification === "source_error"
+    ) {
+      requireSuccessfulPageClassification(
+        initialHtml,
+        source,
+        page.url(),
+        "search form load",
+      );
+    }
+    if (await page.$(DEFAULT_SELECTORS.parcel) === null) {
+      throw new BrowardAccelaSourceError(
+        "unexpected_response",
+        source,
+        `${source.jurisdiction} Accela did not expose the configured public parcel field`,
+        page.url(),
+      );
+    }
+
+    await setAccelaInput(page, DEFAULT_SELECTORS.startDate, "");
+    await setAccelaInput(page, DEFAULT_SELECTORS.endDate, "");
+    await setAccelaInput(
+      page,
+      DEFAULT_SELECTORS.parcel,
+      normalizedParcelIdentifier,
+    );
+    await Promise.allSettled([
+      page.waitForNavigation({
+        waitUntil: "domcontentloaded",
+        timeout: 60_000,
+      }),
+      page.click(DEFAULT_SELECTORS.submit),
+    ]);
+    await waitForSearchOutcome(page);
+
+    for (let pageNumber = 1; pageNumber <= maxPages; pageNumber += 1) {
+      const html = await page.content();
+      const text = htmlToText(html);
+      const classification = requireSuccessfulPageClassification(
+        html,
+        source,
+        page.url(),
+        `parcel search ${searchKey} page ${String(pageNumber)}`,
+      );
+      const directDetail = extractBrowardAccelaDirectDetailLink({
+        html,
+        pageUrl: page.url(),
+        source,
+        searchKey,
+        pageNumber,
+      });
+      if (directDetail !== null) {
+        pages.push({
+          pageNumber,
+          url: page.url(),
+          resultSummary: "detail page",
+          html,
+        });
+        permits.push(directDetail);
+        reportedTotal = 1;
+        break;
+      }
+
+      const parsedSummary = parseResultSummary(text);
+      reportedTotal = reportedTotal ?? parsedSummary.total;
+      pages.push({
+        pageNumber,
+        url: page.url(),
+        resultSummary: parsedSummary.summary,
+        html,
+      });
+      if (classification === "no_records") {
+        if (pageNumber !== 1 || permits.length > 0) {
+          throw new BrowardAccelaSourceError(
+            "unexpected_response",
+            source,
+            `${source.jurisdiction} Accela mixed an explicit no-records marker with record pages`,
+            page.url(),
+          );
+        }
+        logger.info("broward_accela_parcel_no_records", {
+          sourceKey: source.key,
+          parcelIdentifier: normalizedParcelIdentifier,
+          searchKey,
+        });
+        return {
+          status: "no_records",
+          searchKey,
+          parcelIdentifier: normalizedParcelIdentifier,
+          source,
+          permits: [],
+          pages,
+          reportedTotal: 0,
+        };
+      }
+
+      const pageLinks = extractBrowardAccelaPermitLinks({
+        html,
+        source,
+        searchKey,
+        pageNumber,
+      });
+      if (pageLinks.length === 0) {
+        throw new BrowardAccelaSourceError(
+          "unexpected_response",
+          source,
+          `${source.jurisdiction} Accela indicated records but exposed no permit detail links on page ${String(pageNumber)}`,
+          page.url(),
+        );
+      }
+      permits.push(...pageLinks);
+      logger.info("broward_accela_parcel_page_captured", {
+        sourceKey: source.key,
+        parcelIdentifier: normalizedParcelIdentifier,
+        pageNumber,
+        pagePermitCount: pageLinks.length,
+        reportedTotal,
+      });
+
+      const nextAvailable = await hasNextPage(page);
+      if (!nextAvailable) {
+        if (reportedTotal !== null && permits.length < reportedTotal) {
+          throw new BrowardAccelaSourceError(
+            "incomplete_pagination",
+            source,
+            `${source.jurisdiction} Accela exposed ${String(permits.length)} of ${String(reportedTotal)} reported records without a next page`,
+            page.url(),
+          );
+        }
+        break;
+      }
+      if (pageNumber === maxPages) {
+        throw new BrowardAccelaSourceError(
+          "incomplete_pagination",
+          source,
+          `${source.jurisdiction} Accela still exposed a next page at the maxPages limit ${String(maxPages)}`,
+          page.url(),
+        );
+      }
+
+      const priorSummary = parsedSummary.summary;
+      if (!(await clickNextPage(page))) {
+        throw new BrowardAccelaSourceError(
+          "incomplete_pagination",
+          source,
+          `${source.jurisdiction} Accela next-page control disappeared before it could be clicked`,
+          page.url(),
+        );
+      }
+      await page.waitForFunction(
+        (previousSummary) => {
+          const bodyText = document.body?.innerText ?? "";
+          if (
+            /Your search returned no results|No records found|access denied|captcha|technical difficulties|unable to proceed|Object reference not set|error\(s\) occurred on current page/i.test(
+              bodyText,
+            )
+          ) {
+            return true;
+          }
+          const match =
+            /Showing\s+([0-9,]+\s*-\s*[0-9,]+\s+of\s+[0-9,]+)/i.exec(
+              bodyText,
+            );
+          const current =
+            match === null ? null : match[1].replace(/\s+/g, " ").trim();
+          return current !== null && current !== previousSummary;
+        },
+        { timeout: 60_000 },
+        priorSummary,
+      );
+    }
+  } finally {
+    await page.close().catch(() => undefined);
+  }
+
+  /** @type {Map<string, BrowardAccelaPermitLink>} */
+  const deduped = new Map();
+  for (const permit of permits) {
+    const key = permit.recordNumber.toUpperCase();
+    const existing = deduped.get(key);
+    if (existing !== undefined && existing.url !== permit.url) {
+      throw new BrowardAccelaSourceError(
+        "identity_mismatch",
+        source,
+        `${source.jurisdiction} Accela returned conflicting detail URLs for record ${permit.recordNumber}`,
+        permit.url,
+      );
+    }
+    deduped.set(key, permit);
+  }
+  if (deduped.size === 0) {
+    throw new BrowardAccelaSourceError(
+      "unexpected_response",
+      source,
+      `${source.jurisdiction} Accela completed without records or an explicit no-records marker`,
+      source.portalUrl,
+    );
+  }
+  if (reportedTotal !== null && deduped.size < reportedTotal) {
+    throw new BrowardAccelaSourceError(
+      "incomplete_pagination",
+      source,
+      `${source.jurisdiction} Accela captured ${String(deduped.size)} unique records from ${String(reportedTotal)} reported records`,
+      source.portalUrl,
+    );
+  }
+  return {
+    status: "records",
+    searchKey,
+    parcelIdentifier: normalizedParcelIdentifier,
+    source,
+    permits: [...deduped.values()],
+    pages,
+    reportedTotal,
+  };
+}
+
+/**
+ * Extract public document and related links using the configured jurisdiction
+ * origin rather than Lee County's agency path.
+ *
+ * @param {string} html - Complete Accela detail HTML.
+ * @param {BrowardAccelaSource} source - Jurisdiction source.
+ * @returns {{ documentLinks: import("../../workflow/lambdas/permit-harvest-worker/lee-accela.mjs").ExtractedLink[], relatedLinks: import("../../workflow/lambdas/permit-harvest-worker/lee-accela.mjs").ExtractedLink[] }} Public link groups.
+ */
+function extractSourceDetailLinks(html, source) {
+  const $ = cheerio.load(html);
+  /** @type {import("../../workflow/lambdas/permit-harvest-worker/lee-accela.mjs").ExtractedLink[]} */
+  const documentLinks = [];
+  /** @type {import("../../workflow/lambdas/permit-harvest-worker/lee-accela.mjs").ExtractedLink[]} */
+  const relatedLinks = [];
+  $("a[href]").each((_, element) => {
+    const anchor = $(element);
+    const href = anchor.attr("href");
+    if (href === undefined || /^javascript:/i.test(href)) return;
+    let url;
+    try {
+      url = normalizeSourceUrl(href, source);
+    } catch (caught) {
+      if (caught instanceof BrowardAccelaSourceError) return;
+      throw caught;
+    }
+    const link = {
+      text: collapseText(anchor.text()),
+      url,
+      title: anchor.attr("title") ?? null,
+    };
+    if (
+      /urlrouting\.ashx|document|eplan|digitalprojects|GetDocument/i.test(
+        `${href} ${link.text}`,
+      )
+    ) {
+      documentLinks.push(link);
+    } else if (
+      /RelatedRecords|CapDetail|Inspection|Report/i.test(
+        `${href} ${link.text}`,
+      )
+    ) {
+      relatedLinks.push(link);
+    }
+  });
+  return { documentLinks, relatedLinks };
+}
+
+/**
+ * Parse one compatible public Accela detail page into the existing permit
+ * artifact shape while retaining jurisdiction-specific source identity and the
+ * exact submitted Broward folio.
+ *
+ * @param {object} params - Detail extraction parameters.
+ * @param {string} params.html - Complete source HTML.
+ * @param {string} params.sourceUrl - Final browser URL.
+ * @param {BrowardAccelaSource} params.source - Jurisdiction source.
+ * @param {string} params.parcelIdentifier - Exact submitted Broward folio.
+ * @param {BrowardAccelaPermitLink} params.permit - Reconciled search-result link.
+ * @param {string} [params.retrievedAt] - Injectable ISO timestamp for deterministic fixtures.
+ * @returns {BrowardAccelaPermitRecord} Normalized, provenance-rich permit record.
+ */
+export function extractBrowardAccelaPermitDetail({
+  html,
+  sourceUrl,
+  source,
+  parcelIdentifier,
+  permit,
+  retrievedAt = new Date().toISOString(),
+}) {
+  const canonicalParcel = normalizeBrowardPermitFolio(parcelIdentifier);
+  const text = htmlToText(html);
+  const header =
+    /Record\s+([A-Z0-9][A-Z0-9./_-]{1,79})\s*:\s*(.*?)\s+Record Status:/i.exec(
+      text,
+    );
+  const detailRecordNumber =
+    header === null ? permit.recordNumber : readRecordNumber(header[1]);
+  if (
+    detailRecordNumber === null ||
+    detailRecordNumber.toUpperCase() !== permit.recordNumber.toUpperCase()
+  ) {
+    throw new BrowardAccelaSourceError(
+      "identity_mismatch",
+      source,
+      `${source.jurisdiction} Accela detail identity differs from search record ${permit.recordNumber}`,
+      sourceUrl,
+    );
+  }
+  const recordType =
+    header === null ? permit.recordType : collapseText(header[2]) || null;
+  const moreDetailsRawText = matchCollapsedText(
+    text,
+    /More Details\s+(.*?)(?:Fees\s+\*?Fee Reductions|Inspections|Processing Status|Related Records|$)/i,
+  );
+  const moreDetails = parseMoreDetails(moreDetailsRawText);
+  const rawSourceParcel =
+    moreDetails["Parcel Number"] ??
+    matchCollapsedText(
+      text,
+      /Parcel (?:Information\s+)?(?:Number|No\.?):\s*([A-Z0-9-]{12,16})/i,
+    );
+  /** @type {string | null} */
+  let sourceParcelIdentifier = null;
+  if (rawSourceParcel !== null && rawSourceParcel !== undefined) {
+    try {
+      sourceParcelIdentifier = normalizeBrowardPermitFolio(rawSourceParcel);
+    } catch {
+      sourceParcelIdentifier = null;
+    }
+  }
+  if (
+    sourceParcelIdentifier !== null &&
+    sourceParcelIdentifier !== canonicalParcel
+  ) {
+    throw new BrowardAccelaSourceError(
+      "identity_mismatch",
+      source,
+      `${source.jurisdiction} Accela detail parcel ${sourceParcelIdentifier} differs from submitted parcel ${canonicalParcel}`,
+      sourceUrl,
+    );
+  }
+  const inspectionsRawText = matchCollapsedText(
+    text,
+    /Inspections\s+(.*?)(?:Digital Projects|Processing Status|Related Records|$)/i,
+  );
+  const processingStatusRawText = matchCollapsedText(
+    text,
+    /Processing Status\s+(.*?)(?:Related Records|$)/i,
+  );
+  const { documentLinks, relatedLinks } = extractSourceDetailLinks(html, source);
+  const workLocation = matchCollapsedText(
+    text,
+    /Work Location\s+(.*?)\s+\*\s+Record Details/i,
+  );
+  const applicant = matchCollapsedText(
+    text,
+    /Applicant:\s*(.*?)\s+Licensed Professional:/i,
+  );
+  const licensedProfessional = matchCollapsedText(
+    text,
+    /Licensed Professional:\s*(.*?)\s+Project Description:/i,
+  );
+  const projectDescription = matchCollapsedText(
+    text,
+    /Project Description:\s*(.*?)(?:More Details|Fees|Inspections|Processing Status|Related Records)/i,
+  );
+
+  return {
+    schemaVersion: "permit-harvest.accela.v1",
+    source: source.sourceSystem,
+    sourceSystem: source.sourceSystem,
+    jurisdiction: source.jurisdiction,
+    retrievedAt,
+    sourceUrl: normalizeSourceUrl(sourceUrl, source),
+    recordNumber: detailRecordNumber,
+    recordType,
+    recordStatus: cleanRecordStatus(
+      matchCollapsedText(
+        text,
+        /Record Status:\s*(.*?)(?:Click here for more information|Create a New Collection|Add to Existing Collection|Record Info|Work Location)/i,
+      ) ?? permit.status,
+    ),
+    workLocation: workLocation ?? permit.address,
+    parcelIdentifier: canonicalParcel,
+    sourceParcelIdentifier,
+    applicant,
+    licensedProfessional,
+    projectDescription: projectDescription ?? permit.description,
+    moreDetails,
+    moreDetailsRawText,
+    inspectionsRawText,
+    completedInspections: parseCompletedInspections(text),
+    processingStatusRawText,
+    documentLinks,
+    relatedLinks,
+    rawText: text,
+    sourceSearchResult: permit,
+    idempotencyKey: `${source.sourceSystem}:permit:${detailRecordNumber}`,
+    provenance: {
+      searchMethod: "public_anonymous_parcel",
+      anonymous: true,
+      submittedParcelIdentifier: canonicalParcel,
+      searchUrl: source.portalUrl,
+      searchKey: permit.sourceSearchKey,
+      resultPage: permit.sourcePage,
+      agencyCode: source.agencyCode,
+      module: source.module,
+      officialEvidenceUrl: source.officialEvidenceUrl,
+      historicalCutoff: source.historicalCutoff,
+      separateHistoricalSource: source.separateHistoricalSource,
+    },
+  };
+}
+
+/**
+ * Capture and normalize one public detail page. Explicit source/access errors
+ * remain failures; unlike the Lee historic fallback, no Broward record is
+ * synthesized from a list row when its jurisdictional detail cannot be read.
+ *
+ * @param {object} params - Detail capture parameters.
+ * @param {import("puppeteer").Browser} params.browser - Reused anonymous browser.
+ * @param {BrowardAccelaSource} params.source - Jurisdiction source.
+ * @param {string} params.parcelIdentifier - Exact submitted Broward folio.
+ * @param {BrowardAccelaPermitLink} params.permit - Search-result permit link.
+ * @param {Logger} params.logger - Structured local logger.
+ * @returns {Promise<BrowardAccelaDetailCapture>} Raw and normalized detail.
+ */
+export async function captureBrowardAccelaPermitDetail({
+  browser,
+  source,
+  parcelIdentifier,
+  permit,
+  logger,
+}) {
+  const page = await createConfiguredPage(browser);
+  try {
+    logger.info("broward_accela_detail_open", {
+      sourceKey: source.key,
+      parcelIdentifier,
+      recordNumber: permit.recordNumber,
+      url: permit.url,
+    });
+    await page.goto(permit.url, {
+      waitUntil: "domcontentloaded",
+      timeout: 60_000,
+    });
+    await page.waitForFunction(
+      (recordNumber) => {
+        const text = document.body?.innerText ?? "";
+        return (
+          text.toUpperCase().includes(String(recordNumber).toUpperCase()) ||
+          /access denied|captcha|technical difficulties|unable to proceed|Object reference not set|error\(s\) occurred on current page|temporarily unavailable/i.test(
+            text,
+          )
+        );
+      },
+      { timeout: 60_000 },
+      permit.recordNumber,
+    );
+    const html = await page.content();
+    requireSuccessfulPageClassification(
+      html,
+      source,
+      page.url(),
+      `detail ${permit.recordNumber}`,
+    );
+    return {
+      html,
+      record: extractBrowardAccelaPermitDetail({
+        html,
+        sourceUrl: page.url(),
+        source,
+        parcelIdentifier,
+        permit,
+      }),
+    };
+  } finally {
+    await page.close().catch(() => undefined);
+  }
+}
+
+/**
+ * Create a reusable anonymous browser with the same tested Chromium mechanism
+ * as Lee Accela. Exported here keeps the local CLI independent of AWS.
+ *
+ * @param {Logger} logger - Structured local logger.
+ * @returns {Promise<import("puppeteer").Browser>} Headless browser.
+ */
+export function createBrowardAccelaBrowser(logger) {
+  return createBrowser(logger);
+}
+
+/**
+ * Build a stable local raw-detail filename without exposing record text as an
+ * unbounded path segment.
+ *
+ * @param {BrowardAccelaPermitLink} permit - Search-result permit link.
+ * @returns {string} Stable filename stem.
+ */
+export function buildBrowardAccelaPermitStem(permit) {
+  return `${safeKeyPart(permit.recordNumber)}-${shortHash(permit.url)}`;
+}
+
+/**
+ * Create a new empty local checkpoint.
+ *
+ * @param {string} [updatedAt] - Injectable timestamp for deterministic tests.
+ * @returns {BrowardAccelaCheckpoint} Empty checkpoint.
+ */
+export function createBrowardAccelaCheckpoint(
+  updatedAt = new Date().toISOString(),
+) {
+  return {
+    schemaVersion: "broward-accela-local-checkpoint.v1",
+    updatedAt,
+    targets: {},
+  };
+}
+
+/**
+ * Read and validate a local checkpoint. A missing file starts a new checkpoint;
+ * malformed or foreign state fails closed instead of silently restarting.
+ *
+ * @param {string} checkpointPath - Local JSON checkpoint path.
+ * @returns {Promise<BrowardAccelaCheckpoint>} Valid checkpoint state.
+ */
+export async function readBrowardAccelaCheckpoint(checkpointPath) {
+  try {
+    const parsed = JSON.parse(await readFile(checkpointPath, "utf8"));
+    if (
+      !isRecord(parsed) ||
+      parsed.schemaVersion !== "broward-accela-local-checkpoint.v1" ||
+      !isRecord(parsed.targets) ||
+      typeof parsed.updatedAt !== "string"
+    ) {
+      throw new Error(
+        `Invalid Broward Accela checkpoint schema: ${checkpointPath}`,
+      );
+    }
+    return /** @type {BrowardAccelaCheckpoint} */ (parsed);
+  } catch (caught) {
+    if (isNodeError(caught) && caught.code === "ENOENT") {
+      return createBrowardAccelaCheckpoint();
+    }
+    throw caught;
+  }
+}
+
+/**
+ * Atomically replace a mode-0600 local checkpoint after creating its parent.
+ *
+ * @param {string} checkpointPath - Local JSON checkpoint path.
+ * @param {BrowardAccelaCheckpoint} checkpoint - Complete state to persist.
+ * @returns {Promise<void>} Resolves after atomic rename.
+ */
+export async function writeBrowardAccelaCheckpoint(
+  checkpointPath,
+  checkpoint,
+) {
+  checkpoint.updatedAt = new Date().toISOString();
+  await mkdir(dirname(checkpointPath), { recursive: true });
+  const temporaryPath = `${checkpointPath}.${String(process.pid)}.tmp`;
+  await writeFile(
+    temporaryPath,
+    `${JSON.stringify(checkpoint, null, 2)}\n`,
+    {
+      encoding: "utf8",
+      mode: 0o600,
+    },
+  );
+  await rename(temporaryPath, checkpointPath);
+}
+
+/**
+ * Narrow an unknown value to an object record.
+ *
+ * @param {unknown} value - Candidate value.
+ * @returns {value is Record<string, unknown>} Whether the value is an object record.
+ */
+function isRecord(value) {
+  return (
+    value !== null &&
+    typeof value === "object" &&
+    Array.isArray(value) === false
+  );
+}
+
+/**
+ * Narrow an unknown thrown value to a Node-style error with a string code.
+ *
+ * @param {unknown} value - Caught value.
+ * @returns {value is Error & { code: string }} Whether a string error code is present.
+ */
+function isNodeError(value) {
+  return (
+    value instanceof Error &&
+    "code" in value &&
+    typeof value.code === "string"
+  );
+}
