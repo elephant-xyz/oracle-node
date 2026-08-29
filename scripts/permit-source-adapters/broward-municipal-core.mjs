@@ -215,7 +215,9 @@ export function validateMunicipalQueries(queries, maxQueries = MAX_QUERIES) {
   const identities = new Set();
   for (const query of queries) {
     if (!["permit_number", "address", "folio"].includes(query.kind)) {
-      throw new Error(`Unsupported Broward municipal query kind: ${query.kind}`);
+      throw new Error(
+        `Unsupported Broward municipal query kind: ${query.kind}`,
+      );
     }
     if (typeof query.value !== "string" || query.value.trim().length === 0) {
       throw new Error("Broward municipal query value must be non-empty text");
@@ -286,7 +288,11 @@ export function validateMunicipalProbeLimits(limits = {}) {
  */
 export function decideMunicipalSourceAccess(config) {
   if (config.accessMode === "login_required") {
-    return { action: "skip", reason: "login_required", note: config.accessNote };
+    return {
+      action: "skip",
+      reason: "login_required",
+      note: config.accessNote,
+    };
   }
   if (config.accessMode === "captcha_required") {
     return {
@@ -296,7 +302,11 @@ export function decideMunicipalSourceAccess(config) {
     };
   }
   if (config.accessMode === "records_request") {
-    return { action: "skip", reason: "records_request", note: config.accessNote };
+    return {
+      action: "skip",
+      reason: "records_request",
+      note: config.accessNote,
+    };
   }
   if (config.probeStatus === "landing_only") {
     return { action: "skip", reason: "landing_only", note: config.accessNote };
@@ -384,7 +394,9 @@ export function validateMunicipalCheckpoint(value, config, queries) {
     candidate.completed &&
     /** @type {number} */ (candidate.nextQueryIndex) !== queries.length
   ) {
-    throw new Error("Completed Broward municipal checkpoint has pending queries");
+    throw new Error(
+      "Completed Broward municipal checkpoint has pending queries",
+    );
   }
   return {
     version: 1,
@@ -545,7 +557,11 @@ export async function runBoundedMunicipalCapture({
       (page.nextPage.length === 0 ||
         page.nextPage.length > 2_048 ||
         page.nextPage === pageNumber);
-    if (invalidNumericPage || invalidCursor) {
+    const invalidPageType =
+      page.nextPage !== null &&
+      typeof page.nextPage !== "number" &&
+      typeof page.nextPage !== "string";
+    if (invalidNumericPage || invalidCursor || invalidPageType) {
       throw new Error("Broward municipal source returned invalid pagination");
     }
 

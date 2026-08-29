@@ -38,9 +38,7 @@ const CLICK2GOV_CAPABILITIES = Object.freeze({
 });
 
 const ESUITE_CAPABILITIES = Object.freeze({
-  searchBy: Object.freeze(
-    /** @type {const} */ (["permit_number", "address"]),
-  ),
+  searchBy: Object.freeze(/** @type {const} */ (["permit_number", "address"])),
   pagination: /** @type {const} */ ("numbered"),
   detail: /** @type {const} */ ("same_session"),
   inspections: true,
@@ -56,8 +54,7 @@ export const BROWARD_MUNICIPAL_PERMIT_JURISDICTIONS = Object.freeze([
     jurisdiction: "Pompano Beach",
     sourceSystem: "pompano_beach_click2gov_permits",
     protocol: "click2gov",
-    searchUrl:
-      "https://c2g.pompanobeachfl.gov/Click2GovBP/selectpermit.html",
+    searchUrl: "https://c2g.pompanobeachfl.gov/Click2GovBP/selectpermit.html",
     officialEvidenceUrl:
       "https://c2g.pompanobeachfl.gov/Click2GovBP/selectpermit.html",
     accessMode: "anonymous",
@@ -86,8 +83,7 @@ export const BROWARD_MUNICIPAL_PERMIT_JURISDICTIONS = Object.freeze([
     jurisdiction: "Margate",
     sourceSystem: "margate_click2gov_permits",
     protocol: "click2gov",
-    searchUrl:
-      "https://marg-egov.aspgov.com/Click2GovBP/selectpermit.html",
+    searchUrl: "https://marg-egov.aspgov.com/Click2GovBP/selectpermit.html",
     officialEvidenceUrl:
       "https://marg-egov.aspgov.com/Click2GovBP/selectpermit.html",
     accessMode: "anonymous",
@@ -171,8 +167,7 @@ export const BROWARD_MUNICIPAL_PERMIT_JURISDICTIONS = Object.freeze([
     protocol: "gov_easy",
     searchUrl:
       "https://apps.gov-easy.com/Home/PermitInspection/Search?clientId=d60f9827-2c53-44a4-9037-31e1de2b3f09",
-    officialEvidenceUrl:
-      "https://www.tppfl.gov/194/Online-Permitting-System",
+    officialEvidenceUrl: "https://www.tppfl.gov/194/Online-Permitting-System",
     accessMode: "captcha_required",
     probeStatus: "blocked",
     accessNote:
@@ -214,8 +209,7 @@ export const BROWARD_MUNICIPAL_PERMIT_JURISDICTIONS = Object.freeze([
     sourceSystem: "lauderdale_lakes_opengov_permits",
     protocol: "opengov",
     searchUrl: "https://lauderdalelakesfl.portal.opengov.com/search",
-    officialEvidenceUrl:
-      "https://lauderdalelakesfl.portal.opengov.com/search",
+    officialEvidenceUrl: "https://lauderdalelakesfl.portal.opengov.com/search",
     accessMode: "anonymous",
     probeStatus: "landing_only",
     accessNote:
