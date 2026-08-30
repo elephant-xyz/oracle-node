@@ -17,6 +17,11 @@
     "install-workspaces": "npm install --workspaces",
     "catalog:update": "node scripts/update-published-county-catalog.mjs",
     "polk:appraisal:local": "node scripts/build-polk-local-appraisal.mjs",
+    "polk:status": "node scripts/polk-local-status.mjs",
+    "polk:dashboard": "node scripts/polk-local-dashboard.mjs",
+    "polk:publication:prepare": "node scripts/prepare-polk-local-publication.mjs",
+    "polk:overture:probe": "node scripts/extract-overture-places.mjs --county polk --county-name Polk --county-fips 12105 --release 2026-08-19.0 --boundary-source tiger/tl_2024_us_county --counts-only --output-dir tmp/polk/overture/2026-08-19.0/probe --cache-dir tmp/polk/overture/cache",
+    "polk:overture:extract": "node scripts/extract-overture-places.mjs --county polk --county-name Polk --county-fips 12105 --release 2026-08-19.0 --boundary-source tiger/tl_2024_us_county --output-dir tmp/polk/overture/2026-08-19.0/extract --cache-dir tmp/polk/overture/cache",
     "query-post-logs": "node scripts/query_post_logs.js",
     "update-elephant-cli": "npm install @elephant-xyz/cli@latest --workspace=prepare/lambdas/downloader --workspace=workflow/lambdas/submit --workspace=workflow/lambdas/pre --workspace=workflow/lambdas/mvl"
   },
