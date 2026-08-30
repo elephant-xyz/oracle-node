@@ -1,6 +1,6 @@
 {
   "schemaVersion": "1.0",
-  "generatedAt": "2026-08-29T20:45:00.000Z",
+  "generatedAt": "2026-08-30T17:50:46.028Z",
   "counties": [
     {
       "countyKey": "chester",
@@ -97,6 +97,18 @@
       "permitQueryTableUrl": null,
       "placesTableUrl": null,
       "updatedAt": "2026-08-28T09:30:10.000Z"
+    },
+    {
+      "countyKey": "polk",
+      "countyName": "Polk",
+      "stateCode": "FL",
+      "countyFips": "12105",
+      "status": "published",
+      "queryTableUrl": "https://ipfs.filebase.io/ipns/k51qzi5uqu5dj7acu8xg9ugfk670m8b185q4h7pz2gp8cv3mos15ftb4yz6w7o",
+      "datasetCoverageUrl": "https://ipfs.filebase.io/ipns/k51qzi5uqu5diaoycedqekfs0osktwx8py1h8s7h0gspga18rksi3kumrs52nq/",
+      "permitQueryTableUrl": null,
+      "placesTableUrl": null,
+      "updatedAt": "2026-08-30T17:50:46.028Z"
     },
     {
       "countyKey": "rock-island",
