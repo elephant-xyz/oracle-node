@@ -6,6 +6,10 @@ import {
   parsePilotArgs,
   parseSeedCsvText,
 } from "../../scripts/hillsborough/lib.mjs";
+import {
+  classifyFailure,
+  withTransientRetry,
+} from "../../scripts/hillsborough/run-state.mjs";
 
 describe("hillsborough local pilot lib", () => {
   it("parses pilot CLI args", () => {
@@ -13,12 +17,21 @@ describe("hillsborough local pilot lib", () => {
       "--limit=12",
       "--load",
       "--concurrency=3",
+      "--resume",
+      "--job-id=hillsborough-test",
       "--seed=downloads/hillsborough/pilot-seed-50.csv",
     ]);
     expect(options.limit).toBe(12);
     expect(options.load).toBe(true);
     expect(options.concurrency).toBe(3);
+    expect(options.skipExisting).toBe(true);
+    expect(options.resume).toBe(true);
+    expect(options.jobId).toBe("hillsborough-test");
     expect(options.seedPath).toBe("downloads/hillsborough/pilot-seed-50.csv");
+  });
+
+  it("treats --limit=all as unrestricted", () => {
+    expect(parsePilotArgs(["--limit=all"]).limit).toBeNull();
   });
 
   it("parses quoted CSV rows", () => {
@@ -68,7 +81,16 @@ describe("hillsborough local pilot lib", () => {
       salesHistory: [],
       permitInfo: [],
       landLines: [],
-      buildings: [],
+      buildings: [
+        {
+          yearBuilt: "1978",
+          heatedArea: 1200,
+          bedrooms: 3,
+          bathrooms: 2,
+          stories: 1,
+          constructionInfo: [],
+        },
+      ],
       fullLegal: "LOT 1",
     });
     expect(html).toContain("Property Use:");
@@ -77,5 +99,30 @@ describe("hillsborough local pilot lib", () => {
     expect(html).toContain("Site Address");
     expect(html).toContain("Value Summary");
     expect(html).toContain("publicOwner");
+    expect(html).toContain('class="report-table"');
+    expect(html).toContain("Actual Year Built");
+    expect(html).toContain("1978");
+  });
+
+  it("classifies transient vs permanent failures", () => {
+    expect(classifyFailure(new Error("ParcelData HTTP 503"))).toBe("transient");
+    expect(classifyFailure(new Error("timeout waiting"))).toBe("transient");
+    expect(classifyFailure(new Error("missing source_identifier/pin"))).toBe(
+      "permanent",
+    );
+  });
+
+  it("retries transient failures then succeeds", async () => {
+    let attempts = 0;
+    const value = await withTransientRetry(
+      async () => {
+        attempts += 1;
+        if (attempts < 3) throw new Error("HTTP 502 bad gateway");
+        return "ok";
+      },
+      { maxAttempts: 3, baseDelayMs: 1 },
+    );
+    expect(value).toBe("ok");
+    expect(attempts).toBe(3);
   });
 });

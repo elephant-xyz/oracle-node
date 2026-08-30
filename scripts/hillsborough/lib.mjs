@@ -3,6 +3,9 @@
  * @module scripts/hillsborough/lib
  */
 
+import { createReadStream } from "node:fs";
+import { createInterface } from "node:readline";
+
 /**
  * @typedef {object} HillsboroughSeedRow
  * @property {string} parcel_id
@@ -39,30 +42,170 @@ export const JURISDICTION_KEY = "hillsborough_appraiser";
  * @returns {{
  *   load: boolean;
  *   permits: boolean;
- *   limit: number;
+ *   limit: number | null;
+ *   offset: number;
  *   seedPath: string | null;
  *   outputRoot: string | null;
  *   skipExisting: boolean;
+ *   resume: boolean;
+ *   retryFailures: boolean;
+ *   jobId: string;
  *   concurrency: number;
+ *   maxAttempts: number;
  * }}
  */
 export function parsePilotArgs(argv) {
+  const limitRaw = argv.find((arg) => arg.startsWith("--limit="))?.split("=")[1];
+  const jobFromArg = argv
+    .find((arg) => arg.startsWith("--job-id="))
+    ?.split("=")[1];
   return {
     load: argv.includes("--load"),
     permits: argv.includes("--permits"),
-    limit: Number.parseInt(
-      argv.find((arg) => arg.startsWith("--limit="))?.split("=")[1] ?? "50",
+    limit:
+      limitRaw === undefined || limitRaw === "all"
+        ? null
+        : Number.parseInt(limitRaw, 10),
+    offset: Number.parseInt(
+      argv.find((arg) => arg.startsWith("--offset="))?.split("=")[1] ?? "0",
       10,
     ),
-    seedPath: argv.find((arg) => arg.startsWith("--seed="))?.split("=")[1] ?? null,
+    seedPath:
+      argv.find((arg) => arg.startsWith("--seed="))?.split("=")[1] ?? null,
     outputRoot:
       argv.find((arg) => arg.startsWith("--output="))?.split("=")[1] ?? null,
-    skipExisting: argv.includes("--skip-existing"),
+    skipExisting:
+      argv.includes("--skip-existing") || argv.includes("--resume"),
+    resume: argv.includes("--resume"),
+    retryFailures: argv.includes("--retry-failures"),
+    jobId:
+      jobFromArg ||
+      `hillsborough-local-${new Date().toISOString().slice(0, 10)}`,
     concurrency: Number.parseInt(
-      argv.find((arg) => arg.startsWith("--concurrency="))?.split("=")[1] ?? "2",
+      argv.find((arg) => arg.startsWith("--concurrency="))?.split("=")[1] ??
+        "2",
+      10,
+    ),
+    maxAttempts: Number.parseInt(
+      argv
+        .find((arg) => arg.startsWith("--max-attempts="))
+        ?.split("=")[1] ?? "3",
       10,
     ),
   };
+}
+
+/**
+ * Stream seed CSV file row by row without loading the entire dataset into memory.
+ * @param {string} filePath
+ * @param {{ limit?: number | null, offset?: number }} [options]
+ * @returns {AsyncGenerator<HillsboroughSeedRow, void, unknown>}
+ */
+export async function* streamSeedCsvRows(filePath, options = {}) {
+  const limit = options.limit ?? null;
+  const offset = Math.max(options.offset || 0, 0);
+  const maxRows = limit != null ? offset + limit : null;
+  const rl = createInterface({
+    input: createReadStream(filePath, { encoding: "utf8" }),
+    crlfDelay: Infinity,
+  });
+
+  let header = null;
+  let rowIndex = 0;
+  let emitted = 0;
+
+  for await (const line of rl) {
+    if (!line.trim()) continue;
+    if (!header) {
+      header = splitCsvLine(line);
+      continue;
+    }
+    if (rowIndex < offset) {
+      rowIndex += 1;
+      continue;
+    }
+    const cols = splitCsvLine(line);
+    /** @type {Record<string, string>} */
+    const row = {};
+    for (let c = 0; c < header.length; c += 1) {
+      row[header[c]] = cols[c] ?? "";
+    }
+    if (row.parcel_id) {
+      yield /** @type {HillsboroughSeedRow} */ (row);
+      emitted += 1;
+      if (limit != null && emitted >= limit) {
+        break;
+      }
+    }
+    rowIndex += 1;
+    if (maxRows != null && rowIndex >= maxRows) {
+      break;
+    }
+  }
+}
+
+/**
+ * Count rows in seed CSV file efficiently using stream.
+ * @param {string} filePath
+ * @returns {Promise<number>}
+ */
+export async function countSeedCsvRows(filePath) {
+  const rl = createInterface({
+    input: createReadStream(filePath, { encoding: "utf8" }),
+    crlfDelay: Infinity,
+  });
+  let count = 0;
+  for await (const line of rl) {
+    if (line.trim()) count += 1;
+  }
+  return Math.max(count - 1, 0);
+}
+
+/**
+ * Read seed CSV file using a stream to support multi-hundred-MB county seeds.
+ * @param {string} filePath
+ * @param {{ limit?: number | null, offset?: number }} [options]
+ * @returns {Promise<HillsboroughSeedRow[]>}
+ */
+export async function readSeedCsvFile(filePath, options = {}) {
+  const limit = options.limit ?? null;
+  const offset = Math.max(options.offset || 0, 0);
+  const maxRows = limit != null ? offset + limit : null;
+  const rl = createInterface({
+    input: createReadStream(filePath, { encoding: "utf8" }),
+    crlfDelay: Infinity,
+  });
+
+  const rows = [];
+  let header = null;
+  let rowIndex = 0;
+
+  for await (const line of rl) {
+    if (!line.trim()) continue;
+    if (!header) {
+      header = splitCsvLine(line);
+      continue;
+    }
+    if (rowIndex < offset) {
+      rowIndex += 1;
+      continue;
+    }
+    const cols = splitCsvLine(line);
+    /** @type {Record<string, string>} */
+    const row = {};
+    for (let c = 0; c < header.length; c += 1) {
+      row[header[c]] = cols[c] ?? "";
+    }
+    if (row.parcel_id) {
+      rows.push(/** @type {HillsboroughSeedRow} */ (row));
+    }
+    rowIndex += 1;
+    if (maxRows != null && rowIndex >= maxRows) {
+      break;
+    }
+  }
+
+  return rows;
 }
 
 /**
@@ -201,19 +344,14 @@ export function formatMailingAddress(mailing) {
  * @returns {string}
  */
 export function buildInputHtmlFromParcelData(parcel) {
-  const pc =
-    /** @type {Record<string, unknown>} */ (parcel.propertyCard || {});
-  const landUse =
-    /** @type {{ code?: string, description?: string }} */ (
-      parcel.landUse || pc.landUse || {}
-    );
-  const subdivision =
-    /** @type {{ code?: string, description?: string }} */ (
-      parcel.subdivision || pc.subdivision || {}
-    );
-  const displayStrap = String(
-    pc.displayStrap || parcel.pin || "",
+  const pc = /** @type {Record<string, unknown>} */ (parcel.propertyCard || {});
+  const landUse = /** @type {{ code?: string, description?: string }} */ (
+    parcel.landUse || pc.landUse || {}
   );
+  const subdivision = /** @type {{ code?: string, description?: string }} */ (
+    parcel.subdivision || pc.subdivision || {}
+  );
+  const displayStrap = String(pc.displayStrap || parcel.pin || "");
   const propertyUse = formatPropertyUse(landUse);
   const siteAddress = String(parcel.siteAddress || "");
   const mailing = formatMailingAddress(
@@ -222,8 +360,9 @@ export function buildInputHtmlFromParcelData(parcel) {
     ),
   );
   const owner = String(parcel.owner || "").replace(/;\s*$/, "");
-  const legal =
-    String(parcel.fullLegal || pc.legalDescription || parcel.shortLegal || "");
+  const legal = String(
+    parcel.fullLegal || pc.legalDescription || parcel.shortLegal || "",
+  );
 
   const valueSummary = Array.isArray(parcel.valueSummary)
     ? parcel.valueSummary
@@ -237,9 +376,9 @@ export function buildInputHtmlFromParcelData(parcel) {
 
   const taxYear =
     pc.current && typeof pc.current === "object" && "_date" in pc.current
-      ? String(/** @type {{ _date?: string }} */ (pc.current)._date || "").slice(
-          -4,
-        )
+      ? String(
+          /** @type {{ _date?: string }} */ (pc.current)._date || "",
+        ).slice(-4)
       : "2025";
 
   const valueRows = valueSummary
@@ -290,8 +429,7 @@ export function buildInputHtmlFromParcelData(parcel) {
   const landRows = landLines
     .map((line) => {
       const l = /** @type {Record<string, unknown>} */ (line);
-      const lt =
-        /** @type {{ description?: string }} */ (l.landType || {});
+      const lt = /** @type {{ description?: string }} */ (l.landType || {});
       return `<tr>
   <td><span data-bind="text: publicLandType">${escapeHtml(lt.description || "")}</span></td>
   <td><span data-bind="text: publicUnits">${escapeHtml(l.units)}</span></td>
@@ -328,14 +466,18 @@ export function buildInputHtmlFromParcelData(parcel) {
       const heated =
         b.heatedArea != null
           ? b.heatedArea
-          : b.totalArea != null
-            ? b.totalArea
-            : "";
+          : b.grossArea != null
+            ? b.grossArea
+            : b.totalArea != null
+              ? b.totalArea
+              : "";
+      const gross = b.grossArea != null ? b.grossArea : heated;
+      const yearBuilt = b.actualYearBuilt || b.yearBuilt || "";
       return `
 <h4 class="section-header">Building ${idx + 1}</h4>
 <div class="section-wrap">
-  <table><tbody>
-    <tr><td>Actual Year Built</td><td></td><td>${escapeHtml(b.actualYearBuilt || b.yearBuilt || "")}</td></tr>
+  <table class="report-table"><tbody>
+    <tr><td>Actual Year Built</td><td></td><td>${escapeHtml(yearBuilt)}</td></tr>
     <tr><td>Effective Year Built</td><td></td><td>${escapeHtml(b.effectiveYearBuilt || "")}</td></tr>
     <tr><td>Bedrooms</td><td></td><td>${escapeHtml(b.bedrooms)}</td></tr>
     <tr><td>Bathrooms</td><td></td><td>${escapeHtml(b.bathrooms)}</td></tr>
@@ -343,9 +485,14 @@ export function buildInputHtmlFromParcelData(parcel) {
     <tr><td>Heated Area</td><td></td><td>${escapeHtml(heated)}</td></tr>
     ${charRows}
   </tbody></table>
-  <table class="subareas"><tbody>
-    <tr class="totals"><td>Total</td><td>${escapeHtml(heated)}</td></tr>
-  </tbody></table>
+  <h5>Building Sub Areas</h5>
+  <div class="table-container">
+    <table class="subareas">
+      <tfoot>
+        <tr><th>Total</th><th>${escapeHtml(gross)}</th><th>${escapeHtml(heated)}</th></tr>
+      </tfoot>
+    </table>
+  </div>
 </div>`;
     })
     .join("\n");
