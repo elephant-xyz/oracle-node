@@ -23,7 +23,6 @@ const baseCatalog = {
       queryTableUrl: "https://example.com/lee.parquet",
       datasetCoverageUrl: "https://example.com/lee-coverage.json",
       permitQueryTableUrl: null,
-      placesTableUrl: null,
       updatedAt: "2026-07-23T00:00:00.000Z",
     },
   ],
@@ -39,11 +38,14 @@ describe("published county catalog", () => {
 
     expect(result.counties.length).toBeGreaterThan(0);
     expect(result.counties.map((county) => county.countyKey)).toEqual([
+      "chester",
       "hillsborough",
       "lee",
       "miami-dade",
+      "montgomery",
       "orange",
       "palm-beach",
+      "pinellas",
       "rock-island",
     ]);
   });
@@ -65,7 +67,6 @@ describe("published county catalog", () => {
         queryTableUrl: "https://example.com/alameda.parquet",
         datasetCoverageUrl: "https://example.com/alameda-coverage.json",
         permitQueryTableUrl: null,
-        placesTableUrl: null,
         updatedAt: "2026-07-24T10:00:00.000Z",
       },
       "2026-07-24T10:01:00.000Z",
@@ -184,28 +185,6 @@ describe("published county catalog", () => {
 
     expect(requests.at(-1)).toEqual({
       url: "https://example.com/lee-permits.parquet",
-      method: "HEAD",
-    });
-  });
-
-  it("verifies an optional places table", async () => {
-    const requests = [];
-    const fetchImpl = async (url, init) => {
-      requests.push({ url: String(url), method: init?.method ?? "GET" });
-      if (init?.method === "HEAD") {
-        return new Response(null, { status: 200 });
-      }
-      return new Response(JSON.stringify({ county: "Lee" }), { status: 200 });
-    };
-    const county = {
-      ...validateCatalog(baseCatalog).counties[0],
-      placesTableUrl: "https://example.com/lee-places.parquet",
-    };
-
-    await verifyPublishedCountyArtifacts(county, fetchImpl);
-
-    expect(requests.at(-1)).toEqual({
-      url: "https://example.com/lee-places.parquet",
       method: "HEAD",
     });
   });
