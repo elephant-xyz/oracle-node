@@ -21,7 +21,7 @@ const BROWARD_TRANSFORM_PATCH_URL = new URL(
   import.meta.url,
 );
 const BROWARD_TRANSFORM_PATCH_SHA256 =
-  "0a5cddfc53ce778317694c8968964ec42586e6acb1588362941bb8f66c666582";
+  "ef1e201c20503ae00c2107db035801861f5baf6256245d7f64c558e4517d191a";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -141,6 +141,7 @@ describe("Broward appraisal validation harness", () => {
     expect(source).toContain("capturedInput?.input?.response");
     expect(source).toContain("relationship_property_has_structure.json");
     expect(source).toContain("relationship_property_has_utility.json");
+    expect(source).toContain("parsed = JSON.parse(rawHtml)");
   });
 
   it("renders a complete one-row seed without corrupting JSON or geometry", () => {

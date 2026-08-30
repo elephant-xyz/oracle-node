@@ -96,7 +96,7 @@ git am \
 ```
 
 Required SHA-256:
-`0a5cddfc53ce778317694c8968964ec42586e6acb1588362941bb8f66c666582`.
+`ef1e201c20503ae00c2107db035801861f5baf6256245d7f64c558e4517d191a`.
 The runtime scripts are then available at
 `/tmp/Counties-trasform-scripts/broward/scripts`. Captures and transforms remain
 private and are never uploaded.

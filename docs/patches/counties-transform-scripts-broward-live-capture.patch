@@ -1,7 +1,7 @@
-From 14c576e79e8feb307b519c7a71b663a2c7250f1a Mon Sep 17 00:00:00 2001
+From 93164393eda7e42dac9c1862a2b2a8c34d34a67b Mon Sep 17 00:00:00 2001
 From: Cursor Agent <cursoragent@cursor.com>
 Date: Sat, 29 Aug 2026 17:14:15 +0000
-Subject: [PATCH] Fix Broward live capture transforms
+Subject: [PATCH 1/2] Fix Broward live capture transforms
 
 ---
  broward/scripts/data_extractor.js             | 41 +++++++++-------
@@ -258,6 +258,39 @@ index 0cebe0c..f5d15df 100644
    const folio = parcel.folioNumber || "unknown";
  
    const utilities = {
+-- 
+2.43.0
+
+
+From 39af246bc087f694008b70eb4a1672fc92da18f1 Mon Sep 17 00:00:00 2001
+From: Cursor Agent <cursoragent@cursor.com>
+Date: Sun, 30 Aug 2026 16:35:52 +0000
+Subject: [PATCH 2/2] Parse Broward owner captures as raw JSON
+
+---
+ broward/scripts/ownerMapping.js | 8 ++++++--
+ 1 file changed, 6 insertions(+), 2 deletions(-)
+
+diff --git a/broward/scripts/ownerMapping.js b/broward/scripts/ownerMapping.js
+index 7aa4e9c..fdf24e3 100644
+--- a/broward/scripts/ownerMapping.js
++++ b/broward/scripts/ownerMapping.js
+@@ -427,9 +427,13 @@ const rawHtml = fs.readFileSync(inputPath, "utf8");
+ const $ = cheerio.load(rawHtml);
+ const pageText = $.root().text();
+ 
+-// Attempt to parse JSON content if present
++// Parse captured JSON before passing content through Cheerio. Cheerio's text
++// extraction decodes escaped control characters inside JSON string values,
++// which makes otherwise valid BCPA owner/address payloads fail JSON.parse.
+ let parsed = null;
+-if (pageText.trim().startsWith("{")) {
++if (rawHtml.trim().startsWith("{")) {
++  parsed = JSON.parse(rawHtml);
++} else if (pageText.trim().startsWith("{")) {
+   parsed = JSON.parse(pageText);
+ }
+ if (parsed && parsed.input && parsed.input.response) {
 -- 
 2.43.0
 
