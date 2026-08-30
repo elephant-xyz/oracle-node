@@ -13,7 +13,8 @@ describe("extract-full-permits", () => {
     expect(parseFullExtractArgs([])).toEqual({
       runDir: "downloads/hillsborough/full-run",
       seedPath: "downloads/hillsborough/full-seed.csv",
-      outputJsonl: "downloads/hillsborough/full-permits/normalized-permits.jsonl",
+      outputJsonl:
+        "downloads/hillsborough/full-permits/normalized-permits.jsonl",
       scorecardPath: "downloads/hillsborough/full-permits/scorecard.json",
     });
 
@@ -37,25 +38,43 @@ describe("extract-full-permits", () => {
   });
 
   it("classifies multi-trade permits accurately", () => {
-    const roof = classifyTradePermit({ descr: "Re-roof single family shingle", permitNum: "R-1" });
+    const roof = classifyTradePermit({
+      descr: "Re-roof single family shingle",
+      permitNum: "R-1",
+    });
     expect(roof.isRoof).toBe(true);
     expect(roof.isHvac).toBe(false);
 
-    const hvac = classifyTradePermit({ descr: "Replace 3-ton heat pump and condenser", permitNum: "M-1" });
+    const hvac = classifyTradePermit({
+      descr: "Replace 3-ton heat pump and condenser",
+      permitNum: "M-1",
+    });
     expect(hvac.isHvac).toBe(true);
     expect(hvac.isRoof).toBe(false);
 
-    const solar = classifyTradePermit({ descr: "Install 10kW rooftop photovoltaic solar array", permitNum: "S-1" });
+    const solar = classifyTradePermit({
+      descr: "Install 10kW rooftop photovoltaic solar array",
+      permitNum: "S-1",
+    });
     expect(solar.isSolar).toBe(true);
     expect(solar.isRoof).toBe(false);
 
-    const pool = classifyTradePermit({ descr: "In-ground swimming pool and screen enclosure", permitNum: "P-1" });
+    const pool = classifyTradePermit({
+      descr: "In-ground swimming pool and screen enclosure",
+      permitNum: "P-1",
+    });
     expect(pool.isPool).toBe(true);
 
-    const electrical = classifyTradePermit({ descr: "200A electrical service panel upgrade", permitNum: "E-1" });
+    const electrical = classifyTradePermit({
+      descr: "200A electrical service panel upgrade",
+      permitNum: "E-1",
+    });
     expect(electrical.isElectrical).toBe(true);
 
-    const plumbing = classifyTradePermit({ descr: "Replace 50 gallon water heater", permitNum: "PL-1" });
+    const plumbing = classifyTradePermit({
+      descr: "Replace 50 gallon water heater",
+      permitNum: "PL-1",
+    });
     expect(plumbing.isPlumbing).toBe(true);
   });
 
@@ -63,10 +82,14 @@ describe("extract-full-permits", () => {
     expect(parseUsDateToIso("10/14/2025")).toBe("2025-10-14");
     expect(parseUsDateToIso("invalid")).toBeNull();
     expect(
-      jurisdictionHintFromUrl("https://aca-prod.accela.com/TAMPA/Cap/CapDetail.aspx?capID=1"),
+      jurisdictionHintFromUrl(
+        "https://aca-prod.accela.com/TAMPA/Cap/CapDetail.aspx?capID=1",
+      ),
     ).toBe("TAMPA");
     expect(
-      jurisdictionHintFromUrl("https://aca-prod.accela.com/hcfl/Cap/CapDetail.aspx?capID=2"),
+      jurisdictionHintFromUrl(
+        "https://aca-prod.accela.com/hcfl/Cap/CapDetail.aspx?capID=2",
+      ),
     ).toBe("HCFL");
   });
 
@@ -79,7 +102,8 @@ describe("extract-full-permits", () => {
         permitType: "Z",
         descr: "ROOF REPLACEMENT AND SHINGLE REPAIR",
         estValue: "$18,500",
-        permitUrl: "https://aca-prod.accela.com/hcfl/Cap/CapDetail.aspx?Module=Building&capID1=HC&capID2=BTR",
+        permitUrl:
+          "https://aca-prod.accela.com/hcfl/Cap/CapDetail.aspx?Module=Building&capID1=HC&capID2=BTR",
       },
       seed: {
         folio: "0000010000",

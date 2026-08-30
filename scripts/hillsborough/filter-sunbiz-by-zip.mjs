@@ -52,7 +52,9 @@ export async function parseFilterSunbizArgs(argv) {
   /** @type {string[]} */
   let zipPrefixes = [];
   if (typeof values["zip-prefixes-file"] === "string") {
-    const parsed = JSON.parse(await readFile(values["zip-prefixes-file"], "utf8"));
+    const parsed = JSON.parse(
+      await readFile(values["zip-prefixes-file"], "utf8"),
+    );
     if (Array.isArray(parsed)) {
       zipPrefixes = parsed.map(String);
     } else if (

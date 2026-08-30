@@ -14,7 +14,8 @@ describe("extract-pilot-permits", () => {
     expect(parseExtractPilotPermitsArgs([])).toEqual({
       pilotRunDir: "downloads/hillsborough/pilot-run",
       seedPath: "downloads/hillsborough/pilot-seed-50.csv",
-      outputJsonl: "downloads/hillsborough/pilot-permits/normalized-permits.jsonl",
+      outputJsonl:
+        "downloads/hillsborough/pilot-permits/normalized-permits.jsonl",
       scorecardPath: "downloads/hillsborough/pilot-permits/scorecard.json",
     });
     expect(
@@ -64,7 +65,9 @@ describe("extract-pilot-permits", () => {
       ),
     ).toBe("TAMPA");
     expect(
-      jurisdictionHintFromUrl("https://aca-prod.accela.com/hcfl/Cap/CapHome.aspx"),
+      jurisdictionHintFromUrl(
+        "https://aca-prod.accela.com/hcfl/Cap/CapHome.aspx",
+      ),
     ).toBe("HCFL");
   });
 

@@ -163,7 +163,11 @@ export function parseUsDateToIso(value) {
   const month = Number(match[1]);
   const day = Number(match[2]);
   const year = Number(match[3]);
-  if (!Number.isFinite(month) || !Number.isFinite(day) || !Number.isFinite(year)) {
+  if (
+    !Number.isFinite(month) ||
+    !Number.isFinite(day) ||
+    !Number.isFinite(year)
+  ) {
     return null;
   }
   if (month < 1 || month > 12 || day < 1 || day > 31) return null;
@@ -210,11 +214,15 @@ export function classifyTradePermit(permit) {
  */
 export function normalizeEmbeddedPermit(params) {
   const permitNumber =
-    typeof params.permit.permitNum === "string" ? params.permit.permitNum.trim() : "";
+    typeof params.permit.permitNum === "string"
+      ? params.permit.permitNum.trim()
+      : "";
   if (!permitNumber) return null;
 
   const jurisdiction = jurisdictionHintFromUrl(
-    typeof params.permit.permitUrl === "string" ? params.permit.permitUrl : null,
+    typeof params.permit.permitUrl === "string"
+      ? params.permit.permitUrl
+      : null,
   );
   const sourceSystem =
     jurisdiction === "TAMPA"
@@ -233,7 +241,10 @@ export function normalizeEmbeddedPermit(params) {
     (typeof params.siteAddress === "string" && params.siteAddress.trim()) ||
     params.seed.address;
   const workLocationParts = [site];
-  if (params.seed.city && !site.toUpperCase().includes(params.seed.city.toUpperCase())) {
+  if (
+    params.seed.city &&
+    !site.toUpperCase().includes(params.seed.city.toUpperCase())
+  ) {
     workLocationParts.push(params.seed.city);
   }
   workLocationParts.push("FL");
@@ -246,7 +257,8 @@ export function normalizeEmbeddedPermit(params) {
       : `${params.seed.folio}:${permitNumber}`;
 
   const recordType =
-    typeof params.permit.permitType === "string" && params.permit.permitType.trim()
+    typeof params.permit.permitType === "string" &&
+    params.permit.permitType.trim()
       ? params.permit.permitType.trim()
       : null;
   const description =
@@ -259,7 +271,8 @@ export function normalizeEmbeddedPermit(params) {
   const directAccelaUrl =
     jurisdiction === "TAMPA" || jurisdiction === "HCFL"
       ? `https://aca-prod.accela.com/${jurisdiction}/Cap/CapDetail.aspx?Module=Building&TabName=Building&altId=${encodeURIComponent(permitNumber)}`
-      : typeof params.permit.permitUrl === "string" && params.permit.permitUrl.trim()
+      : typeof params.permit.permitUrl === "string" &&
+          params.permit.permitUrl.trim()
         ? params.permit.permitUrl.trim()
         : null;
 
@@ -273,7 +286,8 @@ export function normalizeEmbeddedPermit(params) {
     work_location: workLocation,
     permit_issue_date: parseUsDateToIso(params.permit.issueDate),
     record_status: null,
-    record_type: recordType ?? (description !== null ? description.slice(0, 64) : null),
+    record_type:
+      recordType ?? (description !== null ? description.slice(0, 64) : null),
     project_description: description,
     is_roof_permit: trades.isRoof,
     is_hvac_permit: trades.isHvac,
@@ -282,7 +296,9 @@ export function normalizeEmbeddedPermit(params) {
     is_electrical_permit: trades.isElectrical,
     is_plumbing_permit: trades.isPlumbing,
     estimated_value:
-      typeof params.permit.estValue === "string" ? params.permit.estValue : null,
+      typeof params.permit.estValue === "string"
+        ? params.permit.estValue
+        : null,
     jurisdiction_hint: jurisdiction,
     raw: {
       detail_id: detailId,
@@ -338,7 +354,9 @@ export async function streamExtractFullCountyPermits(options) {
   await mkdir(path.dirname(options.outputJsonl), { recursive: true });
   await mkdir(path.dirname(options.scorecardPath), { recursive: true });
 
-  const outStream = createWriteStream(options.outputJsonl, { encoding: "utf8" });
+  const outStream = createWriteStream(options.outputJsonl, {
+    encoding: "utf8",
+  });
 
   const rl = createInterface({
     input: createReadStream(options.seedPath, { encoding: "utf8" }),
@@ -387,10 +405,17 @@ export async function streamExtractFullCountyPermits(options) {
     if (batch.length === 0) return;
 
     const readPromises = batch.map(async (seed) => {
-      const parcelPath = path.join(options.runDir, seed.folio, "parcel-data.json");
+      const parcelPath = path.join(
+        options.runDir,
+        seed.folio,
+        "parcel-data.json",
+      );
       try {
         const rawText = await readFile(parcelPath, "utf8");
-        return { seed, parsed: /** @type {ParcelDataFile} */ (JSON.parse(rawText)) };
+        return {
+          seed,
+          parsed: /** @type {ParcelDataFile} */ (JSON.parse(rawText)),
+        };
       } catch {
         return { seed, parsed: null };
       }
@@ -403,7 +428,9 @@ export async function streamExtractFullCountyPermits(options) {
       parcelCountScanned += 1;
       if (!parsed) continue;
 
-      const permitInfo = Array.isArray(parsed.permitInfo) ? parsed.permitInfo : [];
+      const permitInfo = Array.isArray(parsed.permitInfo)
+        ? parsed.permitInfo
+        : [];
       if (permitInfo.length === 0) continue;
 
       parcelsWithPermits += 1;
@@ -436,12 +463,15 @@ export async function streamExtractFullCountyPermits(options) {
         else byJurisdiction.unknown += 1;
 
         if (norm.record_type) {
-          topRecordTypes[norm.record_type] = (topRecordTypes[norm.record_type] ?? 0) + 1;
+          topRecordTypes[norm.record_type] =
+            (topRecordTypes[norm.record_type] ?? 0) + 1;
         }
 
         if (norm.permit_issue_date) {
-          if (!minDate || norm.permit_issue_date < minDate) minDate = norm.permit_issue_date;
-          if (!maxDate || norm.permit_issue_date > maxDate) maxDate = norm.permit_issue_date;
+          if (!minDate || norm.permit_issue_date < minDate)
+            minDate = norm.permit_issue_date;
+          if (!maxDate || norm.permit_issue_date > maxDate)
+            maxDate = norm.permit_issue_date;
         }
 
         outputBuffer += `${JSON.stringify(norm)}\n`;
@@ -465,8 +495,15 @@ export async function streamExtractFullCountyPermits(options) {
         byJurisdiction,
         updatedAt: new Date().toISOString(),
       };
-      const progressPath = path.join(path.dirname(options.outputJsonl), "progress.json");
-      writeFile(progressPath, JSON.stringify(progressPayload, null, 2), "utf8").catch(() => {});
+      const progressPath = path.join(
+        path.dirname(options.outputJsonl),
+        "progress.json",
+      );
+      writeFile(
+        progressPath,
+        JSON.stringify(progressPayload, null, 2),
+        "utf8",
+      ).catch(() => {});
     }
   }
 
@@ -537,7 +574,11 @@ export async function streamExtractFullCountyPermits(options) {
     sampleRoofingPermitNumbers,
   };
 
-  await writeFile(options.scorecardPath, JSON.stringify(scorecard, null, 2), "utf8");
+  await writeFile(
+    options.scorecardPath,
+    JSON.stringify(scorecard, null, 2),
+    "utf8",
+  );
 
   const finalProgress = {
     status: "completed",
@@ -550,7 +591,10 @@ export async function streamExtractFullCountyPermits(options) {
     byJurisdiction,
     updatedAt: new Date().toISOString(),
   };
-  const progressPath = path.join(path.dirname(options.outputJsonl), "progress.json");
+  const progressPath = path.join(
+    path.dirname(options.outputJsonl),
+    "progress.json",
+  );
   await writeFile(progressPath, JSON.stringify(finalProgress, null, 2), "utf8");
 
   return scorecard;
@@ -580,7 +624,10 @@ async function main() {
   );
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(process.argv[1]).href
+) {
   main().catch((err) => {
     console.error(err);
     process.exit(1);

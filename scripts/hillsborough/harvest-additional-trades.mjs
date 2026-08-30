@@ -14,20 +14,30 @@ import { runContractorJoin } from "./match-contractors-crm.mjs";
 const TRADES = [
   {
     name: "Heating and Air Conditioning (HVAC)",
-    categoryUrl: "https://www.bbb.org/us/fl/tampa/category/heating-and-air-conditioning",
-    outputDir: path.resolve(process.cwd(), "downloads/hillsborough/bbb-harvest-hvac"),
+    categoryUrl:
+      "https://www.bbb.org/us/fl/tampa/category/heating-and-air-conditioning",
+    outputDir: path.resolve(
+      process.cwd(),
+      "downloads/hillsborough/bbb-harvest-hvac",
+    ),
     maxPages: 10,
   },
   {
     name: "Solar Energy Contractors",
-    categoryUrl: "https://www.bbb.org/us/fl/tampa/category/solar-energy-contractors",
-    outputDir: path.resolve(process.cwd(), "downloads/hillsborough/bbb-harvest-solar"),
+    categoryUrl:
+      "https://www.bbb.org/us/fl/tampa/category/solar-energy-contractors",
+    outputDir: path.resolve(
+      process.cwd(),
+      "downloads/hillsborough/bbb-harvest-solar",
+    ),
     maxPages: 10,
   },
 ];
 
 async function main() {
-  console.log("=== Starting Multi-Trade BBB Contractor Harvest (HVAC & Solar) ===");
+  console.log(
+    "=== Starting Multi-Trade BBB Contractor Harvest (HVAC & Solar) ===",
+  );
 
   for (const trade of TRADES) {
     console.log(`\n[Trade Harvest] Starting: ${trade.name}`);
@@ -70,12 +80,22 @@ async function main() {
     }
   }
 
-  console.log("\n[Contractor CRM] Rebuilding combined multi-trade contractor leaderboard...");
+  console.log(
+    "\n[Contractor CRM] Rebuilding combined multi-trade contractor leaderboard...",
+  );
   const leaderboard = await runContractorJoin({
-    enrichedJsonl: path.resolve(process.cwd(), "downloads/hillsborough/full-permits/enriched-permits.jsonl"),
-    outputPath: path.resolve(process.cwd(), "downloads/hillsborough/full-permits/contractor-leaderboard.json"),
+    enrichedJsonl: path.resolve(
+      process.cwd(),
+      "downloads/hillsborough/full-permits/enriched-permits.jsonl",
+    ),
+    outputPath: path.resolve(
+      process.cwd(),
+      "downloads/hillsborough/full-permits/contractor-leaderboard.json",
+    ),
   });
-  console.log(`[Contractor CRM] Leaderboard updated with ${leaderboard.topContractors.length} top contractors, ${leaderboard.matchedInBbbCrm} matched in BBB CRM!`);
+  console.log(
+    `[Contractor CRM] Leaderboard updated with ${leaderboard.topContractors.length} top contractors, ${leaderboard.matchedInBbbCrm} matched in BBB CRM!`,
+  );
   console.log("=== Multi-Trade BBB Contractor Harvest Finished ===");
 }
 

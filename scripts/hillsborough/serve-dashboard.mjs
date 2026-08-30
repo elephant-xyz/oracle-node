@@ -44,12 +44,16 @@ export const COUNTY_REGISTRY = {
     targetParcels: 524196,
     totalSeedParcels: 527880,
     appraiserUrl: "https://hcpafl.org",
-    gisFeatureServer: "https://maps.hillsboroughcounty.org/arcgis/rest/services/InfoLayers/HC_ParcelsPublic/FeatureServer/0",
+    gisFeatureServer:
+      "https://maps.hillsboroughcounty.org/arcgis/rest/services/InfoLayers/HC_ParcelsPublic/FeatureServer/0",
     permitVendors: ["Accela HillsGovHub (HCFL)", "Accela Tampa (TAMPA)"],
     ipns: {
-      openData: "k51qzi5uqu5diznbms9qjkf8wrebeq7qwhc4jzy620k5bb44qqnibp7cl7nx1f",
-      queryTable: "k51qzi5uqu5diqz0l68gfi22qk0w8aqhsm7pcgje535uz8vhu8p37ynm2po0fh",
-      coverage: "k51qzi5uqu5di5jghjwbpumnr2vt1crmaycqmtx673kw8pqp8dymecuig5x8jb",
+      openData:
+        "k51qzi5uqu5diznbms9qjkf8wrebeq7qwhc4jzy620k5bb44qqnibp7cl7nx1f",
+      queryTable:
+        "k51qzi5uqu5diqz0l68gfi22qk0w8aqhsm7pcgje535uz8vhu8p37ynm2po0fh",
+      coverage:
+        "k51qzi5uqu5di5jghjwbpumnr2vt1crmaycqmtx673kw8pqp8dymecuig5x8jb",
     },
   },
 };
@@ -78,7 +82,8 @@ export function parseServerArgs(argv) {
     "hillsborough";
   const outputRoot = resolve(
     ROOT,
-    argv.find((a) => a.startsWith("--output="))?.split("=")[1] || DEFAULT_OUTPUT,
+    argv.find((a) => a.startsWith("--output="))?.split("=")[1] ||
+      DEFAULT_OUTPUT,
   );
   const open = !argv.includes("--no-open");
   const port = portArg ? Number.parseInt(portArg, 10) : 3888;
@@ -95,7 +100,10 @@ export async function getLifecycleStatus(rootPath, countyKey = "hillsborough") {
   const county = COUNTY_REGISTRY[countyKey] || COUNTY_REGISTRY.hillsborough;
 
   // 1. Discovery State
-  const findingsPath = resolve(rootPath, `docs/${countyKey}-county-findings.md`);
+  const findingsPath = resolve(
+    rootPath,
+    `docs/${countyKey}-county-findings.md`,
+  );
   let hasDiscovery = false;
   try {
     await access(findingsPath);
@@ -103,7 +111,10 @@ export async function getLifecycleStatus(rootPath, countyKey = "hillsborough") {
   } catch {}
 
   // 2. Seed State
-  const seedPath = resolve(rootPath, `downloads/${countyKey}/pilot-seed-50.csv`);
+  const seedPath = resolve(
+    rootPath,
+    `downloads/${countyKey}/pilot-seed-50.csv`,
+  );
   const fullSeedPath = resolve(rootPath, `data/seeds/${countyKey}.csv`);
   let seedStatus = "pending";
   let seedCount = 0;
@@ -127,7 +138,10 @@ export async function getLifecycleStatus(rootPath, countyKey = "hillsborough") {
   let appraisalSpeed = 0;
   let appraisalEta = null;
   try {
-    const progressPath = resolve(rootPath, `downloads/${countyKey}/full-run/state/progress.json`);
+    const progressPath = resolve(
+      rootPath,
+      `downloads/${countyKey}/full-run/state/progress.json`,
+    );
     const progText = await readFile(progressPath, "utf8");
     const prog = JSON.parse(progText);
     if (prog.succeeded > 0) appraisalCount = prog.succeeded;
@@ -135,8 +149,14 @@ export async function getLifecycleStatus(rootPath, countyKey = "hillsborough") {
   } catch {}
 
   // 4. Permits & Sourcing State
-  const permitsScorecard = resolve(rootPath, `downloads/${countyKey}/full-permits/scorecard.json`);
-  const enrichmentProgPath = resolve(rootPath, `downloads/${countyKey}/full-permits/enrichment-progress.json`);
+  const permitsScorecard = resolve(
+    rootPath,
+    `downloads/${countyKey}/full-permits/scorecard.json`,
+  );
+  const enrichmentProgPath = resolve(
+    rootPath,
+    `downloads/${countyKey}/full-permits/enrichment-progress.json`,
+  );
   let permitsStatus = "pending";
   let permitsCount = 0;
   let permitsTradeCounts = {};
@@ -151,7 +171,10 @@ export async function getLifecycleStatus(rootPath, countyKey = "hillsborough") {
   } catch {
     // Check pilot permits
     try {
-      const pilotScorecard = resolve(rootPath, `downloads/${countyKey}/pilot-permits/scorecard.json`);
+      const pilotScorecard = resolve(
+        rootPath,
+        `downloads/${countyKey}/pilot-permits/scorecard.json`,
+      );
       const pscText = await readFile(pilotScorecard, "utf8");
       const psc = JSON.parse(pscText);
       permitsCount = psc.totalPermitsEmitted || 0;
@@ -171,7 +194,10 @@ export async function getLifecycleStatus(rootPath, countyKey = "hillsborough") {
   } catch {}
 
   // Sunbiz Slice
-  const sunbizZipPath = resolve(rootPath, `docs/${countyKey}-sunbiz-zip-prefixes.json`);
+  const sunbizZipPath = resolve(
+    rootPath,
+    `docs/${countyKey}-sunbiz-zip-prefixes.json`,
+  );
   let sunbizStatus = "pending";
   let sunbizCount = 0;
   try {
@@ -181,9 +207,19 @@ export async function getLifecycleStatus(rootPath, countyKey = "hillsborough") {
   } catch {}
 
   // BBB CRM
-  const bbbProfilesDir = resolve(rootPath, `downloads/${countyKey}/bbb-harvest/profiles`);
-  const bbbProbeDir = resolve(rootPath, `downloads/${countyKey}/bbb-probe/profiles`);
-  const bbbTargetDir = existsSync(bbbProfilesDir) ? bbbProfilesDir : (existsSync(bbbProbeDir) ? bbbProbeDir : null);
+  const bbbProfilesDir = resolve(
+    rootPath,
+    `downloads/${countyKey}/bbb-harvest/profiles`,
+  );
+  const bbbProbeDir = resolve(
+    rootPath,
+    `downloads/${countyKey}/bbb-probe/profiles`,
+  );
+  const bbbTargetDir = existsSync(bbbProfilesDir)
+    ? bbbProfilesDir
+    : existsSync(bbbProbeDir)
+      ? bbbProbeDir
+      : null;
   let bbbStatus = "pending";
   let bbbCount = 0;
   if (bbbTargetDir) {
@@ -197,7 +233,10 @@ export async function getLifecycleStatus(rootPath, countyKey = "hillsborough") {
   // 5. Warehouse State
   let warehouseStatus = "ready";
   try {
-    const chkPath = resolve(rootPath, `downloads/${countyKey}/appraisal-bulk-checkpoint.json`);
+    const chkPath = resolve(
+      rootPath,
+      `downloads/${countyKey}/appraisal-bulk-checkpoint.json`,
+    );
     const chkText = await readFile(chkPath, "utf8");
     const chk = JSON.parse(chkText);
     if (chk.status === "superseded") {
@@ -208,7 +247,10 @@ export async function getLifecycleStatus(rootPath, countyKey = "hillsborough") {
   } catch {}
 
   // 6. Publish State
-  const publishProgPath = resolve(rootPath, `downloads/${countyKey}/publish-progress.json`);
+  const publishProgPath = resolve(
+    rootPath,
+    `downloads/${countyKey}/publish-progress.json`,
+  );
   let publishStatus = "pending";
   let parquetCount = 0;
   let parquetSize = 0;
@@ -229,7 +271,8 @@ export async function getLifecycleStatus(rootPath, countyKey = "hillsborough") {
     stageNumber: 6,
     stageName: "Publish & IPFS",
     actionTitle: "County Ingestion & Publishing Complete",
-    description: "Hillsborough County query table is published to Filebase IPFS and bound to IPNS pointer k51qzi5uqu5diqz0l68gfi22qk0w8aqhsm7pcgje535uz8vhu8p37ynm2po0fh for live MCP querying.",
+    description:
+      "Hillsborough County query table is published to Filebase IPFS and bound to IPNS pointer k51qzi5uqu5diqz0l68gfi22qk0w8aqhsm7pcgje535uz8vhu8p37ynm2po0fh for live MCP querying.",
     command: `PROPERTY_QUERY_TABLE_MAP='{"hillsborough":"https://ipfs.filebase.io/ipns/k51qzi5uqu5diqz0l68gfi22qk0w8aqhsm7pcgje535uz8vhu8p37ynm2po0fh"}'`,
     status: "Published & Verified",
   };
@@ -239,7 +282,8 @@ export async function getLifecycleStatus(rootPath, countyKey = "hillsborough") {
       stageNumber: 1,
       stageName: "Discovery",
       actionTitle: "Run County Discovery",
-      description: "Perform appraisal and permit portal discovery, verify anti-bot posture and endpoints.",
+      description:
+        "Perform appraisal and permit portal discovery, verify anti-bot posture and endpoints.",
       command: `/county-discovery county=${countyKey} state=${county.state}`,
       status: "Required",
     };
@@ -248,7 +292,8 @@ export async function getLifecycleStatus(rootPath, countyKey = "hillsborough") {
       stageNumber: 2,
       stageName: "Seed Roll",
       actionTitle: "Generate Parcel Seed CSV",
-      description: "Query GIS FeatureServer to extract all parcel identifiers, straps, and geometry boundaries.",
+      description:
+        "Query GIS FeatureServer to extract all parcel identifiers, straps, and geometry boundaries.",
       command: `node scripts/hillsborough/build-full-seed.mjs`,
       status: "Required",
     };
@@ -257,7 +302,8 @@ export async function getLifecycleStatus(rootPath, countyKey = "hillsborough") {
       stageNumber: 3,
       stageName: "Appraisal Ingest",
       actionTitle: "Monitor Appraisal Downloader",
-      description: "Streaming appraisal parcels into warm worker transform pool.",
+      description:
+        "Streaming appraisal parcels into warm worker transform pool.",
       command: `node scripts/hillsborough-local-pilot.mjs --concurrency=32`,
       status: "In Progress",
     };
@@ -266,7 +312,8 @@ export async function getLifecycleStatus(rootPath, countyKey = "hillsborough") {
       stageNumber: 6,
       stageName: "Publish & IPFS",
       actionTitle: "County Ingestion & Publishing Complete",
-      description: "Hillsborough County query table is published to Filebase IPFS and bound to IPNS pointer k51qzi5uqu5diqz0l68gfi22qk0w8aqhsm7pcgje535uz8vhu8p37ynm2po0fh for live MCP querying.",
+      description:
+        "Hillsborough County query table is published to Filebase IPFS and bound to IPNS pointer k51qzi5uqu5diqz0l68gfi22qk0w8aqhsm7pcgje535uz8vhu8p37ynm2po0fh for live MCP querying.",
       command: `PROPERTY_QUERY_TABLE_MAP='{"hillsborough":"https://ipfs.filebase.io/ipns/k51qzi5uqu5diqz0l68gfi22qk0w8aqhsm7pcgje535uz8vhu8p37ynm2po0fh"}'`,
       status: "Published & Verified",
     };
@@ -307,7 +354,12 @@ export async function getLifecycleStatus(rootPath, countyKey = "hillsborough") {
         number: 4,
         title: "Permits & Sourcing",
         status: permitsStatus,
-        permits: { count: permitsCount, target: 958002, tradeCounts: permitsTradeCounts, enrichment: enrichmentData },
+        permits: {
+          count: permitsCount,
+          target: 958002,
+          tradeCounts: permitsTradeCounts,
+          enrichment: enrichmentData,
+        },
         sunbiz: { count: sunbizCount, status: sunbizStatus },
         bbb: { count: bbbCount, status: bbbStatus },
       },
@@ -315,7 +367,8 @@ export async function getLifecycleStatus(rootPath, countyKey = "hillsborough") {
         number: 5,
         title: "Postgres Warehouse",
         status: warehouseStatus,
-        description: "Postgres Relational DB & Staging Merges (Bypassed in favor of high-throughput direct Parquet)",
+        description:
+          "Postgres Relational DB & Staging Merges (Bypassed in favor of high-throughput direct Parquet)",
       },
       publish: {
         number: 6,
@@ -367,7 +420,11 @@ export async function startDashboardServer(options) {
         res.end(JSON.stringify(lifecycle));
       } catch (err) {
         res.writeHead(500, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
+        res.end(
+          JSON.stringify({
+            error: err instanceof Error ? err.message : String(err),
+          }),
+        );
       }
       return;
     }
@@ -375,7 +432,10 @@ export async function startDashboardServer(options) {
     // --- DISCOVERY FINDINGS ENDPOINT ---
     if (url.pathname === "/api/discovery") {
       try {
-        const findingsPath = resolve(ROOT, `docs/${options.county}-county-findings.md`);
+        const findingsPath = resolve(
+          ROOT,
+          `docs/${options.county}-county-findings.md`,
+        );
         const markdown = await readFile(findingsPath, "utf8");
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(
@@ -399,7 +459,12 @@ export async function startDashboardServer(options) {
         res.end(text);
       } catch {
         res.writeHead(404, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "Progress file not found", path: paths.progressPath }));
+        res.end(
+          JSON.stringify({
+            error: "Progress file not found",
+            path: paths.progressPath,
+          }),
+        );
       }
       return;
     }
@@ -422,7 +487,10 @@ export async function startDashboardServer(options) {
 
     if (url.pathname === "/api/permits/progress") {
       try {
-        const scorecardPath = resolve(ROOT, "downloads/hillsborough/full-permits/scorecard.json");
+        const scorecardPath = resolve(
+          ROOT,
+          "downloads/hillsborough/full-permits/scorecard.json",
+        );
         try {
           const scorecardText = await readFile(scorecardPath, "utf8");
           const sc = JSON.parse(scorecardText);
@@ -442,20 +510,29 @@ export async function startDashboardServer(options) {
           return;
         } catch {}
 
-        const progPath = resolve(ROOT, "downloads/hillsborough/full-permits/progress.json");
+        const progPath = resolve(
+          ROOT,
+          "downloads/hillsborough/full-permits/progress.json",
+        );
         const text = await readFile(progPath, "utf8");
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(text);
       } catch {
         try {
-          const jsonlPath = resolve(ROOT, "downloads/hillsborough/full-permits/normalized-permits.jsonl");
+          const jsonlPath = resolve(
+            ROOT,
+            "downloads/hillsborough/full-permits/normalized-permits.jsonl",
+          );
           const s = await stat(jsonlPath);
           const estimatedRecords = Math.round(s.size / 300);
           res.writeHead(200, { "Content-Type": "application/json" });
           res.end(
             JSON.stringify({
               status: "in_progress",
-              parcelsScanned: Math.min(524196, Math.round(estimatedRecords / 1.8)),
+              parcelsScanned: Math.min(
+                524196,
+                Math.round(estimatedRecords / 1.8),
+              ),
               seedTotal: 527880,
               totalPermitsEmitted: estimatedRecords,
               parcelsWithPermits: Math.round(estimatedRecords / 2.5),
@@ -481,7 +558,14 @@ export async function startDashboardServer(options) {
               totalPermitsEmitted: 0,
               parcelsWithPermits: 0,
               withAccelaUrl: 0,
-              tradeCounts: { roofing: 0, solar: 0, hvac_mechanical: 0, electrical: 0, plumbing: 0, demolition: 0 },
+              tradeCounts: {
+                roofing: 0,
+                solar: 0,
+                hvac_mechanical: 0,
+                electrical: 0,
+                plumbing: 0,
+                demolition: 0,
+              },
             }),
           );
         }
@@ -491,7 +575,10 @@ export async function startDashboardServer(options) {
 
     if (url.pathname === "/api/permits/samples") {
       try {
-        const jsonlPath = resolve(ROOT, "downloads/hillsborough/full-permits/normalized-permits.jsonl");
+        const jsonlPath = resolve(
+          ROOT,
+          "downloads/hillsborough/full-permits/normalized-permits.jsonl",
+        );
         const s = await stat(jsonlPath);
         const readSize = Math.min(s.size, 131072);
         const buffer = Buffer.alloc(readSize);
@@ -508,29 +595,51 @@ export async function startDashboardServer(options) {
         for (let i = lines.length - 1; i >= 0 && samples.length < 15; i--) {
           try {
             const p = JSON.parse(lines[i]);
-            if (p.is_roof_permit && p.permit_number && !seenPermits.has(p.permit_number)) {
+            if (
+              p.is_roof_permit &&
+              p.permit_number &&
+              !seenPermits.has(p.permit_number)
+            ) {
               seenPermits.add(p.permit_number);
-              
+
               let jurisdiction = "HCFL (County)";
               let sourceUrl = p.source_url;
               let portalLabel = "Accela Portal";
 
-              if (p.source_system === "tampa_accela" || p.jurisdiction_hint === "TAMPA" || (p.city && p.city.toLowerCase() === "tampa")) {
+              if (
+                p.source_system === "tampa_accela" ||
+                p.jurisdiction_hint === "TAMPA" ||
+                (p.city && p.city.toLowerCase() === "tampa")
+              ) {
                 jurisdiction = "TAMPA (City)";
-                const cleanNum = encodeURIComponent(String(p.permit_number).trim());
+                const cleanNum = encodeURIComponent(
+                  String(p.permit_number).trim(),
+                );
                 sourceUrl = `https://aca-prod.accela.com/TAMPA/Cap/CapDetail.aspx?Module=Building&TabName=Building&altId=${cleanNum}`;
                 portalLabel = "Tampa Accela";
-              } else if (p.city === "Plant City" || (p.source_url && p.source_url.includes("maintstar"))) {
+              } else if (
+                p.city === "Plant City" ||
+                (p.source_url && p.source_url.includes("maintstar"))
+              ) {
                 jurisdiction = "Plant City";
-                sourceUrl = p.source_url || `https://h8.maintstar.co/plantcity/portal/#/record/${encodeURIComponent(String(p.permit_number).trim())}`;
+                sourceUrl =
+                  p.source_url ||
+                  `https://h8.maintstar.co/plantcity/portal/#/record/${encodeURIComponent(String(p.permit_number).trim())}`;
                 portalLabel = "MaintStar Portal";
-              } else if (p.city === "Temple Terrace" || (p.source_url && p.source_url.includes("click2gov"))) {
+              } else if (
+                p.city === "Temple Terrace" ||
+                (p.source_url && p.source_url.includes("click2gov"))
+              ) {
                 jurisdiction = "Temple Terrace";
-                sourceUrl = p.source_url || "https://templeterracefl-egov.aspgov.com/Click2GovBP/";
+                sourceUrl =
+                  p.source_url ||
+                  "https://templeterracefl-egov.aspgov.com/Click2GovBP/";
                 portalLabel = "Click2Gov Portal";
               } else {
                 jurisdiction = "HCFL (County)";
-                const cleanNum = encodeURIComponent(String(p.permit_number).trim());
+                const cleanNum = encodeURIComponent(
+                  String(p.permit_number).trim(),
+                );
                 sourceUrl = `https://aca-prod.accela.com/HCFL/Cap/CapDetail.aspx?Module=Building&TabName=Building&altId=${cleanNum}`;
                 portalLabel = "HCFL Accela";
               }
@@ -541,7 +650,10 @@ export async function startDashboardServer(options) {
                 trade: "Roofing",
                 folio: p.parcel_identifier,
                 issueDate: p.permit_issue_date || p.issue_date || "--",
-                description: p.project_description || p.work_description || "Roofing installation/repair",
+                description:
+                  p.project_description ||
+                  p.work_description ||
+                  "Roofing installation/repair",
                 sourceUrl: sourceUrl || "#",
                 portalLabel,
               });
@@ -553,7 +665,11 @@ export async function startDashboardServer(options) {
         res.end(JSON.stringify({ samples }));
       } catch (err) {
         res.writeHead(500, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
+        res.end(
+          JSON.stringify({
+            error: err instanceof Error ? err.message : String(err),
+          }),
+        );
       }
       return;
     }
@@ -562,12 +678,18 @@ export async function startDashboardServer(options) {
       try {
         let permitScorecard = null;
         try {
-          const scPath = resolve(ROOT, "downloads/hillsborough/full-permits/scorecard.json");
+          const scPath = resolve(
+            ROOT,
+            "downloads/hillsborough/full-permits/scorecard.json",
+          );
           const scText = await readFile(scPath, "utf8");
           permitScorecard = JSON.parse(scText);
         } catch {
           try {
-            const pPath = resolve(ROOT, "downloads/hillsborough/pilot-permits/scorecard.json");
+            const pPath = resolve(
+              ROOT,
+              "downloads/hillsborough/pilot-permits/scorecard.json",
+            );
             const pText = await readFile(pPath, "utf8");
             permitScorecard = JSON.parse(pText);
           } catch {}
@@ -592,12 +714,16 @@ export async function startDashboardServer(options) {
             totalPermitsEmitted: permitScorecard?.totalPermitsEmitted || 958002,
             roofPermits: permitScorecard?.tradeCounts?.roofing || 162985,
             solarPermits: permitScorecard?.tradeCounts?.solar || 38320,
-            hvacPermits: permitScorecard?.tradeCounts?.hvac_mechanical || 210760,
-            electricalPermits: permitScorecard?.tradeCounts?.electrical || 143700,
+            hvacPermits:
+              permitScorecard?.tradeCounts?.hvac_mechanical || 210760,
+            electricalPermits:
+              permitScorecard?.tradeCounts?.electrical || 143700,
             plumbingPermits: permitScorecard?.tradeCounts?.plumbing || 114960,
-            demolitionPermits: permitScorecard?.tradeCounts?.demolition || 19160,
+            demolitionPermits:
+              permitScorecard?.tradeCounts?.demolition || 19160,
             status: "completed",
-            outputFile: "downloads/hillsborough/full-permits/normalized-permits.jsonl",
+            outputFile:
+              "downloads/hillsborough/full-permits/normalized-permits.jsonl",
           },
           sunbiz: {
             state: "Florida Division of Corporations",
@@ -644,14 +770,21 @@ export async function startDashboardServer(options) {
         res.end(JSON.stringify(sourcesData));
       } catch (err) {
         res.writeHead(500, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
+        res.end(
+          JSON.stringify({
+            error: err instanceof Error ? err.message : String(err),
+          }),
+        );
       }
       return;
     }
 
     if (url.pathname === "/api/publish/progress") {
       try {
-        const pubPath = resolve(ROOT, "downloads/hillsborough/publish-progress.json");
+        const pubPath = resolve(
+          ROOT,
+          "downloads/hillsborough/publish-progress.json",
+        );
         let data = { status: "idle", processedCount: 0, targetCount: 524196 };
         try {
           const text = await readFile(pubPath, "utf8");
@@ -690,7 +823,11 @@ export async function startDashboardServer(options) {
                 permitsBatches = parsed.batchIndex || permitsBatches;
                 permitsStatus = "in_progress";
               } catch {}
-            } else if (line.includes('"event":"hillsborough_permits_bulk_load_completed"')) {
+            } else if (
+              line.includes(
+                '"event":"hillsborough_permits_bulk_load_completed"',
+              )
+            ) {
               permitsStatus = "completed";
               permitsRead = 958002;
               permitsPrepared = 1916004;
@@ -711,7 +848,10 @@ export async function startDashboardServer(options) {
         let appraisalStartedAt = null;
 
         try {
-          const chkPath = resolve(ROOT, "downloads/hillsborough/appraisal-bulk-checkpoint.json");
+          const chkPath = resolve(
+            ROOT,
+            "downloads/hillsborough/appraisal-bulk-checkpoint.json",
+          );
           const chkText = await readFile(chkPath, "utf8");
           const chk = JSON.parse(chkText);
           appraisalParcels = chk.parcelsRead || 0;
@@ -731,10 +871,15 @@ export async function startDashboardServer(options) {
             appraisalParcelsPerSecond = chk.parcelsPerSecond;
             appraisalEtaIso = chk.etaIso;
             appraisalEtaSeconds = chk.etaSeconds;
-            appraisalStatus = appraisalParcels >= 524196 ? "completed" : chk.status || "in_progress";
+            appraisalStatus =
+              appraisalParcels >= 524196
+                ? "completed"
+                : chk.status || "in_progress";
           } else if (appraisalParcels > 0) {
             const now = Date.now();
-            const startedMs = appraisalStartedAt ? new Date(appraisalStartedAt).getTime() : 1787971780000;
+            const startedMs = appraisalStartedAt
+              ? new Date(appraisalStartedAt).getTime()
+              : 1787971780000;
             const elapsedSec = Math.max(1, (now - startedMs) / 1000);
             const ratePerSec = appraisalParcels / elapsedSec;
             appraisalParcelsPerSecond = Number(ratePerSec.toFixed(1));
@@ -742,8 +887,14 @@ export async function startDashboardServer(options) {
             const remaining = Math.max(0, 524196 - appraisalParcels);
             const etaSec = ratePerSec > 0 ? remaining / ratePerSec : null;
             appraisalEtaSeconds = etaSec !== null ? Math.round(etaSec) : null;
-            appraisalEtaIso = etaSec !== null ? new Date(now + etaSec * 1000).toISOString() : null;
-            appraisalStatus = appraisalParcels >= 524196 ? "completed" : chk.status || "in_progress";
+            appraisalEtaIso =
+              etaSec !== null
+                ? new Date(now + etaSec * 1000).toISOString()
+                : null;
+            appraisalStatus =
+              appraisalParcels >= 524196
+                ? "completed"
+                : chk.status || "in_progress";
           } else {
             appraisalStatus = chk.status || "pending";
           }
@@ -785,7 +936,11 @@ export async function startDashboardServer(options) {
         );
       } catch (err) {
         res.writeHead(500, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
+        res.end(
+          JSON.stringify({
+            error: err instanceof Error ? err.message : String(err),
+          }),
+        );
       }
       return;
     }
@@ -796,8 +951,14 @@ export async function startDashboardServer(options) {
           resolve(ROOT, "downloads/hillsborough/bbb-harvest/profiles"),
           resolve(ROOT, "downloads/hillsborough/bbb-harvest-hvac/profiles"),
           resolve(ROOT, "downloads/hillsborough/bbb-harvest-solar/profiles"),
-          resolve(ROOT, "downloads/hillsborough/bbb-harvest-hvac/probe/profiles"),
-          resolve(ROOT, "downloads/hillsborough/bbb-harvest-solar/probe/profiles"),
+          resolve(
+            ROOT,
+            "downloads/hillsborough/bbb-harvest-hvac/probe/profiles",
+          ),
+          resolve(
+            ROOT,
+            "downloads/hillsborough/bbb-harvest-solar/probe/profiles",
+          ),
           resolve(ROOT, "downloads/hillsborough/bbb-probe/profiles"),
         ];
         const roofers = [];
@@ -814,7 +975,11 @@ export async function startDashboardServer(options) {
                 if (!line.trim()) continue;
                 try {
                   const obj = JSON.parse(line);
-                  const name = (obj.name || obj.businessName || obj.legalName)?.trim();
+                  const name = (
+                    obj.name ||
+                    obj.businessName ||
+                    obj.legalName
+                  )?.trim();
                   if (!name || seenNames.has(name)) continue;
                   seenNames.add(name);
 
@@ -825,7 +990,11 @@ export async function startDashboardServer(options) {
                       : Array.isArray(obj.contacts)
                         ? obj.contacts
                         : [];
-                  const manager = mgmt.find((m) => m.name)?.name || obj.principalName || obj.manager || null;
+                  const manager =
+                    mgmt.find((m) => m.name)?.name ||
+                    obj.principalName ||
+                    obj.manager ||
+                    null;
                   const managerTitle =
                     mgmt.find((m) => m.title || m.jobTitle || m.role)?.title ||
                     mgmt.find((m) => m.jobTitle)?.jobTitle ||
@@ -835,12 +1004,24 @@ export async function startDashboardServer(options) {
                     null;
 
                   const lics = Array.isArray(obj.licenses) ? obj.licenses : [];
-                  const licText = lics.map((l) => (typeof l === "string" ? l : (l.rawText || l.licenseNumber || ""))).join(" ");
-                  const licMatch = licText.match(/\b(CCC\d+|CBC\d+|CGC\d+|CMC\d+|CAC\d+|CVC\d+|EC\d+|I-CCC\d+)\b/i);
-                  const licenseNumber = licMatch ? licMatch[1].toUpperCase() : (obj.licenseNumber || null);
+                  const licText = lics
+                    .map((l) =>
+                      typeof l === "string"
+                        ? l
+                        : l.rawText || l.licenseNumber || "",
+                    )
+                    .join(" ");
+                  const licMatch = licText.match(
+                    /\b(CCC\d+|CBC\d+|CGC\d+|CMC\d+|CAC\d+|CVC\d+|EC\d+|I-CCC\d+)\b/i,
+                  );
+                  const licenseNumber = licMatch
+                    ? licMatch[1].toUpperCase()
+                    : obj.licenseNumber || null;
 
                   const cats = Array.isArray(obj.categories)
-                    ? obj.categories.map((c) => (typeof c === "string" ? c : c.name)).filter(Boolean)
+                    ? obj.categories
+                        .map((c) => (typeof c === "string" ? c : c.name))
+                        .filter(Boolean)
                     : targetDir.includes("hvac")
                       ? ["Air Conditioning & Heating"]
                       : targetDir.includes("solar")
@@ -853,14 +1034,26 @@ export async function startDashboardServer(options) {
                     legalName: obj.legalName || null,
                     rating: obj.bbbRating || obj.rating || "A+",
                     accredited: Boolean(obj.accredited),
-                    phone: obj.phone || (obj.contact && obj.contact.phoneNumber) || obj.primaryPhone || null,
+                    phone:
+                      obj.phone ||
+                      (obj.contact && obj.contact.phoneNumber) ||
+                      obj.primaryPhone ||
+                      null,
                     website: obj.websiteUrl || obj.website || null,
                     websiteUrl: obj.websiteUrl || obj.website || null,
                     yearsInBusiness: obj.yearsInBusiness || null,
                     city: obj.address?.addressLocality || obj.city || "Tampa",
                     state: obj.address?.addressRegion || obj.state || "FL",
-                    zip: obj.address?.postalCode || obj.zip || obj.postalCode || null,
-                    postalCode: obj.address?.postalCode || obj.zip || obj.postalCode || null,
+                    zip:
+                      obj.address?.postalCode ||
+                      obj.zip ||
+                      obj.postalCode ||
+                      null,
+                    postalCode:
+                      obj.address?.postalCode ||
+                      obj.zip ||
+                      obj.postalCode ||
+                      null,
                     principalName: manager,
                     principalTitle: managerTitle,
                     manager,
@@ -879,15 +1072,28 @@ export async function startDashboardServer(options) {
         res.end(JSON.stringify({ count: roofers.length, roofers }));
       } catch (err) {
         res.writeHead(500, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
+        res.end(
+          JSON.stringify({
+            error: err instanceof Error ? err.message : String(err),
+          }),
+        );
       }
       return;
     }
 
     if (url.pathname === "/api/contractors/leaderboard") {
       try {
-        const boardPath = resolve(ROOT, "downloads/hillsborough/full-permits/contractor-leaderboard.json");
-        let boardData = { scannedPermits: 0, permitsWithLicense: 0, uniqueContractors: 0, matchedInBbbCrm: 0, topContractors: [] };
+        const boardPath = resolve(
+          ROOT,
+          "downloads/hillsborough/full-permits/contractor-leaderboard.json",
+        );
+        let boardData = {
+          scannedPermits: 0,
+          permitsWithLicense: 0,
+          uniqueContractors: 0,
+          matchedInBbbCrm: 0,
+          topContractors: [],
+        };
         try {
           const text = await readFile(boardPath, "utf8");
           boardData = JSON.parse(text);
@@ -897,16 +1103,32 @@ export async function startDashboardServer(options) {
         res.end(JSON.stringify(boardData));
       } catch (err) {
         res.writeHead(500, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
+        res.end(
+          JSON.stringify({
+            error: err instanceof Error ? err.message : String(err),
+          }),
+        );
       }
       return;
     }
 
     if (url.pathname === "/api/permits/enrichment") {
       try {
-        const fullProgPath = resolve(ROOT, "downloads/hillsborough/full-permits/enrichment-progress.json");
-        const pilotPath = resolve(ROOT, "downloads/hillsborough/full-permits/enrichment-pilot-checkpoint.json");
-        let chkData = { processed: 0, enrichedCount: 0, licenseCount: 0, valuationCount: 0, status: "pending" };
+        const fullProgPath = resolve(
+          ROOT,
+          "downloads/hillsborough/full-permits/enrichment-progress.json",
+        );
+        const pilotPath = resolve(
+          ROOT,
+          "downloads/hillsborough/full-permits/enrichment-pilot-checkpoint.json",
+        );
+        let chkData = {
+          processed: 0,
+          enrichedCount: 0,
+          licenseCount: 0,
+          valuationCount: 0,
+          status: "pending",
+        };
         try {
           if (existsSync(fullProgPath)) {
             const text = await readFile(fullProgPath, "utf8");
@@ -921,16 +1143,29 @@ export async function startDashboardServer(options) {
         res.end(JSON.stringify(chkData));
       } catch (err) {
         res.writeHead(500, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
+        res.end(
+          JSON.stringify({
+            error: err instanceof Error ? err.message : String(err),
+          }),
+        );
       }
       return;
     }
 
     if (url.pathname === "/api/overture") {
       try {
-        const probePath = resolve(ROOT, "downloads/overture-places/hillsborough/probe/manifest/summary.json");
-        const fullSummaryPath = resolve(ROOT, "downloads/overture-places/hillsborough/2026-08-19.0/manifest/summary.json");
-        const placesParquetPath = resolve(ROOT, "downloads/overture-places/hillsborough/2026-08-19.0/places.parquet");
+        const probePath = resolve(
+          ROOT,
+          "downloads/overture-places/hillsborough/probe/manifest/summary.json",
+        );
+        const fullSummaryPath = resolve(
+          ROOT,
+          "downloads/overture-places/hillsborough/2026-08-19.0/manifest/summary.json",
+        );
+        const placesParquetPath = resolve(
+          ROOT,
+          "downloads/overture-places/hillsborough/2026-08-19.0/places.parquet",
+        );
 
         let summary = null;
         if (existsSync(fullSummaryPath)) {
@@ -944,11 +1179,15 @@ export async function startDashboardServer(options) {
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(
           JSON.stringify({
-            status: summary && !summary.mode?.includes("counts-only") ? "completed" : "in_progress",
+            status:
+              summary && !summary.mode?.includes("counts-only")
+                ? "completed"
+                : "in_progress",
             county: "hillsborough",
             countyFips: "12057",
             release: summary?.overtureRelease || "2026-08-19.0",
-            boundarySource: summary?.boundarySource || "tiger/tl_2024_us_county",
+            boundarySource:
+              summary?.boundarySource || "tiger/tl_2024_us_county",
             bboxCount: summary?.bboxCount || 146309,
             clipCount: summary?.clipCount || 81895,
             isParquetPresent,
@@ -968,7 +1207,11 @@ export async function startDashboardServer(options) {
         );
       } catch (err) {
         res.writeHead(500, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
+        res.end(
+          JSON.stringify({
+            error: err instanceof Error ? err.message : String(err),
+          }),
+        );
       }
       return;
     }
@@ -1004,7 +1247,9 @@ export async function startDashboardServer(options) {
         res.end(html);
       } catch (err) {
         res.writeHead(500, { "Content-Type": "text/plain" });
-        res.end(`Error loading dashboard.html: ${err instanceof Error ? err.message : String(err)}`);
+        res.end(
+          `Error loading dashboard.html: ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
       return;
     }

@@ -37,7 +37,12 @@ process.on("message", (msg) => {
       const sandbox = {
         require,
         process,
-        console: { log: () => {}, warn: () => {}, error: () => {}, info: () => {} },
+        console: {
+          log: () => {},
+          warn: () => {},
+          error: () => {},
+          info: () => {},
+        },
         Buffer,
         setTimeout,
         clearTimeout,

@@ -1,6 +1,6 @@
 /**
  * @fileoverview Plant City MaintStar Permit Portal Adapter.
- * 
+ *
  * Queries and parses permit data from the City of Plant City
  * MaintStar system (h8.maintstar.co/PlantCity).
  */
@@ -48,18 +48,29 @@ export function parseMaintStarRecord(raw) {
   if (!raw || typeof raw !== "object") return null;
 
   const id = typeof raw.id === "number" ? raw.id : 0;
-  const num = typeof raw.number === "string" ? raw.number : (typeof raw.projectNumber === "string" ? raw.projectNumber : "");
+  const num =
+    typeof raw.number === "string"
+      ? raw.number
+      : typeof raw.projectNumber === "string"
+        ? raw.projectNumber
+        : "";
   if (!num && !id) return null;
 
   const msType = typeof raw.msType === "string" ? raw.msType : null;
   const type = typeof raw.type === "string" ? raw.type : null;
   const status = typeof raw.status === "string" ? raw.status : null;
-  const dateVal = typeof raw.dateVal === "string" ? raw.dateVal : (typeof raw.createdDate === "string" ? raw.createdDate : null);
+  const dateVal =
+    typeof raw.dateVal === "string"
+      ? raw.dateVal
+      : typeof raw.createdDate === "string"
+        ? raw.createdDate
+        : null;
   const datePrefix = typeof raw.datePrefix === "string" ? raw.datePrefix : null;
   const address = typeof raw.address === "string" ? raw.address : null;
   const lat = typeof raw.lat === "number" ? raw.lat : null;
   const lng = typeof raw.lng === "number" ? raw.lng : null;
-  const description = typeof raw.description === "string" ? raw.description : null;
+  const description =
+    typeof raw.description === "string" ? raw.description : null;
 
   const typeDesc = `${msType || ""} ${type || ""} ${description || ""}`;
   const isRoof = /roof|shingle|tile|metal roof/i.test(typeDesc);
@@ -83,7 +94,7 @@ export function parseMaintStarRecord(raw) {
 /**
  * Search Plant City MaintStar permits by query (permit number, address, or keyword).
  * Implements exponential retry backoff for rate-quota protection.
- * 
+ *
  * @param {string} query - Permit number, address, or search term
  * @param {number} [maxRetries=3]
  * @returns {Promise<MaintStarSearchResult>}
@@ -100,9 +111,10 @@ export async function searchMaintStarPermits(query, maxRetries = 3) {
     try {
       const res = await fetch(endpoint, {
         headers: {
-          "Accept": "application/json",
+          Accept: "application/json",
           "X-Mst": "portal",
-          "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+          "User-Agent":
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         },
       });
 

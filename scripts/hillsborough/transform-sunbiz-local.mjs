@@ -88,10 +88,9 @@ export async function transformLocalSunbizExtract(options) {
   /** @type {Record<string, import('node:fs').WriteStream>} */
   const writers = {};
   for (const [classType, dir] of Object.entries(classDirs)) {
-    writers[classType] = createWriteStream(
-      path.join(dir, "part-0000.jsonl"),
-      { encoding: "utf8" },
-    );
+    writers[classType] = createWriteStream(path.join(dir, "part-0000.jsonl"), {
+      encoding: "utf8",
+    });
   }
 
   let sourceRecordCount = 0;
@@ -112,7 +111,10 @@ export async function transformLocalSunbizExtract(options) {
   }
 
   for (const fileName of files) {
-    if (options.maxRecords !== null && sourceRecordCount >= options.maxRecords) {
+    if (
+      options.maxRecords !== null &&
+      sourceRecordCount >= options.maxRecords
+    ) {
       break;
     }
     const reader = createInterface({
@@ -122,7 +124,10 @@ export async function transformLocalSunbizExtract(options) {
       crlfDelay: Infinity,
     });
     for await (const line of reader) {
-      if (options.maxRecords !== null && sourceRecordCount >= options.maxRecords) {
+      if (
+        options.maxRecords !== null &&
+        sourceRecordCount >= options.maxRecords
+      ) {
         break;
       }
       const trimmed = line.trim();
@@ -183,7 +188,11 @@ async function main() {
   const options = parseTransformLocalArgs(process.argv.slice(2));
   const summary = await transformLocalSunbizExtract(options);
   console.log(
-    JSON.stringify({ event: "hillsborough_sunbiz_transform_finished", ...summary }, null, 2),
+    JSON.stringify(
+      { event: "hillsborough_sunbiz_transform_finished", ...summary },
+      null,
+      2,
+    ),
   );
 }
 

@@ -3,7 +3,13 @@
  * @module scripts/hillsborough/run-state
  */
 
-import { mkdir, readFile, writeFile, appendFile, access } from "node:fs/promises";
+import {
+  mkdir,
+  readFile,
+  writeFile,
+  appendFile,
+  access,
+} from "node:fs/promises";
 import { join } from "node:path";
 
 /**
@@ -137,7 +143,11 @@ export async function initRunProgress(outputRoot, jobId, seed) {
       status: "running",
     };
   }
-  await writeFile(paths.progressPath, JSON.stringify(progress, null, 2), "utf8");
+  await writeFile(
+    paths.progressPath,
+    JSON.stringify(progress, null, 2),
+    "utf8",
+  );
   await writeFile(
     paths.statePath,
     JSON.stringify(
@@ -172,7 +182,7 @@ const ROLLING_WINDOW_MS = 60000;
 export async function writeRunProgress(outputRoot, jobId, progress, meta = {}) {
   const paths = runStatePaths(outputRoot, jobId);
   await mkdir(paths.jobDir, { recursive: true });
-  
+
   const now = Date.now();
   const done = progress.succeeded + progress.failed + progress.skipped;
 
@@ -184,7 +194,10 @@ export async function writeRunProgress(outputRoot, jobId, progress, meta = {}) {
   rollingSamples.push({ time: now, count: activeDone });
 
   // Evict samples older than ROLLING_WINDOW_MS
-  while (rollingSamples.length > 0 && now - rollingSamples[0].time > ROLLING_WINDOW_MS) {
+  while (
+    rollingSamples.length > 0 &&
+    now - rollingSamples[0].time > ROLLING_WINDOW_MS
+  ) {
     rollingSamples.shift();
   }
 
@@ -262,11 +275,7 @@ export async function appendFailure(outputRoot, jobId, record) {
  * @param {{ includePermanent?: boolean }} [options]
  * @returns {Promise<FailureRecord[]>}
  */
-export async function loadRetryableFailures(
-  outputRoot,
-  jobId,
-  options = {},
-) {
+export async function loadRetryableFailures(outputRoot, jobId, options = {}) {
   const paths = runStatePaths(outputRoot, jobId);
   if (!(await pathExists(paths.failuresPath))) return [];
   const text = await readFile(paths.failuresPath, "utf8");
@@ -285,7 +294,9 @@ export async function loadRetryableFailures(
   const includePermanent = options.includePermanent === true;
   return [...byFolio.values()].filter((row) => {
     if (includePermanent) return true;
-    return row.classification === "transient" || row.classification === "unknown";
+    return (
+      row.classification === "transient" || row.classification === "unknown"
+    );
   });
 }
 

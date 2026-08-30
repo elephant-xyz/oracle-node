@@ -1,17 +1,7 @@
 {
   "county": "hillsborough",
   "derivedFrom": "downloads/hillsborough/pilot-seed-50.csv",
-  "pilotExactZips": [
-    "33548",
-    "33558",
-    "33606",
-    "33609",
-    "33612",
-    "33635"
-  ],
-  "prefixes": [
-    "335",
-    "336"
-  ],
+  "pilotExactZips": ["33548", "33558", "33606", "33609", "33612", "33635"],
+  "prefixes": ["335", "336"],
   "notes": "Use 3-digit prefixes 335/336 for county-scoped Sunbiz extract (principal/mailing/agent/officer addresses)."
 }

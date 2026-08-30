@@ -84,7 +84,8 @@ export async function scorePilotEnrichment(params) {
     /** @type {Set<string>} */
     const streetBases = new Set();
     for (const row of pilot.rows) {
-      const base = /** @type {{ street_base: string | null }} */ (row).street_base;
+      const base = /** @type {{ street_base: string | null }} */ (row)
+        .street_base;
       if (base) streetBases.add(base);
     }
 
@@ -106,7 +107,8 @@ export async function scorePilotEnrichment(params) {
       if ((r.rowCount ?? 0) > 0) {
         streetPrefixHits += 1;
         const pin = pilot.rows.find(
-          (p) => /** @type {{ street_base: string }} */ (p).street_base === base,
+          (p) =>
+            /** @type {{ street_base: string }} */ (p).street_base === base,
         );
         if (pin) hitPins.push(/** @type {{ pin: string }} */ (pin).pin);
       }
@@ -165,8 +167,7 @@ export async function scorePilotEnrichment(params) {
       zipPrefixes: params.zipPrefixes,
       permits: permitStats.rows[0] ?? null,
       sunbiz: {
-        note:
-          "Statewide Sunbiz already present in Neon; exact address-key join is 0 because appraisal keys omit FL+ZIP while Sunbiz keys include them. Street-prefix (number+street+%tampa%) is the usable pilot join.",
+        note: "Statewide Sunbiz already present in Neon; exact address-key join is 0 because appraisal keys omit FL+ZIP while Sunbiz keys include them. Street-prefix (number+street+%tampa%) is the usable pilot join.",
         exactNormalizedKeyMatches: exact.rows[0]?.c ?? 0,
         streetPrefixMatches: streetPrefixHits,
         streetBasesTried: streetBases.size,
@@ -223,7 +224,11 @@ async function main() {
     zipPrefixes,
   });
   console.log(
-    JSON.stringify({ event: "pilot_enrichment_scorecard", ...scorecard }, null, 2),
+    JSON.stringify(
+      { event: "pilot_enrichment_scorecard", ...scorecard },
+      null,
+      2,
+    ),
   );
 }
 

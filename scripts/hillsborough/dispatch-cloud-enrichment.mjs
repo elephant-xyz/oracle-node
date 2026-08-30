@@ -32,7 +32,7 @@ const RATE_PER_INVOCATION = 0.0000002;
  */
 export function calculateLambdaCostUsd(durationMs) {
   const durationSec = Math.max(1, durationMs) / 1000;
-  return (durationSec * GB_PER_256MB * RATE_PER_GB_SEC) + RATE_PER_INVOCATION;
+  return durationSec * GB_PER_256MB * RATE_PER_GB_SEC + RATE_PER_INVOCATION;
 }
 
 /**
@@ -58,16 +58,36 @@ export async function runCloudPermitDispatch(options = {}) {
   // Golden rate concurrency (60-80 concurrency with 150ms request delay/jitter per worker in Lambda)
   const concurrency = options.concurrency || 75;
   const batchSize = options.batchSize || 60;
-  const maxCostUsd = options.maxCostUsd ?? 100.00;
+  const maxCostUsd = options.maxCostUsd ?? 100.0;
   const tradeFilter = options.trade || "all";
   const retryFailures = Boolean(options.retryFailures);
   const functionName = options.functionName || "hillsborough-permit-enricher";
   const region = options.region || process.env.AWS_REGION || "us-east-1";
 
-  const inputPath = options.inputJsonl || path.resolve(process.cwd(), "downloads/hillsborough/full-permits/normalized-permits.jsonl");
-  const outputPath = options.outputJsonl || path.resolve(process.cwd(), "downloads/hillsborough/full-permits/enriched-permits.jsonl");
-  const failuresPath = options.failuresJsonl || path.resolve(process.cwd(), "downloads/hillsborough/full-permits/enrichment-failures.jsonl");
-  const checkpointPath = options.checkpointPath || path.resolve(process.cwd(), "downloads/hillsborough/full-permits/enrichment-progress.json");
+  const inputPath =
+    options.inputJsonl ||
+    path.resolve(
+      process.cwd(),
+      "downloads/hillsborough/full-permits/normalized-permits.jsonl",
+    );
+  const outputPath =
+    options.outputJsonl ||
+    path.resolve(
+      process.cwd(),
+      "downloads/hillsborough/full-permits/enriched-permits.jsonl",
+    );
+  const failuresPath =
+    options.failuresJsonl ||
+    path.resolve(
+      process.cwd(),
+      "downloads/hillsborough/full-permits/enrichment-failures.jsonl",
+    );
+  const checkpointPath =
+    options.checkpointPath ||
+    path.resolve(
+      process.cwd(),
+      "downloads/hillsborough/full-permits/enrichment-progress.json",
+    );
 
   await mkdir(path.dirname(outputPath), { recursive: true });
 
@@ -99,7 +119,9 @@ export async function runCloudPermitDispatch(options = {}) {
   const contractorTally = new Map();
 
   if (existsSync(outputPath) && !retryFailures) {
-    console.log(`[cloud-dispatch] Checking existing output file for resume: ${outputPath}`);
+    console.log(
+      `[cloud-dispatch] Checking existing output file for resume: ${outputPath}`,
+    );
     const rlExisting = createInterface({
       input: createReadStream(outputPath),
       crlfDelay: Infinity,
@@ -109,13 +131,24 @@ export async function runCloudPermitDispatch(options = {}) {
       try {
         const parsed = JSON.parse(line);
         if (parsed.permit_number) {
-          const isDone = ["enriched", "no_details", "ok", "portal_404", "unsupported_portal"].includes(parsed.enrichment_status) ||
-            parsed.contractor !== null || parsed.job_valuation !== null;
-          
+          const isDone =
+            [
+              "enriched",
+              "no_details",
+              "ok",
+              "portal_404",
+              "unsupported_portal",
+            ].includes(parsed.enrichment_status) ||
+            parsed.contractor !== null ||
+            parsed.job_valuation !== null;
+
           if (isDone) {
             completedPermits.add(parsed.permit_number);
             processed++;
-            const isEnriched = parsed.enrichment_status === "enriched" || parsed.contractor !== null || parsed.job_valuation !== null;
+            const isEnriched =
+              parsed.enrichment_status === "enriched" ||
+              parsed.contractor !== null ||
+              parsed.job_valuation !== null;
             if (isEnriched) enrichedCount++;
             if (parsed.contractor?.licenseNumber) {
               licenseCount++;
@@ -130,11 +163,19 @@ export async function runCloudPermitDispatch(options = {}) {
         }
       } catch {}
     }
-    console.log(`[cloud-dispatch] Found ${completedPermits.size} previously completed permits (resuming)`);
+    console.log(
+      `[cloud-dispatch] Found ${completedPermits.size} previously completed permits (resuming)`,
+    );
   }
 
-  const outStream = createWriteStream(outputPath, { flags: retryFailures ? "w" : "a", encoding: "utf8" });
-  const failStream = createWriteStream(failuresPath, { flags: retryFailures ? "w" : "a", encoding: "utf8" });
+  const outStream = createWriteStream(outputPath, {
+    flags: retryFailures ? "w" : "a",
+    encoding: "utf8",
+  });
+  const failStream = createWriteStream(failuresPath, {
+    flags: retryFailures ? "w" : "a",
+    encoding: "utf8",
+  });
 
   const totalTarget = limit || (retryFailures ? failureCount : 958002);
   let newlyProcessed = 0;
@@ -144,7 +185,7 @@ export async function runCloudPermitDispatch(options = {}) {
 
   const startedAtMs = Date.now();
   let lastCheckpointWrite = Date.now();
-  
+
   // Rolling 30-second window rate estimation for rock-solid smooth ETA
   /** @type {Array<{ time: number, processed: number }>} */
   const rateHistory = [];
@@ -173,33 +214,62 @@ export async function runCloudPermitDispatch(options = {}) {
       smoothedRatePerSec = Number((deltaProc / deltaSec).toFixed(1));
     } else {
       const elapsedTotalSec = Math.max(1, (now - startedAtMs) / 1000);
-      smoothedRatePerSec = Number((newlyProcessed / elapsedTotalSec).toFixed(1));
+      smoothedRatePerSec = Number(
+        (newlyProcessed / elapsedTotalSec).toFixed(1),
+      );
     }
 
     const activeRate = smoothedRatePerSec > 0 ? smoothedRatePerSec : 1;
     const remaining = isCompleted ? 0 : Math.max(0, totalTarget - processed);
-    const etaSec = isCompleted ? 0 : (activeRate > 0 ? Math.round(remaining / activeRate) : null);
-    const etaIso = isCompleted ? null : (etaSec !== null ? new Date(now + etaSec * 1000).toISOString() : null);
+    const etaSec = isCompleted
+      ? 0
+      : activeRate > 0
+        ? Math.round(remaining / activeRate)
+        : null;
+    const etaIso = isCompleted
+      ? null
+      : etaSec !== null
+        ? new Date(now + etaSec * 1000).toISOString()
+        : null;
 
-    const avgValuation = valuationValues.length > 0
-      ? Math.round(valuationValues.reduce((a, b) => a + b, 0) / valuationValues.length)
-      : 0;
+    const avgValuation =
+      valuationValues.length > 0
+        ? Math.round(
+            valuationValues.reduce((a, b) => a + b, 0) / valuationValues.length,
+          )
+        : 0;
 
     const progressData = {
-      status: isBudgetExceeded ? "budget_exceeded" : (isCompleted || (totalTarget > 0 && processed >= totalTarget) ? "completed" : "in_progress"),
+      status: isBudgetExceeded
+        ? "budget_exceeded"
+        : isCompleted || (totalTarget > 0 && processed >= totalTarget)
+          ? "completed"
+          : "in_progress",
       mode: "aws_lambda_cloud",
       targetCount: totalTarget,
       processedCount: processed,
       newlyProcessedCount: newlyProcessed,
       enrichedCount,
-      enrichmentRatePct: processed > 0 ? ((enrichedCount / processed) * 100).toFixed(1) + "%" : "0.0%",
+      enrichmentRatePct:
+        processed > 0
+          ? ((enrichedCount / processed) * 100).toFixed(1) + "%"
+          : "0.0%",
       failedCount: failureCount,
-      failureRatePct: processed > 0 ? ((failureCount / processed) * 100).toFixed(1) + "%" : "0.0%",
+      failureRatePct:
+        processed > 0
+          ? ((failureCount / processed) * 100).toFixed(1) + "%"
+          : "0.0%",
       failureBreakdown,
       licenseCount,
-      licenseYieldPct: processed > 0 ? ((licenseCount / processed) * 100).toFixed(1) + "%" : "0.0%",
+      licenseYieldPct:
+        processed > 0
+          ? ((licenseCount / processed) * 100).toFixed(1) + "%"
+          : "0.0%",
       valuationCount,
-      valuationYieldPct: processed > 0 ? ((valuationCount / processed) * 100).toFixed(1) + "%" : "0.0%",
+      valuationYieldPct:
+        processed > 0
+          ? ((valuationCount / processed) * 100).toFixed(1) + "%"
+          : "0.0%",
       averageJobValuationUsd: avgValuation,
       uniqueContractorLicenses: contractorTally.size,
       ratePerSecond: activeRate,
@@ -210,19 +280,27 @@ export async function runCloudPermitDispatch(options = {}) {
         spentUsd: Number(totalSpentUsd.toFixed(4)),
         budgetCapUsd: maxCostUsd,
         invocationsCount: totalInvocations,
-        costPerPermitUsd: newlyProcessed > 0 ? Number((totalSpentUsd / newlyProcessed).toFixed(6)) : 0,
+        costPerPermitUsd:
+          newlyProcessed > 0
+            ? Number((totalSpentUsd / newlyProcessed).toFixed(6))
+            : 0,
       },
       updatedAt: new Date().toISOString(),
       startedAt: new Date(startedAtMs).toISOString(),
     };
 
     try {
-      await writeFile(checkpointPath, JSON.stringify(progressData, null, 2), "utf8");
+      await writeFile(
+        checkpointPath,
+        JSON.stringify(progressData, null, 2),
+        "utf8",
+      );
     } catch {}
   }
 
   // 2. Stream candidates in batches
-  const streamSourcePath = retryFailures && existsSync(failuresPath) ? failuresPath : inputPath;
+  const streamSourcePath =
+    retryFailures && existsSync(failuresPath) ? failuresPath : inputPath;
   const rl = createInterface({
     input: createReadStream(streamSourcePath),
     crlfDelay: Infinity,
@@ -232,7 +310,9 @@ export async function runCloudPermitDispatch(options = {}) {
   let currentBatch = [];
   let streamCount = 0;
 
-  console.log(`[cloud-dispatch] Initiating distributed cloud harvester (concurrency: ${concurrency}, batchSize: ${batchSize}, budget: $${maxCostUsd.toFixed(2)}, retryFailures: ${retryFailures})...`);
+  console.log(
+    `[cloud-dispatch] Initiating distributed cloud harvester (concurrency: ${concurrency}, batchSize: ${batchSize}, budget: $${maxCostUsd.toFixed(2)}, retryFailures: ${retryFailures})...`,
+  );
 
   // Active worker queue manager with FIFO waiting queue
   let activeInvocations = 0;
@@ -248,7 +328,9 @@ export async function runCloudPermitDispatch(options = {}) {
 
     if (totalSpentUsd >= maxCostUsd) {
       if (!isBudgetExceeded) {
-        console.warn(`[cloud-dispatch] BUDGET CAP REACHED ($${totalSpentUsd.toFixed(2)} / $${maxCostUsd.toFixed(2)}). Halting further dispatches.`);
+        console.warn(
+          `[cloud-dispatch] BUDGET CAP REACHED ($${totalSpentUsd.toFixed(2)} / $${maxCostUsd.toFixed(2)}). Halting further dispatches.`,
+        );
         isBudgetExceeded = true;
       }
       return;
@@ -285,7 +367,10 @@ export async function runCloudPermitDispatch(options = {}) {
     try {
       res = await lambdaClient.send(cmd);
     } catch (sendErr) {
-      console.error(`[cloud-dispatch] Lambda send failed (attempt ${attempt}):`, sendErr.message);
+      console.error(
+        `[cloud-dispatch] Lambda send failed (attempt ${attempt}):`,
+        sendErr.message,
+      );
       if (attempt <= 3) {
         await new Promise((r) => setTimeout(r, attempt * 2000));
         return invokeLambdaBatch(batch, attempt + 1);
@@ -308,10 +393,13 @@ export async function runCloudPermitDispatch(options = {}) {
         if (body.results && Array.isArray(body.results)) {
           for (const rec of body.results) {
             // Check if record is a transient error that should self-heal (rate_limited, fetch_error, 502/503)
-            const isTransient = ["rate_limited", "fetch_error"].includes(rec.enrichment_status);
-            const origItem = batch.find((b) => b.permit_number === rec.permit_number) || rec;
+            const isTransient = ["rate_limited", "fetch_error"].includes(
+              rec.enrichment_status,
+            );
+            const origItem =
+              batch.find((b) => b.permit_number === rec.permit_number) || rec;
             const retryCount = (origItem._retryCount || 0) + 1;
-            
+
             if (isTransient && retryCount <= 6) {
               // Self-heal: re-enqueue this specific item into the retry buffer with progressive delay
               origItem._retryCount = retryCount;
@@ -320,20 +408,33 @@ export async function runCloudPermitDispatch(options = {}) {
             }
 
             // Clean record status
-            const finalStatus = (rec.enrichment_status === "rate_limited" || rec.enrichment_status === "fetch_error")
-              ? "no_details"
-              : (rec.enrichment_status || "no_details");
+            const finalStatus =
+              rec.enrichment_status === "rate_limited" ||
+              rec.enrichment_status === "fetch_error"
+                ? "no_details"
+                : rec.enrichment_status || "no_details";
             rec.enrichment_status = finalStatus;
 
             outStream.write(JSON.stringify(rec) + "\n");
             processed++;
             newlyProcessed++;
 
-            const isEnriched = rec.enrichment_status === "enriched" || rec.contractor !== null || rec.job_valuation !== null;
+            const isEnriched =
+              rec.enrichment_status === "enriched" ||
+              rec.contractor !== null ||
+              rec.job_valuation !== null;
             if (isEnriched) enrichedCount++;
 
             // Handle genuine permanent missing records
-            const isFailure = rec.enrichment_status && !["enriched", "no_details", "ok", "portal_404", "unsupported_portal"].includes(rec.enrichment_status);
+            const isFailure =
+              rec.enrichment_status &&
+              ![
+                "enriched",
+                "no_details",
+                "ok",
+                "portal_404",
+                "unsupported_portal",
+              ].includes(rec.enrichment_status);
             if (isFailure) {
               failureCount++;
               if (failureBreakdown[rec.enrichment_status] !== undefined) {
@@ -341,15 +442,17 @@ export async function runCloudPermitDispatch(options = {}) {
               } else {
                 failureBreakdown.fetch_error++;
               }
-              failStream.write(JSON.stringify({
-                permit_number: rec.permit_number,
-                source_system: rec.source_system,
-                source_url: rec.source_url,
-                parcel_identifier: rec.parcel_identifier,
-                enrichment_status: rec.enrichment_status,
-                error_message: rec.error_message,
-                failed_at: rec.enriched_at,
-              }) + "\n");
+              failStream.write(
+                JSON.stringify({
+                  permit_number: rec.permit_number,
+                  source_system: rec.source_system,
+                  source_url: rec.source_url,
+                  parcel_identifier: rec.parcel_identifier,
+                  enrichment_status: rec.enrichment_status,
+                  error_message: rec.error_message,
+                  failed_at: rec.enriched_at,
+                }) + "\n",
+              );
             }
 
             if (rec.contractor?.licenseNumber) {
@@ -364,25 +467,33 @@ export async function runCloudPermitDispatch(options = {}) {
           }
         }
       } catch (e) {
-        console.error("[cloud-dispatch] Failed to parse Lambda payload response:", e.message);
+        console.error(
+          "[cloud-dispatch] Failed to parse Lambda payload response:",
+          e.message,
+        );
       }
     }
 
     // Immediately dispatch self-healing retry batch if any transient failures were captured
     if (transientFailuresToHeal.length > 0) {
-      setTimeout(async () => {
-        // Chunk into micro-batches of 15 records for soft-landed retry
-        for (let i = 0; i < transientFailuresToHeal.length; i += 15) {
-          const chunk = transientFailuresToHeal.slice(i, i + 15);
-          await enqueueBatch(chunk).catch(() => {});
-        }
-      }, 3500 + Math.floor(Math.random() * 2500));
+      setTimeout(
+        async () => {
+          // Chunk into micro-batches of 15 records for soft-landed retry
+          for (let i = 0; i < transientFailuresToHeal.length; i += 15) {
+            const chunk = transientFailuresToHeal.slice(i, i + 15);
+            await enqueueBatch(chunk).catch(() => {});
+          }
+        },
+        3500 + Math.floor(Math.random() * 2500),
+      );
     }
 
     await flushCheckpoint();
 
     if (newlyProcessed % 2000 === 0 && newlyProcessed > 0) {
-      console.log(`[cloud-dispatch] Processed ${processed}/${totalTarget} (${smoothedRatePerSec} req/sec | Spent: $${totalSpentUsd.toFixed(3)} | Failures: ${failureCount})`);
+      console.log(
+        `[cloud-dispatch] Processed ${processed}/${totalTarget} (${smoothedRatePerSec} req/sec | Spent: $${totalSpentUsd.toFixed(3)} | Failures: ${failureCount})`,
+      );
       runContractorJoin({ enrichedJsonl: outputPath }).catch(() => {});
     }
   }
@@ -416,7 +527,9 @@ export async function runCloudPermitDispatch(options = {}) {
 
   // Automatic Sweep: If any dead-letter failures accumulated, run an immediate self-healing cleanup pass
   if (failureCount > 0 && !retryFailures) {
-    console.log(`[cloud-dispatch] Primary stream finished with ${failureCount} failures. Initiating automated self-healing sweep...`);
+    console.log(
+      `[cloud-dispatch] Primary stream finished with ${failureCount} failures. Initiating automated self-healing sweep...`,
+    );
     outStream.end();
     failStream.end();
     await runCloudPermitDispatch({
@@ -432,13 +545,20 @@ export async function runCloudPermitDispatch(options = {}) {
   failStream.end();
   await flushCheckpoint(true, true);
 
-  console.log(`[cloud-dispatch] Dispatch run complete. Spent: $${totalSpentUsd.toFixed(4)}. Finalizing contractor CRM...`);
+  console.log(
+    `[cloud-dispatch] Dispatch run complete. Spent: $${totalSpentUsd.toFixed(4)}. Finalizing contractor CRM...`,
+  );
   await runContractorJoin({ enrichedJsonl: outputPath });
 
-  console.log(`[cloud-dispatch] All finished! Total permits processed: ${processed}, Failures logged: ${failureCount}`);
+  console.log(
+    `[cloud-dispatch] All finished! Total permits processed: ${processed}, Failures logged: ${failureCount}`,
+  );
 }
 
-if (import.meta.url.startsWith("file:") && process.argv[1] === new URL(import.meta.url).pathname) {
+if (
+  import.meta.url.startsWith("file:") &&
+  process.argv[1] === new URL(import.meta.url).pathname
+) {
   const { values } = parseArgs({
     options: {
       limit: { type: "string" },

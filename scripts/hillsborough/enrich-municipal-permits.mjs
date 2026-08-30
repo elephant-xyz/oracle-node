@@ -1,6 +1,6 @@
 /**
  * @fileoverview High-Throughput Municipal Permit Enrichment Dispatcher.
- * 
+ *
  * Enriches Temple Terrace (Click2Gov) and Plant City (MaintStar) permit records,
  * prioritizes roofing and key trades first, manages rate-quota backoff gracefully,
  * updates `enriched-permits.jsonl`, and rebuilds the CRM contractor leaderboard.
@@ -30,13 +30,24 @@ export async function runMunicipalPermitEnrichment(options = {}) {
   const tradeFilter = options.trade || "all"; // "roofing" | "all"
   const systemFilter = options.system || "all"; // "temple_terrace" | "plant_city" | "all"
 
-  const inputPath = path.resolve(process.cwd(), "downloads/hillsborough/full-permits/normalized-permits.jsonl");
-  const enrichedPath = path.resolve(process.cwd(), "downloads/hillsborough/full-permits/enriched-permits.jsonl");
-  const tempOutputPath = path.resolve(process.cwd(), "downloads/hillsborough/full-permits/municipal-enriched-temp.jsonl");
+  const inputPath = path.resolve(
+    process.cwd(),
+    "downloads/hillsborough/full-permits/normalized-permits.jsonl",
+  );
+  const enrichedPath = path.resolve(
+    process.cwd(),
+    "downloads/hillsborough/full-permits/enriched-permits.jsonl",
+  );
+  const tempOutputPath = path.resolve(
+    process.cwd(),
+    "downloads/hillsborough/full-permits/municipal-enriched-temp.jsonl",
+  );
 
   await mkdir(path.dirname(enrichedPath), { recursive: true });
 
-  console.log(`[municipal-enrich] Scanning ${inputPath} for candidates (trade=${tradeFilter}, system=${systemFilter})...`);
+  console.log(
+    `[municipal-enrich] Scanning ${inputPath} for candidates (trade=${tradeFilter}, system=${systemFilter})...`,
+  );
 
   const candidates = [];
   const ttCandidates = [];
@@ -51,15 +62,27 @@ export async function runMunicipalPermitEnrichment(options = {}) {
     if (!line) continue;
     try {
       const r = JSON.parse(line);
-      const isTT = Boolean(r.source_url?.includes("aspgov") || r.permit_number?.startsWith("TT-"));
-      const isPC = Boolean(r.source_url?.includes("maintstar") || r.source_system?.includes("plant_city") || /^\d{9}-\d{4}$/.test(r.permit_number || ""));
+      const isTT = Boolean(
+        r.source_url?.includes("aspgov") || r.permit_number?.startsWith("TT-"),
+      );
+      const isPC = Boolean(
+        r.source_url?.includes("maintstar") ||
+        r.source_system?.includes("plant_city") ||
+        /^\d{9}-\d{4}$/.test(r.permit_number || ""),
+      );
 
       if (!isTT && !isPC) continue;
       if (tradeFilter === "roofing" && !r.is_roof_permit) continue;
 
-      if (isTT && (systemFilter === "all" || systemFilter === "temple_terrace")) {
+      if (
+        isTT &&
+        (systemFilter === "all" || systemFilter === "temple_terrace")
+      ) {
         ttCandidates.push(r);
-      } else if (isPC && (systemFilter === "all" || systemFilter === "plant_city")) {
+      } else if (
+        isPC &&
+        (systemFilter === "all" || systemFilter === "plant_city")
+      ) {
         pcCandidates.push(r);
       }
     } catch {}
@@ -71,7 +94,9 @@ export async function runMunicipalPermitEnrichment(options = {}) {
     candidates.length = limit;
   }
 
-  console.log(`[municipal-enrich] Found ${candidates.length} municipal permit candidates.`);
+  console.log(
+    `[municipal-enrich] Found ${candidates.length} municipal permit candidates.`,
+  );
   if (candidates.length === 0) {
     console.log("[municipal-enrich] No candidates matching filter. Done.");
     return;
@@ -102,7 +127,10 @@ export async function runMunicipalPermitEnrichment(options = {}) {
     } catch {}
   }
 
-  const outStream = createWriteStream(tempOutputPath, { flags: "a", encoding: "utf8" });
+  const outStream = createWriteStream(tempOutputPath, {
+    flags: "a",
+    encoding: "utf8",
+  });
 
   let newlyProcessed = 0;
   let processed = completedMunicipalPermits.size;
@@ -111,9 +139,14 @@ export async function runMunicipalPermitEnrichment(options = {}) {
   const startTime = Date.now();
   let lastFlush = Date.now();
 
-  console.log(`[municipal-enrich] Resuming from ${completedMunicipalPermits.size} previously processed permits (already enriched: ${existingEnrichedCount}).`);
+  console.log(
+    `[municipal-enrich] Resuming from ${completedMunicipalPermits.size} previously processed permits (already enriched: ${existingEnrichedCount}).`,
+  );
 
-  const baseProgressPath = path.resolve(process.cwd(), "downloads/hillsborough/full-permits/enrichment-progress.json");
+  const baseProgressPath = path.resolve(
+    process.cwd(),
+    "downloads/hillsborough/full-permits/enrichment-progress.json",
+  );
   let baseProgress = {};
   try {
     if (existsSync(baseProgressPath)) {
@@ -129,10 +162,12 @@ export async function runMunicipalPermitEnrichment(options = {}) {
     lastFlush = now;
 
     const elapsedSec = Math.max(1, (now - startTime) / 1000);
-    const rate = newlyProcessed > 0 ? Number((newlyProcessed / elapsedSec).toFixed(1)) : 0;
+    const rate =
+      newlyProcessed > 0 ? Number((newlyProcessed / elapsedSec).toFixed(1)) : 0;
     const remaining = Math.max(0, candidates.length - processed);
     const etaSec = rate > 0 ? Math.round(remaining / rate) : 0;
-    const etaIso = rate > 0 ? new Date(now + etaSec * 1000).toISOString() : null;
+    const etaIso =
+      rate > 0 ? new Date(now + etaSec * 1000).toISOString() : null;
 
     const payload = {
       status: isCompleted ? "completed" : "in_progress",
@@ -141,7 +176,12 @@ export async function runMunicipalPermitEnrichment(options = {}) {
       processedCount: processed,
       newlyProcessedCount: processed,
       enrichedCount: initialEnriched + (enrichedCount - existingEnrichedCount),
-      enrichmentRatePct: (((initialEnriched + (enrichedCount - existingEnrichedCount)) / 958002) * 100).toFixed(1) + "%",
+      enrichmentRatePct:
+        (
+          ((initialEnriched + (enrichedCount - existingEnrichedCount)) /
+            958002) *
+          100
+        ).toFixed(1) + "%",
       failedCount: 0,
       failureRatePct: "0.0%",
       failureBreakdown: {
@@ -150,12 +190,17 @@ export async function runMunicipalPermitEnrichment(options = {}) {
         fetch_error: 0,
         unsupported_portal: 0,
       },
-      licenseCount: (baseProgress.licenseCount || 351513) + Math.round(enrichedCount * 0.9),
+      licenseCount:
+        (baseProgress.licenseCount || 351513) + Math.round(enrichedCount * 0.9),
       licenseYieldPct: "39.1%",
-      valuationCount: (baseProgress.valuationCount || 207387) + Math.round(enrichedCount * 0.6),
+      valuationCount:
+        (baseProgress.valuationCount || 207387) +
+        Math.round(enrichedCount * 0.6),
       valuationYieldPct: "23.1%",
       averageJobValuationUsd: baseProgress.averageJobValuationUsd || 319951,
-      uniqueContractorLicenses: (baseProgress.uniqueContractorLicenses || 15147) + Math.round(enrichedCount * 0.15),
+      uniqueContractorLicenses:
+        (baseProgress.uniqueContractorLicenses || 15147) +
+        Math.round(enrichedCount * 0.15),
       ratePerSecond: rate,
       permitsPerMinute: Math.round(rate * 60),
       etaSeconds: isCompleted ? 0 : etaSec,
@@ -171,7 +216,11 @@ export async function runMunicipalPermitEnrichment(options = {}) {
     };
 
     try {
-      await writeFile(baseProgressPath, JSON.stringify(payload, null, 2), "utf8");
+      await writeFile(
+        baseProgressPath,
+        JSON.stringify(payload, null, 2),
+        "utf8",
+      );
     } catch {}
   }
 
@@ -185,71 +234,88 @@ export async function runMunicipalPermitEnrichment(options = {}) {
         continue;
       }
 
-      const isTT = Boolean(cand.source_url?.includes("aspgov") || cand.permit_number?.startsWith("TT-"));
-      const isPC = Boolean(cand.source_url?.includes("maintstar") || cand.source_system?.includes("plant_city") || /^\d{9}-\d{4}$/.test(cand.permit_number || ""));
+      const isTT = Boolean(
+        cand.source_url?.includes("aspgov") ||
+        cand.permit_number?.startsWith("TT-"),
+      );
+      const isPC = Boolean(
+        cand.source_url?.includes("maintstar") ||
+        cand.source_system?.includes("plant_city") ||
+        /^\d{9}-\d{4}$/.test(cand.permit_number || ""),
+      );
 
-  let parsed = null;
-  let status = "no_details";
-  let error = null;
+      let parsed = null;
+      let status = "no_details";
+      let error = null;
 
-  try {
-    if (isTT) {
-      const res = await fetchClick2GovPermitDetail(cand.permit_number);
-      if (res.data) {
-        const d = res.data;
-        const hasDetails = d.contractor !== null || d.jobValuation !== null || d.recordStatus !== null || d.squareFeet !== null || d.applicationType !== null;
-        if (hasDetails) {
-          status = "enriched";
-          enrichedCount++;
-          parsed = {
-            contractor: d.contractor ? {
-              businessName: d.contractor.businessName,
-              contactName: d.contractor.qualifierName,
-              licenseNumber: d.contractor.licenseNumber,
-              licenseType: null,
-              email: d.contractor.email,
-              phone: d.contractor.phone,
-              address: null,
-              raw: d.contractor.businessName,
-            } : null,
-            jobValuation: d.jobValuation,
-            squareFeet: d.squareFeet,
-            material: null,
-            stormRelated: null,
-            recordStatus: d.recordStatus,
-            expirationDate: null,
-            description: d.applicationType || cand.project_description || null,
-          };
+      try {
+        if (isTT) {
+          const res = await fetchClick2GovPermitDetail(cand.permit_number);
+          if (res.data) {
+            const d = res.data;
+            const hasDetails =
+              d.contractor !== null ||
+              d.jobValuation !== null ||
+              d.recordStatus !== null ||
+              d.squareFeet !== null ||
+              d.applicationType !== null;
+            if (hasDetails) {
+              status = "enriched";
+              enrichedCount++;
+              parsed = {
+                contractor: d.contractor
+                  ? {
+                      businessName: d.contractor.businessName,
+                      contactName: d.contractor.qualifierName,
+                      licenseNumber: d.contractor.licenseNumber,
+                      licenseType: null,
+                      email: d.contractor.email,
+                      phone: d.contractor.phone,
+                      address: null,
+                      raw: d.contractor.businessName,
+                    }
+                  : null,
+                jobValuation: d.jobValuation,
+                squareFeet: d.squareFeet,
+                material: null,
+                stormRelated: null,
+                recordStatus: d.recordStatus,
+                expirationDate: null,
+                description:
+                  d.applicationType || cand.project_description || null,
+              };
+            }
+          } else {
+            status = res.status;
+            error = res.error;
+          }
+        } else if (isPC) {
+          const res = await searchMaintStarPermits(cand.permit_number);
+          if (res.records && res.records.length > 0) {
+            const rec = res.records[0];
+            status = "enriched";
+            enrichedCount++;
+            parsed = {
+              contractor: null,
+              jobValuation: null,
+              squareFeet: null,
+              material: null,
+              stormRelated: null,
+              recordStatus: rec.status,
+              expirationDate: null,
+              description:
+                rec.description || rec.type || cand.project_description || null,
+            };
+          } else {
+            status =
+              res.status === "quota_exceeded" ? "rate_limited" : "no_details";
+            error = res.error;
+          }
         }
-      } else {
-        status = res.status;
-        error = res.error;
+      } catch (err) {
+        status = "fetch_error";
+        error = err instanceof Error ? err.message : String(err);
       }
-    } else if (isPC) {
-      const res = await searchMaintStarPermits(cand.permit_number);
-      if (res.records && res.records.length > 0) {
-        const rec = res.records[0];
-        status = "enriched";
-        enrichedCount++;
-        parsed = {
-          contractor: null,
-          jobValuation: null,
-          squareFeet: null,
-          material: null,
-          stormRelated: null,
-          recordStatus: rec.status,
-          expirationDate: null,
-          description: rec.description || rec.type || cand.project_description || null,
-        };
-      } else {
-        status = res.status === "quota_exceeded" ? "rate_limited" : "no_details";
-        error = res.error;
-      }
-    }
-  } catch (err) {
-    status = "fetch_error";
-    error = err instanceof Error ? err.message : String(err);
-  }
 
       const enrichedRecord = {
         permit_number: cand.permit_number,
@@ -260,7 +326,8 @@ export async function runMunicipalPermitEnrichment(options = {}) {
         permit_issue_date: cand.permit_issue_date || null,
         record_status: parsed?.recordStatus || cand.record_status || null,
         expiration_date: parsed?.expirationDate || null,
-        project_description: parsed?.description || cand.project_description || null,
+        project_description:
+          parsed?.description || cand.project_description || null,
         is_roof_permit: Boolean(cand.is_roof_permit),
         job_valuation: parsed?.jobValuation || null,
         square_feet: parsed?.squareFeet || null,
@@ -282,7 +349,9 @@ export async function runMunicipalPermitEnrichment(options = {}) {
         const elapsedSec = Math.max(1, (Date.now() - startTime) / 1000);
         const rate = (processed / elapsedSec).toFixed(1);
         const pct = ((processed / candidates.length) * 100).toFixed(1);
-        console.log(`[municipal-enrich] Progress: ${processed}/${candidates.length} (${pct}%) • Enriched: ${enrichedCount} • Rate: ${rate}/sec`);
+        console.log(
+          `[municipal-enrich] Progress: ${processed}/${candidates.length} (${pct}%) • Enriched: ${enrichedCount} • Rate: ${rate}/sec`,
+        );
       }
     }
   });
@@ -291,10 +360,14 @@ export async function runMunicipalPermitEnrichment(options = {}) {
   outStream.end();
   await flushProgress(true);
 
-  console.log(`[municipal-enrich] Sweep finished. Processed: ${processed}, Enriched: ${enrichedCount}`);
+  console.log(
+    `[municipal-enrich] Sweep finished. Processed: ${processed}, Enriched: ${enrichedCount}`,
+  );
 
   // Merge records into enriched-permits.jsonl
-  console.log("[municipal-enrich] Merging enriched municipal records into main dataset...");
+  console.log(
+    "[municipal-enrich] Merging enriched municipal records into main dataset...",
+  );
   /** @type {Map<string, string>} */
   const municipalMap = new Map();
   const rlTemp = createInterface({
@@ -309,8 +382,14 @@ export async function runMunicipalPermitEnrichment(options = {}) {
     } catch {}
   }
 
-  const mergedTempPath = path.resolve(process.cwd(), "downloads/hillsborough/full-permits/enriched-permits-merged.jsonl");
-  const mergedOut = createWriteStream(mergedTempPath, { flags: "w", encoding: "utf8" });
+  const mergedTempPath = path.resolve(
+    process.cwd(),
+    "downloads/hillsborough/full-permits/enriched-permits-merged.jsonl",
+  );
+  const mergedOut = createWriteStream(mergedTempPath, {
+    flags: "w",
+    encoding: "utf8",
+  });
 
   let totalMerged = 0;
   let replacedCount = 0;
@@ -343,7 +422,9 @@ export async function runMunicipalPermitEnrichment(options = {}) {
   mergedOut.end();
 
   await writeFile(enrichedPath, await readFile(mergedTempPath));
-  console.log(`[municipal-enrich] Dataset updated: ${totalMerged} total records (${replacedCount} upgraded).`);
+  console.log(
+    `[municipal-enrich] Dataset updated: ${totalMerged} total records (${replacedCount} upgraded).`,
+  );
 
   // Rebuild leaderboard
   console.log("[municipal-enrich] Rebuilding contractor CRM leaderboard...");
@@ -352,7 +433,11 @@ export async function runMunicipalPermitEnrichment(options = {}) {
 }
 
 // CLI Execution support
-if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname)) {
+if (
+  process.argv[1] &&
+  path.resolve(process.argv[1]) ===
+    path.resolve(new URL(import.meta.url).pathname)
+) {
   const { values } = parseArgs({
     options: {
       limit: { type: "string" },
@@ -363,7 +448,11 @@ if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(im
     strict: false,
   });
 
-  const limitVal = values.limit ? (values.limit === "all" ? null : parseInt(values.limit, 10)) : null;
+  const limitVal = values.limit
+    ? values.limit === "all"
+      ? null
+      : parseInt(values.limit, 10)
+    : null;
   const concVal = values.concurrency ? parseInt(values.concurrency, 10) : 10;
   const tradeVal = values.trade || "all";
   const sysVal = values.system || "all";

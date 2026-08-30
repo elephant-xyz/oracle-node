@@ -34,9 +34,14 @@ import path from "node:path";
  */
 function extractCleanBusinessName(raw) {
   if (!raw) return null;
-  const m = raw.match(/(?:[A-Z0-9\s&,.'-]+?)\s+(?:LLC|INC|CORP|CORPORATION|ROOFING|ROOFS|BUILDERS|SERVICES|CONSTRUCTION|CONTRACTING|ENTERPRISES|CO|COMPANY|GROUP)\b/i);
+  const m = raw.match(
+    /(?:[A-Z0-9\s&,.'-]+?)\s+(?:LLC|INC|CORP|CORPORATION|ROOFING|ROOFS|BUILDERS|SERVICES|CONSTRUCTION|CONTRACTING|ENTERPRISES|CO|COMPANY|GROUP)\b/i,
+  );
   if (m) {
-    let bus = m[0].replace(/^[A-Za-z\s]+@[A-Za-z0-9.-]+\s+/, "").replace(/^[0-9\s]+/, "").trim();
+    let bus = m[0]
+      .replace(/^[A-Za-z\s]+@[A-Za-z0-9.-]+\s+/, "")
+      .replace(/^[0-9\s]+/, "")
+      .trim();
     const emailIdx = bus.indexOf("@");
     if (emailIdx !== -1) {
       const spaceAfter = bus.indexOf(" ", emailIdx);
@@ -48,17 +53,41 @@ function extractCleanBusinessName(raw) {
 }
 
 export async function runContractorJoin(options = {}) {
-  const enrichedPath = options.enrichedJsonl || path.resolve(process.cwd(), "downloads/hillsborough/full-permits/enriched-pilot-500.jsonl");
-  const bbbDefaultHarvest = path.resolve(process.cwd(), "downloads/hillsborough/bbb-harvest/profiles/profiles-part-0001.jsonl");
-  const bbbDefaultProbe = path.resolve(process.cwd(), "downloads/hillsborough/bbb-probe/profiles/profiles-part-0001.jsonl");
-  const bbbPath = options.bbbJsonl || (existsSync(bbbDefaultHarvest) ? bbbDefaultHarvest : bbbDefaultProbe);
-  const outputPath = options.outputPath || path.resolve(process.cwd(), "downloads/hillsborough/full-permits/contractor-leaderboard.json");
+  const enrichedPath =
+    options.enrichedJsonl ||
+    path.resolve(
+      process.cwd(),
+      "downloads/hillsborough/full-permits/enriched-pilot-500.jsonl",
+    );
+  const bbbDefaultHarvest = path.resolve(
+    process.cwd(),
+    "downloads/hillsborough/bbb-harvest/profiles/profiles-part-0001.jsonl",
+  );
+  const bbbDefaultProbe = path.resolve(
+    process.cwd(),
+    "downloads/hillsborough/bbb-probe/profiles/profiles-part-0001.jsonl",
+  );
+  const bbbPath =
+    options.bbbJsonl ||
+    (existsSync(bbbDefaultHarvest) ? bbbDefaultHarvest : bbbDefaultProbe);
+  const outputPath =
+    options.outputPath ||
+    path.resolve(
+      process.cwd(),
+      "downloads/hillsborough/full-permits/contractor-leaderboard.json",
+    );
 
   // Discover all BBB profile files across trades (roofing, hvac, solar)
   const bbbDirs = [
     path.resolve(process.cwd(), "downloads/hillsborough/bbb-harvest/profiles"),
-    path.resolve(process.cwd(), "downloads/hillsborough/bbb-harvest-hvac/profiles"),
-    path.resolve(process.cwd(), "downloads/hillsborough/bbb-harvest-solar/profiles"),
+    path.resolve(
+      process.cwd(),
+      "downloads/hillsborough/bbb-harvest-hvac/profiles",
+    ),
+    path.resolve(
+      process.cwd(),
+      "downloads/hillsborough/bbb-harvest-solar/profiles",
+    ),
     path.resolve(process.cwd(), "downloads/hillsborough/bbb-probe/profiles"),
   ];
   const bbbFilesToLoad = [];
@@ -103,7 +132,9 @@ export async function runContractorJoin(options = {}) {
       if (p.licenses && Array.isArray(p.licenses)) {
         for (const licObj of p.licenses) {
           const rawLicText = licObj.rawText || "";
-          const licMatches = rawLicText.match(/\b(C[A-Z]{2}[0-9]{5,8}|[A-Z]{2,4}[0-9]{5,8})\b/gi);
+          const licMatches = rawLicText.match(
+            /\b(C[A-Z]{2}[0-9]{5,8}|[A-Z]{2,4}[0-9]{5,8})\b/gi,
+          );
           if (licMatches) {
             for (const licId of licMatches) {
               bbbByLicense.set(licId.toUpperCase(), p);
@@ -174,7 +205,8 @@ export async function runContractorJoin(options = {}) {
         if (c.raw) entry.rawTexts.add(c.raw);
         if (c.phone) entry.phones.add(c.phone);
         if (c.email) entry.emails.add(c.email);
-        if (r.job_valuation && r.job_valuation > 0) entry.valuations.push(r.job_valuation);
+        if (r.job_valuation && r.job_valuation > 0)
+          entry.valuations.push(r.job_valuation);
       }
     }
   }
@@ -185,13 +217,19 @@ export async function runContractorJoin(options = {}) {
 
   for (const [lic, data] of contractorMap.entries()) {
     const totalVal = data.valuations.reduce((a, b) => a + b, 0);
-    const avgVal = data.valuations.length > 0 ? Math.round(totalVal / data.valuations.length) : 0;
+    const avgVal =
+      data.valuations.length > 0
+        ? Math.round(totalVal / data.valuations.length)
+        : 0;
     const phone = Array.from(data.phones)[0] || null;
     const email = Array.from(data.emails)[0] || null;
     const rawFirst = Array.from(data.rawTexts)[0] || "";
 
     const cleanBus = extractCleanBusinessName(rawFirst);
-    const qualifier = rawFirst.split(/\s+CAITLIN|\s+MBERNS|\s+TRC|\s+collin|@|[0-9]{5,}/)[0]?.trim() || null;
+    const qualifier =
+      rawFirst
+        .split(/\s+CAITLIN|\s+MBERNS|\s+TRC|\s+collin|@|[0-9]{5,}/)[0]
+        ?.trim() || null;
 
     // Matching cascade: 1. State License -> 2. Phone -> 3. Clean Name
     let bbbMatch = bbbByLicense.get(lic) || null;
@@ -218,17 +256,30 @@ export async function runContractorJoin(options = {}) {
 
     leaderboard.push({
       licenseNumber: lic,
-      businessName: (bbbMatch ? (bbbMatch.name || bbbMatch.businessName || bbbMatch.legalName) : cleanBus) || "Contractor " + lic,
+      businessName:
+        (bbbMatch
+          ? bbbMatch.name || bbbMatch.businessName || bbbMatch.legalName
+          : cleanBus) || "Contractor " + lic,
       qualifierName: qualifier,
-      phone: (bbbMatch && (bbbMatch.phone || bbbMatch.primaryPhone)) ? (bbbMatch.phone || bbbMatch.primaryPhone) : phone,
+      phone:
+        bbbMatch && (bbbMatch.phone || bbbMatch.primaryPhone)
+          ? bbbMatch.phone || bbbMatch.primaryPhone
+          : phone,
       email,
       permitCount: data.permitCount,
       totalValuationUsd: totalVal,
       averageValuationUsd: avgVal,
       inBbbCrm: Boolean(bbbMatch),
-      bbbRating: bbbMatch ? (bbbMatch.bbbRating || bbbMatch.rating || "A+") : null,
+      bbbRating: bbbMatch
+        ? bbbMatch.bbbRating || bbbMatch.rating || "A+"
+        : null,
       bbbAccredited: bbbMatch ? (bbbMatch.accredited ?? false) : false,
-      bbbUrl: bbbMatch ? (bbbMatch.profileUrl || bbbMatch.url || bbbMatch.websiteUrl || bbbMatch.website) : null,
+      bbbUrl: bbbMatch
+        ? bbbMatch.profileUrl ||
+          bbbMatch.url ||
+          bbbMatch.websiteUrl ||
+          bbbMatch.website
+        : null,
     });
   }
 
@@ -244,10 +295,15 @@ export async function runContractorJoin(options = {}) {
   };
 
   await writeFile(outputPath, JSON.stringify(summary, null, 2), "utf8");
-  console.log(`[contractor-crm] Leaderboard generated with ${leaderboard.length} contractors (${summary.matchedInBbbCrm} matched in BBB CRM)`);
+  console.log(
+    `[contractor-crm] Leaderboard generated with ${leaderboard.length} contractors (${summary.matchedInBbbCrm} matched in BBB CRM)`,
+  );
   return summary;
 }
 
-if (import.meta.url.startsWith("file:") && process.argv[1] === new URL(import.meta.url).pathname) {
+if (
+  import.meta.url.startsWith("file:") &&
+  process.argv[1] === new URL(import.meta.url).pathname
+) {
   runContractorJoin();
 }

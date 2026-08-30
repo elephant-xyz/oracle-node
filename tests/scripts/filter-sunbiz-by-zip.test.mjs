@@ -15,8 +15,8 @@ describe("filter-sunbiz-by-zip local-only", () => {
   });
 
   it("requires at least one local source", async () => {
-    await expect(parseFilterSunbizArgs(["--zip-prefix", "336"])).rejects.toThrow(
-      /source/,
-    );
+    await expect(
+      parseFilterSunbizArgs(["--zip-prefix", "336"]),
+    ).rejects.toThrow(/source/);
   });
 });

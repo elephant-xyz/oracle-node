@@ -55,7 +55,9 @@ export const JURISDICTION_KEY = "hillsborough_appraiser";
  * }}
  */
 export function parsePilotArgs(argv) {
-  const limitRaw = argv.find((arg) => arg.startsWith("--limit="))?.split("=")[1];
+  const limitRaw = argv
+    .find((arg) => arg.startsWith("--limit="))
+    ?.split("=")[1];
   const jobFromArg = argv
     .find((arg) => arg.startsWith("--job-id="))
     ?.split("=")[1];
@@ -74,8 +76,7 @@ export function parsePilotArgs(argv) {
       argv.find((arg) => arg.startsWith("--seed="))?.split("=")[1] ?? null,
     outputRoot:
       argv.find((arg) => arg.startsWith("--output="))?.split("=")[1] ?? null,
-    skipExisting:
-      argv.includes("--skip-existing") || argv.includes("--resume"),
+    skipExisting: argv.includes("--skip-existing") || argv.includes("--resume"),
     resume: argv.includes("--resume"),
     retryFailures: argv.includes("--retry-failures"),
     jobId:
@@ -87,9 +88,8 @@ export function parsePilotArgs(argv) {
       10,
     ),
     maxAttempts: Number.parseInt(
-      argv
-        .find((arg) => arg.startsWith("--max-attempts="))
-        ?.split("=")[1] ?? "3",
+      argv.find((arg) => arg.startsWith("--max-attempts="))?.split("=")[1] ??
+        "3",
       10,
     ),
   };

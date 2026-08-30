@@ -79,7 +79,8 @@ import { parseArgs } from "node:util";
  * @property {string[]} sampleRoofingPermitNumbers - Sample roofing permit numbers.
  */
 
-const ROOFING_PATTERN = /\b(roof|reroof|re-roof|shingle|membrane|tpo|built[\s-]?up)\b/i;
+const ROOFING_PATTERN =
+  /\b(roof|reroof|re-roof|shingle|membrane|tpo|built[\s-]?up)\b/i;
 
 /**
  * @param {readonly string[]} argv - CLI args after script name.
@@ -124,7 +125,10 @@ export function parseExtractPilotPermitsArgs(argv) {
  * @returns {SeedRow[]}
  */
 export function parseSeedCsvForPermits(text) {
-  const lines = text.replace(/^\uFEFF/, "").split(/\r?\n/).filter((line) => line.length > 0);
+  const lines = text
+    .replace(/^\uFEFF/, "")
+    .split(/\r?\n/)
+    .filter((line) => line.length > 0);
   if (lines.length === 0) return [];
   const header = splitCsvLine(lines[0] ?? "");
   /** @type {SeedRow[]} */
@@ -201,7 +205,11 @@ export function parseUsDateToIso(value) {
   const month = Number(match[1]);
   const day = Number(match[2]);
   const year = Number(match[3]);
-  if (!Number.isFinite(month) || !Number.isFinite(day) || !Number.isFinite(year)) {
+  if (
+    !Number.isFinite(month) ||
+    !Number.isFinite(day) ||
+    !Number.isFinite(year)
+  ) {
     return null;
   }
   if (month < 1 || month > 12 || day < 1 || day > 31) return null;
@@ -240,11 +248,15 @@ export function isRoofingRelatedPermit(permit) {
  */
 export function normalizeEmbeddedPermit(params) {
   const permitNumber =
-    typeof params.permit.permitNum === "string" ? params.permit.permitNum.trim() : "";
+    typeof params.permit.permitNum === "string"
+      ? params.permit.permitNum.trim()
+      : "";
   if (!permitNumber) return null;
 
   const jurisdiction = jurisdictionHintFromUrl(
-    typeof params.permit.permitUrl === "string" ? params.permit.permitUrl : null,
+    typeof params.permit.permitUrl === "string"
+      ? params.permit.permitUrl
+      : null,
   );
   const sourceSystem =
     jurisdiction === "TAMPA"
@@ -263,7 +275,10 @@ export function normalizeEmbeddedPermit(params) {
     (typeof params.siteAddress === "string" && params.siteAddress.trim()) ||
     params.seed.address;
   const workLocationParts = [site];
-  if (params.seed.city && !site.toUpperCase().includes(params.seed.city.toUpperCase())) {
+  if (
+    params.seed.city &&
+    !site.toUpperCase().includes(params.seed.city.toUpperCase())
+  ) {
     workLocationParts.push(params.seed.city);
   }
   workLocationParts.push("FL");
@@ -276,7 +291,8 @@ export function normalizeEmbeddedPermit(params) {
       : `${params.seed.folio}:${permitNumber}`;
 
   const recordType =
-    typeof params.permit.permitType === "string" && params.permit.permitType.trim()
+    typeof params.permit.permitType === "string" &&
+    params.permit.permitType.trim()
       ? params.permit.permitType.trim()
       : null;
   const description =
@@ -287,7 +303,8 @@ export function normalizeEmbeddedPermit(params) {
   return {
     source_system: sourceSystem,
     source_url:
-      typeof params.permit.permitUrl === "string" && params.permit.permitUrl.trim()
+      typeof params.permit.permitUrl === "string" &&
+      params.permit.permitUrl.trim()
         ? params.permit.permitUrl.trim()
         : null,
     city,
@@ -297,11 +314,14 @@ export function normalizeEmbeddedPermit(params) {
     work_location: workLocation,
     permit_issue_date: parseUsDateToIso(params.permit.issueDate),
     record_status: null,
-    record_type: recordType ?? (description !== null ? description.slice(0, 64) : null),
+    record_type:
+      recordType ?? (description !== null ? description.slice(0, 64) : null),
     project_description: description,
     is_roof_permit: isRoofingRelatedPermit(params.permit),
     estimated_value:
-      typeof params.permit.estValue === "string" ? params.permit.estValue : null,
+      typeof params.permit.estValue === "string"
+        ? params.permit.estValue
+        : null,
     jurisdiction_hint: jurisdiction,
     raw: {
       detail_id: detailId,
@@ -343,7 +363,11 @@ export async function extractPilotPermits(options) {
     const folio = entry.name;
     const seed = seedByFolio.get(folio);
     if (!seed) continue;
-    const parcelPath = path.join(options.pilotRunDir, folio, "parcel-data.json");
+    const parcelPath = path.join(
+      options.pilotRunDir,
+      folio,
+      "parcel-data.json",
+    );
     let parsed;
     try {
       parsed = /** @type {ParcelDataFile} */ (
@@ -353,7 +377,9 @@ export async function extractPilotPermits(options) {
       continue;
     }
     parcelCount += 1;
-    const permitInfo = Array.isArray(parsed.permitInfo) ? parsed.permitInfo : [];
+    const permitInfo = Array.isArray(parsed.permitInfo)
+      ? parsed.permitInfo
+      : [];
     if (permitInfo.length > 0) parcelsWithPermits += 1;
 
     for (const permit of permitInfo) {
@@ -372,9 +398,11 @@ export async function extractPilotPermits(options) {
         }
       }
       if (normalized.jurisdiction_hint === "TAMPA") byJurisdiction.tampa += 1;
-      else if (normalized.jurisdiction_hint === "HCFL") byJurisdiction.hcfl += 1;
+      else if (normalized.jurisdiction_hint === "HCFL")
+        byJurisdiction.hcfl += 1;
       else byJurisdiction.unknown += 1;
-      if (normalized.permit_issue_date) isoDates.push(normalized.permit_issue_date);
+      if (normalized.permit_issue_date)
+        isoDates.push(normalized.permit_issue_date);
       const typeKey = normalized.record_type ?? "(null)";
       recordTypeCounts[typeKey] = (recordTypeCounts[typeKey] ?? 0) + 1;
     }
@@ -419,7 +447,11 @@ export async function runExtractPilotPermits(options) {
     stream.end(() => resolve(undefined));
     stream.on("error", reject);
   });
-  await writeFile(options.scorecardPath, `${JSON.stringify(scorecard, null, 2)}\n`, "utf8");
+  await writeFile(
+    options.scorecardPath,
+    `${JSON.stringify(scorecard, null, 2)}\n`,
+    "utf8",
+  );
   return scorecard;
 }
 

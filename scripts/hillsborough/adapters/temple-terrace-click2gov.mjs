@@ -1,6 +1,6 @@
 /**
  * @fileoverview Temple Terrace Click2Gov Permit Portal Adapter.
- * 
+ *
  * Fetches and parses permit status details from the City of Temple Terrace
  * Click2Gov Building Permit system (temp-egov.aspgov.com).
  */
@@ -105,8 +105,14 @@ export function parseClick2GovStatusDetailHtml(html, fallbackPermitNumber) {
 
   // Extract label-value pairs from Click2Gov grid layout
   $("label").each((_, labelEl) => {
-    const key = $(labelEl).text().replace(/[\*\s]+/g, " ").trim().replace(/:$/, "").toLowerCase();
-    const val = $(labelEl).next().find(".form-control-static").text().trim() ||
+    const key = $(labelEl)
+      .text()
+      .replace(/[\*\s]+/g, " ")
+      .trim()
+      .replace(/:$/, "")
+      .toLowerCase();
+    const val =
+      $(labelEl).next().find(".form-control-static").text().trim() ||
       $(labelEl).next(".form-control-static").text().trim() ||
       $(labelEl).parent().find(".form-control-static").text().trim();
     if (key && val && !fields.has(key)) {
@@ -118,9 +124,15 @@ export function parseClick2GovStatusDetailHtml(html, fallbackPermitNumber) {
   if (fields.size === 0) {
     $(".form-control-static").each((_, el) => {
       const val = $(el).text().trim();
-      const prev = $(el).parent().prev("label").text().trim() || $(el).prev("label").text().trim();
+      const prev =
+        $(el).parent().prev("label").text().trim() ||
+        $(el).prev("label").text().trim();
       if (prev) {
-        const key = prev.replace(/[\*\s]+/g, " ").trim().replace(/:$/, "").toLowerCase();
+        const key = prev
+          .replace(/[\*\s]+/g, " ")
+          .trim()
+          .replace(/:$/, "")
+          .toLowerCase();
         if (!fields.has(key) && val) {
           fields.set(key, val);
         }
@@ -142,16 +154,24 @@ export function parseClick2GovStatusDetailHtml(html, fallbackPermitNumber) {
 
   const isRoof = Boolean(
     (appType && /roof/i.test(appType)) ||
-    (contractorName && /roof/i.test(contractorName))
+    (contractorName && /roof/i.test(contractorName)),
   );
 
   /** @type {Click2GovContractorInfo | null} */
   let contractor = null;
-  if (contractorName && contractorName.length > 2 && !/owner/i.test(contractorName)) {
+  if (
+    contractorName &&
+    contractorName.length > 2 &&
+    !/owner/i.test(contractorName)
+  ) {
     // Check if contractor text contains license number or clean business name
-    const licMatch = contractorName.match(/\b(C[A-Z]{2}\d{6,8}|CCC\d+|CBC\d+|CGC\d+)\b/i);
+    const licMatch = contractorName.match(
+      /\b(C[A-Z]{2}\d{6,8}|CCC\d+|CBC\d+|CGC\d+)\b/i,
+    );
     const lic = licMatch ? licMatch[1].toUpperCase() : null;
-    const cleanName = contractorName.replace(/\b(C[A-Z]{2}\d{6,8}|CCC\d+|CBC\d+|CGC\d+)\b/gi, "").trim();
+    const cleanName = contractorName
+      .replace(/\b(C[A-Z]{2}\d{6,8}|CCC\d+|CBC\d+|CGC\d+)\b/gi, "")
+      .trim();
 
     contractor = {
       businessName: cleanName || contractorName,
@@ -185,15 +205,23 @@ export function parseClick2GovStatusDetailHtml(html, fallbackPermitNumber) {
  */
 export async function createClick2GovSession(appYear, appNumber) {
   const baseUrl = "https://temp-egov.aspgov.com/Click2GovBP/selectpermit.html";
-  const getRes = await fetch(`${baseUrl}?permit.appYearAndNumber=${encodeURIComponent(`${appYear}-${appNumber}`)}`, {
-    headers: {
-      "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+  const getRes = await fetch(
+    `${baseUrl}?permit.appYearAndNumber=${encodeURIComponent(`${appYear}-${appNumber}`)}`,
+    {
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        Accept:
+          "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      },
     },
-  });
+  );
 
   const cookies = getRes.headers.getSetCookie
-    ? getRes.headers.getSetCookie().map((c) => c.split(";")[0]).join("; ")
+    ? getRes.headers
+        .getSetCookie()
+        .map((c) => c.split(";")[0])
+        .join("; ")
     : "";
 
   const getHtml = await getRes.text();
@@ -238,23 +266,36 @@ export async function fetchClick2GovPermitDetail(permitNumber, maxRetries = 3) {
         method: "POST",
         headers: {
           "Content-Type": "application/x-www-form-urlencoded",
-          "Cookie": session.cookies,
-          "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-          "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          Cookie: session.cookies,
+          "User-Agent":
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+          Accept:
+            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         },
         body: postParams.toString(),
       });
 
       if (!postRes.ok) {
         if (attempt === maxRetries) {
-          return { data: null, status: "fetch_error", error: `POST detail returned HTTP ${postRes.status}` };
+          return {
+            data: null,
+            status: "fetch_error",
+            error: `POST detail returned HTTP ${postRes.status}`,
+          };
         }
         continue;
       }
 
       const postHtml = await postRes.text();
-      if (/no structure found|no records found|invalid permit/i.test(postHtml) && !postHtml.includes("Status Detail")) {
-        return { data: null, status: "not_found", error: "Record not found on Temple Terrace portal" };
+      if (
+        /no structure found|no records found|invalid permit/i.test(postHtml) &&
+        !postHtml.includes("Status Detail")
+      ) {
+        return {
+          data: null,
+          status: "not_found",
+          error: "Record not found on Temple Terrace portal",
+        };
       }
 
       const detail = parseClick2GovStatusDetailHtml(postHtml, permitNumber);

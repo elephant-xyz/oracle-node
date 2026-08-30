@@ -457,17 +457,14 @@ async function mapPool(items, concurrency, worker) {
 
   const iterator = items[Symbol.asyncIterator]();
   let index = 0;
-  const runners = Array.from(
-    { length: Math.max(1, concurrency) },
-    async () => {
-      while (true) {
-        const { value, done } = await iterator.next();
-        if (done) break;
-        const i = index++;
-        await worker(value, i);
-      }
-    },
-  );
+  const runners = Array.from({ length: Math.max(1, concurrency) }, async () => {
+    while (true) {
+      const { value, done } = await iterator.next();
+      if (done) break;
+      const i = index++;
+      await worker(value, i);
+    }
+  });
   await Promise.all(runners);
 }
 
@@ -487,8 +484,7 @@ async function runHillsboroughLocalPilot(options) {
   const offset = Math.max(options.offset || 0, 0);
 
   const isStreaming =
-    !options.retryFailures &&
-    (options.limit === null || options.limit > 1000);
+    !options.retryFailures && (options.limit === null || options.limit > 1000);
   let seedTotal = 0;
   /** @type {import("./hillsborough/lib.mjs").HillsboroughSeedRow[] | AsyncIterable<import("./hillsborough/lib.mjs").HillsboroughSeedRow>} */
   let rowsSource;
@@ -499,7 +495,11 @@ async function runHillsboroughLocalPilot(options) {
     const byFolio = new Map(allRows.map((row) => [row.parcel_id, row]));
     const matchedRows = failures
       .map((f) => byFolio.get(f.folio))
-      .filter(/** @returns {row is import("./hillsborough/lib.mjs").HillsboroughSeedRow} */ (row) => Boolean(row));
+      .filter(
+        /** @returns {row is import("./hillsborough/lib.mjs").HillsboroughSeedRow} */ (
+          row,
+        ) => Boolean(row),
+      );
     console.log(
       JSON.stringify({
         event: "retry_failures_loaded",
@@ -581,7 +581,10 @@ async function runHillsboroughLocalPilot(options) {
   /** Debounced progress flusher to avoid locking on every single parcel */
   let lastProgressFlush = 0;
   let progressFlushPending = false;
-  let lastMeta = { lastFolio: /** @type {string | null} */ (null), lastEvent: "init" };
+  let lastMeta = {
+    lastFolio: /** @type {string | null} */ (null),
+    lastEvent: "init",
+  };
 
   /**
    * @param {{ lastFolio?: string | null; lastEvent?: string }} [meta]
@@ -617,221 +620,223 @@ async function runHillsboroughLocalPilot(options) {
 
   try {
     await mapPool(rowsSource, options.concurrency, async (seed) => {
-    const folio = seed.parcel_id;
-    const pin = seed.source_identifier || seed.pin;
-    if (!pin) {
-      const classification = "permanent";
-      failureCount += 1;
-      if (recentFailures.length < 200) {
-        recentFailures.push({
+      const folio = seed.parcel_id;
+      const pin = seed.source_identifier || seed.pin;
+      if (!pin) {
+        const classification = "permanent";
+        failureCount += 1;
+        if (recentFailures.length < 200) {
+          recentFailures.push({
+            folio,
+            pin,
+            error: "missing source_identifier/pin",
+            classification,
+          });
+        }
+        progress.attempted += 1;
+        progress.failed += 1;
+        await appendFailure(outputRoot, options.jobId, {
           folio,
-          pin,
           error: "missing source_identifier/pin",
           classification,
+          attempts: 1,
+          at: new Date().toISOString(),
+          jobId: options.jobId,
         });
+        await triggerProgressFlush({
+          lastFolio: folio,
+          lastEvent: "permanent_failure",
+        });
+        return;
       }
-      progress.attempted += 1;
-      progress.failed += 1;
-      await appendFailure(outputRoot, options.jobId, {
-        folio,
-        error: "missing source_identifier/pin",
-        classification,
-        attempts: 1,
-        at: new Date().toISOString(),
-        jobId: options.jobId,
-      });
-      await triggerProgressFlush({
-        lastFolio: folio,
-        lastEvent: "permanent_failure",
-      });
-      return;
-    }
 
-    const parcelDir = join(outputRoot, folio);
-    const zipPath = join(parcelDir, "transformed_output.zip");
-    if (options.skipExisting && (await pathExists(zipPath))) {
-      skippedCount += 1;
-      if (sampleResults.length < 200) {
-        sampleResults.push({ folio, pin, ok: true, skipped: true, zipPath });
+      const parcelDir = join(outputRoot, folio);
+      const zipPath = join(parcelDir, "transformed_output.zip");
+      if (options.skipExisting && (await pathExists(zipPath))) {
+        skippedCount += 1;
+        if (sampleResults.length < 200) {
+          sampleResults.push({ folio, pin, ok: true, skipped: true, zipPath });
+        }
+        if (options.load) zipPaths.push(zipPath);
+        progress.attempted += 1;
+        progress.skipped += 1;
+        await triggerProgressFlush({
+          lastFolio: folio,
+          lastEvent: "skipped",
+        });
+        return;
       }
-      if (options.load) zipPaths.push(zipPath);
-      progress.attempted += 1;
-      progress.skipped += 1;
-      await triggerProgressFlush({
-        lastFolio: folio,
-        lastEvent: "skipped",
-      });
-      return;
-    }
 
-    try {
-      await withTransientRetry(
-        async () => {
-          await rm(parcelDir, { recursive: true, force: true });
-          await mkdir(parcelDir, { recursive: true });
+      try {
+        await withTransientRetry(
+          async () => {
+            await rm(parcelDir, { recursive: true, force: true });
+            await mkdir(parcelDir, { recursive: true });
 
-          const parcel = await fetchParcelData(pin);
-          await writeFile(
-            join(parcelDir, "parcel-data.json"),
-            JSON.stringify(parcel, null, 2),
-            "utf8",
-          );
+            const parcel = await fetchParcelData(pin);
+            await writeFile(
+              join(parcelDir, "parcel-data.json"),
+              JSON.stringify(parcel, null, 2),
+              "utf8",
+            );
 
-          const html = buildInputHtmlFromParcelData(parcel);
-          await writeFile(join(parcelDir, "input.html"), html, "utf8");
+            const html = buildInputHtmlFromParcelData(parcel);
+            await writeFile(join(parcelDir, "input.html"), html, "utf8");
 
-          const { property_seed, unnormalized_address } = buildSeedArtifacts(
-            seed,
-            parcel,
-          );
-          await writeFile(
-            join(parcelDir, "property_seed.json"),
-            JSON.stringify(property_seed, null, 2),
-            "utf8",
-          );
-          await writeFile(
-            join(parcelDir, "unnormalized_address.json"),
-            JSON.stringify(unnormalized_address, null, 2),
-            "utf8",
-          );
+            const { property_seed, unnormalized_address } = buildSeedArtifacts(
+              seed,
+              parcel,
+            );
+            await writeFile(
+              join(parcelDir, "property_seed.json"),
+              JSON.stringify(property_seed, null, 2),
+              "utf8",
+            );
+            await writeFile(
+              join(parcelDir, "unnormalized_address.json"),
+              JSON.stringify(unnormalized_address, null, 2),
+              "utf8",
+            );
 
-          if (seed.parcel_polygon) {
-            const csv = [
-              "parcel_id,parcel_polygon,longitude,latitude",
-              `"${seed.parcel_id}","${String(seed.parcel_polygon).replace(/"/g, '""')}",${seed.longitude || ""},${seed.latitude || ""}`,
-            ].join("\n");
-            await writeFile(join(parcelDir, "seed.csv"), csv, "utf8");
-          }
+            if (seed.parcel_polygon) {
+              const csv = [
+                "parcel_id,parcel_polygon,longitude,latitude",
+                `"${seed.parcel_id}","${String(seed.parcel_polygon).replace(/"/g, '""')}",${seed.longitude || ""},${seed.latitude || ""}`,
+              ].join("\n");
+              await writeFile(join(parcelDir, "seed.csv"), csv, "utf8");
+            }
 
-          await mkdir(join(parcelDir, "owners"), { recursive: true });
-          await transformPool.run(parcelDir);
-          const zipEntryCount = await packageTransformedZip(parcelDir, zipPath);
+            await mkdir(join(parcelDir, "owners"), { recursive: true });
+            await transformPool.run(parcelDir);
+            const zipEntryCount = await packageTransformedZip(
+              parcelDir,
+              zipPath,
+            );
 
-          const validation = await validateParcelOutputs(parcelDir);
-          validation.zipEntryCount = zipEntryCount;
-          await writeFile(
-            join(parcelDir, "summary.json"),
-            JSON.stringify(
-              {
+            const validation = await validateParcelOutputs(parcelDir);
+            validation.zipEntryCount = zipEntryCount;
+            await writeFile(
+              join(parcelDir, "summary.json"),
+              JSON.stringify(
+                {
+                  folio,
+                  pin,
+                  siteAddress: parcel.siteAddress,
+                  landUse: parcel.landUse,
+                  validation,
+                  embeddedPermitCount: validation.permitCount,
+                },
+                null,
+                2,
+              ),
+              "utf8",
+            );
+
+            if (!validation.ok) {
+              throw new Error(
+                `validation failed missing=${(validation.missing || []).join(",")}`,
+              );
+            }
+
+            successCount += 1;
+            if (validation.hasGeometry) withGeometryCount += 1;
+            if (validation.hasTax) withTaxCount += 1;
+            if (validation.hasOwner) withOwnerCount += 1;
+            embeddedPermitsCount += validation.permitCount || 0;
+
+            if (sampleResults.length < 200) {
+              sampleResults.push({
                 folio,
                 pin,
+                ok: true,
+                validation,
+                zipPath,
                 siteAddress: parcel.siteAddress,
                 landUse: parcel.landUse,
-                validation,
-                embeddedPermitCount: validation.permitCount,
-              },
-              null,
-              2,
-            ),
-            "utf8",
-          );
-
-          if (!validation.ok) {
-            throw new Error(
-              `validation failed missing=${(validation.missing || []).join(",")}`,
-            );
-          }
-
-          successCount += 1;
-          if (validation.hasGeometry) withGeometryCount += 1;
-          if (validation.hasTax) withTaxCount += 1;
-          if (validation.hasOwner) withOwnerCount += 1;
-          embeddedPermitsCount += validation.permitCount || 0;
-
-          if (sampleResults.length < 200) {
-            sampleResults.push({
-              folio,
-              pin,
-              ok: true,
-              validation,
-              zipPath,
-              siteAddress: parcel.siteAddress,
-              landUse: parcel.landUse,
-            });
-          }
-          if (options.load) zipPaths.push(zipPath);
-          console.log(
-            JSON.stringify({
-              event: "parcel_complete",
-              jobId: options.jobId,
-              folio,
-              ok: true,
-              hasGeometry: validation.hasGeometry,
-              hasTax: validation.hasTax,
-              hasOwner: validation.hasOwner,
-              permitCount: validation.permitCount,
-            }),
-          );
-        },
-        {
-          maxAttempts: options.maxAttempts,
-          onRetry: ({ attempt, error, classification }) => {
-            progress.retried += 1;
-            console.warn(
+              });
+            }
+            if (options.load) zipPaths.push(zipPath);
+            console.log(
               JSON.stringify({
-                event: "parcel_retry",
+                event: "parcel_complete",
                 jobId: options.jobId,
                 folio,
-                attempt,
-                classification,
-                error:
-                  error instanceof Error ? error.message : String(error),
+                ok: true,
+                hasGeometry: validation.hasGeometry,
+                hasTax: validation.hasTax,
+                hasOwner: validation.hasOwner,
+                permitCount: validation.permitCount,
               }),
             );
           },
-        },
-      );
-      progress.attempted += 1;
-      progress.succeeded += 1;
-      await triggerProgressFlush({
-        lastFolio: folio,
-        lastEvent: "success",
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      const classification = classifyFailure(error);
-      const attempts = (attemptCounts.get(folio) || 0) + options.maxAttempts;
-      attemptCounts.set(folio, attempts);
+          {
+            maxAttempts: options.maxAttempts,
+            onRetry: ({ attempt, error, classification }) => {
+              progress.retried += 1;
+              console.warn(
+                JSON.stringify({
+                  event: "parcel_retry",
+                  jobId: options.jobId,
+                  folio,
+                  attempt,
+                  classification,
+                  error: error instanceof Error ? error.message : String(error),
+                }),
+              );
+            },
+          },
+        );
+        progress.attempted += 1;
+        progress.succeeded += 1;
+        await triggerProgressFlush({
+          lastFolio: folio,
+          lastEvent: "success",
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const classification = classifyFailure(error);
+        const attempts = (attemptCounts.get(folio) || 0) + options.maxAttempts;
+        attemptCounts.set(folio, attempts);
 
-      failureCount += 1;
-      if (recentFailures.length < 200) {
-        recentFailures.push({
+        failureCount += 1;
+        if (recentFailures.length < 200) {
+          recentFailures.push({
+            folio,
+            pin,
+            error: message,
+            classification,
+          });
+        }
+
+        progress.attempted += 1;
+        progress.failed += 1;
+
+        await appendFailure(outputRoot, options.jobId, {
           folio,
           pin,
           error: message,
           classification,
-        });
-      }
-
-      progress.attempted += 1;
-      progress.failed += 1;
-
-      await appendFailure(outputRoot, options.jobId, {
-        folio,
-        pin,
-        error: message,
-        classification,
-        attempts,
-        at: new Date().toISOString(),
-        jobId: options.jobId,
-      });
-
-      await triggerProgressFlush({
-        lastFolio: folio,
-        lastEvent: "failure",
-      });
-
-      console.error(
-        JSON.stringify({
-          event: "parcel_failed",
+          attempts,
+          at: new Date().toISOString(),
           jobId: options.jobId,
-          folio,
-          classification,
-          error: message,
-        }),
-      );
-    }
-  });
+        });
+
+        await triggerProgressFlush({
+          lastFolio: folio,
+          lastEvent: "failure",
+        });
+
+        console.error(
+          JSON.stringify({
+            event: "parcel_failed",
+            jobId: options.jobId,
+            folio,
+            classification,
+            error: message,
+          }),
+        );
+      }
+    });
   } finally {
     await triggerProgressFlush({ lastEvent: "final" }, true);
     transformPool.close();

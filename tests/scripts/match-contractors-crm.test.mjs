@@ -41,7 +41,8 @@ describe("match-contractors-crm", () => {
       phone: "(813) 264-5690",
       rating: "A+",
       accredited: true,
-      profileUrl: "https://www.bbb.org/us/fl/tampa/profile/roofing-contractors/westfall-roofing-0653-90001234",
+      profileUrl:
+        "https://www.bbb.org/us/fl/tampa/profile/roofing-contractors/westfall-roofing-0653-90001234",
     });
 
     await writeFile(tmpEnriched, sampleEnriched, "utf8");

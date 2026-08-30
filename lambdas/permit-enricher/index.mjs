@@ -53,9 +53,14 @@ import { searchMaintStarPermits } from "../../scripts/hillsborough/adapters/plan
  */
 export function extractCleanBusinessName(raw) {
   if (!raw) return null;
-  const m = raw.match(/(?:[A-Z0-9\s&,.'-]+?)\s+(?:LLC|INC|CORP|CORPORATION|ROOFING|ROOFS|BUILDERS|SERVICES|CONSTRUCTION|CONTRACTING|ENTERPRISES|CO|COMPANY|GROUP)\b/i);
+  const m = raw.match(
+    /(?:[A-Z0-9\s&,.'-]+?)\s+(?:LLC|INC|CORP|CORPORATION|ROOFING|ROOFS|BUILDERS|SERVICES|CONSTRUCTION|CONTRACTING|ENTERPRISES|CO|COMPANY|GROUP)\b/i,
+  );
   if (m) {
-    let bus = m[0].replace(/^[A-Za-z\s]+@[A-Za-z0-9.-]+\s+/, "").replace(/^[0-9\s]+/, "").trim();
+    let bus = m[0]
+      .replace(/^[A-Za-z\s]+@[A-Za-z0-9.-]+\s+/, "")
+      .replace(/^[0-9\s]+/, "")
+      .trim();
     const emailIdx = bus.indexOf("@");
     if (emailIdx !== -1) {
       const spaceAfter = bus.indexOf(" ", emailIdx);
@@ -102,9 +107,14 @@ export function parseAccelaCapDetailHtml(html) {
   const $ = cheerio.load(html);
 
   // 1. Header parsing (Record Number, Status, Expiration)
-  const headerText = $("#ctl00_PlaceHolderMain_dvContent").text().replace(/\s+/g, " ").trim();
+  const headerText = $("#ctl00_PlaceHolderMain_dvContent")
+    .text()
+    .replace(/\s+/g, " ")
+    .trim();
   const permitNumMatch = headerText.match(/Record\s+([A-Z0-9_-]+):/i);
-  const statusMatch = headerText.match(/Record Status:\s*([A-Za-z0-9_\s-]+?)(?:\s+Expiration|\s+function|\s*$)/i);
+  const statusMatch = headerText.match(
+    /Record Status:\s*([A-Za-z0-9_\s-]+?)(?:\s+Expiration|\s+function|\s*$)/i,
+  );
   const expMatch = headerText.match(/Expiration Date:\s*([0-9/]+)/i);
 
   // 2. Project Description
@@ -121,7 +131,10 @@ export function parseAccelaCapDetailHtml(html) {
   $("td, div, span").each((_, el) => {
     const text = $(el).text().replace(/\s+/g, " ").trim();
     if (text.startsWith("Owner:") && !ownerName) {
-      ownerName = text.replace(/^Owner:\s*/, "").replace(/\*.*$/, "").trim();
+      ownerName = text
+        .replace(/^Owner:\s*/, "")
+        .replace(/\*.*$/, "")
+        .trim();
     }
   });
 
@@ -130,16 +143,31 @@ export function parseAccelaCapDetailHtml(html) {
   let contractor = null;
   $("td, div").each((_, el) => {
     const text = $(el).text().replace(/\s+/g, " ").trim();
-    if (text.startsWith("Licensed Professional:") && $(el).hasClass("td_parent_left") && !contractor) {
+    if (
+      text.startsWith("Licensed Professional:") &&
+      $(el).hasClass("td_parent_left") &&
+      !contractor
+    ) {
       const body = text.replace(/^Licensed Professional:\s*/, "");
 
-      const licMatch = body.match(/\b(C[A-Z]{2}[0-9]{5,8}|[A-Z]{2,4}[0-9]{5,8})\b/i);
-      const emailMatch = body.match(/([a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+)/);
-      const phoneMatch = body.match(/(?:Phone:|Home Phone:|Business Phone:)?\s*(\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4})/i);
-      const licTypeMatch = body.match(/(Certified\s+[A-Za-z\s]+|Registered\s+[A-Za-z\s]+)/i);
+      const licMatch = body.match(
+        /\b(C[A-Z]{2}[0-9]{5,8}|[A-Z]{2,4}[0-9]{5,8})\b/i,
+      );
+      const emailMatch = body.match(
+        /([a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+)/,
+      );
+      const phoneMatch = body.match(
+        /(?:Phone:|Home Phone:|Business Phone:)?\s*(\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4})/i,
+      );
+      const licTypeMatch = body.match(
+        /(Certified\s+[A-Za-z\s]+|Registered\s+[A-Za-z\s]+)/i,
+      );
 
       const cleanBus = extractCleanBusinessName(body);
-      const qualifier = body.split(/\s+CAITLIN|\s+MBERNS|\s+TRC|\s+collin|@|[0-9]{5,}/)[0]?.trim() || null;
+      const qualifier =
+        body
+          .split(/\s+CAITLIN|\s+MBERNS|\s+TRC|\s+collin|@|[0-9]{5,}/)[0]
+          ?.trim() || null;
 
       contractor = {
         businessName: cleanBus,
@@ -163,7 +191,9 @@ export function parseAccelaCapDetailHtml(html) {
   $("tr, div, td").each((_, el) => {
     const text = $(el).text().replace(/\s+/g, " ").trim();
     if (text.includes("Total Project Value:")) {
-      const m = text.match(/Total Project Value:\s*\$?([0-9,]+(?:\.[0-9]{2})?)/i);
+      const m = text.match(
+        /Total Project Value:\s*\$?([0-9,]+(?:\.[0-9]{2})?)/i,
+      );
       if (m && jobValuation === null) {
         jobValuation = parseFloat(m[1].replace(/,/g, ""));
       }
@@ -217,23 +247,38 @@ export async function fetchAccelaCapDetailHtml(url, maxRetries = 8) {
     try {
       const res = await fetch(url, {
         headers: {
-          "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-          "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          "User-Agent":
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+          Accept:
+            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
           "Accept-Language": "en-US,en;q=0.9",
         },
       });
 
-      if (res.status === 429 || res.status === 502 || res.status === 503 || res.status === 504 || res.status === 500) {
+      if (
+        res.status === 429 ||
+        res.status === 502 ||
+        res.status === 503 ||
+        res.status === 504 ||
+        res.status === 500
+      ) {
         lastStatus = res.status === 429 ? "rate_limited" : "fetch_error";
         lastError = `HTTP ${res.status} Rate Limit / Gateway Error`;
         // Progressive exponential backoff with jitter: 1.5s, 3.0s, 4.5s, 6.0s, 7.5s ...
-        const delay = Math.min(attempt * 1200 + Math.floor(Math.random() * 800), 8000);
+        const delay = Math.min(
+          attempt * 1200 + Math.floor(Math.random() * 800),
+          8000,
+        );
         await new Promise((r) => setTimeout(r, delay));
         continue;
       }
 
       if (res.status === 404) {
-        return { html: null, status: "portal_404", error: "HTTP 404 Record Not Found on Accela" };
+        return {
+          html: null,
+          status: "portal_404",
+          error: "HTTP 404 Record Not Found on Accela",
+        };
       }
 
       if (!res.ok) {
@@ -252,7 +297,9 @@ export async function fetchAccelaCapDetailHtml(url, maxRetries = 8) {
       if (attempt === maxRetries) {
         return { html: null, status: lastStatus, error: lastError };
       }
-      await new Promise((r) => setTimeout(r, attempt * 1000 + Math.floor(Math.random() * 500)));
+      await new Promise((r) =>
+        setTimeout(r, attempt * 1000 + Math.floor(Math.random() * 500)),
+      );
     }
   }
 
@@ -310,12 +357,25 @@ export async function handler(event, context) {
       const cand = items[idx];
 
       let url = cand.source_url;
-      const isClick2Gov = Boolean((url && url.includes("aspgov.com")) || (cand.permit_number && cand.permit_number.startsWith("TT-")));
-      const isMaintStar = Boolean((url && url.includes("maintstar")) || cand.source_system?.includes("plant_city") || (cand.permit_number && /^\d{9}-\d{4}$/.test(cand.permit_number)));
+      const isClick2Gov = Boolean(
+        (url && url.includes("aspgov.com")) ||
+        (cand.permit_number && cand.permit_number.startsWith("TT-")),
+      );
+      const isMaintStar = Boolean(
+        (url && url.includes("maintstar")) ||
+        cand.source_system?.includes("plant_city") ||
+        (cand.permit_number && /^\d{9}-\d{4}$/.test(cand.permit_number)),
+      );
       const isAccela = !isClick2Gov && !isMaintStar;
 
-      if (isAccela && url && url.includes("aca-prod.accela.com") && !url.includes("CapDetail.aspx")) {
-        const isTampa = url.includes("/TAMPA") || cand.jurisdiction_hint === "TAMPA";
+      if (
+        isAccela &&
+        url &&
+        url.includes("aca-prod.accela.com") &&
+        !url.includes("CapDetail.aspx")
+      ) {
+        const isTampa =
+          url.includes("/TAMPA") || cand.jurisdiction_hint === "TAMPA";
         const agency = isTampa ? "TAMPA" : "HCFL";
         url = `https://aca-prod.accela.com/${agency}/Cap/CapDetail.aspx?Module=Building&TabName=Building&altId=${cand.permit_number}`;
       }
@@ -329,28 +389,34 @@ export async function handler(event, context) {
         const c2gRes = await fetchClick2GovPermitDetail(cand.permit_number);
         if (c2gRes.data) {
           const d = c2gRes.data;
-          const hasDetails = d.contractor !== null || d.jobValuation !== null || d.recordStatus !== null;
+          const hasDetails =
+            d.contractor !== null ||
+            d.jobValuation !== null ||
+            d.recordStatus !== null;
           if (hasDetails) {
             enrichmentStatus = "enriched";
             enrichedCount++;
             parsed = {
-              contractor: d.contractor ? {
-                businessName: d.contractor.businessName,
-                contactName: d.contractor.qualifierName,
-                licenseNumber: d.contractor.licenseNumber,
-                licenseType: null,
-                email: d.contractor.email,
-                phone: d.contractor.phone,
-                address: null,
-                raw: d.contractor.businessName,
-              } : null,
+              contractor: d.contractor
+                ? {
+                    businessName: d.contractor.businessName,
+                    contactName: d.contractor.qualifierName,
+                    licenseNumber: d.contractor.licenseNumber,
+                    licenseType: null,
+                    email: d.contractor.email,
+                    phone: d.contractor.phone,
+                    address: null,
+                    raw: d.contractor.businessName,
+                  }
+                : null,
               jobValuation: d.jobValuation,
               squareFeet: d.squareFeet,
               material: null,
               stormRelated: null,
               recordStatus: d.recordStatus,
               expirationDate: null,
-              description: d.applicationType || cand.project_description || null,
+              description:
+                d.applicationType || cand.project_description || null,
             };
           }
         } else if (c2gRes.status === "not_found") {
@@ -375,14 +441,16 @@ export async function handler(event, context) {
             stormRelated: null,
             recordStatus: rec.status,
             expirationDate: null,
-            description: rec.description || rec.type || cand.project_description || null,
+            description:
+              rec.description || rec.type || cand.project_description || null,
           };
         } else if (msRes.status === "quota_exceeded") {
           enrichmentStatus = "rate_limited";
           errorMessage = msRes.error;
         } else {
           enrichmentStatus = "no_details";
-          errorMessage = msRes.error || "No matching record in Plant City MaintStar";
+          errorMessage =
+            msRes.error || "No matching record in Plant City MaintStar";
         }
       } else if (!url || !url.includes("aca-prod.accela.com")) {
         enrichmentStatus = "no_details";
@@ -392,7 +460,9 @@ export async function handler(event, context) {
         const fetchRes = await fetchAccelaCapDetailHtml(url);
         if (fetchRes.html) {
           parsed = parseAccelaCapDetailHtml(fetchRes.html);
-          const hasDetails = parsed !== null && (parsed.contractor !== null || parsed.jobValuation !== null);
+          const hasDetails =
+            parsed !== null &&
+            (parsed.contractor !== null || parsed.jobValuation !== null);
           if (hasDetails) {
             enrichmentStatus = "enriched";
             enrichedCount++;
@@ -424,7 +494,8 @@ export async function handler(event, context) {
         permit_issue_date: cand.permit_issue_date || null,
         record_status: parsed?.recordStatus || cand.record_status || null,
         expiration_date: parsed?.expirationDate || null,
-        project_description: parsed?.description || cand.project_description || null,
+        project_description:
+          parsed?.description || cand.project_description || null,
         is_roof_permit: Boolean(cand.is_roof_permit),
         job_valuation: parsed?.jobValuation || null,
         square_feet: parsed?.squareFeet || null,
@@ -438,7 +509,9 @@ export async function handler(event, context) {
       };
 
       results.push(record);
-      await new Promise((r) => setTimeout(r, 150 + Math.floor(Math.random() * 100)));
+      await new Promise((r) =>
+        setTimeout(r, 150 + Math.floor(Math.random() * 100)),
+      );
     }
   });
 

@@ -75,7 +75,8 @@ export class TransformPool {
     };
 
     child.on("message", (msg) => {
-      const { id, ok, error } = /** @type {{ id: number; ok: boolean; error?: string }} */ (msg);
+      const { id, ok, error } =
+        /** @type {{ id: number; ok: boolean; error?: string }} */ (msg);
       const task = this.inFlight.get(id);
       if (task) {
         this.inFlight.delete(id);
@@ -91,7 +92,9 @@ export class TransformPool {
 
     child.on("exit", (code) => {
       if (this.closed) return;
-      console.warn(`Transform worker ${workerIndex} exited with code ${code}. Respawning...`);
+      console.warn(
+        `Transform worker ${workerIndex} exited with code ${code}. Respawning...`,
+      );
       state.busy = false;
       this.workers = this.workers.filter((w) => w.id !== workerIndex);
       this.spawnWorker(workerIndex);
