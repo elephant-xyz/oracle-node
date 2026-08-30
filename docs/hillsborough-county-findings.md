@@ -7,15 +7,15 @@
 
 ## 1. Appraiser portal
 
-| Item | Detail |
-|------|--------|
-| Site | [hcpafl.org](https://hcpafl.org/) |
-| Search SPA | [gis.hcpafl.org/PropertySearch](https://gis.hcpafl.org/PropertySearch/) |
-| JSON API | `https://gis.hcpafl.org/CommonServices/property/search/` |
-| Primary endpoints | `BasicSearch`, `ParcelData`, `Autocomplete` |
-| Access mode | **Plain HTTP JSON** (no browser required for capture) |
-| CAPTCHA / Cloudflare | None observed on CommonServices (US egress) |
-| Parcel id | Folio (10-digit) + strap/PIN display form |
+| Item                 | Detail                                                                  |
+| -------------------- | ----------------------------------------------------------------------- |
+| Site                 | [hcpafl.org](https://hcpafl.org/)                                       |
+| Search SPA           | [gis.hcpafl.org/PropertySearch](https://gis.hcpafl.org/PropertySearch/) |
+| JSON API             | `https://gis.hcpafl.org/CommonServices/property/search/`                |
+| Primary endpoints    | `BasicSearch`, `ParcelData`, `Autocomplete`                             |
+| Access mode          | **Plain HTTP JSON** (no browser required for capture)                   |
+| CAPTCHA / Cloudflare | None observed on CommonServices (US egress)                             |
+| Parcel id            | Folio (10-digit) + strap/PIN display form                               |
 
 Example folio: `1125270100` / display `112527-0100` / strap pin `182919ZZZ000005494600A`.
 
@@ -53,33 +53,33 @@ Captured when present:
 
 HCPA land-use codes drive commercial vs residential eligibility. Examples observed in pilot pool:
 
-| Code band | Examples | Pilot role |
-|-----------|----------|------------|
-| 00xx | Vacant residential / condo | Vacant geometry / skip-permits path |
-| 01xx | Single family | Residential |
-| 04xx | Condo | Condo unit |
-| 11xx–18xx | Store / office / multi-story office | Commercial |
-| 41xx+ | Industrial | Industrial |
+| Code band | Examples                            | Pilot role                          |
+| --------- | ----------------------------------- | ----------------------------------- |
+| 00xx      | Vacant residential / condo          | Vacant geometry / skip-permits path |
+| 01xx      | Single family                       | Residential                         |
+| 04xx      | Condo                               | Condo unit                          |
+| 11xx–18xx | Store / office / multi-story office | Commercial                          |
+| 41xx+     | Industrial                          | Industrial                          |
 
 Full mapping lives in `Counties-trasform-scripts/hillsborough/scripts/data_extractor.js` (`propertyTypeMapping`).
 
 ## 5. Additional sources
 
-| Category | Status |
-|----------|--------|
-| Sunbiz (FL) | ZIP prefixes `335`/`336`; match rates scored on Neon (see §12) |
-| BBB | Tampa roofing probe: 15 profiles loaded (see §12) |
-| Tax collector | Out of scope (values from HCPA) |
-| Recorder / OR | Out of scope (book/page links only) |
-| Code enforcement | No unified countywide source identified |
+| Category         | Status                                                         |
+| ---------------- | -------------------------------------------------------------- |
+| Sunbiz (FL)      | ZIP prefixes `335`/`336`; match rates scored on Neon (see §12) |
+| BBB              | Tampa roofing probe: 15 profiles loaded (see §12)              |
+| Tax collector    | Out of scope (values from HCPA)                                |
+| Recorder / OR    | Out of scope (book/page links only)                            |
+| Code enforcement | No unified countywide source identified                        |
 
 ## 6. Source feasibility (local)
 
-| Source | Probe | Safe concurrency | Full-download note |
-|--------|-------|------------------|--------------------|
-| ParcelData | ~0.5–1.5s / parcel | 2 | Full county deferred (no AWS this story) |
-| HC_ParcelsPublic | ~0.3–1s / folio | 2–4 | Used for pilot geometry only |
-| Accela HCFL/TAMPA | Live 200 on CapHome | n/a | Adapter not in this pilot |
+| Source            | Probe               | Safe concurrency | Full-download note                       |
+| ----------------- | ------------------- | ---------------- | ---------------------------------------- |
+| ParcelData        | ~0.5–1.5s / parcel  | 2                | Full county deferred (no AWS this story) |
+| HC_ParcelsPublic  | ~0.3–1s / folio     | 2–4              | Used for pilot geometry only             |
+| Accela HCFL/TAMPA | Live 200 on CapHome | n/a              | Adapter not in this pilot                |
 
 ## 7. Risks
 
@@ -110,17 +110,17 @@ Command:
 node scripts/hillsborough-local-pilot.mjs --limit=50 --concurrency=2
 ```
 
-| Check | Result |
-|-------|--------|
-| Seed rows | 50 unique folios (`downloads/hillsborough/pilot-seed-50.csv`) |
-| Diversity | land-use bands include 00/01/04 (vacant/res/condo) + 11–18 commercial + industrial/other |
-| Geometry in seed | 50/50 polygons from `HC_ParcelsPublic` |
-| Capture + transform | **50/50 success** |
-| Required artifacts | `property.json`, `address.json`, `property_seed.json` present for all |
-| Completeness | tax 50/50, owner 50/50, geometry 50/50 |
-| Embedded permitInfo rows | 356 across pilot (Tampa Accela links; full HCFL harvest deferred) |
-| Failures | 0 |
-| Manifest | `downloads/hillsborough/pilot-run/pilot-manifest.json` |
+| Check                    | Result                                                                                   |
+| ------------------------ | ---------------------------------------------------------------------------------------- |
+| Seed rows                | 50 unique folios (`downloads/hillsborough/pilot-seed-50.csv`)                            |
+| Diversity                | land-use bands include 00/01/04 (vacant/res/condo) + 11–18 commercial + industrial/other |
+| Geometry in seed         | 50/50 polygons from `HC_ParcelsPublic`                                                   |
+| Capture + transform      | **50/50 success**                                                                        |
+| Required artifacts       | `property.json`, `address.json`, `property_seed.json` present for all                    |
+| Completeness             | tax 50/50, owner 50/50, geometry 50/50                                                   |
+| Embedded permitInfo rows | 356 across pilot (Tampa Accela links; full HCFL harvest deferred)                        |
+| Failures                 | 0                                                                                        |
+| Manifest                 | `downloads/hillsborough/pilot-run/pilot-manifest.json`                                   |
 
 Neon load: **done** — `node scripts/hillsborough-local-pilot.mjs --limit=50 --concurrency=2 --load` → 50 parcels / 1509 prepared rows upserted under `hillsborough_appraiser` (`parcelsBefore: 0` → `parcelsAfter: 50`).
 
@@ -128,15 +128,15 @@ Neon load: **done** — `node scripts/hillsborough-local-pilot.mjs --limit=50 --
 
 Reused existing Filebase account credentials from `.env.publish-chester.local` (same pattern as Chester — no new access key required). Created bucket `elephant-oracle-open-data-hillsborough`.
 
-| Surface | Result |
-|---------|--------|
-| Open-data index CID | `QmXmudL56YGZLQy58XH5J65Z2ouePkhVpDnrCth6wcTAax` |
-| Open-data IPNS | `oracle-open-data-hillsborough` → `k51qzi5uqu5diznbms9qjkf8wrebeq7qwhc4jzy620k5bb44qqnibp7cl7nx1f` |
-| Query-table CID | `QmaheHZg56fJQAP2iH9XVSjKsU5VUbnyqR8MSPrZudJNSu` |
-| Query-table IPNS | `oracle-query-table-hillsborough` → `k51qzi5uqu5diqz0l68gfi22qk0w8aqhsm7pcgje535uz8vhu8p37ynm2po0fh` |
+| Surface               | Result                                                                                                    |
+| --------------------- | --------------------------------------------------------------------------------------------------------- |
+| Open-data index CID   | `QmXmudL56YGZLQy58XH5J65Z2ouePkhVpDnrCth6wcTAax`                                                          |
+| Open-data IPNS        | `oracle-open-data-hillsborough` → `k51qzi5uqu5diznbms9qjkf8wrebeq7qwhc4jzy620k5bb44qqnibp7cl7nx1f`        |
+| Query-table CID       | `QmaheHZg56fJQAP2iH9XVSjKsU5VUbnyqR8MSPrZudJNSu`                                                          |
+| Query-table IPNS      | `oracle-query-table-hillsborough` → `k51qzi5uqu5diqz0l68gfi22qk0w8aqhsm7pcgje535uz8vhu8p37ynm2po0fh`      |
 | Dataset coverage IPNS | `oracle-dataset-coverage-hillsborough` → `k51qzi5uqu5di5jghjwbpumnr2vt1crmaycqmtx673kw8pqp8dymecuig5x8jb` |
-| Validation | parquet 50 rows = Neon 50 folios; gateway bytes `PAR1` |
-| MCP local map | `PROPERTY_QUERY_TABLE_MAP` + `ORACLE_OPEN_DATA_IPNS_MAP` updated in team-kit / local plugin |
+| Validation            | parquet 50 rows = Neon 50 folios; gateway bytes `PAR1`                                                    |
+| MCP local map         | `PROPERTY_QUERY_TABLE_MAP` + `ORACLE_OPEN_DATA_IPNS_MAP` updated in team-kit / local plugin               |
 
 Donphan: after **Developer: Reload Window**, query `county=hillsborough` (e.g. `SELECT count(*) FROM properties`).
 
@@ -189,14 +189,14 @@ npx tsx scripts/run-permits-local-load.ts \
   --permit-source-system hillsborough_permits
 ```
 
-| Metric | Value |
-|--------|-------|
-| Parcels with ≥1 permitInfo | 39 / 50 |
-| Permit rows loaded | 356 (all linked to parcel + property; all with Accela URL) |
-| Jurisdiction | Tampa Accela 315 / HCFL Accela 41 |
-| Issue date range | 2006-01-20 → 2026-02-01 |
-| Roofing-related (descr/number heuristic) | 15–22 depending on pattern |
-| Contractor company on embedded rows | **0** (ParcelData `permitInfo` has no contractor) |
+| Metric                                   | Value                                                      |
+| ---------------------------------------- | ---------------------------------------------------------- |
+| Parcels with ≥1 permitInfo               | 39 / 50                                                    |
+| Permit rows loaded                       | 356 (all linked to parcel + property; all with Accela URL) |
+| Jurisdiction                             | Tampa Accela 315 / HCFL Accela 41                          |
+| Issue date range                         | 2006-01-20 → 2026-02-01                                    |
+| Roofing-related (descr/number heuristic) | 15–22 depending on pattern                                 |
+| Contractor company on embedded rows      | **0** (ParcelData `permitInfo` has no contractor)          |
 
 **Valuation:** Keep embedded `permitInfo` for roofing MVP **property↔permit join + Accela deep links**. It is enough to flag parcels with recent building/roof work. It is **not** enough for contractor reputation joins — defer full Accela HCFL/Tampa adapters until contractor fields are required.
 
@@ -208,11 +208,11 @@ Local filter tool: `scripts/hillsborough/filter-sunbiz-by-zip.mjs` (filesystem `
 
 Match rates vs pilot (statewide Sunbiz already in Neon):
 
-| Join | Rate |
-|------|------|
-| Exact `normalized_address_key` | **0 / 50** (appraisal keys omit `FL` + ZIP; Sunbiz keys include them) |
-| Street-prefix (`{number} {street}%tampa%`) | **9 / 49** unique street bases (~18%) |
-| Owner/company name normalize | **4** distinct name hits |
+| Join                                       | Rate                                                                  |
+| ------------------------------------------ | --------------------------------------------------------------------- |
+| Exact `normalized_address_key`             | **0 / 50** (appraisal keys omit `FL` + ZIP; Sunbiz keys include them) |
+| Street-prefix (`{number} {street}%tampa%`) | **9 / 49** unique street bases (~18%)                                 |
+| Owner/company name normalize               | **4** distinct name hits                                              |
 
 Query-table export flags: `has_sunbiz_tenant` **0/50** (exact-key CTE).
 
@@ -233,12 +233,12 @@ npx tsx scripts/run-bbb-local-load.ts \
   --input ../oracle-node-hillsborough/downloads/hillsborough/bbb-probe/profiles/profiles-part-0001.jsonl
 ```
 
-| Metric | Value |
-|--------|-------|
-| Category page | 1 page, 16 listings discovered (5054 Tampa-area roofing results claimed) |
-| Profiles harvested / loaded | 15 / 15 (egress US OK; ~5 min for 15 profiles) |
-| `has_bbb_contractor` on query table | **0 / 50** |
-| Why | Flag joins BBB names to **permit contractor companies**; embedded permits have none |
+| Metric                              | Value                                                                               |
+| ----------------------------------- | ----------------------------------------------------------------------------------- |
+| Category page                       | 1 page, 16 listings discovered (5054 Tampa-area roofing results claimed)            |
+| Profiles harvested / loaded         | 15 / 15 (egress US OK; ~5 min for 15 profiles)                                      |
+| `has_bbb_contractor` on query table | **0 / 50**                                                                          |
+| Why                                 | Flag joins BBB names to **permit contractor companies**; embedded permits have none |
 
 **Valuation:** BBB crawl is **technically viable** locally. For roofing MVP **defer** national/category crawl until Accela harvest supplies contractor names; otherwise `has_bbb_contractor` stays false.
 
@@ -251,23 +251,23 @@ npx tsx scripts/run-query-table-export.ts \
   --out-dir ../oracle-node-hillsborough/downloads/hillsborough/query-table-pilot-enriched
 ```
 
-| Flag | Count / 50 |
-|------|------------|
-| `has_permits` | **39** (counts `hillsborough_permits` only; excludes same-source appraisal improvements) |
-| `permit_count` sum | **356** |
-| `has_sunbiz_tenant` | **0** |
-| `has_bbb_contractor` | **0** |
+| Flag                 | Count / 50                                                                               |
+| -------------------- | ---------------------------------------------------------------------------------------- |
+| `has_permits`        | **39** (counts `hillsborough_permits` only; excludes same-source appraisal improvements) |
+| `permit_count` sum   | **356**                                                                                  |
+| `has_sunbiz_tenant`  | **0**                                                                                    |
+| `has_bbb_contractor` | **0**                                                                                    |
 
 IPFS republish skipped (out of scope for this validation).
 
 ### Recommendations before full-county
 
-| Source | Decision |
-|--------|----------|
-| Embedded permitInfo | **Keep** for MVP parcel↔permit + Accela URLs |
-| Full Accela HCFL/Tampa | **Defer** until contractor/inspection fields needed |
-| Sunbiz ZIP extract | **Defer** for roofing; fix address-key alignment before relying on `has_sunbiz_tenant` |
-| BBB category harvest | **Defer** until permit contractors exist to match |
+| Source                 | Decision                                                                               |
+| ---------------------- | -------------------------------------------------------------------------------------- |
+| Embedded permitInfo    | **Keep** for MVP parcel↔permit + Accela URLs                                           |
+| Full Accela HCFL/Tampa | **Defer** until contractor/inspection fields needed                                    |
+| Sunbiz ZIP extract     | **Defer** for roofing; fix address-key alignment before relying on `has_sunbiz_tenant` |
+| BBB category harvest   | **Defer** until permit contractors exist to match                                      |
 
 ## 13. Full county production ingestion & publishing summary
 
@@ -276,16 +276,16 @@ IPFS republish skipped (out of scope for this validation).
 
 ### Pipeline Yield & Metrics
 
-| Pipeline Stage | Total Target | Ingested / Verified | Coverage % | Details / Artifacts |
-|---|---|---|---|---|
-| **Appraisal Harvest** | 524,196 parcels | **524,196** | **100.0%** | Full parcel deeds, valuations, structures, GIS polygons |
-| **Permit Extraction** | 958,002 permits | **958,002** | **100.0%** | 169.9k Roofing, 75.0k HVAC, 21.5k Solar, 62.2k Pool, 28.8k Plumbing |
-| **Accela Deep Enrichment** | 958,002 permits | **958,002** | **100.0%** | Extracted licenses & valuations across HCFL & Tampa |
-| **Municipal Portal Adapters** | 50,751 permits | **50,408** | **99.3%** | Temple Terrace (Click2Gov) & Plant City (MaintStar) |
-| **Multi-Trade BBB CRM** | 3 Trades | **352 profiles** | **100.0%** | Roofing (88), HVAC (156), Solar (108) with 436 matched contractors |
-| **Overture Places & POIs** | 81,895 places | **81,895** | **100.0%** | Commercial places clipped to 2024 TIGER boundary |
-| **Sunbiz Corporate Slice** | Hillsborough | **50,211 entities** | **100.0%** | Scoped by ZIP prefixes `335` & `336` |
-| **Master Query Table Parquet** | 524,196 rows | **524,196** | **100.0%** | `217.8 MB` flat scalar-only parquet with full contractor joins |
+| Pipeline Stage                 | Total Target    | Ingested / Verified | Coverage % | Details / Artifacts                                                 |
+| ------------------------------ | --------------- | ------------------- | ---------- | ------------------------------------------------------------------- |
+| **Appraisal Harvest**          | 524,196 parcels | **524,196**         | **100.0%** | Full parcel deeds, valuations, structures, GIS polygons             |
+| **Permit Extraction**          | 958,002 permits | **958,002**         | **100.0%** | 169.9k Roofing, 75.0k HVAC, 21.5k Solar, 62.2k Pool, 28.8k Plumbing |
+| **Accela Deep Enrichment**     | 958,002 permits | **958,002**         | **100.0%** | Extracted licenses & valuations across HCFL & Tampa                 |
+| **Municipal Portal Adapters**  | 50,751 permits  | **50,408**          | **99.3%**  | Temple Terrace (Click2Gov) & Plant City (MaintStar)                 |
+| **Multi-Trade BBB CRM**        | 3 Trades        | **352 profiles**    | **100.0%** | Roofing (88), HVAC (156), Solar (108) with 436 matched contractors  |
+| **Overture Places & POIs**     | 81,895 places   | **81,895**          | **100.0%** | Commercial places clipped to 2024 TIGER boundary                    |
+| **Sunbiz Corporate Slice**     | Hillsborough    | **50,211 entities** | **100.0%** | Scoped by ZIP prefixes `335` & `336`                                |
+| **Master Query Table Parquet** | 524,196 rows    | **524,196**         | **100.0%** | `217.8 MB` flat scalar-only parquet with full contractor joins      |
 
 ### Published IPFS / IPNS Pointers
 
@@ -307,4 +307,3 @@ FROM properties
 WHERE market_value > 500000
 LIMIT 5;
 ```
-
