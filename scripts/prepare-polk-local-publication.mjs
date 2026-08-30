@@ -68,6 +68,15 @@ const ipfsHash = require("ipfs-only-hash");
  */
 
 /**
+ * @typedef {object} PolkPublicCoverageOptions
+ * @property {number} propertyCount Reconciled published property count.
+ * @property {number} permitCount Reconciled permit rows nested in property payloads.
+ * @property {string} exportedAt Export start timestamp.
+ * @property {string} completedAt Export completion timestamp.
+ * @property {string} openDataCid CID of the published open-data index.
+ */
+
+/**
  * Parse local publication-preparation options.
  *
  * Dry-run is the default. `--materialize` must be explicit because it creates
@@ -340,6 +349,11 @@ export async function buildPolkPublicationPlan(options) {
   if (!isJsonObject(privacy) || privacy.passed !== true) {
     throw new Error("Polk privacy gate is not recorded as passed");
   }
+  const childRows = coverage.childRows;
+  if (!isJsonObject(childRows)) {
+    throw new Error("Polk source coverage child rows are missing");
+  }
+  const permitCount = requiredCount(childRows, "permits", "coverage.childRows");
   const countsMatch =
     propertyCount === inventory.propertyCount &&
     propertyCount === queryTableRows &&
@@ -399,6 +413,7 @@ export async function buildPolkPublicationPlan(options) {
       passed: true,
       propertyCount,
       propertyBytes,
+      permitCount,
       sourceManifestCount: inventory.sourceManifestNames.length,
       queryTable: {
         file: queryTableFile,
@@ -438,7 +453,7 @@ export async function buildPolkPublicationPlan(options) {
         localFile: path.join(
           options.outputDirectory,
           "dataset-coverage",
-          "coverage.json",
+          "dataset-coverage.json",
         ),
         requiredIpnsLabel: "oracle-dataset-coverage-polk",
         externalStatus: "awaiting_human_approval",
@@ -607,6 +622,64 @@ async function writeOpenDataShard(openDataDirectory, shardIndex, entries) {
 }
 
 /**
+ * Build the canonical MCP coverage snapshot for locally published Polk data.
+ *
+ * Appraisal and permit counts are published because both are reconciled into
+ * the property payload family. Enrichment tracks remain explicitly zero with
+ * unknown expected counts until independently loaded and reconciled.
+ *
+ * @param {PolkPublicCoverageOptions} options Reconciled publication evidence.
+ * @returns {JsonObject} MCP-compatible five-track coverage snapshot.
+ */
+export function buildPolkPublicCoverageSnapshot(options) {
+  /**
+   * Build one canonical enrichment row that has not been published.
+   *
+   * @param {"corporate" | "bbb" | "overture_places"} source Coverage source.
+   * @returns {JsonObject} Explicitly incomplete coverage row.
+   */
+  const emptyTrack = (source) => ({
+    county: "polk",
+    source,
+    ingested_count: 0,
+    expected_count: null,
+    first_loaded_at: null,
+    last_loaded_at: null,
+    cid: null,
+    ipns_label: null,
+  });
+  return {
+    county: "polk",
+    exportedAt: options.completedAt,
+    datasets: [
+      {
+        county: "polk",
+        source: "appraisal",
+        ingested_count: options.propertyCount,
+        expected_count: options.propertyCount,
+        first_loaded_at: options.exportedAt,
+        last_loaded_at: options.completedAt,
+        cid: options.openDataCid,
+        ipns_label: "oracle-open-data-polk",
+      },
+      {
+        county: "polk",
+        source: "permits",
+        ingested_count: options.permitCount,
+        expected_count: options.permitCount,
+        first_loaded_at: options.exportedAt,
+        last_loaded_at: options.completedAt,
+        cid: options.openDataCid,
+        ipns_label: "oracle-open-data-polk",
+      },
+      emptyTrack("corporate"),
+      emptyTrack("bbb"),
+      emptyTrack("overture_places"),
+    ],
+  };
+}
+
+/**
  * Materialize family-separated local staging without external network calls.
  *
  * @param {PolkPublicationCliOptions} options Explicit materialization options.
@@ -753,6 +826,7 @@ async function materializePolkPublication(options, inventory, manifest, plan) {
     "utf8",
   );
   await writeFile(path.join(openDataDirectory, "index.json"), indexBody);
+  const localOpenDataIndexCid = await ipfsHash.of(indexBody);
   const queryTable = isJsonObject(manifest.output)
     ? manifest.output.queryTable
     : null;
@@ -761,21 +835,32 @@ async function materializePolkPublication(options, inventory, manifest, plan) {
   }
   const queryTableFile = requiredText(queryTable, "file", "queryTable");
   const queryTableBytes = requiredCount(queryTable, "sizeBytes", "queryTable");
+  const publicCoverage = buildPolkPublicCoverageSnapshot({
+    propertyCount: inventory.propertyCount,
+    permitCount: requiredCount(
+      /** @type {JsonObject} */ (plan.validation),
+      "permitCount",
+      "plan.validation",
+    ),
+    exportedAt,
+    completedAt,
+    openDataCid: localOpenDataIndexCid,
+  });
   await Promise.all([
     linkOrVerify(
       path.join(options.sourceDirectory, queryTableFile),
       path.join(queryTableDirectory, "query-table.parquet"),
       queryTableBytes,
     ),
-    linkOrVerify(
-      path.join(options.sourceDirectory, "coverage.json"),
-      path.join(coverageDirectory, "coverage.json"),
-      (await stat(path.join(options.sourceDirectory, "coverage.json"))).size,
+    writeFile(
+      path.join(coverageDirectory, "dataset-coverage.json"),
+      `${JSON.stringify(publicCoverage, null, 2)}\n`,
+      { encoding: "utf8", mode: 0o600 },
     ),
   ]);
   const completedPlan = {
     ...plan,
-    localOpenDataIndexCid: await ipfsHash.of(indexBody),
+    localOpenDataIndexCid,
   };
   await writeFile(
     path.join(options.outputDirectory, "publication-plan.json"),

@@ -13,6 +13,7 @@ import * as path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  buildPolkPublicCoverageSnapshot,
   buildPolkPublicationPlan,
   inventoryPolkPublicationSource,
   parsePolkPublicationCliOptions,
@@ -108,6 +109,7 @@ async function createPublicationFixture() {
   });
   await writeJson(path.join(sourceDirectory, "coverage.json"), {
     county: "polk",
+    childRows: { permits: 7 },
     privacy: { passed: true },
   });
   await writeJson(path.join(sourceDirectory, ".state", "checkpoint.json"), {
@@ -181,6 +183,7 @@ describe("Polk publication preparation", () => {
     expect(plan.validation).toMatchObject({
       passed: true,
       propertyCount: 1,
+      permitCount: 7,
       privacyPassed: true,
       checkpointComplete: true,
     });
@@ -208,6 +211,73 @@ describe("Polk publication preparation", () => {
       },
     });
     expect(plan.status).toBe("dry_run");
+  });
+
+  it("builds canonical coverage without claiming unpublished enrichments", () => {
+    expect(
+      buildPolkPublicCoverageSnapshot({
+        propertyCount: 438612,
+        permitCount: 531344,
+        exportedAt: "2026-08-28T22:31:53.851Z",
+        completedAt: "2026-08-28T22:44:54.220Z",
+        openDataCid: "QmPolkOpenDataIndex",
+      }),
+    ).toEqual({
+      county: "polk",
+      exportedAt: "2026-08-28T22:44:54.220Z",
+      datasets: [
+        {
+          county: "polk",
+          source: "appraisal",
+          ingested_count: 438612,
+          expected_count: 438612,
+          first_loaded_at: "2026-08-28T22:31:53.851Z",
+          last_loaded_at: "2026-08-28T22:44:54.220Z",
+          cid: "QmPolkOpenDataIndex",
+          ipns_label: "oracle-open-data-polk",
+        },
+        {
+          county: "polk",
+          source: "permits",
+          ingested_count: 531344,
+          expected_count: 531344,
+          first_loaded_at: "2026-08-28T22:31:53.851Z",
+          last_loaded_at: "2026-08-28T22:44:54.220Z",
+          cid: "QmPolkOpenDataIndex",
+          ipns_label: "oracle-open-data-polk",
+        },
+        {
+          county: "polk",
+          source: "corporate",
+          ingested_count: 0,
+          expected_count: null,
+          first_loaded_at: null,
+          last_loaded_at: null,
+          cid: null,
+          ipns_label: null,
+        },
+        {
+          county: "polk",
+          source: "bbb",
+          ingested_count: 0,
+          expected_count: null,
+          first_loaded_at: null,
+          last_loaded_at: null,
+          cid: null,
+          ipns_label: null,
+        },
+        {
+          county: "polk",
+          source: "overture_places",
+          ingested_count: 0,
+          expected_count: null,
+          first_loaded_at: null,
+          last_loaded_at: null,
+          cid: null,
+          ipns_label: null,
+        },
+      ],
+    });
   });
 
   it("recognizes a full licence-gated Polk Overture extract as ready for load", async () => {
@@ -297,10 +367,14 @@ describe("Polk publication preparation", () => {
     ).toEqual(fixture.queryTableBody);
     expect(
       await readFile(
-        path.join(fixture.outputDirectory, "dataset-coverage", "coverage.json"),
+        path.join(
+          fixture.outputDirectory,
+          "dataset-coverage",
+          "dataset-coverage.json",
+        ),
         "utf8",
       ),
-    ).toContain('"county": "polk"');
+    ).toContain('"source": "permits"');
     expect(plan.status).toBe("materialized");
   });
 
