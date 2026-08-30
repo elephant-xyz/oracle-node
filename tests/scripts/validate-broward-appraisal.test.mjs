@@ -1,9 +1,11 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  BROWARD_SOURCE_TIMEOUT_MS,
+  fetchBrowardParcelEnvelope,
   unwrapBrowardPrepareCapture,
   requireParcelRecords,
 } from "../../scripts/capture-broward-parcel.mjs";
@@ -21,7 +23,51 @@ const BROWARD_TRANSFORM_PATCH_URL = new URL(
 const BROWARD_TRANSFORM_PATCH_SHA256 =
   "0a5cddfc53ce778317694c8968964ec42586e6acb1588362941bb8f66c666582";
 
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
 describe("Broward prepare capture unwrap", () => {
+  it("bounds every live BCPA request with an abort timeout", async () => {
+    /** @type {RequestInit | undefined} */
+    let observedOptions;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        /**
+         * Capture the request options without making a network request.
+         *
+         * @param {string | URL | Request} _input - Ignored BCPA URL.
+         * @param {RequestInit | undefined} options - Fetch request options.
+         * @returns {Promise<Pick<Response, "ok" | "json">>} Minimal successful response.
+         */
+        (_input, options) => {
+          observedOptions = options;
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                d: {
+                  parcelInfok__BackingField: [
+                    { folioNumber: "504108BJ0140" },
+                  ],
+                },
+              }),
+          });
+        },
+      ),
+    );
+
+    await expect(
+      fetchBrowardParcelEnvelope("504108BJ0140"),
+    ).resolves.toMatchObject({
+      d: { parcelInfok__BackingField: [{ folioNumber: "504108BJ0140" }] },
+    });
+    expect(BROWARD_SOURCE_TIMEOUT_MS).toBe(15_000);
+    expect(observedOptions?.signal).toBeInstanceOf(AbortSignal);
+    expect(observedOptions?.signal?.aborted).toBe(false);
+  });
+
   it("unwraps the elephant-cli multi-request wrapper", () => {
     const envelope = unwrapBrowardPrepareCapture({
       input: {
