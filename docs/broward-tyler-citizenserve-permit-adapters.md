@@ -56,6 +56,42 @@ submission. The adapter lets the rendered official page execute that code. It
 does not request, inject, replay, solve, or bypass a token. A visible challenge
 or login form is a hard stop.
 
+## Tyler vendor-wide optimization (2026-08-31)
+
+`scripts/run-broward-tyler-date-windows.mjs` adds a separate list-first path
+for the four anonymous Tyler tenants: Pembroke Pines, Hallandale Beach,
+Miramar, and Oakland Park. The original property-first adapter and its bounds
+remain available for detail recertification.
+
+The optimized runner:
+
+- bootstraps the public tenant once per invocation;
+- clones the complete UI request model and switches it to advanced Permit
+  search;
+- uses explicit `ApplyDateFrom`/`ApplyDateTo` UTC timestamps;
+- requests 100 records per page;
+- reuses tenant cookies and required tenant headers;
+- reconciles `TotalFound`, `TotalPages`, permit entities, and stable `CaseId`;
+- applies both in-page and outer wall-clock request timeouts;
+- writes private raw JSON pages and deterministic normalized list JSONL; and
+- checkpoints after each complete application-date window.
+
+Two-day live pilots reconciled Pembroke Pines 30, Hallandale Beach 10, Miramar
+34, and Oakland Park 9 permits. Full runs use 30-day windows after year-wide
+historical probes proved too expensive/unbounded. Oakland Park begins at its
+documented `2019-11-01` Tyler boundary. Pembroke Pines begins at the City's
+documented 1992 records-request boundary but still does not claim portal
+completeness. Hallandale's migrated start remains unknown. Miramar restarts
+from 2019, with its separate FY2019/FY2020 official ArcGIS archives retained
+as reconciliation evidence.
+
+Completed list inventories load through
+`scripts/load-broward-permit-list-to-neon.mjs`. Tyler `CaseId` matches the
+existing detail-loader key, so later detail enrichment updates the same row.
+Exact 12-character folios link immediately; other permits remain valid
+unlinked rows. Loads use the shared permit writer lock and durable 1,000-row
+Neon chunks.
+
 ## Jurisdiction matrix
 
 | Jurisdiction          | Adapter/source                                 | Anonymous record status   | Boundary                                                                                                                                 |

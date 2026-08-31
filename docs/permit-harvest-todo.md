@@ -31,9 +31,23 @@
   four tenants to run concurrently.
 - [ ] Deploy/enable the AWS enumeration mapping after credentials are available;
   this VM currently has neither AWS CLI nor SDK credentials.
-- [ ] Complete the four equivalent persistent local full-history Accela runs.
-- [ ] Implement Tyler date-window and Citizenserve type-wide enumeration after
-  per-host pressure tests.
+- [ ] Complete the healthy persistent local Accela runs. Hollywood, Cooper City,
+  and Weston continue with 30-day windows; Weston now splits incomplete
+  multi-day pagination. Plantation requires permit-type shards because at least
+  one single day reaches the source's 100-row cap.
+- [x] Implement Tyler application-date enumeration for Pembroke Pines,
+  Hallandale Beach, Miramar, and Oakland Park with one tenant bootstrap,
+  100-row API pages, hard request deadlines, source-total reconciliation, and
+  private checkpoints.
+- [x] Reconcile Tyler pilots: Pembroke Pines 30, Hallandale Beach 10, Miramar
+  34, and Oakland Park 9 records.
+- [ ] Complete the healthy persistent Tyler runs. Production windows are 30
+  days; Oakland Park begins at its certified 2019-11-01 boundary.
+- [x] Add a durable list-to-Neon loader using detail-compatible Accela/Tyler
+  keys, exact Tyler folio links, 1,000-row commits, and richer-detail
+  precedence.
+- [ ] Implement Citizenserve type-wide enumeration after per-host pressure
+  tests and parser drift repairs.
 - [ ] Obtain official bulk/custodian exports for routes that do not support
   anonymous complete enumeration.
 - [ ] Keep publication disabled until every source receipt and jurisdictional

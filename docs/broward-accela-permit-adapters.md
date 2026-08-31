@@ -161,7 +161,7 @@ npm run broward:permits:run-accela-windows -- \
   --source <hollywood|plantation|cooper-city|weston> \
   --start-date <explicit-source-boundary> \
   --end-date 2026-08-31 \
-  --window-days 366 \
+  --window-days 30 \
   --split-threshold 100 \
   --max-pages 200 \
   --delay-ms 1000 \
@@ -174,6 +174,15 @@ while different tenants can run concurrently. The event-source mapping starts
 at aggregate concurrency four and is not enabled before an AWS pilot. Cloud
 deployment is currently blocked because this VM has no usable AWS credentials;
 the four equivalent local workers are running instead.
+
+The 30-day production burn-in added two fail-closed source rules:
+
+- incomplete multi-day pagination is split again until the children reconcile;
+  Weston exercised this path; and
+- a single day that still reaches a portal cap cannot split by date. Plantation
+  has at least one such day and therefore requires sequential record-type
+  shards or an official bulk export before its inventory can be called
+  complete.
 
 ## Bounded live evidence
 
