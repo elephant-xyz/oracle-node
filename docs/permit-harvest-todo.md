@@ -58,6 +58,21 @@
 - [ ] Keep publication disabled until every source receipt and jurisdictional
   coverage boundary reconciles.
 
+## Broward Sunbiz property matching
+
+- [x] Reuse the 4,532,582 Sunbiz registrations already loaded in isolated
+  Neon; do not rescan the 12.6 million-row source archive.
+- [x] Profile 469,979 Broward-ZIP candidate address roles.
+- [x] Require exact normalized-address hashes resolving to one Broward
+  property; ZIP alone is not county proof.
+- [x] Exclude 460 ambiguous address roles from mutation.
+- [x] Apply and verify a 100-role pilot with original-address receipts.
+- [x] Complete the full match: 21,512 address roles, 12,432 registrations,
+  9,023 properties, and 22 durable chunks.
+- [x] Verify every updated role through a direct property/address join.
+- [ ] Add the verified Sunbiz match counts to the unpublished Broward query
+  coverage artifact when permit jurisdiction reconciliation is complete.
+
 ## Lee County all-permits harvest
 
 - [x] Confirm usable elephant-cli GitHub ref for Browser Flow v2 / Transform v2.
