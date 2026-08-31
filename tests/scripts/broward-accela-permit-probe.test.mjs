@@ -719,4 +719,56 @@ describe("Broward Accela vendor-wide date windows", () => {
         .split("\n"),
     ).toHaveLength(2);
   });
+
+  it("splits an incomplete multi-day source window instead of accepting partial rows", async () => {
+    const outputDirectory = await mkdtemp(
+      join(tmpdir(), "broward-accela-incomplete-window-"),
+    );
+    temporaryDirectories.push(outputDirectory);
+    const summary = await runBrowardAccelaDateWindows(
+      {
+        sourceKey: "weston",
+        startDate: "2005-11-17",
+        endDate: "2005-11-18",
+        initialWindowDays: 2,
+        splitThreshold: 100,
+        maxPages: 200,
+        delayMs: 1_000,
+        maxWindows: 1,
+        outputDirectory,
+      },
+      {
+        createBrowser: async () => ({
+          close: async () => undefined,
+        }),
+        searchWindow: async ({ source }) => {
+          throw new BrowardAccelaSourceError(
+            "incomplete_pagination",
+            source,
+            "Source stopped before reported total",
+          );
+        },
+        wait: async () => undefined,
+        now: () => "2026-08-31T19:00:00.000Z",
+      },
+    );
+    expect(summary).toMatchObject({
+      status: "paused",
+      windowsProcessedThisInvocation: 1,
+      terminalWindowCount: 0,
+      splitWindowCount: 1,
+      pendingWindowCount: 2,
+      uniquePermitCount: 0,
+    });
+    const checkpoint = JSON.parse(
+      await readFile(
+        join(outputDirectory, "checkpoint.private.json"),
+        "utf8",
+      ),
+    );
+    expect(checkpoint.pendingWindows).toEqual([
+      { startDate: "2005-11-17", endDate: "2005-11-17" },
+      { startDate: "2005-11-18", endDate: "2005-11-18" },
+    ]);
+  });
 });

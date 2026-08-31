@@ -16,6 +16,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import {
+  BrowardAccelaSourceError,
   buildBrowardAccelaDateWindowKey,
   createBrowardAccelaBrowser,
   readBrowardAccelaSource,
@@ -314,16 +315,61 @@ export async function runBrowardAccelaDateWindows(
       if (processed > 0) await wait(options.delayMs);
       const windowKey = localWindowKey(window);
       const span = inclusiveDaySpan(window.startDate, window.endDate);
-      const result = await searchWindow({
-        browser,
-        source,
-        startDate: window.startDate,
-        endDate: window.endDate,
-        maxPages: options.maxPages,
-        stopAfterFirstPageWhenTotalAtLeast:
-          span > 1 ? options.splitThreshold : undefined,
-        logger,
-      });
+      let result;
+      try {
+        result = await searchWindow({
+          browser,
+          source,
+          startDate: window.startDate,
+          endDate: window.endDate,
+          maxPages: options.maxPages,
+          stopAfterFirstPageWhenTotalAtLeast:
+            span > 1 ? options.splitThreshold : undefined,
+          logger,
+        });
+      } catch (error) {
+        if (
+          span > 1 &&
+          error instanceof BrowardAccelaSourceError &&
+          error.code === "incomplete_pagination"
+        ) {
+          const children = splitBrowardAccelaDateWindow(window);
+          checkpoint = {
+            ...checkpoint,
+            pendingWindows: [
+              ...children,
+              ...checkpoint.pendingWindows.slice(1),
+            ],
+            completedWindows: {
+              ...checkpoint.completedWindows,
+              [localWindowKey(window)]: {
+                status: "split",
+                startDate: window.startDate,
+                endDate: window.endDate,
+                reportedTotal: null,
+                discoveredPermitCount: 0,
+                excludedNonPermitCount: 0,
+                linksPath: null,
+                completedAt: now(),
+              },
+            },
+            updatedAt: now(),
+          };
+          await writePrivateAtomic(
+            checkpointPath,
+            `${JSON.stringify(checkpoint, null, 2)}\n`,
+          );
+          processed += 1;
+          logger.warn("broward_accela_incomplete_window_split", {
+            sourceKey: source.key,
+            startDate: window.startDate,
+            endDate: window.endDate,
+            childWindows: children,
+          });
+          continue;
+        }
+        throw error;
+      }
       const windowDirectory = path.join(windowsDirectory, windowKey);
       const rawDirectory = path.join(windowDirectory, "raw");
       await mkdir(rawDirectory, { recursive: true, mode: 0o700 });
