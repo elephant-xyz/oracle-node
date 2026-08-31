@@ -117,6 +117,7 @@ const LOAD_KEY = "broward-supported-pilots-v3";
  * @typedef {object} PermitLoadOptions
  * @property {string} inputPath - Reconciled private normalized permit JSONL.
  * @property {number | null} expectedRecords - Optional exact record count.
+ * @property {boolean} includeBcs - Whether to read the BCS-format input.
  * @property {string | null} accelaInputPath - Optional reconciled Accela JSONL.
  * @property {number | null} expectedAccelaRecords - Optional exact Accela count.
  * @property {readonly string[]} municipalInputPaths - Tyler/Citizenserve JSONL inputs.
@@ -158,6 +159,7 @@ const LOAD_KEY = "broward-supported-pilots-v3";
 export function parsePermitLoadOptions(argv) {
   let inputPath = DEFAULT_INPUT;
   let expectedRecords = null;
+  let includeBcs = true;
   let accelaInputPath = null;
   let expectedAccelaRecords = null;
   /** @type {string[]} */
@@ -174,6 +176,12 @@ export function parsePermitLoadOptions(argv) {
       throw new Error("Permit load options must be --flag value pairs");
     }
     if (flag === "--input") inputPath = value;
+    else if (flag === "--include-bcs") {
+      if (value !== "true" && value !== "false") {
+        throw new Error("--include-bcs must be true or false");
+      }
+      includeBcs = value === "true";
+    }
     else if (flag === "--accela-input") accelaInputPath = value;
     else if (flag === "--municipal-input") municipalInputPaths.push(value);
     else if (flag === "--expected-records") {
@@ -191,6 +199,9 @@ export function parsePermitLoadOptions(argv) {
     (!Number.isInteger(expectedRecords) || expectedRecords < 1)
   ) {
     throw new Error("--expected-records must be a positive integer");
+  }
+  if (!includeBcs && expectedRecords !== null) {
+    throw new Error("--expected-records cannot be used when BCS is excluded");
   }
   if (
     expectedAccelaRecords !== null &&
@@ -222,6 +233,7 @@ export function parsePermitLoadOptions(argv) {
   return {
     inputPath,
     expectedRecords,
+    includeBcs,
     accelaInputPath,
     expectedAccelaRecords,
     municipalInputPaths,
@@ -503,9 +515,12 @@ export function buildMunicipalPermitUpsertValues(record, parent) {
  *   Exact committed logical counts and source identity.
  */
 export async function loadBrowardPermitPilotToNeon(options) {
-  const bcs = await readNormalizedPermitRecords(
-    options.inputPath,
-  );
+  const bcs = options.includeBcs
+    ? await readNormalizedPermitRecords(options.inputPath)
+    : {
+        records: /** @type {BrowardNormalizedPermit[]} */ ([]),
+        sourceSha256: /** @type {string | null} */ (null),
+      };
   if (
     options.expectedRecords !== null &&
     bcs.records.length !== options.expectedRecords
