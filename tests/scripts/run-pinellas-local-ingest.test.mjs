@@ -14,6 +14,7 @@ import {
   buildPrintPageUrl,
   buildSeedJsonFiles,
   buildSourceHttpRequest,
+  createLimiter,
   fetchPropertyPrintHtml,
   hasCompletedTransform,
   mapWithConcurrency,
@@ -75,7 +76,8 @@ describe("Pinellas local ingest helpers", () => {
       outputDirectory: "tmp/out",
       allRows: false,
       skipExisting: true,
-      concurrency: 2,
+      concurrency: 4,
+      fetchConcurrency: 8,
       transformMode: "scripts",
       useCliPrepare: false,
     });
@@ -86,7 +88,11 @@ describe("Pinellas local ingest helpers", () => {
         transformMode: "elephant-cli",
         concurrency: 4,
       });
-    expect(() => parseCliOptions(["--limit", "-1"])).toThrow(/positive integer/);
+    expect(parseCliOptions(["--fetch-concurrency", "8", "--fetch-timeout-ms", "5000"]))
+      .toMatchObject({
+        fetchConcurrency: 8,
+        fetchTimeoutMs: 5000,
+      });
     expect(() => parseCliOptions(["--concurrency", "0"])).toThrow(
       /positive integer/,
     );
@@ -175,6 +181,7 @@ describe("Pinellas local ingest helpers", () => {
         return new Response("denied", { status: 403 });
       }
       expect(String(input)).toContain("s=162805389030000430");
+      expect(init?.signal).toBeDefined();
       return new Response(html, { status: 200 });
     };
     const fetched = await fetchPropertyPrintHtml(
@@ -204,5 +211,65 @@ describe("Pinellas local ingest helpers", () => {
     expect(hasCompletedTransform("/tmp/does-not-exist-pinellas-strap")).toBe(
       false,
     );
+  });
+
+  it("limits concurrent limiter jobs", async () => {
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const limiter = createLimiter(2);
+    await Promise.all(
+      [1, 2, 3, 4].map((value) =>
+        limiter.run(async () => {
+          inFlight += 1;
+          maxInFlight = Math.max(maxInFlight, inFlight);
+          await new Promise((resolve) => {
+            setTimeout(resolve, 20);
+          });
+          inFlight -= 1;
+          return value;
+        }),
+      ),
+    );
+    expect(maxInFlight).toBe(2);
+  });
+
+  it("re-runs county scripts in one process without killing the worker on exit(1)", async () => {
+    const { mkdtemp, mkdir, writeFile, rm } = await import("node:fs/promises");
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const root = await mkdtemp(path.join(os.tmpdir(), "pinellas-worker-"));
+    const scriptsDirectory = path.join(root, "scripts");
+    const workDir = path.join(root, "work");
+    await mkdir(scriptsDirectory);
+    await mkdir(workDir);
+    for (const name of [
+      "ownerMapping.js",
+      "structureMapping.js",
+      "layoutMapping.js",
+      "utilityMapping.js",
+    ]) {
+      await writeFile(path.join(scriptsDirectory, name), "", "utf8");
+    }
+    await writeFile(
+      path.join(scriptsDirectory, "data_extractor.js"),
+      `const fs = require("fs");
+fs.mkdirSync("data", { recursive: true });
+fs.writeFileSync("data/property.json", JSON.stringify({ property_usage_type: "Residential" }));
+`,
+      "utf8",
+    );
+    const { transformParcel } = require("../../scripts/pinellas-transform-worker.cjs");
+    expect(transformParcel(scriptsDirectory, workDir).propertyUsageType).toBe(
+      "Residential",
+    );
+    await writeFile(
+      path.join(scriptsDirectory, "ownerMapping.js"),
+      "process.exit(1);\n",
+      "utf8",
+    );
+    expect(() => transformParcel(scriptsDirectory, workDir)).toThrow(
+      /PINELLAS_SCRIPT_EXIT_1/,
+    );
+    await rm(root, { recursive: true, force: true });
   });
 });

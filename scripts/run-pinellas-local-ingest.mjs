@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { spawn } from "node:child_process";
+import { fork, spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { existsSync } from "node:fs";
 import {
@@ -33,7 +33,9 @@ const ELEPHANT_CLI_ENTRY = path.join(
 );
 const LOCAL_IPFS_SHIM_PATH = "scripts/local-ipfs-fetch-shim.cjs";
 const LOCAL_IPFS_GATEWAY = "http://127.0.0.1:8080";
-const DEFAULT_CONCURRENCY = 2;
+const DEFAULT_CONCURRENCY = 4;
+const DEFAULT_FETCH_CONCURRENCY = 8;
+const DEFAULT_FETCH_TIMEOUT_MS = 12000;
 const PRINT_URL = "https://www.pcpao.gov/property/detail/print";
 const PRINT_USER_AGENT =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
@@ -62,7 +64,9 @@ const FALLBACK_SCRIPTS_DIRECTORIES = Object.freeze([
  * @property {boolean} allRows - When true, ingest every seed row instead of one per use group.
  * @property {boolean} skipValidate - When true, skip `elephant-cli validate`.
  * @property {boolean} skipExisting - When true, skip parcels that already have `transformed.zip`.
- * @property {number} concurrency - Maximum in-flight parcels.
+ * @property {number} concurrency - Maximum in-flight transforms (CPU-bound).
+ * @property {number} fetchConcurrency - Maximum in-flight PCPAO print GETs.
+ * @property {number} fetchTimeoutMs - Abort a hung print GET after this many ms.
  * @property {TransformMode} transformMode - How county scripts are executed.
  * @property {boolean} useCliPrepare - When true, fetch via `elephant-cli prepare` instead of direct HTTP.
  *
@@ -101,9 +105,14 @@ const FALLBACK_SCRIPTS_DIRECTORIES = Object.freeze([
  * @property {number} skippedExisting - Parcels reused from disk.
  * @property {number} transformsPassed - Successful transforms including skips.
  * @property {number} transformsFailed - Failed parcels.
- * @property {number} concurrency - Worker count.
+ * @property {number} concurrency - Transform worker count.
+ * @property {number} fetchConcurrency - In-flight print GETs.
  * @property {string} seedPath - Seed CSV path.
  * @property {string} outputDirectory - Output root.
+ *
+ * @typedef {object} TransformPool
+ * @property {(workDir: string) => Promise<string | null>} transform - Run county scripts in `workDir`.
+ * @property {() => Promise<void>} close - Kill persistent workers.
  */
 
 /**
@@ -235,6 +244,8 @@ export function parseCliOptions(argv) {
     skipValidate: false,
     skipExisting: true,
     concurrency: DEFAULT_CONCURRENCY,
+    fetchConcurrency: DEFAULT_FETCH_CONCURRENCY,
+    fetchTimeoutMs: DEFAULT_FETCH_TIMEOUT_MS,
     transformMode: "scripts",
     useCliPrepare: false,
   };
@@ -276,6 +287,10 @@ export function parseCliOptions(argv) {
     else if (flag === "--limit") options.limit = Number.parseInt(value, 10);
     else if (flag === "--concurrency") {
       options.concurrency = Number.parseInt(value, 10);
+    } else if (flag === "--fetch-concurrency") {
+      options.fetchConcurrency = Number.parseInt(value, 10);
+    } else if (flag === "--fetch-timeout-ms") {
+      options.fetchTimeoutMs = Number.parseInt(value, 10);
     } else throw new Error(`Unknown option: ${flag}`);
   }
   if (
@@ -286,6 +301,18 @@ export function parseCliOptions(argv) {
   }
   if (!Number.isInteger(options.concurrency) || options.concurrency <= 0) {
     throw new Error("--concurrency must be a positive integer");
+  }
+  if (
+    !Number.isInteger(options.fetchConcurrency) ||
+    options.fetchConcurrency <= 0
+  ) {
+    throw new Error("--fetch-concurrency must be a positive integer");
+  }
+  if (
+    !Number.isInteger(options.fetchTimeoutMs) ||
+    options.fetchTimeoutMs <= 0
+  ) {
+    throw new Error("--fetch-timeout-ms must be a positive integer");
   }
   return options;
 }
@@ -465,7 +492,8 @@ export async function mapWithConcurrency(items, concurrency, worker) {
   /** @type {R[]} */
   const results = new Array(items.length);
   let nextIndex = 0;
-  const workerCount = Math.max(1, Math.min(concurrency, items.length));
+  const workerCount = Math.max(1, Math.min(concurrency, items.length || 1));
+  if (items.length === 0) return results;
   await Promise.all(
     Array.from({ length: workerCount }, async () => {
       while (true) {
@@ -479,6 +507,169 @@ export async function mapWithConcurrency(items, concurrency, worker) {
     }),
   );
   return results;
+}
+
+/**
+ * Bound how many async jobs run at once.
+ *
+ * @param {number} max - Maximum concurrent jobs.
+ * @returns {{ run: <T>(job: () => Promise<T>) => Promise<T> }} Limiter.
+ */
+export function createLimiter(max) {
+  let active = 0;
+  /** @type {Array<() => void>} */
+  const waiters = [];
+  return {
+    /**
+     * @template T
+     * @param {() => Promise<T>} job - Work to run.
+     * @returns {Promise<T>} Job result.
+     */
+    async run(job) {
+      if (active >= max) {
+        await new Promise((resolve) => {
+          waiters.push(resolve);
+        });
+      }
+      active += 1;
+      try {
+        return await job();
+      } finally {
+        active -= 1;
+        const next = waiters.shift();
+        if (next !== undefined) next();
+      }
+    },
+  };
+}
+
+/**
+ * Launch persistent Pinellas script workers (one Node process, many parcels).
+ *
+ * @param {object} params - Pool parameters.
+ * @param {string} params.workerPath - Absolute path to `pinellas-transform-worker.cjs`.
+ * @param {string} params.scriptsDirectory - County scripts folder.
+ * @param {number} params.size - Worker count.
+ * @param {string} params.nodeModulesPath - `NODE_PATH` so scripts can `require("cheerio")`.
+ * @returns {Promise<TransformPool>} IPC pool.
+ */
+export async function createTransformPool({
+  workerPath,
+  scriptsDirectory,
+  size,
+  nodeModulesPath,
+}) {
+  /** @type {import("node:child_process").ChildProcess[]} */
+  const workers = [];
+  /** @type {import("node:child_process").ChildProcess[]} */
+  const idle = [];
+  /** @type {Array<(worker: import("node:child_process").ChildProcess) => void>} */
+  const waiters = [];
+  let nextJobId = 1;
+
+  /**
+   * @returns {Promise<import("node:child_process").ChildProcess>} Idle worker.
+   */
+  function takeIdle() {
+    const existing = idle.pop();
+    if (existing !== undefined) return Promise.resolve(existing);
+    return new Promise((resolve) => {
+      waiters.push(resolve);
+    });
+  }
+
+  /**
+   * @param {import("node:child_process").ChildProcess} worker - Worker to return.
+   * @returns {void}
+   */
+  function release(worker) {
+    const waiter = waiters.shift();
+    if (waiter !== undefined) waiter(worker);
+    else idle.push(worker);
+  }
+
+  for (let index = 0; index < size; index += 1) {
+    const worker = fork(workerPath, [], {
+      stdio: ["ignore", "ignore", "ignore", "ipc"],
+      env: { ...process.env, NODE_PATH: nodeModulesPath },
+    });
+    workers.push(worker);
+    await new Promise((resolve, reject) => {
+      const onReady = (message) => {
+        if (
+          message !== null &&
+          typeof message === "object" &&
+          "type" in message &&
+          message.type === "ready"
+        ) {
+          worker.off("message", onReady);
+          worker.off("error", reject);
+          resolve(undefined);
+        }
+      };
+      worker.on("message", onReady);
+      worker.once("error", reject);
+    });
+    idle.push(worker);
+  }
+
+  return {
+    async transform(workDir) {
+      const worker = await takeIdle();
+      const id = nextJobId;
+      nextJobId += 1;
+      try {
+        const result = await new Promise((resolve, reject) => {
+          /**
+           * @param {unknown} message - IPC payload.
+           * @returns {void}
+           */
+          const onMessage = (message) => {
+            if (message === null || typeof message !== "object") return;
+            const record = /** @type {{ type?: unknown, id?: unknown, propertyUsageType?: unknown, error?: unknown }} */ (
+              message
+            );
+            if (record.id !== id) return;
+            worker.off("message", onMessage);
+            if (record.type === "ok") {
+              resolve(
+                typeof record.propertyUsageType === "string"
+                  ? record.propertyUsageType
+                  : null,
+              );
+              return;
+            }
+            reject(
+              new Error(
+                typeof record.error === "string" ? record.error : "transform worker failed",
+              ),
+            );
+          };
+          worker.on("message", onMessage);
+          worker.send({
+            type: "run",
+            id,
+            scriptsDirectory,
+            workDir,
+          });
+        });
+        return result;
+      } finally {
+        release(worker);
+      }
+    },
+    async close() {
+      await Promise.all(
+        workers.map(
+          (worker) =>
+            new Promise((resolve) => {
+              worker.once("exit", () => resolve(undefined));
+              worker.kill("SIGKILL");
+            }),
+        ),
+      );
+    },
+  };
 }
 
 /**
@@ -511,6 +702,7 @@ export async function fetchPropertyPrintHtml(
   strap,
   fetchImpl = fetch,
   attempts = 4,
+  timeoutMs = DEFAULT_FETCH_TIMEOUT_MS,
 ) {
   const url = buildPrintPageUrl(strap);
   /** @type {Error} */
@@ -522,6 +714,7 @@ export async function fetchPropertyPrintHtml(
           "User-Agent": PRINT_USER_AGENT,
           Accept: "text/html",
         },
+        signal: AbortSignal.timeout(timeoutMs),
       });
       if (!response.ok) {
         throw new Error(`PCPAO print HTTP ${response.status} for ${strap}`);
@@ -537,7 +730,7 @@ export async function fetchPropertyPrintHtml(
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
       if (attempt === attempts) break;
-      await sleep(1000 * 2 ** (attempt - 1));
+      await sleep(250 * 2 ** (attempt - 1));
     }
   }
   throw lastError;
@@ -675,7 +868,7 @@ async function injectSourceHttpRequest(dataDir, sourceHttpRequest, requestIdenti
         }
         record.request_identifier = requestIdentifier;
         const sanitized = stripQueryFromSourceHttpRequestTree(record);
-        await writeFile(filePath, `${JSON.stringify(sanitized, null, 2)}\n`, "utf8");
+        await writeFile(filePath, `${JSON.stringify(sanitized)}\n`, "utf8");
       }),
   );
 }
@@ -725,6 +918,7 @@ function runMappingScript(scriptPath, cwd, nodeModulesPath) {
  * @param {UnnormalizedAddressJson} params.unnormalizedAddress - Address JSON.
  * @param {string} params.repoRoot - oracle-node root.
  * @param {string} params.transformedZip - Output archive path.
+ * @param {TransformPool} params.transformPool - Persistent county-script workers.
  * @returns {Promise<string | null>} `property_usage_type`, or null.
  */
 async function transformWithCountyScripts({
@@ -735,31 +929,22 @@ async function transformWithCountyScripts({
   unnormalizedAddress,
   repoRoot,
   transformedZip,
+  transformPool,
 }) {
   await writeFile(path.join(workDir, "input.html"), html, "utf8");
   await writeFile(
     path.join(workDir, "property_seed.json"),
-    `${JSON.stringify(propertySeed, null, 2)}\n`,
+    `${JSON.stringify(propertySeed)}\n`,
     "utf8",
   );
   await writeFile(
     path.join(workDir, "unnormalized_address.json"),
-    `${JSON.stringify(unnormalizedAddress, null, 2)}\n`,
+    `${JSON.stringify(unnormalizedAddress)}\n`,
     "utf8",
   );
   await mkdir(path.join(workDir, "data"), { recursive: true });
   await mkdir(path.join(workDir, "owners"), { recursive: true });
-  const nodeModulesPath = path.join(repoRoot, "node_modules");
-  await Promise.all(
-    MAPPING_SCRIPT_NAMES.map((name) =>
-      runMappingScript(path.join(scriptsDirectory, name), workDir, nodeModulesPath),
-    ),
-  );
-  await runMappingScript(
-    path.join(scriptsDirectory, "data_extractor.js"),
-    workDir,
-    nodeModulesPath,
-  );
+  const propertyUsageType = await transformPool.transform(workDir);
   const dataDir = path.join(workDir, "data");
   await injectSourceHttpRequest(
     dataDir,
@@ -767,14 +952,7 @@ async function transformWithCountyScripts({
     propertySeed.request_identifier,
   );
   await zipDataDirectory(dataDir, transformedZip);
-  const propertyPath = path.join(dataDir, "property.json");
-  if (!existsSync(propertyPath)) {
-    throw new Error("data_extractor.js did not write data/property.json");
-  }
-  const propertyJson = JSON.parse(await readFile(propertyPath, "utf8"));
-  return typeof propertyJson.property_usage_type === "string"
-    ? propertyJson.property_usage_type
-    : null;
+  return propertyUsageType;
 }
 
 /**
@@ -786,6 +964,8 @@ async function transformWithCountyScripts({
  * @param {string} params.scriptsZipPath - Packaged Pinellas scripts.
  * @param {string} params.scriptsDirectory - Unpacked scripts directory.
  * @param {string} params.repoRoot - oracle-node root.
+ * @param {TransformPool | null} params.transformPool - Persistent workers, or null for CLI transform.
+ * @param {string | null} [params.html] - Pre-fetched print HTML.
  * @returns {Promise<ParcelIngestResult>} Per-parcel outcome.
  */
 async function ingestParcel({
@@ -794,11 +974,12 @@ async function ingestParcel({
   scriptsZipPath,
   scriptsDirectory,
   repoRoot,
+  transformPool,
+  html = null,
 }) {
   const parcelId = row.parcel_id;
   const useGroup = row.use_group ?? "";
   const parcelDir = path.join(options.outputDirectory, parcelId);
-  await mkdir(parcelDir, { recursive: true });
   if (options.skipExisting && hasCompletedTransform(parcelDir)) {
     return {
       parcelId,
@@ -811,30 +992,37 @@ async function ingestParcel({
       skippedExisting: true,
     };
   }
+  await mkdir(parcelDir, { recursive: true });
   const workDir = await mkdtemp(path.join(os.tmpdir(), `pinellas-${parcelId}-`));
   try {
     const seedFiles = buildSeedJsonFiles(row);
     const transformedZip = path.join(parcelDir, "transformed.zip");
     /** @type {string} */
-    let html;
-    if (options.useCliPrepare) {
-      html = await prepareWithElephantCli({
-        row,
-        options,
-        seedFiles,
-        parcelDir,
-        workDir,
-        repoRoot,
-      });
-    } else {
-      html = await fetchPropertyPrintHtml(parcelId);
+    let printHtml = html ?? "";
+    if (printHtml.length === 0) {
+      if (options.useCliPrepare) {
+        printHtml = await prepareWithElephantCli({
+          row,
+          options,
+          seedFiles,
+          parcelDir,
+          workDir,
+          repoRoot,
+        });
+      } else {
+        printHtml = await fetchPropertyPrintHtml(
+          parcelId,
+          fetch,
+          4,
+          options.fetchTimeoutMs,
+        );
+      }
     }
-    await writeFile(path.join(parcelDir, "input.html"), html, "utf8");
     /** @type {string | null} */
     let propertyUsageType;
     if (options.transformMode === "elephant-cli") {
       propertyUsageType = await transformWithElephantCli({
-        html,
+        html: printHtml,
         seedFiles,
         parcelId,
         workDir,
@@ -843,18 +1031,22 @@ async function ingestParcel({
         transformedZip,
         repoRoot,
       });
+      await stripQueryFromTransformedZip(transformedZip);
     } else {
+      if (transformPool === null) {
+        throw new Error("transform pool is required for scripts mode");
+      }
       propertyUsageType = await transformWithCountyScripts({
         workDir,
         scriptsDirectory,
-        html,
+        html: printHtml,
         propertySeed: seedFiles.propertySeed,
         unnormalizedAddress: seedFiles.unnormalizedAddress,
         repoRoot,
         transformedZip,
+        transformPool,
       });
     }
-    await stripQueryFromTransformedZip(transformedZip);
     if (propertyUsageType === null) {
       const propertyJson = JSON.parse(
         readZipEntrySync(transformedZip, "data/property.json").toString("utf8"),
@@ -1068,7 +1260,8 @@ async function writeStatusSnapshot(outputDirectory, snapshot) {
  * Run the local Pinellas prepare → transform ingest.
  *
  * @param {LocalIngestCliOptions} options - Validated CLI options.
- * @returns {Promise<ParcelIngestResult[]>} Per-parcel results.
+ * @returns {Promise<{ total: number, skippedExisting: number, transformsPassed: number, transformsFailed: number, failures: ParcelIngestResult[] }>}
+ *   Compact run totals. Successful parcels are not retained in memory.
  */
 export async function runLocalIngest(options) {
   const repoRoot = process.cwd();
@@ -1087,71 +1280,146 @@ export async function runLocalIngest(options) {
   if (options.transformMode === "elephant-cli") {
     await packageScripts(scriptsDirectory, scriptsZipPath);
   }
-  const startedAt = new Date().toISOString();
-  let completed = 0;
+
+  /** @type {SeedRow[]} */
+  const pending = [];
   let skippedExisting = 0;
-  let transformsPassed = 0;
+  if (options.skipExisting) {
+    for (const row of rows) {
+      if (hasCompletedTransform(path.join(outputDirectory, row.parcel_id))) {
+        skippedExisting += 1;
+      } else {
+        pending.push(row);
+      }
+    }
+  } else {
+    pending.push(...rows);
+  }
+
+  const startedAt = new Date().toISOString();
+  let completed = skippedExisting;
+  let transformsPassed = skippedExisting;
   let transformsFailed = 0;
+  /** @type {ParcelIngestResult[]} */
+  const failures = [];
   const failuresPath = path.join(outputDirectory, "failures.jsonl");
   await writeFile(failuresPath, "", "utf8");
   const resolvedOptions = { ...options, outputDirectory };
-  const results = await mapWithConcurrency(
-    rows,
-    options.concurrency,
-    async (row) => {
-      const result = await ingestParcel({
-        row,
-        options: resolvedOptions,
-        scriptsZipPath,
-        scriptsDirectory,
-        repoRoot,
-      });
-      completed += 1;
-      if (result.skippedExisting) skippedExisting += 1;
-      if (result.transformSuccess) transformsPassed += 1;
-      else {
-        transformsFailed += 1;
-        await appendFile(failuresPath, `${JSON.stringify(result)}\n`, "utf8");
-      }
-      if (completed === 1 || completed % 25 === 0 || completed === rows.length) {
-        const snapshot = {
-          startedAt,
-          updatedAt: new Date().toISOString(),
-          total: rows.length,
-          completed,
-          skippedExisting,
-          transformsPassed,
-          transformsFailed,
-          concurrency: options.concurrency,
-          seedPath: options.seedPath,
-          outputDirectory,
-        };
-        await writeStatusSnapshot(outputDirectory, snapshot);
-        console.log(JSON.stringify({ event: "pinellas_ingest_progress", ...snapshot }));
-      }
-      return result;
-    },
-  );
+  const workerPath = path.join(repoRoot, "scripts", "pinellas-transform-worker.cjs");
+  const transformPool =
+    options.transformMode === "scripts"
+      ? await createTransformPool({
+          workerPath,
+          scriptsDirectory,
+          size: options.concurrency,
+          nodeModulesPath: path.join(repoRoot, "node_modules"),
+        })
+      : null;
+  const transformLimit = createLimiter(options.concurrency);
+
+  /**
+   * @param {IngestStatusSnapshot} snapshot - Counts.
+   * @returns {Promise<void>}
+   */
+  async function recordProgress(snapshot) {
+    await writeStatusSnapshot(outputDirectory, snapshot);
+    console.log(JSON.stringify({ event: "pinellas_ingest_progress", ...snapshot }));
+  }
+
+  await recordProgress({
+    startedAt,
+    updatedAt: startedAt,
+    total: rows.length,
+    completed,
+    skippedExisting,
+    transformsPassed,
+    transformsFailed,
+    concurrency: options.concurrency,
+    fetchConcurrency: options.fetchConcurrency,
+    seedPath: options.seedPath,
+    outputDirectory,
+  });
+
+  try {
+    await mapWithConcurrency(
+      pending,
+      options.fetchConcurrency,
+      async (row) => {
+        const html = options.useCliPrepare
+          ? null
+          : await fetchPropertyPrintHtml(
+              row.parcel_id,
+              fetch,
+              4,
+              options.fetchTimeoutMs,
+            );
+        const result = await transformLimit.run(() =>
+          ingestParcel({
+            row,
+            options: resolvedOptions,
+            scriptsZipPath,
+            scriptsDirectory,
+            repoRoot,
+            transformPool,
+            html,
+          }),
+        );
+        completed += 1;
+        if (result.transformSuccess) transformsPassed += 1;
+        else {
+          transformsFailed += 1;
+          failures.push(result);
+          await appendFile(failuresPath, `${JSON.stringify(result)}\n`, "utf8");
+        }
+        if (
+          completed === skippedExisting + 1 ||
+          completed % 25 === 0 ||
+          completed === rows.length
+        ) {
+          await recordProgress({
+            startedAt,
+            updatedAt: new Date().toISOString(),
+            total: rows.length,
+            completed,
+            skippedExisting,
+            transformsPassed,
+            transformsFailed,
+            concurrency: options.concurrency,
+            fetchConcurrency: options.fetchConcurrency,
+            seedPath: options.seedPath,
+            outputDirectory,
+          });
+        }
+        return result;
+      },
+    );
+  } finally {
+    await transformPool?.close();
+  }
+
   await writeFile(
     path.join(outputDirectory, "summary.json"),
     JSON.stringify(
       {
         generatedAt: new Date().toISOString(),
-        total: results.length,
-        skippedExisting: results.filter((result) => result.skippedExisting).length,
-        transformsPassed: results.filter((result) => result.transformSuccess)
-          .length,
-        validationsPassed: results.filter(
-          (result) => result.validationSuccess === true,
-        ).length,
-        failures: results.filter((result) => !result.transformSuccess),
+        total: rows.length,
+        skippedExisting,
+        transformsPassed,
+        transformsFailed,
+        failures,
       },
       null,
       2,
     ),
     "utf8",
   );
-  return results;
+  return {
+    total: rows.length,
+    skippedExisting,
+    transformsPassed,
+    transformsFailed,
+    failures,
+  };
 }
 
 if (
@@ -1160,25 +1428,21 @@ if (
 ) {
   const options = parseCliOptions(process.argv.slice(2));
   runLocalIngest(options)
-    .then((results) => {
+    .then((summary) => {
       console.log(
         JSON.stringify(
           {
-            total: results.length,
-            skippedExisting: results.filter((result) => result.skippedExisting)
-              .length,
-            transformsPassed: results.filter((result) => result.transformSuccess)
-              .length,
-            validationsPassed: results.filter(
-              (result) => result.validationSuccess === true,
-            ).length,
+            total: summary.total,
+            skippedExisting: summary.skippedExisting,
+            transformsPassed: summary.transformsPassed,
+            transformsFailed: summary.transformsFailed,
             outputDirectory: path.resolve(options.outputDirectory),
           },
           null,
           2,
         ),
       );
-      if (results.some((result) => !result.transformSuccess)) {
+      if (summary.transformsFailed > 0) {
         process.exitCode = 1;
       }
     })
