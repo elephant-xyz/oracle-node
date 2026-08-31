@@ -36,6 +36,7 @@ import {
   runBrowardPermitPilot,
   verifyBrowardPermitStatusTarget,
 } from "../../scripts/run-broward-permit-pilot.mjs";
+import { parseSupportedPermitOptions } from "../../scripts/run-broward-supported-permit-ingest.mjs";
 import {
   parseDonphanToolResult,
   parseDonphanValidationOptions,
@@ -202,6 +203,7 @@ describe("Broward permit Neon pilot loader", () => {
     ).toEqual({
       inputPath: "pilot.jsonl",
       expectedRecords: 73,
+      includeBcs: true,
       accelaInputPath: "accela.jsonl",
       expectedAccelaRecords: 14,
       municipalInputPaths: ["tyler.jsonl", "citizenserve.jsonl"],
@@ -333,6 +335,40 @@ describe("Broward permit Neon pilot loader", () => {
       source_vendor: "tyler_energov_civic_access",
       finalized_date: "2023-01-01",
     });
+  });
+});
+
+describe("Broward supported-route permit ingest", () => {
+  it("caps total concurrency and requires a stable job ID", () => {
+    expect(
+      parseSupportedPermitOptions([
+        "--job-id",
+        "broward-permits-supported-pilot-20260831",
+        "--limit",
+        "30",
+        "--concurrency",
+        "4",
+        "--max-attempts",
+        "3",
+      ]),
+    ).toEqual({
+      jobId: "broward-permits-supported-pilot-20260831",
+      limit: 30,
+      concurrency: 4,
+      maxAttempts: 3,
+      workDirectory: "downloads/broward/supported-permit-ingest",
+    });
+    expect(() =>
+      parseSupportedPermitOptions([
+        "--job-id",
+        "broward-permits-supported",
+        "--concurrency",
+        "5",
+      ]),
+    ).toThrow(/through 4/u);
+    expect(() =>
+      parseSupportedPermitOptions(["--job-id", "unscoped-run"]),
+    ).toThrow(/broward-permits-/u);
   });
 });
 

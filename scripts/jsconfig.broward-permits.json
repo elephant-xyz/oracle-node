@@ -23,6 +23,7 @@
     "broward-permit-query-artifact.mjs",
     "load-broward-permit-pilot-to-neon.mjs",
     "run-broward-permit-pilot.mjs",
+    "run-broward-supported-permit-ingest.mjs",
     "validate-broward-permits-with-donphan.mjs",
     "permit-source-adapters/broward-bcs-posse.mjs"
   ]
