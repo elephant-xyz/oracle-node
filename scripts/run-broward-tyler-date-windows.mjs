@@ -45,6 +45,7 @@ const TYLER_SOURCE_KEYS = new Set([
  * @property {number} pageSize - Public UI page size.
  * @property {number} maxPages - Hard pages per window.
  * @property {number} delayMs - Delay between API pages and windows.
+ * @property {number} maxAttempts - Transient attempts per source window.
  * @property {number | null} maxWindows - Optional pilot pause bound.
  * @property {string} outputDirectory - Private artifact root.
  *
@@ -152,6 +153,12 @@ export function parseTylerDateWindowOptions(argv) {
       "delay-ms",
       1_000,
       60_000,
+    ),
+    maxAttempts: boundedInteger(
+      values.get("max-attempts") ?? "3",
+      "max-attempts",
+      1,
+      5,
     ),
     maxWindows:
       rawMaxWindows === undefined
@@ -265,15 +272,39 @@ export async function runTylerDateWindows(options, dependencies = {}) {
       const window = checkpoint.pendingWindows[0];
       if (window === undefined) break;
       if (processed > 0) await wait(options.delayMs);
-      const result = await searchWindow(
-        session,
-        window.startDate,
-        window.endDate,
-        options.pageSize,
-        options.maxPages,
-        options.delayMs,
-        wait,
-      );
+      let result;
+      for (
+        let attempt = 1;
+        attempt <= options.maxAttempts;
+        attempt += 1
+      ) {
+        try {
+          result = await searchWindow(
+            session,
+            window.startDate,
+            window.endDate,
+            options.pageSize,
+            options.maxPages,
+            options.delayMs,
+            wait,
+          );
+          break;
+        } catch (error) {
+          if (attempt >= options.maxAttempts) throw error;
+          logger.warn("broward_tyler_date_window_retry", {
+            sourceKey: options.sourceKey,
+            startDate: window.startDate,
+            endDate: window.endDate,
+            attempt,
+            error:
+              error instanceof Error ? error.message : "Unknown error",
+          });
+          await wait(options.delayMs * attempt);
+        }
+      }
+      if (result === undefined) {
+        throw new Error("Tyler date window exhausted without a result");
+      }
       const windowKey = localWindowKey(window);
       const windowDirectory = path.join(windowsDirectory, windowKey);
       const rawDirectory = path.join(windowDirectory, "raw");
@@ -456,6 +487,7 @@ async function readOrCreateCheckpoint(checkpointPath, options, startedAt) {
         pageSize: options.pageSize,
         maxPages: options.maxPages,
         delayMs: options.delayMs,
+        maxAttempts: options.maxAttempts,
       }),
     )
     .digest("hex");

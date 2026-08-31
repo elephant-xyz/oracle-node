@@ -855,6 +855,7 @@ describe("Broward official Accela CSV exports", () => {
     ).toMatchObject({
       sourceKey: "hollywood",
       windowDays: 30,
+      maxAttempts: 3,
       maxWindows: 1,
     });
     const options = {
@@ -863,6 +864,7 @@ describe("Broward official Accela CSV exports", () => {
       endDate: "2025-01-03",
       windowDays: 2,
       delayMs: 1_000,
+      maxAttempts: 3,
       maxWindows: null,
       outputDirectory,
     };

@@ -43,6 +43,7 @@ const SOURCE_KEYS = new Set([
  * @property {string} endDate - Inclusive range end.
  * @property {number} windowDays - Source export window width.
  * @property {number} delayMs - Delay between exports.
+ * @property {number} maxAttempts - Transient attempts per source window.
  * @property {number | null} maxWindows - Optional pilot bound.
  * @property {string} outputDirectory - Private artifact root.
  *
@@ -137,6 +138,12 @@ export function parseAccelaCsvWindowOptions(argv) {
       "delay-ms",
       1_000,
       60_000,
+    ),
+    maxAttempts: boundedInteger(
+      values.get("max-attempts") ?? "3",
+      "max-attempts",
+      1,
+      5,
     ),
     maxWindows:
       rawMaxWindows === undefined
@@ -239,14 +246,38 @@ export async function runAccelaCsvWindows(options, dependencies = {}) {
       if (processed > 0) await wait(options.delayMs);
       const windowKey = localWindowKey(window);
       const windowDirectory = path.join(windowsDirectory, windowKey);
-      const capture = await captureWindow({
-        browser,
-        source,
-        startDate: window.startDate,
-        endDate: window.endDate,
-        downloadDirectory: windowDirectory,
-        logger,
-      });
+      let capture;
+      for (
+        let attempt = 1;
+        attempt <= options.maxAttempts;
+        attempt += 1
+      ) {
+        try {
+          capture = await captureWindow({
+            browser,
+            source,
+            startDate: window.startDate,
+            endDate: window.endDate,
+            downloadDirectory: windowDirectory,
+            logger,
+          });
+          break;
+        } catch (error) {
+          if (attempt >= options.maxAttempts) throw error;
+          logger.warn("broward_accela_csv_window_retry", {
+            sourceKey: source.key,
+            startDate: window.startDate,
+            endDate: window.endDate,
+            attempt,
+            error:
+              error instanceof Error ? error.message : "Unknown error",
+          });
+          await wait(options.delayMs * attempt);
+        }
+      }
+      if (capture === undefined) {
+        throw new Error("Accela CSV capture exhausted without a result");
+      }
       const searchHtmlPath = path.join(windowDirectory, "search.html");
       await writePrivateAtomic(searchHtmlPath, capture.rawSearchHtml);
       const recordsPath = path.join(windowDirectory, "records.private.json");
@@ -417,6 +448,7 @@ async function readOrCreateCheckpoint(checkpointPath, options, startedAt) {
         endDate: options.endDate,
         windowDays: options.windowDays,
         delayMs: options.delayMs,
+        maxAttempts: options.maxAttempts,
       }),
     )
     .digest("hex");

@@ -225,6 +225,7 @@ describe("Tyler vendor-wide application-date windows", () => {
       sourceKey: "oakland_park",
       startDate: "2019-11-01",
       pageSize: 100,
+      maxAttempts: 3,
       maxWindows: 1,
     });
     expect(() =>
@@ -254,6 +255,7 @@ describe("Tyler vendor-wide application-date windows", () => {
       pageSize: 100,
       maxPages: 200,
       delayMs: 1_000,
+      maxAttempts: 3,
       maxWindows: 1,
       outputDirectory,
     };
