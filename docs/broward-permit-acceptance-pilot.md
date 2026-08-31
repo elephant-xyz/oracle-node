@@ -189,6 +189,32 @@ blocked/unavailable. A countywide or supported-routes-only crawl requires an
 explicit run scope and source-pressure policy; it must not be inferred from
 this pilot.
 
+## Supported-routes full run
+
+After the 15-route durable pilot reached terminal state, the supported-only
+property-first run started on 2026-08-31:
+
+- job ID: `broward-permits-supported-full-20260831`;
+- candidate properties: 276,502;
+- scope: only the 15 registry routes marked implemented;
+- concurrency: four total workers, serialized per jurisdiction;
+- source attempts: anonymous, page/detail bounded, and rate delayed;
+- durable state:
+  `ingest_control.broward_supported_permit_runs` and
+  `ingest_control.broward_supported_permit_items`;
+- checkpoint identity: one-way parcel hashes plus immutable registry/config
+  signature;
+- local private cache:
+  `downloads/broward/supported-permit-full`;
+- publication: disabled.
+
+The 17 blocked/login/CAPTCHA/custodian routes are excluded from source calls.
+Records, explicit no-permit results, bounded truncations, retryable failures,
+and failures exhausted after three attempts remain separate terminal states.
+Source exhaustion for this job means only that every supported-route candidate
+has one of those explicit outcomes; it does not mean countywide permit
+completeness.
+
 ## Query-db and Donphan evidence
 
 The mapper follows `elephant-query-db`
