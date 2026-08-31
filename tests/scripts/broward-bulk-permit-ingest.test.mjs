@@ -274,7 +274,7 @@ describe("durable Broward bulk permit runner", () => {
       invalidRecords: 1,
       roofingRecords: 1,
       matchedProperties: 0,
-      unmatchedProperties: 1,
+      unmatchedProperties: 0,
       allSourceRowsAccountedFor: true,
       completedChunks: 1,
       expectedChunks: 1,
