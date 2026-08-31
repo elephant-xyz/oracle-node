@@ -161,6 +161,7 @@ export async function runSupportedPermitIngest(options) {
     let processed = 0;
     let terminal = completed.size;
     let failed = 0;
+    /** @type {Map<string, Promise<void>>} */
     const sourceTails = new Map();
     await processWithConcurrency(
       pending,
@@ -352,6 +353,13 @@ async function probeAndLoadCandidate(candidate, options) {
   return { status: "failed_exhausted", recordCount: 0, errorClass: "unsupported_adapter" };
 }
 
+/**
+ * Run one bounded BCS lookup and load complete normalized records.
+ *
+ * @param {SupportedPermitCandidate} candidate - Routed BCS property.
+ * @param {string} itemDirectory - Private hash-keyed working directory.
+ * @returns {Promise<ProbeOutcome>} Explicit BCS outcome.
+ */
 async function probeBcs(candidate, itemDirectory) {
   const recordsPath = path.join(itemDirectory, "records.private.jsonl");
   const summaryPath = path.join(itemDirectory, "summary.private.json");
@@ -391,6 +399,13 @@ async function probeBcs(candidate, itemDirectory) {
   };
 }
 
+/**
+ * Run one bounded Accela lookup and load only a complete result set.
+ *
+ * @param {SupportedPermitCandidate} candidate - Routed Accela property.
+ * @param {string} itemDirectory - Private hash-keyed working directory.
+ * @returns {Promise<ProbeOutcome>} Explicit Accela outcome.
+ */
 async function probeAccela(candidate, itemDirectory) {
   const recordsPath = path.join(itemDirectory, "records.private.jsonl");
   const summaryPath = path.join(itemDirectory, "summary.private.json");
@@ -442,6 +457,13 @@ async function probeAccela(candidate, itemDirectory) {
   };
 }
 
+/**
+ * Run one bounded Tyler/Citizenserve lookup and load returned records.
+ *
+ * @param {SupportedPermitCandidate} candidate - Routed municipal property.
+ * @param {string} itemDirectory - Private hash-keyed working directory.
+ * @returns {Promise<ProbeOutcome>} Explicit municipal outcome.
+ */
 async function probeMunicipal(candidate, itemDirectory) {
   const recordsPath = path.join(itemDirectory, "records.private.jsonl");
   const summaryPath = path.join(itemDirectory, "summary.json");
@@ -516,6 +538,18 @@ function runNode(args) {
   });
 }
 
+/**
+ * Atomically upsert one aggregate-safe parcel outcome and heartbeat.
+ *
+ * @param {import("pg").Client} client - Verified control client.
+ * @param {string} jobId - Stable run identifier.
+ * @param {SupportedPermitCandidate} candidate - Private in-process property.
+ * @param {SupportedPermitItemStatus} status - Explicit source outcome.
+ * @param {number} recordCount - Records committed from this property.
+ * @param {number} attemptCount - Durable source attempt count.
+ * @param {string | null} errorClass - Fixed aggregate-safe failure class.
+ * @returns {Promise<void>} Resolves after item and heartbeat writes.
+ */
 async function checkpointItem(
   client,
   jobId,
@@ -552,6 +586,12 @@ async function checkpointItem(
   );
 }
 
+/**
+ * Create additive supported-run control tables after identity verification.
+ *
+ * @param {import("pg").Client} client - Verified direct client.
+ * @returns {Promise<void>} Resolves after idempotent DDL.
+ */
 async function ensureControlTables(client) {
   await client.query(`CREATE SCHEMA IF NOT EXISTS ${CONTROL_SCHEMA}`);
   await client.query(
@@ -589,6 +629,15 @@ async function ensureControlTables(client) {
   );
 }
 
+/**
+ * Register or verify one immutable supported-routes run contract.
+ *
+ * @param {import("pg").Client} client - Verified direct client.
+ * @param {SupportedPermitOptions} options - Run configuration.
+ * @param {string} signature - Candidate/config SHA-256.
+ * @param {number} candidateCount - Exact supported candidate count.
+ * @returns {Promise<void>} Resolves after registration and heartbeat.
+ */
 async function registerRun(client, options, signature, candidateCount) {
   await client.query(
     `INSERT INTO ${CONTROL_SCHEMA}.broward_supported_permit_runs (
@@ -626,6 +675,14 @@ async function registerRun(client, options, signature, candidateCount) {
   );
 }
 
+/**
+ * Read terminal or exhausted one-way parcel hashes.
+ *
+ * @param {import("pg").Client} client - Verified control client.
+ * @param {string} jobId - Stable run identifier.
+ * @param {number} maxAttempts - Failure exhaustion threshold.
+ * @returns {Promise<Set<string>>} Durable completed parcel hashes.
+ */
 async function readCompletedItems(client, jobId, maxAttempts) {
   const result = await client.query(
     `SELECT parcel_hash,status,attempt_count
@@ -643,6 +700,14 @@ async function readCompletedItems(client, jobId, maxAttempts) {
   );
 }
 
+/**
+ * Read a prior parcel attempt count.
+ *
+ * @param {import("pg").Client} client - Verified control client.
+ * @param {string} jobId - Stable run identifier.
+ * @param {string} parcelHash - One-way parcel identity.
+ * @returns {Promise<number>} Existing attempt count or zero.
+ */
 async function readAttemptCount(client, jobId, parcelHash) {
   const result = await client.query(
     `SELECT attempt_count FROM ${CONTROL_SCHEMA}.broward_supported_permit_items
@@ -652,6 +717,14 @@ async function readAttemptCount(client, jobId, parcelHash) {
   return Number(result.rows[0]?.attempt_count ?? 0);
 }
 
+/**
+ * Rebuild run counters from durable item truth.
+ *
+ * @param {import("pg").Client} client - Verified control client.
+ * @param {string} jobId - Stable run identifier.
+ * @returns {Promise<{terminalCount:number,recordCount:number,failureCount:number}>}
+ *   Aggregate durable counters.
+ */
 async function readRunAggregate(client, jobId) {
   const result = await client.query(
     `SELECT
@@ -668,6 +741,12 @@ async function readRunAggregate(client, jobId) {
   };
 }
 
+/**
+ * Acquire the session-scoped supported permit writer lock.
+ *
+ * @param {import("pg").Client} client - Verified direct client.
+ * @returns {Promise<void>} Resolves only for the sole runner.
+ */
 async function acquireRunLock(client) {
   const result = await client.query(
     "SELECT pg_try_advisory_lock($1,$2) AS acquired",
@@ -678,6 +757,13 @@ async function acquireRunLock(client) {
   }
 }
 
+/**
+ * Prove immutable Neon project, branch, and endpoint identity.
+ *
+ * @param {import("pg").Client} client - Connected direct client.
+ * @param {{expectedBranchId:string,expectedEndpointId:string}} target - Expected IDs.
+ * @returns {Promise<void>} Resolves after exact identity match.
+ */
 async function verifyTarget(client, target) {
   const result = await client.query(
     `SELECT current_setting('neon.project_id',true) AS project_id,
@@ -694,6 +780,13 @@ async function verifyTarget(client, target) {
   }
 }
 
+/**
+ * Read and validate the direct Neon runtime target.
+ *
+ * @param {NodeJS.ProcessEnv} environment - Runtime secrets.
+ * @returns {{connectionString:string,expectedBranchId:string,expectedEndpointId:string}}
+ *   Validated target without logging values.
+ */
 function requireTarget(environment) {
   const connectionString = environment.DATABASE_URL_UNPOOLED;
   const expectedBranchId = environment.BROWARD_INGEST_NEON_BRANCH_ID;
@@ -711,6 +804,12 @@ function requireTarget(environment) {
   return { connectionString, expectedBranchId, expectedEndpointId };
 }
 
+/**
+ * Read one source summary as an object.
+ *
+ * @param {string} filePath - Private source summary path.
+ * @returns {Promise<Record<string, unknown>>} Parsed summary object.
+ */
 async function readJson(filePath) {
   const value = /** @type {unknown} */ (
     JSON.parse(await readFile(filePath, "utf8"))
@@ -721,6 +820,13 @@ async function readJson(filePath) {
   return /** @type {Record<string, unknown>} */ (value);
 }
 
+/**
+ * Read a non-negative integer source summary field.
+ *
+ * @param {Record<string, unknown>} record - Source summary.
+ * @param {string} key - Required numeric field.
+ * @returns {number} Validated non-negative integer.
+ */
 function numberField(record, key) {
   const value = record[key];
   if (!Number.isInteger(value) || Number(value) < 0) {
@@ -729,6 +835,13 @@ function numberField(record, key) {
   return Number(value);
 }
 
+/**
+ * Hash exact ordered candidates and run configuration.
+ *
+ * @param {readonly SupportedPermitCandidate[]} candidates - Ordered candidate set.
+ * @param {SupportedPermitOptions} options - Run bounds.
+ * @returns {string} Lowercase SHA-256 signature.
+ */
 function candidateSignature(candidates, options) {
   const digest = createHash("sha256");
   digest.update(BROWARD_PERMIT_REGISTRY_VERSION);
@@ -741,16 +854,37 @@ function candidateSignature(candidates, options) {
   return digest.digest("hex");
 }
 
+/**
+ * Produce one one-way durable parcel identity.
+ *
+ * @param {string} folio - Exact private-in-process folio.
+ * @returns {string} Lowercase SHA-256.
+ */
 function hashFolio(folio) {
   return createHash("sha256")
     .update(`broward-permit:${folio}`)
     .digest("hex");
 }
 
+/**
+ * Convert registry kebab keys to municipal adapter keys.
+ *
+ * @param {string} key - Exact registry jurisdiction key.
+ * @returns {string} Municipal adapter configuration key.
+ */
 function registryKeyToMunicipalKey(key) {
   return key.replaceAll("-", "_");
 }
 
+/**
+ * Process items with bounded total concurrency.
+ *
+ * @template Item
+ * @param {readonly Item[]} items - Ordered pending items.
+ * @param {number} concurrency - Maximum simultaneous handlers.
+ * @param {(item:Item)=>Promise<void>} handler - Per-item operation.
+ * @returns {Promise<void>} Resolves after all items settle successfully.
+ */
 async function processWithConcurrency(items, concurrency, handler) {
   const executing = new Set();
   for (const item of items) {
@@ -762,6 +896,15 @@ async function processWithConcurrency(items, concurrency, handler) {
   await Promise.all(executing);
 }
 
+/**
+ * Parse an integer within an inclusive range.
+ *
+ * @param {string} raw - Raw CLI value.
+ * @param {string} name - Option name without dashes.
+ * @param {number} minimum - Inclusive minimum.
+ * @param {number} maximum - Inclusive maximum.
+ * @returns {number} Validated integer.
+ */
 function boundedInteger(raw, name, minimum, maximum) {
   const value = Number(raw);
   if (!Number.isInteger(value) || value < minimum || value > maximum) {
