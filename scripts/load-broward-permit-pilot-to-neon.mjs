@@ -87,7 +87,8 @@ const LOAD_KEY = "broward-supported-pilots-v3";
  *
  * @typedef {object} BrowardMunicipalPermitRecord
  * @property {string} source_system - County-prefixed municipal source.
- * @property {"tyler-civic-access" | "citizenserve"} source_vendor - Adapter family.
+ * @property {"tyler_energov_civic_access" | "citizenserve_cap_government"} source_vendor
+ *   Exact adapter-family identifier.
  * @property {string} source_url - Official detail URL.
  * @property {string} source_record_id - Stable source object ID.
  * @property {string} record_key - Stable source-system record key.
@@ -718,8 +719,8 @@ function isMunicipalPermit(value) {
   return (
     typeof candidate.source_system === "string" &&
     /^broward_[a-z0-9_]+_permits$/u.test(candidate.source_system) &&
-    (candidate.source_vendor === "tyler-civic-access" ||
-      candidate.source_vendor === "citizenserve") &&
+    (candidate.source_vendor === "tyler_energov_civic_access" ||
+      candidate.source_vendor === "citizenserve_cap_government") &&
     typeof candidate.source_url === "string" &&
     typeof candidate.source_record_id === "string" &&
     typeof candidate.record_key === "string" &&

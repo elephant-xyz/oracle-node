@@ -280,7 +280,7 @@ describe("Broward permit Neon pilot loader", () => {
   it("reconciles and maps bounded Tyler/Citizenserve permit records", async () => {
     const record = {
       source_system: "broward_pembroke_pines_tyler_permits",
-      source_vendor: "tyler-civic-access",
+      source_vendor: "tyler_energov_civic_access",
       source_url: "https://example.test/permit/1",
       source_record_id: "1",
       record_key: "broward_pembroke_pines_tyler_permits:1",
@@ -330,7 +330,7 @@ describe("Broward permit Neon pilot loader", () => {
       estimatedSqFt: 500,
     });
     expect(values.moreDetails).toMatchObject({
-      source_vendor: "tyler-civic-access",
+      source_vendor: "tyler_energov_civic_access",
       finalized_date: "2023-01-01",
     });
   });
