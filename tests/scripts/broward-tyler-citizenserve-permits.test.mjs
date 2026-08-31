@@ -296,6 +296,7 @@ describe("Tyler vendor-wide application-date windows", () => {
             totalPages: 1,
             records: [record],
             invalidRecordCount: 0,
+            sourceMissingRecordCount: 0,
             pages: [
               {
                 pageNumber: 1,

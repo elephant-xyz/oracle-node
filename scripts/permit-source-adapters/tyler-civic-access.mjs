@@ -77,6 +77,7 @@ import {
  * @property {number} totalPages - Stable source page count.
  * @property {readonly NormalizedCityPermit[]} records - Deduplicated permit rows.
  * @property {number} invalidRecordCount - Raw source rows that could not normalize.
+ * @property {number} sourceMissingRecordCount - Reported rows absent from every supported page-size traversal.
  * @property {readonly TylerDateWindowPage[]} pages - Raw page responses.
  */
 
@@ -704,7 +705,8 @@ export async function searchTylerDateWindow(
   const totalFound = expectedTotal ?? 0;
   const totalPages = expectedPages ?? 0;
   const deduped = dedupeAndSortNormalizedPermits(records);
-  if (deduped.length + invalidRecordCount !== totalFound) {
+  const accounted = deduped.length + invalidRecordCount;
+  if (accounted !== totalFound) {
     const smallerPageSize = nextSmallerTylerPageSize(pageSize);
     if (smallerPageSize !== null) {
       return searchTylerDateWindow(
@@ -717,10 +719,13 @@ export async function searchTylerDateWindow(
         wait,
       );
     }
-    throw new Error(
-      `${session.config.city} Tyler accounted for ${String(deduped.length)} valid and ${String(invalidRecordCount)} invalid of ${String(totalFound)} date-window permits`,
-    );
+    if (accounted > totalFound) {
+      throw new Error(
+        `${session.config.city} Tyler returned more unique/invalid rows than TotalFound`,
+      );
+    }
   }
+  const sourceMissingRecordCount = totalFound - accounted;
   return {
     startDate,
     endDate,
@@ -728,6 +733,7 @@ export async function searchTylerDateWindow(
     totalPages,
     records: deduped,
     invalidRecordCount,
+    sourceMissingRecordCount,
     pages,
   };
 }

@@ -54,6 +54,7 @@ const TYLER_SOURCE_KEYS = new Set([
  * @property {number} totalFound - Reconciled source records.
  * @property {number} totalPages - Reconciled source pages.
  * @property {number | undefined} [invalidRecordCount] - Raw rows without normalized identity; absent in pre-v2 receipts means zero.
+ * @property {number | undefined} [sourceMissingRecordCount] - Reported rows absent from source pages; absent in pre-v2 receipts means zero.
  * @property {string} linksPath - Private normalized page records.
  * @property {string} completedAt - ISO completion timestamp.
  *
@@ -79,6 +80,7 @@ const TYLER_SOURCE_KEYS = new Set([
  * @property {number} uniquePermitCount - Unique CaseId records.
  * @property {number} duplicatePermitObservations - Cross-window duplicates.
  * @property {number} invalidRecordCount - Accounted malformed source rows.
+ * @property {number} sourceMissingRecordCount - Reported rows unavailable from paging.
  * @property {string} normalizedListPath - Private deterministic JSONL.
  * @property {string} checkpointPath - Private checkpoint.
  * @property {string} completedAt - ISO summary timestamp.
@@ -298,6 +300,7 @@ export async function runTylerDateWindows(options, dependencies = {}) {
             totalFound: result.totalFound,
             totalPages: result.totalPages,
             invalidRecordCount: result.invalidRecordCount,
+            sourceMissingRecordCount: result.sourceMissingRecordCount,
             records: result.records,
           },
           null,
@@ -315,6 +318,7 @@ export async function runTylerDateWindows(options, dependencies = {}) {
             totalFound: result.totalFound,
             totalPages: result.totalPages,
             invalidRecordCount: result.invalidRecordCount,
+            sourceMissingRecordCount: result.sourceMissingRecordCount,
             linksPath,
             completedAt: now(),
           },
@@ -350,6 +354,7 @@ export async function runTylerDateWindows(options, dependencies = {}) {
     uniquePermitCount: aggregate.uniquePermitCount,
     duplicatePermitObservations: aggregate.duplicatePermitObservations,
     invalidRecordCount: aggregate.invalidRecordCount,
+    sourceMissingRecordCount: aggregate.sourceMissingRecordCount,
     normalizedListPath,
     checkpointPath,
     completedAt: now(),
@@ -370,7 +375,8 @@ export async function runTylerDateWindows(options, dependencies = {}) {
  *   sourceRecordObservations:number,
  *   uniquePermitCount:number,
  *   duplicatePermitObservations:number,
- *   invalidRecordCount:number
+ *   invalidRecordCount:number,
+ *   sourceMissingRecordCount:number
  * }>} Whole-run counts.
  */
 async function aggregateWindows(checkpoint, normalizedListPath) {
@@ -378,8 +384,10 @@ async function aggregateWindows(checkpoint, normalizedListPath) {
   const byCaseId = new Map();
   let observations = 0;
   let invalidRecordCount = 0;
+  let sourceMissingRecordCount = 0;
   for (const receipt of Object.values(checkpoint.completedWindows)) {
     invalidRecordCount += receipt.invalidRecordCount ?? 0;
+    sourceMissingRecordCount += receipt.sourceMissingRecordCount ?? 0;
     const payload = /** @type {unknown} */ (
       JSON.parse(await readFile(receipt.linksPath, "utf8"))
     );
@@ -425,6 +433,7 @@ async function aggregateWindows(checkpoint, normalizedListPath) {
     uniquePermitCount: records.length,
     duplicatePermitObservations: observations - records.length,
     invalidRecordCount,
+    sourceMissingRecordCount,
   };
 }
 
