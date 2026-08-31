@@ -52,6 +52,7 @@ const SOURCE_KEYS = new Set([
  * @property {number | null} displayedTotal - Untrusted UI total.
  * @property {boolean} displayedTotalCapped - Whether UI displayed cap 100.
  * @property {number} exportedRecordCount - Official CSV rows.
+ * @property {number | undefined} [excludedNonPermitCount] - Explicit non-permit source rows; absent in pre-v2 receipts means zero.
  * @property {string} recordsPath - Private normalized window artifact.
  * @property {string} rawCsvSha256 - Exact export hash.
  * @property {string} completedAt - ISO completion timestamp.
@@ -78,6 +79,7 @@ const SOURCE_KEYS = new Set([
  * @property {number} uniquePermitCount - Unique permit-number identities.
  * @property {number} duplicatePermitObservations - Cross-window duplicates.
  * @property {number} cappedDisplayedTotalWindowCount - Windows whose UI showed 100.
+ * @property {number} excludedNonPermitCount - Whole-run explicit exclusions.
  * @property {string} normalizedListPath - Final private JSONL.
  * @property {string} checkpointPath - Private checkpoint.
  * @property {string} completedAt - ISO summary timestamp.
@@ -260,6 +262,7 @@ export async function runAccelaCsvWindows(options, dependencies = {}) {
             displayedTotal: capture.displayedTotal,
             displayedTotalCapped: capture.displayedTotalCapped,
             exportedRecordCount: capture.records.length,
+            excludedNonPermitCount: capture.excludedNonPermitCount,
             records: capture.records,
           },
           null,
@@ -277,6 +280,7 @@ export async function runAccelaCsvWindows(options, dependencies = {}) {
             displayedTotal: capture.displayedTotal,
             displayedTotalCapped: capture.displayedTotalCapped,
             exportedRecordCount: capture.records.length,
+            excludedNonPermitCount: capture.excludedNonPermitCount,
             recordsPath,
             rawCsvSha256: createHash("sha256")
               .update(capture.rawCsv)
@@ -316,6 +320,7 @@ export async function runAccelaCsvWindows(options, dependencies = {}) {
     duplicatePermitObservations: aggregate.duplicatePermitObservations,
     cappedDisplayedTotalWindowCount:
       aggregate.cappedDisplayedTotalWindowCount,
+    excludedNonPermitCount: aggregate.excludedNonPermitCount,
     normalizedListPath,
     checkpointPath,
     completedAt: now(),
@@ -336,7 +341,8 @@ export async function runAccelaCsvWindows(options, dependencies = {}) {
  *   exportedRecordObservations:number,
  *   uniquePermitCount:number,
  *   duplicatePermitObservations:number,
- *   cappedDisplayedTotalWindowCount:number
+ *   cappedDisplayedTotalWindowCount:number,
+ *   excludedNonPermitCount:number
  * }>} Whole-run counts.
  */
 async function aggregateWindows(checkpoint, normalizedListPath) {
@@ -344,8 +350,10 @@ async function aggregateWindows(checkpoint, normalizedListPath) {
   const records = new Map();
   let observations = 0;
   let cappedDisplayedTotalWindowCount = 0;
+  let excludedNonPermitCount = 0;
   for (const receipt of Object.values(checkpoint.completedWindows)) {
     if (receipt.displayedTotalCapped) cappedDisplayedTotalWindowCount += 1;
+    excludedNonPermitCount += receipt.excludedNonPermitCount ?? 0;
     const payload = /** @type {unknown} */ (
       JSON.parse(await readFile(receipt.recordsPath, "utf8"))
     );
@@ -388,6 +396,7 @@ async function aggregateWindows(checkpoint, normalizedListPath) {
     uniquePermitCount: ordered.length,
     duplicatePermitObservations: observations - ordered.length,
     cappedDisplayedTotalWindowCount,
+    excludedNonPermitCount,
   };
 }
 

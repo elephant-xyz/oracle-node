@@ -138,6 +138,7 @@ import {
  * @property {number | null} displayedTotal - Untrusted/capped UI total.
  * @property {boolean} displayedTotalCapped - Whether UI total equals known cap 100.
  * @property {readonly BrowardAccelaCsvPermitRecord[]} records - Exported unique records.
+ * @property {number} excludedNonPermitCount - Explicit non-permit CSV/list rows.
  * @property {string} rawCsv - Exact official export bytes as UTF-8.
  * @property {string} rawSearchHtml - First result/no-record page.
  */
@@ -1342,9 +1343,10 @@ export async function searchBrowardAccelaDateWindow({
  * @param {BrowardAccelaSource} source - Jurisdiction source.
  * @param {string} startDate - Inclusive search start.
  * @param {string} endDate - Inclusive search end.
- * @returns {BrowardAccelaCsvPermitRecord[]} Unique exported records.
+ * @returns {{records:BrowardAccelaCsvPermitRecord[],sourceRowCount:number,excludedNonPermitCount:number}}
+ *   In-scope records and complete CSV accounting.
  */
-export function parseBrowardAccelaCsvExport(
+export function parseBrowardAccelaCsvExportSummary(
   csvText,
   source,
   startDate,
@@ -1369,11 +1371,25 @@ export function parseBrowardAccelaCsvExport(
   }
   /** @type {Map<string, BrowardAccelaCsvPermitRecord>} */
   const byKey = new Map();
+  let excludedNonPermitCount = 0;
   for (const value of parsed) {
     if (!isRecord(value)) {
       throw new Error(`${source.jurisdiction} Accela CSV row is malformed`);
     }
-    const recordNumber = readRecordNumber(value["Record Number"]);
+    const recordType = optionalCollapsedText(value["Record Type"]);
+    if (
+      source.key === "plantation" &&
+      recordType !== null &&
+      /\b(?:enforcement|local business tax|minor development)\b/iu.test(
+        recordType,
+      )
+    ) {
+      excludedNonPermitCount += 1;
+      continue;
+    }
+    const recordNumber = readRecordNumber(
+      value["Record Number"] ?? value["Record No."],
+    );
     if (recordNumber === null) {
       throw new Error(
         `${source.jurisdiction} Accela CSV row has no record number`,
@@ -1391,7 +1407,7 @@ export function parseBrowardAccelaCsvExport(
       sourceUrl: buildAccelaAltIdDetailUrl(source, recordNumber),
       recordKey,
       recordDate: parseAccelaCsvDate(value.Date),
-      recordType: optionalCollapsedText(value["Record Type"]),
+      recordType,
       projectName: optionalCollapsedText(value["Project Name"]),
       address: optionalCollapsedText(value.Address),
       expirationDate: parseAccelaCsvDate(value["Expiration Date"]),
@@ -1418,9 +1434,36 @@ export function parseBrowardAccelaCsvExport(
     }
     byKey.set(recordKey, record);
   }
-  return [...byKey.values()].sort((left, right) =>
-    left.recordKey.localeCompare(right.recordKey),
-  );
+  return {
+    records: [...byKey.values()].sort((left, right) =>
+      left.recordKey.localeCompare(right.recordKey),
+    ),
+    sourceRowCount: parsed.length,
+    excludedNonPermitCount,
+  };
+}
+
+/**
+ * Parse only in-scope permit rows from an official Accela CSV export.
+ *
+ * @param {string} csvText - Exact UTF-8 export.
+ * @param {BrowardAccelaSource} source - Jurisdiction source.
+ * @param {string} startDate - Inclusive search start.
+ * @param {string} endDate - Inclusive search end.
+ * @returns {BrowardAccelaCsvPermitRecord[]} Unique in-scope permit records.
+ */
+export function parseBrowardAccelaCsvExport(
+  csvText,
+  source,
+  startDate,
+  endDate,
+) {
+  return parseBrowardAccelaCsvExportSummary(
+    csvText,
+    source,
+    startDate,
+    endDate,
+  ).records;
 }
 
 /**
@@ -1505,6 +1548,7 @@ export async function captureBrowardAccelaCsvWindow({
         displayedTotal: 0,
         displayedTotalCapped: false,
         records: [],
+        excludedNonPermitCount: 0,
         rawCsv: "",
         rawSearchHtml: searchHtml,
       };
@@ -1553,6 +1597,7 @@ export async function captureBrowardAccelaCsvWindow({
         displayedTotal: displayedTotal ?? 1,
         displayedTotalCapped: false,
         records: [record],
+        excludedNonPermitCount: 0,
         rawCsv: "",
         rawSearchHtml: searchHtml,
       };
@@ -1576,6 +1621,7 @@ export async function captureBrowardAccelaCsvWindow({
             source,
             sourceWindowKey,
           ),
+          excludedNonPermitCount: excludedListCount,
           rawCsv: "",
           rawSearchHtml: searchHtml,
         };
@@ -1616,6 +1662,7 @@ export async function captureBrowardAccelaCsvWindow({
             source,
             sourceWindowKey,
           ),
+          excludedNonPermitCount: excludedListCount,
           rawCsv: "",
           rawSearchHtml: searchHtml,
         };
@@ -1626,12 +1673,13 @@ export async function captureBrowardAccelaCsvWindow({
     const rawCsv = await readFile(downloadedPath, "utf8");
     const finalPath = `${downloadDirectory}/results.csv`;
     await rename(downloadedPath, finalPath);
-    const exportedRecords = parseBrowardAccelaCsvExport(
+    const exportSummary = parseBrowardAccelaCsvExportSummary(
       rawCsv,
       source,
       startDate,
       endDate,
     );
+    const exportedRecords = exportSummary.records;
     const recordsByKey = new Map(
       exportedRecords.map((record) => [record.recordKey, record]),
     );
@@ -1664,6 +1712,7 @@ export async function captureBrowardAccelaCsvWindow({
       endDate,
       displayedTotal,
       exportedRecordCount: records.length,
+      excludedNonPermitCount: exportSummary.excludedNonPermitCount,
       finalPath,
     });
     return {
@@ -1673,6 +1722,7 @@ export async function captureBrowardAccelaCsvWindow({
       displayedTotal,
       displayedTotalCapped: displayedTotal === 100,
       records,
+      excludedNonPermitCount: exportSummary.excludedNonPermitCount,
       rawCsv,
       rawSearchHtml: searchHtml,
     };

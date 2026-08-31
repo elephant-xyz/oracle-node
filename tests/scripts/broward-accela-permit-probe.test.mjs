@@ -21,6 +21,7 @@ import {
   isBrowardAccelaRoofPermitCandidate,
   normalizeBrowardPermitFolio,
   parseBrowardAccelaCsvExport,
+  parseBrowardAccelaCsvExportSummary,
   parseBrowardAccelaMoreDetails,
   readBrowardAccelaCheckpoint,
   readBrowardAccelaSource,
@@ -804,6 +805,29 @@ describe("Broward official Accela CSV exports", () => {
     expect(records[1]?.sourceUrl).toContain(
       "altId=STRUC-ROOF-25-000185",
     );
+  });
+
+  it("accepts Plantation Record No. and accounts for explicit non-permit modules", () => {
+    const summary = parseBrowardAccelaCsvExportSummary(
+      [
+        '"Date","Record No.","Record Type","Sub Type","Description","Address","Status",',
+        '"08/31/2026","CE26-02231","Code Enforcement",,"Bulk trash","100 TEST AVE","Investigate",',
+        '"08/31/2026","B26-03481","Building Permit","Misc","Kitchen","200 TEST AVE","Applied",',
+      ].join("\n"),
+      BROWARD_ACCELA_SOURCES.plantation,
+      "2026-08-31",
+      "2026-08-31",
+    );
+    expect(summary).toMatchObject({
+      sourceRowCount: 2,
+      excludedNonPermitCount: 1,
+      records: [
+        expect.objectContaining({
+          recordNumber: "B26-03481",
+          recordType: "Building Permit",
+        }),
+      ],
+    });
   });
 
   it("creates deterministic CSV windows and checkpointed inventory", async () => {
