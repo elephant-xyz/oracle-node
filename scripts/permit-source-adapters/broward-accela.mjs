@@ -17,6 +17,7 @@ import {
   parseResultSummary,
   safeKeyPart,
   shortHash,
+  toAccelaDate,
 } from "../../workflow/lambdas/permit-harvest-worker/lee-accela.mjs";
 
 /**
@@ -96,6 +97,20 @@ import {
  * @property {BrowardAccelaSearchPage[]} pages - Raw list/detail-redirect captures.
  * @property {number | null} reportedTotal - Accela's reported result count, when displayed.
  * @property {number} excludedNonPermitCount - Cross-module records (for example code enforcement) explicitly excluded from permit normalization.
+ */
+
+/**
+ * @typedef {object} BrowardAccelaDateWindowSearchResult
+ * @property {"records" | "no_records"} status - Explicit public source outcome.
+ * @property {string} searchKey - Stable jurisdiction/date-window identity.
+ * @property {string} startDate - Inclusive ISO source start date.
+ * @property {string} endDate - Inclusive ISO source end date.
+ * @property {BrowardAccelaSource} source - Jurisdiction source configuration.
+ * @property {BrowardAccelaPermitLink[]} permits - Deduplicated list records.
+ * @property {BrowardAccelaSearchPage[]} pages - Raw private page captures.
+ * @property {number | null} reportedTotal - Source-reported total when visible.
+ * @property {number} excludedNonPermitCount - Explicit cross-module rows.
+ * @property {boolean} truncatedForSplit - Whether a dense multi-day window intentionally stopped after page one.
  */
 
 /**
@@ -392,6 +407,52 @@ export function normalizeBrowardPermitFolio(value) {
  */
 export function buildBrowardAccelaSearchKey(source, parcelIdentifier) {
   return `${source.key}:parcel:${normalizeBrowardPermitFolio(parcelIdentifier)}`;
+}
+
+/**
+ * Validate a real ISO calendar date without timezone inference.
+ *
+ * @param {string} value - Candidate YYYY-MM-DD value.
+ * @param {string} fieldName - Field name used in errors.
+ * @returns {string} Validated date.
+ */
+function requireIsoDate(value, fieldName) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/u.exec(value);
+  if (match === null) {
+    throw new Error(`Broward Accela ${fieldName} must be YYYY-MM-DD`);
+  }
+  const date = new Date(
+    Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])),
+  );
+  if (
+    date.getUTCFullYear() !== Number(match[1]) ||
+    date.getUTCMonth() !== Number(match[2]) - 1 ||
+    date.getUTCDate() !== Number(match[3])
+  ) {
+    throw new Error(`Broward Accela ${fieldName} is not a calendar date`);
+  }
+  return value;
+}
+
+/**
+ * Build a stable source key for one inclusive jurisdiction date window.
+ *
+ * @param {BrowardAccelaSource} source - Jurisdiction-specific source.
+ * @param {string} startDate - Inclusive ISO start date.
+ * @param {string} endDate - Inclusive ISO end date.
+ * @returns {string} Stable date-window identity.
+ */
+export function buildBrowardAccelaDateWindowKey(
+  source,
+  startDate,
+  endDate,
+) {
+  const start = requireIsoDate(startDate, "startDate");
+  const end = requireIsoDate(endDate, "endDate");
+  if (Date.parse(`${end}T00:00:00Z`) < Date.parse(`${start}T00:00:00Z`)) {
+    throw new Error("Broward Accela endDate must not precede startDate");
+  }
+  return `${source.key}:date:${start.replaceAll("-", "")}_${end.replaceAll("-", "")}`;
 }
 
 /**
@@ -848,6 +909,311 @@ async function hasNextPage(context) {
         anchor.getAttribute("href")?.includes("__doPostBack"),
     ),
   );
+}
+
+/**
+ * Search one date-enabled Broward Accela agency without a parcel filter.
+ *
+ * A shared browser may call this repeatedly, giving each agency one persistent
+ * worker while every window gets a fresh page/session form. Dense multi-day
+ * windows may stop after page one so the caller can split them recursively.
+ * A terminal window reconciles all visible pages against Accela's total.
+ *
+ * @param {object} params - Public date-window search parameters.
+ * @param {import("puppeteer").Browser} params.browser - Reused browser.
+ * @param {BrowardAccelaSource} params.source - Date-enabled jurisdiction.
+ * @param {string} params.startDate - Inclusive ISO start date.
+ * @param {string} params.endDate - Inclusive ISO end date.
+ * @param {number} params.maxPages - Hard terminal pagination ceiling.
+ * @param {number | undefined} [params.stopAfterFirstPageWhenTotalAtLeast]
+ *   Dense-window split threshold.
+ * @param {Logger} params.logger - Structured logger.
+ * @returns {Promise<BrowardAccelaDateWindowSearchResult>} Reconciled source result.
+ */
+export async function searchBrowardAccelaDateWindow({
+  browser,
+  source,
+  startDate,
+  endDate,
+  maxPages,
+  stopAfterFirstPageWhenTotalAtLeast,
+  logger,
+}) {
+  const searchKey = buildBrowardAccelaDateWindowKey(
+    source,
+    startDate,
+    endDate,
+  );
+  if (!Number.isInteger(maxPages) || maxPages < 1 || maxPages > 200) {
+    throw new Error("Broward Accela date-window maxPages must be 1 through 200");
+  }
+  if (
+    stopAfterFirstPageWhenTotalAtLeast !== undefined &&
+    (!Number.isInteger(stopAfterFirstPageWhenTotalAtLeast) ||
+      stopAfterFirstPageWhenTotalAtLeast < 2)
+  ) {
+    throw new Error(
+      "Broward Accela split threshold must be an integer of at least 2",
+    );
+  }
+  const page = await createConfiguredPage(browser);
+  /** @type {BrowardAccelaSearchPage[]} */
+  const pages = [];
+  /** @type {BrowardAccelaPermitLink[]} */
+  const permits = [];
+  let reportedTotal = /** @type {number | null} */ (null);
+  let excludedNonPermitCount = 0;
+  let truncatedForSplit = false;
+
+  try {
+    logger.info("broward_accela_date_window_open", {
+      sourceKey: source.key,
+      jurisdiction: source.jurisdiction,
+      startDate,
+      endDate,
+      searchKey,
+    });
+    await page.goto(source.portalUrl, {
+      waitUntil: "domcontentloaded",
+      timeout: 60_000,
+    });
+    const context = await resolveAccelaDomContext(page, source);
+    await waitForSearchFormOrFailure(context);
+    const initialHtml = await context.content();
+    const initialClassification = classifyBrowardAccelaPage(initialHtml);
+    if (
+      initialClassification === "access_blocked" ||
+      initialClassification === "source_error"
+    ) {
+      requireSuccessfulPageClassification(
+        initialHtml,
+        source,
+        context.url(),
+        "date-window search form load",
+      );
+    }
+    if (
+      (await context.$(DEFAULT_SELECTORS.startDate)) === null ||
+      (await context.$(DEFAULT_SELECTORS.endDate)) === null
+    ) {
+      throw new BrowardAccelaSourceError(
+        "unexpected_response",
+        source,
+        `${source.jurisdiction} Accela does not expose start/end date controls`,
+        context.url(),
+        initialHtml,
+      );
+    }
+    await setAccelaInput(context, DEFAULT_SELECTORS.parcel, "");
+    await setAccelaInput(
+      context,
+      DEFAULT_SELECTORS.startDate,
+      toAccelaDate(startDate),
+    );
+    await setAccelaInput(
+      context,
+      DEFAULT_SELECTORS.endDate,
+      toAccelaDate(endDate),
+    );
+    await Promise.allSettled([
+      context.waitForNavigation({
+        waitUntil: "domcontentloaded",
+        timeout: 60_000,
+      }),
+      context.click(DEFAULT_SELECTORS.submit),
+    ]);
+    await waitForSearchOutcome(context);
+
+    for (let pageNumber = 1; pageNumber <= maxPages; pageNumber += 1) {
+      const html = await context.content();
+      const text = htmlToText(html);
+      const classification = requireSuccessfulPageClassification(
+        html,
+        source,
+        context.url(),
+        `date-window search ${searchKey} page ${String(pageNumber)}`,
+      );
+      const directDetail = extractBrowardAccelaDirectDetailLink({
+        html,
+        pageUrl: context.url(),
+        source,
+        searchKey,
+        pageNumber,
+      });
+      if (directDetail !== null) {
+        pages.push({
+          pageNumber,
+          url: context.url(),
+          resultSummary: "detail page",
+          html,
+        });
+        permits.push(directDetail);
+        reportedTotal = 1;
+        break;
+      }
+
+      const parsedSummary = parseResultSummary(text);
+      reportedTotal = reportedTotal ?? parsedSummary.total;
+      pages.push({
+        pageNumber,
+        url: context.url(),
+        resultSummary: parsedSummary.summary,
+        html,
+      });
+      if (classification === "no_records") {
+        if (pageNumber !== 1 || permits.length > 0) {
+          throw new BrowardAccelaSourceError(
+            "unexpected_response",
+            source,
+            `${source.jurisdiction} Accela mixed no-records and record pages`,
+            context.url(),
+            html,
+          );
+        }
+        return {
+          status: "no_records",
+          searchKey,
+          startDate,
+          endDate,
+          source,
+          permits: [],
+          pages,
+          reportedTotal: 0,
+          excludedNonPermitCount: 0,
+          truncatedForSplit: false,
+        };
+      }
+
+      const pageExcluded = countBrowardAccelaExcludedModuleLinks({
+        html,
+        source,
+      });
+      excludedNonPermitCount += pageExcluded;
+      const pageLinks = extractBrowardAccelaPermitLinks({
+        html,
+        source,
+        searchKey,
+        pageNumber,
+      });
+      if (pageLinks.length === 0 && pageExcluded === 0) {
+        throw new BrowardAccelaSourceError(
+          "unexpected_response",
+          source,
+          `${source.jurisdiction} Accela exposed no list records for ${searchKey}`,
+          context.url(),
+          html,
+        );
+      }
+      permits.push(...pageLinks);
+      logger.info("broward_accela_date_window_page_captured", {
+        sourceKey: source.key,
+        startDate,
+        endDate,
+        pageNumber,
+        pagePermitCount: pageLinks.length,
+        pageExcludedNonPermitCount: pageExcluded,
+        reportedTotal,
+      });
+
+      if (
+        pageNumber === 1 &&
+        stopAfterFirstPageWhenTotalAtLeast !== undefined &&
+        reportedTotal !== null &&
+        reportedTotal >= stopAfterFirstPageWhenTotalAtLeast
+      ) {
+        truncatedForSplit = true;
+        break;
+      }
+      const nextAvailable = await hasNextPage(context);
+      if (!nextAvailable) break;
+      if (pageNumber === maxPages) {
+        throw new BrowardAccelaSourceError(
+          "incomplete_pagination",
+          source,
+          `${source.jurisdiction} Accela exceeded date-window maxPages ${String(maxPages)}`,
+          context.url(),
+          html,
+        );
+      }
+      const priorSummary = parsedSummary.summary;
+      if (!(await clickNextPage(context))) {
+        throw new BrowardAccelaSourceError(
+          "incomplete_pagination",
+          source,
+          `${source.jurisdiction} Accela next-page control disappeared`,
+          context.url(),
+          html,
+        );
+      }
+      await context.waitForFunction(
+        (previousSummary) => {
+          const bodyText = document.body?.innerText ?? "";
+          if (
+            /Your search returned no results|No records found|access denied|captcha|technical difficulties|unable to proceed|Object reference not set|error\(s\) occurred on current page/i.test(
+              bodyText,
+            )
+          ) {
+            return true;
+          }
+          const match =
+            /Showing\s+([0-9,]+\s*-\s*[0-9,]+\s+of\s+[0-9,]+)/i.exec(
+              bodyText,
+            );
+          const current =
+            match === null ? null : match[1].replace(/\s+/g, " ").trim();
+          return current !== null && current !== previousSummary;
+        },
+        { timeout: 60_000 },
+        priorSummary,
+      );
+    }
+  } finally {
+    await page.close().catch(() => undefined);
+  }
+
+  /** @type {Map<string, BrowardAccelaPermitLink>} */
+  const deduped = new Map();
+  for (const permit of permits) {
+    const identity = permit.url.toLowerCase();
+    const existing = deduped.get(identity);
+    if (
+      existing !== undefined &&
+      existing.recordNumber !== permit.recordNumber
+    ) {
+      throw new BrowardAccelaSourceError(
+        "identity_mismatch",
+        source,
+        `${source.jurisdiction} Accela returned conflicting date-window identities`,
+        permit.url,
+      );
+    }
+    deduped.set(identity, permit);
+  }
+  const accounted = deduped.size + excludedNonPermitCount;
+  if (
+    !truncatedForSplit &&
+    reportedTotal !== null &&
+    accounted < reportedTotal
+  ) {
+    throw new BrowardAccelaSourceError(
+      "incomplete_pagination",
+      source,
+      `${source.jurisdiction} Accela accounted for ${String(accounted)} of ${String(reportedTotal)} date-window records`,
+      source.portalUrl,
+    );
+  }
+  return {
+    status: "records",
+    searchKey,
+    startDate,
+    endDate,
+    source,
+    permits: [...deduped.values()],
+    pages,
+    reportedTotal,
+    excludedNonPermitCount,
+    truncatedForSplit,
+  };
 }
 
 /**

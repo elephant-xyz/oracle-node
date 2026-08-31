@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   BROWARD_ACCELA_SOURCES,
   BrowardAccelaSourceError,
+  buildBrowardAccelaDateWindowKey,
   buildBrowardAccelaPermitStem,
   buildBrowardAccelaSearchKey,
   classifyBrowardAccelaPage,
@@ -27,6 +28,12 @@ import {
   parseOptions,
   renderBrowardAccelaPermitJsonl,
 } from "../../scripts/probe-broward-accela-permits.mjs";
+import {
+  createBrowardAccelaDateWindows,
+  parseBrowardAccelaDateWindowOptions,
+  runBrowardAccelaDateWindows,
+  splitBrowardAccelaDateWindow,
+} from "../../scripts/run-broward-accela-date-windows.mjs";
 
 const fixtureDirectory = new URL(
   "../fixtures/broward-accela/",
@@ -489,5 +496,183 @@ describe("Broward jurisdiction-specific Accela adapters", () => {
     expect(() => parseOptions(["--pilot", "--detail-delay-ms=249"])).toThrow(
       "between 250",
     );
+  });
+});
+
+describe("Broward Accela vendor-wide date windows", () => {
+  it("builds exact non-overlapping windows and stable source keys", () => {
+    expect(
+      createBrowardAccelaDateWindows(
+        "2026-08-28",
+        "2026-08-31",
+        2,
+      ),
+    ).toEqual([
+      { startDate: "2026-08-28", endDate: "2026-08-29" },
+      { startDate: "2026-08-30", endDate: "2026-08-31" },
+    ]);
+    expect(
+      splitBrowardAccelaDateWindow({
+        startDate: "2026-08-28",
+        endDate: "2026-08-31",
+      }),
+    ).toEqual([
+      { startDate: "2026-08-28", endDate: "2026-08-29" },
+      { startDate: "2026-08-30", endDate: "2026-08-31" },
+    ]);
+    expect(
+      buildBrowardAccelaDateWindowKey(
+        BROWARD_ACCELA_SOURCES.hollywood,
+        "2026-08-30",
+        "2026-08-31",
+      ),
+    ).toBe("hollywood:date:20260830_20260831");
+    expect(() =>
+      splitBrowardAccelaDateWindow({
+        startDate: "2026-08-31",
+        endDate: "2026-08-31",
+      }),
+    ).toThrow(/cannot be split/u);
+  });
+
+  it("requires explicit dates and a certified date-enabled source", () => {
+    expect(
+      parseBrowardAccelaDateWindowOptions([
+        "--source",
+        "weston",
+        "--start-date",
+        "1997-01-01",
+        "--end-date",
+        "2026-08-31",
+        "--window-days",
+        "30",
+        "--max-windows",
+        "2",
+      ]),
+    ).toMatchObject({
+      sourceKey: "weston",
+      startDate: "1997-01-01",
+      endDate: "2026-08-31",
+      initialWindowDays: 30,
+      maxWindows: 2,
+    });
+    expect(() =>
+      parseBrowardAccelaDateWindowOptions([
+        "--source",
+        "fort-lauderdale",
+        "--start-date",
+        "2026-01-01",
+        "--end-date",
+        "2026-01-02",
+      ]),
+    ).toThrow(/hollywood, plantation, cooper-city, or weston/u);
+  });
+
+  it("checkpoints a bounded invocation and resumes the same persistent source run", async () => {
+    const outputDirectory = await mkdtemp(
+      join(tmpdir(), "broward-accela-date-window-"),
+    );
+    temporaryDirectories.push(outputDirectory);
+    let browserCreations = 0;
+    const closedBrowsers = [];
+    const searchedWindows = [];
+    const createBrowser = async () => {
+      browserCreations += 1;
+      return {
+        close: async () => {
+          closedBrowsers.push(browserCreations);
+        },
+      };
+    };
+    const searchWindow = async ({ source, startDate, endDate }) => {
+      searchedWindows.push(`${startDate}:${endDate}`);
+      const recordNumber = `B${startDate.replaceAll("-", "")}`;
+      return {
+        status: "records",
+        searchKey: `${source.key}:${startDate}:${endDate}`,
+        startDate,
+        endDate,
+        source,
+        permits: [
+          {
+            recordNumber,
+            url: `https://aca-prod.accela.com/HOLLYWOOD/Cap/CapDetail.aspx?Module=Building&capID1=${recordNumber}`,
+            address: "100 TEST AVE",
+            description: "Building permit",
+            status: "Issued",
+            recordType: "Building",
+            sourceSearchKey: `${source.key}:${startDate}:${endDate}`,
+            sourcePage: 1,
+          },
+        ],
+        pages: [
+          {
+            pageNumber: 1,
+            url: source.portalUrl,
+            resultSummary: "1-1 of 1",
+            html: "<html><body>fixture</body></html>",
+          },
+        ],
+        reportedTotal: 1,
+        excludedNonPermitCount: 0,
+        truncatedForSplit: false,
+      };
+    };
+    const baseOptions = {
+      sourceKey: "hollywood",
+      startDate: "2026-08-28",
+      endDate: "2026-08-31",
+      initialWindowDays: 2,
+      splitThreshold: 100,
+      maxPages: 200,
+      delayMs: 1_000,
+      maxWindows: 1,
+      outputDirectory,
+    };
+    const first = await runBrowardAccelaDateWindows(baseOptions, {
+      createBrowser,
+      searchWindow,
+      wait: async () => undefined,
+      now: () => "2026-08-31T18:00:00.000Z",
+    });
+    expect(first).toMatchObject({
+      status: "paused",
+      windowsProcessedThisInvocation: 1,
+      terminalWindowCount: 1,
+      pendingWindowCount: 1,
+      uniquePermitCount: 1,
+    });
+    const resumed = await runBrowardAccelaDateWindows(
+      { ...baseOptions, maxWindows: null },
+      {
+        createBrowser,
+        searchWindow,
+        wait: async () => undefined,
+        now: () => "2026-08-31T18:01:00.000Z",
+      },
+    );
+    expect(resumed).toMatchObject({
+      status: "complete",
+      windowsProcessedThisInvocation: 1,
+      terminalWindowCount: 2,
+      pendingWindowCount: 0,
+      uniquePermitCount: 2,
+    });
+    expect(searchedWindows).toEqual([
+      "2026-08-28:2026-08-29",
+      "2026-08-30:2026-08-31",
+    ]);
+    expect(browserCreations).toBe(2);
+    expect(closedBrowsers).toHaveLength(2);
+    expect(
+      (
+        await readFile(
+          join(outputDirectory, "normalized-list.private.jsonl"),
+          "utf8",
+        )
+      )
+        .trim()
+        .split("\n"),
+    ).toHaveLength(2);
   });
 });
