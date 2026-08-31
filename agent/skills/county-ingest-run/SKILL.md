@@ -1,10 +1,7 @@
 ---
-name: county-ingest-run
-description: Operate the end-to-end property-first ingestion run for an onboarded county on the local durable stack - pilot batch first, source-feasibility gate, then the full backpressure-aware run with stepwise concurrency ramp-up, plus the streamed incremental load+publish that lands the county in the query DB and re-publishes the query-table as the run ingests. Use when starting, scaling, resuming, monitoring failure classes, streaming load+publish, or wrapping up a county ingestion run.
-metadata:
-  author: elephant-xyz
+description: "Operate the end-to-end property-first ingestion run for an onboarded county on the local durable stack - pilot batch first, source-feasibility gate, then the full backpressure-aware run with stepwise concurrency ramp-up, plus the streamed incremental load+publish that lands the county in the query DB and re-publishes the query-table as the run ingests. Use when starting, scaling, resuming, monitoring failure classes, streaming load+publish, or wrapping up a county ingestion run."
+metadata: {"author":"elephant-xyz"}
 ---
-
 # County Ingest Run
 
 Prerequisites: `bootstrap-oracle-infra` checks pass; appraisal onboarding, transform

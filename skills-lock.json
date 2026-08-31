@@ -5,67 +5,79 @@
       "source": "elephant-xyz/skills",
       "sourceType": "github",
       "skillPath": "skills/bbb-harvest/SKILL.md",
-      "computedHash": "d76cf1aa1f98e0d5df80e9b5e9315e7ece946a8968ce7c14bac00253b762f581"
+      "computedHash": "ab0ffa58eca5d528cbfd79784b606ef78ebd02294ab1b62bfbce2c8be0e7b4ae"
     },
     "bootstrap-oracle-infra": {
       "source": "elephant-xyz/skills",
       "sourceType": "github",
       "skillPath": "skills/bootstrap-oracle-infra/SKILL.md",
-      "computedHash": "ac9f15f45e0b4c0cb68b14524bb853a2fd9dece4339fa69ac63bfd3617fae753"
+      "computedHash": "29c76f49c0f92a20d511429beac6173077454bd373bf13b6f95a84a6648f52d4"
     },
     "county-appraisal-onboarding": {
       "source": "elephant-xyz/skills",
       "sourceType": "github",
       "skillPath": "skills/county-appraisal-onboarding/SKILL.md",
-      "computedHash": "b724cb1cf41eaf65d01616b3c2cf4f6b01786a5c0f666c73b099848a6feffa80"
+      "computedHash": "0847602c4b42c66dc330038d75edd619f3a649fd4f9e8781a0c5965db107962d"
     },
     "county-discovery": {
       "source": "elephant-xyz/skills",
       "sourceType": "github",
       "skillPath": "skills/county-discovery/SKILL.md",
-      "computedHash": "aac8aaa33531f01fe65d8e5e2f8a5425ed2a6cd0eea103fa4ae2ccfe6a78a0f7"
+      "computedHash": "ebedde1d01a63f4222bf3334499fca364b2b6a41d023c562b93965a00c21faa3"
     },
     "county-ingest-run": {
       "source": "elephant-xyz/skills",
       "sourceType": "github",
       "skillPath": "skills/county-ingest-run/SKILL.md",
-      "computedHash": "50edf4670d1ab54e20c2dc1cfe06fc6bc2672aff14df6da956076ced04fb8631"
+      "computedHash": "2cc35c5fd3b2dedfd80431c13e523d94300a6d5051703fcecf71be2670311b4b"
     },
     "county-open-data-publish": {
       "source": "elephant-xyz/skills",
       "sourceType": "github",
       "skillPath": "skills/county-open-data-publish/SKILL.md",
-      "computedHash": "327e2b8048291c7373e563812ba66e7d656b17298e9dd3539f6268c8628e867b"
+      "computedHash": "f0e706241ee172be2c334fee6b36c3a684554c45488049748e324bfc4a4357eb"
     },
     "county-permit-adapter": {
       "source": "elephant-xyz/skills",
       "sourceType": "github",
       "skillPath": "skills/county-permit-adapter/SKILL.md",
-      "computedHash": "3a2178e85a206cb70dc698499699885b93be9256bbe9ebaf2136a48f9d06e969"
+      "computedHash": "d092b75cff461c4b571ae4d3f95749aee84f58cddd466b560537349092ca9d92"
+    },
+    "county-query-table-publish": {
+      "source": "elephant-xyz/skills",
+      "sourceType": "github",
+      "skillPath": "skills/county-query-table-publish/SKILL.md",
+      "computedHash": "df0f070b45abba10d68c2e34f7db45b0fb5cff47fd5c1d0f4d0d4d7f08f37b0e"
     },
     "county-seed-data": {
       "source": "elephant-xyz/skills",
       "sourceType": "github",
       "skillPath": "skills/county-seed-data/SKILL.md",
-      "computedHash": "2c99d94dfe8f4280292a46c55bd49edba9315584a1d045d15d3cc042867c32c6"
+      "computedHash": "ea9dcc9643f7c9ae6e0fda287c3fd82ef9991151fdd09325e7a163bc1b650e9f"
     },
     "deploy-open-data-mcp": {
       "source": "elephant-xyz/skills",
       "sourceType": "github",
       "skillPath": "skills/deploy-open-data-mcp/SKILL.md",
-      "computedHash": "cd774c699e8d4cee1beaab3c0b4af3d7c93c6f0b37fa2547dfdab00c1a9676fe"
+      "computedHash": "7b28608d69dc2a4408952dd514352ac480da8f9fa8f6162196a7dd66d8c6cbd2"
+    },
+    "durable-workflow-builder": {
+      "source": "elephant-xyz/skills",
+      "sourceType": "github",
+      "skillPath": "skills/durable-workflow-builder/SKILL.md",
+      "computedHash": "9fc2868a2f1b7b44f7b38a771900e26cd765fcba8a9365bfcc1f7470b8cd0041"
     },
     "monitoring-county-ingestion": {
       "source": "elephant-xyz/skills",
       "sourceType": "github",
       "skillPath": "skills/monitoring-county-ingestion/SKILL.md",
-      "computedHash": "417cf6da65e0d5737101bb7a66d0ec83458970cf4eeae4fe83e2fdf2e28cc392"
+      "computedHash": "087380b46e609a3ad59ff44d62650959fcc66a39243d5b54236cf1e63c2e24c7"
     },
     "onboard-county": {
       "source": "elephant-xyz/skills",
       "sourceType": "github",
       "skillPath": "skills/onboard-county/SKILL.md",
-      "computedHash": "cb5b4f51847aeb82c9d01d24dac5fdd8aee8984419499e7cc56d1a664d6d9c11"
+      "computedHash": "e74793a5c9f6ecf054c0ad77a5c3d3700ba67d5224ab2aa40dbf5ed5b1786c3c"
     },
     "overture-places-ingest": {
       "source": "elephant-xyz/skills",
@@ -77,25 +89,25 @@
       "source": "elephant-xyz/skills",
       "sourceType": "github",
       "skillPath": "skills/query-db-loading-matching/SKILL.md",
-      "computedHash": "e9b0b1c255050da5b72a4f88347c916089c7f0b171a9ce4cbd93dd1bbed00fe6"
+      "computedHash": "dbff591d029dd5d3732dd8cc2051d2cd20ece6606ba005995373a4618e17ef54"
     },
     "sunbiz-corporate-ingest": {
       "source": "elephant-xyz/skills",
       "sourceType": "github",
       "skillPath": "skills/sunbiz-corporate-ingest/SKILL.md",
-      "computedHash": "4018cf16a1ef9b7f6e43dd356f43094598d5353f38a9eca3858e2ef0c34a9011"
+      "computedHash": "ce0812159d1d23f8f63ebfc2ca02c8e5d43445246e1de5b9f0abe76b0c3b76af"
     },
     "transform-v2-builder": {
       "source": "elephant-xyz/skills",
       "sourceType": "github",
       "skillPath": "skills/transform-v2-builder/SKILL.md",
-      "computedHash": "e6c74e376fa8c14b6efae1f6064850880dc2d0babe6e070969d5eb0226f0d04f"
+      "computedHash": "3fd5c01acaf29b68301012212a749f55fb30506986e859ca61e1ba797ebb667d"
     },
     "validate-county-transform": {
       "source": "elephant-xyz/skills",
       "sourceType": "github",
       "skillPath": "skills/validate-county-transform/SKILL.md",
-      "computedHash": "88261069ec20c1b5f3b0c4167d77b6cbf0c435e5c43807b2a3cab4b4bf6863a7"
+      "computedHash": "d94975dd5b91cc35a47f3e3c55a6b92a752c0a4561215fd85053a3da77f884b9"
     }
   }
 }

@@ -1,10 +1,7 @@
 ---
-name: county-appraisal-onboarding
-description: Wire a new county's appraisal scraping into the pipeline - browser flow JSON in elephant-pipeline/flows/, per-county prepare config and Parcel concurrency, transform scripts synced from Counties-trasform-scripts, and appraisal-source throughput gates. Use when onboarding a county's property appraiser site, creating browser flows, or when prepare fails for a specific county.
-metadata:
-  author: elephant-xyz
+description: "Wire a new county's appraisal scraping into the pipeline - browser flow JSON in elephant-pipeline/flows/, per-county prepare config and Parcel concurrency, transform scripts synced from Counties-trasform-scripts, and appraisal-source throughput gates. Use when onboarding a county's property appraiser site, creating browser flows, or when prepare fails for a specific county."
+metadata: {"author":"elephant-xyz"}
 ---
-
 # County Appraisal Onboarding
 
 Goal: one parcel of the new county completes `Parcel.process` end to end — Prepare →
