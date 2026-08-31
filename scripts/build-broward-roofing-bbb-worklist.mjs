@@ -319,7 +319,10 @@ export async function buildBrowardRoofingBbbWorklist(options) {
       0,
     ) + aggregate.excludedPlaceholderPermits;
   const summary = {
-    schemaVersion: WORKLIST_SCHEMA_VERSION,
+    schemaVersion:
+      /** @type {typeof WORKLIST_SCHEMA_VERSION} */ (
+        WORKLIST_SCHEMA_VERSION
+      ),
     generatedAt: new Date().toISOString(),
     county: /** @type {"Broward"} */ ("Broward"),
     scope: /** @type {"roofing"} */ ("roofing"),
