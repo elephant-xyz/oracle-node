@@ -25,11 +25,17 @@ import {
   parseCitizenserveSearchResultsHtml,
 } from "../../scripts/permit-source-adapters/citizenserve.mjs";
 import {
+  buildTylerDateWindowRequest,
   isTylerRoofPermitCandidate,
   normalizeTylerPermitDetailResponse,
   readTylerTotalPages,
 } from "../../scripts/permit-source-adapters/tyler-civic-access.mjs";
 import { parseOptions } from "../../scripts/probe-broward-municipal-permits.mjs";
+import {
+  createTylerDateWindows,
+  parseTylerDateWindowOptions,
+  runTylerDateWindows,
+} from "../../scripts/run-broward-tyler-date-windows.mjs";
 
 const fixtureDirectory = new URL(
   "../fixtures/broward-municipal-permits/",
@@ -138,6 +144,195 @@ describe("Broward Tyler and Citizenserve jurisdiction routing", () => {
       kind: "address",
       value: "218 E COMMERCIAL BOULEVARD",
     });
+  });
+});
+
+describe("Tyler vendor-wide application-date windows", () => {
+  it("builds the exact advanced Permit request from the complete UI model", () => {
+    const template = {
+      Keyword: "parcel",
+      ExactMatch: true,
+      SearchModule: 1,
+      FilterModule: 1,
+      PermitCriteria: {
+        PermitTypeId: null,
+        PermitStatusId: null,
+        ApplyDateFrom: null,
+        ApplyDateTo: null,
+        PageNumber: 0,
+        PageSize: 0,
+      },
+      PlanCriteria: {},
+      SortOrderList: [],
+    };
+    const request = buildTylerDateWindowRequest(
+      template,
+      "2026-08-30",
+      "2026-08-31",
+      2,
+      100,
+    );
+    expect(request).toMatchObject({
+      Keyword: "",
+      ExactMatch: true,
+      SearchModule: 2,
+      FilterModule: 0,
+      PageNumber: 2,
+      PageSize: 100,
+      SortBy: "PermitNumber.keyword",
+      PermitCriteria: {
+        PermitTypeId: "none",
+        PermitStatusId: "none",
+        ApplyDateFrom: "2026-08-30T00:00:00.000Z",
+        ApplyDateTo: "2026-08-31T00:00:00.000Z",
+        PageNumber: 2,
+        PageSize: 100,
+      },
+      PlanCriteria: {},
+      SortOrderList: [],
+    });
+    expect(template).toMatchObject({
+      Keyword: "parcel",
+      SearchModule: 1,
+      PermitCriteria: { ApplyDateFrom: null },
+    });
+  });
+
+  it("creates non-overlapping windows and validates anonymous Tyler tenants", () => {
+    expect(
+      createTylerDateWindows("2026-08-28", "2026-08-31", 2),
+    ).toEqual([
+      { startDate: "2026-08-28", endDate: "2026-08-29" },
+      { startDate: "2026-08-30", endDate: "2026-08-31" },
+    ]);
+    expect(
+      parseTylerDateWindowOptions([
+        "--source",
+        "oakland_park",
+        "--start-date",
+        "2019-11-01",
+        "--end-date",
+        "2026-08-31",
+        "--max-windows",
+        "1",
+      ]),
+    ).toMatchObject({
+      sourceKey: "oakland_park",
+      startDate: "2019-11-01",
+      pageSize: 100,
+      maxWindows: 1,
+    });
+    expect(() =>
+      parseTylerDateWindowOptions([
+        "--source",
+        "north_lauderdale",
+        "--start-date",
+        "2026-01-01",
+        "--end-date",
+        "2026-01-02",
+      ]),
+    ).toThrow(/pembroke_pines/u);
+  });
+
+  it("checkpoints and resumes a persistent tenant window run", async () => {
+    const outputDirectory = await mkdtemp(
+      join(tmpdir(), "broward-tyler-windows-"),
+    );
+    const searched = [];
+    let sessions = 0;
+    let closed = 0;
+    const baseOptions = {
+      sourceKey: "pembroke_pines",
+      startDate: "2026-08-28",
+      endDate: "2026-08-31",
+      windowDays: 2,
+      pageSize: 100,
+      maxPages: 200,
+      delayMs: 1_000,
+      maxWindows: 1,
+      outputDirectory,
+    };
+    try {
+      const dependencies = {
+        createSession: async (config) => {
+          sessions += 1;
+          return { config };
+        },
+        closeSession: async () => {
+          closed += 1;
+        },
+        searchWindow: async (session, startDate, endDate) => {
+          searched.push(`${startDate}:${endDate}`);
+          const caseId = `case-${startDate}`;
+          const record = {
+            source_system: session.config.sourceSystem,
+            source_url: `${session.config.portalBaseUrl}#/permit/${caseId}`,
+            city: session.config.city,
+            permit_number: `P-${startDate}`,
+            parcel_identifier: null,
+            work_location: "100 TEST AVE",
+            permit_issue_date: null,
+            record_status: "Open",
+            record_type: "Building",
+            project_description: "Permit",
+            is_roof_permit: false,
+            raw: {
+              case_id: caseId,
+              work_class: null,
+              applied_date: startDate,
+              expiration_date: null,
+              finalized_date: null,
+            },
+          };
+          return {
+            startDate,
+            endDate,
+            totalFound: 1,
+            totalPages: 1,
+            records: [record],
+            pages: [
+              {
+                pageNumber: 1,
+                totalFound: 1,
+                totalPages: 1,
+                records: [record],
+                rawJson: JSON.stringify({ Result: { EntityResults: [] } }),
+              },
+            ],
+          };
+        },
+        wait: async () => undefined,
+        now: () => "2026-08-31T18:00:00.000Z",
+      };
+      const first = await runTylerDateWindows(
+        baseOptions,
+        dependencies,
+      );
+      expect(first).toMatchObject({
+        status: "paused",
+        completedWindowCount: 1,
+        pendingWindowCount: 1,
+        uniquePermitCount: 1,
+      });
+      const resumed = await runTylerDateWindows(
+        { ...baseOptions, maxWindows: null },
+        dependencies,
+      );
+      expect(resumed).toMatchObject({
+        status: "complete",
+        completedWindowCount: 2,
+        pendingWindowCount: 0,
+        uniquePermitCount: 2,
+      });
+      expect(searched).toEqual([
+        "2026-08-28:2026-08-29",
+        "2026-08-30:2026-08-31",
+      ]);
+      expect(sessions).toBe(2);
+      expect(closed).toBe(2);
+    } finally {
+      await rm(outputDirectory, { recursive: true, force: true });
+    }
   });
 });
 

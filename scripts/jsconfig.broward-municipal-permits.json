@@ -21,6 +21,7 @@
     "permit-source-adapters/broward-permit-jurisdictions.mjs",
     "permit-source-adapters/citizenserve.mjs",
     "permit-source-adapters/tyler-civic-access.mjs",
+    "run-broward-tyler-date-windows.mjs",
     "probe-broward-municipal-permits.mjs",
     "permit-source-adapters/broward-municipal-core.mjs",
     "permit-source-adapters/broward-municipal-config.mjs",
