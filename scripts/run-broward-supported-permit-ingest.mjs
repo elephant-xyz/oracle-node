@@ -161,70 +161,61 @@ export async function runSupportedPermitIngest(options) {
     let processed = 0;
     let terminal = completed.size;
     let failed = 0;
-    /** @type {Map<string, Promise<void>>} */
-    const sourceTails = new Map();
-    await processWithConcurrency(
+    await processByRouteWithConcurrency(
       pending,
       options.concurrency,
+      (candidate) => candidate.jurisdictionKey,
       async (candidate) => {
-        const prior = sourceTails.get(candidate.jurisdictionKey) ??
-          Promise.resolve();
-        const work = prior
-          .catch(() => undefined)
-          .then(async () => {
-            const attempt = await readAttemptCount(
+        const attempt = await readAttemptCount(
+          client,
+          options.jobId,
+          candidate.parcelHash,
+        );
+        try {
+          const outcome = await probeAndLoadCandidate(
+            candidate,
+            options,
+          );
+          const finalStatus =
+            outcome.status === "failed" &&
+            attempt + 1 >= options.maxAttempts
+              ? "failed_exhausted"
+              : outcome.status;
+          await checkpointItem(
+            client,
+            options.jobId,
+            candidate,
+            finalStatus,
+            outcome.recordCount,
+            attempt + 1,
+            outcome.errorClass,
+          );
+          processed += 1;
+          if (TERMINAL_STATUSES.has(finalStatus)) terminal += 1;
+          if (
+            finalStatus === "failed" ||
+            finalStatus === "failed_exhausted"
+          ) {
+            failed += 1;
+          }
+        } catch {
+          const finalStatus =
+            attempt + 1 >= options.maxAttempts
+              ? "failed_exhausted"
+              : "failed";
+          await checkpointItem(
               client,
               options.jobId,
-              candidate.parcelHash,
+              candidate,
+              finalStatus,
+              0,
+              attempt + 1,
+              "source_or_load_error",
             );
-            try {
-              const outcome = await probeAndLoadCandidate(
-                candidate,
-                options,
-              );
-              const finalStatus =
-                outcome.status === "failed" &&
-                attempt + 1 >= options.maxAttempts
-                  ? "failed_exhausted"
-                  : outcome.status;
-              await checkpointItem(
-                client,
-                options.jobId,
-                candidate,
-                finalStatus,
-                outcome.recordCount,
-                attempt + 1,
-                outcome.errorClass,
-              );
-              processed += 1;
-              if (TERMINAL_STATUSES.has(finalStatus)) terminal += 1;
-              if (
-                finalStatus === "failed" ||
-                finalStatus === "failed_exhausted"
-              ) {
-                failed += 1;
-              }
-            } catch {
-              const finalStatus =
-                attempt + 1 >= options.maxAttempts
-                  ? "failed_exhausted"
-                  : "failed";
-              await checkpointItem(
-                client,
-                options.jobId,
-                candidate,
-                finalStatus,
-                0,
-                attempt + 1,
-                "source_or_load_error",
-              );
-              processed += 1;
-              failed += 1;
-              if (finalStatus === "failed_exhausted") terminal += 1;
-            }
-          });
-        sourceTails.set(candidate.jurisdictionKey, work);
-        await work;
+          processed += 1;
+          failed += 1;
+          if (finalStatus === "failed_exhausted") terminal += 1;
+        }
       },
     );
     const aggregate = await readRunAggregate(client, options.jobId);
@@ -882,21 +873,58 @@ function registryKeyToMunicipalKey(key) {
  * @template Item
  * @param {readonly Item[]} items - Ordered pending items.
  * @param {number} concurrency - Maximum simultaneous handlers.
+ * @param {(item:Item)=>string} routeKey - Stable per-source serialization key.
  * @param {(item:Item)=>Promise<void>} handler - Per-item operation.
  * @returns {Promise<void>} Resolves after all items settle successfully.
  */
-async function processWithConcurrency(items, concurrency, handler) {
-  const executing = new Set();
+export async function processByRouteWithConcurrency(
+  items,
+  concurrency,
+  routeKey,
+  handler,
+) {
+  /** @type {Map<string, Item[]>} */
+  const routes = new Map();
   for (const item of items) {
-    const task = Promise.resolve().then(() => handler(item));
-    executing.add(task);
-    void task.then(
-      () => executing.delete(task),
-      () => executing.delete(task),
-    );
-    if (executing.size >= concurrency) await Promise.race(executing);
+    const key = routeKey(item);
+    const queue = routes.get(key) ?? [];
+    queue.push(item);
+    routes.set(key, queue);
   }
-  await Promise.all(executing);
+
+  let available = concurrency;
+  /** @type {((release:()=>void)=>void)[]} */
+  const waiters = [];
+  const release = () => {
+    const waiter = waiters.shift();
+    if (waiter !== undefined) {
+      waiter(release);
+      return;
+    }
+    available += 1;
+  };
+  const acquire = () => {
+    if (available > 0) {
+      available -= 1;
+      return Promise.resolve(release);
+    }
+    return new Promise((resolvePromise) => {
+      waiters.push(resolvePromise);
+    });
+  };
+
+  await Promise.all(
+    [...routes.values()].map(async (queue) => {
+      for (const item of queue) {
+        const releaseSlot = await acquire();
+        try {
+          await handler(item);
+        } finally {
+          releaseSlot();
+        }
+      }
+    }),
+  );
 }
 
 /**

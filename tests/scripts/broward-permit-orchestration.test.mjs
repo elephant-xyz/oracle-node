@@ -36,7 +36,10 @@ import {
   runBrowardPermitPilot,
   verifyBrowardPermitStatusTarget,
 } from "../../scripts/run-broward-permit-pilot.mjs";
-import { parseSupportedPermitOptions } from "../../scripts/run-broward-supported-permit-ingest.mjs";
+import {
+  parseSupportedPermitOptions,
+  processByRouteWithConcurrency,
+} from "../../scripts/run-broward-supported-permit-ingest.mjs";
 import {
   parseDonphanToolResult,
   parseDonphanValidationOptions,
@@ -369,6 +372,44 @@ describe("Broward supported-route permit ingest", () => {
     expect(() =>
       parseSupportedPermitOptions(["--job-id", "unscoped-run"]),
     ).toThrow(/broward-permits-/u);
+  });
+
+  it("does not let a waiting same-route item reserve a global worker", async () => {
+    const events = [];
+    const items = [
+      { route: "a", id: 1, delay: 30 },
+      { route: "a", id: 2, delay: 1 },
+      { route: "b", id: 1, delay: 1 },
+      { route: "c", id: 1, delay: 1 },
+    ];
+    let active = 0;
+    let maximumActive = 0;
+    const routeActive = new Set();
+    await processByRouteWithConcurrency(
+      items,
+      2,
+      (item) => item.route,
+      async (item) => {
+        expect(routeActive.has(item.route)).toBe(false);
+        routeActive.add(item.route);
+        active += 1;
+        maximumActive = Math.max(maximumActive, active);
+        events.push(`start:${item.route}:${String(item.id)}`);
+        await new Promise((resolvePromise) =>
+          setTimeout(resolvePromise, item.delay),
+        );
+        events.push(`end:${item.route}:${String(item.id)}`);
+        active -= 1;
+        routeActive.delete(item.route);
+      },
+    );
+    expect(maximumActive).toBe(2);
+    expect(events.indexOf("start:c:1")).toBeLessThan(
+      events.indexOf("end:a:1"),
+    );
+    expect(events.indexOf("start:a:2")).toBeGreaterThan(
+      events.indexOf("end:a:1"),
+    );
   });
 });
 
