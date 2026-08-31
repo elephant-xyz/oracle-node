@@ -1696,12 +1696,12 @@ export async function captureBrowardAccelaCsvWindow({
     if (
       displayedTotal !== null &&
       displayedTotal < 100 &&
-      records.length + excludedListCount < displayedTotal
+      records.length + exportSummary.excludedNonPermitCount < displayedTotal
     ) {
       throw new BrowardAccelaSourceError(
         "incomplete_pagination",
         source,
-        `${source.jurisdiction} Accela CSV/list accounted for ${String(records.length + excludedListCount)} of ${String(displayedTotal)}`,
+        `${source.jurisdiction} Accela CSV/list accounted for ${String(records.length + exportSummary.excludedNonPermitCount)} of ${String(displayedTotal)}`,
         context.url(),
         searchHtml,
       );
