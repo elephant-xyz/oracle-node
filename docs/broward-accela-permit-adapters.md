@@ -126,6 +126,55 @@ The command imports no AWS client and does not access queues, databases, IPFS,
 publication paths, login flows, or CAPTCHA handling. It must not be used as a
 full municipal harvest.
 
+## Vendor-wide date-window enumeration
+
+`scripts/run-broward-accela-date-windows.mjs` replaces one-search-per-property
+discovery for the four Accela tenants that expose start/end dates:
+
+- Hollywood;
+- Plantation;
+- Cooper City; and
+- Weston.
+
+Each source uses one persistent browser process. Initial non-overlapping
+windows split recursively when Accela reports at least 100 rows; terminal
+windows paginate every visible page and reconcile permit plus explicitly
+excluded cross-module rows to the reported total. Raw HTML, terminal list
+records, and checkpoints are private mode-0600 artifacts. Fort Lauderdale is
+excluded because its Accela form has no date controls and its official
+FeatureServer is the list-discovery source.
+
+The Hollywood live pilot for `2026-08-30..2026-08-31` exposed temporary
+records without clickable detail anchors. Those rows still carry a full hidden
+three-part `RecordId`; the parser now builds the official cap-detail identity
+from that value. The corrected pilot reconciled **44/44** changing live records
+across five pages. Equivalent pilots reconciled:
+
+- Plantation: 26 permits plus 13 explicit Enforcement rows = 39/39;
+- Cooper City: 19/19 permits; and
+- Weston: 14/14 permits.
+
+Full persistent local workers use:
+
+```bash
+npm run broward:permits:run-accela-windows -- \
+  --source <hollywood|plantation|cooper-city|weston> \
+  --start-date <explicit-source-boundary> \
+  --end-date 2026-08-31 \
+  --window-days 366 \
+  --split-threshold 100 \
+  --max-pages 200 \
+  --delay-ms 1000 \
+  --output-dir downloads/broward/accela-date-windows/<source>-full
+```
+
+The AWS template adds a disabled-by-default encrypted FIFO enumeration queue.
+Its `MessageGroupId` is the jurisdiction key, so each tenant is serialized
+while different tenants can run concurrently. The event-source mapping starts
+at aggregate concurrency four and is not enabled before an AWS pilot. Cloud
+deployment is currently blocked because this VM has no usable AWS credentials;
+the four equivalent local workers are running instead.
+
 ## Bounded live evidence
 
 Live source traffic was limited to one validated appraisal folio in Hollywood,

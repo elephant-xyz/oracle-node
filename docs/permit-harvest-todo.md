@@ -20,8 +20,20 @@
   205 durable chunks.
 - [ ] Generalize the bulk runner to the Broward HCED/POSSE feed and Miramar
   FY2019/FY2020 archives.
-- [ ] Implement anonymous vendor-wide date-window pagination for remaining
-  Accela/Tyler/Citizenserve sources after per-host pressure tests.
+- [x] Implement anonymous vendor-wide date-window pagination for Hollywood,
+  Plantation, Cooper City, and Weston Accela with persistent browsers,
+  recursive dense-window splitting, terminal-page reconciliation, and private
+  resume checkpoints.
+- [x] Reconcile bounded date-window pilots: Hollywood 44/44, Plantation 26
+  permits + 13 Enforcement rows, Cooper City 19/19, and Weston 14/14.
+- [x] Add a disabled-by-default encrypted AWS FIFO queue/DLQ and worker message
+  contract; jurisdiction message groups serialize each tenant while allowing
+  four tenants to run concurrently.
+- [ ] Deploy/enable the AWS enumeration mapping after credentials are available;
+  this VM currently has neither AWS CLI nor SDK credentials.
+- [ ] Complete the four equivalent persistent local full-history Accela runs.
+- [ ] Implement Tyler date-window and Citizenserve type-wide enumeration after
+  per-host pressure tests.
 - [ ] Obtain official bulk/custodian exports for routes that do not support
   anonymous complete enumeration.
 - [ ] Keep publication disabled until every source receipt and jurisdictional
