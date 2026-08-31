@@ -15,6 +15,7 @@ import {
   normalizeFortLauderdaleArcgisPermit,
 } from "../../scripts/permit-source-adapters/broward-arcgis-bulk.mjs";
 import {
+  accelaCaseKeyFromUrl,
   mapBulkPermitLoadRow,
   parseBulkPermitOptions,
   runBrowardBulkPermitIngest,
@@ -88,7 +89,8 @@ describe("Fort Lauderdale official bulk permit normalization", () => {
       source_vendor: "arcgis_feature_service",
       source_record_id: "2",
       record_key:
-        "broward_fort_lauderdale_lauderbuild_permits:permit:BLD-ROOF-25010001",
+        "broward_fort_lauderdale_lauderbuild_permits:arcgis:case:25CAP-00000-00ABC",
+      accela_case_key: "25CAP-00000-00ABC",
       permit_number: "BLD-ROOF-25010001",
       parcel_identifier: "504216100030",
       application_date: "2025-01-02",
@@ -126,15 +128,36 @@ describe("Fort Lauderdale official bulk permit normalization", () => {
   });
 
   it("builds exact Accela and fallback FeatureServer URLs", () => {
-    expect(
-      buildFortLauderdalePermitUrl(
-        "25CAP-00000-00ABC",
-        "BLD-ROOF-25010001",
-      ),
-    ).toContain("capID3=00ABC");
+    const detailUrl = buildFortLauderdalePermitUrl(
+      "25CAP-00000-00ABC",
+      "BLD-ROOF-25010001",
+    );
+    expect(detailUrl).toContain("capID3=00ABC");
+    expect(accelaCaseKeyFromUrl(detailUrl)).toBe("25CAP-00000-00ABC");
     expect(
       buildFortLauderdalePermitUrl(null, "BLD-ROOF-25010001"),
     ).toContain("PERMITID%3D%27BLD-ROOF-25010001%27");
+  });
+
+  it("does not collapse truncated duplicate permit labels", () => {
+    const first = normalizeFortLauderdaleArcgisPermit(
+      fortLauderdaleFeature({
+        OBJECTID: 1,
+        PERMITID: "BLD-RALT-220",
+        CASEKEY: "22CAP-00000-00AAA",
+      }),
+      "2026-08-31T17:00:00.000Z",
+    ).record;
+    const second = normalizeFortLauderdaleArcgisPermit(
+      fortLauderdaleFeature({
+        OBJECTID: 2,
+        PERMITID: "BLD-RALT-220",
+        CASEKEY: "22CAP-00000-00BBB",
+      }),
+      "2026-08-31T17:00:00.000Z",
+    ).record;
+    expect(first?.permit_number).toBe(second?.permit_number);
+    expect(first?.record_key).not.toBe(second?.record_key);
   });
 });
 
@@ -306,7 +329,7 @@ describe("durable Broward bulk permit runner", () => {
     });
     expect(exact).toMatchObject({
       source_record_key:
-        "broward_fort_lauderdale_lauderbuild_permits:permit:BLD-ROOF-25010001",
+        "broward_fort_lauderdale_lauderbuild_permits:arcgis:case:25CAP-00000-00ABC",
       property_match_method: "exact_folio",
       property_match_confidence: "exact",
       licensed_professional:
@@ -317,6 +340,18 @@ describe("durable Broward bulk permit runner", () => {
       parcel_id: null,
       property_match_method: "unmatched",
       property_match_confidence: "unmatched",
+    });
+    expect(
+      mapBulkPermitLoadRow(
+        normalized,
+        undefined,
+        "broward_fort_lauderdale_lauderbuild_permits:permit:BLD-ROOF-25010001",
+      ),
+    ).toMatchObject({
+      source_record_key:
+        "broward_fort_lauderdale_lauderbuild_permits:permit:BLD-ROOF-25010001",
+      request_identifier:
+        "broward_fort_lauderdale_lauderbuild_permits:permit:BLD-ROOF-25010001",
     });
   });
 });

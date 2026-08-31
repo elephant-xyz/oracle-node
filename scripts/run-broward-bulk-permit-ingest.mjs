@@ -30,7 +30,7 @@ const EXPECTED_PROJECT_ID = "raspy-frost-51580436";
 const PRODUCTION_ENDPOINT_PREFIX = "ep-mute-leaf";
 const CONTROL_SCHEMA = "ingest_control";
 const LOAD_LOCK_NAMESPACE = 12_011;
-const LOAD_LOCK_KEY = 5;
+const LOAD_LOCK_KEY = 3;
 const MANIFEST_SCHEMA_VERSION =
   "oracle-node.broward-permit-bulk-manifest.v1";
 const DEFAULT_OUTPUT_DIRECTORY =
@@ -242,6 +242,8 @@ export async function runBrowardBulkPermitIngest(
 
   /** @type {import("pg").Client | null} */
   let client = null;
+  /** @type {ReadonlyMap<string, string>} */
+  let portalRecordKeysByCaseKey = new Map();
   if (options.load) {
     const target = requireTarget(process.env);
     client =
@@ -257,6 +259,7 @@ export async function runBrowardBulkPermitIngest(
     await acquireLoadLock(client);
     await ensureControlTables(client);
     await registerBulkRun(client, manifest);
+    portalRecordKeysByCaseKey = await readPortalRecordKeysByCaseKey(client);
   }
 
   /** @type {Set<string>} */
@@ -362,6 +365,7 @@ export async function runBrowardBulkPermitIngest(
           objectIds,
           capture.rawText,
           validRecords,
+          portalRecordKeysByCaseKey,
         );
         matchedPropertyCount = loadResult.matchedPropertyCount;
         unmatchedPropertyCount = loadResult.unmatchedPropertyCount;
@@ -514,6 +518,73 @@ async function readOrCreateManifest(
 }
 
 /**
+ * Index existing rich Accela portal rows by their complete cap identity.
+ *
+ * The FeatureServer's visible PERMITID is truncated and cannot safely dedupe
+ * records. CASEKEY maps exactly to the capID1/capID2/capID3 tuple in existing
+ * portal detail URLs, allowing the bulk row to enrich that row without
+ * creating a second property improvement.
+ *
+ * @param {import("pg").Client} client - Verified direct Neon client.
+ * @returns {Promise<ReadonlyMap<string,string>>} CASEKEY to source record key.
+ */
+async function readPortalRecordKeysByCaseKey(client) {
+  const result = await client.query(
+    `SELECT source_record_key,source_url
+     FROM public.property_improvements
+     WHERE source_system=$1
+       AND source_payload ? 'schemaVersion'`,
+    [FORT_LAUDERDALE_PERMIT_ARCGIS_SOURCE.sourceSystem],
+  );
+  /** @type {Map<string,string>} */
+  const byCaseKey = new Map();
+  for (const row of result.rows) {
+    if (
+      typeof row.source_record_key !== "string" ||
+      typeof row.source_url !== "string"
+    ) {
+      continue;
+    }
+    const caseKey = accelaCaseKeyFromUrl(row.source_url);
+    if (caseKey === null) continue;
+    const existing = byCaseKey.get(caseKey);
+    if (existing !== undefined && existing !== row.source_record_key) {
+      throw new Error(
+        `Existing Fort Lauderdale portal rows conflict for CASEKEY ${caseKey}`,
+      );
+    }
+    byCaseKey.set(caseKey, row.source_record_key);
+  }
+  return byCaseKey;
+}
+
+/**
+ * Rebuild the complete Accela CASEKEY from a public detail URL.
+ *
+ * @param {string} value - Candidate Accela detail URL.
+ * @returns {string | null} Uppercase capID tuple or null.
+ */
+export function accelaCaseKeyFromUrl(value) {
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    return null;
+  }
+  const parts = ["capID1", "capID2", "capID3"].map((name) =>
+    url.searchParams.get(name)?.trim().toUpperCase(),
+  );
+  return parts.every(
+    (part) =>
+      typeof part === "string" &&
+      part.length > 0 &&
+      /^[A-Z0-9]+$/u.test(part),
+  )
+    ? parts.join("-")
+    : null;
+}
+
+/**
  * Load one raw source chunk and its durable receipt transactionally.
  *
  * @param {import("pg").Client} client - Verified direct Neon client.
@@ -522,6 +593,8 @@ async function readOrCreateManifest(
  * @param {readonly number[]} objectIds - Exact source object IDs.
  * @param {string} rawText - Raw source response used for its checksum.
  * @param {readonly NormalizedBrowardArcgisPermit[]} records - Valid rows.
+ * @param {ReadonlyMap<string,string>} portalRecordKeysByCaseKey
+ *   Existing rich portal keys indexed by complete Accela CASEKEY.
  * @returns {Promise<{matchedPropertyCount:number,unmatchedPropertyCount:number}>}
  *   Exact folio-match reconciliation for the chunk.
  */
@@ -532,6 +605,7 @@ async function loadBulkPermitChunk(
   objectIds,
   rawText,
   records,
+  portalRecordKeysByCaseKey,
 ) {
   const folios = [
     ...new Set(
@@ -575,7 +649,11 @@ async function loadBulkPermitChunk(
         ? undefined
         : parents.get(record.parcel_identifier);
     if (parent !== undefined) matchedPropertyCount += 1;
-    return mapBulkPermitLoadRow(record, parent);
+    const portalRecordKey =
+      record.accela_case_key === null
+        ? undefined
+        : portalRecordKeysByCaseKey.get(record.accela_case_key);
+    return mapBulkPermitLoadRow(record, parent, portalRecordKey);
   });
   const matchedSourceRecords = records.filter(
     (record) =>
@@ -647,9 +725,14 @@ async function loadBulkPermitChunk(
  *
  * @param {NormalizedBrowardArcgisPermit} record - Valid normalized source row.
  * @param {{propertyId:string,parcelId:string} | undefined} parent - Exact parent.
+ * @param {string | undefined} [existingPortalRecordKey] - Existing rich portal key.
  * @returns {BulkPermitLoadRow} Complete parameter row.
  */
-export function mapBulkPermitLoadRow(record, parent) {
+export function mapBulkPermitLoadRow(
+  record,
+  parent,
+  existingPortalRecordKey,
+) {
   const sourceRequestUrl = new URL(
     FORT_LAUDERDALE_PERMIT_ARCGIS_SOURCE.queryUrl,
   );
@@ -661,10 +744,11 @@ export function mapBulkPermitLoadRow(record, parent) {
   sourceRequestUrl.searchParams.set("returnGeometry", "false");
   sourceRequestUrl.searchParams.set("f", "json");
   const sourceRecordHash = stableHash(record);
+  const sourceRecordKey = existingPortalRecordKey ?? record.record_key;
   return {
     property_id: parent?.propertyId ?? null,
     parcel_id: parent?.parcelId ?? null,
-    request_identifier: record.record_key,
+    request_identifier: sourceRecordKey,
     permit_number: record.permit_number,
     improvement_type: record.record_type,
     improvement_status: record.record_status,
@@ -709,7 +793,7 @@ export function mapBulkPermitLoadRow(record, parent) {
         /** @type {unknown} */ (record)
       ),
     source_system: record.source_system,
-    source_record_key: record.record_key,
+    source_record_key: sourceRecordKey,
     source_record_hash: sourceRecordHash,
     source_artifact_uri: record.source_url,
     property_match_method:
@@ -964,7 +1048,7 @@ async function acquireLoadLock(client) {
     [LOAD_LOCK_NAMESPACE, LOAD_LOCK_KEY],
   );
   if (result.rows[0]?.acquired !== true) {
-    throw new Error("Another Broward bulk permit loader owns the writer lock");
+    throw new Error("Another Broward permit loader owns the writer lock");
   }
 }
 

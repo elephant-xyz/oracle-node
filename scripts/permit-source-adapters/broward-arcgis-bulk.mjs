@@ -36,7 +36,8 @@ const ROOF_PATTERN =
  * @property {"arcgis_feature_service"} source_vendor - Bulk transport family.
  * @property {string} source_url - Official permit detail or feature URL.
  * @property {string} source_record_id - ArcGIS OBJECTID retained as text.
- * @property {string} record_key - Permit-number key shared with portal records.
+ * @property {string} record_key - Stable CASEKEY/global/object identity.
+ * @property {string | null} accela_case_key - Complete Accela cap identity.
  * @property {string} city - Issuing jurisdiction.
  * @property {string} permit_number - Public permit identifier.
  * @property {string | null} parcel_identifier - Canonical Broward folio when valid.
@@ -218,19 +219,28 @@ export function normalizeFortLauderdaleArcgisPermit(feature, retrievedAt) {
     return { record: null, invalidReason: "missing_permit_number" };
   }
   const source = FORT_LAUDERDALE_PERMIT_ARCGIS_SOURCE;
+  const sourceRecordId = String(objectId);
+  const accelaCaseKey =
+    optionalText(attributes.CASEKEY)?.toUpperCase() ?? null;
+  const globalId = optionalText(attributes.GlobalID);
+  const stableIdentity =
+    accelaCaseKey === null
+      ? globalId === null
+        ? `object:${sourceRecordId}`
+        : `global:${globalId.toUpperCase()}`
+      : `case:${accelaCaseKey}`;
   const recordType = optionalText(attributes.PERMITTYPE);
   const description = optionalText(attributes.PERMITDESC);
   const locationDescription = optionalText(attributes.LOCDESC);
-  const sourceRecordId = String(objectId);
   const sourceUrl = buildFortLauderdalePermitUrl(
-    attributes.CASEKEY,
+    accelaCaseKey,
     permitNumber,
   );
   const sourcePayload = Object.freeze({
     object_id: objectId,
-    global_id: optionalText(attributes.GlobalID),
+    global_id: globalId,
     permit_id: permitNumber,
-    case_key: optionalText(attributes.CASEKEY),
+    case_key: accelaCaseKey,
     permit_type: recordType,
     permit_status: optionalText(attributes.PERMITSTAT),
     permit_description: description,
@@ -261,7 +271,8 @@ export function normalizeFortLauderdaleArcgisPermit(feature, retrievedAt) {
       source_vendor: "arcgis_feature_service",
       source_url: sourceUrl,
       source_record_id: sourceRecordId,
-      record_key: `${source.sourceSystem}:permit:${permitNumber}`,
+      record_key: `${source.sourceSystem}:arcgis:${stableIdentity}`,
+      accela_case_key: accelaCaseKey,
       city: source.jurisdiction,
       permit_number: permitNumber,
       parcel_identifier: normalizeArcgisBrowardFolio(attributes.PARCELID),
