@@ -331,7 +331,9 @@ export async function runBrowardAccelaDateWindows(
         if (
           span > 1 &&
           error instanceof BrowardAccelaSourceError &&
-          error.code === "incomplete_pagination"
+          (error.code === "incomplete_pagination" ||
+            (error.code === "unexpected_response" &&
+              /exposed no list records/iu.test(error.message)))
         ) {
           const children = splitBrowardAccelaDateWindow(window);
           checkpoint = {
