@@ -32,6 +32,11 @@ const ipfsHash = require("ipfs-only-hash");
  * @typedef {object} PolkPublicationCliOptions
  * @property {string} sourceDirectory Completed local Polk export.
  * @property {string} outputDirectory Local family-separated staging root.
+ * @property {string} [permitEnrichmentReceiptPath] Deep permit evidence receipt.
+ * @property {string} [sunbizManifestPath] Sunbiz transform/match manifest.
+ * @property {string} [bbbManifestPath] BBB contractor CRM receipt.
+ * @property {string} [neonReceiptPath] Neon reconciliation receipt.
+ * @property {string} [overturePublicationReceiptPath] Overture Neon-export receipt.
  * @property {number} shardSize Open-data index entries per shard.
  * @property {boolean} materialize Whether to create local hard-link staging.
  */
@@ -74,6 +79,7 @@ const ipfsHash = require("ipfs-only-hash");
  * @property {string} exportedAt Export start timestamp.
  * @property {string} completedAt Export completion timestamp.
  * @property {string} openDataCid CID of the published open-data index.
+ * @property {readonly JsonObject[]} [reconciledTracks] Optional passed Neon track receipts.
  */
 
 /**
@@ -95,6 +101,11 @@ export function parsePolkPublicationCliOptions(
     options: {
       "source-dir": { type: "string" },
       "output-dir": { type: "string" },
+      "permit-enrichment-receipt": { type: "string" },
+      "sunbiz-manifest": { type: "string" },
+      "bbb-manifest": { type: "string" },
+      "neon-receipt": { type: "string" },
+      "overture-publication-receipt": { type: "string" },
       "shard-size": { type: "string" },
       materialize: { type: "boolean" },
       "dry-run": { type: "boolean" },
@@ -124,6 +135,36 @@ export function parsePolkPublicationCliOptions(
       typeof values["output-dir"] === "string"
         ? values["output-dir"]
         : "tmp/polk/publication-prepared",
+    ),
+    permitEnrichmentReceiptPath: path.resolve(
+      rootDirectory,
+      typeof values["permit-enrichment-receipt"] === "string"
+        ? values["permit-enrichment-receipt"]
+        : "tmp/polk/permits/enrichment-receipt.json",
+    ),
+    sunbizManifestPath: path.resolve(
+      rootDirectory,
+      typeof values["sunbiz-manifest"] === "string"
+        ? values["sunbiz-manifest"]
+        : "tmp/polk/sunbiz/transformed/manifest.json",
+    ),
+    bbbManifestPath: path.resolve(
+      rootDirectory,
+      typeof values["bbb-manifest"] === "string"
+        ? values["bbb-manifest"]
+        : "tmp/polk/bbb/manifest/contractor-crm.json",
+    ),
+    neonReceiptPath: path.resolve(
+      rootDirectory,
+      typeof values["neon-receipt"] === "string"
+        ? values["neon-receipt"]
+        : "tmp/polk/neon/reconciliation-receipt.json",
+    ),
+    overturePublicationReceiptPath: path.resolve(
+      rootDirectory,
+      typeof values["overture-publication-receipt"] === "string"
+        ? values["overture-publication-receipt"]
+        : "tmp/polk/overture/2026-08-19.0/publication-receipt.json",
     ),
     shardSize,
     materialize: values.materialize === true,
@@ -176,6 +217,40 @@ function requiredCount(object, key, context) {
     throw new Error(`${context}.${key} must be a non-negative safe integer`);
   }
   return Number(value);
+}
+
+/**
+ * Read a nested non-negative safe integer.
+ *
+ * @param {JsonObject | null} object Root object.
+ * @param {readonly string[]} keys Nested keys.
+ * @returns {number | null} Count or null.
+ */
+function nestedCount(object, keys) {
+  let current = /** @type {unknown} */ (object);
+  for (const key of keys) {
+    if (!isJsonObject(current)) return null;
+    current = current[key];
+  }
+  return Number.isSafeInteger(current) && Number(current) >= 0
+    ? Number(current)
+    : null;
+}
+
+/**
+ * Read a nested boolean.
+ *
+ * @param {JsonObject | null} object Root object.
+ * @param {readonly string[]} keys Nested keys.
+ * @returns {boolean | null} Boolean or null.
+ */
+function nestedBoolean(object, keys) {
+  let current = /** @type {unknown} */ (object);
+  for (const key of keys) {
+    if (!isJsonObject(current)) return null;
+    current = current[key];
+  }
+  return typeof current === "boolean" ? current : null;
 }
 
 /**
@@ -296,6 +371,22 @@ export async function inventoryPolkPublicationSource(sourceDirectory) {
  * @returns {Promise<{plan:PolkPublicationPlan,inventory:PolkPublicationInventory,manifest:JsonObject}>} Plan and reusable inventory.
  */
 export async function buildPolkPublicationPlan(options) {
+  const polkRoot = path.resolve(options.sourceDirectory, "..");
+  const permitEnrichmentReceiptPath =
+    options.permitEnrichmentReceiptPath ??
+    path.join(polkRoot, "permits", "enrichment-receipt.json");
+  const sunbizManifestPath =
+    options.sunbizManifestPath ??
+    path.join(polkRoot, "sunbiz", "transformed", "manifest.json");
+  const bbbManifestPath =
+    options.bbbManifestPath ??
+    path.join(polkRoot, "bbb", "manifest", "contractor-crm.json");
+  const neonReceiptPath =
+    options.neonReceiptPath ??
+    path.join(polkRoot, "neon", "reconciliation-receipt.json");
+  const overturePublicationReceiptPath =
+    options.overturePublicationReceiptPath ??
+    path.join(polkRoot, "overture", "2026-08-19.0", "publication-receipt.json");
   const overtureSummaryPath = path.resolve(
     options.sourceDirectory,
     "..",
@@ -305,16 +396,31 @@ export async function buildPolkPublicationPlan(options) {
     "manifest",
     "summary.json",
   );
-  const [manifest, coverage, checkpoint, inventory, overture] =
-    await Promise.all([
-      readJsonObject(path.join(options.sourceDirectory, "manifest.json")),
-      readJsonObject(path.join(options.sourceDirectory, "coverage.json")),
-      readJsonObject(
-        path.join(options.sourceDirectory, ".state", "checkpoint.json"),
-      ),
-      inventoryPolkPublicationSource(options.sourceDirectory),
-      readOptionalJsonObject(overtureSummaryPath),
-    ]);
+  const [
+    manifest,
+    coverage,
+    checkpoint,
+    inventory,
+    overture,
+    permitEnrichment,
+    sunbiz,
+    bbb,
+    neonReceipt,
+    overturePublication,
+  ] = await Promise.all([
+    readJsonObject(path.join(options.sourceDirectory, "manifest.json")),
+    readJsonObject(path.join(options.sourceDirectory, "coverage.json")),
+    readJsonObject(
+      path.join(options.sourceDirectory, ".state", "checkpoint.json"),
+    ),
+    inventoryPolkPublicationSource(options.sourceDirectory),
+    readOptionalJsonObject(overtureSummaryPath),
+    readOptionalJsonObject(permitEnrichmentReceiptPath),
+    readOptionalJsonObject(sunbizManifestPath),
+    readOptionalJsonObject(bbbManifestPath),
+    readOptionalJsonObject(neonReceiptPath),
+    readOptionalJsonObject(overturePublicationReceiptPath),
+  ]);
   if (manifest.county !== "polk" || coverage.county !== "polk") {
     throw new Error("Publication input must identify Polk County");
   }
@@ -385,6 +491,41 @@ export async function buildPolkPublicationPlan(options) {
     overtureClipCount !== null &&
     overtureClipCount > 0 &&
     overtureLicenceGate?.passed === true;
+  const permitEnrichmentReady =
+    permitEnrichment?.schemaVersion ===
+      "oracle-node.polk-permit-enrichment-receipt.v1" &&
+    permitEnrichment.complete === true &&
+    nestedCount(permitEnrichment, ["officialPermitCount"]) === permitCount &&
+    nestedCount(permitEnrichment, ["unsupportedPermitCount"]) === 0;
+  const sunbizReady =
+    sunbiz?.schemaVersion === "oracle-node.polk-sunbiz-transform-match.v1" &&
+    sunbiz.county === "polk" &&
+    sunbiz.complete === true &&
+    nestedCount(sunbiz, ["transformedRecordCount"]) !== null &&
+    nestedCount(sunbiz, ["transformedRecordCount"]) > 0;
+  const bbbReady =
+    bbb?.schemaVersion === "oracle-node.polk-bbb-contractor-crm.v1" &&
+    bbb.county === "polk" &&
+    bbb.complete === true &&
+    nestedBoolean(bbb, ["gate", "actualPermitContractorLicenseEvidence"]) ===
+      true;
+  const neonTracks =
+    neonReceipt !== null && Array.isArray(neonReceipt.tracks)
+      ? neonReceipt.tracks.filter(isJsonObject)
+      : [];
+  const neonReady =
+    neonReceipt?.schemaVersion === "oracle-node.polk-neon-reconciliation.v1" &&
+    neonReceipt.county === "polk" &&
+    neonReceipt.complete === true &&
+    neonTracks.length === 5 &&
+    neonTracks.every((track) => track.passed === true);
+  const overturePublicationReady =
+    overturePublication?.schemaVersion ===
+      "oracle-node.polk-overture-publication-receipt.v1" &&
+    overturePublication.county === "polk" &&
+    overturePublication.complete === true &&
+    nestedCount(overturePublication, ["rowCount"]) === overtureClipCount &&
+    nestedBoolean(overturePublication, ["validation", "passed"]) === true;
   if (
     !countsMatch ||
     !bytesMatch ||
@@ -431,6 +572,37 @@ export async function buildPolkPublicationPlan(options) {
         clipCount: overtureClipCount,
         licenceGatePassed: overtureLicenceGate?.passed === true,
       },
+      enrichments: {
+        permitEnrichment: {
+          receiptPath: permitEnrichmentReceiptPath,
+          ready: permitEnrichmentReady,
+          licenseEvidenceCount: nestedCount(permitEnrichment, [
+            "licenseEvidenceCount",
+          ]),
+        },
+        sunbiz: {
+          manifestPath: sunbizManifestPath,
+          ready: sunbizReady,
+          transformedRecordCount: nestedCount(sunbiz, [
+            "transformedRecordCount",
+          ]),
+          matchedPropertyCount: nestedCount(sunbiz, [
+            "propertyMatching",
+            "matchedPropertyCount",
+          ]),
+        },
+        bbb: {
+          manifestPath: bbbManifestPath,
+          ready: bbbReady,
+          harvestedProfileCount: nestedCount(bbb, ["harvestedProfileCount"]),
+          matchedContractorCount: nestedCount(bbb, ["matchedContractorCount"]),
+        },
+        neon: {
+          receiptPath: neonReceiptPath,
+          ready: neonReady,
+          tracks: neonTracks,
+        },
+      },
     },
     families: {
       openData: {
@@ -456,18 +628,25 @@ export async function buildPolkPublicationPlan(options) {
           "dataset-coverage.json",
         ),
         requiredIpnsLabel: "oracle-dataset-coverage-polk",
+        enrichmentStatus: neonReady
+          ? "all_five_tracks_reconciled"
+          : "property_and_permit_publication_only",
         externalStatus: "awaiting_human_approval",
       },
       places: {
         localExtractPath: overtureSummaryPath,
-        localExtractStatus: overtureReady
-          ? "ready_for_neon_load"
-          : "missing_or_unvalidated",
+        localExtractStatus: overturePublicationReady
+          ? "validated_neon_export_ready_for_human_review"
+          : overtureReady
+            ? "ready_for_neon_load"
+            : "missing_or_unvalidated",
         localPlaceCount: overtureClipCount,
+        localPublicationReceiptPath: overturePublicationReceiptPath,
         requiredBucket: "elephant-oracle-open-data-polk-places",
         requiredIpnsLabel: "oracle-open-data-polk-places",
-        externalStatus:
-          "blocked_until_neon_load_reconciliation_and_publication_review",
+        externalStatus: overturePublicationReady
+          ? "awaiting_human_pii_approval"
+          : "blocked_until_neon_load_reconciliation_and_publication_review",
       },
     },
     catalogRegistration: {
@@ -481,11 +660,12 @@ export async function buildPolkPublicationPlan(options) {
         queryTableUrl: "<verified-query-table-ipns-url>",
         datasetCoverageUrl: "<verified-coverage-ipns-url>",
         permitQueryTableUrl: null,
-        placesTableUrl: null,
+        placesTableUrl: overturePublicationReady
+          ? "<verified-polk-places-ipns-url>"
+          : null,
         updatedAt: "<verified-publication-timestamp>",
       },
-      updateCommandTemplate:
-        "npm run catalog:update -- --county-key polk --county-name Polk --state-code FL --county-fips 12105 --query-table-url <verified-query-table-ipns-url> --dataset-coverage-url <verified-coverage-ipns-url> --updated-at <verified-publication-timestamp>",
+      updateCommandTemplate: `npm run catalog:update -- --county-key polk --county-name Polk --state-code FL --county-fips 12105 --query-table-url <verified-query-table-ipns-url> --dataset-coverage-url <verified-coverage-ipns-url>${overturePublicationReady ? " --places-table-url <verified-polk-places-ipns-url>" : ""} --updated-at <verified-publication-timestamp>`,
       mcpMapTemplate: '{"polk":"<verified-query-table-ipns-url>"}',
     },
     externalActions: [
@@ -496,9 +676,17 @@ export async function buildPolkPublicationPlan(options) {
       "Register the stable verified URLs with catalog:update; do not hand-edit an unverified published entry.",
       "Merge the Polk URL into the existing MCP county map, redeploy the MCP, and run a Donphan smoke query.",
       overtureReady
-        ? "Load and reconcile the completed Polk Overture extract in Neon, export from Neon, repeat the licence gate, and obtain a Polk-specific PII publication decision."
+        ? overturePublicationReady
+          ? "Obtain explicit human PII approval, publish the validated Polk places family, gateway-verify it, and apply the catalog handoff."
+          : "Load and reconcile the completed Polk Overture extract in Neon, export from Neon, repeat the licence gate, and obtain a Polk-specific PII publication decision."
         : "Run and validate the full Polk Overture extract before loading or separately publishing the places family.",
     ],
+    parityEvidenceReady:
+      permitEnrichmentReady &&
+      sunbizReady &&
+      bbbReady &&
+      neonReady &&
+      overturePublicationReady,
     status: /** @type {"dry_run" | "materialized"} */ (
       options.materialize ? "materialized" : "dry_run"
     ),
@@ -648,6 +836,53 @@ export function buildPolkPublicCoverageSnapshot(options) {
     cid: null,
     ipns_label: null,
   });
+  /**
+   * Build one enrichment row only from a passed Neon reconciliation track.
+   *
+   * @param {"corporate" | "bbb" | "overture_places"} publicSource Published coverage source.
+   * @param {"sunbiz" | "bbb" | "overture_places"} receiptSource Reconciliation source.
+   * @returns {JsonObject} Reconciled or explicitly empty coverage row.
+   */
+  const reconciledTrack = (publicSource, receiptSource) => {
+    const track = options.reconciledTracks?.find(
+      (candidate) =>
+        candidate.source === receiptSource && candidate.passed === true,
+    );
+    const localCount =
+      track !== undefined &&
+      typeof track.localCount === "number" &&
+      Number.isSafeInteger(track.localCount) &&
+      track.localCount >= 0
+        ? track.localCount
+        : null;
+    const neonCount =
+      track !== undefined &&
+      typeof track.neonCoverageCount === "number" &&
+      Number.isSafeInteger(track.neonCoverageCount) &&
+      track.neonCoverageCount >= 0
+        ? track.neonCoverageCount
+        : null;
+    if (
+      track === undefined ||
+      localCount === null ||
+      neonCount === null ||
+      localCount !== neonCount
+    ) {
+      return emptyTrack(publicSource);
+    }
+    return {
+      county: "polk",
+      source: publicSource,
+      ingested_count: neonCount,
+      expected_count: localCount,
+      first_loaded_at:
+        typeof track.firstLoadedAt === "string" ? track.firstLoadedAt : null,
+      last_loaded_at:
+        typeof track.lastLoadedAt === "string" ? track.lastLoadedAt : null,
+      cid: null,
+      ipns_label: null,
+    };
+  };
   return {
     county: "polk",
     exportedAt: options.completedAt,
@@ -672,9 +907,9 @@ export function buildPolkPublicCoverageSnapshot(options) {
         cid: options.openDataCid,
         ipns_label: "oracle-open-data-polk",
       },
-      emptyTrack("corporate"),
-      emptyTrack("bbb"),
-      emptyTrack("overture_places"),
+      reconciledTrack("corporate", "sunbiz"),
+      reconciledTrack("bbb", "bbb"),
+      reconciledTrack("overture_places", "overture_places"),
     ],
   };
 }
@@ -835,16 +1070,21 @@ async function materializePolkPublication(options, inventory, manifest, plan) {
   }
   const queryTableFile = requiredText(queryTable, "file", "queryTable");
   const queryTableBytes = requiredCount(queryTable, "sizeBytes", "queryTable");
+  const validation = /** @type {JsonObject} */ (plan.validation);
+  const enrichments = isJsonObject(validation.enrichments)
+    ? validation.enrichments
+    : null;
+  const neon = isJsonObject(enrichments?.neon) ? enrichments.neon : null;
+  const reconciledTracks = Array.isArray(neon?.tracks)
+    ? neon.tracks.filter(isJsonObject)
+    : [];
   const publicCoverage = buildPolkPublicCoverageSnapshot({
     propertyCount: inventory.propertyCount,
-    permitCount: requiredCount(
-      /** @type {JsonObject} */ (plan.validation),
-      "permitCount",
-      "plan.validation",
-    ),
+    permitCount: requiredCount(validation, "permitCount", "plan.validation"),
     exportedAt,
     completedAt,
     openDataCid: localOpenDataIndexCid,
+    reconciledTracks,
   });
   await Promise.all([
     linkOrVerify(

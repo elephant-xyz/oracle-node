@@ -88,9 +88,12 @@ export const POLK_PERMIT_TRADE_RULES = Object.freeze([
  * @property {string} sourceDirectory Completed local appraisal export root.
  * @property {string} workDatabase Persistent DuckDB cache built from Polk bulk files.
  * @property {string} permitSummaryPath Generated permit classification summary.
+ * @property {string} permitEnrichmentReceiptPath Optional deep permit-enrichment receipt.
  * @property {string} overtureSummaryPath Optional Overture extract/probe summary.
+ * @property {string} overturePublicationReceiptPath Optional Neon-exported places receipt.
  * @property {string} sunbizManifestPath Optional Polk Sunbiz extraction/match manifest.
  * @property {string} bbbSummaryPath Optional Polk BBB harvest/match summary.
+ * @property {string} neonReceiptPath Optional local-to-Neon reconciliation receipt.
  * @property {string} publicationIndexPath Optional staged open-data publication index.
  * @property {string} catalogPath Tracked canonical published-county catalog.
  * @property {string} outputPath Generated lifecycle status JSON.
@@ -238,14 +241,16 @@ export function buildPolkPermitAggregateSql() {
       )::INTEGER AS with_estimated_value,
       min(
         CASE
-          WHEN substr(issue_date, 1, 10) > '1900-01-01'
+          WHEN try_cast(substr(issue_date, 1, 10) AS DATE)
+            BETWEEN DATE '1901-01-01' AND CURRENT_DATE + INTERVAL '2 years'
             THEN substr(issue_date, 1, 10)
           ELSE NULL
         END
       ) AS earliest_issue_date,
       max(
         CASE
-          WHEN substr(issue_date, 1, 10) > '1900-01-01'
+          WHEN try_cast(substr(issue_date, 1, 10) AS DATE)
+            BETWEEN DATE '1901-01-01' AND CURRENT_DATE + INTERVAL '2 years'
             THEN substr(issue_date, 1, 10)
           ELSE NULL
         END
@@ -505,9 +510,12 @@ export function parsePolkStatusCliOptions(argv, rootDirectory = process.cwd()) {
       "source-dir": { type: "string" },
       "work-db": { type: "string" },
       "permit-summary": { type: "string" },
+      "permit-enrichment-receipt": { type: "string" },
       "overture-summary": { type: "string" },
+      "overture-publication-receipt": { type: "string" },
       "sunbiz-manifest": { type: "string" },
       "bbb-summary": { type: "string" },
+      "neon-receipt": { type: "string" },
       "publication-index": { type: "string" },
       catalog: { type: "string" },
       out: { type: "string" },
@@ -536,23 +544,41 @@ export function parsePolkStatusCliOptions(argv, rootDirectory = process.cwd()) {
         ? values["permit-summary"]
         : "tmp/polk/parity/permit-enrichment.json",
     ),
+    permitEnrichmentReceiptPath: path.resolve(
+      rootDirectory,
+      typeof values["permit-enrichment-receipt"] === "string"
+        ? values["permit-enrichment-receipt"]
+        : "tmp/polk/permits/enrichment-receipt.json",
+    ),
     overtureSummaryPath: path.resolve(
       rootDirectory,
       typeof values["overture-summary"] === "string"
         ? values["overture-summary"]
         : "tmp/polk/overture/2026-08-19.0/extract/manifest/summary.json",
     ),
+    overturePublicationReceiptPath: path.resolve(
+      rootDirectory,
+      typeof values["overture-publication-receipt"] === "string"
+        ? values["overture-publication-receipt"]
+        : "tmp/polk/overture/2026-08-19.0/publication-receipt.json",
+    ),
     sunbizManifestPath: path.resolve(
       rootDirectory,
       typeof values["sunbiz-manifest"] === "string"
         ? values["sunbiz-manifest"]
-        : "tmp/polk/sunbiz/manifest.json",
+        : "tmp/polk/sunbiz/transformed/manifest.json",
     ),
     bbbSummaryPath: path.resolve(
       rootDirectory,
       typeof values["bbb-summary"] === "string"
         ? values["bbb-summary"]
-        : "tmp/polk/bbb/manifest/summary.json",
+        : "tmp/polk/bbb/manifest/contractor-crm.json",
+    ),
+    neonReceiptPath: path.resolve(
+      rootDirectory,
+      typeof values["neon-receipt"] === "string"
+        ? values["neon-receipt"]
+        : "tmp/polk/neon/reconciliation-receipt.json",
     ),
     publicationIndexPath: path.resolve(
       rootDirectory,
@@ -663,8 +689,11 @@ export async function buildPolkLocalParityStatus(options) {
     coverage,
     checkpoint,
     overture,
+    overturePublication,
     sunbiz,
     bbb,
+    permitEnrichment,
+    neonReceipt,
     publicationIndex,
     catalog,
     permitSummary,
@@ -675,8 +704,11 @@ export async function buildPolkLocalParityStatus(options) {
       path.join(options.sourceDirectory, ".state", "checkpoint.json"),
     ),
     readOvertureEvidence(options.overtureSummaryPath),
+    readOptionalJsonObject(options.overturePublicationReceiptPath),
     readOptionalJsonObject(options.sunbizManifestPath),
     readOptionalJsonObject(options.bbbSummaryPath),
+    readOptionalJsonObject(options.permitEnrichmentReceiptPath),
+    readOptionalJsonObject(options.neonReceiptPath),
     readOptionalJsonObject(options.publicationIndexPath),
     readOptionalJsonObject(options.catalogPath),
     buildPolkPermitSummary(options.workDatabase),
@@ -745,6 +777,13 @@ export async function buildPolkLocalParityStatus(options) {
   const permitComplete =
     permitSourceCount !== null &&
     permitSourceCount === permitSummary.permitCount;
+  const permitEnrichmentComplete =
+    permitEnrichment?.schemaVersion ===
+      "oracle-node.polk-permit-enrichment-receipt.v1" &&
+    permitEnrichment.complete === true &&
+    nestedNumber(permitEnrichment, ["officialPermitCount"]) ===
+      permitSummary.permitCount &&
+    nestedNumber(permitEnrichment, ["unsupportedPermitCount"]) === 0;
   const overtureMode = readText(overture?.mode);
   const overtureClipCount = nestedNumber(overture, ["clipCount"]);
   const overtureLicencePassed = nestedBoolean(overture, [
@@ -757,12 +796,51 @@ export async function buildPolkLocalParityStatus(options) {
     overtureClipCount !== null &&
     overtureClipCount > 0 &&
     overtureLicencePassed === true;
+  const overturePublicationComplete =
+    overturePublication?.schemaVersion ===
+      "oracle-node.polk-overture-publication-receipt.v1" &&
+    overturePublication.complete === true &&
+    nestedNumber(overturePublication, ["rowCount"]) === overtureClipCount &&
+    nestedNumber(overturePublication, ["extractClipCount"]) ===
+      overtureClipCount &&
+    nestedNumber(overturePublication, ["neonBusinessLocationCount"]) ===
+      overtureClipCount &&
+    nestedBoolean(overturePublication, ["validation", "passed"]) === true;
   const sunbizMatchedCount =
-    nestedNumber(sunbiz, ["matchedPropertyCount"]) ??
-    nestedNumber(sunbiz, ["matchedRecordCount"]);
+    nestedNumber(sunbiz, ["propertyMatching", "matchedPropertyCount"]) ??
+    nestedNumber(sunbiz, ["matchedPropertyCount"]);
+  const sunbizTransformedCount = nestedNumber(sunbiz, [
+    "transformedRecordCount",
+  ]);
+  const sunbizComplete =
+    sunbiz?.schemaVersion === "oracle-node.polk-sunbiz-transform-match.v1" &&
+    sunbiz.county === "polk" &&
+    sunbiz.complete === true &&
+    sunbizTransformedCount !== null &&
+    sunbizTransformedCount > 0 &&
+    nestedNumber(sunbiz, ["sourceRecordCount"]) === sunbizTransformedCount &&
+    nestedNumber(sunbiz, ["invalidRecordCount"]) === 0 &&
+    sunbizMatchedCount !== null;
   const bbbMatchedCount =
     nestedNumber(bbb, ["matchedContractorCount"]) ??
     nestedNumber(bbb, ["matchedInBbbCrm"]);
+  const bbbComplete =
+    bbb?.schemaVersion === "oracle-node.polk-bbb-contractor-crm.v1" &&
+    bbb.county === "polk" &&
+    bbb.complete === true &&
+    nestedBoolean(bbb, ["gate", "actualPermitContractorLicenseEvidence"]) ===
+      true &&
+    bbbMatchedCount !== null;
+  const neonTracks =
+    neonReceipt !== null && Array.isArray(neonReceipt.tracks)
+      ? neonReceipt.tracks
+      : [];
+  const neonComplete =
+    neonReceipt?.schemaVersion === "oracle-node.polk-neon-reconciliation.v1" &&
+    neonReceipt.county === "polk" &&
+    neonReceipt.complete === true &&
+    neonTracks.length === 5 &&
+    neonTracks.every((track) => isJsonObject(track) && track.passed === true);
   const stagedPropertyCount = nestedNumber(publicationIndex, ["propertyCount"]);
   const publicationPrepared =
     propertyCount !== null && stagedPropertyCount === propertyCount;
@@ -782,52 +860,66 @@ export async function buildPolkLocalParityStatus(options) {
       name: "Permit classification",
       status: permitComplete ? "complete" : "blocked",
       evidence: permitComplete
-        ? `${permitSummary.permitCount} official bulk permits classified across six overlapping trades; contractor-detail enrichment remains unavailable.`
+        ? `${permitSummary.permitCount} official bulk permits classified across six overlapping trades.`
         : "Permit summary does not reconcile to the official bulk permit count.",
       count: permitSummary.permitCount,
     },
+    permitEnrichment: {
+      name: "Deep and municipal permit enrichment",
+      status: permitEnrichmentComplete ? "complete" : "blocked",
+      evidence: permitEnrichmentComplete
+        ? `${nestedNumber(permitEnrichment, ["licenseEvidenceCount"]) ?? 0} permit records carry certified contractor-licence evidence and every official agency is covered by a verified adapter.`
+        : permitEnrichment === null
+          ? "No deep permit-enrichment receipt exists; only Polk County Accela currently has a certified anonymous detail adapter."
+          : (readText(permitEnrichment.blocker) ??
+            "Deep permit enrichment does not cover every official Polk agency with a certified adapter."),
+      count: nestedNumber(permitEnrichment, ["enrichedRecordCount"]),
+    },
     sunbiz: {
       name: "Sunbiz property matching",
-      status:
-        sunbiz !== null && sunbizMatchedCount !== null ? "ready" : "blocked",
-      evidence:
-        sunbiz !== null && sunbizMatchedCount !== null
-          ? `${sunbizMatchedCount} locally evidenced Polk property matches.`
-          : "No local Polk Sunbiz source slice and property-match manifest exists; statewide cordata text is required.",
+      status: sunbizComplete ? "complete" : "blocked",
+      evidence: sunbizComplete
+        ? `${sunbizTransformedCount} exact-ZIP Sunbiz records transformed; ${sunbizMatchedCount} Polk properties matched by exact normalized street, city, and ZIP.`
+        : "No local Polk Sunbiz source slice and property-match manifest exists; statewide cordata text is required.",
       count: sunbizMatchedCount,
     },
     bbb: {
       name: "BBB contractor matching",
-      status:
-        bbb !== null &&
-        bbbMatchedCount !== null &&
-        permitSummary.contractorEnrichment.available
-          ? "ready"
-          : "blocked",
-      evidence:
-        "Polk bulk permits contain no contractor company or licence identifiers, so a BBB-to-permit match cannot be claimed.",
+      status: bbbComplete ? "complete" : "blocked",
+      evidence: bbbComplete
+        ? `${bbbMatchedCount} contractors exact-matched to multi-trade BBB profiles through certified permit licence evidence.`
+        : (readText(bbb?.blocker) ??
+          "BBB matching requires complete roofing/HVAC/solar harvests and actual contractor licences from certified permit details."),
       count: bbbMatchedCount,
     },
     overture: {
       name: "Overture places",
-      status: overtureExtractReady
-        ? "ready"
-        : overtureMode === "counts-only"
-          ? "probed"
-          : "blocked",
-      evidence: overtureExtractReady
-        ? `${overtureClipCount} boundary-clipped places passed the local source/licence gate and are ready for load reconciliation.`
-        : overtureMode === "counts-only"
-          ? `${overtureClipCount ?? 0} places were counted with the Polk TIGER boundary; full extraction, licence gating, and load are still required.`
-          : "No Polk TIGER-boundary Overture probe or extract summary exists.",
+      status: overturePublicationComplete
+        ? "complete"
+        : overtureExtractReady
+          ? "ready"
+          : overtureMode === "counts-only"
+            ? "probed"
+            : "blocked",
+      evidence: overturePublicationComplete
+        ? `${overtureClipCount} boundary-clipped places reconciled through Neon and a validated local publication parquet; external publication still needs human PII approval.`
+        : overtureExtractReady
+          ? `${overtureClipCount} boundary-clipped places passed the local source/licence gate and are ready for Neon load reconciliation.`
+          : overtureMode === "counts-only"
+            ? `${overtureClipCount ?? 0} places were counted with the Polk TIGER boundary; full extraction, licence gating, and load are still required.`
+            : "No Polk TIGER-boundary Overture probe or extract summary exists.",
       count: overtureClipCount,
     },
     queryDatabase: {
       name: "Elephant query DB load",
-      status: "blocked",
-      evidence:
-        "No local load receipt or oracle_dataset_coverage row proves Polk appraisal, permits, Sunbiz, BBB, or places were loaded and reconciled in Neon.",
-      count: 0,
+      status: neonComplete ? "complete" : "blocked",
+      evidence: neonComplete
+        ? "All five local artifact denominators match timestamped Polk oracle_dataset_coverage rows; Overture also matches direct current-row and extraction counts."
+        : (readText(neonReceipt?.blocker) ??
+          "No complete read-only Neon reconciliation receipt proves all five Polk tracks."),
+      count: neonTracks.filter(
+        (track) => isJsonObject(track) && track.passed === true,
+      ).length,
     },
     publication: {
       name: "Publication preparation",
@@ -875,10 +967,30 @@ export async function buildPolkLocalParityStatus(options) {
           classifiedPermitCount: permitSummary.classifiedPermitCount,
           tradeCounts: permitSummary.tradeCounts,
           zipPrefixes: permitSummary.zipPrefixes,
+          enrichmentReceipt: permitEnrichment ?? {
+            status: "missing",
+            expectedPath: options.permitEnrichmentReceiptPath,
+          },
+        },
+        sunbiz: sunbiz ?? {
+          status: "missing",
+          expectedPath: options.sunbizManifestPath,
+        },
+        bbb: bbb ?? {
+          status: "missing",
+          expectedPath: options.bbbSummaryPath,
         },
         overture: overture ?? {
           status: "missing",
           expectedPath: options.overtureSummaryPath,
+        },
+        overturePublication: overturePublication ?? {
+          status: "missing",
+          expectedPath: options.overturePublicationReceiptPath,
+        },
+        neon: neonReceipt ?? {
+          status: "missing",
+          expectedPath: options.neonReceiptPath,
         },
         publication:
           publicationIndex === null

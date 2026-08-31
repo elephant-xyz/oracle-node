@@ -249,9 +249,18 @@ describe("Polk evidence-only lifecycle status", () => {
       sourceDirectory,
       workDatabase: databasePath,
       permitSummaryPath: path.join(root, "permit-summary.json"),
+      permitEnrichmentReceiptPath: path.join(
+        root,
+        "missing-permit-enrichment.json",
+      ),
       overtureSummaryPath,
+      overturePublicationReceiptPath: path.join(
+        root,
+        "missing-overture-publication.json",
+      ),
       sunbizManifestPath: path.join(root, "missing-sunbiz.json"),
       bbbSummaryPath: path.join(root, "missing-bbb.json"),
+      neonReceiptPath: path.join(root, "missing-neon.json"),
       publicationIndexPath,
       catalogPath,
       outputPath: path.join(root, "status.json"),
@@ -269,6 +278,7 @@ describe("Polk evidence-only lifecycle status", () => {
     expect(status.stages.publication.status).toBe("awaiting_human");
     expect(status.stages.sunbiz.status).toBe("blocked");
     expect(status.stages.bbb.status).toBe("blocked");
+    expect(status.stages.permitEnrichment.status).toBe("blocked");
     expect(status.stages.queryDatabase.status).toBe("blocked");
     expect(status.stages.catalog.status).toBe("blocked");
     expect(status.pr200FunctionalParity).toBe(false);

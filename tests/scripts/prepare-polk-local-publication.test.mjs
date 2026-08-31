@@ -129,6 +129,13 @@ describe("Polk publication preparation", () => {
     expect(parsePolkPublicationCliOptions([], "/repo")).toEqual({
       sourceDirectory: "/repo/tmp/polk/full",
       outputDirectory: "/repo/tmp/polk/publication-prepared",
+      permitEnrichmentReceiptPath:
+        "/repo/tmp/polk/permits/enrichment-receipt.json",
+      sunbizManifestPath: "/repo/tmp/polk/sunbiz/transformed/manifest.json",
+      bbbManifestPath: "/repo/tmp/polk/bbb/manifest/contractor-crm.json",
+      neonReceiptPath: "/repo/tmp/polk/neon/reconciliation-receipt.json",
+      overturePublicationReceiptPath:
+        "/repo/tmp/polk/overture/2026-08-19.0/publication-receipt.json",
       shardSize: 10000,
       materialize: false,
     });
@@ -211,6 +218,7 @@ describe("Polk publication preparation", () => {
       },
     });
     expect(plan.status).toBe("dry_run");
+    expect(plan.parityEvidenceReady).toBe(false);
   });
 
   it("builds canonical coverage without claiming unpublished enrichments", () => {
@@ -277,6 +285,45 @@ describe("Polk publication preparation", () => {
           ipns_label: null,
         },
       ],
+    });
+  });
+
+  it("promotes enrichment coverage only from passed Neon track receipts", () => {
+    const snapshot = buildPolkPublicCoverageSnapshot({
+      propertyCount: 10,
+      permitCount: 20,
+      exportedAt: "2026-08-28T22:31:53.851Z",
+      completedAt: "2026-08-28T22:44:54.220Z",
+      openDataCid: "QmPolkOpenDataIndex",
+      reconciledTracks: [
+        {
+          source: "sunbiz",
+          localCount: 5,
+          neonCoverageCount: 5,
+          firstLoadedAt: "2026-08-28T22:40:00.000Z",
+          lastLoadedAt: "2026-08-28T22:41:00.000Z",
+          passed: true,
+        },
+        {
+          source: "bbb",
+          localCount: 3,
+          neonCoverageCount: 2,
+          firstLoadedAt: "2026-08-28T22:40:00.000Z",
+          lastLoadedAt: "2026-08-28T22:41:00.000Z",
+          passed: true,
+        },
+      ],
+    });
+
+    expect(snapshot.datasets[2]).toMatchObject({
+      source: "corporate",
+      ingested_count: 5,
+      expected_count: 5,
+    });
+    expect(snapshot.datasets[3]).toMatchObject({
+      source: "bbb",
+      ingested_count: 0,
+      expected_count: null,
     });
   });
 
