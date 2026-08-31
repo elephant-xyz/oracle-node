@@ -636,6 +636,7 @@ export async function searchTylerDateWindow(
           },
           credentials: "include",
           body: JSON.stringify(input.body),
+          signal: AbortSignal.timeout(input.timeoutMs),
         });
         return { status: result.status, text: await result.text() };
       },
@@ -643,6 +644,7 @@ export async function searchTylerDateWindow(
         endpoint: session.endpoint,
         headers: session.tenantHeaders,
         body: requestBody,
+        timeoutMs: DEFAULT_SEARCH_TIMEOUT_MS,
       },
     );
     if (response.status !== 200) {
