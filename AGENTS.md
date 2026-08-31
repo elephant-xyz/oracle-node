@@ -15,6 +15,7 @@
 - `docs/permit-harvest-todo.md` — durable TODO/status list for permit harvest and Sunbiz extraction work.
 - `docs/sunbiz-bulk-download-runbook.md` — Sunbiz bulk download path, browser/Cloudflare notes, S3 staging, and Deflate64 workaround.
 - `docs/sunbiz-lexicon-transform-findings.md` — Sunbiz lexicon additions, transform output, and mapping notes.
+- `docs/broward-oracle-optimization-adoption.md` — updated Oracle-agent compute, dashboard, and source-policy adoption for the active Broward run.
 - `../elephant-query-db/README.md` — query database package overview and usage.
 - `../elephant-query-db/docs/data-load-and-matching-plan.md` — plan for loading appraisal, permits, and Sunbiz into Postgres and joining by parcel id/address hash.
 - `../elephant-query-db/docs/schema-design.md` — logical-only Postgres schema design and rerunnable loading plan.
