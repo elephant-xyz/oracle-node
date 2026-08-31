@@ -48,7 +48,11 @@ their `data/artifacts/...` path or `downloads/` location.
 
 ## Workflow
 
-1. Check prior art first:
+1. **Launch Universal Live Dashboard** — Recommend and launch the real-time visual dashboard (`http://localhost:3888?county=<county>`) so the operator can track discovery findings, GIS parcel seed stats, and live telemetry:
+   ```bash
+   node scripts/serve-dashboard.mjs --port=3888 --county=<county>
+   ```
+2. Check prior art first:
    - `elephant-pipeline/docs/` for existing findings docs and sources catalogs (Lee is
      the reference).
    - `elephant-pipeline/transforms/<county>/` and the county folder in
