@@ -181,6 +181,25 @@ const ACCESS_BLOCK_PATTERN =
 const SOURCE_ERROR_PATTERN =
   /technical difficulties|unable to proceed|Object reference not set|String was not recognized|error\(s\) occurred on current page|an unexpected error (?:has )?occurred|temporarily unavailable/i;
 const RECORD_NUMBER_PATTERN = /^[A-Z0-9][A-Z0-9./_-]{1,79}$/i;
+const ROOF_PERMIT_PATTERN = /\broof(?:ing)?\b/iu;
+
+/**
+ * Classify a result-list permit as roofing before opening its detail page.
+ *
+ * @param {BrowardAccelaPermitLink} permit - Reconciled Accela search result.
+ * @returns {boolean} True only when public list text explicitly identifies roofing.
+ */
+export function isBrowardAccelaRoofPermitCandidate(permit) {
+  return ROOF_PERMIT_PATTERN.test(
+    [
+      permit.recordNumber,
+      permit.recordType,
+      permit.description,
+    ]
+      .filter((value) => typeof value === "string")
+      .join(" "),
+  );
+}
 
 /**
  * Official source-specific configuration. Dates are deliberately conservative:

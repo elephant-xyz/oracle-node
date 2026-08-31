@@ -144,6 +144,7 @@ const LOAD_KEY = "broward-supported-pilots-v3";
  * @property {string | null} workLocation - Public work location.
  * @property {number | null} estimatedJobValue - Public estimated job value.
  * @property {number | null} estimatedSqFt - Public square footage.
+ * @property {boolean} isRoofPermit - Explicit/conservative roofing classification.
  * @property {string | null} projectDescription - Public project description.
  * @property {string | null} description - Public project title.
  * @property {Record<string, unknown>} moreDetails - Preserved public permit facts.
@@ -381,6 +382,7 @@ export function buildPermitUpsertValues(record, parent) {
       typeof record.square_footage === "number"
         ? record.square_footage
         : null,
+    isRoofPermit: record.is_roof_permit,
     projectDescription: record.project_description,
     description: record.project_title,
     moreDetails: {
@@ -438,6 +440,16 @@ export function buildAccelaPermitUpsertValues(record, parent) {
     workLocation: record.workLocation,
     estimatedJobValue: null,
     estimatedSqFt: null,
+    isRoofPermit: /\broof(?:ing)?\b/iu.test(
+      [
+        record.recordNumber,
+        record.recordType,
+        record.projectDescription,
+        record.rawText,
+      ]
+        .filter((value) => typeof value === "string")
+        .join(" "),
+    ),
     projectDescription: record.projectDescription,
     description: record.projectDescription,
     moreDetails: {
@@ -488,6 +500,7 @@ export function buildMunicipalPermitUpsertValues(record, parent) {
     workLocation: record.work_location,
     estimatedJobValue: record.job_value,
     estimatedSqFt: record.square_feet,
+    isRoofPermit: record.is_roof_permit,
     projectDescription: record.project_description,
     description: record.project_description,
     moreDetails: {
@@ -894,11 +907,12 @@ async function upsertPropertyImprovement(client, values) {
        work_location, parcel_identifier, property_match_method,
        property_match_confidence, project_description, description,
        more_details, source_http_request, source_payload, source_system,
-       source_record_key, source_record_hash, source_artifact_uri
+       source_record_key, source_record_hash, source_artifact_uri,
+       is_roof_permit
      ) VALUES (
        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,
        $8,$19,$20,'exact_folio','exact',$21,$22,$23::jsonb,$24::jsonb,
-       $25::jsonb,$26,$27,$28,$29
+       $25::jsonb,$26,$27,$28,$29,$30
      )
      ON CONFLICT (source_system, source_record_key) DO UPDATE SET
        property_id=EXCLUDED.property_id,
@@ -923,6 +937,7 @@ async function upsertPropertyImprovement(client, values) {
        source_payload=EXCLUDED.source_payload,
        source_record_hash=EXCLUDED.source_record_hash,
        source_artifact_uri=EXCLUDED.source_artifact_uri,
+       is_roof_permit=EXCLUDED.is_roof_permit,
        loaded_at=now(),
        updated_at=now()
      RETURNING property_improvement_id`,
@@ -942,6 +957,7 @@ async function upsertPropertyImprovement(client, values) {
       values.estimatedSqFt,
       values.sourceSystem,
       values.sourceArtifactUri,
+      values.isRoofPermit,
       values.improvementType,
       values.improvementStatus,
       values.improvementStatus,

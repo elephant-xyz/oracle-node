@@ -20,10 +20,12 @@ import {
 } from "../../scripts/permit-source-adapters/broward-permit-jurisdictions.mjs";
 import {
   buildCitizenserveSearchUrl,
+  isCitizenserveRoofPermitCandidate,
   parseCitizenservePermitDetailHtml,
   parseCitizenserveSearchResultsHtml,
 } from "../../scripts/permit-source-adapters/citizenserve.mjs";
 import {
+  isTylerRoofPermitCandidate,
   normalizeTylerPermitDetailResponse,
   readTylerTotalPages,
 } from "../../scripts/permit-source-adapters/tyler-civic-access.mjs";
@@ -49,6 +51,37 @@ const lauderdaleByTheSea = getBrowardPermitJurisdiction(
 );
 
 describe("Broward Tyler and Citizenserve jurisdiction routing", () => {
+  it("filters roofing candidates from public result-list fields", () => {
+    expect(
+      isTylerRoofPermitCandidate({
+        caseId: "1",
+        permitNumber: "P-1",
+        entity: { CaseType: "Re-Roof", CaseWorkclass: "Residential" },
+      }),
+    ).toBe(true);
+    expect(
+      isTylerRoofPermitCandidate({
+        caseId: "2",
+        permitNumber: "P-2",
+        entity: { CaseType: "Plumbing", CaseWorkclass: "Repair" },
+      }),
+    ).toBe(false);
+    expect(
+      isCitizenserveRoofPermitCandidate({
+        permitId: "1",
+        workOrderId: "1",
+        permitNumber: "P-1",
+        detailUrl: "https://example.test/1",
+        workLocation: null,
+        recordType: "Building",
+        workClass: "Roofing",
+        recordStatus: "Issued",
+        issueDate: null,
+        description: null,
+      }),
+    ).toBe(true);
+  });
+
   it("registers every requested jurisdiction and keeps North Lauderdale disabled", () => {
     expect(Object.keys(BROWARD_PERMIT_JURISDICTIONS)).toEqual([
       "pembroke_pines",
@@ -366,7 +399,19 @@ describe("permit checkpointing and local CLI guardrails", () => {
       maxDetails: 4,
       searchDelayMs: 1500,
       detailDelayMs: 500,
+      roofOnly: false,
     });
+    expect(
+      parseOptions([
+        "--jurisdiction",
+        "pembroke_pines",
+        "--folio",
+        "513914101320",
+        "--output-dir",
+        "downloads/broward/pembroke-roof-probe",
+        "--roof-only",
+      ])?.roofOnly,
+    ).toBe(true);
     expect(() =>
       parseOptions([
         "--jurisdiction",

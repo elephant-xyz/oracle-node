@@ -6,6 +6,7 @@ import {
   BROWARD_BCS_PILOT_PARCEL_IDS,
   BROWARD_BCS_SEARCH_URL,
   dedupeAndSortBrowardBcsPermits,
+  isBrowardBcsRoofPermitCandidate,
   normalizeBrowardBcsParcelId,
   parseBrowardBcsDetailHtml,
   parseBrowardBcsPermitListHtml,
@@ -32,6 +33,26 @@ const [listHtml, emptyListHtml, masterHtml, permitHtml] = await Promise.all(
 );
 
 describe("Broward BCS POSSE property-first permit pilot", () => {
+  it("filters roofing from BCS list fields before detail requests", () => {
+    const base = {
+      sourceUrl: "https://example.test/permit",
+      sourceObjectId: "1",
+      sourceRecordKind: "permit",
+      permitNumber: "P-1",
+      recordType: "Building Alteration",
+      recordStatus: "Open",
+      permitIssueDate: null,
+      listContractor: null,
+    };
+    expect(
+      isBrowardBcsRoofPermitCandidate({
+        ...base,
+        recordType: "Residential Re-Roof",
+      }),
+    ).toBe(true);
+    expect(isBrowardBcsRoofPermitCandidate(base)).toBe(false);
+  });
+
   it("preserves letters in exact 12-character parcel IDs and enforces five lookups", () => {
     expect(normalizeBrowardBcsParcelId(" 504108bj0140 ")).toBe("504108BJ0140");
     expect(() => normalizeBrowardBcsParcelId("504108-BJ-0140")).toThrow(
@@ -274,6 +295,7 @@ describe("Broward BCS POSSE property-first permit pilot", () => {
       summaryPath: null,
       propertyDelayMs: 1500,
       detailDelayMs: 300,
+      roofOnly: false,
     });
     expect(
       parseOptions([
@@ -293,7 +315,11 @@ describe("Broward BCS POSSE property-first permit pilot", () => {
       summaryPath: "downloads/broward/bcs-summary.json",
       propertyDelayMs: 1250,
       detailDelayMs: 275,
+      roofOnly: false,
     });
+    expect(
+      parseOptions(["--pilot", "--roof-only"])?.roofOnly,
+    ).toBe(true);
     expect(() => parseOptions([])).toThrow("exactly one");
     expect(() =>
       parseOptions(["--pilot", "--parcel-id", "504108BJ0140"]),

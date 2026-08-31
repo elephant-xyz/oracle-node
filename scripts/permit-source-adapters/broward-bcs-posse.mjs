@@ -143,6 +143,19 @@ const MAX_DETAIL_PAGES_PER_FOLIO = 75;
 const MIN_PROPERTY_DELAY_MS = 1_000;
 const MIN_DETAIL_DELAY_MS = 250;
 const MAX_SOURCE_HTML_BYTES = 2_000_000;
+const ROOF_PERMIT_PATTERN = /\broof(?:ing)?\b/iu;
+
+/**
+ * Classify a BCS list row before requesting its detail page.
+ *
+ * @param {BrowardBcsListRecord} record - Public BCS permit/master list row.
+ * @returns {boolean} True only when number or type explicitly says roofing.
+ */
+export function isBrowardBcsRoofPermitCandidate(record) {
+  return ROOF_PERMIT_PATTERN.test(
+    `${record.permitNumber} ${record.recordType}`,
+  );
+}
 
 /**
  * Collapse source whitespace and convert an empty value to null.
@@ -1091,6 +1104,7 @@ async function configureSearchPage(page) {
  * @param {number} [params.navigationTimeoutMs=45000] - Rendered search navigation timeout.
  * @param {number} [params.detailTimeoutMs=30000] - Individual detail-fetch timeout.
  * @param {number} [params.maxDetailPagesPerFolio=75] - Detail-page ceiling, never above 75.
+ * @param {boolean} [params.roofOnly=false] - Detail only list rows explicitly marked roofing.
  * @returns {Promise<BrowardBcsProbeResult>} Normalized records and explicit source outcomes.
  */
 export async function probeBrowardBcsPermits({
@@ -1101,6 +1115,7 @@ export async function probeBrowardBcsPermits({
   navigationTimeoutMs = 45_000,
   detailTimeoutMs = 30_000,
   maxDetailPagesPerFolio = MAX_DETAIL_PAGES_PER_FOLIO,
+  roofOnly = false,
 }) {
   const parcelIds = validateBrowardBcsParcelIds(rawParcelIds, maxFolios);
   if (
@@ -1225,9 +1240,12 @@ export async function probeBrowardBcsPermits({
             `Broward BCS parcel ${parcelIdentifier} has ${String(parsedList.listedRecordCount)} rows; hard limit is ${String(MAX_LIST_ROWS_PER_FOLIO)}`,
           );
         }
-        if (parsedList.records.length > maxDetailPagesPerFolio) {
+        const detailRecords = roofOnly
+          ? parsedList.records.filter(isBrowardBcsRoofPermitCandidate)
+          : parsedList.records;
+        if (detailRecords.length > maxDetailPagesPerFolio) {
           throw new Error(
-            `Broward BCS parcel ${parcelIdentifier} needs ${String(parsedList.records.length)} detail requests; hard limit is ${String(maxDetailPagesPerFolio)}`,
+            `Broward BCS parcel ${parcelIdentifier} needs ${String(detailRecords.length)} detail requests; hard limit is ${String(maxDetailPagesPerFolio)}`,
           );
         }
         const cookies = await page.cookies();
@@ -1240,7 +1258,10 @@ export async function probeBrowardBcsPermits({
 
       /** @type {NormalizedBrowardBcsPermit[]} */
       const parcelRecords = [];
-      for (const [detailIndex, listRecord] of parsedList.records.entries()) {
+      const detailRecords = roofOnly
+        ? parsedList.records.filter(isBrowardBcsRoofPermitCandidate)
+        : parsedList.records;
+      for (const [detailIndex, listRecord] of detailRecords.entries()) {
         if (detailIndex > 0) await delay(detailDelayMs);
         const detailHtml = await fetchBrowardBcsDetailHtml(
           listRecord.sourceUrl,
@@ -1269,7 +1290,7 @@ export async function probeBrowardBcsPermits({
         listedRecordCount: parsedList.listedRecordCount,
         excludedPlanReviewCount: parsedList.excludedPlanReviewCount,
         normalizedRecordCount: parcelRecords.length,
-        detailPageCount: parsedList.records.length,
+        detailPageCount: detailRecords.length,
         elapsedMs: Date.now() - startedAt,
       });
       if (parcelIndex < parcelIds.length - 1) {

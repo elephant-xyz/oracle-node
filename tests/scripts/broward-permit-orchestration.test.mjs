@@ -361,6 +361,7 @@ describe("Broward supported-route permit ingest", () => {
       concurrency: 4,
       maxAttempts: 3,
       workDirectory: "downloads/broward/supported-permit-ingest",
+      scope: "all",
     });
     expect(() =>
       parseSupportedPermitOptions([
@@ -373,6 +374,14 @@ describe("Broward supported-route permit ingest", () => {
     expect(() =>
       parseSupportedPermitOptions(["--job-id", "unscoped-run"]),
     ).toThrow(/broward-permits-/u);
+    expect(
+      parseSupportedPermitOptions([
+        "--job-id",
+        "broward-permits-roofing-pilot-20260831",
+        "--scope",
+        "roofing",
+      ]).scope,
+    ).toBe("roofing");
   });
 
   it("does not let a waiting same-route item reserve a global worker", async () => {

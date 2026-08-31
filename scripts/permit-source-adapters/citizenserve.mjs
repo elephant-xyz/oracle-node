@@ -288,6 +288,24 @@ export function parseCitizenserveSearchResultsHtml(
 }
 
 /**
+ * Classify a Citizenserve result before requesting its detail page.
+ *
+ * @param {CitizenservePermitCandidate} candidate - Public search-result row.
+ * @returns {boolean} True only when type, class, or description says roofing.
+ */
+export function isCitizenserveRoofPermitCandidate(candidate) {
+  return /\broof(?:ing)?\b/iu.test(
+    [
+      candidate.recordType,
+      candidate.workClass,
+      candidate.description,
+    ]
+      .filter((value) => typeof value === "string")
+      .join(" "),
+  );
+}
+
+/**
  * Normalize a public Citizenserve detail page after reconciling its search row.
  *
  * The parser uses only the permit summary/core tab. Reviews, documents,
@@ -418,6 +436,7 @@ export function parseCitizenservePermitDetailHtml(html, context) {
  * @param {PermitAdapterCheckpoint} [params.checkpoint] - Optional resume state.
  * @param {(checkpoint: PermitAdapterCheckpoint) => Promise<void>} [params.onCheckpoint] - Durable state callback.
  * @param {number} [params.timeoutMs=60000] - Browser navigation/source timeout.
+ * @param {boolean} [params.roofOnly=false] - Detail only search rows explicitly marked roofing.
  * @returns {Promise<CitizenserveProbeResult>} Captures, evidence, and resume state.
  */
 export async function probeBoundedCitizenserve({
@@ -430,6 +449,7 @@ export async function probeBoundedCitizenserve({
   checkpoint: suppliedCheckpoint,
   onCheckpoint,
   timeoutMs = DEFAULT_TIMEOUT_MS,
+  roofOnly = false,
 }) {
   const config = validateCitizenserveConfig(rawConfig);
   const query = normalizePermitSearchQuery(rawQuery);
@@ -471,6 +491,9 @@ export async function probeBoundedCitizenserve({
         config,
         pageNumber,
       });
+      const candidates = roofOnly
+        ? parsed.candidates.filter(isCitizenserveRoofPermitCandidate)
+        : parsed.candidates;
       reportedTotal = Math.max(reportedTotal, parsed.reportedTotal);
       const totalPages =
         parsed.reportedTotal === 0
@@ -483,13 +506,13 @@ export async function probeBoundedCitizenserve({
         rangeStart: parsed.rangeStart,
         rangeEnd: parsed.rangeEnd,
         reportedTotal: parsed.reportedTotal,
-        permitCandidateCount: parsed.candidates.length,
+        permitCandidateCount: candidates.length,
         excludedJurisdictionCount: parsed.excludedJurisdictionCount,
       });
 
       if (!checkpoint.completedSearchPages.includes(pageNumber)) {
         let completedWholePage = true;
-        for (const candidate of parsed.candidates) {
+        for (const candidate of candidates) {
           if (checkpoint.completedDetailIds.includes(candidate.permitId)) {
             continue;
           }

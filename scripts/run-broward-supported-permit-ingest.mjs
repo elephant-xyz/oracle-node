@@ -46,6 +46,7 @@ const TERMINAL_STATUSES = new Set([
 
 /**
  * @typedef {"records" | "no_permits" | "truncated" | "failed" | "failed_exhausted"} SupportedPermitItemStatus
+ * @typedef {"all" | "roofing"} SupportedPermitScope
  *
  * @typedef {object} SupportedPermitOptions
  * @property {string} jobId - Stable operator-selected job identifier.
@@ -53,6 +54,7 @@ const TERMINAL_STATUSES = new Set([
  * @property {number} maxAttempts - Attempts before one source result is terminal.
  * @property {number | null} limit - Optional deterministic candidate cap.
  * @property {string} workDirectory - Private source artifact and checkpoint root.
+ * @property {SupportedPermitScope} scope - All bounded permits or roofing-only.
  *
  * @typedef {object} SupportedPermitCandidate
  * @property {string} folio - Exact private-in-process Broward folio.
@@ -121,7 +123,18 @@ export function parseSupportedPermitOptions(argv) {
   if (workDirectory.trim() === "") {
     throw new Error("--work-dir must not be empty");
   }
-  return { jobId, concurrency, maxAttempts, limit, workDirectory };
+  const scope = values.get("scope") ?? "all";
+  if (scope !== "all" && scope !== "roofing") {
+    throw new Error("--scope must be all or roofing");
+  }
+  return {
+    jobId,
+    concurrency,
+    maxAttempts,
+    limit,
+    workDirectory,
+    scope,
+  };
 }
 
 /**
@@ -332,16 +345,16 @@ async function probeAndLoadCandidate(candidate, options) {
   );
   await mkdir(itemDirectory, { recursive: true, mode: 0o700 });
   if (candidate.adapterKey === BROWARD_BCS_ADAPTER_KEY) {
-    return probeBcs(candidate, itemDirectory);
+    return probeBcs(candidate, itemDirectory, options);
   }
   if (candidate.adapterKey === BROWARD_ACCELA_ADAPTER_KEY) {
-    return probeAccela(candidate, itemDirectory);
+    return probeAccela(candidate, itemDirectory, options);
   }
   if (
     candidate.adapterKey === BROWARD_TYLER_CIVIC_ACCESS_ADAPTER_KEY ||
     candidate.adapterKey === BROWARD_CITIZENSERVE_ADAPTER_KEY
   ) {
-    return probeMunicipal(candidate, itemDirectory);
+    return probeMunicipal(candidate, itemDirectory, options);
   }
   return { status: "failed_exhausted", recordCount: 0, errorClass: "unsupported_adapter" };
 }
@@ -351,9 +364,10 @@ async function probeAndLoadCandidate(candidate, options) {
  *
  * @param {SupportedPermitCandidate} candidate - Routed BCS property.
  * @param {string} itemDirectory - Private hash-keyed working directory.
+ * @param {SupportedPermitOptions} options - Parent scope and run bounds.
  * @returns {Promise<ProbeOutcome>} Explicit BCS outcome.
  */
-async function probeBcs(candidate, itemDirectory) {
+async function probeBcs(candidate, itemDirectory, options) {
   const recordsPath = path.join(itemDirectory, "records.private.jsonl");
   const summaryPath = path.join(itemDirectory, "summary.private.json");
   const command = await runNode([
@@ -368,6 +382,7 @@ async function probeBcs(candidate, itemDirectory) {
     "1500",
     "--detail-delay-ms",
     "300",
+    ...roofScopeArgs(options),
   ]);
   if (command.exitCode !== 0) {
     return {
@@ -401,9 +416,10 @@ async function probeBcs(candidate, itemDirectory) {
  *
  * @param {SupportedPermitCandidate} candidate - Routed Accela property.
  * @param {string} itemDirectory - Private hash-keyed working directory.
+ * @param {SupportedPermitOptions} options - Parent scope and run bounds.
  * @returns {Promise<ProbeOutcome>} Explicit Accela outcome.
  */
-async function probeAccela(candidate, itemDirectory) {
+async function probeAccela(candidate, itemDirectory, options) {
   const recordsPath = path.join(itemDirectory, "records.private.jsonl");
   const summaryPath = path.join(itemDirectory, "summary.private.json");
   const command = await runNode([
@@ -426,6 +442,7 @@ async function probeAccela(candidate, itemDirectory) {
     "1500",
     "--detail-delay-ms",
     "300",
+    ...roofScopeArgs(options),
   ]);
   if (command.exitCode !== 0) {
     return {
@@ -464,9 +481,10 @@ async function probeAccela(candidate, itemDirectory) {
  *
  * @param {SupportedPermitCandidate} candidate - Routed municipal property.
  * @param {string} itemDirectory - Private hash-keyed working directory.
+ * @param {SupportedPermitOptions} options - Parent scope and run bounds.
  * @returns {Promise<ProbeOutcome>} Explicit municipal outcome.
  */
-async function probeMunicipal(candidate, itemDirectory) {
+async function probeMunicipal(candidate, itemDirectory, options) {
   const recordsPath = path.join(itemDirectory, "records.private.jsonl");
   const summaryPath = path.join(itemDirectory, "summary.json");
   const command = await runNode([
@@ -485,6 +503,7 @@ async function probeMunicipal(candidate, itemDirectory) {
     "1500",
     "--detail-delay-ms",
     "500",
+    ...roofScopeArgs(options),
   ]);
   if (command.exitCode !== 0) {
     return {
@@ -639,6 +658,7 @@ async function ensureControlTables(client) {
        job_id text PRIMARY KEY,
        config_signature text NOT NULL,
        registry_version text NOT NULL,
+       scope text NOT NULL DEFAULT 'all' CHECK (scope IN ('all','roofing')),
        candidate_count integer NOT NULL,
        concurrency integer NOT NULL,
        max_attempts integer NOT NULL,
@@ -650,6 +670,11 @@ async function ensureControlTables(client) {
        heartbeat_at timestamptz NOT NULL DEFAULT now(),
        completed_at timestamptz
      )`,
+  );
+  await client.query(
+    `ALTER TABLE ${CONTROL_SCHEMA}.broward_supported_permit_runs
+     ADD COLUMN IF NOT EXISTS scope text NOT NULL DEFAULT 'all'
+     CHECK (scope IN ('all','roofing'))`,
   );
   await client.query(
     `CREATE TABLE IF NOT EXISTS ${CONTROL_SCHEMA}.broward_supported_permit_items (
@@ -682,8 +707,8 @@ async function registerRun(client, options, signature, candidateCount) {
   await client.query(
     `INSERT INTO ${CONTROL_SCHEMA}.broward_supported_permit_runs (
        job_id, config_signature, registry_version, candidate_count,
-       concurrency, max_attempts, phase
-     ) VALUES ($1,$2,$3,$4,$5,$6,'running')
+       concurrency, max_attempts, scope, phase
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7,'running')
      ON CONFLICT (job_id) DO NOTHING`,
     [
       options.jobId,
@@ -692,10 +717,11 @@ async function registerRun(client, options, signature, candidateCount) {
       candidateCount,
       options.concurrency,
       options.maxAttempts,
+      options.scope,
     ],
   );
   const result = await client.query(
-    `SELECT config_signature,candidate_count,concurrency,max_attempts
+    `SELECT config_signature,candidate_count,concurrency,max_attempts,scope
      FROM ${CONTROL_SCHEMA}.broward_supported_permit_runs WHERE job_id=$1`,
     [options.jobId],
   );
@@ -705,6 +731,7 @@ async function registerRun(client, options, signature, candidateCount) {
     Number(row.candidate_count) !== candidateCount ||
     Number(row.concurrency) !== options.concurrency ||
     Number(row.max_attempts) !== options.maxAttempts
+    || row.scope !== options.scope
   ) {
     throw new Error("Existing supported permit run config does not match");
   }
@@ -886,6 +913,9 @@ function candidateSignature(candidates, options) {
   const digest = createHash("sha256");
   digest.update(BROWARD_PERMIT_REGISTRY_VERSION);
   digest.update(`\0${String(options.limit)}\0${String(options.concurrency)}\0`);
+  if (options.scope !== "all") {
+    digest.update(`scope:${options.scope}\0`);
+  }
   for (const candidate of candidates) {
     digest.update(
       `${candidate.parcelHash}:${candidate.jurisdictionKey}:${candidate.adapterKey}\n`,
@@ -914,6 +944,16 @@ function hashFolio(folio) {
  */
 function registryKeyToMunicipalKey(key) {
   return key.replaceAll("-", "_");
+}
+
+/**
+ * Build the child CLI scope flag without changing all-permit command identity.
+ *
+ * @param {SupportedPermitOptions} options - Parent run configuration.
+ * @returns {readonly string[]} Roofing-only flag or an empty all-permit list.
+ */
+function roofScopeArgs(options) {
+  return options.scope === "roofing" ? ["--roof-only"] : [];
 }
 
 /**

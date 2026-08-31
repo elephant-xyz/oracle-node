@@ -760,6 +760,7 @@ export function normalizeTylerPermitDetailResponse(payload, context) {
  * @param {(checkpoint: PermitAdapterCheckpoint) => Promise<void>} [params.onCheckpoint] - Durable state callback after each detail/page.
  * @param {number} [params.navigationTimeoutMs=45000] - Public route timeout.
  * @param {number} [params.responseTimeoutMs=45000] - Public API response timeout.
+ * @param {boolean} [params.roofOnly=false] - Detail only search rows explicitly marked roofing.
  * @returns {Promise<TylerBoundedProbeResult>} Captures, provenance, and resume state.
  */
 export async function probeBoundedTylerCivicAccess({
@@ -773,6 +774,7 @@ export async function probeBoundedTylerCivicAccess({
   onCheckpoint,
   navigationTimeoutMs = DEFAULT_NAVIGATION_TIMEOUT_MS,
   responseTimeoutMs = DEFAULT_SEARCH_TIMEOUT_MS,
+  roofOnly = false,
 }) {
   const config = validateBoundedTylerConfig(rawConfig);
   const query = normalizePermitSearchQuery(rawQuery);
@@ -844,7 +846,10 @@ export async function probeBoundedTylerCivicAccess({
       reportedTotalPages = Math.max(reportedTotalPages, totalPages);
       paginationTruncated ||= totalPages > maxPages;
 
-      const candidates = readTylerPermitCandidates(result.EntityResults);
+      const allCandidates = readTylerPermitCandidates(result.EntityResults);
+      const candidates = roofOnly
+        ? allCandidates.filter(isTylerRoofPermitCandidate)
+        : allCandidates;
       observations.push({
         pageNumber,
         httpStatus,
@@ -1078,6 +1083,25 @@ function readTylerPermitCandidates(entities) {
     candidates.push({ caseId, permitNumber, entity: value });
   }
   return candidates;
+}
+
+/**
+ * Classify a Tyler search candidate before opening its detail API route.
+ *
+ * @param {TylerPermitCandidate} candidate - Public Tyler search entity.
+ * @returns {boolean} True only when type, work class, or description says roofing.
+ */
+export function isTylerRoofPermitCandidate(candidate) {
+  return /\broof(?:ing)?\b/iu.test(
+    [
+      candidate.entity.CaseType,
+      candidate.entity.CaseWorkclass,
+      candidate.entity.Description,
+      candidate.entity.ProjectName,
+    ]
+      .filter((value) => typeof value === "string")
+      .join(" "),
+  );
 }
 
 /**

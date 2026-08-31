@@ -16,6 +16,7 @@ import {
   extractBrowardAccelaDirectDetailLink,
   extractBrowardAccelaPermitDetail,
   extractBrowardAccelaPermitLinks,
+  isBrowardAccelaRoofPermitCandidate,
   normalizeBrowardPermitFolio,
   parseBrowardAccelaMoreDetails,
   readBrowardAccelaCheckpoint,
@@ -97,6 +98,32 @@ describe("Broward jurisdiction-specific Accela adapters", () => {
     expect(() => readBrowardAccelaSource("lee")).toThrow(
       "Unknown Broward Accela jurisdiction",
     );
+  });
+
+  it("classifies roofing from Accela result-list fields before detail", () => {
+    const base = {
+      recordNumber: "B24-00001",
+      url: "https://example.test/permit",
+      address: null,
+      description: null,
+      status: "Active",
+      recordType: "Building",
+      sourceSearchKey: "test",
+      sourcePage: 1,
+    };
+    expect(
+      isBrowardAccelaRoofPermitCandidate({
+        ...base,
+        recordNumber: "STRUC-ROOF-25-000925",
+      }),
+    ).toBe(true);
+    expect(
+      isBrowardAccelaRoofPermitCandidate({
+        ...base,
+        description: "Re-roof existing residence",
+      }),
+    ).toBe(true);
+    expect(isBrowardAccelaRoofPermitCandidate(base)).toBe(false);
   });
 
   it("preserves exact 12-character alphanumeric Broward folios without Lee STRAP normalization", () => {
@@ -448,7 +475,9 @@ describe("Broward jurisdiction-specific Accela adapters", () => {
       isCuratedPilot: false,
       maxPages: 3,
       maxDetails: 4,
+      roofOnly: false,
     });
+    expect(parseOptions(["--pilot", "--roof-only"])?.roofOnly).toBe(true);
     expect(() =>
       parseOptions([
         "--target=hollywood:514111160200",

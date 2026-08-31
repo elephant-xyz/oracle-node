@@ -33,6 +33,7 @@ import { probeBoundedTylerCivicAccess } from "./permit-source-adapters/tyler-civ
  * @property {number} maxDetails - Detail-page ceiling.
  * @property {number} searchDelayMs - Delay between source search pages.
  * @property {number} detailDelayMs - Delay between source detail pages.
+ * @property {boolean} roofOnly - Whether result rows must explicitly identify roofing.
  */
 
 const USAGE = `Usage:
@@ -40,6 +41,7 @@ const USAGE = `Usage:
     --jurisdiction <key> (--folio <12-character-id> | --address <situs>) \\
     --output-dir <local-directory> [--max-pages 1] [--max-details 3] \\
     [--search-delay-ms 1500] [--detail-delay-ms 500]
+    [--roof-only]
 
 Jurisdictions:
 ${Object.values(BROWARD_PERMIT_JURISDICTIONS)
@@ -54,6 +56,7 @@ Safety:
   - At most 3 result pages and 10 details, serialized and rate-delayed.
   - Local mode-0600 checkpoint, private JSONL, and summary files only.
   - No AWS, queues, databases, publication, credentials, or login attempts.
+  - --roof-only filters result rows before detail requests.
 `;
 
 /**
@@ -110,10 +113,15 @@ export function parseOptions(args) {
   let maxDetails = 3;
   let searchDelayMs = 1_500;
   let detailDelayMs = 500;
+  let roofOnly = false;
 
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index];
     if (argument === "--help" || argument === "-h") return null;
+    if (argument === "--roof-only") {
+      roofOnly = true;
+      continue;
+    }
 
     if (argument === "--jurisdiction") {
       const parsed = readFollowingValue(args, index, argument);
@@ -216,6 +224,7 @@ export function parseOptions(args) {
     maxDetails,
     searchDelayMs,
     detailDelayMs,
+    roofOnly,
   };
 }
 
@@ -249,6 +258,7 @@ export async function runProbe(options) {
     maxDetails: options.maxDetails,
     searchDelayMs: options.searchDelayMs,
     detailDelayMs: options.detailDelayMs,
+    roofOnly: options.roofOnly,
     checkpoint,
     onCheckpoint: async (
       /** @type {import("./permit-source-adapters/bounded-permit-common.mjs").PermitAdapterCheckpoint} */ nextCheckpoint,
@@ -284,6 +294,7 @@ export async function runProbe(options) {
     officialSourceUrl: config.officialSourceUrl,
     portalBaseUrl: config.portalBaseUrl,
     coverageNote: config.coverageNote,
+    roofOnly: options.roofOnly,
     query: options.query,
     limits: {
       maxPages: options.maxPages,
