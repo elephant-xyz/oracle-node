@@ -516,6 +516,33 @@ function readRecordNumber(value) {
 }
 
 /**
+ * Construct an official Accela detail route from a complete hidden RecordId.
+ *
+ * Some temporary/in-process records are included in Accela's reported total
+ * but are rendered without an anchor. Their row still carries the complete
+ * three-part cap identity in `input#RecordId`; retaining that identity keeps
+ * list reconciliation complete without guessing from the permit number.
+ *
+ * @param {string} recordId - Three-part Accela cap identity.
+ * @param {BrowardAccelaSource} source - Jurisdiction source configuration.
+ * @returns {string | null} Official detail route or null for malformed identity.
+ */
+export function buildBrowardAccelaDetailUrlFromRecordId(recordId, source) {
+  const match =
+    /^([A-Z0-9]+)-([A-Z0-9]+)-([A-Z0-9]+)$/iu.exec(recordId.trim());
+  if (match === null) return null;
+  const url = new URL("./CapDetail.aspx", source.portalUrl);
+  url.searchParams.set("Module", source.module);
+  url.searchParams.set("TabName", source.module);
+  url.searchParams.set("capID1", match[1] ?? "");
+  url.searchParams.set("capID2", match[2] ?? "");
+  url.searchParams.set("capID3", match[3] ?? "");
+  url.searchParams.set("agencyCode", source.agencyCode);
+  url.searchParams.set("IsToShowInspection", "");
+  return url.toString();
+}
+
+/**
  * Return true when a candidate CapDetail link belongs to the detail page's
  * related-record tree instead of the scoped search results.
  *
@@ -598,6 +625,64 @@ export function extractBrowardAccelaPermitLinks({
       sourceSearchKey: searchKey,
       sourcePage: pageNumber,
     });
+  });
+
+  const linkedRecordNumbers = new Set(
+    links.map((link) => link.recordNumber.toUpperCase()),
+  );
+  $("[id*='gdvPermitList'] tr").each((_, element) => {
+    const row = $(element);
+    if (row.find("a[href*='CapDetail.aspx']").length > 0) return;
+    const hiddenRecordId = collapseText(
+      row.find("input[id='RecordId']").first().attr("value"),
+    );
+    const url = buildBrowardAccelaDetailUrlFromRecordId(
+      hiddenRecordId,
+      source,
+    );
+    const recordNumber = readRecordNumber(
+      row
+        .find("[id$='_lblPermitNumber'],[id$='_lblPermitNumber1']")
+        .first()
+        .text(),
+    );
+    if (
+      url === null ||
+      recordNumber === null ||
+      linkedRecordNumbers.has(recordNumber.toUpperCase())
+    ) {
+      return;
+    }
+    const cells = row
+      .find("td")
+      .toArray()
+      .map((cell) => collapseText($(cell).text()));
+    const headers = row
+      .closest("table")
+      .find("th")
+      .toArray()
+      .map((header) => collapseText($(header).text()).toLowerCase());
+    /**
+     * @param {readonly string[]} labels - Accepted lowercase headers.
+     * @param {number} fallbackIndex - Standard grid fallback index.
+     * @returns {string | null} Matching list value.
+     */
+    const cellByHeader = (labels, fallbackIndex) => {
+      const index = headers.findIndex((header) => labels.includes(header));
+      const value = cells[index >= 0 ? index : fallbackIndex];
+      return value === undefined || value.length === 0 ? null : value;
+    };
+    links.push({
+      recordNumber,
+      url,
+      address: cellByHeader(["address", "work location"], 5),
+      description: cellByHeader(["description", "project name"], 4),
+      status: cellByHeader(["status", "record status"], 7),
+      recordType: cellByHeader(["record type", "type"], 3),
+      sourceSearchKey: searchKey,
+      sourcePage: pageNumber,
+    });
+    linkedRecordNumbers.add(recordNumber.toUpperCase());
   });
 
   return links;

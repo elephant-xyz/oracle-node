@@ -8,6 +8,7 @@ import {
   BROWARD_ACCELA_SOURCES,
   BrowardAccelaSourceError,
   buildBrowardAccelaDateWindowKey,
+  buildBrowardAccelaDetailUrlFromRecordId,
   buildBrowardAccelaPermitStem,
   buildBrowardAccelaSearchKey,
   classifyBrowardAccelaPage,
@@ -229,6 +230,49 @@ describe("Broward jurisdiction-specific Accela adapters", () => {
       },
     ]);
     expect(countBrowardAccelaExcludedModuleLinks({ html, source })).toBe(1);
+  });
+
+  it("preserves reported temporary rows that have a hidden RecordId but no detail anchor", () => {
+    const html = `
+      <div>Showing 1-1 of 1</div>
+      <table id="ctl00_PlaceHolderMain_dgvPermitList_gdvPermitList">
+        <thead><tr>
+          <th></th><th>Date</th><th>Record Number</th><th>Record Type</th>
+          <th>Project Name</th><th>Address</th><th>Expiration Date</th>
+          <th>Status</th>
+        </tr></thead>
+        <tbody><tr>
+          <td></td><td>08/31/2026</td>
+          <td><span id="row_lblPermitNumber">26TMP-017930</span>
+            <input type="hidden" id="RecordId" value="26EST-00000-17950">
+          </td>
+          <td>Commercial Mechanical Permit</td><td>Temporary intake</td>
+          <td>2700 HOLLYWOOD BLVD</td><td></td><td></td>
+        </tr></tbody>
+      </table>`;
+    const source = BROWARD_ACCELA_SOURCES.hollywood;
+    expect(
+      buildBrowardAccelaDetailUrlFromRecordId(
+        "26EST-00000-17950",
+        source,
+      ),
+    ).toContain("capID3=17950");
+    expect(
+      extractBrowardAccelaPermitLinks({
+        html,
+        source,
+        searchKey: "hollywood:date:20260830_20260831",
+        pageNumber: 1,
+      }),
+    ).toMatchObject([
+      {
+        recordNumber: "26TMP-017930",
+        recordType: "Commercial Mechanical Permit",
+        description: "Temporary intake",
+        address: "2700 HOLLYWOOD BLVD",
+        sourcePage: 1,
+      },
+    ]);
   });
 
   it("distinguishes explicit no records from source errors and unknown pages", () => {
