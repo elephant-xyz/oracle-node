@@ -224,12 +224,16 @@ node scripts/run-pinellas-local-ingest.mjs \
   --all \
   --skip-validate \
   --skip-existing \
-  --concurrency 2 \
-  --scripts /tmp/Counties-trasform-scripts/pinellas/scripts \
+  --concurrency 4 \
+  --fetch-concurrency 8 \
+  --fetch-timeout-ms 12000 \
+  --scripts downloads/Counties-trasform-scripts/pinellas/scripts \
   --output downloads/pinellas/local-ingest
 ```
 
-The ingest GETs print HTML with a Chrome UA (no `elephant-cli prepare`), runs the Pinellas scripts from `feat/pinellas-print-html-fallbacks`, and writes `downloads/pinellas/local-ingest/<STRAP>/transformed.zip`. Restart-safe: existing zips are skipped. Progress is `status.json`. Lexicon validate is skipped for the full roll (already proven 50/50 on the pilot).
+The ingest GETs print HTML with a Chrome UA (12s timeout, 8 in-flight fetches), runs Pinellas scripts in **persistent workers** (no per-parcel Node spawn), and writes `downloads/pinellas/local-ingest/<STRAP>/transformed.zip`. Restart-safe: existing zips are skipped in a pre-scan. Progress is `status.json`. Lexicon validate is skipped for the full roll (already proven 50/50 on the pilot).
+
+Hung print GETs previously stalled the run for hours; `--fetch-timeout-ms` aborts those. Do not jump fetch concurrency past 8 without watching for PCPAO 403s.
 
 When the roll is complete:
 
