@@ -14,7 +14,7 @@ municipal custodian or public-record route is recorded instead.
 | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Appraisal                | [Broward County Property Appraiser](https://web.bcpa.net/BcpaClient/#/Record-Search) and its `search.aspx/getParcelInformation` API                                                        | Public JSON; pilot certified 50/50                                                                                                                                                             |
 | Parcel geometry          | [BCPA ArcGIS Parcels layer](https://gisweb-adapters.bcpa.net/arcgis/rest/services/BCPA_EXTERNAL_JAN26/MapServer/16)                                                                        | Public ArcGIS JSON; official layer type is `esriGeometryPolygon`; 556,178 features and 534,309 unique folios                                                                                   |
-| Building permits         | Municipal sources below; [Broward Building Official Contacts](https://www.broward.org/CodeAppeals/Pages/BuildingContacts.aspx) identifies the official custodians                          | Fragmented across 31 municipalities plus the unincorporated Broward Municipal Services District                                                                                                |
+| Building permits         | Municipal sources below; [Broward Building Official Contacts](https://www.broward.org/CodeAppeals/Pages/BuildingContacts.aspx) identifies the official custodians                          | Fragmented across 31 municipalities plus BMSD; use certified municipal bulk feeds first, including the 204,760-row Fort Lauderdale FeatureServer                                               |
 | Florida companies        | [Florida Department of State Division of Corporations](https://dos.fl.gov/sunbiz/) and [quarterly corporate data](https://dos.fl.gov/sunbiz/other-services/data-downloads/quarterly-data/) | Official statewide bulk files; reuse the existing Sunbiz fixed-width loader with Broward ZIP scope                                                                                             |
 | Business reputation      | [BBB API](https://developer.bbb.org/) and [API terms](https://developer.bbb.org/terms-of-use)                                                                                              | BBB is not a government registry. API access requires approval; complaint/review data is internal-use-only. No public Broward bulk source is available, and site aggregation is not authorized |
 | Tax collector (deferred) | [Broward County Tax Collector](https://browardtax.org/)                                                                                                                                    | Official source identified; not part of the accepted appraisal/permit/Sunbiz/BBB ingest scope                                                                                                  |
@@ -40,6 +40,11 @@ Common official evidence:
   agency/module routing, exact alphanumeric folios, pagination/detail capture,
   atomic resume state, explicit historical boundaries, and fail-closed
   records/no-records/error outcomes for the five Accela jurisdictions below.
+- The
+  [bulk-first permit runner](./broward-bulk-permit-ingest.md) snapshots the
+  official Fort Lauderdale FeatureServer by exact object IDs, uses complete
+  Accela `CASEKEY` identity, preserves private raw artifacts, and commits
+  resumable Neon chunks without duplicating existing LauderBuild portal rows.
 - The local-only
   [municipal vendor-family prototypes](./broward-municipal-permit-prototypes.md)
   document reusable parsing/checkpoint contracts, bounded official-site
@@ -66,7 +71,7 @@ Common official evidence:
 | Dania Beach                                          | [City Tyler eSuite](https://cityofdaniabeachfl.nwerp.tylerapp.com/nwprod/eSuite.Permits/)                                                                                     | Bounded parser/checkpoint prototype; anonymous tenant transport is not implemented                                                        |
 | Davie                                                | [Town eSuite Permits](https://esuite.davie-fl.gov/eSuite.Permits/AdvancedSearchPage/AdvancedSearch.aspx)                                                                      | Bounded parser/checkpoint prototype; anonymous tenant transport is not implemented, and new 2026 submissions use a login-gated OAS system |
 | Deerfield Beach                                      | [Legacy Gov-Easy search](https://apps.gov-easy.com/Home/PermitInspection/Search?clientId=dce877e0-e162-4827-a60d-7249ec4e8fe2)                                                | Current GeoCivix is `login_required`; historical Gov-Easy is `captcha_required`; both are explicit no-request outcomes                    |
-| Fort Lauderdale                                      | [LauderBuild](https://aca3.accela.com/FTL/)                                                                                                                                   | Local bounded `Permits` adapter certified; one 7-detail probe completed, while a separate 50-result folio hit the 20-detail safety cap    |
+| Fort Lauderdale                                      | [LauderBuild](https://aca3.accela.com/FTL/) and [official Building Permits FeatureServer](https://gis.fortlauderdale.gov/server/rest/services/BuildingPermits/FeatureServer/0) | Bulk-first runner certified against 204,760 source rows; 100-row capture and Neon pilots reconciled, while Accela remains the detail fallback |
 | Hallandale Beach                                     | [City Building Division FAQ](https://cohb.org/Faq.aspx?QID=75)                                                                                                                | Bounded Tyler adapter implemented; earliest migrated history and a matched live pilot control remain unverified                           |
 | Hillsboro Beach                                      | [Town CommunityCore portal](https://app.communitycore.com/app/public-portal/c98c7b46-2cba-4ba2-bbd5-7a76966f42dd)                                                             | `login_required`: account-required status, review, fee, and inspection access is skipped                                                  |
 | Hollywood                                            | [City permit-status search](https://apps.hollywoodfl.org/building/PermitStatus.aspx)                                                                                          | Current Accela adapter certified separately from the 1988-present legacy address source; older records use City archives                  |
@@ -97,7 +102,8 @@ Common official evidence:
 Every requested category now has either a first-party source or a documented
 official custodian/unavailability route. This matrix does **not** claim that
 all 32 permit jurisdictions have ingestion adapters. Source discovery is
-closed, and all jurisdictions have an explicit route. Fifteen current routes
+closed, and all jurisdictions have an explicit route. Fort Lauderdale now has
+an official bulk-first path; fifteen current routes
 point to bounded local adapters: two BCS, five Accela, four Tyler, and four
 Citizenserve. The other 17 are nine transport-unavailable prototypes/routes,
 four login-required routes, two CAPTCHA-required routes, and two

@@ -26,6 +26,21 @@ explicit `1997-01-01` boundary. Plantation retains its portal's
 deduplicate the legacy source because no official Accela/BCLA migration date
 was certified.
 
+## Fort Lauderdale bulk-first override
+
+Fort Lauderdale now uses its official
+[Building Permits FeatureServer](https://gis.fortlauderdale.gov/server/rest/services/BuildingPermits/FeatureServer/0)
+for complete list discovery. The layer reported 204,760 rows on 2026-08-31 and
+includes BCPA parcel IDs, contractor/license fields, statuses, dates, and
+costs. See [the bulk ingest runbook](./broward-bulk-permit-ingest.md).
+
+The ArcGIS `PERMITID` display is truncated and repeated, so it is not a safe
+key. The bulk runner keys records by complete Accela `CASEKEY` and matches its
+three components to existing portal `capID1/capID2/capID3` URLs. The browser
+adapter remains useful for detail/inspection enrichment and history outside
+the certified bulk layer; it is no longer the primary Fort Lauderdale
+discovery path.
+
 ## Search and record contract
 
 For each target, the local adapter:

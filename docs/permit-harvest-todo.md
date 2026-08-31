@@ -1,5 +1,30 @@
 # Permit Harvest TODO
 
+## Broward County bulk-first permits
+
+- [x] Preserve the paused property-first run and its 3,314 durable outcomes.
+- [x] Verify the Fort Lauderdale official Building Permits FeatureServer.
+- [x] Profile the live source: 204,760 rows; parcel, contractor, cost, status,
+  and date fields; 16,777 roof-like rows by source-text query.
+- [x] Implement object-ID snapshot capture, private raw checksums, deterministic
+  normalization, and durable Neon chunk receipts.
+- [x] Detect truncated/repeated `PERMITID` values in the live pilot and switch
+  identity to complete Accela `CASEKEY`.
+- [x] Reconcile a 100-row capture pilot with zero invalid or duplicate
+  `CASEKEY` records.
+- [x] Commit a 100-row Neon pilot: 76 exact BCPA matches and 24 unmatched
+  records retained; 1,603 prior portal payloads preserved.
+- [ ] Let `broward-permits-ftl-bulk-full-20260831` drain and reconcile all
+  204,760 source rows.
+- [ ] Generalize the bulk runner to the Broward HCED/POSSE feed and Miramar
+  FY2019/FY2020 archives.
+- [ ] Implement anonymous vendor-wide date-window pagination for remaining
+  Accela/Tyler/Citizenserve sources after per-host pressure tests.
+- [ ] Obtain official bulk/custodian exports for routes that do not support
+  anonymous complete enumeration.
+- [ ] Keep publication disabled until every source receipt and jurisdictional
+  coverage boundary reconciles.
+
 ## Lee County all-permits harvest
 
 - [x] Confirm usable elephant-cli GitHub ref for Browser Flow v2 / Transform v2.
