@@ -890,7 +890,10 @@ async function processWithConcurrency(items, concurrency, handler) {
   for (const item of items) {
     const task = Promise.resolve().then(() => handler(item));
     executing.add(task);
-    void task.finally(() => executing.delete(task));
+    void task.then(
+      () => executing.delete(task),
+      () => executing.delete(task),
+    );
     if (executing.size >= concurrency) await Promise.race(executing);
   }
   await Promise.all(executing);
