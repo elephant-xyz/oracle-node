@@ -104,6 +104,34 @@ describe("Broward permit list Neon loading", () => {
     });
   });
 
+  it("loads official Accela CSV inventory with the same detail key", () => {
+    const normalized = normalizePermitListRecord({
+      schemaVersion: "oracle-node.broward-accela-csv-list.v1",
+      sourceSystem: "broward_hollywood_accela_permits",
+      jurisdiction: "Hollywood",
+      recordNumber: "STRUC-ROOF-25-000185",
+      sourceUrl:
+        "https://aca-prod.accela.com/HOLLYWOOD/Cap/CapDetail.aspx?altId=STRUC-ROOF-25-000185",
+      recordKey:
+        "broward_hollywood_accela_permits:permit:STRUC-ROOF-25-000185",
+      recordDate: "2025-01-16",
+      recordType: "Roofing Permit",
+      projectName: null,
+      address: "6751 HARDING ST",
+      expirationDate: "2025-09-02",
+      status: "Closed - Complete",
+      isRoofPermit: true,
+      sourceWindowKey: "hollywood:date:20250116_20250116",
+    });
+    expect(normalized).toMatchObject({
+      sourceRecordKey:
+        "broward_hollywood_accela_permits:permit:STRUC-ROOF-25-000185",
+      applicationDate: null,
+      expirationDate: "2025-09-02",
+      isRoofPermit: true,
+    });
+  });
+
   it("maps Tyler CaseId identity and exact Broward folio parents", () => {
     const normalized = normalizePermitListRecord(tylerListRecord());
     expect(normalized).toMatchObject({

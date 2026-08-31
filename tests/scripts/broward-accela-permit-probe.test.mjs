@@ -20,6 +20,7 @@ import {
   extractBrowardAccelaPermitLinks,
   isBrowardAccelaRoofPermitCandidate,
   normalizeBrowardPermitFolio,
+  parseBrowardAccelaCsvExport,
   parseBrowardAccelaMoreDetails,
   readBrowardAccelaCheckpoint,
   readBrowardAccelaSource,
@@ -35,6 +36,11 @@ import {
   runBrowardAccelaDateWindows,
   splitBrowardAccelaDateWindow,
 } from "../../scripts/run-broward-accela-date-windows.mjs";
+import {
+  createAccelaCsvDateWindows,
+  parseAccelaCsvWindowOptions,
+  runAccelaCsvWindows,
+} from "../../scripts/run-broward-accela-csv-windows.mjs";
 
 const fixtureDirectory = new URL(
   "../fixtures/broward-accela/",
@@ -770,5 +776,119 @@ describe("Broward Accela vendor-wide date windows", () => {
       { startDate: "2005-11-17", endDate: "2005-11-17" },
       { startDate: "2005-11-18", endDate: "2005-11-18" },
     ]);
+  });
+});
+
+describe("Broward official Accela CSV exports", () => {
+  it("parses full exported record numbers and stable detail-compatible keys", () => {
+    const records = parseBrowardAccelaCsvExport(
+      [
+        '"Date","Record Number","Record Type","Project Name","Address","Expiration Date","Status",',
+        '"01/16/2025","STRUC-ROOF-25-000185","Roofing Permit",,"6751 Harding St","09/02/2025","Closed - Complete",',
+        '"01/16/2025","RES-ELEC-25-000065","Residential Electrical Permit",,"4524 Jackson St","11/17/2025","Closed - Complete",',
+      ].join("\n"),
+      BROWARD_ACCELA_SOURCES.hollywood,
+      "2025-01-16",
+      "2025-01-16",
+    );
+    expect(records).toHaveLength(2);
+    expect(records[1]).toMatchObject({
+      recordNumber: "STRUC-ROOF-25-000185",
+      recordKey:
+        "broward_hollywood_accela_permits:permit:STRUC-ROOF-25-000185",
+      recordDate: "2025-01-16",
+      expirationDate: "2025-09-02",
+      isRoofPermit: true,
+      sourceWindowKey: "hollywood:date:20250116_20250116",
+    });
+    expect(records[1]?.sourceUrl).toContain(
+      "altId=STRUC-ROOF-25-000185",
+    );
+  });
+
+  it("creates deterministic CSV windows and checkpointed inventory", async () => {
+    const outputDirectory = await mkdtemp(
+      join(tmpdir(), "broward-accela-csv-window-"),
+    );
+    temporaryDirectories.push(outputDirectory);
+    expect(
+      createAccelaCsvDateWindows("2025-01-01", "2025-01-03", 2),
+    ).toEqual([
+      { startDate: "2025-01-01", endDate: "2025-01-02" },
+      { startDate: "2025-01-03", endDate: "2025-01-03" },
+    ]);
+    expect(
+      parseAccelaCsvWindowOptions([
+        "--source",
+        "hollywood",
+        "--start-date",
+        "2025-01-01",
+        "--end-date",
+        "2025-01-03",
+        "--max-windows",
+        "1",
+      ]),
+    ).toMatchObject({
+      sourceKey: "hollywood",
+      windowDays: 30,
+      maxWindows: 1,
+    });
+    const options = {
+      sourceKey: "hollywood",
+      startDate: "2025-01-01",
+      endDate: "2025-01-03",
+      windowDays: 2,
+      delayMs: 1_000,
+      maxWindows: null,
+      outputDirectory,
+    };
+    const summary = await runAccelaCsvWindows(options, {
+      createBrowser: async () => ({
+        close: async () => undefined,
+      }),
+      captureWindow: async ({
+        source,
+        startDate,
+        endDate,
+      }) => {
+        const [record] = parseBrowardAccelaCsvExport(
+          [
+            '"Date","Record Number","Record Type","Project Name","Address","Expiration Date","Status",',
+            `"01/01/2025","B-${startDate.replaceAll("-", "")}","Building Permit",,"100 TEST AVE",,"Open",`,
+          ].join("\n"),
+          source,
+          startDate,
+          endDate,
+        );
+        return {
+          startDate,
+          endDate,
+          sourceWindowKey: record.sourceWindowKey,
+          displayedTotal: 100,
+          displayedTotalCapped: true,
+          records: [record],
+          rawCsv: "fixture",
+          rawSearchHtml: "<html>fixture</html>",
+        };
+      },
+      wait: async () => undefined,
+      now: () => "2026-08-31T19:00:00.000Z",
+    });
+    expect(summary).toMatchObject({
+      status: "complete",
+      completedWindowCount: 2,
+      uniquePermitCount: 2,
+      cappedDisplayedTotalWindowCount: 2,
+    });
+    expect(
+      (
+        await readFile(
+          join(outputDirectory, "normalized-list.private.jsonl"),
+          "utf8",
+        )
+      )
+        .trim()
+        .split("\n"),
+    ).toHaveLength(2);
   });
 });

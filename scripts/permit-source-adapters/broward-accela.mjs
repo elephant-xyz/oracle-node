@@ -4,6 +4,7 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
 import * as cheerio from "cheerio";
+import { parse as parseCsv } from "csv-parse/sync";
 
 import { normalizeBrowardFolio } from "../broward-folio.mjs";
 import {
@@ -111,6 +112,34 @@ import {
  * @property {number | null} reportedTotal - Source-reported total when visible.
  * @property {number} excludedNonPermitCount - Explicit cross-module rows.
  * @property {boolean} truncatedForSplit - Whether a dense multi-day window intentionally stopped after page one.
+ */
+
+/**
+ * @typedef {object} BrowardAccelaCsvPermitRecord
+ * @property {"oracle-node.broward-accela-csv-list.v1"} schemaVersion - CSV list contract.
+ * @property {string} sourceSystem - Jurisdiction source identity.
+ * @property {string} jurisdiction - Issuing jurisdiction.
+ * @property {string} recordNumber - Full exported permit number.
+ * @property {string} sourceUrl - Official Accela detail lookup.
+ * @property {string} recordKey - Detail-compatible source key.
+ * @property {string | null} recordDate - Exported ISO record date.
+ * @property {string | null} recordType - Exported record type.
+ * @property {string | null} projectName - Exported project name.
+ * @property {string | null} address - Exported work address.
+ * @property {string | null} expirationDate - Exported ISO expiration date.
+ * @property {string | null} status - Exported status.
+ * @property {boolean} isRoofPermit - Conservative list classification.
+ * @property {string} sourceWindowKey - Inclusive date-window identity.
+ *
+ * @typedef {object} BrowardAccelaCsvWindowResult
+ * @property {string} startDate - Inclusive ISO start.
+ * @property {string} endDate - Inclusive ISO end.
+ * @property {string} sourceWindowKey - Stable source/window identity.
+ * @property {number | null} displayedTotal - Untrusted/capped UI total.
+ * @property {boolean} displayedTotalCapped - Whether UI total equals known cap 100.
+ * @property {readonly BrowardAccelaCsvPermitRecord[]} records - Exported unique records.
+ * @property {string} rawCsv - Exact official export bytes as UTF-8.
+ * @property {string} rawSearchHtml - First result/no-record page.
  */
 
 /**
@@ -1296,6 +1325,318 @@ export async function searchBrowardAccelaDateWindow({
     excludedNonPermitCount,
     truncatedForSplit,
   };
+}
+
+/**
+ * Parse one official Accela CSV export into deterministic list records.
+ *
+ * @param {string} csvText - Exact UTF-8 export.
+ * @param {BrowardAccelaSource} source - Jurisdiction source.
+ * @param {string} startDate - Inclusive search start.
+ * @param {string} endDate - Inclusive search end.
+ * @returns {BrowardAccelaCsvPermitRecord[]} Unique exported records.
+ */
+export function parseBrowardAccelaCsvExport(
+  csvText,
+  source,
+  startDate,
+  endDate,
+) {
+  const sourceWindowKey = buildBrowardAccelaDateWindowKey(
+    source,
+    startDate,
+    endDate,
+  );
+  const parsed = /** @type {unknown} */ (
+    parseCsv(csvText, {
+      bom: true,
+      columns: true,
+      skip_empty_lines: true,
+      relax_column_count: true,
+      trim: true,
+    })
+  );
+  if (!Array.isArray(parsed)) {
+    throw new Error(`${source.jurisdiction} Accela CSV is not row data`);
+  }
+  /** @type {Map<string, BrowardAccelaCsvPermitRecord>} */
+  const byKey = new Map();
+  for (const value of parsed) {
+    if (!isRecord(value)) {
+      throw new Error(`${source.jurisdiction} Accela CSV row is malformed`);
+    }
+    const recordNumber = readRecordNumber(value["Record Number"]);
+    if (recordNumber === null) {
+      throw new Error(
+        `${source.jurisdiction} Accela CSV row has no record number`,
+      );
+    }
+    const recordKey = `${source.sourceSystem}:permit:${recordNumber}`;
+    const record = {
+      schemaVersion:
+        /** @type {"oracle-node.broward-accela-csv-list.v1"} */ (
+          "oracle-node.broward-accela-csv-list.v1"
+        ),
+      sourceSystem: source.sourceSystem,
+      jurisdiction: source.jurisdiction,
+      recordNumber,
+      sourceUrl: buildAccelaAltIdDetailUrl(source, recordNumber),
+      recordKey,
+      recordDate: parseAccelaCsvDate(value.Date),
+      recordType: optionalCollapsedText(value["Record Type"]),
+      projectName: optionalCollapsedText(value["Project Name"]),
+      address: optionalCollapsedText(value.Address),
+      expirationDate: parseAccelaCsvDate(value["Expiration Date"]),
+      status: optionalCollapsedText(value.Status),
+      isRoofPermit: ROOF_PERMIT_PATTERN.test(
+        [
+          recordNumber,
+          optionalCollapsedText(value["Record Type"]),
+          optionalCollapsedText(value["Project Name"]),
+        ]
+          .filter((part) => typeof part === "string")
+          .join(" "),
+      ),
+      sourceWindowKey,
+    };
+    const existing = byKey.get(recordKey);
+    if (
+      existing !== undefined &&
+      JSON.stringify(existing) !== JSON.stringify(record)
+    ) {
+      throw new Error(
+        `${source.jurisdiction} Accela CSV conflicts for ${recordNumber}`,
+      );
+    }
+    byKey.set(recordKey, record);
+  }
+  return [...byKey.values()].sort((left, right) =>
+    left.recordKey.localeCompare(right.recordKey),
+  );
+}
+
+/**
+ * Capture the official full-result CSV for one date window.
+ *
+ * The UI total is retained only as provenance because several agencies report
+ * a capped or inconsistent value. The built-in `Download results` response is
+ * the source artifact and can contain more rows than the visible grid.
+ *
+ * @param {object} params - Export capture parameters.
+ * @param {import("puppeteer").Browser} params.browser - Persistent browser.
+ * @param {BrowardAccelaSource} params.source - Jurisdiction source.
+ * @param {string} params.startDate - Inclusive ISO start.
+ * @param {string} params.endDate - Inclusive ISO end.
+ * @param {string} params.downloadDirectory - Existing/private window directory.
+ * @param {Logger} params.logger - Structured logger.
+ * @returns {Promise<BrowardAccelaCsvWindowResult>} Official exported window.
+ */
+export async function captureBrowardAccelaCsvWindow({
+  browser,
+  source,
+  startDate,
+  endDate,
+  downloadDirectory,
+  logger,
+}) {
+  const sourceWindowKey = buildBrowardAccelaDateWindowKey(
+    source,
+    startDate,
+    endDate,
+  );
+  await mkdir(downloadDirectory, { recursive: true, mode: 0o700 });
+  const page = await browser.newPage();
+  try {
+    await page.goto(source.portalUrl, {
+      waitUntil: "domcontentloaded",
+      timeout: 60_000,
+    });
+    const context = await resolveAccelaDomContext(page, source);
+    await waitForSearchFormOrFailure(context);
+    const initialHtml = await context.content();
+    if (
+      (await context.$(DEFAULT_SELECTORS.startDate)) === null ||
+      (await context.$(DEFAULT_SELECTORS.endDate)) === null
+    ) {
+      throw new BrowardAccelaSourceError(
+        "unexpected_response",
+        source,
+        `${source.jurisdiction} Accela does not expose CSV date controls`,
+        context.url(),
+        initialHtml,
+      );
+    }
+    await setAccelaInput(context, DEFAULT_SELECTORS.parcel, "");
+    await setAccelaInput(
+      context,
+      DEFAULT_SELECTORS.startDate,
+      toAccelaDate(startDate),
+    );
+    await setAccelaInput(
+      context,
+      DEFAULT_SELECTORS.endDate,
+      toAccelaDate(endDate),
+    );
+    await context.click(DEFAULT_SELECTORS.submit);
+    await waitForSearchOutcome(context);
+    const searchHtml = await context.content();
+    const classification = requireSuccessfulPageClassification(
+      searchHtml,
+      source,
+      context.url(),
+      `CSV date-window ${sourceWindowKey}`,
+    );
+    const displayedTotal = parseResultSummary(
+      htmlToText(searchHtml),
+    ).total;
+    if (classification === "no_records") {
+      return {
+        startDate,
+        endDate,
+        sourceWindowKey,
+        displayedTotal: 0,
+        displayedTotalCapped: false,
+        records: [],
+        rawCsv: "",
+        rawSearchHtml: searchHtml,
+      };
+    }
+
+    const exportLink = await context.$("a[id$='btnExport']");
+    if (exportLink === null) {
+      throw new BrowardAccelaSourceError(
+        "unexpected_response",
+        source,
+        `${source.jurisdiction} Accela result page has no CSV export`,
+        context.url(),
+        searchHtml,
+      );
+    }
+    const cdp = await page.createCDPSession();
+    await cdp.send("Browser.setDownloadBehavior", {
+      behavior: "allowAndName",
+      downloadPath: downloadDirectory,
+      eventsEnabled: true,
+    });
+    const download = waitForAccelaDownload(cdp, 60_000);
+    await exportLink.click();
+    const completed = await download;
+    const downloadedPath = `${downloadDirectory}/${completed.guid}`;
+    const rawCsv = await readFile(downloadedPath, "utf8");
+    const finalPath = `${downloadDirectory}/results.csv`;
+    await rename(downloadedPath, finalPath);
+    const records = parseBrowardAccelaCsvExport(
+      rawCsv,
+      source,
+      startDate,
+      endDate,
+    );
+    logger.info("broward_accela_csv_window_captured", {
+      sourceKey: source.key,
+      startDate,
+      endDate,
+      displayedTotal,
+      exportedRecordCount: records.length,
+      finalPath,
+    });
+    return {
+      startDate,
+      endDate,
+      sourceWindowKey,
+      displayedTotal,
+      displayedTotalCapped: displayedTotal === 100,
+      records,
+      rawCsv,
+      rawSearchHtml: searchHtml,
+    };
+  } finally {
+    await page.close().catch(() => undefined);
+  }
+}
+
+/**
+ * Await one completed browser download by CDP GUID.
+ *
+ * @param {import("puppeteer").CDPSession} cdp - Page CDP session.
+ * @param {number} timeoutMs - Hard download deadline.
+ * @returns {Promise<{guid:string,suggestedFilename:string}>} Completed download.
+ */
+function waitForAccelaDownload(cdp, timeoutMs) {
+  return new Promise((resolvePromise, rejectPromise) => {
+    /** @type {Map<string,string>} */
+    const filenames = new Map();
+    const timeout = setTimeout(() => {
+      rejectPromise(new Error("Accela CSV download timed out"));
+    }, timeoutMs);
+    cdp.on("Browser.downloadWillBegin", (event) => {
+      if (
+        typeof event.guid === "string" &&
+        typeof event.suggestedFilename === "string"
+      ) {
+        filenames.set(event.guid, event.suggestedFilename);
+      }
+    });
+    cdp.on("Browser.downloadProgress", (event) => {
+      if (event.state !== "completed" || typeof event.guid !== "string") {
+        return;
+      }
+      const suggestedFilename = filenames.get(event.guid);
+      if (suggestedFilename === undefined) return;
+      clearTimeout(timeout);
+      resolvePromise({ guid: event.guid, suggestedFilename });
+    });
+  });
+}
+
+/**
+ * Build an official detail lookup from a full exported alternate ID.
+ *
+ * @param {BrowardAccelaSource} source - Jurisdiction source.
+ * @param {string} recordNumber - Full exported record number.
+ * @returns {string} Official detail lookup URL.
+ */
+function buildAccelaAltIdDetailUrl(source, recordNumber) {
+  const url = new URL("./CapDetail.aspx", source.portalUrl);
+  url.searchParams.set("Module", source.module);
+  url.searchParams.set("TabName", source.module);
+  url.searchParams.set("altId", recordNumber);
+  return url.toString();
+}
+
+/**
+ * Parse an Accela MM/DD/YYYY CSV field.
+ *
+ * @param {unknown} value - Candidate field.
+ * @returns {string | null} ISO date or null.
+ */
+function parseAccelaCsvDate(value) {
+  const text = optionalCollapsedText(value);
+  if (text === null) return null;
+  const match = /^(\d{2})\/(\d{2})\/(\d{4})$/u.exec(text);
+  if (match === null) return null;
+  const date = new Date(
+    Date.UTC(Number(match[3]), Number(match[1]) - 1, Number(match[2])),
+  );
+  if (
+    date.getUTCFullYear() !== Number(match[3]) ||
+    date.getUTCMonth() !== Number(match[1]) - 1 ||
+    date.getUTCDate() !== Number(match[2])
+  ) {
+    return null;
+  }
+  return date.toISOString().slice(0, 10);
+}
+
+/**
+ * Collapse an optional source value.
+ *
+ * @param {unknown} value - Candidate value.
+ * @returns {string | null} Non-empty collapsed text.
+ */
+function optionalCollapsedText(value) {
+  if (typeof value !== "string") return null;
+  const text = collapseText(value);
+  return text.length === 0 ? null : text;
 }
 
 /**

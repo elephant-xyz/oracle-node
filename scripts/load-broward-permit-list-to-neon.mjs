@@ -64,6 +64,22 @@ const CONTROL_SCHEMA = "ingest_control";
  *   finalized_date:string|null
  * }>} raw - Allow-listed Tyler list fields.
  *
+ * @typedef {object} AccelaCsvListRecord
+ * @property {"oracle-node.broward-accela-csv-list.v1"} schemaVersion - CSV list schema.
+ * @property {string} sourceSystem - Jurisdiction source system.
+ * @property {string} jurisdiction - Issuing jurisdiction.
+ * @property {string} recordNumber - Full exported permit number.
+ * @property {string} sourceUrl - Official detail lookup.
+ * @property {string} recordKey - Detail-compatible source key.
+ * @property {string | null} recordDate - Ambiguous source Date retained without field inference.
+ * @property {string | null} recordType - Exported record type.
+ * @property {string | null} projectName - Exported project name.
+ * @property {string | null} address - Exported work address.
+ * @property {string | null} expirationDate - Exported ISO expiration date.
+ * @property {string | null} status - Exported status.
+ * @property {boolean} isRoofPermit - Conservative classification.
+ * @property {string} sourceWindowKey - Source date window.
+ *
  * @typedef {object} NormalizedPermitListRecord
  * @property {string} sourceSystem - Jurisdiction source system.
  * @property {string} sourceRecordKey - Stable detail-compatible identity.
@@ -202,6 +218,29 @@ export async function readPermitListRecords(inputPath) {
  * @returns {NormalizedPermitListRecord} Unified load record.
  */
 export function normalizePermitListRecord(value) {
+  if (isAccelaCsvListRecord(value)) {
+    return {
+      sourceSystem: value.sourceSystem,
+      sourceRecordKey: value.recordKey,
+      permitNumber: value.recordNumber,
+      sourceUrl: value.sourceUrl,
+      jurisdiction: value.jurisdiction,
+      parcelIdentifier: null,
+      workLocation: value.address,
+      applicationDate: null,
+      permitIssueDate: null,
+      expirationDate: value.expirationDate,
+      finalizedDate: null,
+      recordStatus: value.status,
+      recordType: value.recordType,
+      description: value.projectName,
+      isRoofPermit: value.isRoofPermit,
+      sourcePayload: {
+        schema_version: "oracle-node.broward-accela-csv-list.v1",
+        ...value,
+      },
+    };
+  }
   if (isAccelaListRecord(value)) {
     return {
       sourceSystem: value.sourceSystem,
@@ -716,6 +755,26 @@ function isAccelaListRecord(value) {
     typeof value.sourceUrl === "string" &&
     typeof value.recordKey === "string" &&
     Array.isArray(value.sourceWindowKeys)
+  );
+}
+
+/**
+ * Validate an official Accela CSV list row.
+ *
+ * @param {unknown} value - Candidate row.
+ * @returns {value is AccelaCsvListRecord} Whether required fields exist.
+ */
+function isAccelaCsvListRecord(value) {
+  if (!isRecord(value)) return false;
+  return (
+    value.schemaVersion === "oracle-node.broward-accela-csv-list.v1" &&
+    typeof value.sourceSystem === "string" &&
+    typeof value.jurisdiction === "string" &&
+    typeof value.recordNumber === "string" &&
+    typeof value.sourceUrl === "string" &&
+    typeof value.recordKey === "string" &&
+    typeof value.isRoofPermit === "boolean" &&
+    typeof value.sourceWindowKey === "string"
   );
 }
 
