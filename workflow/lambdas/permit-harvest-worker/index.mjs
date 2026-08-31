@@ -1717,10 +1717,12 @@ function validateMessage(value) {
         "broward-accela-list-window requires a valid inclusive date range",
       );
     }
-    for (const [fieldName, minimum, maximum] of [
+    /** @type {readonly [string, number, number][]} */
+    const boundedFields = [
       ["maxPages", 1, 200],
       ["splitThreshold", 2, 10_000],
-    ]) {
+    ];
+    for (const [fieldName, minimum, maximum] of boundedFields) {
       const fieldValue = message[fieldName];
       if (
         fieldValue !== undefined &&
