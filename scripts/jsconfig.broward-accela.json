@@ -20,6 +20,7 @@
   },
   "include": [
     "broward-folio.mjs",
+    "enqueue-broward-accela-date-windows.mjs",
     "permit-source-adapters/broward-accela.mjs",
     "probe-broward-accela-permits.mjs",
     "run-broward-accela-date-windows.mjs"

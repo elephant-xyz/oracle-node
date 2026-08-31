@@ -26,6 +26,7 @@
     "broward:permits:run-supported": "node scripts/run-broward-supported-permit-ingest.mjs",
     "broward:permits:run-bulk": "node scripts/run-broward-bulk-permit-ingest.mjs",
     "broward:permits:run-accela-windows": "node scripts/run-broward-accela-date-windows.mjs",
+    "broward:permits:enqueue-accela-windows": "node scripts/enqueue-broward-accela-date-windows.mjs",
     "query-post-logs": "node scripts/query_post_logs.js",
     "update-elephant-cli": "npm install @elephant-xyz/cli@latest --workspace=prepare/lambdas/downloader --workspace=workflow/lambdas/submit --workspace=workflow/lambdas/pre --workspace=workflow/lambdas/mvl"
   },

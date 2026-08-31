@@ -36,6 +36,12 @@ import {
   shortHash,
 } from "./lee-accela.mjs";
 import {
+  buildBrowardAccelaDateWindowKey,
+  createBrowardAccelaBrowser,
+  readBrowardAccelaSource,
+  searchBrowardAccelaDateWindow,
+} from "../../../scripts/permit-source-adapters/broward-accela.mjs";
+import {
   extractCorporateDataS3ObjectByZip,
   matchCorporateDataS3Object,
   safeKeyPart as safeSunbizKeyPart,
@@ -168,7 +174,21 @@ import {
  */
 
 /**
- * @typedef {LeePermitListWindowMessage | LeePermitDetailBatchMessage | LeePropertyFirstPermitParcelMessage | LeePropertyFirstSeedFeederMessage | SunbizCorporateAddressMatchMessage | SunbizCorporateZipExtractMessage} PermitHarvestMessage
+ * @typedef {object} BrowardAccelaListWindowMessage
+ * @property {"broward-accela-list-window"} type - Message discriminator.
+ * @property {1} version - Message version.
+ * @property {string} jobId - Stable source-run identity.
+ * @property {"hollywood" | "plantation" | "cooper-city" | "weston"} jurisdictionKey
+ *   Date-enabled Accela tenant and FIFO message group.
+ * @property {string} startDate - Inclusive ISO start date.
+ * @property {string} endDate - Inclusive ISO end date.
+ * @property {number | undefined} [maxPages] - Terminal pagination ceiling.
+ * @property {number | undefined} [splitThreshold] - Dense-window split threshold.
+ * @property {string | undefined} [outputPrefix] - Optional S3 output prefix.
+ */
+
+/**
+ * @typedef {LeePermitListWindowMessage | LeePermitDetailBatchMessage | LeePropertyFirstPermitParcelMessage | LeePropertyFirstSeedFeederMessage | SunbizCorporateAddressMatchMessage | SunbizCorporateZipExtractMessage | BrowardAccelaListWindowMessage} PermitHarvestMessage
  */
 
 /**
@@ -272,6 +292,8 @@ const secretsManager = new SecretsManagerClient({});
 
 const DEFAULT_OUTPUT_PREFIX = process.env.PERMIT_HARVEST_OUTPUT_PREFIX;
 const QUEUE_URL = process.env.PERMIT_HARVEST_QUEUE_URL;
+const BROWARD_ENUMERATION_QUEUE_URL =
+  process.env.BROWARD_PERMIT_ENUMERATION_QUEUE_URL;
 const QUERY_DB_DATABASE_URL = process.env.QUERY_DB_DATABASE_URL;
 const QUERY_DB_DATABASE_URL_SECRET_ARN =
   process.env.QUERY_DB_DATABASE_URL_SECRET_ARN;
@@ -1009,16 +1031,27 @@ async function objectExists(bucket, key) {
  * Send a permit-harvest message to the worker queue.
  *
  * @param {PermitHarvestMessage} message - Message to enqueue.
+ * @param {{queueUrl?:string,messageGroupId?:string,messageDeduplicationId?:string}} [options]
+ *   Optional queue override and FIFO identity.
  * @returns {Promise<void>}
  */
-async function enqueueMessage(message) {
-  if (!QUEUE_URL) {
+async function enqueueMessage(message, options = {}) {
+  const queueUrl = options.queueUrl ?? QUEUE_URL;
+  if (!queueUrl) {
     throw new Error("PERMIT_HARVEST_QUEUE_URL is not configured");
   }
   await sqs.send(
     new SendMessageCommand({
-      QueueUrl: QUEUE_URL,
+      QueueUrl: queueUrl,
       MessageBody: JSON.stringify(message),
+      ...(options.messageGroupId === undefined
+        ? {}
+        : { MessageGroupId: options.messageGroupId }),
+      ...(options.messageDeduplicationId === undefined
+        ? {}
+        : {
+            MessageDeduplicationId: options.messageDeduplicationId,
+          }),
     }),
   );
 }
@@ -1663,6 +1696,46 @@ function validateMessage(value) {
   if (typeof message.jobId !== "string" || !message.jobId.trim()) {
     throw new Error("Permit harvest message requires jobId");
   }
+  if (message.type === "broward-accela-list-window") {
+    if (
+      !["hollywood", "plantation", "cooper-city", "weston"].includes(
+        String(message.jurisdictionKey),
+      )
+    ) {
+      throw new Error(
+        "broward-accela-list-window requires a date-enabled jurisdictionKey",
+      );
+    }
+    if (
+      typeof message.startDate !== "string" ||
+      typeof message.endDate !== "string" ||
+      !/^\d{4}-\d{2}-\d{2}$/u.test(message.startDate) ||
+      !/^\d{4}-\d{2}-\d{2}$/u.test(message.endDate) ||
+      inclusiveDaySpan(message.startDate, message.endDate) < 1
+    ) {
+      throw new Error(
+        "broward-accela-list-window requires a valid inclusive date range",
+      );
+    }
+    for (const [fieldName, minimum, maximum] of [
+      ["maxPages", 1, 200],
+      ["splitThreshold", 2, 10_000],
+    ]) {
+      const fieldValue = message[fieldName];
+      if (
+        fieldValue !== undefined &&
+        (typeof fieldValue !== "number" ||
+          !Number.isInteger(fieldValue) ||
+          fieldValue < minimum ||
+          fieldValue > maximum)
+      ) {
+        throw new Error(
+          `broward-accela-list-window ${fieldName} is outside its safe bound`,
+        );
+      }
+    }
+    return /** @type {BrowardAccelaListWindowMessage} */ (message);
+  }
   if (message.type === "lee-permit-list-window") {
     if (
       typeof message.startDate !== "string" ||
@@ -1933,6 +2006,160 @@ async function processLeePropertyFirstSeedFeeder(message) {
   });
   if (!nextState.sourceExhausted) {
     await rescheduleLeePropertyFirstSeedFeeder(message);
+  }
+}
+
+/**
+ * Build deterministic child messages for one dense Broward Accela window.
+ *
+ * @param {BrowardAccelaListWindowMessage} message - Dense parent message.
+ * @returns {BrowardAccelaListWindowMessage[]} Two non-overlapping children.
+ */
+function buildBrowardAccelaSplitMessages(message) {
+  return splitDateRange(message.startDate, message.endDate).map((window) => ({
+    ...message,
+    startDate: window.startDate,
+    endDate: window.endDate,
+  }));
+}
+
+/**
+ * Process one Broward Accela list-only date window.
+ *
+ * FIFO message groups serialize windows per agency while different agency
+ * groups run concurrently. Dense multi-day windows write their first-page
+ * evidence and enqueue deterministic children. Terminal windows write every
+ * reconciled list page and permit link without spending detail-page capacity.
+ *
+ * @param {BrowardAccelaListWindowMessage} message - Window message.
+ * @returns {Promise<void>} Resolves after S3 receipt and child enqueue.
+ */
+async function processBrowardAccelaListWindow(message) {
+  const output = resolveOutputPrefix(message.outputPrefix, message.jobId);
+  const source = readBrowardAccelaSource(message.jurisdictionKey);
+  const maxPages = message.maxPages ?? 200;
+  const splitThreshold = message.splitThreshold ?? 100;
+  const windowKey = `${message.startDate.replaceAll("-", "")}_${message.endDate.replaceAll("-", "")}`;
+  const windowPrefix = `${output.key}/broward/accela/${source.key}/permit-lists/${windowKey}`;
+  const summaryKey = `${windowPrefix}/links.json`;
+  const summaryUri = `s3://${output.bucket}/${summaryKey}`;
+  if (await objectExists(output.bucket, summaryKey)) {
+    const prior = await readJsonFromS3(summaryUri);
+    if (
+      isRecord(prior) &&
+      prior.schemaVersion ===
+        "permit-harvest.broward-accela.window.v1" &&
+      prior.processingComplete === true
+    ) {
+      consoleLogger.info("broward_accela_window_already_complete", {
+        jobId: message.jobId,
+        sourceKey: source.key,
+        windowKey,
+        summaryUri,
+      });
+      return;
+    }
+  }
+
+  const daySpan = inclusiveDaySpan(message.startDate, message.endDate);
+  const browser = await createBrowardAccelaBrowser(consoleLogger);
+  try {
+    const result = await searchBrowardAccelaDateWindow({
+      browser,
+      source,
+      startDate: message.startDate,
+      endDate: message.endDate,
+      maxPages,
+      stopAfterFirstPageWhenTotalAtLeast:
+        daySpan > 1 ? splitThreshold : undefined,
+      logger: consoleLogger,
+    });
+    for (const page of result.pages) {
+      await putTextObject({
+        bucket: output.bucket,
+        key: `${windowPrefix}/raw/page-${String(page.pageNumber).padStart(4, "0")}.html`,
+        body: page.html,
+        contentType: "text/html; charset=utf-8",
+      });
+    }
+    const children =
+      result.truncatedForSplit && daySpan > 1
+        ? buildBrowardAccelaSplitMessages(message)
+        : [];
+    const summary = {
+      schemaVersion: "permit-harvest.broward-accela.window.v1",
+      jobId: message.jobId,
+      sourceKey: source.key,
+      sourceSystem: source.sourceSystem,
+      jurisdiction: source.jurisdiction,
+      searchKey: buildBrowardAccelaDateWindowKey(
+        source,
+        message.startDate,
+        message.endDate,
+      ),
+      startDate: message.startDate,
+      endDate: message.endDate,
+      retrievedAt: new Date().toISOString(),
+      reportedTotal: result.reportedTotal,
+      discoveredPermitCount: result.permits.length,
+      excludedNonPermitCount: result.excludedNonPermitCount,
+      noResults: result.status === "no_records",
+      truncatedForSplit: result.truncatedForSplit,
+      permits: result.permits,
+      childWindows: children.map((child) => ({
+        startDate: child.startDate,
+        endDate: child.endDate,
+      })),
+      processingComplete: children.length === 0,
+    };
+    await putTextObject({
+      bucket: output.bucket,
+      key: summaryKey,
+      body: JSON.stringify(summary, null, 2),
+      contentType: "application/json; charset=utf-8",
+    });
+
+    if (children.length > 0) {
+      if (!BROWARD_ENUMERATION_QUEUE_URL) {
+        throw new Error(
+          "BROWARD_PERMIT_ENUMERATION_QUEUE_URL is not configured",
+        );
+      }
+      for (const child of children) {
+        await enqueueMessage(child, {
+          queueUrl: BROWARD_ENUMERATION_QUEUE_URL,
+          messageGroupId: source.key,
+          messageDeduplicationId: shortHash(
+            `${child.jobId}:${source.key}:${child.startDate}:${child.endDate}`,
+          ),
+        });
+      }
+      await putTextObject({
+        bucket: output.bucket,
+        key: summaryKey,
+        body: JSON.stringify(
+          {
+            ...summary,
+            processingComplete: true,
+            childMessagesEnqueuedAt: new Date().toISOString(),
+          },
+          null,
+          2,
+        ),
+        contentType: "application/json; charset=utf-8",
+      });
+    }
+    consoleLogger.info("broward_accela_window_written", {
+      jobId: message.jobId,
+      sourceKey: source.key,
+      windowKey,
+      reportedTotal: result.reportedTotal,
+      discoveredPermitCount: result.permits.length,
+      childWindowCount: children.length,
+      summaryUri,
+    });
+  } finally {
+    await browser.close().catch(() => undefined);
   }
 }
 
@@ -3187,7 +3414,9 @@ export const handler = async (event) => {
       messageId: record.messageId,
     });
 
-    if (message.type === "lee-permit-list-window") {
+    if (message.type === "broward-accela-list-window") {
+      await processBrowardAccelaListWindow(message);
+    } else if (message.type === "lee-permit-list-window") {
       await processLeePermitListWindow(message);
     } else if (message.type === "lee-permit-detail-batch") {
       await processLeePermitDetailBatch(message);
@@ -3215,6 +3444,7 @@ export const _private = {
   validateMessage,
   splitDateRange,
   inclusiveDaySpan,
+  buildBrowardAccelaSplitMessages,
   readJsonFromS3,
   resolveSunbizSourceFormat,
   buildOneRowSeedCsv,
