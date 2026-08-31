@@ -167,6 +167,7 @@ export const POLK_PERMIT_SOURCE_REGISTRY = Object.freeze([
  * @property {string} output JSONL destination.
  * @property {readonly string[]} agencies Official agency labels to include.
  * @property {number | null} limit Optional deterministic pilot cap.
+ * @property {boolean} [winterHavenHistoricalOnly] Restrict to the certified legacy Winter Haven identifier shape.
  */
 
 /**
@@ -188,9 +189,14 @@ function duckdbStringLiteral(value) {
  *
  * @param {readonly string[]} agencies Official agency labels.
  * @param {number | null} limit Optional pilot cap.
+ * @param {boolean} [winterHavenHistoricalOnly=false] Restrict to certified legacy Winter Haven identifiers.
  * @returns {string} Read-only DuckDB SQL.
  */
-export function buildPolkPermitCandidateSql(agencies, limit) {
+export function buildPolkPermitCandidateSql(
+  agencies,
+  limit,
+  winterHavenHistoricalOnly = false,
+) {
   const normalizedAgencies = [
     ...new Set(
       agencies
@@ -214,6 +220,11 @@ export function buildPolkPermitCandidateSql(agencies, limit) {
       AND trim(permit_number) <> ''
       AND agency_name IS NOT NULL
       AND upper(trim(agency_name)) IN (${agencySql})
+      ${
+        winterHavenHistoricalOnly
+          ? "AND regexp_matches(trim(permit_number), '^20[0-9]{2}-[0-9]{8}$')"
+          : ""
+      }
     ORDER BY
       CASE
         WHEN try_cast(substr(issue_date, 1, 10) AS DATE)
@@ -225,6 +236,18 @@ export function buildPolkPermitCandidateSql(agencies, limit) {
       trim(permit_number)
     ${limit === null ? "" : `LIMIT ${limit}`}
   `;
+}
+
+/**
+ * Identify Winter Haven records supported by the anonymous legacy eSuite
+ * search. New `WHyy-*` identifiers belong to the replacement portal and are
+ * intentionally excluded from this partial adapter.
+ *
+ * @param {string} permitNumber Official permit identifier.
+ * @returns {boolean} Whether the legacy adapter supports the identifier shape.
+ */
+export function isWinterHavenHistoricalPermitNumber(permitNumber) {
+  return /^20\d{2}-\d{8}$/.test(permitNumber.trim());
 }
 
 /**
@@ -277,7 +300,11 @@ export async function writePolkPermitAdapterCandidates(options) {
   try {
     rows = await queryDuckDb(
       connection,
-      buildPolkPermitCandidateSql(options.agencies, options.limit),
+      buildPolkPermitCandidateSql(
+        options.agencies,
+        options.limit,
+        options.winterHavenHistoricalOnly === true,
+      ),
     );
   } finally {
     await closeDuckDbConnection(connection);
@@ -286,9 +313,15 @@ export async function writePolkPermitAdapterCandidates(options) {
     const permitNumber =
       typeof row.permitNumber === "string" ? row.permitNumber.trim() : "";
     const agency = typeof row.agency === "string" ? row.agency.trim() : "";
-    return permitNumber.length > 0 && agency.length > 0
-      ? [{ permitNumber, agency }]
-      : [];
+    if (permitNumber.length === 0 || agency.length === 0) return [];
+    if (
+      options.winterHavenHistoricalOnly === true &&
+      (agency.toUpperCase() !== "WINTER HAVEN" ||
+        !isWinterHavenHistoricalPermitNumber(permitNumber))
+    ) {
+      return [];
+    }
+    return [{ permitNumber, agency }];
   });
   await writeFile(
     absoluteOutput,
@@ -303,6 +336,7 @@ export async function writePolkPermitAdapterCandidates(options) {
     output: absoluteOutput,
     agencies: [...options.agencies],
     requestedLimit: options.limit,
+    winterHavenHistoricalOnly: options.winterHavenHistoricalOnly === true,
     candidateCount: candidates.length,
     complete: candidates.length > 0,
   };
@@ -1861,7 +1895,10 @@ function countPolkPermitPart(counters, records) {
         counters.partialAdapterEnrichedRecordCount += 1;
       if (record.detail?.contractor !== null)
         counters.contractorEvidenceCount += 1;
-      if (record.detail?.contractor?.licenseNumber !== null)
+      if (
+        typeof record.detail?.contractor?.licenseNumber === "string" &&
+        record.detail.contractor.licenseNumber.length > 0
+      )
         counters.licenseEvidenceCount += 1;
     } else if (record.status === "fetch_error") {
       counters.fetchErrorCount += 1;
@@ -1935,6 +1972,7 @@ export async function runPolkPermitEnrichment(argv) {
       checkpoint: { type: "string" },
       "reset-checkpoint": { type: "boolean" },
       "redrive-errors": { type: "boolean" },
+      "winter-haven-historical": { type: "boolean" },
     },
     strict: true,
     allowPositionals: false,
@@ -1965,11 +2003,23 @@ export async function runPolkPermitEnrichment(argv) {
       typeof values.limit === "string"
         ? Number.parseInt(values.limit, 10)
         : null;
+    const winterHavenHistoricalOnly =
+      values["winter-haven-historical"] === true;
     const agencies = Array.isArray(values.agency)
       ? values.agency.map(String)
-      : POLK_PERMIT_SOURCE_REGISTRY.filter(
-          (source) => source.status === "adapter_ready",
-        ).map((source) => source.agency);
+      : winterHavenHistoricalOnly
+        ? ["WINTER HAVEN"]
+        : POLK_PERMIT_SOURCE_REGISTRY.filter(
+            (source) => source.status === "adapter_ready",
+          ).map((source) => source.agency);
+    if (
+      winterHavenHistoricalOnly &&
+      agencies.some((agency) => agency.trim().toUpperCase() !== "WINTER HAVEN")
+    ) {
+      throw new Error(
+        "--winter-haven-historical can only be used with WINTER HAVEN",
+      );
+    }
     return writePolkPermitAdapterCandidates({
       workDatabase:
         typeof values["work-db"] === "string"
@@ -1978,6 +2028,7 @@ export async function runPolkPermitEnrichment(argv) {
       output: input,
       agencies,
       limit,
+      winterHavenHistoricalOnly,
     });
   }
   if (stage !== "enrich") {

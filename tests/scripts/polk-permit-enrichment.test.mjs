@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 
@@ -11,6 +11,7 @@ import {
   buildPolkPermitEnrichmentReceipt,
   buildWinterHavenPermitSearchUrl,
   findPolkPermitSource,
+  isWinterHavenHistoricalPermitNumber,
   mapPolkPermitWithConcurrency,
   parseLakelandImsPermitDetailHtml,
   parseLakeWalesPermitDetailHtml,
@@ -72,6 +73,8 @@ describe("Polk permit source registry", () => {
     expect(url.searchParams.get("permitNumber")).toBe("2025-00042002");
     expect(url.searchParams.get("permitType")).toBe("-1");
     expect(url.searchParams.get("serviceAddress")).toBe("");
+    expect(isWinterHavenHistoricalPermitNumber("2025-00042002")).toBe(true);
+    expect(isWinterHavenHistoricalPermitNumber("WH26-DP-0009")).toBe(false);
   });
 
   it("builds deterministic, agency-scoped adapter candidates", () => {
@@ -80,6 +83,9 @@ describe("Polk permit source registry", () => {
       "upper(trim(agency_name)) IN ('O''BRIEN', 'POLK COUNTY')",
     );
     expect(sql).toContain("LIMIT 25");
+    expect(buildPolkPermitCandidateSql(["WINTER HAVEN"], 5, true)).toContain(
+      "regexp_matches(trim(permit_number), '^20[0-9]{2}-[0-9]{8}$')",
+    );
     expect(() => buildPolkPermitCandidateSql([], null)).toThrow(
       /At least one Polk permit agency/,
     );
@@ -425,6 +431,64 @@ describe("Polk permit enrichment execution controls", () => {
       permitNumber: "BR-2",
       status: "enriched",
       error: null,
+    });
+  });
+
+  it("does not count absent contractor licenses in partitioned output", async () => {
+    const directory = await mkdtemp(
+      path.join(tmpdir(), "polk-permit-license-count-"),
+    );
+    temporaryDirectories.push(directory);
+    const htmlDirectory = path.join(directory, "html");
+    const input = path.join(directory, "candidates.jsonl");
+    const permitSummary = path.join(directory, "permit-summary.json");
+    await mkdir(htmlDirectory, { recursive: true });
+    await Promise.all([
+      writeFile(
+        input,
+        `${JSON.stringify({
+          permitNumber: "BR-1",
+          agency: "POLK COUNTY",
+        })}\n`,
+      ),
+      writeFile(
+        path.join(htmlDirectory, "BR-1.html"),
+        "<h1>Record BR-1:</h1><div>Record Status: Issued</div>",
+      ),
+      writeFile(
+        permitSummary,
+        `${JSON.stringify({
+          permitCount: 1,
+          agencies: [{ value: "POLK COUNTY", count: 1 }],
+        })}\n`,
+      ),
+    ]);
+
+    const receipt = await runPolkPermitEnrichment([
+      "--input",
+      input,
+      "--output",
+      path.join(directory, "output.jsonl"),
+      "--receipt",
+      path.join(directory, "receipt.json"),
+      "--permit-summary",
+      permitSummary,
+      "--html-dir",
+      htmlDirectory,
+      "--batch-size",
+      "1",
+      "--delay-ms",
+      "1",
+      "--attempts",
+      "1",
+      "--retry-delay-ms",
+      "1",
+    ]);
+
+    expect(receipt).toMatchObject({
+      enrichedRecordCount: 1,
+      contractorEvidenceCount: 0,
+      licenseEvidenceCount: 0,
     });
   });
 

@@ -69,6 +69,23 @@ currently have requestable permit numbers. The remaining 107 rows and the
 301,123 rows without certified anonymous adapters remain explicit source
 limitations and do not justify fabricated detail evidence.
 
+```bash
+npm run polk:permits:enrich -- \
+  --stage candidates \
+  --winter-haven-historical \
+  --input tmp/polk/permits/winter-haven-historical.jsonl
+npm run polk:permits:enrich -- \
+  --stage enrich \
+  --network \
+  --include-partial \
+  --input tmp/polk/permits/winter-haven-historical.jsonl \
+  --output tmp/polk/permits/winter-haven-historical-results.jsonl
+```
+
+The historical filter accepts only the legacy `YYYY-NNNNNNNN` identifiers
+served by eSuite. Current `WHyy-*` permits belong to Winter Haven's replacement
+portal and remain explicitly unsupported.
+
 Transform and match the exact-ZIP Sunbiz slice:
 
 ```bash
