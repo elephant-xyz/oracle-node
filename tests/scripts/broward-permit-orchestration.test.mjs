@@ -21,9 +21,11 @@ import {
 } from "../../scripts/broward-permit-query-artifact.mjs";
 import {
   buildAccelaPermitUpsertValues,
+  buildMunicipalPermitUpsertValues,
   buildPermitUpsertValues,
   parsePermitLoadOptions,
   readNormalizedAccelaPermitRecords,
+  readNormalizedMunicipalPermitRecords,
   readNormalizedPermitRecords,
 } from "../../scripts/load-broward-permit-pilot-to-neon.mjs";
 import {
@@ -190,12 +192,20 @@ describe("Broward permit Neon pilot loader", () => {
         "accela.jsonl",
         "--expected-accela-records",
         "14",
+        "--municipal-input",
+        "tyler.jsonl",
+        "--municipal-input",
+        "citizenserve.jsonl",
+        "--expected-municipal-records",
+        "17",
       ]),
     ).toEqual({
       inputPath: "pilot.jsonl",
       expectedRecords: 73,
       accelaInputPath: "accela.jsonl",
       expectedAccelaRecords: 14,
+      municipalInputPaths: ["tyler.jsonl", "citizenserve.jsonl"],
+      expectedMunicipalRecords: 17,
     });
     const directory = await createTemporaryDirectory();
     const inputPath = join(directory, "permits.private.jsonl");
@@ -264,6 +274,64 @@ describe("Broward permit Neon pilot loader", () => {
       improvementAction: "permit_record",
       permitIssueDate: null,
       applicationReceivedDate: null,
+    });
+  });
+
+  it("reconciles and maps bounded Tyler/Citizenserve permit records", async () => {
+    const record = {
+      source_system: "broward_pembroke_pines_tyler_permits",
+      source_vendor: "tyler-civic-access",
+      source_url: "https://example.test/permit/1",
+      source_record_id: "1",
+      record_key: "broward_pembroke_pines_tyler_permits:1",
+      city: "Pembroke Pines",
+      permit_number: "22-08581",
+      parcel_identifier: "513914101320",
+      work_location: "470 SW 198 TER",
+      permit_issue_date: "2022-10-01",
+      application_date: "2022-09-01",
+      expiration_date: null,
+      finalized_date: "2023-01-01",
+      record_status: "Complete",
+      record_type: "Building",
+      work_class: "Alteration",
+      project_description: "PUBLIC PROJECT",
+      square_feet: 500,
+      job_value: 25_000,
+      is_roof_permit: false,
+      provenance: { query_kind: "folio" },
+      raw: { source: "public" },
+    };
+    const directory = await createTemporaryDirectory();
+    const inputPath = join(directory, "municipal.private.jsonl");
+    await writeFile(inputPath, `${JSON.stringify(record)}\n`);
+    await expect(
+      readNormalizedMunicipalPermitRecords([inputPath]),
+    ).resolves.toMatchObject({
+      records: [expect.objectContaining({ permit_number: "22-08581" })],
+      sourceSha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+    });
+    const values = buildMunicipalPermitUpsertValues(
+      /** @type {Parameters<typeof buildMunicipalPermitUpsertValues>[0]} */ (
+        record
+      ),
+      {
+        propertyId: "11111111-1111-4111-8111-111111111111",
+        parcelId: "22222222-2222-4222-8222-222222222222",
+      },
+    );
+    expect(values).toMatchObject({
+      sourceSystem: "broward_pembroke_pines_tyler_permits",
+      permitNumber: "22-08581",
+      applicationReceivedDate: "2022-09-01",
+      permitIssueDate: "2022-10-01",
+      finalInspectionDate: null,
+      estimatedJobValue: 25_000,
+      estimatedSqFt: 500,
+    });
+    expect(values.moreDetails).toMatchObject({
+      source_vendor: "tyler-civic-access",
+      finalized_date: "2023-01-01",
     });
   });
 });

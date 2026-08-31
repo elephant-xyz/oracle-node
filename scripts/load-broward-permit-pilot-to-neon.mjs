@@ -23,7 +23,7 @@ const LOAD_LOCK_NAMESPACE = 12_011;
 const LOAD_LOCK_KEY = 3;
 const DEFAULT_INPUT =
   "downloads/broward/permit-acceptance-pilot/normalized-permits.private.jsonl";
-const LOAD_KEY = "broward-supported-pilots-v2";
+const LOAD_KEY = "broward-supported-pilots-v3";
 
 /**
  * @typedef {import("./broward-permit-query-artifact.mjs").BrowardNormalizedPermit & {
@@ -85,6 +85,30 @@ const LOAD_KEY = "broward-supported-pilots-v2";
  * @property {string} idempotencyKey - Jurisdiction-scoped identity.
  * @property {Record<string, unknown>} provenance - Source-boundary evidence.
  *
+ * @typedef {object} BrowardMunicipalPermitRecord
+ * @property {string} source_system - County-prefixed municipal source.
+ * @property {"tyler-civic-access" | "citizenserve"} source_vendor - Adapter family.
+ * @property {string} source_url - Official detail URL.
+ * @property {string} source_record_id - Stable source object ID.
+ * @property {string} record_key - Stable source-system record key.
+ * @property {string} city - Issuing municipality.
+ * @property {string} permit_number - Public permit number.
+ * @property {string} parcel_identifier - Exact Broward folio.
+ * @property {string | null} work_location - Public work location.
+ * @property {string | null} permit_issue_date - ISO issue date.
+ * @property {string | null} application_date - ISO application date.
+ * @property {string | null} expiration_date - ISO expiration date.
+ * @property {string | null} finalized_date - Explicit source finalization date.
+ * @property {string | null} record_status - Public status.
+ * @property {string | null} record_type - Public permit type.
+ * @property {string | null} work_class - Public work class.
+ * @property {string | null} project_description - Public description.
+ * @property {number | null} square_feet - Public project area.
+ * @property {number | null} job_value - Public estimated value.
+ * @property {boolean} is_roof_permit - Conservative roof classification.
+ * @property {Record<string, unknown>} provenance - Search evidence.
+ * @property {Record<string, unknown>} raw - Source-specific fields.
+ *
  * @typedef {object} PermitParent
  * @property {string} propertyId - Canonical Broward appraiser property UUID.
  * @property {string} parcelId - Canonical Broward appraiser parcel UUID.
@@ -94,6 +118,8 @@ const LOAD_KEY = "broward-supported-pilots-v2";
  * @property {number | null} expectedRecords - Optional exact record count.
  * @property {string | null} accelaInputPath - Optional reconciled Accela JSONL.
  * @property {number | null} expectedAccelaRecords - Optional exact Accela count.
+ * @property {readonly string[]} municipalInputPaths - Tyler/Citizenserve JSONL inputs.
+ * @property {number | null} expectedMunicipalRecords - Optional exact municipal count.
  *
  * @typedef {object} PermitUpsertValues
  * @property {string} sourceSystem - County-prefixed permit source.
@@ -133,6 +159,9 @@ export function parsePermitLoadOptions(argv) {
   let expectedRecords = null;
   let accelaInputPath = null;
   let expectedAccelaRecords = null;
+  /** @type {string[]} */
+  const municipalInputPaths = [];
+  let expectedMunicipalRecords = null;
   for (let index = 0; index < argv.length; index += 2) {
     const flag = argv[index];
     const value = argv[index + 1];
@@ -145,10 +174,13 @@ export function parsePermitLoadOptions(argv) {
     }
     if (flag === "--input") inputPath = value;
     else if (flag === "--accela-input") accelaInputPath = value;
+    else if (flag === "--municipal-input") municipalInputPaths.push(value);
     else if (flag === "--expected-records") {
       expectedRecords = Number(value);
     } else if (flag === "--expected-accela-records") {
       expectedAccelaRecords = Number(value);
+    } else if (flag === "--expected-municipal-records") {
+      expectedMunicipalRecords = Number(value);
     } else {
       throw new Error(`Unknown permit load option: ${flag}`);
     }
@@ -171,11 +203,28 @@ export function parsePermitLoadOptions(argv) {
       "--expected-accela-records requires --accela-input",
     );
   }
+  if (
+    expectedMunicipalRecords !== null &&
+    (!Number.isInteger(expectedMunicipalRecords) ||
+      expectedMunicipalRecords < 1)
+  ) {
+    throw new Error("--expected-municipal-records must be positive");
+  }
+  if (
+    expectedMunicipalRecords !== null &&
+    municipalInputPaths.length === 0
+  ) {
+    throw new Error(
+      "--expected-municipal-records requires --municipal-input",
+    );
+  }
   return {
     inputPath,
     expectedRecords,
     accelaInputPath,
     expectedAccelaRecords,
+    municipalInputPaths,
+    expectedMunicipalRecords,
   };
 }
 
@@ -239,6 +288,46 @@ export async function readNormalizedAccelaPermitRecords(inputPath) {
     throw new Error("Normalized Broward Accela JSONL is empty");
   }
   return { records, sourceSha256 };
+}
+
+/**
+ * Read and reconcile one or more municipal Tyler/Citizenserve JSONL outputs.
+ *
+ * @param {readonly string[]} inputPaths - Private normalized municipal JSONL files.
+ * @returns {Promise<{records:BrowardMunicipalPermitRecord[],sourceSha256:string|null}>}
+ *   Unique municipal permit records and combined deterministic checksum.
+ */
+export async function readNormalizedMunicipalPermitRecords(inputPaths) {
+  /** @type {BrowardMunicipalPermitRecord[]} */
+  const records = [];
+  const keys = new Set();
+  /** @type {string[]} */
+  const hashes = [];
+  for (const inputPath of inputPaths) {
+    const text = await readFile(inputPath, "utf8");
+    hashes.push(createHash("sha256").update(text).digest("hex"));
+    for (const line of text.split(/\r?\n/u)) {
+      if (line.trim() === "") continue;
+      const parsed = /** @type {unknown} */ (JSON.parse(line));
+      if (!isMunicipalPermit(parsed)) {
+        throw new Error(
+          "Normalized Broward municipal JSONL contains an invalid row",
+        );
+      }
+      if (keys.has(parsed.record_key)) {
+        throw new Error(
+          "Normalized Broward municipal JSONL contains a duplicate key",
+        );
+      }
+      keys.add(parsed.record_key);
+      records.push(parsed);
+    }
+  }
+  return {
+    records,
+    sourceSha256:
+      hashes.length === 0 ? null : stableHash(hashes.sort()),
+  };
 }
 
 /**
@@ -359,6 +448,53 @@ export function buildAccelaPermitUpsertValues(record, parent) {
 }
 
 /**
+ * Build canonical values for one bounded Tyler/Citizenserve permit record.
+ *
+ * @param {BrowardMunicipalPermitRecord} record - Reconciled municipal record.
+ * @param {PermitParent} parent - Exact appraiser property and parcel UUIDs.
+ * @returns {PermitUpsertValues} Idempotent property-improvement values.
+ */
+export function buildMunicipalPermitUpsertValues(record, parent) {
+  return {
+    sourceSystem: record.source_system,
+    sourceRecordKey: record.record_key,
+    sourceRecordHash: stableHash(record),
+    sourceArtifactUri: record.source_url,
+    requestIdentifier: record.record_key,
+    propertyId: parent.propertyId,
+    parcelId: parent.parcelId,
+    parcelIdentifier: record.parcel_identifier,
+    permitNumber: record.permit_number,
+    improvementType: record.record_type,
+    improvementStatus: record.record_status,
+    improvementAction: "permit_record",
+    applicationReceivedDate: record.application_date,
+    permitIssueDate: record.permit_issue_date,
+    finalInspectionDate: null,
+    expirationDate: record.expiration_date,
+    workLocation: record.work_location,
+    estimatedJobValue: record.job_value,
+    estimatedSqFt: record.square_feet,
+    projectDescription: record.project_description,
+    description: record.project_description,
+    moreDetails: {
+      city: record.city,
+      source_vendor: record.source_vendor,
+      source_record_id: record.source_record_id,
+      work_class: record.work_class,
+      finalized_date: record.finalized_date,
+      is_roof_permit: record.is_roof_permit,
+      provenance: record.provenance,
+      raw: record.raw,
+    },
+    sourcePayload:
+      /** @type {Record<string, unknown>} */ (
+        /** @type {unknown} */ (record)
+      ),
+  };
+}
+
+/**
  * Load all reconciled pilot records in one transaction and verify exact counts.
  *
  * @param {PermitLoadOptions} options - Input and expected-count gate.
@@ -387,11 +523,26 @@ export async function loadBrowardPermitPilotToNeon(options) {
       "Accela pilot record count differs from the required count",
     );
   }
+  const municipal = await readNormalizedMunicipalPermitRecords(
+    options.municipalInputPaths,
+  );
+  if (
+    options.expectedMunicipalRecords !== null &&
+    municipal.records.length !== options.expectedMunicipalRecords
+  ) {
+    throw new Error(
+      "Municipal pilot record count differs from the required count",
+    );
+  }
   const sourceSha256 = stableHash({
     accela: accela.sourceSha256,
     bcs: bcs.sourceSha256,
+    municipal: municipal.sourceSha256,
   });
-  const permitRecordCount = bcs.records.length + accela.records.length;
+  const permitRecordCount =
+    bcs.records.length +
+    accela.records.length +
+    municipal.records.length;
   const target = requireNeonTarget(process.env);
   const client = new Client({
     connectionString: target.connectionString,
@@ -410,12 +561,14 @@ export async function loadBrowardPermitPilotToNeon(options) {
         ...new Set([
           ...bcs.records.map((record) => record.parcel_identifier),
           ...accela.records.map((record) => record.parcelIdentifier),
+          ...municipal.records.map((record) => record.parcel_identifier),
         ]),
       ],
     );
     const permitKeys = [
       ...bcs.records.map((record) => record.record_key),
       ...accela.records.map((record) => record.idempotencyKey),
+      ...municipal.records.map((record) => record.record_key),
     ];
     const inspectionKeys = bcs.records.flatMap(buildInspectionSourceKeys);
     let inspectionCount = 0;
@@ -442,6 +595,18 @@ export async function loadBrowardPermitPilotToNeon(options) {
         await upsertPropertyImprovement(
           client,
           buildAccelaPermitUpsertValues(record, parent),
+        );
+      }
+      for (const record of municipal.records) {
+        const parent = parents.get(record.parcel_identifier);
+        if (parent === undefined) {
+          throw new Error(
+            "Municipal permit record has no exact Broward appraisal parent",
+          );
+        }
+        await upsertPropertyImprovement(
+          client,
+          buildMunicipalPermitUpsertValues(record, parent),
         );
       }
       await verifyLoadedRecords(
@@ -537,6 +702,37 @@ function isAccelaPermit(value) {
     typeof candidate.provenance === "object" &&
     candidate.provenance !== null &&
     !Array.isArray(candidate.provenance)
+  );
+}
+
+/**
+ * @param {unknown} value - Candidate Tyler/Citizenserve normalized record.
+ * @returns {value is BrowardMunicipalPermitRecord} Whether stable fields exist.
+ */
+function isMunicipalPermit(value) {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const candidate =
+    /** @type {Partial<BrowardMunicipalPermitRecord>} */ (value);
+  return (
+    typeof candidate.source_system === "string" &&
+    /^broward_[a-z0-9_]+_permits$/u.test(candidate.source_system) &&
+    (candidate.source_vendor === "tyler-civic-access" ||
+      candidate.source_vendor === "citizenserve") &&
+    typeof candidate.source_url === "string" &&
+    typeof candidate.source_record_id === "string" &&
+    typeof candidate.record_key === "string" &&
+    typeof candidate.city === "string" &&
+    typeof candidate.permit_number === "string" &&
+    typeof candidate.parcel_identifier === "string" &&
+    /^[A-Z0-9]{12}$/u.test(candidate.parcel_identifier) &&
+    typeof candidate.provenance === "object" &&
+    candidate.provenance !== null &&
+    !Array.isArray(candidate.provenance) &&
+    typeof candidate.raw === "object" &&
+    candidate.raw !== null &&
+    !Array.isArray(candidate.raw)
   );
 }
 
