@@ -487,7 +487,6 @@ async function readOrCreateCheckpoint(checkpointPath, options, startedAt) {
         pageSize: options.pageSize,
         maxPages: options.maxPages,
         delayMs: options.delayMs,
-        maxAttempts: options.maxAttempts,
       }),
     )
     .digest("hex");
