@@ -15,6 +15,7 @@ build/
 develop-eggs/
 dist/
 downloads/
+*.zip
 eggs/
 .eggs/
 lib/
@@ -57,6 +58,10 @@ cover/
 # Translations
 *.mo
 *.pot
+
+# Local validation / submit reports
+submit_errors.csv
+submit_warnings.csv
 
 # Django stuff:
 *.log

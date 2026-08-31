@@ -1,0 +1,2815 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title id="pageTitle">Oracle County Lifecycle & Open Data Engine</title>
+    <style>
+      :root {
+        /* Default: Dark Mode */
+        --bg-main: #0b0f19;
+        --bg-card: #111827;
+        --card-border: #1f2937;
+        --card-hover: #1e293b;
+        --text-main: #f9fafb;
+        --text-muted: #9ca3af;
+        --text-subtle: #6b7280;
+        --accent: #3b82f6;
+        --accent-glow: rgba(59, 130, 246, 0.15);
+        --accent-hover: #2563eb;
+        --success: #10b981;
+        --success-glow: rgba(16, 185, 129, 0.15);
+        --warning: #f59e0b;
+        --warning-glow: rgba(245, 158, 11, 0.15);
+        --danger: #ef4444;
+        --danger-glow: rgba(239, 68, 68, 0.15);
+        --purple: #8b5cf6;
+        --purple-glow: rgba(139, 92, 246, 0.15);
+        --cyan: #06b6d4;
+        --cyan-glow: rgba(6, 182, 212, 0.15);
+        --radius-sm: 8px;
+        --radius-md: 12px;
+        --radius-lg: 16px;
+        --font-mono:
+          ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        --table-stripe: rgba(255, 255, 255, 0.02);
+        --table-hover: rgba(255, 255, 255, 0.04);
+        --code-box-bg: #070a13;
+        --input-bg: #0b0f19;
+        --pill-bg: #0b0f19;
+        --next-step-bg: linear-gradient(
+          135deg,
+          rgba(59, 130, 246, 0.12) 0%,
+          rgba(139, 92, 246, 0.12) 100%
+        );
+        --next-step-border: rgba(59, 130, 246, 0.3);
+        --badge-blue-bg: rgba(59, 130, 246, 0.2);
+        --badge-blue-text: #60a5fa;
+        --badge-blue-border: rgba(59, 130, 246, 0.3);
+        --badge-green-bg: rgba(16, 185, 129, 0.2);
+        --badge-green-text: #34d399;
+        --badge-green-border: rgba(16, 185, 129, 0.3);
+        --badge-amber-bg: rgba(245, 158, 11, 0.2);
+        --badge-amber-text: #fbbf24;
+        --badge-amber-border: rgba(245, 158, 11, 0.3);
+        --badge-purple-bg: rgba(139, 92, 246, 0.2);
+        --badge-purple-text: #a78bfa;
+        --badge-purple-border: rgba(139, 92, 246, 0.3);
+        --badge-cyan-bg: rgba(6, 182, 212, 0.2);
+        --badge-cyan-text: #22d3ee;
+        --badge-cyan-border: rgba(6, 182, 212, 0.3);
+      }
+
+      /* Light Mode: Triggered by client default system preferences */
+      @media (prefers-color-scheme: light) {
+        :root {
+          --bg-main: #f8fafc;
+          --bg-card: #ffffff;
+          --card-border: #e2e8f0;
+          --card-hover: #f1f5f9;
+          --text-main: #0f172a;
+          --text-muted: #64748b;
+          --text-subtle: #94a3b8;
+          --accent: #2563eb;
+          --accent-glow: rgba(37, 99, 235, 0.08);
+          --accent-hover: #1d4ed8;
+          --success: #059669;
+          --success-glow: rgba(5, 150, 105, 0.08);
+          --warning: #d97706;
+          --warning-glow: rgba(217, 119, 6, 0.08);
+          --danger: #dc2626;
+          --danger-glow: rgba(220, 38, 38, 0.08);
+          --purple: #7c3aed;
+          --purple-glow: rgba(124, 58, 237, 0.08);
+          --cyan: #0891b2;
+          --cyan-glow: rgba(8, 145, 178, 0.08);
+          --table-stripe: rgba(0, 0, 0, 0.02);
+          --table-hover: #f8fafc;
+          --code-box-bg: #f1f5f9;
+          --input-bg: #f8fafc;
+          --pill-bg: #f1f5f9;
+          --next-step-bg: linear-gradient(
+            135deg,
+            rgba(37, 99, 235, 0.06) 0%,
+            rgba(124, 58, 237, 0.06) 100%
+          );
+          --next-step-border: rgba(37, 99, 235, 0.25);
+          --badge-blue-bg: rgba(37, 99, 235, 0.1);
+          --badge-blue-text: #1d4ed8;
+          --badge-blue-border: rgba(37, 99, 235, 0.25);
+          --badge-green-bg: rgba(5, 150, 105, 0.1);
+          --badge-green-text: #047857;
+          --badge-green-border: rgba(5, 150, 105, 0.25);
+          --badge-amber-bg: rgba(217, 119, 6, 0.1);
+          --badge-amber-text: #b45309;
+          --badge-amber-border: rgba(217, 119, 6, 0.25);
+          --badge-purple-bg: rgba(124, 58, 237, 0.1);
+          --badge-purple-text: #6d28d9;
+          --badge-purple-border: rgba(124, 58, 237, 0.25);
+          --badge-cyan-bg: rgba(8, 145, 178, 0.1);
+          --badge-cyan-text: #0e7490;
+          --badge-cyan-border: rgba(8, 145, 178, 0.25);
+        }
+      }
+
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        font-family:
+          -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica,
+          Arial, sans-serif;
+        background-color: var(--bg-main);
+        color: var(--text-main);
+        padding: 24px;
+        min-height: 100vh;
+        transition:
+          background-color 0.2s ease,
+          color 0.2s ease;
+      }
+      .container {
+        max-width: 1400px;
+        margin: 0 auto;
+      }
+
+      header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 20px;
+        padding-bottom: 16px;
+        border-bottom: 1px solid var(--card-border);
+      }
+      .title-group h1 {
+        font-size: 22px;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+      .title-group p {
+        color: var(--text-muted);
+        font-size: 13px;
+        margin-top: 4px;
+      }
+      .header-actions {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+
+      /* Clean, Non-Overstretching Badges */
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 2px 7px;
+        border-radius: 9999px;
+        font-size: 10px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        line-height: 1.3;
+        flex-shrink: 0;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: 60%;
+      }
+      .badge-blue {
+        background: var(--badge-blue-bg);
+        color: var(--badge-blue-text);
+        border: 1px solid var(--badge-blue-border);
+      }
+      .badge-green {
+        background: var(--badge-green-bg);
+        color: var(--badge-green-text);
+        border: 1px solid var(--badge-green-border);
+      }
+      .badge-amber {
+        background: var(--badge-amber-bg);
+        color: var(--badge-amber-text);
+        border: 1px solid var(--badge-amber-border);
+      }
+      .badge-purple {
+        background: var(--badge-purple-bg);
+        color: var(--badge-purple-text);
+        border: 1px solid var(--badge-purple-border);
+      }
+      .badge-cyan {
+        background: var(--badge-cyan-bg);
+        color: var(--badge-cyan-text);
+        border: 1px solid var(--badge-cyan-border);
+      }
+
+      .county-selector {
+        background: var(--bg-card);
+        color: var(--text-main);
+        border: 1px solid var(--accent);
+        border-radius: var(--radius-sm);
+        padding: 6px 12px;
+        font-size: 13px;
+        font-weight: 600;
+        cursor: pointer;
+        outline: none;
+      }
+
+      .badge-live {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        background: var(--badge-green-bg);
+        color: var(--success);
+        border: 1px solid var(--badge-green-border);
+        padding: 5px 10px;
+        border-radius: 9999px;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.05em;
+      }
+      .pulse {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background-color: var(--success);
+        box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
+        animation: pulse 2s infinite;
+      }
+      @keyframes pulse {
+        0% {
+          transform: scale(0.95);
+          box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
+        }
+        70% {
+          transform: scale(1);
+          box-shadow: 0 0 0 6px rgba(16, 185, 129, 0);
+        }
+        100% {
+          transform: scale(0.95);
+          box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
+        }
+      }
+
+      /* Next Step Banner */
+      .next-step-banner {
+        background: var(--next-step-bg);
+        border: 1px solid var(--next-step-border);
+        border-radius: var(--radius-md);
+        padding: 14px 18px;
+        margin-bottom: 20px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 14px;
+        flex-wrap: wrap;
+      }
+      .next-step-info {
+        flex: 1;
+        min-width: 280px;
+      }
+      .next-step-tag {
+        font-size: 11px;
+        font-weight: 700;
+        color: var(--accent);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        margin-bottom: 3px;
+      }
+      .next-step-title {
+        font-size: 15px;
+        font-weight: 700;
+        color: var(--text-main);
+      }
+      .next-step-desc {
+        font-size: 12px;
+        color: var(--text-muted);
+        margin-top: 2px;
+      }
+      .next-step-command {
+        background: var(--code-box-bg);
+        border: 1px solid var(--card-border);
+        border-radius: var(--radius-sm);
+        padding: 8px 12px;
+        font-family: var(--font-mono);
+        font-size: 12px;
+        color: var(--accent);
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        word-break: break-all;
+      }
+
+      /* Responsive 10-Stage Lifecycle Navigation Grid */
+      .lifecycle-tracker {
+        display: grid;
+        grid-template-columns: repeat(10, minmax(0, 1fr));
+        gap: 6px;
+        margin-bottom: 20px;
+      }
+      @media (max-width: 1200px) {
+        .lifecycle-tracker {
+          grid-template-columns: repeat(5, minmax(0, 1fr));
+        }
+      }
+      @media (max-width: 640px) {
+        .lifecycle-tracker {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
+
+      .step-node {
+        background: var(--bg-card);
+        border: 1px solid var(--card-border);
+        border-radius: var(--radius-md);
+        padding: 10px 10px;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        min-width: 0;
+        overflow: hidden;
+      }
+      .step-node:hover {
+        border-color: var(--accent);
+        background: var(--card-hover);
+        transform: translateY(-2px);
+      }
+      .step-node.active {
+        border-color: var(--accent);
+        background: var(--accent-glow);
+        box-shadow: 0 0 12px rgba(59, 130, 246, 0.12);
+      }
+      .step-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 4px;
+        margin-bottom: 6px;
+        min-width: 0;
+      }
+      .step-num {
+        font-size: 10px;
+        font-weight: 700;
+        color: var(--text-subtle);
+        text-transform: uppercase;
+        flex-shrink: 0;
+        white-space: nowrap;
+      }
+      .step-title {
+        font-size: 12px;
+        font-weight: 700;
+        color: var(--text-main);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .step-status {
+        font-size: 10px;
+        color: var(--text-muted);
+        margin-top: 3px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      /* Tab Content */
+      .tab-content {
+        display: none;
+      }
+      .tab-content.active {
+        display: block;
+      }
+
+      /* Grid & Cards */
+      .grid-stats {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 14px;
+        margin-bottom: 20px;
+      }
+      .card {
+        background: var(--bg-card);
+        border: 1px solid var(--card-border);
+        border-radius: var(--radius-md);
+        padding: 18px;
+        transition:
+          border-color 0.2s ease,
+          background-color 0.2s ease;
+      }
+      .card:hover {
+        border-color: var(--accent);
+      }
+      .card h3 {
+        font-size: 11px;
+        font-weight: 700;
+        color: var(--text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        margin-bottom: 6px;
+      }
+      .card .value {
+        font-size: 26px;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+      }
+      .card .sub {
+        font-size: 12px;
+        color: var(--text-subtle);
+        margin-top: 4px;
+      }
+
+      .code-box {
+        background: var(--code-box-bg);
+        border: 1px solid var(--card-border);
+        border-radius: var(--radius-sm);
+        padding: 12px;
+        font-family: var(--font-mono);
+        font-size: 12px;
+        color: var(--text-main);
+        white-space: pre-wrap;
+        word-break: break-all;
+        margin-top: 8px;
+        line-height: 1.5;
+      }
+
+      /* Progress Bar */
+      .progress-section {
+        margin-bottom: 20px;
+      }
+      .progress-labels {
+        display: flex;
+        justify-content: space-between;
+        font-size: 12px;
+        margin-bottom: 6px;
+      }
+      .progress-bar-bg {
+        width: 100%;
+        height: 10px;
+        background: var(--code-box-bg);
+        border-radius: 9999px;
+        overflow: hidden;
+        border: 1px solid var(--card-border);
+      }
+      .progress-bar-fill {
+        height: 100%;
+        background: linear-gradient(
+          90deg,
+          var(--accent) 0%,
+          var(--purple) 100%
+        );
+        border-radius: 9999px;
+        transition: width 0.4s ease;
+      }
+
+      /* Tables */
+      .table-card {
+        margin-top: 20px;
+        overflow-x: auto;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+        text-align: left;
+      }
+      th {
+        padding: 10px 12px;
+        color: var(--text-muted);
+        font-weight: 600;
+        border-bottom: 1px solid var(--card-border);
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+      td {
+        padding: 10px 12px;
+        border-bottom: 1px solid var(--card-border);
+      }
+      tr:nth-child(even) td {
+        background: var(--table-stripe);
+      }
+      tr:hover td {
+        background: var(--table-hover);
+      }
+
+      .search-input {
+        background: var(--input-bg);
+        border: 1px solid var(--card-border);
+        border-radius: var(--radius-sm);
+        padding: 7px 10px;
+        color: var(--text-main);
+        font-size: 12px;
+        outline: none;
+        width: 240px;
+      }
+      .search-input:focus {
+        border-color: var(--accent);
+      }
+
+      .code-copy-btn {
+        background: var(--bg-card);
+        border: 1px solid var(--card-border);
+        color: var(--text-muted);
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-size: 11px;
+        cursor: pointer;
+        font-weight: 600;
+      }
+      .code-copy-btn:hover {
+        color: var(--text-main);
+        border-color: var(--accent);
+      }
+
+      .copy-pill {
+        display: inline-block;
+        font-family: var(--font-mono);
+        background: var(--pill-bg);
+        border: 1px solid var(--card-border);
+        padding: 2px 6px;
+        border-radius: 4px;
+        font-size: 11px;
+        color: var(--accent);
+        cursor: pointer;
+      }
+      .copy-pill:hover {
+        background: var(--card-hover);
+      }
+
+      .footer {
+        margin-top: 36px;
+        padding-top: 14px;
+        border-top: 1px solid var(--card-border);
+        display: flex;
+        justify-content: space-between;
+        font-size: 12px;
+        color: var(--text-subtle);
+      }
+
+      a {
+        color: var(--accent);
+        text-decoration: none;
+      }
+      a:hover {
+        text-decoration: underline;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <!-- Header -->
+      <header>
+        <div class="title-group">
+          <h1>
+            <span>Oracle County Lifecycle Engine</span>
+            <span class="badge badge-blue" id="headerCountyBadge"
+              >Volusia County, FL</span
+            >
+          </h1>
+          <p id="jobSub">
+            Lifecycle Status:
+            <code id="jobId">volusia-pilot-2026-08-31</code> &bull;
+            <span id="jobParcelsSub">313,735 total parcels</span>
+          </p>
+        </div>
+        <div class="header-actions">
+          <select
+            id="countySwitcherSelect"
+            class="county-selector"
+            onchange="onCountySelectChange(this.value)"
+          >
+            <option value="volusia">Volusia County (FL)</option>
+            <option value="hillsborough">Hillsborough County (FL)</option>
+            <option value="pinellas">Pinellas County (FL)</option>
+            <option value="lee">Lee County (FL)</option>
+            <option value="palm-beach">Palm Beach County (FL)</option>
+          </select>
+          <span class="badge-live">
+            <span class="pulse"></span>
+            <span id="lifecycleEngineStatus">ORACLE LIVE</span>
+          </span>
+        </div>
+      </header>
+
+      <!-- Next Step Guide Banner -->
+      <div class="next-step-banner" id="nextStepBanner">
+        <div class="next-step-info">
+          <div class="next-step-tag" id="nextStepTag">
+            Recommended Next Step
+          </div>
+          <div class="next-step-title" id="nextStepTitle">
+            Loading Next Action...
+          </div>
+          <div class="next-step-desc" id="nextStepDesc">
+            Evaluating active county lifecycle stages...
+          </div>
+        </div>
+        <div class="next-step-command" id="nextStepCommand">
+          <code>--</code>
+        </div>
+      </div>
+
+      <!-- Primary Unified Lifecycle Navigation Tracker (10 Stages) -->
+      <div class="lifecycle-tracker">
+        <div
+          class="step-node active"
+          id="nav-overview"
+          onclick="switchTab('tab-overview')"
+        >
+          <div class="step-header">
+            <span class="step-num">Stage 0</span>
+            <span class="badge badge-blue" id="navBadgeOverview">Overview</span>
+          </div>
+          <div class="step-title">Overview</div>
+          <div class="step-status" id="navStatusOverview">Architecture</div>
+        </div>
+
+        <div
+          class="step-node"
+          id="nav-discovery"
+          onclick="switchTab('tab-discovery')"
+        >
+          <div class="step-header">
+            <span class="step-num">Step 1</span>
+            <span class="badge badge-green" id="stepBadge1">Done</span>
+          </div>
+          <div class="step-title">Discovery</div>
+          <div class="step-status" id="stepStatus1">Findings Ready</div>
+        </div>
+
+        <div class="step-node" id="nav-seed" onclick="switchTab('tab-seed')">
+          <div class="step-header">
+            <span class="step-num">Step 2</span>
+            <span class="badge badge-green" id="stepBadge2">Done</span>
+          </div>
+          <div class="step-title">Seed Roll</div>
+          <div class="step-status" id="stepStatus2">313,735 Parcels</div>
+        </div>
+
+        <div
+          class="step-node"
+          id="nav-appraisal"
+          onclick="switchTab('tab-appraisal')"
+        >
+          <div class="step-header">
+            <span class="step-num">Step 3</span>
+            <span class="badge badge-green" id="stepBadge3">Done</span>
+          </div>
+          <div class="step-title">Appraisal</div>
+          <div class="step-status" id="stepStatus3">Warm Worker Pool</div>
+        </div>
+
+        <div
+          class="step-node"
+          id="nav-permits"
+          onclick="switchTab('tab-permits')"
+        >
+          <div class="step-header">
+            <span class="step-num">Step 4</span>
+            <span class="badge badge-green" id="stepBadge4">Done</span>
+          </div>
+          <div class="step-title">Permits</div>
+          <div class="step-status" id="stepStatus4">Multi-Portal</div>
+        </div>
+
+        <div
+          class="step-node"
+          id="nav-sunbiz"
+          onclick="switchTab('tab-sunbiz')"
+        >
+          <div class="step-header">
+            <span class="step-num">Step 5</span>
+            <span class="badge badge-blue" id="navBadgeSunbiz">Corp</span>
+          </div>
+          <div class="step-title">Sunbiz</div>
+          <div class="step-status" id="navStatusSunbiz">County Entities</div>
+        </div>
+
+        <div class="step-node" id="nav-bbb" onclick="switchTab('tab-bbb')">
+          <div class="step-header">
+            <span class="step-num">Step 6</span>
+            <span class="badge badge-green" id="navBadgeBbb">CRM</span>
+          </div>
+          <div class="step-title">BBB CRM</div>
+          <div class="step-status" id="navStatusBbb">Contractor Directory</div>
+        </div>
+
+        <div
+          class="step-node"
+          id="nav-overture"
+          onclick="switchTab('tab-overture')"
+        >
+          <div class="step-header">
+            <span class="step-num">Step 7</span>
+            <span class="badge badge-amber" id="overtureBadgeNav">POIs</span>
+          </div>
+          <div class="step-title">Overture</div>
+          <div class="step-status" id="overtureStatusNav">Spatial Boundary</div>
+        </div>
+
+        <div class="step-node" id="nav-neon" onclick="switchTab('tab-neon')">
+          <div class="step-header">
+            <span class="step-num">Step 8</span>
+            <span class="badge badge-purple" id="stepBadge5">Direct</span>
+          </div>
+          <div class="step-title">Warehouse</div>
+          <div class="step-status" id="stepStatus5">DuckDB Engine</div>
+        </div>
+
+        <div
+          class="step-node"
+          id="nav-filebase"
+          onclick="switchTab('tab-filebase')"
+        >
+          <div class="step-header">
+            <span class="step-num">Step 9</span>
+            <span class="badge badge-green" id="stepBadge6">IPFS</span>
+          </div>
+          <div class="step-title">Publish</div>
+          <div class="step-status" id="stepStatus6">Live IPNS</div>
+        </div>
+      </div>
+
+      <!-- TAB 0: Lifecycle Overview -->
+      <div id="tab-overview" class="tab-content active">
+        <div class="grid-stats">
+          <div class="card">
+            <h3>Target County</h3>
+            <div
+              class="value"
+              style="color: var(--accent)"
+              id="overviewCountyName"
+            >
+              Volusia
+            </div>
+            <div class="sub" id="overviewCountySub">
+              Florida &bull; County Seat: DeLand &bull; FIPS 12127
+            </div>
+          </div>
+          <div class="card">
+            <h3>Total Real Estate Parcels</h3>
+            <div
+              class="value"
+              style="color: var(--success)"
+              id="overviewParcelsVal"
+            >
+              313,735
+            </div>
+            <div class="sub" id="overviewParcelsSub">
+              Full parcel roll extraction from GIS MapServer
+            </div>
+          </div>
+          <div class="card">
+            <h3>Normalized Building Permits</h3>
+            <div
+              class="value"
+              style="color: var(--purple)"
+              id="overviewPermitsVal"
+            >
+              Multi-Portal
+            </div>
+            <div class="sub" id="overviewPermitsSub">
+              Connect Live AMANDA REST + Muni Portals
+            </div>
+          </div>
+          <div class="card">
+            <h3>Publication Status</h3>
+            <div
+              class="value"
+              style="color: var(--cyan)"
+              id="overviewPublishVal"
+            >
+              Parquet Ready
+            </div>
+            <div class="sub" id="overviewPublishSub">
+              Zero-compute DuckDB range querying
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>End-to-End County Ingestion Lifecycle Progression</h3>
+          <p
+            style="
+              font-size: 13px;
+              color: var(--text-muted);
+              line-height: 1.6;
+              margin-top: 6px;
+            "
+          >
+            The Oracle platform transforms raw municipal and county records into
+            high-performance, decentralized open data. Click any stage node
+            above to inspect its metrics, extract commands, schema outputs, and
+            live datasets.
+          </p>
+          <div
+            style="
+              display: grid;
+              grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+              gap: 12px;
+              margin-top: 16px;
+            "
+          >
+            <div
+              style="
+                background: var(--table-stripe);
+                border: 1px solid var(--card-border);
+                border-radius: var(--radius-sm);
+                padding: 12px;
+                cursor: pointer;
+              "
+              onclick="switchTab('tab-discovery')"
+            >
+              <div
+                style="
+                  font-weight: 700;
+                  color: var(--text-main);
+                  font-size: 14px;
+                "
+              >
+                1. Discovery & Portal Auditing
+              </div>
+              <div
+                style="
+                  font-size: 12px;
+                  color: var(--text-muted);
+                  margin-top: 4px;
+                "
+              >
+                Appraiser API probes, anti-bot analysis, safe concurrency, and
+                formal findings doc.
+              </div>
+            </div>
+            <div
+              style="
+                background: var(--table-stripe);
+                border: 1px solid var(--card-border);
+                border-radius: var(--radius-sm);
+                padding: 12px;
+                cursor: pointer;
+              "
+              onclick="switchTab('tab-seed')"
+            >
+              <div
+                style="
+                  font-weight: 700;
+                  color: var(--text-main);
+                  font-size: 14px;
+                "
+              >
+                2. GIS Seed Roll Extraction
+              </div>
+              <div
+                style="
+                  font-size: 12px;
+                  color: var(--text-muted);
+                  margin-top: 4px;
+                "
+              >
+                ArcGIS FeatureServer geometry streams, folio identifiers, and
+                spatial coordinate bounds.
+              </div>
+            </div>
+            <div
+              style="
+                background: var(--table-stripe);
+                border: 1px solid var(--card-border);
+                border-radius: var(--radius-sm);
+                padding: 12px;
+                cursor: pointer;
+              "
+              onclick="switchTab('tab-appraisal')"
+            >
+              <div
+                style="
+                  font-weight: 700;
+                  color: var(--text-main);
+                  font-size: 14px;
+                "
+              >
+                3. Appraisal Harvest (Warm Worker Pool)
+              </div>
+              <div
+                style="
+                  font-size: 12px;
+                  color: var(--text-muted);
+                  margin-top: 4px;
+                "
+              >
+                20-60 parcels/sec worker cluster, JSON transform,
+                Lexicon-aligned property records.
+              </div>
+            </div>
+            <div
+              style="
+                background: var(--table-stripe);
+                border: 1px solid var(--card-border);
+                border-radius: var(--radius-sm);
+                padding: 12px;
+                cursor: pointer;
+              "
+              onclick="switchTab('tab-permits')"
+            >
+              <div
+                style="
+                  font-weight: 700;
+                  color: var(--text-main);
+                  font-size: 14px;
+                "
+              >
+                4. Permits & Trade Signal Extraction
+              </div>
+              <div
+                style="
+                  font-size: 12px;
+                  color: var(--text-muted);
+                  margin-top: 4px;
+                "
+              >
+                County & municipal building permit sourcing, trade
+                classification, contractor details.
+              </div>
+            </div>
+            <div
+              style="
+                background: var(--table-stripe);
+                border: 1px solid var(--card-border);
+                border-radius: var(--radius-sm);
+                padding: 12px;
+                cursor: pointer;
+              "
+              onclick="switchTab('tab-sunbiz')"
+            >
+              <div
+                style="
+                  font-weight: 700;
+                  color: var(--text-main);
+                  font-size: 14px;
+                "
+              >
+                5. Sunbiz Corporate Slice
+              </div>
+              <div
+                style="
+                  font-size: 12px;
+                  color: var(--text-muted);
+                  margin-top: 4px;
+                "
+              >
+                ZIP prefix streams, entity document numbers, officer/registered
+                agent roles.
+              </div>
+            </div>
+            <div
+              style="
+                background: var(--table-stripe);
+                border: 1px solid var(--card-border);
+                border-radius: var(--radius-sm);
+                padding: 12px;
+                cursor: pointer;
+              "
+              onclick="switchTab('tab-bbb')"
+            >
+              <div
+                style="
+                  font-weight: 700;
+                  color: var(--text-main);
+                  font-size: 14px;
+                "
+              >
+                6. BBB Contractor Directory
+              </div>
+              <div
+                style="
+                  font-size: 12px;
+                  color: var(--text-muted);
+                  margin-top: 4px;
+                "
+              >
+                Harvested contractor profiles, ratings, license IDs, phone
+                numbers, and decision makers.
+              </div>
+            </div>
+            <div
+              style="
+                background: var(--table-stripe);
+                border: 1px solid var(--card-border);
+                border-radius: var(--radius-sm);
+                padding: 12px;
+                cursor: pointer;
+              "
+              onclick="switchTab('tab-overture')"
+            >
+              <div
+                style="
+                  font-weight: 700;
+                  color: var(--text-main);
+                  font-size: 14px;
+                "
+              >
+                7. Overture Places & POIs
+              </div>
+              <div
+                style="
+                  font-size: 12px;
+                  color: var(--text-muted);
+                  margin-top: 4px;
+                "
+              >
+                Spatial TIGER polygon clip, business locations, taxonomy
+                hierarchy, and licence audit.
+              </div>
+            </div>
+            <div
+              style="
+                background: var(--table-stripe);
+                border: 1px solid var(--card-border);
+                border-radius: var(--radius-sm);
+                padding: 12px;
+                cursor: pointer;
+              "
+              onclick="switchTab('tab-neon')"
+            >
+              <div
+                style="
+                  font-weight: 700;
+                  color: var(--text-main);
+                  font-size: 14px;
+                "
+              >
+                8. Warehouse & Relational Joins
+              </div>
+              <div
+                style="
+                  font-size: 12px;
+                  color: var(--text-muted);
+                  margin-top: 4px;
+                "
+              >
+                DuckDB zero-compute consolidation, address normalization, and
+                parcel multi-source joins.
+              </div>
+            </div>
+            <div
+              style="
+                background: var(--table-stripe);
+                border: 1px solid var(--card-border);
+                border-radius: var(--radius-sm);
+                padding: 12px;
+                cursor: pointer;
+              "
+              onclick="switchTab('tab-filebase')"
+            >
+              <div
+                style="
+                  font-weight: 700;
+                  color: var(--text-main);
+                  font-size: 14px;
+                "
+              >
+                9. DuckDB Parquet & Filebase IPFS
+              </div>
+              <div
+                style="
+                  font-size: 12px;
+                  color: var(--text-muted);
+                  margin-top: 4px;
+                "
+              >
+                Immutable IPFS storage, persistent IPNS pointers, MCP
+                zero-compute server distribution.
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- TAB 1: Discovery -->
+      <div id="tab-discovery" class="tab-content">
+        <div class="grid-stats">
+          <div class="card">
+            <h3>County Jurisdiction</h3>
+            <div class="value" style="color: var(--accent)" id="discCountyName">
+              Volusia
+            </div>
+            <div class="sub" id="discCountySub">
+              State: FL &bull; FIPS: 12127 &bull; Seat: DeLand
+            </div>
+          </div>
+          <div class="card">
+            <h3>Appraiser Portal</h3>
+            <div
+              class="value"
+              style="font-size: 18px; color: var(--success)"
+              id="discAppraiserPortal"
+            >
+              paproapp.vcgov.org
+            </div>
+            <div class="sub" id="discAppraiserSub">
+              Search API &bull; REST Endpoints
+            </div>
+          </div>
+          <div class="card">
+            <h3>Permit Vendor</h3>
+            <div
+              class="value"
+              style="font-size: 18px; color: var(--purple)"
+              id="discPermitVendor"
+            >
+              Connect Live (AMANDA)
+            </div>
+            <div class="sub" id="discPermitSub">
+              AMANDA REST API + Municipal Portals
+            </div>
+          </div>
+          <div class="card">
+            <h3>Anti-Bot / Egress</h3>
+            <div class="value" style="color: var(--cyan)">US Egress</div>
+            <div class="sub">Standard rate limits & concurrency safe</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div
+            style="
+              display: flex;
+              justify-content: space-between;
+              align-items: center;
+              margin-bottom: 8px;
+            "
+          >
+            <h3>County Findings Summary & Technical Contract</h3>
+            <button
+              class="code-copy-btn"
+              onclick="copyCode('discoveryDocBox', this)"
+            >
+              Copy Markdown
+            </button>
+          </div>
+          <div class="code-box" id="discoveryDocBox">
+            Loading county findings doc...
+          </div>
+        </div>
+      </div>
+
+      <!-- TAB 2: Seed Roll -->
+      <div id="tab-seed" class="tab-content">
+        <div class="grid-stats">
+          <div class="card">
+            <h3>Total Seed Parcels</h3>
+            <div class="value" style="color: var(--accent)" id="seedTotalVal">
+              313,735
+            </div>
+            <div class="sub" id="seedTotalSub">
+              Full county parcel roll extraction
+            </div>
+          </div>
+          <div class="card">
+            <h3>GIS FeatureServer</h3>
+            <div
+              class="value"
+              style="font-size: 18px; color: var(--success)"
+              id="seedGisVal"
+            >
+              vcgov.org GIS
+            </div>
+            <div class="sub" id="seedGisSub">
+              MapServer / FeatureServer Layer 0
+            </div>
+          </div>
+          <div class="card">
+            <h3>Key Identifiers</h3>
+            <div class="value" style="color: var(--purple)" id="seedKeyIdVal">
+              PARCEL_ID
+            </div>
+            <div class="sub">
+              Unique parcel ID with leading-zero preservation
+            </div>
+          </div>
+          <div class="card">
+            <h3>Pilot Seed Pool</h3>
+            <div class="value" style="color: var(--cyan)" id="seedPilotVal">
+              50 Parcels
+            </div>
+            <div class="sub">Multi-source join scorecard validation pool</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div
+            style="
+              display: flex;
+              justify-content: space-between;
+              align-items: center;
+              margin-bottom: 8px;
+            "
+          >
+            <h3>FeatureServer Streaming Extraction Command</h3>
+            <button
+              class="code-copy-btn"
+              onclick="copyCode('seedCommandBox', this)"
+            >
+              Copy Command
+            </button>
+          </div>
+          <div class="code-box" id="seedCommandBox">
+            node scripts/volusia/build-full-seed.mjs
+          </div>
+        </div>
+      </div>
+
+      <!-- TAB 3: Appraisal Harvest -->
+      <div id="tab-appraisal" class="tab-content">
+        <div class="grid-stats">
+          <div class="card">
+            <h3>Overall Progress</h3>
+            <div class="value" style="color: var(--accent)" id="pctVal">
+              100.00%
+            </div>
+            <div class="sub">
+              <span id="doneCount">313,735</span> of
+              <span id="totalCount">313,735</span> parcels
+            </div>
+          </div>
+          <div class="card">
+            <h3>Throughput</h3>
+            <div class="value" style="color: var(--success)" id="speedVal">
+              0.0 / sec
+            </div>
+            <div class="sub">
+              <span id="speedMin">0</span> parcels/min (rolling window)
+            </div>
+          </div>
+          <div class="card">
+            <h3>Processing Status</h3>
+            <div class="value" style="color: var(--cyan)" id="statusVal">
+              Complete
+            </div>
+            <div class="sub">
+              <span id="activeDoneCount">313,735</span> active completed
+            </div>
+          </div>
+          <div class="card">
+            <h3>Estimated Completion</h3>
+            <div
+              class="value"
+              style="font-size: 20px; color: var(--warning)"
+              id="etaDuration"
+            >
+              Complete
+            </div>
+            <div class="sub" id="etaTime">
+              <span id="remainingCount">0</span> remaining
+            </div>
+          </div>
+        </div>
+
+        <div class="card progress-section">
+          <div class="progress-labels">
+            <span
+              ><strong>Appraisal Harvest Progress:</strong>
+              <span id="pctText">100.00%</span></span
+            >
+            <span
+              ><span id="progressDoneText">313,735</span> /
+              <span id="progressTotalText">313,735</span></span
+            >
+          </div>
+          <div class="progress-bar-bg">
+            <div
+              id="progressBar"
+              class="progress-bar-fill"
+              style="width: 100%"
+            ></div>
+          </div>
+        </div>
+
+        <div class="grid-stats" style="margin-top: 16px">
+          <div class="card">
+            <h3>Harvest Breakdown</h3>
+            <div
+              style="
+                display: flex;
+                flex-direction: column;
+                gap: 12px;
+                margin-top: 8px;
+              "
+            >
+              <div
+                style="
+                  display: flex;
+                  justify-content: space-between;
+                  font-size: 13px;
+                "
+              >
+                <span style="color: var(--success)">Succeeded:</span>
+                <strong id="successCount">313,735</strong>
+              </div>
+              <div
+                style="
+                  display: flex;
+                  justify-content: space-between;
+                  font-size: 13px;
+                "
+              >
+                <span style="color: var(--danger)">Failed (Misses):</span>
+                <strong id="failCount">0</strong>
+              </div>
+              <div
+                style="
+                  display: flex;
+                  justify-content: space-between;
+                  font-size: 13px;
+                "
+              >
+                <span style="color: var(--warning)">Retried:</span>
+                <strong id="retryCount">0</strong>
+              </div>
+              <div
+                style="
+                  display: flex;
+                  justify-content: space-between;
+                  font-size: 13px;
+                "
+              >
+                <span style="color: var(--accent)">Skipped (Resumed):</span>
+                <strong id="skippedCount">0</strong>
+              </div>
+            </div>
+          </div>
+          <div class="card">
+            <div
+              style="
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                margin-bottom: 8px;
+              "
+            >
+              <h3>Appraisal Execution Command</h3>
+              <button
+                class="code-copy-btn"
+                onclick="copyCode('appraisalCommandBox', this)"
+              >
+                Copy Command
+              </button>
+            </div>
+            <div class="code-box" id="appraisalCommandBox">
+              node scripts/volusia/run-full-appraisal.mjs --concurrency=16
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- TAB 4: Permits & Trade Signals -->
+      <div id="tab-permits" class="tab-content">
+        <div class="grid-stats">
+          <div class="card">
+            <h3>Total Extracted Permits</h3>
+            <div class="value" style="color: var(--accent)" id="permitTotalVal">
+              --
+            </div>
+            <div class="sub" id="permitTotalSub">Building & Trade Permits</div>
+          </div>
+          <div class="card">
+            <h3>Roofing Trade Permits</h3>
+            <div class="value" style="color: var(--warning)" id="permitRoofVal">
+              --
+            </div>
+            <div class="sub" id="permitRoofSub">
+              Re-roof, shingles, tile & metal
+            </div>
+          </div>
+          <div class="card">
+            <h3>HVAC / Mechanical</h3>
+            <div class="value" style="color: var(--cyan)" id="permitHvacVal">
+              --
+            </div>
+            <div class="sub" id="permitHvacSub">
+              A/C, heat pumps, split systems
+            </div>
+          </div>
+          <div class="card">
+            <h3>Solar & Renewable</h3>
+            <div class="value" style="color: var(--purple)" id="permitSolarVal">
+              --
+            </div>
+            <div class="sub" id="permitSolarSub">
+              Rooftop PV & solar thermal
+            </div>
+          </div>
+        </div>
+
+        <div class="card progress-section">
+          <div class="progress-labels">
+            <span
+              ><strong>Permit Extraction Status:</strong>
+              <span id="permitStatusText">Active</span> &bull;
+              <span id="permitPctText">100.0%</span></span
+            >
+            <span
+              ><span id="permitProcessedText">--</span> of
+              <span id="permitTargetText">--</span> parcels</span
+            >
+          </div>
+          <div class="progress-bar-bg">
+            <div
+              id="permitProgressBar"
+              class="progress-bar-fill"
+              style="width: 100%"
+            ></div>
+          </div>
+        </div>
+
+        <!-- Trade Breakdown Cards -->
+        <div class="card">
+          <h3>Permit Trade Distribution</h3>
+          <div
+            style="
+              display: grid;
+              grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+              gap: 12px;
+              margin-top: 10px;
+            "
+          >
+            <div
+              style="
+                background: var(--table-stripe);
+                border: 1px solid var(--card-border);
+                border-radius: var(--radius-sm);
+                padding: 10px;
+              "
+            >
+              <div
+                style="
+                  font-size: 11px;
+                  color: var(--text-muted);
+                  font-weight: 600;
+                "
+              >
+                ROOFING
+              </div>
+              <div
+                style="font-size: 20px; font-weight: 700; color: var(--warning)"
+                id="tradeCountRoofing"
+              >
+                --
+              </div>
+              <div style="font-size: 11px; color: var(--text-muted)">
+                Re-roof, shingles, tile, metal
+              </div>
+            </div>
+            <div
+              style="
+                background: var(--table-stripe);
+                border: 1px solid var(--card-border);
+                border-radius: var(--radius-sm);
+                padding: 10px;
+              "
+            >
+              <div
+                style="
+                  font-size: 11px;
+                  color: var(--text-muted);
+                  font-weight: 600;
+                "
+              >
+                HVAC
+              </div>
+              <div
+                style="font-size: 20px; font-weight: 700; color: var(--cyan)"
+                id="tradeCountHvac"
+              >
+                --
+              </div>
+              <div style="font-size: 11px; color: var(--text-muted)">
+                A/C changeout, heat pump
+              </div>
+            </div>
+            <div
+              style="
+                background: var(--table-stripe);
+                border: 1px solid var(--card-border);
+                border-radius: var(--radius-sm);
+                padding: 10px;
+              "
+            >
+              <div
+                style="
+                  font-size: 11px;
+                  color: var(--text-muted);
+                  font-weight: 600;
+                "
+              >
+                SOLAR
+              </div>
+              <div
+                style="font-size: 20px; font-weight: 700; color: var(--purple)"
+                id="tradeCountSolar"
+              >
+                --
+              </div>
+              <div style="font-size: 11px; color: var(--text-muted)">
+                Rooftop PV, solar storage
+              </div>
+            </div>
+            <div
+              style="
+                background: var(--table-stripe);
+                border: 1px solid var(--card-border);
+                border-radius: var(--radius-sm);
+                padding: 10px;
+              "
+            >
+              <div
+                style="
+                  font-size: 11px;
+                  color: var(--text-muted);
+                  font-weight: 600;
+                "
+              >
+                SWIMMING POOL
+              </div>
+              <div
+                style="font-size: 20px; font-weight: 700; color: var(--accent)"
+                id="tradeCountPool"
+              >
+                --
+              </div>
+              <div style="font-size: 11px; color: var(--text-muted)">
+                Pool & spa construction
+              </div>
+            </div>
+            <div
+              style="
+                background: var(--table-stripe);
+                border: 1px solid var(--card-border);
+                border-radius: var(--radius-sm);
+                padding: 10px;
+              "
+            >
+              <div
+                style="
+                  font-size: 11px;
+                  color: var(--text-muted);
+                  font-weight: 600;
+                "
+              >
+                ELECTRICAL
+              </div>
+              <div
+                style="font-size: 20px; font-weight: 700; color: var(--success)"
+                id="tradeCountElectrical"
+              >
+                --
+              </div>
+              <div style="font-size: 11px; color: var(--text-muted)">
+                Panel upgrades, EV chargers
+              </div>
+            </div>
+            <div
+              style="
+                background: var(--table-stripe);
+                border: 1px solid var(--card-border);
+                border-radius: var(--radius-sm);
+                padding: 10px;
+              "
+            >
+              <div
+                style="
+                  font-size: 11px;
+                  color: var(--text-muted);
+                  font-weight: 600;
+                "
+              >
+                PLUMBING
+              </div>
+              <div
+                style="font-size: 20px; font-weight: 700; color: #ec4899"
+                id="tradeCountPlumbing"
+              >
+                --
+              </div>
+              <div style="font-size: 11px; color: var(--text-muted)">
+                Water heater, repiping
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Deep Enrichment Metrics -->
+        <div class="card" style="margin-top: 16px">
+          <div
+            style="
+              display: flex;
+              justify-content: space-between;
+              align-items: center;
+              margin-bottom: 8px;
+            "
+          >
+            <h3>Deep Permit Enrichment Telemetry</h3>
+            <span class="badge badge-purple" id="enrichmentStatusBadge"
+              >Active</span
+            >
+          </div>
+          <div
+            style="
+              display: grid;
+              grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+              gap: 12px;
+              margin-top: 10px;
+            "
+          >
+            <div
+              style="
+                background: var(--table-stripe);
+                border: 1px solid var(--card-border);
+                border-radius: var(--radius-sm);
+                padding: 10px;
+              "
+            >
+              <div
+                style="
+                  font-size: 11px;
+                  color: var(--text-muted);
+                  font-weight: 600;
+                "
+              >
+                ENRICHMENT YIELD
+              </div>
+              <div
+                style="font-size: 20px; font-weight: 700; color: var(--accent)"
+                id="enrichmentYieldVal"
+              >
+                --
+              </div>
+              <div
+                style="font-size: 11px; color: var(--text-muted)"
+                id="enrichmentYieldSub"
+              >
+                Records with full specs
+              </div>
+            </div>
+            <div
+              style="
+                background: var(--table-stripe);
+                border: 1px solid var(--card-border);
+                border-radius: var(--radius-sm);
+                padding: 10px;
+              "
+            >
+              <div
+                style="
+                  font-size: 11px;
+                  color: var(--text-muted);
+                  font-weight: 600;
+                "
+              >
+                AVERAGE JOB VALUATION
+              </div>
+              <div
+                style="font-size: 20px; font-weight: 700; color: var(--success)"
+                id="enrichmentAvgValuation"
+              >
+                --
+              </div>
+              <div
+                style="font-size: 11px; color: var(--text-muted)"
+                id="enrichmentValuationSub"
+              >
+                Total stated permit value
+              </div>
+            </div>
+            <div
+              style="
+                background: var(--table-stripe);
+                border: 1px solid var(--card-border);
+                border-radius: var(--radius-sm);
+                padding: 10px;
+              "
+            >
+              <div
+                style="
+                  font-size: 11px;
+                  color: var(--text-muted);
+                  font-weight: 600;
+                "
+              >
+                UNIQUE LICENSES
+              </div>
+              <div
+                style="font-size: 20px; font-weight: 700; color: var(--accent)"
+                id="enrichmentUniqueLic"
+              >
+                --
+              </div>
+              <div style="font-size: 11px; color: var(--text-muted)">
+                CCC / CGC trade licenses
+              </div>
+            </div>
+            <div
+              style="
+                background: var(--table-stripe);
+                border: 1px solid var(--card-border);
+                border-radius: var(--radius-sm);
+                padding: 10px;
+              "
+            >
+              <div
+                style="
+                  font-size: 11px;
+                  color: var(--text-muted);
+                  font-weight: 600;
+                "
+              >
+                BBB MATCHES
+              </div>
+              <div
+                style="font-size: 20px; font-weight: 700; color: var(--warning)"
+                id="enrichmentBbbMatches"
+              >
+                --
+              </div>
+              <div style="font-size: 11px; color: var(--text-muted)">
+                Verified accredited match
+              </div>
+            </div>
+            <div
+              style="
+                background: var(--table-stripe);
+                border: 1px solid var(--card-border);
+                border-radius: var(--radius-sm);
+                padding: 10px;
+              "
+            >
+              <div
+                style="
+                  font-size: 11px;
+                  color: var(--text-muted);
+                  font-weight: 600;
+                "
+              >
+                PORTAL FAILURES
+              </div>
+              <div
+                style="font-size: 20px; font-weight: 700; color: var(--danger)"
+                id="enrichmentFailuresVal"
+              >
+                0
+              </div>
+              <div
+                style="font-size: 11px; color: var(--text-muted)"
+                id="enrichmentFailuresSub"
+              >
+                404s / rate limits logged
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card table-card">
+          <div
+            style="
+              display: flex;
+              justify-content: space-between;
+              align-items: center;
+              margin-bottom: 10px;
+              flex-wrap: wrap;
+              gap: 8px;
+            "
+          >
+            <h3>Live Contractor Leaderboard</h3>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Contractor / Company</th>
+                <th>License #</th>
+                <th>Qualifier / Professional</th>
+                <th>Permit Volume</th>
+                <th>Total Stated Value</th>
+                <th>Avg Job Size</th>
+                <th>BBB Profile</th>
+              </tr>
+            </thead>
+            <tbody id="contractorLeaderboardBody">
+              <tr>
+                <td
+                  colspan="7"
+                  style="text-align: center; color: var(--text-muted)"
+                >
+                  Loading contractor leaderboard...
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="card table-card">
+          <h3>Sample Building Permits & Direct Portal Records</h3>
+          <table style="margin-top: 10px">
+            <thead>
+              <tr>
+                <th>Permit Number</th>
+                <th>Jurisdiction</th>
+                <th>Trade</th>
+                <th>Permit Type / Description</th>
+                <th>Issue Date</th>
+                <th>Record Link</th>
+              </tr>
+            </thead>
+            <tbody id="samplePermitsTableBody">
+              <tr>
+                <td
+                  colspan="6"
+                  style="text-align: center; color: var(--text-muted)"
+                >
+                  Loading live permit samples...
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- TAB 5: Sunbiz Corporate Slice -->
+      <div id="tab-sunbiz" class="tab-content">
+        <div class="grid-stats">
+          <div class="card">
+            <h3>Sunbiz County ZIP Chunks</h3>
+            <div
+              class="value"
+              style="color: var(--accent)"
+              id="sunbizZipChunksVal"
+            >
+              Active
+            </div>
+            <div class="sub" id="sunbizZipChunksSub">
+              Filtered from 12GB statewide master file
+            </div>
+          </div>
+          <div class="card">
+            <h3>Transformed Entities</h3>
+            <div
+              class="value"
+              style="color: var(--success)"
+              id="sunbizEntitiesVal"
+            >
+              --
+            </div>
+            <div class="sub" id="sunbizEntitiesSub">
+              Lexicon-aligned active corporate entities
+            </div>
+          </div>
+          <div class="card">
+            <h3>Corporate Roles</h3>
+            <div class="value" style="color: var(--purple)" id="sunbizRolesVal">
+              --
+            </div>
+            <div class="sub" id="sunbizRolesSub">
+              Officers, Directors, Registered Agents
+            </div>
+          </div>
+          <div class="card">
+            <h3>Processing Pipeline</h3>
+            <div class="value" style="color: var(--cyan)">
+              Local Fast Stream
+            </div>
+            <div class="sub">0 bytes AWS &bull; Zero memory overhead</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div
+            style="
+              display: flex;
+              justify-content: space-between;
+              align-items: center;
+              margin-bottom: 8px;
+            "
+          >
+            <h3>Sunbiz Corporate Extraction Command</h3>
+            <button
+              class="code-copy-btn"
+              onclick="copyCode('sunbizCommandBox', this)"
+            >
+              Copy Command
+            </button>
+          </div>
+          <div class="code-box" id="sunbizCommandBox">
+            node scripts/volusia/transform-sunbiz-local.mjs
+          </div>
+        </div>
+      </div>
+
+      <!-- TAB 6: BBB Roofer CRM -->
+      <div id="tab-bbb" class="tab-content">
+        <div class="grid-stats">
+          <div class="card">
+            <h3>Harvested Contractors</h3>
+            <div class="value" style="color: var(--accent)" id="bbbTotalCount">
+              --
+            </div>
+            <div class="sub" id="bbbTotalSub">Local trade contractors</div>
+          </div>
+          <div class="card">
+            <h3>A+ / Accredited Rating</h3>
+            <div
+              class="value"
+              style="color: var(--success)"
+              id="bbbAccreditedCount"
+            >
+              --
+            </div>
+            <div class="sub" id="bbbAccreditedSub">
+              100% verified BBB ratings
+            </div>
+          </div>
+          <div class="card">
+            <h3>Decision Makers</h3>
+            <div
+              class="value"
+              style="color: var(--purple)"
+              id="bbbDecisionMakersCount"
+            >
+              --
+            </div>
+            <div class="sub" id="bbbDecisionMakersSub">
+              Owners, Presidents, Principals
+            </div>
+          </div>
+          <div class="card">
+            <h3>Direct Phone & Contact</h3>
+            <div class="value" style="color: var(--cyan)" id="bbbPhoneCount">
+              --
+            </div>
+            <div class="sub" id="bbbPhoneSub">100% reachable phone numbers</div>
+          </div>
+        </div>
+
+        <div class="card table-card">
+          <div
+            style="
+              display: flex;
+              justify-content: space-between;
+              align-items: center;
+              margin-bottom: 10px;
+              flex-wrap: wrap;
+              gap: 8px;
+            "
+          >
+            <h3 id="bbbDirectoryTitle">Trade Contractor CRM Directory</h3>
+            <input
+              type="text"
+              id="rooferSearchInput"
+              class="search-input"
+              placeholder="Search contractor or city..."
+              onkeyup="filterRoofersTable()"
+            />
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Business Name</th>
+                <th>Rating</th>
+                <th>Accredited</th>
+                <th>City / State</th>
+                <th>Phone</th>
+                <th>Management / Contacts</th>
+                <th>Website</th>
+              </tr>
+            </thead>
+            <tbody id="roofersTableBody">
+              <tr>
+                <td
+                  colspan="7"
+                  style="text-align: center; color: var(--text-muted)"
+                >
+                  Loading contractor CRM data...
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- TAB 7: Overture Places -->
+      <div id="tab-overture" class="tab-content">
+        <div class="grid-stats">
+          <div class="card">
+            <h3>County POIs & Places</h3>
+            <div
+              class="value"
+              style="color: var(--accent)"
+              id="overtureClippedVal"
+            >
+              --
+            </div>
+            <div class="sub" id="overtureClippedSub">
+              Clipped via ST_Within polygon
+            </div>
+          </div>
+          <div class="card">
+            <h3>Overture Release</h3>
+            <div
+              class="value"
+              style="font-size: 18px; color: var(--success)"
+              id="overtureReleaseVal"
+            >
+              2026-08-19.0
+            </div>
+            <div class="sub">Pinned STAC catalog release</div>
+          </div>
+          <div class="card">
+            <h3>Boundary Source</h3>
+            <div
+              class="value"
+              style="font-size: 18px; color: var(--purple)"
+              id="overtureBoundaryVal"
+            >
+              TIGER 2024
+            </div>
+            <div class="sub" id="overtureBoundarySub">
+              US Census County Boundary
+            </div>
+          </div>
+          <div class="card">
+            <h3>Licence Gate</h3>
+            <div
+              class="value"
+              style="color: var(--cyan)"
+              id="overtureLicenceVal"
+            >
+              100% Approved
+            </div>
+            <div class="sub">Zero-copy commercial reusability</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div
+            style="
+              display: flex;
+              justify-content: space-between;
+              align-items: center;
+              margin-bottom: 8px;
+            "
+          >
+            <h3>DuckDB Spatial Extraction Command</h3>
+            <button
+              class="code-copy-btn"
+              onclick="copyCode('overtureCommandBox', this)"
+            >
+              Copy Command
+            </button>
+          </div>
+          <div class="code-box" id="overtureCommandBox">
+            node scripts/extract-overture-places.mjs --county volusia
+            --county-fips 12127 --release 2026-08-19.0
+          </div>
+        </div>
+      </div>
+
+      <!-- TAB 8: Neon Warehouse -->
+      <div id="tab-neon" class="tab-content">
+        <div class="grid-stats">
+          <div class="card">
+            <h3>Warehouse Strategy</h3>
+            <div class="value" style="color: var(--accent)">Direct Parquet</div>
+            <div class="sub">DuckDB in-process zero-compute architecture</div>
+          </div>
+          <div class="card">
+            <h3>PostgreSQL Status</h3>
+            <div class="value" style="color: var(--warning)">
+              Bypassed (Fast)
+            </div>
+            <div class="sub">
+              Direct Parquet bypassed 10h DB merge bottleneck
+            </div>
+          </div>
+          <div class="card">
+            <h3>DuckDB Query Table</h3>
+            <div
+              class="value"
+              style="color: var(--success)"
+              id="warehouseTableCount"
+            >
+              Ready
+            </div>
+            <div class="sub">
+              Flat single-table schema with permit & roof joins
+            </div>
+          </div>
+          <div class="card">
+            <h3>Publication Format</h3>
+            <div class="value" style="color: var(--cyan)">Parquet + IPFS</div>
+            <div class="sub">Direct HTTP range-reads over IPNS</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>Warehouse Table Schema Matrix</h3>
+          <table style="margin-top: 10px">
+            <thead>
+              <tr>
+                <th>Table Name</th>
+                <th>Source Layer</th>
+                <th>Key Relational Identifier</th>
+                <th>Status in Warehouse</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>parcels</code></td>
+                <td>Appraisal Harvest</td>
+                <td><code>parcel_id</code> / Folio</td>
+                <td>
+                  <span class="badge badge-green" id="neonParcelsStatus"
+                    >Exported to Parquet</span
+                  >
+                </td>
+              </tr>
+              <tr>
+                <td><code>property_improvements</code></td>
+                <td>Building Permits & Trade</td>
+                <td><code>permit_number</code></td>
+                <td>
+                  <span class="badge badge-green" id="neonPermitsStatus"
+                    >Exported to Parquet</span
+                  >
+                </td>
+              </tr>
+              <tr>
+                <td><code>companies</code></td>
+                <td>Sunbiz Corporate Registry</td>
+                <td><code>company_id</code> / Document Number</td>
+                <td>
+                  <span class="badge badge-blue" id="neonCompaniesStatus"
+                    >Local JSONL Staged</span
+                  >
+                </td>
+              </tr>
+              <tr>
+                <td><code>contractors</code></td>
+                <td>BBB CRM Harvest</td>
+                <td><code>business_id</code> / License Number</td>
+                <td>
+                  <span class="badge badge-green" id="neonContractorsStatus"
+                    >Loaded Profiles</span
+                  >
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- TAB 9: Filebase IPFS & Publish -->
+      <div id="tab-filebase" class="tab-content">
+        <div class="grid-stats">
+          <div class="card">
+            <h3>Parquet Query Table</h3>
+            <div
+              class="value"
+              style="color: var(--success)"
+              id="pubParquetSize"
+            >
+              -- MB
+            </div>
+            <div class="sub">
+              <span id="pubParquetRows">--</span> properties &bull; DuckDB
+              Parquet
+            </div>
+          </div>
+          <div class="card">
+            <h3>Query Format</h3>
+            <div class="value" style="color: var(--accent)">DuckDB Parquet</div>
+            <div class="sub">Zero-compute HTTP range-read engine</div>
+          </div>
+          <div class="card">
+            <h3>IPFS Publication</h3>
+            <div class="value" style="color: var(--purple)" id="pubIpfsStatus">
+              Live / Pending
+            </div>
+            <div class="sub">Immutable decentralized open data</div>
+          </div>
+          <div class="card">
+            <h3>IPNS Pointer</h3>
+            <div class="value" style="color: var(--cyan)" id="pubIpnsStatus">
+              Active / Pending
+            </div>
+            <div class="sub">Stable pointer across dataset updates</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>Decentralized IPNS Pointers & Gateway Resolvers</h3>
+          <table style="margin-top: 10px">
+            <thead>
+              <tr>
+                <th>Pointer Label</th>
+                <th>Dataset Type</th>
+                <th>IPNS Decentralized Identifier</th>
+                <th>Public Gateway Resolvers</th>
+              </tr>
+            </thead>
+            <tbody id="pubTableBody">
+              <tr>
+                <td
+                  colspan="4"
+                  style="text-align: center; color: var(--text-muted)"
+                >
+                  Loading decentralized IPNS pointers...
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="card">
+          <div
+            style="
+              display: flex;
+              justify-content: space-between;
+              align-items: center;
+              margin-bottom: 8px;
+            "
+          >
+            <h3>Zero-Compute DuckDB Direct HTTP Query</h3>
+            <button
+              class="code-copy-btn"
+              onclick="copyCode('duckdbCodeBox', this)"
+            >
+              Copy SQL
+            </button>
+          </div>
+          <div class="code-box" id="duckdbCodeBox">
+            Loading SQL query snippet...
+          </div>
+        </div>
+      </div>
+
+      <!-- Footer -->
+      <div class="footer">
+        <span id="footerEngineLabel"
+          >Oracle County Lifecycle Engine &bull; Port 3888</span
+        >
+        <span id="lastUpdated">Updated: Just now</span>
+      </div>
+    </div>
+
+    <script>
+      let currentCountyKey = "volusia";
+      let allRoofers = [];
+
+      function copyText(text, element) {
+        navigator.clipboard.writeText(text).then(() => {
+          const orig = element.innerText;
+          element.innerText = "Copied!";
+          setTimeout(() => (element.innerText = orig), 1500);
+        });
+      }
+
+      function copyCode(elementId, btn) {
+        const codeText = document.getElementById(elementId).innerText;
+        navigator.clipboard.writeText(codeText).then(() => {
+          const orig = btn.innerText;
+          btn.innerText = "Copied!";
+          setTimeout(() => (btn.innerText = orig), 1500);
+        });
+      }
+
+      const TAB_ROUTES = {
+        overview: "tab-overview",
+        discovery: "tab-discovery",
+        seed: "tab-seed",
+        appraisal: "tab-appraisal",
+        permits: "tab-permits",
+        sourcing: "tab-permits",
+        sunbiz: "tab-sunbiz",
+        bbb: "tab-bbb",
+        roofers: "tab-bbb",
+        overture: "tab-overture",
+        places: "tab-overture",
+        neon: "tab-neon",
+        postgres: "tab-neon",
+        warehouse: "tab-neon",
+        filebase: "tab-filebase",
+        publish: "tab-filebase",
+        ipfs: "tab-filebase",
+      };
+      const TAB_TO_ROUTE = {
+        "tab-overview": "overview",
+        "tab-discovery": "discovery",
+        "tab-seed": "seed",
+        "tab-appraisal": "appraisal",
+        "tab-permits": "permits",
+        "tab-sunbiz": "sunbiz",
+        "tab-bbb": "bbb",
+        "tab-overture": "overture",
+        "tab-neon": "neon",
+        "tab-filebase": "publish",
+      };
+      const TAB_TO_NAV = {
+        "tab-overview": "nav-overview",
+        "tab-discovery": "nav-discovery",
+        "tab-seed": "nav-seed",
+        "tab-appraisal": "nav-appraisal",
+        "tab-permits": "nav-permits",
+        "tab-sunbiz": "nav-sunbiz",
+        "tab-bbb": "nav-bbb",
+        "tab-overture": "nav-overture",
+        "tab-neon": "nav-neon",
+        "tab-filebase": "nav-filebase",
+      };
+
+      function switchTab(tabId, updateHistory = true) {
+        const content = document.getElementById(tabId);
+        if (!content) return;
+
+        document
+          .querySelectorAll(".tab-content")
+          .forEach((el) => el.classList.remove("active"));
+        document
+          .querySelectorAll(".step-node")
+          .forEach((el) => el.classList.remove("active"));
+
+        content.classList.add("active");
+        const navId = TAB_TO_NAV[tabId];
+        if (navId) {
+          document.getElementById(navId)?.classList.add("active");
+        }
+
+        const route = TAB_TO_ROUTE[tabId] || "overview";
+        if (updateHistory) {
+          history.pushState({ tabId }, "", "/" + route);
+        }
+      }
+
+      function initRouteFromUrl() {
+        const path = window.location.pathname
+          .replace(/^\/+|\/+$/g, "")
+          .toLowerCase();
+        let targetTab = "tab-overview";
+        if (path) {
+          if (path.startsWith("stage/")) {
+            const stageNum = parseInt(path.split("/")[1], 10);
+            const stageTabs = [
+              "tab-overview",
+              "tab-discovery",
+              "tab-seed",
+              "tab-appraisal",
+              "tab-permits",
+              "tab-sunbiz",
+              "tab-bbb",
+              "tab-overture",
+              "tab-neon",
+              "tab-filebase",
+            ];
+            if (stageTabs[stageNum]) targetTab = stageTabs[stageNum];
+          } else if (TAB_ROUTES[path]) {
+            targetTab = TAB_ROUTES[path];
+          }
+        }
+        switchTab(targetTab, false);
+      }
+
+      window.addEventListener("popstate", (e) => {
+        if (e.state && e.state.tabId) {
+          switchTab(e.state.tabId, false);
+        } else {
+          initRouteFromUrl();
+        }
+      });
+
+      async function fetchCounties() {
+        try {
+          const res = await fetch("/api/counties");
+          if (!res.ok) return;
+          const data = await res.json();
+          const select = document.getElementById("countySwitcherSelect");
+          if (!select || !data.counties) return;
+          select.innerHTML = data.counties
+            .map(
+              (c) =>
+                `<option value="${c.key}" ${c.key === currentCountyKey ? "selected" : ""}>${c.name} (${c.state})</option>`,
+            )
+            .join("");
+        } catch {}
+      }
+
+      function onCountySelectChange(countyKey) {
+        currentCountyKey = countyKey;
+        const url = new URL(window.location.href);
+        url.searchParams.set("county", countyKey);
+        window.history.replaceState({}, "", url.toString());
+        updateDashboard();
+      }
+
+      async function fetchLifecycle() {
+        try {
+          const params = new URLSearchParams(window.location.search);
+          const countyParam = params.get("county") || currentCountyKey;
+          const res = await fetch(`/api/lifecycle?county=${countyParam}`);
+          if (!res.ok) return;
+          const data = await res.json();
+          const county = data.county || {};
+          currentCountyKey = county.key || currentCountyKey;
+
+          // Header
+          document.getElementById("pageTitle").innerText =
+            `${county.name || "Oracle"} County Lifecycle & Open Data Engine`;
+          document.getElementById("headerCountyBadge").innerText =
+            `${county.name || "County"}, ${county.state || "FL"}`;
+          document.getElementById("jobId").innerText =
+            `${county.key || "county"}-lifecycle-live`;
+          const totalParcelsFormatted = (
+            county.totalSeedParcels ||
+            county.targetParcels ||
+            0
+          ).toLocaleString();
+          document.getElementById("jobParcelsSub").innerText =
+            `${totalParcelsFormatted} total parcels`;
+
+          const select = document.getElementById("countySwitcherSelect");
+          if (select && select.value !== currentCountyKey) {
+            select.value = currentCountyKey;
+          }
+
+          // Next Step Banner
+          if (data.nextStep) {
+            document.getElementById("nextStepTitle").innerText =
+              data.nextStep.actionTitle;
+            document.getElementById("nextStepDesc").innerText =
+              data.nextStep.description;
+            document.getElementById("nextStepTag").innerText =
+              `Step ${data.nextStep.stageNumber} • ${data.nextStep.stageName}`;
+            document.getElementById("nextStepCommand").innerHTML =
+              `<code>${data.nextStep.command}</code>`;
+          }
+
+          // Stage Badges & Statuses (Concise status labels to prevent overstretching)
+          const dStage = data.stages?.discovery;
+          if (dStage?.status === "completed") {
+            document.getElementById("stepBadge1").innerText = "Done";
+            document.getElementById("stepBadge1").className =
+              "badge badge-green";
+            document.getElementById("stepStatus1").innerText = "Findings Ready";
+          } else {
+            document.getElementById("stepBadge1").innerText = "Pending";
+            document.getElementById("stepBadge1").className =
+              "badge badge-amber";
+            document.getElementById("stepStatus1").innerText =
+              "Discovery Needed";
+          }
+
+          const sStage = data.stages?.seed;
+          if (sStage?.status === "completed") {
+            document.getElementById("stepBadge2").innerText = "Done";
+            document.getElementById("stepBadge2").className =
+              "badge badge-green";
+            document.getElementById("stepStatus2").innerText =
+              `${(sStage.count || county.totalSeedParcels || 0).toLocaleString()} Parcels`;
+          } else if (sStage?.status === "pilot_completed") {
+            document.getElementById("stepBadge2").innerText = "Pilot";
+            document.getElementById("stepBadge2").className =
+              "badge badge-blue";
+            document.getElementById("stepStatus2").innerText =
+              "50 Seed Parcels";
+          } else {
+            document.getElementById("stepBadge2").innerText = "Pending";
+            document.getElementById("stepBadge2").className =
+              "badge badge-amber";
+            document.getElementById("stepStatus2").innerText =
+              `${(county.totalSeedParcels || 0).toLocaleString()} Parcels`;
+          }
+
+          const aStage = data.stages?.appraisal;
+          if (aStage?.status === "completed") {
+            document.getElementById("stepBadge3").innerText = "Done";
+            document.getElementById("stepBadge3").className =
+              "badge badge-green";
+            document.getElementById("stepStatus3").innerText =
+              `${(aStage.count || 0).toLocaleString()} Lexicon`;
+          } else if (aStage?.status === "pilot_completed") {
+            document.getElementById("stepBadge3").innerText = "Pilot";
+            document.getElementById("stepBadge3").className =
+              "badge badge-blue";
+            document.getElementById("stepStatus3").innerText = "50 Transformed";
+          }
+
+          const srcStage = data.stages?.sourcing;
+          if (srcStage?.status === "completed") {
+            document.getElementById("stepBadge4").innerText = "Enriched";
+            document.getElementById("stepBadge4").className =
+              "badge badge-green";
+            document.getElementById("stepStatus4").innerText =
+              `${(srcStage.permits?.count || 0).toLocaleString()} Permits`;
+          } else if (srcStage?.status === "pilot_enriched") {
+            document.getElementById("stepBadge4").innerText = "Pilot";
+            document.getElementById("stepBadge4").className =
+              "badge badge-blue";
+            document.getElementById("stepStatus4").innerText =
+              "50 Multi-Source";
+          }
+
+          const pubStage = data.stages?.publish;
+          if (
+            pubStage?.status === "completed" ||
+            pubStage?.status === "pilot_validated"
+          ) {
+            document.getElementById("stepBadge6").innerText =
+              pubStage.status === "completed" ? "Live" : "Ready";
+            document.getElementById("stepBadge6").className =
+              "badge badge-green";
+            document.getElementById("stepStatus6").innerText = pubStage.ipnsKey
+              ? "Live IPNS"
+              : "Parquet Ready";
+          }
+
+          // TAB 0: Overview Cards
+          document.getElementById("overviewCountyName").innerText =
+            county.name || "County";
+          document.getElementById("overviewCountySub").innerText =
+            `${county.state || "FL"} • County Seat: ${county.seat || "DeLand"} • FIPS ${county.fips || "12127"}`;
+          document.getElementById("overviewParcelsVal").innerText = (
+            county.targetParcels || 0
+          ).toLocaleString();
+          document.getElementById("overviewParcelsSub").innerText =
+            `Full parcel roll from ${county.gisFeatureServer ? "ArcGIS GIS" : "County GIS"}`;
+          document.getElementById("overviewPermitsVal").innerText =
+            county.permitVendors ? county.permitVendors[0] : "Multi-Portal";
+          document.getElementById("overviewPermitsSub").innerText = (
+            county.permitVendors || []
+          ).join(" • ");
+          document.getElementById("overviewPublishVal").innerText =
+            pubStage?.ipnsKey ? "IPFS / IPNS Live" : "DuckDB Parquet";
+
+          // TAB 1: Discovery
+          document.getElementById("discCountyName").innerText =
+            county.name || "County";
+          document.getElementById("discCountySub").innerText =
+            `State: ${county.state || "FL"} • FIPS: ${county.fips || "--"} • Seat: ${county.seat || "--"}`;
+          document.getElementById("discAppraiserPortal").innerText = (
+            county.appraiserUrl || ""
+          ).replace(/^https?:\/\//, "");
+          document.getElementById("discPermitVendor").innerText =
+            (county.permitVendors || ["Connect Live"])[0];
+          document.getElementById("discPermitSub").innerText = (
+            county.permitVendors || []
+          ).join(" + ");
+          document.getElementById("discoveryDocBox").innerText =
+            `# ${county.name || "County"}, ${county.state || "FL"} — Discovery & Findings
+County key: ${county.key} | FIPS: ${county.fips} | Seat: ${county.seat}
+Appraiser: ${county.appraiserUrl}
+GIS FeatureServer: ${county.gisFeatureServer}
+Permit Vendors: ${(county.permitVendors || []).join(", ")}
+Target Parcel Roll: ${(county.targetParcels || 0).toLocaleString()}
+Documentation: docs/${county.key}-county-findings.md`;
+
+          // TAB 2: Seed Roll
+          document.getElementById("seedTotalVal").innerText = (
+            county.totalSeedParcels ||
+            county.targetParcels ||
+            0
+          ).toLocaleString();
+          document.getElementById("seedGisVal").innerText =
+            (county.gisFeatureServer || "GIS Service")
+              .split("/")
+              .slice(-3, -1)
+              .join("/") || "ArcGIS Layer 0";
+          document.getElementById("seedCommandBox").innerText =
+            `node scripts/${county.key}/build-full-seed.mjs`;
+
+          // TAB 3: Appraisal Harvest
+          const appCount = aStage?.count || 0;
+          const appTarget = county.targetParcels || 313735;
+          const appPct =
+            appTarget > 0 ? ((appCount / appTarget) * 100).toFixed(2) : "0.00";
+          document.getElementById("pctVal").innerText = `${appPct}%`;
+          document.getElementById("doneCount").innerText =
+            appCount.toLocaleString();
+          document.getElementById("totalCount").innerText =
+            appTarget.toLocaleString();
+          document.getElementById("speedVal").innerText =
+            `${aStage?.speed || 0.0} / sec`;
+          document.getElementById("statusVal").innerText =
+            aStage?.status === "completed"
+              ? "Complete"
+              : aStage?.status === "pilot_completed"
+                ? "Pilot Complete (50)"
+                : "Pending";
+          document.getElementById("activeDoneCount").innerText =
+            appCount.toLocaleString();
+          document.getElementById("etaDuration").innerText =
+            aStage?.status === "completed" ||
+            aStage?.status === "pilot_completed"
+              ? "Complete"
+              : "Calculating...";
+          document.getElementById("remainingCount").innerText = Math.max(
+            0,
+            appTarget - appCount,
+          ).toLocaleString();
+          document.getElementById("pctText").innerText = `${appPct}%`;
+          document.getElementById("progressDoneText").innerText =
+            appCount.toLocaleString();
+          document.getElementById("progressTotalText").innerText =
+            appTarget.toLocaleString();
+          document.getElementById("progressBar").style.width =
+            `${Math.min(100, Math.max(0, parseFloat(appPct)))}%`;
+          document.getElementById("successCount").innerText =
+            appCount.toLocaleString();
+          document.getElementById("appraisalCommandBox").innerText =
+            `node scripts/${county.key}/run-full-appraisal.mjs --concurrency=16`;
+
+          // TAB 5: Sunbiz
+          document.getElementById("sunbizCommandBox").innerText =
+            `node scripts/${county.key}/transform-sunbiz-local.mjs`;
+          document.getElementById("sunbizZipChunksVal").innerText =
+            `${(county.zipCodes || []).length} ZIP Codes`;
+          document.getElementById("sunbizZipChunksSub").innerText =
+            (county.zipCodes || []).slice(0, 6).join(", ") + "...";
+
+          // TAB 7: Overture Places
+          document.getElementById("overtureCommandBox").innerText =
+            `node scripts/extract-overture-places.mjs --county ${county.key} --county-fips ${county.fips} --release 2026-08-19.0`;
+          document.getElementById("overtureBoundarySub").innerText =
+            `tl_2024_us_county (${county.name})`;
+
+          // TAB 9: Publish & IPFS
+          const ipnsTable = document.getElementById("pubTableBody");
+          if (ipnsTable) {
+            const qTableIpns = county.ipns?.queryTable;
+            const openDataIpns = county.ipns?.openData;
+            const coverageIpns = county.ipns?.coverage;
+
+            if (qTableIpns || openDataIpns) {
+              ipnsTable.innerHTML = `
+                <tr>
+                  <td><strong>oracle-query-table-${county.key}</strong></td>
+                  <td>DuckDB Range-Readable Parquet Table</td>
+                  <td><span class="copy-pill" onclick="copyText('${qTableIpns || ""}', this)">${qTableIpns || "Pending Publish"}</span></td>
+                  <td>${qTableIpns ? `<a href="https://ipfs.filebase.io/ipns/${qTableIpns}" target="_blank">Filebase Gateway &rarr;</a>` : "--"}</td>
+                </tr>
+                <tr>
+                  <td><strong>oracle-open-data-${county.key}</strong></td>
+                  <td>Consolidated Sharded Properties JSON</td>
+                  <td><span class="copy-pill" onclick="copyText('${openDataIpns || ""}', this)">${openDataIpns || "Pending Publish"}</span></td>
+                  <td>${openDataIpns ? `<a href="https://ipfs.filebase.io/ipns/${openDataIpns}" target="_blank">Filebase Gateway &rarr;</a>` : "--"}</td>
+                </tr>
+                <tr>
+                  <td><strong>oracle-dataset-coverage-${county.key}</strong></td>
+                  <td>Dataset Quality & Metadata Snapshot</td>
+                  <td><span class="copy-pill" onclick="copyText('${coverageIpns || ""}', this)">${coverageIpns || "Pending Publish"}</span></td>
+                  <td>${coverageIpns ? `<a href="https://ipfs.filebase.io/ipns/${coverageIpns}" target="_blank">Filebase Gateway &rarr;</a>` : "--"}</td>
+                </tr>
+              `;
+            } else {
+              ipnsTable.innerHTML = `
+                <tr>
+                  <td><strong>oracle-query-table-${county.key}</strong></td>
+                  <td>DuckDB Range-Readable Parquet Table (Local Pilot)</td>
+                  <td><span class="copy-pill">data/${county.key}/pilot/${county.key}_pilot_query_table.parquet</span></td>
+                  <td><span class="badge badge-blue">Local Parquet</span></td>
+                </tr>
+              `;
+            }
+          }
+
+          // DuckDB Snippet
+          const duckdbSnippet = county.ipns?.queryTable
+            ? `INSTALL httpfs; LOAD httpfs; SET unsafe_disable_etag_checks = true;
+-- Query ${county.name} Properties & Roof Signals via IPNS HTTP Range Request
+SELECT parcel_identifier, address_street, address_city, market_value, roof_covering_material, has_permits, permit_count
+FROM read_parquet('https://ipfs.filebase.io/ipns/${county.ipns.queryTable}')
+WHERE has_permits = true
+LIMIT 25;`
+            : `-- Query Local ${county.name} Parquet Table in DuckDB
+SELECT parcel_identifier, address_street, address_city, market_value, roof_covering_material, has_permits, permit_count
+FROM read_parquet('data/${county.key}/pilot/${county.key}_pilot_query_table.parquet')
+LIMIT 25;`;
+          document.getElementById("duckdbCodeBox").innerText = duckdbSnippet;
+        } catch (err) {
+          console.error("fetchLifecycle error", err);
+        }
+      }
+
+      async function fetchRoofers() {
+        try {
+          const params = new URLSearchParams(window.location.search);
+          const countyParam = params.get("county") || currentCountyKey;
+          const res = await fetch(`/api/roofers?county=${countyParam}`);
+          if (!res.ok) return;
+          const data = await res.json();
+          allRoofers = data.roofers || [];
+          renderRoofersTable(allRoofers);
+          if (data.total !== undefined) {
+            document.getElementById("bbbTotalCount").innerText = data.total;
+            document.getElementById("bbbAccreditedCount").innerText =
+              data.accreditedCount || data.total;
+            document.getElementById("bbbDecisionMakersCount").innerText =
+              data.decisionMakersCount || data.total;
+            document.getElementById("bbbPhoneCount").innerText =
+              data.phoneCount || data.total;
+          }
+        } catch {}
+      }
+
+      function renderRoofersTable(roofers) {
+        const tbody = document.getElementById("roofersTableBody");
+        if (!tbody) return;
+        if (!roofers || roofers.length === 0) {
+          tbody.innerHTML =
+            '<tr><td colspan="7" style="text-align:center; color:var(--text-muted);">No contractors match search criteria.</td></tr>';
+          return;
+        }
+        tbody.innerHTML = roofers
+          .map(
+            (r) => `
+        <tr>
+          <td>
+            <strong>${r.businessName || r.name || "Unknown"}</strong>
+            ${r.licenseNumber ? `<div style="font-size:11px; color:var(--accent); font-family:monospace;">${r.licenseNumber}</div>` : ""}
+          </td>
+          <td><span class="badge badge-green">${r.rating || "A+"}</span></td>
+          <td><span class="badge ${r.accredited ? "badge-blue" : "badge-purple"}">${r.accredited ? "Yes" : "No"}</span></td>
+          <td>${r.city || "DeLand"}, ${r.state || "FL"} ${r.zip || r.postalCode || ""}</td>
+          <td><code>${r.phone || "--"}</code></td>
+          <td>${r.principalName || r.manager || "--"}</td>
+          <td>${r.website || r.websiteUrl ? `<a href="${r.website || r.websiteUrl}" target="_blank">Visit Site &rarr;</a>` : r.profileUrl ? `<a href="${r.profileUrl}" target="_blank">BBB Page &rarr;</a>` : "--"}</td>
+        </tr>
+      `,
+          )
+          .join("");
+      }
+
+      function filterRoofersTable() {
+        const q = (
+          document.getElementById("rooferSearchInput")?.value || ""
+        ).toLowerCase();
+        const filtered = allRoofers.filter(
+          (r) =>
+            (r.businessName || "").toLowerCase().includes(q) ||
+            (r.city || "").toLowerCase().includes(q) ||
+            (r.principalName || "").toLowerCase().includes(q),
+        );
+        renderRoofersTable(filtered);
+      }
+
+      async function fetchPermitSamples() {
+        try {
+          const params = new URLSearchParams(window.location.search);
+          const countyParam = params.get("county") || currentCountyKey;
+          const res = await fetch(`/api/permits/samples?county=${countyParam}`);
+          if (!res.ok) return;
+          const data = await res.json();
+          const tbody = document.getElementById("samplePermitsTableBody");
+          if (!tbody || !data.samples) return;
+          if (data.samples.length === 0) {
+            tbody.innerHTML =
+              '<tr><td colspan="6" style="text-align:center; color:var(--text-muted);">No permit samples staged.</td></tr>';
+            return;
+          }
+          tbody.innerHTML = data.samples
+            .map(
+              (s) => `
+            <tr>
+              <td><code>${s.permitNumber || s.permit_id || "--"}</code></td>
+              <td><span class="badge badge-blue">${s.jurisdiction || s.city || currentCountyKey.toUpperCase()}</span></td>
+              <td><span class="badge badge-amber">${s.trade || "Building"}</span></td>
+              <td>${s.description || s.permitType || "--"}</td>
+              <td>${s.issueDate || s.appliedDate || "--"}</td>
+              <td>${s.url ? `<a href="${s.url}" target="_blank">View Portal &rarr;</a>` : "--"}</td>
+            </tr>
+          `,
+            )
+            .join("");
+        } catch {}
+      }
+
+      async function updateDashboard() {
+        try {
+          await Promise.all([
+            fetchLifecycle(),
+            fetchPermitSamples(),
+            fetchRoofers(),
+          ]);
+          document.getElementById("lastUpdated").innerText =
+            "Updated: " + new Date().toLocaleTimeString();
+        } catch (err) {
+          console.error("Dashboard update error", err);
+        }
+      }
+
+      initRouteFromUrl();
+      fetchCounties();
+      updateDashboard();
+      setInterval(updateDashboard, 5000);
+    </script>
+  </body>
+</html>

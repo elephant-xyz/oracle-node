@@ -1,13 +1,40 @@
-# Generated/transformed files with HTML syntax issues
-generate-transform/**/*.html
-generate-transform/**/*.json
-build/
-dist/
-node_modules/
+# Build & Generated
+generate-transform
+generate-transform/**
+build
+build/**
+dist
+dist/**
+node_modules
+node_modules/**
+downloads
+downloads/**
+data
+data/**
+coverage
+coverage/**
+Counties-trasform-scripts
+Counties-trasform-scripts/**
+agent-transcripts
+agent-transcripts/**
+
+# File extensions
 *.zip
 *.log
+*.jsonl
+*.csv
+*.parquet
+*.geojson
 
-# IDE and config files
-.claude/
-.cursor/
+# IDE & Configs
+.claude
+.claude/**
+.cursor
+.cursor/**
+.agents
+.agents/**
+agent
+agent/**
+terminals
+terminals/**
 .mcp.json

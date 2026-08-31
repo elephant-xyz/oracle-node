@@ -1,0 +1,71 @@
+# Montgomery County, PA — source catalog (machine-readable registry)
+county: Montgomery
+state: PA
+county_key: montgomery
+parcel_id:
+  name: TAXPIN
+  alternate_names: [PARCEL, PARID, ALT_ID, ALTERNATEI]
+  display_format: "############"
+  example: "300034228005"
+  muni_code_field: MUNI_CODE
+  muni_name_field: Muni_Name
+
+appraisal:
+  source: Montgomery County Assessment Parcel Roll / PASDA
+  vendor: Esri ArcGIS MapServer (Penn State PASDA mirror + County FeatureServer)
+  host: https://mapservices.pasda.psu.edu
+  interactive: https://propertyrecords.montcopa.org/
+  access: plain-http
+  rest: https://mapservices.pasda.psu.edu/server/rest/services/pasda/MontgomeryCounty/MapServer/14
+  county_featureserver: https://gis.montcopa.org/arcgis/rest/services/Parcels/Montgomery_County_Parcels/FeatureServer/10
+  parcel_count_gis_2026_08_29: 309732
+  max_record_count: 1000
+  joined_fields:
+    - owner (OWN1, OWN2, CAREOF, ADDR1, ADDR2, ADDR3, ZIP1_ZIP2)
+    - site address (LOCATION1, LOC_NO, LOC_STR, LOC_SUF, LOC_ZIP1_Z)
+    - assessments (ASSESSMENT, TOTAL_APPR, TOTAL_ASSE, OBYVAL, EST_CO_TAX, EST_MUNI_T, EST_SCH_TA)
+    - structural (YEAR_BUILT, YR_REM, DEGREE_REM, SFLA, EXTWALL, STORIES, BASEMENT, STYLE, BEDROOMS, BATHS, HALF_BATHS, RM_TOT)
+    - commercial (COMM_AREA, COMM_NLA, COMM_YR_BL, USE_TYPE, STRUCTURE)
+    - land use (CLASS, LAND_USE, LAND_SF, LAND_ACRES)
+    - deed refs (DEED_BOOK, DEED_PAGE, SALE_DATE, CONSIDERAT)
+    - municipality (MUNI_CODE, Muni_Name, SCH_DIST)
+  anti_bot:
+    geo_block: false
+    captcha: false
+    terms_of_use: true
+
+gis:
+  rest: https://mapservices.pasda.psu.edu/server/rest/services/pasda/MontgomeryCounty/MapServer/14
+  spatial_reference: 4269 # WGS84/NAD83 decimal degrees
+  geometry_type: esriGeometryPolygon
+
+pa_corporate:
+  source: Pennsylvania Department of State (BCCO open data)
+  applicable: true
+  open_data: https://data.pa.gov/resource/xvd7-5r2c.json
+  county_filter_field: shortcountyname
+  county_filter_value: MONTGOMERY
+  county_code: "46"
+
+permits:
+  # PA building permits are municipal (62 jurisdictions in Montgomery County)
+  - jurisdiction: Lower Merion Township
+    municipality_gis_code: "40"
+    portal: https://www.lowermerion.org/services/building-permits
+    vendor: OpenGov / Custom
+    status: discovered
+  - jurisdiction: Abington Township
+    municipality_gis_code: "30"
+    portal: https://www.abingtonpa.gov/departments/code-enforcement
+    vendor: Custom
+    status: discovered
+  - jurisdiction: Norristown Municipality
+    municipality_gis_code: "13"
+    portal: https://www.norristown.org/168/Building-Permits
+    vendor: Custom
+    status: discovered
+  - jurisdiction: Upper Merion Township
+    municipality_gis_code: "58"
+    portal: https://www.umtownship.org/departments/codes-safety/
+    vendor: Online Services
+    status: discovered
