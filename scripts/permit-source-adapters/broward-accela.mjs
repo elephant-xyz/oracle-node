@@ -1093,6 +1093,14 @@ export async function searchBrowardAccelaDateWindow({
     });
     const context = await resolveAccelaDomContext(page, source);
     await waitForSearchFormOrFailure(context);
+    await Promise.all([
+      context.waitForSelector(DEFAULT_SELECTORS.startDate, {
+        timeout: 45_000,
+      }),
+      context.waitForSelector(DEFAULT_SELECTORS.endDate, {
+        timeout: 45_000,
+      }),
+    ]);
     const initialHtml = await context.content();
     const initialClassification = classifyBrowardAccelaPage(initialHtml);
     if (
@@ -1501,6 +1509,16 @@ export async function captureBrowardAccelaCsvWindow({
         rawSearchHtml: searchHtml,
       };
     }
+    const listLinks = extractBrowardAccelaPermitLinks({
+      html: searchHtml,
+      source,
+      searchKey: sourceWindowKey,
+      pageNumber: 1,
+    });
+    const excludedListCount = countBrowardAccelaExcludedModuleLinks({
+      html: searchHtml,
+      source,
+    });
     const directDetail = extractBrowardAccelaDirectDetailLink({
       html: searchHtml,
       pageUrl: context.url(),
@@ -1542,6 +1560,26 @@ export async function captureBrowardAccelaCsvWindow({
 
     const exportLink = await context.$("a[id$='btnExport']");
     if (exportLink === null) {
+      if (
+        displayedTotal !== null &&
+        displayedTotal < 100 &&
+        listLinks.length + excludedListCount === displayedTotal
+      ) {
+        return {
+          startDate,
+          endDate,
+          sourceWindowKey,
+          displayedTotal,
+          displayedTotalCapped: false,
+          records: csvRecordsFromPermitLinks(
+            listLinks,
+            source,
+            sourceWindowKey,
+          ),
+          rawCsv: "",
+          rawSearchHtml: searchHtml,
+        };
+      }
       throw new BrowardAccelaSourceError(
         "unexpected_response",
         source,
@@ -1556,19 +1594,70 @@ export async function captureBrowardAccelaCsvWindow({
       downloadPath: downloadDirectory,
       eventsEnabled: true,
     });
-    const download = waitForAccelaDownload(cdp, 60_000);
+    const download = waitForAccelaDownload(cdp, 15_000);
     await exportLink.click();
-    const completed = await download;
+    let completed;
+    try {
+      completed = await download;
+    } catch (error) {
+      if (
+        displayedTotal !== null &&
+        displayedTotal < 100 &&
+        listLinks.length + excludedListCount === displayedTotal
+      ) {
+        return {
+          startDate,
+          endDate,
+          sourceWindowKey,
+          displayedTotal,
+          displayedTotalCapped: false,
+          records: csvRecordsFromPermitLinks(
+            listLinks,
+            source,
+            sourceWindowKey,
+          ),
+          rawCsv: "",
+          rawSearchHtml: searchHtml,
+        };
+      }
+      throw error;
+    }
     const downloadedPath = `${downloadDirectory}/${completed.guid}`;
     const rawCsv = await readFile(downloadedPath, "utf8");
     const finalPath = `${downloadDirectory}/results.csv`;
     await rename(downloadedPath, finalPath);
-    const records = parseBrowardAccelaCsvExport(
+    const exportedRecords = parseBrowardAccelaCsvExport(
       rawCsv,
       source,
       startDate,
       endDate,
     );
+    const recordsByKey = new Map(
+      exportedRecords.map((record) => [record.recordKey, record]),
+    );
+    for (const record of csvRecordsFromPermitLinks(
+      listLinks,
+      source,
+      sourceWindowKey,
+    )) {
+      recordsByKey.set(record.recordKey, record);
+    }
+    const records = [...recordsByKey.values()].sort((left, right) =>
+      left.recordKey.localeCompare(right.recordKey),
+    );
+    if (
+      displayedTotal !== null &&
+      displayedTotal < 100 &&
+      records.length + excludedListCount < displayedTotal
+    ) {
+      throw new BrowardAccelaSourceError(
+        "incomplete_pagination",
+        source,
+        `${source.jurisdiction} Accela CSV/list accounted for ${String(records.length + excludedListCount)} of ${String(displayedTotal)}`,
+        context.url(),
+        searchHtml,
+      );
+    }
     logger.info("broward_accela_csv_window_captured", {
       sourceKey: source.key,
       startDate,
@@ -1590,6 +1679,33 @@ export async function captureBrowardAccelaCsvWindow({
   } finally {
     await page.close().catch(() => undefined);
   }
+}
+
+/**
+ * Convert source list links to the CSV inventory contract.
+ *
+ * @param {readonly BrowardAccelaPermitLink[]} links - Reconciled first-page links.
+ * @param {BrowardAccelaSource} source - Jurisdiction source.
+ * @param {string} sourceWindowKey - Stable date-window key.
+ * @returns {BrowardAccelaCsvPermitRecord[]} List-backed inventory records.
+ */
+function csvRecordsFromPermitLinks(links, source, sourceWindowKey) {
+  return links.map((link) => ({
+    schemaVersion: "oracle-node.broward-accela-csv-list.v1",
+    sourceSystem: source.sourceSystem,
+    jurisdiction: source.jurisdiction,
+    recordNumber: link.recordNumber,
+    sourceUrl: link.url,
+    recordKey: `${source.sourceSystem}:permit:${link.recordNumber}`,
+    recordDate: null,
+    recordType: link.recordType,
+    projectName: link.description,
+    address: link.address,
+    expirationDate: null,
+    status: link.status,
+    isRoofPermit: isBrowardAccelaRoofPermitCandidate(link),
+    sourceWindowKey,
+  }));
 }
 
 /**
