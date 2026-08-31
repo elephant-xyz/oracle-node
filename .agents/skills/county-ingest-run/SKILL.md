@@ -78,6 +78,8 @@ exactly-once — a resubmit cannot start a duplicate and is refused as "previous
 accepted". Treat that response as healthy, not an error. There is nothing else to name
 or dedupe.
 
+**Telemetry & Live Dashboard**: Always provide and point the operator to the live dashboard URL (`http://localhost:3888?county=<county>`) to observe active throughput, rolling ETA, failure distribution, and stage completions whether executing locally or dispatched to AWS.
+
 Backpressure in two sentences: the feeder never enqueues the whole county — it dispatches
 `Parcel.process` in `window`-sized batches and admits the next batch only when the
 previous one completes. Per-chunk child workflows keep every journal small, so a crash or
@@ -114,7 +116,6 @@ CPU cores, causing excessive fan noise, and dropping throughput to ~2-5 parcels/
 2. Workers pre-compile Cheerio and all transform scripts once on startup.
 3. IPC messages send `{ parcelDir }` to the next idle worker and return `{ success, error }`.
 4. Achieves **20–60+ parcels/sec** sustained throughput with low CPU overhead and no fan thrashing.
-
 ### Memory Optimization: Streaming Seed CSV Processing
 
 Never load a 500k-row CSV roll into an in-memory array (`const rows = parse(fileContent)`).
