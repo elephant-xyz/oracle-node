@@ -1,3 +1,7 @@
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
 import { describe, expect, it } from "vitest";
 import {
   COUNTY_REGISTRY,
@@ -5,6 +9,7 @@ import {
   listCounties,
 } from "../../scripts/common/county-registry.mjs";
 import {
+  getBrowardLifecycleStatus,
   getLifecycleStatus,
   parseServerArgs,
 } from "../../scripts/serve-dashboard.mjs";
@@ -36,6 +41,71 @@ describe("universal dashboard server & county registry", () => {
     expect(counties.some((c) => c.key === "pinellas")).toBe(true);
     expect(counties.some((c) => c.key === "lee")).toBe(true);
     expect(counties.some((c) => c.key === "palm-beach")).toBe(true);
+    expect(counties.some((c) => c.key === "broward")).toBe(true);
+  });
+
+  it("maps Broward only from verified aggregate telemetry", async () => {
+    const root = await mkdtemp(
+      path.join(tmpdir(), "broward-universal-dashboard-"),
+    );
+    try {
+      const bbbDirectory = path.join(
+        root,
+        "downloads/broward/bbb-roofing-worklist",
+      );
+      await mkdir(bbbDirectory, { recursive: true });
+      await writeFile(
+        path.join(bbbDirectory, "summary.private.json"),
+        JSON.stringify({ candidateCount: 1_381 }),
+      );
+      const lifecycle = await getBrowardLifecycleStatus(root, async () => ({
+        progress: { properties: 534_309 },
+        permitInventory: {
+          records: 243_939,
+          roofing: 22_414,
+          matched: 192_813,
+        },
+        permitEnumeration: { accessibleRecords: 430_087 },
+        sunbizMatch: { registrations: 12_432, properties: 9_023 },
+      }));
+      expect(lifecycle).toMatchObject({
+        county: {
+          key: "broward",
+          fips: "12011",
+          targetParcels: 534_309,
+        },
+        telemetrySource: "broward-neon-recovery-dashboard",
+        stages: {
+          appraisal: {
+            status: "completed",
+            count: 534_309,
+          },
+          sourcing: {
+            status: "in_progress",
+            permits: {
+              count: 243_939,
+              capturedCount: 430_087,
+              tradeCounts: { Roofing: 22_414 },
+            },
+            sunbiz: {
+              count: 12_432,
+              propertyCount: 9_023,
+            },
+            bbb: {
+              count: 0,
+              candidateCount: 1_381,
+              status: "api_credentials_required",
+            },
+          },
+          publish: { status: "disabled" },
+        },
+      });
+      expect(JSON.stringify(lifecycle)).not.toMatch(
+        /555-01|Roofing Pros|Atlantic Coast Roofing/iu,
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it("resolves county metadata by key with fallback", () => {

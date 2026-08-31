@@ -60,6 +60,236 @@ export function parseServerArgs(argv) {
 }
 
 /**
+ * Read the verified aggregate Broward dashboard response.
+ *
+ * @param {string} [statusUrl="http://127.0.0.1:47832/api/status"] - Private aggregate endpoint.
+ * @returns {Promise<Record<string, unknown>>} Validated aggregate response.
+ */
+export async function readBrowardAggregateStatus(
+  statusUrl = "http://127.0.0.1:47832/api/status",
+) {
+  const response = await fetch(statusUrl, {
+    headers: { Accept: "application/json" },
+    signal: AbortSignal.timeout(90_000),
+  });
+  if (!response.ok) {
+    throw new Error(
+      `Broward aggregate dashboard returned HTTP ${String(response.status)}`,
+    );
+  }
+  const value = /** @type {unknown} */ (await response.json());
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Broward aggregate dashboard returned invalid JSON");
+  }
+  return /** @type {Record<string, unknown>} */ (value);
+}
+
+/**
+ * Map verified Broward telemetry into the universal lifecycle contract.
+ *
+ * @param {string} rootPath - Repository root.
+ * @param {() => Promise<Record<string, unknown>>} [readStatus=readBrowardAggregateStatus]
+ *   Injectable aggregate status reader.
+ * @returns {Promise<Record<string, unknown>>} Real Broward lifecycle response.
+ */
+export async function getBrowardLifecycleStatus(
+  rootPath,
+  readStatus = readBrowardAggregateStatus,
+) {
+  const county = getCountyMetadata("broward");
+  const status = await readStatus();
+  const progress = requireObject(status.progress, "Broward progress");
+  const inventory = requireObject(
+    status.permitInventory,
+    "Broward permit inventory",
+  );
+  const enumeration = requireObject(
+    status.permitEnumeration,
+    "Broward permit enumeration",
+  );
+  const sunbiz = requireObject(status.sunbizMatch, "Broward Sunbiz match");
+  const properties = requireNonNegativeNumber(
+    progress.properties,
+    "Broward properties",
+  );
+  const permits = requireNonNegativeNumber(
+    inventory.records,
+    "Broward permits",
+  );
+  const roofing = requireNonNegativeNumber(
+    inventory.roofing,
+    "Broward roofing permits",
+  );
+  const capturedPermits = requireNonNegativeNumber(
+    enumeration.accessibleRecords,
+    "Broward captured permits",
+  );
+  const sunbizRegistrations = requireNonNegativeNumber(
+    sunbiz.registrations,
+    "Broward Sunbiz registrations",
+  );
+  let bbbCandidateCount = 0;
+  try {
+    const summary = /** @type {unknown} */ (
+      JSON.parse(
+        await readFile(
+          resolve(
+            rootPath,
+            "downloads/broward/bbb-roofing-worklist/summary.private.json",
+          ),
+          "utf8",
+        ),
+      )
+    );
+    if (
+      summary !== null &&
+      typeof summary === "object" &&
+      !Array.isArray(summary)
+    ) {
+      bbbCandidateCount = requireNonNegativeNumber(
+        /** @type {Record<string, unknown>} */ (summary).candidateCount,
+        "Broward BBB candidate count",
+      );
+    }
+  } catch (error) {
+    if (
+      !(
+        error instanceof Error &&
+        "code" in error &&
+        error.code === "ENOENT"
+      )
+    ) {
+      throw error;
+    }
+  }
+  const appraisalComplete = properties >= county.targetParcels;
+  return {
+    county,
+    timestamp: new Date().toISOString(),
+    telemetrySource: "broward-neon-recovery-dashboard",
+    stages: {
+      discovery: {
+        number: 1,
+        title: "Discovery",
+        status: "completed",
+        docPath: "docs/broward-county-findings.md",
+        fips: county.fips,
+        portal: county.appraiserUrl,
+      },
+      seed: {
+        number: 2,
+        title: "Seed Generation",
+        status: "completed",
+        count: county.totalSeedParcels,
+        target: county.totalSeedParcels,
+        pct: "100.00",
+        featureServer: county.gisFeatureServer,
+      },
+      appraisal: {
+        number: 3,
+        title: "Appraisal Harvest",
+        status: appraisalComplete ? "completed" : "in_progress",
+        count: properties,
+        target: county.targetParcels,
+        pct: (
+          (properties / Math.max(1, county.targetParcels)) *
+          100
+        ).toFixed(2),
+        speed: 0,
+        eta: null,
+      },
+      sourcing: {
+        number: 4,
+        title: "Permits & Sourcing",
+        status:
+          capturedPermits > permits ? "in_progress" : "partially_loaded",
+        permits: {
+          count: permits,
+          capturedCount: capturedPermits,
+          target: null,
+          tradeCounts: { Roofing: roofing },
+          enrichment: {
+            status: "active",
+            verifiedCount: requireNonNegativeNumber(
+              inventory.matched,
+              "Broward matched permits",
+            ),
+          },
+        },
+        sunbiz: {
+          count: sunbizRegistrations,
+          status: "property_matched",
+          propertyCount: requireNonNegativeNumber(
+            sunbiz.properties,
+            "Broward Sunbiz properties",
+          ),
+        },
+        bbb: {
+          count: 0,
+          candidateCount: bbbCandidateCount,
+          status: "api_credentials_required",
+        },
+      },
+      warehouse: {
+        number: 5,
+        title: "Postgres Warehouse",
+        status: "in_progress",
+        count: properties,
+        target: county.targetParcels,
+      },
+      publish: {
+        number: 6,
+        title: "Publish & IPFS",
+        status: "disabled",
+        parquetCount: 0,
+        parquetSizeBytes: 0,
+        ipnsKey: null,
+        coverageIpnsKey: null,
+      },
+    },
+    nextStep: {
+      stageNumber: 4,
+      stageName: "Permits & Sourcing",
+      actionTitle: "Complete verified municipal permit inventories",
+      description:
+        "Resume checkpointed Accela/Tyler tenant workers and load only reconciled list artifacts.",
+      command:
+        "npm run broward:recovery-dashboard -- --host 0.0.0.0 --port 47832",
+      status: "In Progress",
+    },
+  };
+}
+
+/**
+ * Require an object field from aggregate telemetry.
+ *
+ * @param {unknown} value - Candidate field.
+ * @param {string} label - Error label.
+ * @returns {Record<string, unknown>} Validated object.
+ */
+function requireObject(value, label) {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${label} is missing`);
+  }
+  return /** @type {Record<string, unknown>} */ (value);
+}
+
+/**
+ * Require a finite non-negative aggregate number.
+ *
+ * @param {unknown} value - Candidate count.
+ * @param {string} label - Error label.
+ * @returns {number} Validated count.
+ */
+function requireNonNegativeNumber(value, label) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    throw new Error(`${label} is invalid`);
+  }
+  return parsed;
+}
+
+/**
  * Calculate the overall lifecycle state across all stages for any given county.
  * @param {string} rootPath
  * @param {string} countyKey
@@ -362,7 +592,10 @@ export function startDashboardServer(opts) {
     // Lifecycle telemetry API
     if (pathname === "/api/lifecycle") {
       try {
-        const lifecycle = await getLifecycleStatus(ROOT, requestedCounty);
+        const lifecycle =
+          requestedCounty === "broward"
+            ? await getBrowardLifecycleStatus(ROOT)
+            : await getLifecycleStatus(ROOT, requestedCounty);
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify(lifecycle, null, 2));
       } catch (err) {
@@ -374,87 +607,115 @@ export function startDashboardServer(opts) {
 
     // Contractors / BBB CRM API
     if (pathname === "/api/roofers") {
-      const countyMeta = getCountyMetadata(requestedCounty);
-      const sampleRoofers = [
-        {
-          businessName: `${countyMeta.seat} Roofing Pros & Construction`,
-          rating: "A+",
-          accredited: true,
-          city: countyMeta.seat,
-          state: countyMeta.state,
-          phone: "(386) 555-0192",
-          licenseNumber: "CCC1334892",
-          principalName: "David Vance (President)",
-        },
-        {
-          businessName: `Atlantic Coast Roofing & Solar LLC`,
-          rating: "A+",
-          accredited: true,
-          city: countyMeta.seat,
-          state: countyMeta.state,
-          phone: "(386) 555-0144",
-          licenseNumber: "CCC1329810",
-          principalName: "Elena Rodriguez (Managing Partner)",
-        },
-        {
-          businessName: `Sunshine State Master Roofers`,
-          rating: "A",
-          accredited: false,
-          city: countyMeta.seat,
-          state: countyMeta.state,
-          phone: "(386) 555-0177",
-          licenseNumber: "CCC1331002",
-          principalName: "Marcus Sterling (Owner)",
-        },
-      ];
       res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(
-        JSON.stringify(
-          {
-            total: sampleRoofers.length,
-            accreditedCount: sampleRoofers.filter((r) => r.accredited).length,
-            decisionMakersCount: sampleRoofers.length,
-            phoneCount: sampleRoofers.length,
-            roofers: sampleRoofers,
-          },
-          null,
-          2,
-        ),
-      );
+      if (requestedCounty === "broward") {
+        try {
+          const lifecycle = await getBrowardLifecycleStatus(ROOT);
+          const sourcing = requireObject(
+            requireObject(lifecycle.stages, "Broward stages").sourcing,
+            "Broward sourcing",
+          );
+          const bbb = requireObject(sourcing.bbb, "Broward BBB status");
+          res.end(
+            JSON.stringify(
+              {
+                total: 0,
+                candidateCount: requireNonNegativeNumber(
+                  bbb.candidateCount,
+                  "Broward BBB candidates",
+                ),
+                accreditedCount: 0,
+                decisionMakersCount: 0,
+                phoneCount: 0,
+                status: "api_credentials_required",
+                roofers: [],
+              },
+              null,
+              2,
+            ),
+          );
+        } catch (error) {
+          res.end(
+            JSON.stringify(
+              {
+                total: 0,
+                candidateCount: 0,
+                status: "aggregate_unavailable",
+                roofers: [],
+              },
+              null,
+              2,
+            ),
+          );
+        }
+      } else {
+        res.end(
+          JSON.stringify(
+            {
+              total: 0,
+              candidateCount: 0,
+              accreditedCount: 0,
+              decisionMakersCount: 0,
+              phoneCount: 0,
+              status: "not_configured",
+              roofers: [],
+            },
+            null,
+            2,
+          ),
+        );
+      }
       return;
     }
 
     // Sample Permits API
     if (pathname === "/api/permits/samples") {
-      const countyMeta = getCountyMetadata(requestedCounty);
-      const samples = [
-        {
-          permitNumber: `C2608-${countyMeta.fips}-001`,
-          jurisdiction: countyMeta.name,
-          trade: "Roofing",
-          description: "Re-roof asphalt shingle 2,400 sq ft",
-          issueDate: "2026-08-20",
-          url: countyMeta.appraiserUrl,
-        },
-        {
-          permitNumber: `C2608-${countyMeta.fips}-002`,
-          jurisdiction: countyMeta.name,
-          trade: "HVAC",
-          description: "Replace 4-ton 16 SEER heat pump split system",
-          issueDate: "2026-08-22",
-          url: countyMeta.appraiserUrl,
-        },
-        {
-          permitNumber: `C2608-${countyMeta.fips}-003`,
-          jurisdiction: countyMeta.name,
-          trade: "Solar",
-          description: "Grid-tied rooftop solar PV 9.6 kW with battery",
-          issueDate: "2026-08-25",
-          url: countyMeta.appraiserUrl,
-        },
-      ];
       res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ samples }, null, 2));
+      if (requestedCounty === "broward") {
+        try {
+          const status = await readBrowardAggregateStatus();
+          const inventory = requireObject(
+            status.permitInventory,
+            "Broward permit inventory",
+          );
+          res.end(
+            JSON.stringify(
+              {
+                status: "record_level_data_private",
+                aggregate: {
+                  records: requireNonNegativeNumber(
+                    inventory.records,
+                    "Broward permit records",
+                  ),
+                  roofing: requireNonNegativeNumber(
+                    inventory.roofing,
+                    "Broward roofing permits",
+                  ),
+                },
+                samples: [],
+              },
+              null,
+              2,
+            ),
+          );
+        } catch {
+          res.end(
+            JSON.stringify(
+              { status: "aggregate_unavailable", samples: [] },
+              null,
+              2,
+            ),
+          );
+        }
+      } else {
+        res.end(
+          JSON.stringify(
+            { status: "not_configured", samples: [] },
+            null,
+            2,
+          ),
+        );
+      }
       return;
     }
 
