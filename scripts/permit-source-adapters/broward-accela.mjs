@@ -1100,13 +1100,10 @@ export async function searchBrowardAccelaDateWindow({
       DEFAULT_SELECTORS.endDate,
       toAccelaDate(endDate),
     );
-    await Promise.allSettled([
-      context.waitForNavigation({
-        waitUntil: "domcontentloaded",
-        timeout: 60_000,
-      }),
-      context.click(DEFAULT_SELECTORS.submit),
-    ]);
+    // Accela commonly updates this form through an ASP.NET asynchronous
+    // postback without a top-level navigation. Waiting for navigation here
+    // burns the complete timeout after the result is already visible.
+    await context.click(DEFAULT_SELECTORS.submit);
     await waitForSearchOutcome(context);
 
     for (let pageNumber = 1; pageNumber <= maxPages; pageNumber += 1) {
