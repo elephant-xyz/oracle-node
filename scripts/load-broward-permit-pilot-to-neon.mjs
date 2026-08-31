@@ -56,7 +56,34 @@ const LOAD_KEY = "broward-supported-pilots-v2";
  *   raw:Record<string,unknown>
  * }} BrowardNormalizedPermit
  *
- * @typedef {import("./permit-source-adapters/broward-accela.mjs").BrowardAccelaPermitRecord} BrowardAccelaPermitRecord
+ * @typedef {object} BrowardAccelaPermitRecord
+ * @property {"permit-harvest.accela.v1"} schemaVersion - Accela artifact schema.
+ * @property {string} source - Source-system label.
+ * @property {string} sourceSystem - County-prefixed source system.
+ * @property {string} jurisdiction - Issuing jurisdiction.
+ * @property {string} retrievedAt - ISO retrieval timestamp.
+ * @property {string} sourceUrl - Official detail URL.
+ * @property {string} recordNumber - Public record number.
+ * @property {string | null} recordType - Public record type.
+ * @property {string | null} recordStatus - Public record status.
+ * @property {string | null} workLocation - Public work location.
+ * @property {string} parcelIdentifier - Submitted Broward folio.
+ * @property {string | null} sourceParcelIdentifier - Detail-page parcel ID.
+ * @property {string | null} applicant - Public applicant.
+ * @property {string | null} licensedProfessional - Public professional.
+ * @property {string | null} projectDescription - Public description.
+ * @property {Record<string, string>} moreDetails - Parsed detail fields.
+ * @property {string | null} moreDetailsRawText - Raw details text.
+ * @property {string | null} inspectionsRawText - Raw inspections text.
+ * @property {readonly Record<string, unknown>[]} completedInspections
+ *   Completed shared-Accela inspection records.
+ * @property {string | null} processingStatusRawText - Raw status text.
+ * @property {readonly Record<string, unknown>[]} documentLinks - Public documents.
+ * @property {readonly Record<string, unknown>[]} relatedLinks - Public links.
+ * @property {string} rawText - Collapsed detail text.
+ * @property {Record<string, unknown>} sourceSearchResult - Search evidence.
+ * @property {string} idempotencyKey - Jurisdiction-scoped identity.
+ * @property {Record<string, unknown>} provenance - Source-boundary evidence.
  *
  * @typedef {object} PermitParent
  * @property {string} propertyId - Canonical Broward appraiser property UUID.
@@ -78,8 +105,8 @@ const LOAD_KEY = "broward-supported-pilots-v2";
  * @property {string} parcelId - Matched parcel UUID.
  * @property {string} parcelIdentifier - Exact Broward folio.
  * @property {string} permitNumber - Public permit/application number.
- * @property {string} improvementType - Public permit type.
- * @property {string} improvementStatus - Public source status.
+ * @property {string | null} improvementType - Public permit type.
+ * @property {string | null} improvementStatus - Public source status.
  * @property {"permit_record" | "master_application"} improvementAction
  *   Explicit BCS source record kind.
  * @property {string | null} applicationReceivedDate - ISO application date.

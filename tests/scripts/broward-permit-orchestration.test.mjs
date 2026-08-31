@@ -211,7 +211,7 @@ describe("Broward permit Neon pilot loader", () => {
 
   it("maps bounded Accela records without inventing dates", async () => {
     const record = {
-      schemaVersion: 1,
+      schemaVersion: "permit-harvest.accela.v1",
       source: "Accela",
       sourceSystem: "broward_plantation_accela_permits",
       jurisdiction: "Plantation",
