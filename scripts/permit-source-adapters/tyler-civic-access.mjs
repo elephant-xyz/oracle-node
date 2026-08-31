@@ -67,6 +67,7 @@ import {
  * @property {number} totalFound - Source-reported matching permits.
  * @property {number} totalPages - Source-reported total pages.
  * @property {readonly NormalizedCityPermit[]} records - Page-normalized permits.
+ * @property {number} invalidRecordCount - Source rows lacking normalized permit identity.
  * @property {string} rawJson - Exact public response JSON.
  *
  * @typedef {object} TylerDateWindowResult
@@ -75,6 +76,7 @@ import {
  * @property {number} totalFound - Stable source total.
  * @property {number} totalPages - Stable source page count.
  * @property {readonly NormalizedCityPermit[]} records - Deduplicated permit rows.
+ * @property {number} invalidRecordCount - Raw source rows that could not normalize.
  * @property {readonly TylerDateWindowPage[]} pages - Raw page responses.
  */
 
@@ -616,6 +618,7 @@ export async function searchTylerDateWindow(
   const records = [];
   let expectedTotal = /** @type {number | null} */ (null);
   let expectedPages = /** @type {number | null} */ (null);
+  let invalidRecordCount = 0;
   for (let pageNumber = 1; pageNumber <= maxPages; pageNumber += 1) {
     if (pageNumber > 1) await wait(delayMs);
     const requestBody = buildTylerDateWindowRequest(
@@ -679,11 +682,20 @@ export async function searchTylerDateWindow(
       payload,
       session.config,
     );
+    const pageInvalidCount =
+      result.EntityResults.length - normalized.length;
+    if (pageInvalidCount < 0) {
+      throw new Error(
+        `${session.config.city} Tyler normalized more rows than the source returned`,
+      );
+    }
+    invalidRecordCount += pageInvalidCount;
     pages.push({
       pageNumber,
       totalFound,
       totalPages,
       records: normalized,
+      invalidRecordCount: pageInvalidCount,
       rawJson: response.text,
     });
     records.push(...normalized);
@@ -692,9 +704,9 @@ export async function searchTylerDateWindow(
   const totalFound = expectedTotal ?? 0;
   const totalPages = expectedPages ?? 0;
   const deduped = dedupeAndSortNormalizedPermits(records);
-  if (deduped.length !== totalFound) {
+  if (deduped.length + invalidRecordCount !== totalFound) {
     throw new Error(
-      `${session.config.city} Tyler normalized ${String(deduped.length)} of ${String(totalFound)} date-window permits`,
+      `${session.config.city} Tyler accounted for ${String(deduped.length)} valid and ${String(invalidRecordCount)} invalid of ${String(totalFound)} date-window permits`,
     );
   }
   return {
@@ -703,6 +715,7 @@ export async function searchTylerDateWindow(
     totalFound,
     totalPages,
     records: deduped,
+    invalidRecordCount,
     pages,
   };
 }

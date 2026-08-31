@@ -290,12 +290,14 @@ describe("Tyler vendor-wide application-date windows", () => {
             totalFound: 1,
             totalPages: 1,
             records: [record],
+            invalidRecordCount: 0,
             pages: [
               {
                 pageNumber: 1,
                 totalFound: 1,
                 totalPages: 1,
                 records: [record],
+                invalidRecordCount: 0,
                 rawJson: JSON.stringify({ Result: { EntityResults: [] } }),
               },
             ],
