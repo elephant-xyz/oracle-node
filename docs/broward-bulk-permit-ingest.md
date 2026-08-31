@@ -99,7 +99,7 @@ Result: 100/100 committed in two chunks; 76 exact BCPA property matches and 24
 unmatched permits retained. The 1,603 pre-existing Fort Lauderdale portal
 payloads remained intact.
 
-## Full run
+## Full run — completed
 
 ```bash
 npm run broward:permits:run-bulk -- \
@@ -110,12 +110,38 @@ npm run broward:permits:run-bulk -- \
   --output-dir downloads/broward/permit-bulk/fort-lauderdale-full
 ```
 
-The full job runs in the persistent `broward-ftl-bulk-permits` session.
+The full job completed in the persistent `broward-ftl-bulk-permits` session.
 Local truth is
 `downloads/broward/permit-bulk/fort-lauderdale-full/manifest.private.json`;
 durable truth is in
 `ingest_control.broward_bulk_permit_runs` and
 `ingest_control.broward_bulk_permit_chunks`.
+
+Final reconciliation:
+
+| Metric | Count |
+| --- | ---: |
+| ArcGIS source rows | 204,760 |
+| Normalized source rows | 204,760 |
+| Unique `CASEKEY` logical permits | 204,751 |
+| Duplicate source rows | 9 |
+| Invalid source rows | 0 |
+| Conservative roofing classifications | 16,613 |
+| Source rows with exact BCPA property match | 159,584 |
+| Source rows retained unmatched | 45,176 |
+| Durable chunks | 205 / 205 |
+
+After logical deduplication, Neon contains 204,751 bulk-backed rows: 159,580
+linked and 45,171 unlinked. Of 1,603 pre-existing rich LauderBuild portal
+rows, 264 matched bulk `CASEKEY` values and were enriched in place; all 1,603
+portal payloads were preserved. Fort Lauderdale now has 206,090 total logical
+rows when the older portal-only records are included.
+
+The FeatureServer publishes only 12,907 distinct displayed `PERMITID` values
+across those logical rows because the field is truncated. `CASEKEY` is
+therefore the durable identity. Full public permit-number recovery requires
+optional Accela detail enrichment and is not inferred from the truncated
+field.
 
 ## Remaining municipalities
 

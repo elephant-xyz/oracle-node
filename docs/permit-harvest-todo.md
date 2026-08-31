@@ -14,8 +14,10 @@
   `CASEKEY` records.
 - [x] Commit a 100-row Neon pilot: 76 exact BCPA matches and 24 unmatched
   records retained; 1,603 prior portal payloads preserved.
-- [ ] Let `broward-permits-ftl-bulk-full-20260831` drain and reconcile all
-  204,760 source rows.
+- [x] Drain `broward-permits-ftl-bulk-full-20260831`: 204,760 source rows,
+  204,751 unique `CASEKEY` permits, nine duplicate rows, zero invalid rows,
+  159,584 source-row property matches, and 45,176 unmatched source rows across
+  205 durable chunks.
 - [ ] Generalize the bulk runner to the Broward HCED/POSSE feed and Miramar
   FY2019/FY2020 archives.
 - [ ] Implement anonymous vendor-wide date-window pagination for remaining
