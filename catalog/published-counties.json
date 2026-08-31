@@ -23,8 +23,8 @@
       "queryTableUrl": "https://ipfs.filebase.io/ipns/k51qzi5uqu5diqz0l68gfi22qk0w8aqhsm7pcgje535uz8vhu8p37ynm2po0fh",
       "datasetCoverageUrl": "https://ipfs.filebase.io/ipns/k51qzi5uqu5di5jghjwbpumnr2vt1crmaycqmtx673kw8pqp8dymecuig5x8jb/",
       "permitQueryTableUrl": null,
-      "placesTableUrl": null,
-      "updatedAt": "2026-08-27T20:05:00.000Z"
+      "placesTableUrl": "https://ipfs.filebase.io/ipns/k51qzi5uqu5dk4d5kacjn1b0argjmxmvele89gcnxyz8yjflh6gsx6w3a4o2wo/hillsborough/places-table.parquet",
+      "updatedAt": "2026-08-30T00:25:00.000Z"
     },
     {
       "countyKey": "lee",
