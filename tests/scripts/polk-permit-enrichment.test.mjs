@@ -1,4 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import * as path from "node:path";
+
+import { afterEach, describe, expect, it } from "vitest";
 
 import {
   POLK_PERMIT_SOURCE_REGISTRY,
@@ -7,11 +11,25 @@ import {
   buildPolkPermitEnrichmentReceipt,
   buildWinterHavenPermitSearchUrl,
   findPolkPermitSource,
+  mapPolkPermitWithConcurrency,
   parseLakelandImsPermitDetailHtml,
   parseLakeWalesPermitDetailHtml,
   parsePolkAccelaPermitDetailHtml,
   parseWinterHavenPermitDetailHtml,
+  retryPolkPermitOperation,
+  runPolkPermitEnrichment,
 } from "../../scripts/polk/permit-enrichment.mjs";
+
+/** @type {string[]} */
+const temporaryDirectories = [];
+
+afterEach(async () => {
+  await Promise.all(
+    temporaryDirectories
+      .splice(0)
+      .map((directory) => rm(directory, { recursive: true, force: true })),
+  );
+});
 
 describe("Polk permit source registry", () => {
   it("enables every independently certified anonymous adapter", () => {
@@ -309,5 +327,128 @@ describe("Polk permit enrichment receipt", () => {
 
     expect(receipt.complete).toBe(false);
     expect(receipt.blocker).toMatch(/1 adapter-eligible permit row/);
+  });
+});
+
+describe("Polk permit enrichment execution controls", () => {
+  it("retries transient operations with bounded attempts", async () => {
+    let calls = 0;
+    /** @type {number[]} */
+    const delays = [];
+    const result = await retryPolkPermitOperation(
+      async () => {
+        calls += 1;
+        if (calls < 3) throw new Error("temporary portal failure");
+        return "ok";
+      },
+      3,
+      25,
+      async (milliseconds) => {
+        delays.push(milliseconds);
+      },
+    );
+
+    expect(result).toBe("ok");
+    expect(calls).toBe(3);
+    expect(delays).toEqual([25, 50]);
+  });
+
+  it("preserves order while enforcing bounded concurrency", async () => {
+    let active = 0;
+    let maximumActive = 0;
+    const results = await mapPolkPermitWithConcurrency(
+      [1, 2, 3, 4, 5],
+      2,
+      async (value) => {
+        active += 1;
+        maximumActive = Math.max(maximumActive, active);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        active -= 1;
+        return value * 2;
+      },
+    );
+
+    expect(results).toEqual([2, 4, 6, 8, 10]);
+    expect(maximumActive).toBe(2);
+  });
+
+  it("resumes from validated atomic parts and rebuilds the JSONL handoff", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "polk-permit-resume-"));
+    temporaryDirectories.push(directory);
+    const input = path.join(directory, "candidates.jsonl");
+    const output = path.join(directory, "enriched.jsonl");
+    const stateDirectory = path.join(directory, "parts");
+    const checkpoint = path.join(directory, "checkpoint.json");
+    const receipt = path.join(directory, "receipt.json");
+    const permitSummary = path.join(directory, "permit-summary.json");
+    await Promise.all([
+      writeFile(
+        input,
+        [
+          JSON.stringify({ permitNumber: "HC-1", agency: "HAINES CITY" }),
+          JSON.stringify({ permitNumber: "HC-2", agency: "HAINES CITY" }),
+        ].join("\n") + "\n",
+      ),
+      writeFile(
+        permitSummary,
+        `${JSON.stringify({
+          permitCount: 2,
+          agencies: [{ value: "HAINES CITY", count: 2 }],
+        })}\n`,
+      ),
+    ]);
+    const argumentsList = [
+      "--stage",
+      "enrich",
+      "--input",
+      input,
+      "--output",
+      output,
+      "--state-dir",
+      stateDirectory,
+      "--checkpoint",
+      checkpoint,
+      "--receipt",
+      receipt,
+      "--permit-summary",
+      permitSummary,
+      "--batch-size",
+      "1",
+      "--delay-ms",
+      "1",
+      "--attempts",
+      "1",
+      "--retry-delay-ms",
+      "1",
+    ];
+
+    const first = await runPolkPermitEnrichment(argumentsList);
+    await writeFile(output, "stale aggregate\n");
+    const resumed = await runPolkPermitEnrichment(argumentsList);
+    const records = (await readFile(output, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    const checkpointValue = JSON.parse(await readFile(checkpoint, "utf8"));
+
+    expect(first).toMatchObject({
+      attemptedAdapterRecords: 0,
+      unsupportedInputRecordCount: 2,
+      complete: false,
+    });
+    expect(resumed).toMatchObject({
+      attemptedAdapterRecords: 0,
+      unsupportedInputRecordCount: 2,
+      complete: false,
+    });
+    expect(records.map((record) => record.permitNumber)).toEqual([
+      "HC-1",
+      "HC-2",
+    ]);
+    expect(checkpointValue).toMatchObject({
+      completedPartCount: 2,
+      totalPartCount: 2,
+      processedInputRecordCount: 2,
+    });
   });
 });

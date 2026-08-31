@@ -40,6 +40,32 @@ iWorQ remains adapter-pending. Other municipal rows remain fail-closed where no
 anonymous detail request contract has been verified. Do not infer contractors
 or licences from bulk descriptions.
 
+County-scale adapter runs are resumable and write one atomic JSONL part per
+batch. Generate the complete requestable candidate set, then run with a
+conservative per-source request interval:
+
+```bash
+npm run polk:permits:enrich -- --stage candidates
+npm run polk:permits:enrich -- \
+  --stage enrich \
+  --network \
+  --concurrency 12 \
+  --batch-size 100 \
+  --delay-ms 250 \
+  --attempts 3 \
+  --retry-delay-ms 2000 \
+  --output tmp/polk/permits/enriched-permits-full.jsonl \
+  --receipt tmp/polk/permits/enrichment-receipt-full.json
+```
+
+The checkpoint and deterministic part directory default beside the output. A
+rerun validates and reuses complete parts; `--reset-checkpoint` is required to
+discard them. Use `--include-partial` only for an explicitly scoped Winter
+Haven historical run. The official adapter-ready denominator is 230,221 rows,
+of which 230,114 currently have requestable permit numbers. The remaining 107
+rows and the 301,123 rows without certified anonymous adapters remain explicit
+source limitations and do not justify fabricated detail evidence.
+
 Transform and match the exact-ZIP Sunbiz slice:
 
 ```bash
