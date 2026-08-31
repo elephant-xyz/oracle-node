@@ -1519,7 +1519,9 @@ function parseCliOptions(args) {
     chromiumExecutablePath:
       readStringOption(values, "chromium-executable-path") ??
       process.env.CHROME_EXECUTABLE_PATH ??
-      "/usr/bin/chromium",
+      (process.platform === "darwin"
+        ? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+        : "/usr/bin/chromium"),
     headless: parseBooleanOption(readStringOption(values, "headless"), false),
     startPage:
       parsePositiveIntegerOption(values["start-page"], "start-page") ?? 1,

@@ -17,7 +17,11 @@
     "install-workspaces": "npm install --workspaces",
     "catalog:update": "node scripts/update-published-county-catalog.mjs",
     "query-post-logs": "node scripts/query_post_logs.js",
-    "update-elephant-cli": "npm install @elephant-xyz/cli@latest --workspace=prepare/lambdas/downloader --workspace=workflow/lambdas/submit --workspace=workflow/lambdas/pre --workspace=workflow/lambdas/mvl"
+    "update-elephant-cli": "npm install @elephant-xyz/cli@latest --workspace=prepare/lambdas/downloader --workspace=workflow/lambdas/submit --workspace=workflow/lambdas/pre --workspace=workflow/lambdas/mvl",
+    "hillsborough-pilot": "node scripts/hillsborough-local-pilot.mjs",
+    "hillsborough-seed": "node scripts/hillsborough/build-full-seed.mjs",
+    "hillsborough-status": "node scripts/hillsborough/status.mjs",
+    "hillsborough-dashboard": "node scripts/hillsborough/serve-dashboard.mjs"
   },
   "devDependencies": {
     "@aws-sdk/client-cloudformation": "^3.895.0",

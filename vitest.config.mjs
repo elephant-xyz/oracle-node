@@ -70,6 +70,10 @@ export default defineConfig({
           "node_modules/@aws-sdk/client-cloudformation",
         ),
       },
+      {
+        find: "adm-zip",
+        replacement: path.resolve(__dirname, "node_modules/adm-zip"),
+      },
       // Resolve 'shared/*.js' imports for workflow-events lambdas (import from "shared/types.js" etc.)
       // Maps .js extension to .ts source files for test resolution
       // Must come before exact 'shared' match to handle subpath imports first
