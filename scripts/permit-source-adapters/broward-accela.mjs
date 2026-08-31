@@ -1501,6 +1501,44 @@ export async function captureBrowardAccelaCsvWindow({
         rawSearchHtml: searchHtml,
       };
     }
+    const directDetail = extractBrowardAccelaDirectDetailLink({
+      html: searchHtml,
+      pageUrl: context.url(),
+      source,
+      searchKey: sourceWindowKey,
+      pageNumber: 1,
+    });
+    if (directDetail !== null) {
+      const record = {
+        schemaVersion:
+          /** @type {"oracle-node.broward-accela-csv-list.v1"} */ (
+            "oracle-node.broward-accela-csv-list.v1"
+          ),
+        sourceSystem: source.sourceSystem,
+        jurisdiction: source.jurisdiction,
+        recordNumber: directDetail.recordNumber,
+        sourceUrl: directDetail.url,
+        recordKey: `${source.sourceSystem}:permit:${directDetail.recordNumber}`,
+        recordDate: null,
+        recordType: directDetail.recordType,
+        projectName: directDetail.description,
+        address: directDetail.address,
+        expirationDate: null,
+        status: directDetail.status,
+        isRoofPermit: isBrowardAccelaRoofPermitCandidate(directDetail),
+        sourceWindowKey,
+      };
+      return {
+        startDate,
+        endDate,
+        sourceWindowKey,
+        displayedTotal: displayedTotal ?? 1,
+        displayedTotalCapped: false,
+        records: [record],
+        rawCsv: "",
+        rawSearchHtml: searchHtml,
+      };
+    }
 
     const exportLink = await context.$("a[id$='btnExport']");
     if (exportLink === null) {
