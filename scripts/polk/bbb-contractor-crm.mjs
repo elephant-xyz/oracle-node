@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { createReadStream } from "node:fs";
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import * as path from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
@@ -304,47 +304,159 @@ export function buildPolkBbbHarvestPlan(outputRoot) {
 /**
  * Run all verified Polk BBB category harvests locally.
  *
- * @param {{outputRoot:string,maxPages:number|null,maxProfiles:number|null,chromiumExecutablePath:string|null,headless:boolean}} options Browser and output options.
+ * @typedef {object} PolkBbbHarvestOptions
+ * @property {string} outputRoot Root directory for all trade artifacts.
+ * @property {number | null} maxPages Optional per-trade category-page cap.
+ * @property {number | null} maxProfiles Optional per-trade profile cap.
+ * @property {PolkBbbTrade[]} trades Trades to harvest; omitted trades must have a complete existing receipt.
+ * @property {string | null} chromiumExecutablePath Optional Chromium executable.
+ * @property {boolean} headless Whether Chromium runs headlessly.
+ * @property {number} tradeConcurrency Number of independent trade browsers.
+ * @property {number} pageDelayMs Delay between category pages.
+ * @property {number} profileDelayMs Delay before profile and subpage visits.
+ * @property {number} profileAttempts Maximum attempts for one BBB profile.
+ * @property {number} challengeAttempts Maximum Cloudflare navigation attempts.
+ * @property {number} challengeCheckIntervalMs Delay between challenge checks.
+ * @property {number} challengeChecksPerAttempt Challenge checks per attempt.
+ * @property {number} navigationTimeoutMs Per-navigation timeout.
+ * @property {string[]} profileSubpages BBB profile subpages to retain.
+ */
+
+/**
+ * Harvest one configured BBB trade.
+ *
+ * @param {PolkBbbHarvestOptions} options Browser and output options.
+ * @param {PolkBbbTradeSource} trade Verified trade source.
+ * @returns {Promise<JsonObject>} Trade receipt.
+ */
+async function harvestPolkBbbTrade(options, trade) {
+  const { harvestBbbCategory } = await import("../harvest-bbb-category.mjs");
+  const outputDirectory = path.join(options.outputRoot, trade.key);
+  await rm(outputDirectory, { recursive: true, force: true });
+  await mkdir(outputDirectory, { recursive: true });
+  const summary = await harvestBbbCategory({
+    categoryUrl: trade.categoryUrl,
+    outputLocation: { kind: "local", dir: outputDirectory },
+    chromiumExecutablePath: options.chromiumExecutablePath,
+    headless: options.headless,
+    startPage: 1,
+    maxPages: options.maxPages,
+    maxProfiles: options.maxProfiles,
+    partRecordLimit: 100,
+    pageDelayMs: options.pageDelayMs,
+    profileDelayMs: options.profileDelayMs,
+    profileAttempts: options.profileAttempts,
+    challengeAttempts: options.challengeAttempts,
+    challengeCheckIntervalMs: options.challengeCheckIntervalMs,
+    challengeChecksPerAttempt: options.challengeChecksPerAttempt,
+    navigationTimeoutMs: options.navigationTimeoutMs,
+    includeHtml: false,
+    profileSubpages: options.profileSubpages,
+  });
+  return {
+    key: trade.key,
+    categoryUrl: trade.categoryUrl,
+    outputDirectory,
+    summary,
+    uncapped: options.maxPages === null && options.maxProfiles === null,
+    complete:
+      options.maxPages === null &&
+      options.maxProfiles === null &&
+      summary.profilesHarvested > 0 &&
+      summary.profilesFailed === 0,
+  };
+}
+
+/**
+ * Reuse one uncapped, successful trade from the existing root receipt.
+ *
+ * @param {PolkBbbHarvestOptions} options Browser and output options.
+ * @param {PolkBbbTradeSource} trade Verified trade source.
+ * @returns {Promise<JsonObject>} Existing complete trade receipt.
+ */
+async function readExistingPolkBbbTrade(options, trade) {
+  const rootReceipt = await readOptionalJsonObject(
+    path.join(options.outputRoot, "manifest", "summary.json"),
+  );
+  const existingTrade = Array.isArray(rootReceipt?.trades)
+    ? rootReceipt.trades.find(
+        (value) => isJsonObject(value) && value.key === trade.key,
+      )
+    : null;
+  const outputDirectory = path.join(options.outputRoot, trade.key);
+  const summary = await readOptionalJsonObject(
+    path.join(outputDirectory, "manifest", "summary.json"),
+  );
+  const files = await profileFiles(outputDirectory);
+  if (
+    !isJsonObject(existingTrade) ||
+    existingTrade.uncapped !== true ||
+    summary?.categoryUrl !== trade.categoryUrl ||
+    typeof summary.profilesHarvested !== "number" ||
+    summary.profilesHarvested <= 0 ||
+    summary.profilesFailed !== 0 ||
+    files.length === 0
+  ) {
+    throw new Error(
+      `Cannot skip incomplete BBB trade ${trade.key}; harvest it or restore its complete uncapped receipt`,
+    );
+  }
+  return {
+    key: trade.key,
+    categoryUrl: trade.categoryUrl,
+    outputDirectory,
+    summary,
+    uncapped: true,
+    complete: true,
+  };
+}
+
+/**
+ * Run all verified Polk BBB category harvests locally.
+ *
+ * Trades run in bounded batches so operators can improve throughput without
+ * launching more independent BBB browser sessions than requested.
+ *
+ * @param {PolkBbbHarvestOptions} options Browser and output options.
  * @returns {Promise<JsonObject>} Multi-trade harvest receipt.
  */
 export async function harvestPolkBbbTrades(options) {
-  const { harvestBbbCategory } = await import("../harvest-bbb-category.mjs");
-  /** @type {JsonObject[]} */
-  const trades = [];
-  for (const trade of POLK_BBB_TRADE_SOURCES) {
-    const outputDirectory = path.join(options.outputRoot, trade.key);
-    await mkdir(outputDirectory, { recursive: true });
-    const summary = await harvestBbbCategory({
-      categoryUrl: trade.categoryUrl,
-      outputLocation: { kind: "local", dir: outputDirectory },
-      chromiumExecutablePath: options.chromiumExecutablePath,
-      headless: options.headless,
-      startPage: 1,
-      maxPages: options.maxPages,
-      maxProfiles: options.maxProfiles,
-      partRecordLimit: 100,
-      pageDelayMs: 3_000,
-      profileDelayMs: 5_000,
-      challengeAttempts: 5,
-      challengeCheckIntervalMs: 3_000,
-      challengeChecksPerAttempt: 12,
-      navigationTimeoutMs: 90_000,
-      includeHtml: false,
-      profileSubpages: ["customer-reviews", "complaints", "more-info"],
-    });
-    trades.push({
-      key: trade.key,
-      categoryUrl: trade.categoryUrl,
-      outputDirectory,
-      summary,
-      uncapped: options.maxPages === null && options.maxProfiles === null,
-      complete:
-        options.maxPages === null &&
-        options.maxProfiles === null &&
-        summary.profilesHarvested > 0 &&
-        summary.profilesFailed === 0,
-    });
+  const selectedTrades = new Set(options.trades);
+  const sourcesToHarvest = POLK_BBB_TRADE_SOURCES.filter((trade) =>
+    selectedTrades.has(trade.key),
+  );
+  /** @type {Map<PolkBbbTrade, JsonObject>} */
+  const receiptByTrade = new Map();
+  for (
+    let offset = 0;
+    offset < sourcesToHarvest.length;
+    offset += options.tradeConcurrency
+  ) {
+    const batch = sourcesToHarvest.slice(
+      offset,
+      offset + options.tradeConcurrency,
+    );
+    const receipts = await Promise.all(
+      batch.map((trade) => harvestPolkBbbTrade(options, trade)),
+    );
+    for (const receipt of receipts) {
+      const key = receipt.key;
+      if (key === "roofing" || key === "hvac" || key === "solar") {
+        receiptByTrade.set(key, receipt);
+      }
+    }
   }
+  for (const trade of POLK_BBB_TRADE_SOURCES) {
+    if (!receiptByTrade.has(trade.key)) {
+      receiptByTrade.set(
+        trade.key,
+        await readExistingPolkBbbTrade(options, trade),
+      );
+    }
+  }
+  const trades = POLK_BBB_TRADE_SOURCES.map((trade) =>
+    receiptByTrade.get(trade.key),
+  ).filter(isJsonObject);
   const receipt = {
     schemaVersion: "oracle-node.polk-bbb-multi-trade-harvest.v1",
     generatedAt: new Date().toISOString(),
@@ -429,12 +541,15 @@ export async function matchPolkPermitContractorsToBbb(options) {
       readTradeEvidence(options.bbbRoot, trade),
     ),
   );
+  /** @type {Set<string>} */
+  const loaderProfileKeys = new Set();
   /** @type {Map<string, BbbProfileEvidence>} */
   const profilesByKey = new Map();
   for (const trade of tradeEvidence) {
     for (const filePath of trade.profileFiles) {
       for (const profile of await readJsonlObjects(filePath)) {
         const incoming = toBbbProfileEvidence(profile, trade.trade);
+        loaderProfileKeys.add(incoming.profileUrl ?? incoming.profileKey);
         const existing = profilesByKey.get(incoming.profileKey);
         profilesByKey.set(
           incoming.profileKey,
@@ -503,7 +618,7 @@ export async function matchPolkPermitContractorsToBbb(options) {
       file: path.join(options.bbbRoot, "manifest", "summary.json"),
       complete: harvestComplete,
     },
-    harvestedProfileCount: profilesByKey.size,
+    harvestedProfileCount: loaderProfileKeys.size,
     profilesWithLicenseEvidence: [...profilesByKey.values()].filter(
       (profile) => profile.licenseNumbers.length > 0,
     ).length,
@@ -534,6 +649,88 @@ export async function matchPolkPermitContractorsToBbb(options) {
 }
 
 /**
+ * Parse one optional integer CLI value.
+ *
+ * @param {unknown} value Raw parsed CLI value.
+ * @param {string} name Flag name used in validation errors.
+ * @param {number} minimum Smallest accepted integer.
+ * @param {number | null} fallback Value returned when the flag is absent.
+ * @returns {number | null} Parsed integer or the fallback.
+ */
+function readIntegerOption(value, name, minimum, fallback) {
+  if (value === undefined) return fallback;
+  if (typeof value !== "string" || !/^\d+$/.test(value)) {
+    throw new Error(`--${name} must be an integer >= ${minimum}`);
+  }
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < minimum) {
+    throw new Error(`--${name} must be an integer >= ${minimum}`);
+  }
+  return parsed;
+}
+
+/**
+ * Parse a comma-separated list of BBB profile subpages.
+ *
+ * @param {unknown} value Raw `--profile-subpages` value.
+ * @returns {string[]} Non-empty de-duplicated subpage names.
+ */
+function readProfileSubpages(value) {
+  const defaults = ["customer-reviews", "complaints", "more-info"];
+  if (value === undefined) return defaults;
+  if (typeof value !== "string") {
+    throw new Error("--profile-subpages must be a comma-separated list");
+  }
+  const subpages = [
+    ...new Set(
+      value
+        .split(",")
+        .map((subpage) => subpage.trim())
+        .filter((subpage) => subpage.length > 0),
+    ),
+  ];
+  if (subpages.length === 0) {
+    throw new Error("--profile-subpages must contain at least one subpage");
+  }
+  return subpages;
+}
+
+/**
+ * Parse and validate the subset of configured BBB trades to harvest.
+ *
+ * @param {unknown} value Raw `--trades` value.
+ * @returns {PolkBbbTrade[]} Selected trade keys.
+ */
+function readPolkBbbTrades(value) {
+  if (value === undefined) {
+    return POLK_BBB_TRADE_SOURCES.map((trade) => trade.key);
+  }
+  if (typeof value !== "string") {
+    throw new Error("--trades must be a comma-separated list");
+  }
+  const knownTrades = new Set(POLK_BBB_TRADE_SOURCES.map((trade) => trade.key));
+  const trades = [
+    ...new Set(
+      value
+        .split(",")
+        .map((trade) => trade.trim())
+        .filter((trade) => trade.length > 0),
+    ),
+  ];
+  if (
+    trades.length === 0 ||
+    trades.some(
+      (trade) => !knownTrades.has(/** @type {PolkBbbTrade} */ (trade)),
+    )
+  ) {
+    throw new Error(
+      `--trades must contain only: ${POLK_BBB_TRADE_SOURCES.map((trade) => trade.key).join(", ")}`,
+    );
+  }
+  return /** @type {PolkBbbTrade[]} */ (trades);
+}
+
+/**
  * Run Polk BBB plan, harvest, or permit-backed match mode.
  *
  * @param {readonly string[]} argv CLI arguments.
@@ -549,8 +746,18 @@ export async function runPolkBbbCli(argv) {
       output: { type: "string" },
       "max-pages": { type: "string" },
       "max-profiles": { type: "string" },
+      trades: { type: "string" },
       "chromium-executable-path": { type: "string" },
       headless: { type: "string" },
+      "trade-concurrency": { type: "string" },
+      "page-delay-ms": { type: "string" },
+      "profile-delay-ms": { type: "string" },
+      "profile-attempts": { type: "string" },
+      "challenge-attempts": { type: "string" },
+      "challenge-check-interval-ms": { type: "string" },
+      "challenge-checks-per-attempt": { type: "string" },
+      "navigation-timeout-ms": { type: "string" },
+      "profile-subpages": { type: "string" },
     },
     strict: true,
     allowPositionals: false,
@@ -562,26 +769,37 @@ export async function runPolkBbbCli(argv) {
       : "tmp/polk/bbb";
   if (mode === "plan") return buildPolkBbbHarvestPlan(outputRoot);
   if (mode === "harvest") {
-    const maxPages =
-      typeof values["max-pages"] === "string"
-        ? Number.parseInt(values["max-pages"], 10)
-        : null;
-    const maxProfiles =
-      typeof values["max-profiles"] === "string"
-        ? Number.parseInt(values["max-profiles"], 10)
-        : null;
+    const maxPages = readIntegerOption(
+      values["max-pages"],
+      "max-pages",
+      1,
+      null,
+    );
+    const maxProfiles = readIntegerOption(
+      values["max-profiles"],
+      "max-profiles",
+      1,
+      null,
+    );
+    const tradeConcurrency = readIntegerOption(
+      values["trade-concurrency"],
+      "trade-concurrency",
+      1,
+      1,
+    );
     if (
-      (maxPages !== null &&
-        (!Number.isSafeInteger(maxPages) || maxPages < 1)) ||
-      (maxProfiles !== null &&
-        (!Number.isSafeInteger(maxProfiles) || maxProfiles < 1))
+      tradeConcurrency === null ||
+      tradeConcurrency > POLK_BBB_TRADE_SOURCES.length
     ) {
-      throw new Error("--max-pages/--max-profiles must be positive integers");
+      throw new Error(
+        `--trade-concurrency must be between 1 and ${POLK_BBB_TRADE_SOURCES.length}`,
+      );
     }
     return harvestPolkBbbTrades({
       outputRoot,
       maxPages,
       maxProfiles,
+      trades: readPolkBbbTrades(values.trades),
       chromiumExecutablePath:
         typeof values["chromium-executable-path"] === "string"
           ? values["chromium-executable-path"]
@@ -590,6 +808,53 @@ export async function runPolkBbbCli(argv) {
         typeof values.headless === "string"
           ? !/^(false|0|no)$/i.test(values.headless)
           : true,
+      tradeConcurrency,
+      pageDelayMs:
+        readIntegerOption(values["page-delay-ms"], "page-delay-ms", 0, 3_000) ??
+        3_000,
+      profileDelayMs:
+        readIntegerOption(
+          values["profile-delay-ms"],
+          "profile-delay-ms",
+          0,
+          5_000,
+        ) ?? 5_000,
+      profileAttempts:
+        readIntegerOption(
+          values["profile-attempts"],
+          "profile-attempts",
+          1,
+          2,
+        ) ?? 2,
+      challengeAttempts:
+        readIntegerOption(
+          values["challenge-attempts"],
+          "challenge-attempts",
+          1,
+          5,
+        ) ?? 5,
+      challengeCheckIntervalMs:
+        readIntegerOption(
+          values["challenge-check-interval-ms"],
+          "challenge-check-interval-ms",
+          0,
+          3_000,
+        ) ?? 3_000,
+      challengeChecksPerAttempt:
+        readIntegerOption(
+          values["challenge-checks-per-attempt"],
+          "challenge-checks-per-attempt",
+          1,
+          12,
+        ) ?? 12,
+      navigationTimeoutMs:
+        readIntegerOption(
+          values["navigation-timeout-ms"],
+          "navigation-timeout-ms",
+          1,
+          90_000,
+        ) ?? 90_000,
+      profileSubpages: readProfileSubpages(values["profile-subpages"]),
     });
   }
   if (mode === "match") {

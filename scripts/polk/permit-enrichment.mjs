@@ -1,22 +1,36 @@
 #!/usr/bin/env node
 
 import { createReadStream, createWriteStream } from "node:fs";
+import { createRequire } from "node:module";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import * as path from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
+const require = createRequire(import.meta.url);
+const duckdb = require("duckdb");
+
 /**
  * @typedef {Record<string, unknown>} JsonObject
  */
+
+/**
+ * Narrow an unknown value to a JSON object.
+ *
+ * @param {unknown} value Candidate value.
+ * @returns {value is JsonObject} Whether the value is a non-array object.
+ */
+function isJsonObject(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
 
 /**
  * @typedef {"official_bulk" | "accela" | "ims" | "tyler_esuite" | "iworq" | "municipal_portal" | "none_verified"} PolkPermitPortalKind
  */
 
 /**
- * @typedef {"bulk_only" | "adapter_ready" | "portal_verified_adapter_pending" | "no_public_detail_source_verified"} PolkPermitSourceStatus
+ * @typedef {"bulk_only" | "adapter_ready" | "partial_adapter_ready" | "portal_verified_adapter_pending" | "no_public_detail_source_verified"} PolkPermitSourceStatus
  */
 
 /**
@@ -69,26 +83,26 @@ export const POLK_PERMIT_SOURCE_REGISTRY = Object.freeze([
     key: "lakeland_ims",
     agency: "LAKELAND",
     portalKind: "ims",
-    status: "portal_verified_adapter_pending",
+    status: "adapter_ready",
     officialUrl:
       "https://www.lakelandgov.net/departments/community-economic-development/building-inspection/ims/",
-    searchUrl: "https://ims.lakelandgov.net/ims/Account/Login",
-    adapter: null,
+    searchUrl: "https://ims.lakelandgov.net/ims/Find3?cat=Permits",
+    adapter: "lakeland_ims_permit_detail_v1",
     evidence:
-      "Lakeland officially replaced eTRAKiT with iMS in 2024 and advertises anonymous guest search; no stable anonymous detail request contract has been certified.",
+      "Anonymous guest search was certified with the iMS antiforgery token and redirect sequence; public permit details expose trade contractors and Florida licence identifiers.",
     verifiedAt: "2026-08-31",
   },
   {
     key: "winter_haven_tyler_esuite",
     agency: "WINTER HAVEN",
     portalKind: "tyler_esuite",
-    status: "portal_verified_adapter_pending",
+    status: "partial_adapter_ready",
     officialUrl: "https://www.mywinterhaven.com/342/Building-Permits-Licenses",
     searchUrl:
       "https://myinspections.mywinterhaven.com/eSuite.Permits/AdvancedSearchPage/AdvancedSearch.aspx",
-    adapter: null,
+    adapter: "winter_haven_esuite_permit_detail_v1",
     evidence:
-      "The official Tyler eSuite public search exposes permit and inspection lookup, but its stateful form/detail protocol has not been certified for unattended use.",
+      "Anonymous eSuite search and session-scoped detail retrieval are certified for 2025-and-earlier numeric permits. Current WH26-prefixed bulk permits are not indexed there, so countywide Winter Haven coverage remains unsupported.",
     verifiedAt: "2026-08-31",
   },
   {
@@ -100,19 +114,19 @@ export const POLK_PERMIT_SOURCE_REGISTRY = Object.freeze([
     searchUrl: "https://haines.portal.iworq.net/portalhome/haines",
     adapter: null,
     evidence:
-      "The official city Development Services page links the iWorQ contractor portal; anonymous permit-detail requests have not been certified.",
+      "The public iWorQ search enforces invisible reCAPTCHA. Missing or invalid tokens return no result rows, so unattended detail access is not certified.",
     verifiedAt: "2026-08-31",
   },
   {
     key: "lake_wales_public_view",
     agency: "LAKE WALES",
     portalKind: "municipal_portal",
-    status: "portal_verified_adapter_pending",
+    status: "adapter_ready",
     officialUrl: "https://www.lakewalesfl.gov/909/Contractor-Online-Portal",
     searchUrl: "https://secure.lakewalesfl.gov/permits/",
-    adapter: null,
+    adapter: "lake_wales_citizenlink_permit_detail_v1",
     evidence:
-      "The official city page documents a public permit-number/address view, but the portal was offline during verification and no request protocol was certified.",
+      "Anonymous CitizenLink bootstrap, permit-number lookup, and detail requests were certified; permit details expose municipal contractor identity and class but not a Florida state licence number.",
     verifiedAt: "2026-08-31",
   },
   ...[
@@ -146,6 +160,153 @@ export const POLK_PERMIT_SOURCE_REGISTRY = Object.freeze([
     }),
   ),
 ]);
+
+/**
+ * @typedef {object} PolkPermitCandidateOptions
+ * @property {string} workDatabase Completed Polk DuckDB cache.
+ * @property {string} output JSONL destination.
+ * @property {readonly string[]} agencies Official agency labels to include.
+ * @property {number | null} limit Optional deterministic pilot cap.
+ */
+
+/**
+ * Escape text as a DuckDB SQL string literal.
+ *
+ * @param {string} value Untrusted text.
+ * @returns {string} Escaped SQL literal.
+ */
+function duckdbStringLiteral(value) {
+  return `'${value.replaceAll("'", "''")}'`;
+}
+
+/**
+ * Build the read-only query for permit adapter candidates.
+ *
+ * Candidates intentionally preserve one row per official bulk permit row.
+ * Duplicate permit numbers can therefore be reconciled to the source row
+ * denominator instead of silently collapsing parcel-level evidence.
+ *
+ * @param {readonly string[]} agencies Official agency labels.
+ * @param {number | null} limit Optional pilot cap.
+ * @returns {string} Read-only DuckDB SQL.
+ */
+export function buildPolkPermitCandidateSql(agencies, limit) {
+  const normalizedAgencies = [
+    ...new Set(
+      agencies
+        .map((agency) => agency.trim().toUpperCase())
+        .filter((agency) => agency.length > 0),
+    ),
+  ].sort();
+  if (normalizedAgencies.length === 0) {
+    throw new Error("At least one Polk permit agency is required");
+  }
+  if (limit !== null && (!Number.isSafeInteger(limit) || limit < 1)) {
+    throw new Error("Polk permit candidate limit must be a positive integer");
+  }
+  const agencySql = normalizedAgencies.map(duckdbStringLiteral).join(", ");
+  return `
+    SELECT
+      trim(permit_number) AS permitNumber,
+      upper(trim(agency_name)) AS agency
+    FROM polk_permits
+    WHERE permit_number IS NOT NULL
+      AND trim(permit_number) <> ''
+      AND agency_name IS NOT NULL
+      AND upper(trim(agency_name)) IN (${agencySql})
+    ORDER BY
+      CASE
+        WHEN try_cast(substr(issue_date, 1, 10) AS DATE)
+          BETWEEN DATE '1901-01-01' AND CURRENT_DATE + INTERVAL '2 years'
+          THEN try_cast(substr(issue_date, 1, 10) AS DATE)
+        ELSE NULL
+      END DESC NULLS LAST,
+      upper(trim(agency_name)),
+      trim(permit_number)
+    ${limit === null ? "" : `LIMIT ${limit}`}
+  `;
+}
+
+/**
+ * Execute one read-only DuckDB query.
+ *
+ * @param {import("duckdb").Connection} connection Open connection.
+ * @param {string} sql Read-only SQL.
+ * @returns {Promise<JsonObject[]>} Query rows.
+ */
+function queryDuckDb(connection, sql) {
+  return new Promise((resolve, reject) => {
+    connection.all(sql, (error, rows) => {
+      if (error !== null) {
+        reject(error instanceof Error ? error : new Error(String(error)));
+        return;
+      }
+      resolve(Array.isArray(rows) ? rows : []);
+    });
+  });
+}
+
+/**
+ * Close a DuckDB connection.
+ *
+ * @param {import("duckdb").Connection} connection Open connection.
+ * @returns {Promise<void>} Resolves when closed.
+ */
+function closeDuckDbConnection(connection) {
+  return new Promise((resolve) => {
+    connection.close(() => resolve());
+  });
+}
+
+/**
+ * Materialize deterministic permit adapter candidates from the official bulk
+ * cache without network access.
+ *
+ * @param {PolkPermitCandidateOptions} options Candidate options.
+ * @returns {Promise<JsonObject>} Candidate manifest.
+ */
+export async function writePolkPermitAdapterCandidates(options) {
+  const absoluteDatabase = path.resolve(options.workDatabase);
+  const absoluteOutput = path.resolve(options.output);
+  await mkdir(path.dirname(absoluteOutput), { recursive: true });
+  const database = new duckdb.Database(absoluteDatabase, {
+    access_mode: "READ_ONLY",
+  });
+  const connection = database.connect();
+  let rows;
+  try {
+    rows = await queryDuckDb(
+      connection,
+      buildPolkPermitCandidateSql(options.agencies, options.limit),
+    );
+  } finally {
+    await closeDuckDbConnection(connection);
+  }
+  const candidates = rows.flatMap((row) => {
+    const permitNumber =
+      typeof row.permitNumber === "string" ? row.permitNumber.trim() : "";
+    const agency = typeof row.agency === "string" ? row.agency.trim() : "";
+    return permitNumber.length > 0 && agency.length > 0
+      ? [{ permitNumber, agency }]
+      : [];
+  });
+  await writeFile(
+    absoluteOutput,
+    candidates.map((candidate) => JSON.stringify(candidate)).join("\n") +
+      (candidates.length > 0 ? "\n" : ""),
+    "utf8",
+  );
+  return {
+    schemaVersion: "oracle-node.polk-permit-adapter-candidates.v1",
+    generatedAt: new Date().toISOString(),
+    workDatabase: absoluteDatabase,
+    output: absoluteOutput,
+    agencies: [...options.agencies],
+    requestedLimit: options.limit,
+    candidateCount: candidates.length,
+    complete: candidates.length > 0,
+  };
+}
 
 /**
  * @typedef {object} PolkAccelaPermitDetail
@@ -251,6 +412,16 @@ function firstCapture(text, pattern) {
 }
 
 /**
+ * Escape user-derived text for an exact regular-expression segment.
+ *
+ * @param {string} value Literal text.
+ * @returns {string} Escaped pattern source.
+ */
+function escapeRegularExpression(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
  * Normalize a phone number to its final ten digits.
  *
  * @param {string | null} value Raw phone.
@@ -260,6 +431,58 @@ function normalizePhone(value) {
   if (value === null) return null;
   const digits = value.replace(/\D/g, "");
   return digits.length >= 10 ? digits.slice(-10) : null;
+}
+
+/**
+ * Extract a Florida contractor licence and its visible classification.
+ *
+ * Accela places fax numbers and numeric address fragments in the same flattened
+ * text as licence identifiers. Prefer tokens immediately following an observed
+ * contractor classification, then fall back to a prefix-filtered token scan for
+ * older records that omit the classification.
+ *
+ * @param {string} contractorRaw Flattened licensed-professional text.
+ * @returns {{licenseNumber:string|null,licenseToken:string|null,licenseType:string|null}} Parsed licence evidence.
+ */
+function extractContractorLicenseEvidence(contractorRaw) {
+  const typedMatch =
+    /\b(General|Building|Residential|Roofing|Plumbing(?:\/Gas)?|Air Condition Class [AB]|Mechanical(?:\/Hood)?|Electric With Alarm|Solar|Private Provider|Irrigation|Alum Specialty Structure)\s+([A-Z]{2,4}\s*[: -]?\s*\d{4,12})\b/i.exec(
+      contractorRaw,
+    );
+  if (typedMatch?.[1] !== undefined && typedMatch[2] !== undefined) {
+    return {
+      licenseNumber: typedMatch[2].toUpperCase().replace(/[^A-Z0-9]/g, ""),
+      licenseToken: typedMatch[2],
+      licenseType: typedMatch[1],
+    };
+  }
+  const rejectedPrefixes = new Set(["CORP", "FAX", "INC", "LLC", "TEL"]);
+  const tokenMatch = [
+    ...contractorRaw.matchAll(/\b([A-Z]{2,4}\s*[: -]?\s*\d{5,10})\b/gi),
+  ].find((match) => {
+    const token = match[1];
+    if (token === undefined) return false;
+    const prefix = token.replace(/[^A-Z]/gi, "").toUpperCase();
+    return !rejectedPrefixes.has(prefix);
+  });
+  const licenseToken = tokenMatch?.[1] ?? null;
+  return {
+    licenseNumber:
+      licenseToken === null
+        ? null
+        : licenseToken.toUpperCase().replace(/[^A-Z0-9]/g, ""),
+    licenseToken,
+    licenseType:
+      licenseToken === null
+        ? null
+        : firstCapture(
+            contractorRaw,
+            new RegExp(
+              `([A-Za-z][A-Za-z ]{2,50})\\s+${escapeRegularExpression(licenseToken)}\\b`,
+              "i",
+            ),
+          ),
+  };
 }
 
 /**
@@ -307,43 +530,34 @@ export function parsePolkAccelaPermitDetailHtml(html) {
   );
   let contractor = null;
   if (contractorRaw !== null) {
-    const licenseToken = firstCapture(
-      contractorRaw,
-      /\b([A-Z]{2,4}\s*[: -]?\s*\d{5,10})\b/i,
-    );
-    const licenseNumber =
-      licenseToken === null
-        ? null
-        : licenseToken.toUpperCase().replace(/[^A-Z0-9]/g, "");
+    const primaryContractorRaw =
+      contractorRaw.split(/\bView Additional Licensed Professionals\b/i)[0] ??
+      contractorRaw;
+    const { licenseNumber, licenseType } =
+      extractContractorLicenseEvidence(primaryContractorRaw);
     const email =
       firstCapture(
-        contractorRaw,
+        primaryContractorRaw,
         /\b([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})\b/i,
       )?.toLowerCase() ?? null;
     const phone = normalizePhone(
-      firstCapture(contractorRaw, /(\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4})/),
+      firstCapture(
+        primaryContractorRaw,
+        /(\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4})/,
+      ),
     );
-    const licenseType =
-      licenseToken === null
-        ? null
-        : firstCapture(
-            contractorRaw,
-            new RegExp(
-              `([A-Za-z][A-Za-z ]{2,50})\\s+${licenseToken.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`,
-              "i",
-            ),
-          );
     const businessSearchText =
       email === null
-        ? contractorRaw
-        : contractorRaw.slice(
-            contractorRaw.toLowerCase().indexOf(email) + email.length,
+        ? primaryContractorRaw
+        : primaryContractorRaw.slice(
+            primaryContractorRaw.toLowerCase().indexOf(email) + email.length,
           );
     const businessName =
       firstCapture(
         businessSearchText,
-        /\b([A-Z0-9][A-Z0-9 &'.,-]+?(?:LLC|INC|CORP(?:ORATION)?|COMPANY|CO))\b/i,
+        /\b([A-Z][A-Z0-9 &'.,-]+?(?:LLC|INC|CORP(?:ORATION)?|COMPANY|CO))\b/,
       ) ??
+      firstCapture(businessSearchText, /^(.{2,120}?)\s+\d{2,6}\s+[A-Z0-9]/i) ??
       firstCapture(
         businessSearchText,
         /\b([A-Z0-9][A-Z0-9 &'.,-]+?(?:CONSTRUCTION|CONTRACTING|ROOFING|SERVICES))\b/i,
@@ -351,11 +565,11 @@ export function parsePolkAccelaPermitDetailHtml(html) {
     const contactName =
       businessName === null
         ? firstCapture(
-            contractorRaw,
+            primaryContractorRaw,
             /^([A-Z][A-Z .'-]{2,60}?)(?:\s+[A-Z0-9._%+-]+@|\s+[A-Z]{2,4}\d{5})/i,
           )
         : firstCapture(
-            contractorRaw,
+            primaryContractorRaw,
             /^([A-Z][A-Z .'-]{2,60}?)\s+[A-Z0-9._%+-]+@/i,
           );
     contractor = {
@@ -405,6 +619,682 @@ export async function fetchPolkAccelaPermitDetail(
     throw new Error(`Polk Accela detail returned HTTP ${response.status}`);
   }
   return { url, html: await response.text() };
+}
+
+/**
+ * Build the certified anonymous Winter Haven eSuite search URL.
+ *
+ * @param {string} permitNumber Official permit number.
+ * @returns {string} Public advanced-search URL.
+ */
+export function buildWinterHavenPermitSearchUrl(permitNumber) {
+  const normalized = permitNumber.trim();
+  if (normalized.length === 0) {
+    throw new Error("Winter Haven permit number is required");
+  }
+  const url = new URL(
+    "https://myinspections.mywinterhaven.com/eSuite.Permits/AdvancedSearchPage/AdvancedSearch.aspx",
+  );
+  url.searchParams.set("permitNumber", normalized);
+  url.searchParams.set("permitType", "-1");
+  url.searchParams.set("serviceAddress", "");
+  return url.toString();
+}
+
+/**
+ * Parse Lakeland's public iMS permit page into the shared detail contract.
+ *
+ * @param {string} html Public permit detail HTML.
+ * @param {string} requestedPermitNumber Permit identifier used for lookup.
+ * @returns {PolkAccelaPermitDetail} Parsed public evidence.
+ */
+export function parseLakelandImsPermitDetailHtml(html, requestedPermitNumber) {
+  const text = permitHtmlToText(html);
+  const normalizedPermit = requestedPermitNumber.trim();
+  const permitNumber =
+    normalizedPermit.length > 0
+      ? normalizedPermit
+      : firstCapture(text, /\bPermit(?: Number)?:\s*([A-Z0-9-]+)/i);
+  const headingIndex = text
+    .toUpperCase()
+    .lastIndexOf(normalizedPermit.toUpperCase());
+  const detailHeadingText = headingIndex < 0 ? text : text.slice(headingIndex);
+  const permitHeadingPattern = new RegExp(
+    `^${escapeRegularExpression(normalizedPermit)}\\s+(.+?)\\s+(?:Complete|Issued|Closed|Active|Pending)\\b`,
+    "i",
+  );
+  const permitStatusPattern = new RegExp(
+    `^${escapeRegularExpression(normalizedPermit)}\\s+.+?\\s+(Complete|Issued|Closed|Active|Pending)\\b`,
+    "i",
+  );
+  const contractorMatch =
+    /\b(?:Building Contractor|Electrical|Plumbing(?:\/Gas)?|Mechanical(?:\/Hood)?):?\s+([A-Z0-9][A-Z0-9 &'.,-]{2,100}?)\s*\(([A-Z]{2,4}\d{5,10})\)/i.exec(
+      text,
+    );
+  const contractor =
+    contractorMatch?.[1] === undefined || contractorMatch[2] === undefined
+      ? null
+      : {
+          businessName: contractorMatch[1].trim(),
+          contactName: null,
+          licenseNumber: contractorMatch[2].toUpperCase(),
+          licenseType: null,
+          email: null,
+          phone: null,
+          raw: contractorMatch[0],
+        };
+  return {
+    permitNumber,
+    recordType:
+      firstCapture(
+        text,
+        /\bType:\s*(.+?)(?:\s+Status:|\s+Address:|\s+Location:)/i,
+      ) ?? firstCapture(detailHeadingText, permitHeadingPattern),
+    recordStatus:
+      firstCapture(
+        text,
+        /\bStatus:\s*(.+?)(?:\s+Type:|\s+Address:|\s+Location:|\s+Description:)/i,
+      ) ?? firstCapture(detailHeadingText, permitStatusPattern),
+    parcelIdentifier:
+      firstCapture(text, /\b(?:Parcel|Folio)(?: Number)?:\s*([A-Z0-9-]+)/i)
+        ?.replace(/[^A-Z0-9]/gi, "")
+        .toUpperCase() ?? null,
+    workLocation:
+      firstCapture(
+        text,
+        /\bLocation & Permit Description\s+Location\s+(.+?)\s+Job Description\b/i,
+      ) ??
+      firstCapture(
+        text,
+        /\b(?:Address|Location):\s*(.+?)(?:\s+Description:|\s+Status:|\s+Contractors?\b)/i,
+      ),
+    projectDescription:
+      firstCapture(text, /\bPermit Scope\s+(.+?)\s+Charges\b/i) ??
+      firstCapture(
+        text,
+        /\bDescription:\s*(.+?)(?:\s+Valuation:|\s+Contractors?\b|\s+Fees?\b)/i,
+      ),
+    jobValuationUsd: parseCurrencyCapture(
+      text,
+      /\b(?:Job Value|Valuation|Estimated Value):?\s*\$?([\d,]+(?:\.\d{1,2})?)/i,
+    ),
+    contractor,
+  };
+}
+
+/**
+ * Parse Winter Haven's public eSuite permit page.
+ *
+ * Contractor fields are intentionally null because the certified public detail
+ * leaves those fields blank even for records issued to a contractor.
+ *
+ * @param {string} html Public detail HTML.
+ * @param {string} requestedPermitNumber Permit identifier used for lookup.
+ * @returns {PolkAccelaPermitDetail} Parsed public metadata evidence.
+ */
+export function parseWinterHavenPermitDetailHtml(html, requestedPermitNumber) {
+  const text = permitHtmlToText(html);
+  const normalizedPermit = requestedPermitNumber.trim();
+  return {
+    permitNumber:
+      normalizedPermit.length > 0
+        ? normalizedPermit
+        : firstCapture(text, /\bPermit(?: Number)?:\s*([A-Z0-9-]+)/i),
+    recordType:
+      firstCapture(text, /\bPermit Type\s+(.+?)\s+Permit #/i) ??
+      firstCapture(
+        text,
+        /\bPermit Type:\s*(.+?)(?:\s+Status:|\s+Permit Status:|\s+Address:)/i,
+      ),
+    recordStatus:
+      firstCapture(text, /\bStatus\s+(.+?)\s+Issued To\b/i) ??
+      firstCapture(
+        text,
+        /\b(?:Permit )?Status:\s*(.+?)(?:\s+Issued To:|\s+Address:|\s+Description:)/i,
+      ),
+    parcelIdentifier:
+      firstCapture(text, /\b(?:Parcel|Folio)(?: Number)?:\s*([A-Z0-9-]+)/i)
+        ?.replace(/[^A-Z0-9]/gi, "")
+        .toUpperCase() ?? null,
+    workLocation:
+      firstCapture(
+        text,
+        /\bPrimary Owner Address\s+(.+?)\s+Parcel Description\b/i,
+      ) ??
+      firstCapture(
+        text,
+        /\b(?:Address|Service Address):\s*(.+?)(?:\s+Description:|\s+Valuation:|\s+Permit Type:)/i,
+      ),
+    projectDescription:
+      firstCapture(
+        text,
+        /\bPermit Details Description\s+(.+?)\s+Current Property Value\b/i,
+      ) ??
+      firstCapture(
+        text,
+        /\bDescription:\s*(.+?)(?:\s+Valuation:|\s+Fees?:|\s+Expiration:)/i,
+      ),
+    jobValuationUsd: parseCurrencyCapture(
+      text,
+      /\b(?:Est\. Improvement Value|Valuation):?\s*\$?([\d,]+(?:\.\d{1,2})?)/i,
+    ),
+    contractor: null,
+  };
+}
+
+/**
+ * Parse a Lake Wales CitizenLink permit detail response.
+ *
+ * CitizenLink exposes a municipal contractor number and classification but no
+ * Florida state licence identifier, so `licenseNumber` remains null.
+ *
+ * @param {string} html Decoded CitizenLink detail body.
+ * @param {string} requestedPermitNumber Permit identifier used for lookup.
+ * @returns {PolkAccelaPermitDetail} Parsed public detail evidence.
+ */
+export function parseLakeWalesPermitDetailHtml(html, requestedPermitNumber) {
+  const text = permitHtmlToText(html);
+  const contractorMatch =
+    /\bGeneral Contractor:\s*([0-9]+)\s*\/\s*(.+?)(?:\s+Receipt Date:|\s+Status:|\s+Class:|\s+Address:|\s+Contacts?\b)/i.exec(
+      text,
+    );
+  const contractor =
+    contractorMatch?.[1] === undefined || contractorMatch[2] === undefined
+      ? null
+      : {
+          businessName: contractorMatch[2].trim(),
+          contactName: null,
+          licenseNumber: null,
+          licenseType: firstCapture(
+            text,
+            /\b(?:License )?Class:\s*(.+?)(?:\s+Status:|\s+Expiration:|\s+Address:)/i,
+          ),
+          email: null,
+          phone: null,
+          raw: contractorMatch[0],
+        };
+  const normalizedPermit = requestedPermitNumber.trim();
+  return {
+    permitNumber:
+      normalizedPermit.length > 0
+        ? normalizedPermit
+        : firstCapture(text, /\bPermit(?: Number)?:\s*([A-Z0-9-]+)/i),
+    recordType: firstCapture(
+      text,
+      /\b(?:Permit )?Type:\s*(.+?)(?:\s+Status:|\s+Address:|\s+Description:)/i,
+    ),
+    recordStatus:
+      firstCapture(text, /\bPermit Status:\s*(.+?)\s+Closed Date:/i) ??
+      firstCapture(
+        text,
+        /\bStatus:\s*(.+?)(?:\s+Address:|\s+Description:|\s+Issued:)/i,
+      ),
+    parcelIdentifier:
+      firstCapture(text, /\b(?:Parcel|Folio)(?: Number)?:\s*([A-Z0-9-]+)/i)
+        ?.replace(/[^A-Z0-9]/gi, "")
+        .toUpperCase() ?? null,
+    workLocation: firstCapture(
+      text,
+      /\b(?:Address|Location):\s*(.+?)(?:\s+Description:|\s+Status:|\s+General Contractor:)/i,
+    ),
+    projectDescription:
+      firstCapture(text, /\bDescription:\s*(.+?)\s+Address:/i) ??
+      firstCapture(
+        text,
+        /\bDescription:\s*(.+?)(?:\s+Valuation:|\s+General Contractor:|\s+Fees?\b)/i,
+      ),
+    jobValuationUsd: parseCurrencyCapture(
+      text,
+      /\b(?:Valuation|Estimated Value):\s*\$?([\d,]+(?:\.\d{1,2})?)/i,
+    ),
+    contractor,
+  };
+}
+
+/**
+ * Fetch a Lakeland permit through its anonymous iMS redirect sequence.
+ *
+ * @param {string} permitNumber Official permit number.
+ * @param {typeof fetch} [fetchImplementation] Injectable fetch for tests.
+ * @returns {Promise<{url:string,html:string}>} Public detail response.
+ */
+export async function fetchLakelandImsPermitDetail(
+  permitNumber,
+  fetchImplementation = fetch,
+) {
+  const normalized = permitNumber.trim();
+  if (normalized.length === 0)
+    throw new Error("Lakeland permit number is required");
+  const cookies = new Map();
+  let response = await fetchWithCookies(
+    "https://ims.lakelandgov.net/ims/Account/Anonymous",
+    { redirect: "manual" },
+    cookies,
+    fetchImplementation,
+  );
+  const anonymousLocation =
+    response.headers.get("location") ?? "https://ims.lakelandgov.net/ims";
+  response = await fetchWithCookies(
+    new URL(anonymousLocation, response.url).toString(),
+    {},
+    cookies,
+    fetchImplementation,
+  );
+  assertPublicResponse(response, "Lakeland anonymous entry");
+  const searchUrl = "https://ims.lakelandgov.net/ims/Find3?cat=Permits";
+  response = await fetchWithCookies(
+    searchUrl,
+    {},
+    cookies,
+    fetchImplementation,
+  );
+  assertPublicResponse(response, "Lakeland permit search");
+  const searchHtml = await response.text();
+  const requestVerificationToken = firstCapture(
+    searchHtml,
+    /name=["']__RequestVerificationToken["'][^>]*value=["']([^"']+)["']/i,
+  );
+  if (requestVerificationToken === null) {
+    throw new Error(
+      "Lakeland permit search did not expose an antiforgery token",
+    );
+  }
+  const body = new URLSearchParams({
+    __RequestVerificationToken: requestVerificationToken,
+    bSavedSearchLoaded: "False",
+    "find3SearchCriteria[0].find3Definition.PromptType": "Text",
+    "find3SearchCriteria[0].find3Definition.bTextAllowTwoCharacters": "False",
+    "find3SearchCriteria[0].find3Definition.cat": "Permits",
+    "find3SearchCriteria[0].find3Definition.StoredProcedureName":
+      "dbo.iMSFind3PermitsPermitNumber",
+    "find3SearchCriteria[0].SearchText": normalized,
+    "find3SearchCriteria[0].HashText": "",
+    "find3SearchCriteria[0].DateRange": "",
+    "find3SearchCriteria[0].DateStart": "",
+    "find3SearchCriteria[0].DateEnd": "",
+  });
+  response = await fetchWithCookies(
+    "https://ims.lakelandgov.net/ims/Find3?bNewSearch=False&cat=Permits",
+    {
+      method: "POST",
+      redirect: "manual",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Referer: searchUrl,
+      },
+      body,
+    },
+    cookies,
+    fetchImplementation,
+  );
+  for (let redirectCount = 0; redirectCount < 4; redirectCount += 1) {
+    const location = response.headers.get("location");
+    if (location === null) break;
+    response = await fetchWithCookies(
+      new URL(location, response.url).toString(),
+      { redirect: "manual", headers: { Referer: searchUrl } },
+      cookies,
+      fetchImplementation,
+    );
+  }
+  assertPublicResponse(response, "Lakeland permit detail");
+  const html = await response.text();
+  if (
+    !permitHtmlToText(html).toUpperCase().includes(normalized.toUpperCase())
+  ) {
+    throw new Error(
+      `Lakeland permit ${normalized} did not resolve to a detail page`,
+    );
+  }
+  return { url: response.url, html };
+}
+
+/**
+ * Fetch a Winter Haven eSuite detail after establishing search state.
+ *
+ * @param {string} permitNumber Official permit number.
+ * @param {typeof fetch} [fetchImplementation] Injectable fetch for tests.
+ * @returns {Promise<{url:string,html:string}>} Public detail response.
+ */
+export async function fetchWinterHavenPermitDetail(
+  permitNumber,
+  fetchImplementation = fetch,
+) {
+  const searchUrl = buildWinterHavenPermitSearchUrl(permitNumber);
+  const cookies = new Map();
+  const searchResponse = await fetchWithCookies(
+    searchUrl,
+    {},
+    cookies,
+    fetchImplementation,
+  );
+  assertPublicResponse(searchResponse, "Winter Haven permit search");
+  const searchHtml = await searchResponse.text();
+  const rawDetailPath = firstCapture(
+    searchHtml,
+    /href=["']([^"']*ContractorPermitDetails\.aspx\?id=\d+[^"']*)["']/i,
+  );
+  if (rawDetailPath === null) {
+    throw new Error(
+      `Winter Haven permit ${permitNumber} returned no detail link`,
+    );
+  }
+  const detailUrl = new URL(
+    decodeHtmlEntities(rawDetailPath),
+    searchResponse.url,
+  ).toString();
+  const detailResponse = await fetchWithCookies(
+    detailUrl,
+    { headers: { Referer: searchUrl } },
+    cookies,
+    fetchImplementation,
+  );
+  assertPublicResponse(detailResponse, "Winter Haven permit detail");
+  return { url: detailResponse.url, html: await detailResponse.text() };
+}
+
+/**
+ * Fetch a Lake Wales CitizenLink permit detail through its public AJAX API.
+ *
+ * @param {string} permitNumber Official permit number.
+ * @param {typeof fetch} [fetchImplementation] Injectable fetch for tests.
+ * @returns {Promise<{url:string,html:string}>} Decoded public detail body.
+ */
+export async function fetchLakeWalesPermitDetail(
+  permitNumber,
+  fetchImplementation = fetch,
+) {
+  const normalized = permitNumber.trim();
+  if (normalized.length === 0)
+    throw new Error("Lake Wales permit number is required");
+  const baseUrl = "https://secure.lakewalesfl.gov";
+  const portalUrl = `${baseUrl}/permits/`;
+  const cookies = new Map();
+  let response = await fetchWithCookies(
+    portalUrl,
+    {},
+    cookies,
+    fetchImplementation,
+  );
+  assertPublicResponse(response, "Lake Wales permit portal");
+  response = await postCitizenLink(
+    `${baseUrl}/adg/citizenlink/common/common/ajax/loadInitialMessages.php`,
+    new URLSearchParams({ timeout: "60", SITENAME: "PERMITS" }),
+    portalUrl,
+    cookies,
+    fetchImplementation,
+  );
+  assertPublicResponse(response, "Lake Wales permit bootstrap");
+  response = await postCitizenLink(
+    `${baseUrl}/adg/citizenlink/bps/common/ajax/permitByNumber.php`,
+    new URLSearchParams({
+      q: normalized,
+      "searchFilter[term]": normalized,
+      "searchFilter[_type]": "query",
+      timeout: "60",
+      SITENAME: "PERMITS",
+      sourceClass: "corePermitByNumber",
+      selectOptions: "false",
+    }),
+    portalUrl,
+    cookies,
+    fetchImplementation,
+  );
+  assertPublicResponse(response, "Lake Wales permit lookup");
+  const suggestions = /** @type {unknown} */ (await response.json());
+  const suggestion = Array.isArray(suggestions)
+    ? suggestions.find(
+        (candidate) =>
+          isJsonObject(candidate) &&
+          typeof candidate.id === "string" &&
+          typeof candidate.text === "string" &&
+          candidate.text.toUpperCase().includes(normalized.toUpperCase()),
+      )
+    : undefined;
+  if (!isJsonObject(suggestion) || typeof suggestion.id !== "string") {
+    throw new Error(`Lake Wales permit ${normalized} returned no exact result`);
+  }
+  const detailBody = new URLSearchParams({
+    phpClass: "coreShowFullPermit",
+    primaryCode: suggestion.id,
+    targetData: suggestion.id,
+    subCodeData: "",
+    timeout: "60",
+    SITENAME: "PERMITS",
+    deviceLatitude: "0",
+    deviceLongitude: "0",
+    qrdata: "",
+    userFeature: "0",
+    persistentRequest: "1",
+    discardRequest: "0",
+    loaderType: "0",
+    menuAction: "0",
+  });
+  response = await postCitizenLink(
+    `${baseUrl}/adg/citizenlink/common/common/ajax/classDataLoader.php`,
+    detailBody,
+    portalUrl,
+    cookies,
+    fetchImplementation,
+  );
+  assertPublicResponse(response, "Lake Wales permit detail");
+  const detailResponse = /** @type {unknown} */ (await response.json());
+  if (
+    !isJsonObject(detailResponse) ||
+    typeof detailResponse.body !== "string"
+  ) {
+    throw new Error("Lake Wales permit detail returned no encoded body");
+  }
+  return {
+    url: `${portalUrl}#permit-${encodeURIComponent(normalized)}`,
+    html: Buffer.from(detailResponse.body, "base64").toString("utf8"),
+  };
+}
+
+/**
+ * Fetch and parse one source-specific certified adapter.
+ *
+ * @param {string} adapter Certified adapter key.
+ * @param {string} permitNumber Official permit number.
+ * @param {typeof fetch} [fetchImplementation] Injectable fetch for tests.
+ * @returns {Promise<{url:string,detail:PolkAccelaPermitDetail}>} Parsed detail.
+ */
+export async function fetchPolkPermitAdapterDetail(
+  adapter,
+  permitNumber,
+  fetchImplementation = fetch,
+) {
+  if (adapter === "polk_accela_cap_detail_v1") {
+    const fetched = await fetchPolkAccelaPermitDetail(
+      permitNumber,
+      fetchImplementation,
+    );
+    return {
+      url: fetched.url,
+      detail: parsePolkPermitAdapterHtml(adapter, fetched.html, permitNumber),
+    };
+  }
+  if (adapter === "lakeland_ims_permit_detail_v1") {
+    const fetched = await fetchLakelandImsPermitDetail(
+      permitNumber,
+      fetchImplementation,
+    );
+    return {
+      url: fetched.url,
+      detail: parsePolkPermitAdapterHtml(adapter, fetched.html, permitNumber),
+    };
+  }
+  if (adapter === "winter_haven_esuite_permit_detail_v1") {
+    const fetched = await fetchWinterHavenPermitDetail(
+      permitNumber,
+      fetchImplementation,
+    );
+    return {
+      url: fetched.url,
+      detail: parsePolkPermitAdapterHtml(adapter, fetched.html, permitNumber),
+    };
+  }
+  if (adapter === "lake_wales_citizenlink_permit_detail_v1") {
+    const fetched = await fetchLakeWalesPermitDetail(
+      permitNumber,
+      fetchImplementation,
+    );
+    return {
+      url: fetched.url,
+      detail: parsePolkPermitAdapterHtml(adapter, fetched.html, permitNumber),
+    };
+  }
+  throw new Error(`Unsupported Polk permit adapter: ${adapter}`);
+}
+
+/**
+ * Parse saved or freshly fetched HTML for one certified adapter.
+ *
+ * @param {string} adapter Certified adapter key.
+ * @param {string} html Public detail HTML.
+ * @param {string} permitNumber Requested permit number.
+ * @returns {PolkAccelaPermitDetail} Parsed public evidence.
+ */
+export function parsePolkPermitAdapterHtml(adapter, html, permitNumber) {
+  if (adapter === "polk_accela_cap_detail_v1") {
+    return parsePolkAccelaPermitDetailHtml(html);
+  }
+  if (adapter === "lakeland_ims_permit_detail_v1") {
+    return parseLakelandImsPermitDetailHtml(html, permitNumber);
+  }
+  if (adapter === "winter_haven_esuite_permit_detail_v1") {
+    return parseWinterHavenPermitDetailHtml(html, permitNumber);
+  }
+  if (adapter === "lake_wales_citizenlink_permit_detail_v1") {
+    return parseLakeWalesPermitDetailHtml(html, permitNumber);
+  }
+  throw new Error(`Unsupported Polk permit adapter: ${adapter}`);
+}
+
+/**
+ * Build the public source URL recorded for offline adapter evidence.
+ *
+ * @param {PolkPermitSource} source Certified source.
+ * @param {string} permitNumber Requested permit number.
+ * @returns {string} Public search or detail URL.
+ */
+function buildPolkPermitAdapterUrl(source, permitNumber) {
+  if (source.adapter === "polk_accela_cap_detail_v1") {
+    return buildPolkAccelaDetailUrl(permitNumber);
+  }
+  if (source.adapter === "winter_haven_esuite_permit_detail_v1") {
+    return buildWinterHavenPermitSearchUrl(permitNumber);
+  }
+  if (source.searchUrl !== null) return source.searchUrl;
+  throw new Error(`Polk permit source ${source.key} has no public URL`);
+}
+
+/**
+ * Parse a currency capture into a finite number.
+ *
+ * @param {string} text Visible portal text.
+ * @param {RegExp} pattern Currency capture.
+ * @returns {number | null} Parsed amount.
+ */
+function parseCurrencyCapture(text, pattern) {
+  const captured = firstCapture(text, pattern);
+  if (captured === null) return null;
+  const value = Number(captured.replaceAll(",", ""));
+  return Number.isFinite(value) ? value : null;
+}
+
+/**
+ * Perform a public request while retaining response cookies.
+ *
+ * @param {string} url Request URL.
+ * @param {RequestInit} options Fetch options.
+ * @param {Map<string, string>} cookies Mutable cookie jar.
+ * @param {typeof fetch} fetchImplementation Injectable fetch.
+ * @returns {Promise<Response>} Public response.
+ */
+async function fetchWithCookies(url, options, cookies, fetchImplementation) {
+  const headers = new Headers(options.headers);
+  headers.set("Accept", headers.get("Accept") ?? "text/html,application/json");
+  headers.set(
+    "User-Agent",
+    headers.get("User-Agent") ?? "oracle-node-polk-permit-evidence/1.0",
+  );
+  if (cookies.size > 0) {
+    headers.set(
+      "Cookie",
+      [...cookies.entries()]
+        .map(([name, value]) => `${name}=${value}`)
+        .join("; "),
+    );
+  }
+  const response = await fetchImplementation(url, { ...options, headers });
+  for (const cookie of responseSetCookies(response)) {
+    const [nameValue] = cookie.split(";", 1);
+    const separator = nameValue?.indexOf("=") ?? -1;
+    if (nameValue !== undefined && separator > 0) {
+      cookies.set(
+        nameValue.slice(0, separator).trim(),
+        nameValue.slice(separator + 1).trim(),
+      );
+    }
+  }
+  return response;
+}
+
+/**
+ * Read response Set-Cookie values across Node fetch implementations.
+ *
+ * @param {Response} response Fetch response.
+ * @returns {string[]} Individual cookie header values.
+ */
+function responseSetCookies(response) {
+  const getSetCookie = Reflect.get(response.headers, "getSetCookie");
+  if (typeof getSetCookie === "function") {
+    const values = Reflect.apply(getSetCookie, response.headers, []);
+    return Array.isArray(values) ? values.map(String) : [];
+  }
+  const combined = response.headers.get("set-cookie");
+  return combined === null ? [] : combined.split(/,(?=[^;,]+=)/);
+}
+
+/**
+ * Submit one read-only CitizenLink form request.
+ *
+ * @param {string} url AJAX endpoint.
+ * @param {URLSearchParams} body Form body.
+ * @param {string} referer Public portal URL.
+ * @param {Map<string, string>} cookies Mutable cookie jar.
+ * @param {typeof fetch} fetchImplementation Injectable fetch.
+ * @returns {Promise<Response>} AJAX response.
+ */
+function postCitizenLink(url, body, referer, cookies, fetchImplementation) {
+  return fetchWithCookies(
+    url,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+        "X-Requested-With": "XMLHttpRequest",
+        Referer: referer,
+      },
+      body,
+    },
+    cookies,
+    fetchImplementation,
+  );
+}
+
+/**
+ * Reject non-success public portal responses.
+ *
+ * @param {Response} response Public response.
+ * @param {string} label Request label.
+ * @returns {void}
+ */
+function assertPublicResponse(response, label) {
+  if (!response.ok) {
+    throw new Error(`${label} returned HTTP ${response.status}`);
+  }
 }
 
 /**
@@ -535,8 +1425,13 @@ export function buildPolkPermitEnrichmentReceipt(permitSummary, records) {
       typeof record.detail?.contractor?.licenseNumber === "string" &&
       record.detail.contractor.licenseNumber.length > 0,
   );
-  const attemptedAdapterRecords = records.filter(
-    (record) => record.sourceKey === "polk_county_accela",
+  const adapterSourceKeys = new Set(
+    POLK_PERMIT_SOURCE_REGISTRY.filter(
+      (source) => source.status === "adapter_ready",
+    ).map((source) => source.key),
+  );
+  const attemptedAdapterRecords = records.filter((record) =>
+    adapterSourceKeys.has(record.sourceKey),
   ).length;
   return buildPolkPermitEnrichmentReceiptFromRun(permitSummary, {
     inputRecordCount: records.length,
@@ -566,16 +1461,21 @@ export async function runPolkPermitEnrichment(argv) {
   const { values } = parseArgs({
     args: [...argv],
     options: {
+      stage: { type: "string" },
       input: { type: "string" },
       output: { type: "string" },
       receipt: { type: "string" },
       "permit-summary": { type: "string" },
       "html-dir": { type: "string" },
+      "work-db": { type: "string" },
+      agency: { type: "string", multiple: true },
+      limit: { type: "string" },
       network: { type: "boolean" },
     },
     strict: true,
     allowPositionals: false,
   });
+  const stage = typeof values.stage === "string" ? values.stage : "enrich";
   const input =
     typeof values.input === "string"
       ? values.input
@@ -596,6 +1496,29 @@ export async function runPolkPermitEnrichment(argv) {
     typeof values["html-dir"] === "string"
       ? values["html-dir"]
       : "tmp/polk/permits/html";
+  if (stage === "candidates") {
+    const limit =
+      typeof values.limit === "string"
+        ? Number.parseInt(values.limit, 10)
+        : null;
+    const agencies = Array.isArray(values.agency)
+      ? values.agency.map(String)
+      : POLK_PERMIT_SOURCE_REGISTRY.filter(
+          (source) => source.status === "adapter_ready",
+        ).map((source) => source.agency);
+    return writePolkPermitAdapterCandidates({
+      workDatabase:
+        typeof values["work-db"] === "string"
+          ? values["work-db"]
+          : "tmp/polk/bulk/extracted/polk-appraisal.duckdb",
+      output: input,
+      agencies,
+      limit,
+    });
+  }
+  if (stage !== "enrich") {
+    throw new Error("--stage must be candidates or enrich");
+  }
   await Promise.all([
     mkdir(path.dirname(output), { recursive: true }),
     mkdir(path.dirname(receiptPath), { recursive: true }),
@@ -628,7 +1551,11 @@ export async function runPolkPermitEnrichment(argv) {
     const source = findPolkPermitSource(candidate.agency);
     /** @type {PolkPermitEnrichmentRecord} */
     let result;
-    if (source?.adapter !== "polk_accela_cap_detail_v1") {
+    if (
+      source === null ||
+      source.status !== "adapter_ready" ||
+      source.adapter === null
+    ) {
       result = {
         permitNumber: candidate.permitNumber,
         agency: candidate.agency,
@@ -644,18 +1571,25 @@ export async function runPolkPermitEnrichment(argv) {
       try {
         const fetched =
           values.network === true
-            ? await fetchPolkAccelaPermitDetail(candidate.permitNumber)
+            ? await fetchPolkPermitAdapterDetail(
+                source.adapter,
+                candidate.permitNumber,
+              )
             : {
-                url: buildPolkAccelaDetailUrl(candidate.permitNumber),
-                html: await readFile(
-                  path.join(
-                    htmlDirectory,
-                    `${candidate.permitNumber.replace(/[^A-Z0-9_-]/gi, "_")}.html`,
+                url: buildPolkPermitAdapterUrl(source, candidate.permitNumber),
+                detail: parsePolkPermitAdapterHtml(
+                  source.adapter,
+                  await readFile(
+                    path.join(
+                      htmlDirectory,
+                      `${candidate.permitNumber.replace(/[^A-Z0-9_-]/gi, "_")}.html`,
+                    ),
+                    "utf8",
                   ),
-                  "utf8",
+                  candidate.permitNumber,
                 ),
               };
-        const detail = parsePolkAccelaPermitDetailHtml(fetched.html);
+        const detail = fetched.detail;
         const hasEvidence =
           detail.permitNumber !== null ||
           detail.recordStatus !== null ||
@@ -684,7 +1618,7 @@ export async function runPolkPermitEnrichment(argv) {
           permitNumber: candidate.permitNumber,
           agency: candidate.agency,
           sourceKey: source.key,
-          sourceUrl: buildPolkAccelaDetailUrl(candidate.permitNumber),
+          sourceUrl: buildPolkPermitAdapterUrl(source, candidate.permitNumber),
           status: "fetch_error",
           detail: null,
           error: caught instanceof Error ? caught.message : String(caught),

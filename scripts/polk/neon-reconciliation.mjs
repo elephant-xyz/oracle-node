@@ -430,7 +430,9 @@ export function reconcilePolkNeon(localManifest, observations) {
       coverage !== null &&
       coverage.ingestedCount === track.localCount;
     const timestampEvidenced =
-      coverage?.firstLoadedAt !== null && coverage?.lastLoadedAt !== null;
+      coverage !== null &&
+      coverage.firstLoadedAt !== null &&
+      coverage.lastLoadedAt !== null;
     const directPlacesMatch =
       track.source !== "overture_places" ||
       (placesLocalCount !== null &&

@@ -160,6 +160,18 @@ describe("Polk local-to-Neon receipts", () => {
     expect(
       failed.tracks.find((track) => track.source === "sunbiz"),
     ).toMatchObject({ countMatches: false, passed: false });
+
+    observations.coverageRows = observations.coverageRows.filter(
+      (row) => row.source !== "permits",
+    );
+    const missing = reconcilePolkNeon(readyLocalManifest(), observations);
+    expect(
+      missing.tracks.find((track) => track.source === "permits"),
+    ).toMatchObject({
+      neonCoverageCount: null,
+      timestampEvidenced: false,
+      passed: false,
+    });
   });
 });
 

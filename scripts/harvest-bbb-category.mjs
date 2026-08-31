@@ -184,6 +184,7 @@ const DEFAULT_PROFILE_SUBPAGES = [
  * @property {number} partRecordLimit - Maximum profile records per JSONL part.
  * @property {number} pageDelayMs - Delay between category page visits.
  * @property {number} profileDelayMs - Delay between profile/subpage visits.
+ * @property {number} profileAttempts - Maximum attempts for one profile before recording a failure.
  * @property {number} challengeAttempts - Number of navigation retries for Cloudflare challenge pages.
  * @property {number} challengeCheckIntervalMs - Delay between challenge checks.
  * @property {number} challengeChecksPerAttempt - Number of challenge checks per navigation attempt.
@@ -277,6 +278,7 @@ export async function createBbbBrowserSession(options) {
  */
 export async function harvestBbbCategoryInExistingPage(options, page) {
   const startedAt = new Date().toISOString();
+  let activePage = page;
   /** @type {readonly string[]} */
   const profileSubpages = options.profileSubpages;
   /** @type {CategoryPageRecord[]} */
@@ -298,13 +300,17 @@ export async function harvestBbbCategoryInExistingPage(options, page) {
     pageNumber < options.startPage + parsedPageCount
   ) {
     const pageUrl = buildCategoryPageUrl(options.categoryUrl, pageNumber);
-    const navigation = await gotoAccessibleBbbPage(page, pageUrl, options);
+    const navigation = await gotoAccessibleBbbPage(
+      activePage,
+      pageUrl,
+      options,
+    );
     if (!navigation.ok) {
       throw new Error(
         `Could not load BBB category page ${pageUrl}: ${navigation.title}`,
       );
     }
-    const snapshot = await snapshotPage(page, options.includeHtml);
+    const snapshot = await snapshotPage(activePage, options.includeHtml);
     const categoryRecord = buildCategoryPageRecord({
       categoryUrl: options.categoryUrl,
       pageNumber,
@@ -345,33 +351,60 @@ export async function harvestBbbCategoryInExistingPage(options, page) {
   );
   for (const listing of selectedListings) {
     await sleep(options.profileDelayMs);
-    try {
-      const record = await harvestProfileRecord({
-        listing,
-        page,
-        options,
-        profileSubpages,
-      });
-      pendingProfileRecords.push(record);
-      if (pendingProfileRecords.length >= options.partRecordLimit) {
-        outputArtifacts.push(
-          await writeJsonlRecords(
-            options.outputLocation,
-            `profiles/profiles-part-${String(profilePartNumber).padStart(4, "0")}.jsonl`,
-            pendingProfileRecords,
-          ),
-        );
-        profilePartNumber += 1;
-        pendingProfileRecords = [];
+    /** @type {unknown} */
+    let profileFailure = null;
+    for (let attempt = 1; attempt <= options.profileAttempts; attempt += 1) {
+      try {
+        const record = await harvestProfileRecord({
+          listing,
+          page: activePage,
+          options,
+          profileSubpages,
+        });
+        pendingProfileRecords.push(record);
+        profileFailure = null;
+        break;
+      } catch (caught) {
+        profileFailure = caught;
+        if (attempt < options.profileAttempts) {
+          if (isRecoverableBbbPageError(caught)) {
+            try {
+              activePage = await replaceBbbPage(
+                activePage,
+                options.navigationTimeoutMs,
+              );
+            } catch (recoveryCaught) {
+              profileFailure = recoveryCaught;
+              break;
+            }
+          }
+          await sleep(options.profileDelayMs);
+        }
       }
-    } catch (caught) {
+    }
+    if (profileFailure !== null) {
       failedProfiles.push({
         recordKind: "bbb_profile_failure",
         schemaVersion: DEFAULT_OUTPUT_SCHEMA_VERSION,
         profileUrl: listing.profileUrl,
         listing,
-        error: caught instanceof Error ? caught.message : String(caught),
+        error:
+          profileFailure instanceof Error
+            ? profileFailure.message
+            : String(profileFailure),
       });
+      continue;
+    }
+    if (pendingProfileRecords.length >= options.partRecordLimit) {
+      outputArtifacts.push(
+        await writeJsonlRecords(
+          options.outputLocation,
+          `profiles/profiles-part-${String(profilePartNumber).padStart(4, "0")}.jsonl`,
+          pendingProfileRecords,
+        ),
+      );
+      profilePartNumber += 1;
+      pendingProfileRecords = [];
     }
   }
 
@@ -413,6 +446,35 @@ export async function harvestBbbCategoryInExistingPage(options, page) {
     ),
   );
   return { ...summary, outputArtifacts };
+}
+
+/**
+ * Identify Puppeteer failures that leave the current tab unsafe to reuse.
+ *
+ * @param {unknown} caught Browser failure.
+ * @returns {boolean} True when retrying should use a newly configured tab.
+ */
+export function isRecoverableBbbPageError(caught) {
+  const message = caught instanceof Error ? caught.message : String(caught);
+  return /detached frame|session closed|target closed|protocol error|protocol timeout|runtime\.[a-z]+ timed out/i.test(
+    message,
+  );
+}
+
+/**
+ * Replace a broken Puppeteer tab while preserving the current browser session.
+ *
+ * @param {import("puppeteer").Page} page Broken page.
+ * @param {number} navigationTimeoutMs Default timeout for the replacement.
+ * @returns {Promise<import("puppeteer").Page>} Fresh configured page.
+ */
+async function replaceBbbPage(page, navigationTimeoutMs) {
+  const replacement = await newConfiguredPage(
+    page.browser(),
+    navigationTimeoutMs,
+  );
+  await page.close().catch(() => undefined);
+  return replacement;
 }
 
 /**
@@ -1502,6 +1564,7 @@ function parseCliOptions(args) {
       "part-record-limit": { type: "string" },
       "page-delay-ms": { type: "string" },
       "profile-delay-ms": { type: "string" },
+      "profile-attempts": { type: "string" },
       "challenge-attempts": { type: "string" },
       "challenge-check-interval-ms": { type: "string" },
       "challenge-checks-per-attempt": { type: "string" },
@@ -1541,6 +1604,11 @@ function parseCliOptions(args) {
         values["profile-delay-ms"],
         "profile-delay-ms",
       ) ?? DEFAULT_PROFILE_DELAY_MS,
+    profileAttempts:
+      parsePositiveIntegerOption(
+        values["profile-attempts"],
+        "profile-attempts",
+      ) ?? 2,
     challengeAttempts:
       parsePositiveIntegerOption(
         values["challenge-attempts"],

@@ -8,8 +8,10 @@ import {
   POLK_BBB_TRADE_SOURCES,
   buildPolkBbbHarvestPlan,
   extractBbbLicenseNumbers,
+  harvestPolkBbbTrades,
   matchPolkPermitContractorsToBbb,
   readPermitContractorEvidence,
+  runPolkBbbCli,
 } from "../../scripts/polk/bbb-contractor-crm.mjs";
 
 /** @type {string[]} */
@@ -71,6 +73,83 @@ describe("Polk multi-trade BBB plan", () => {
       }),
     ).toBeNull();
   });
+
+  it("rejects unsafe trade concurrency before launching browsers", async () => {
+    await expect(
+      runPolkBbbCli(["--mode", "harvest", "--trade-concurrency", "4"]),
+    ).rejects.toThrow(/trade-concurrency must be between 1 and 3/i);
+  });
+
+  it("rejects unknown trades and invalid profile retries before launching browsers", async () => {
+    await expect(
+      runPolkBbbCli(["--mode", "harvest", "--trades", "plumbing"]),
+    ).rejects.toThrow(/trades must contain only: roofing, hvac, solar/i);
+    await expect(
+      runPolkBbbCli(["--mode", "harvest", "--profile-attempts", "0"]),
+    ).rejects.toThrow(/profile-attempts must be an integer >= 1/i);
+  });
+
+  it("reuses complete uncapped receipts for omitted redrive trades", async () => {
+    const outputRoot = await createTemporaryDirectory();
+    for (const trade of POLK_BBB_TRADE_SOURCES) {
+      const tradeDirectory = path.join(outputRoot, trade.key);
+      await mkdir(path.join(tradeDirectory, "manifest"), { recursive: true });
+      await mkdir(path.join(tradeDirectory, "profiles"), { recursive: true });
+      await writeFile(
+        path.join(tradeDirectory, "manifest", "summary.json"),
+        `${JSON.stringify({
+          categoryUrl: trade.categoryUrl,
+          profilesHarvested: 1,
+          profilesFailed: 0,
+        })}\n`,
+        "utf8",
+      );
+      await writeFile(
+        path.join(tradeDirectory, "profiles", "profiles-part-0001.jsonl"),
+        `${JSON.stringify({ profileUrl: `https://example.test/${trade.key}` })}\n`,
+        "utf8",
+      );
+    }
+    await mkdir(path.join(outputRoot, "manifest"), { recursive: true });
+    await writeFile(
+      path.join(outputRoot, "manifest", "summary.json"),
+      `${JSON.stringify({
+        trades: POLK_BBB_TRADE_SOURCES.map((trade) => ({
+          key: trade.key,
+          uncapped: true,
+        })),
+      })}\n`,
+      "utf8",
+    );
+
+    const receipt = await harvestPolkBbbTrades({
+      outputRoot,
+      maxPages: null,
+      maxProfiles: null,
+      trades: [],
+      chromiumExecutablePath: null,
+      headless: true,
+      tradeConcurrency: 1,
+      pageDelayMs: 0,
+      profileDelayMs: 0,
+      profileAttempts: 2,
+      challengeAttempts: 1,
+      challengeCheckIntervalMs: 0,
+      challengeChecksPerAttempt: 1,
+      navigationTimeoutMs: 1_000,
+      profileSubpages: [],
+    });
+
+    expect(receipt).toMatchObject({
+      county: "polk",
+      complete: true,
+      trades: [
+        { key: "roofing", complete: true },
+        { key: "hvac", complete: true },
+        { key: "solar", complete: true },
+      ],
+    });
+  });
 });
 
 describe("Polk contractor CRM matching", () => {
@@ -109,19 +188,31 @@ describe("Polk contractor CRM matching", () => {
         })}\n`,
         "utf8",
       );
+      const profile = {
+        providerProfileId: `${trade.key}:profile`,
+        profileUrl: `https://www.bbb.org/profile/${trade.key}`,
+        name: `${trade.name} Fixture`,
+        bbbRating: "A",
+        accredited: true,
+        licenses:
+          trade.key === "roofing"
+            ? [{ rawText: "Florida Roofing CCC1234567" }]
+            : [],
+      };
+      const profiles =
+        trade.key === "roofing"
+          ? [
+              profile,
+              {
+                ...profile,
+                profileUrl:
+                  "https://www.bbb.org/profile/roofing/addressId/secondary",
+              },
+            ]
+          : [profile];
       await writeFile(
         path.join(tradeDirectory, "profiles", "profiles-part-0001.jsonl"),
-        `${JSON.stringify({
-          providerProfileId: `${trade.key}:profile`,
-          profileUrl: `https://www.bbb.org/profile/${trade.key}`,
-          name: `${trade.name} Fixture`,
-          bbbRating: "A",
-          accredited: true,
-          licenses:
-            trade.key === "roofing"
-              ? [{ rawText: "Florida Roofing CCC1234567" }]
-              : [],
-        })}\n`,
+        `${profiles.map((value) => JSON.stringify(value)).join("\n")}\n`,
         "utf8",
       );
     }
@@ -149,7 +240,7 @@ describe("Polk contractor CRM matching", () => {
         uniquePermitLicenseCount: 1,
         matchMethodsAllowed: ["permit_license_exact"],
       },
-      harvestedProfileCount: 3,
+      harvestedProfileCount: 4,
       profilesWithLicenseEvidence: 1,
       matchedContractorCount: 1,
       matchedPermitCount: 1,
