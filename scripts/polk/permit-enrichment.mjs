@@ -1597,6 +1597,52 @@ export async function mapPolkPermitWithConcurrency(
 }
 
 /**
+ * Replace only exhausted fetch failures from a completed atomic part.
+ *
+ * @param {readonly PolkPermitEnrichmentRecord[]} records Existing ordered records.
+ * @param {readonly {permitNumber:string,agency:string}[]} candidates Matching candidates.
+ * @param {number} concurrency Redrive concurrency.
+ * @param {(candidate:{permitNumber:string,agency:string}) => Promise<PolkPermitEnrichmentRecord>} mapper Candidate redrive operation.
+ * @returns {Promise<{records:PolkPermitEnrichmentRecord[],redrivenCount:number}>} Updated ordered records.
+ */
+export async function redrivePolkPermitFetchErrors(
+  records,
+  candidates,
+  concurrency,
+  mapper,
+) {
+  if (records.length !== candidates.length) {
+    throw new Error("Permit redrive records and candidates must align");
+  }
+  const failedIndexes = records.flatMap((record, index) =>
+    record.status === "fetch_error" ? [index] : [],
+  );
+  const replacements = await mapPolkPermitWithConcurrency(
+    failedIndexes,
+    concurrency,
+    async (index) => {
+      const candidate = candidates[index];
+      if (candidate === undefined) {
+        throw new Error(`Missing permit redrive candidate at index ${index}`);
+      }
+      return mapper(candidate);
+    },
+  );
+  const replacementByIndex = new Map(
+    failedIndexes.map((index, replacementIndex) => [
+      index,
+      replacements[replacementIndex],
+    ]),
+  );
+  return {
+    records: records.map(
+      (record, index) => replacementByIndex.get(index) ?? record,
+    ),
+    redrivenCount: failedIndexes.length,
+  };
+}
+
+/**
  * Build a per-source request scheduler. Starts for one portal are spaced by the
  * configured delay even when unrelated portals run concurrently.
  *
@@ -1888,6 +1934,7 @@ export async function runPolkPermitEnrichment(argv) {
       "state-dir": { type: "string" },
       checkpoint: { type: "string" },
       "reset-checkpoint": { type: "boolean" },
+      "redrive-errors": { type: "boolean" },
     },
     strict: true,
     allowPositionals: false,
@@ -2019,10 +2066,27 @@ export async function runPolkPermitEnrichment(argv) {
       `part-${String(partIndex).padStart(6, "0")}.jsonl`,
     );
     let records = await readPolkPermitPart(partPath, partItems);
-    if (records === null) {
-      const validItems = partItems.flatMap((item) =>
-        item.candidate === null ? [] : [item.candidate],
+    const validItems = partItems.flatMap((item) =>
+      item.candidate === null ? [] : [item.candidate],
+    );
+    if (records !== null && values["redrive-errors"] === true) {
+      const redrive = await redrivePolkPermitFetchErrors(
+        records,
+        validItems,
+        settings.concurrency,
+        (candidate) =>
+          enrichPolkPermitCandidate(candidate, settings, scheduleRequest),
       );
+      records = redrive.records;
+      if (redrive.redrivenCount > 0) {
+        await writePolkPermitAtomicText(
+          partPath,
+          records.map((record) => JSON.stringify(record)).join("\n") +
+            (records.length > 0 ? "\n" : ""),
+        );
+      }
+    }
+    if (records === null) {
       records = await mapPolkPermitWithConcurrency(
         validItems,
         settings.concurrency,

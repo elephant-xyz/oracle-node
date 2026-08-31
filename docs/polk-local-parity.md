@@ -60,11 +60,14 @@ npm run polk:permits:enrich -- \
 
 The checkpoint and deterministic part directory default beside the output. A
 rerun validates and reuses complete parts; `--reset-checkpoint` is required to
-discard them. Use `--include-partial` only for an explicitly scoped Winter
-Haven historical run. The official adapter-ready denominator is 230,221 rows,
-of which 230,114 currently have requestable permit numbers. The remaining 107
-rows and the 301,123 rows without certified anonymous adapters remain explicit
-source limitations and do not justify fabricated detail evidence.
+discard them. If a portal throttles or has a transient outage, lower
+`--concurrency`, increase `--delay-ms`, and pass `--redrive-errors`; successful
+rows in each part remain untouched while only exhausted fetch failures retry.
+Use `--include-partial` only for an explicitly scoped Winter Haven historical
+run. The official adapter-ready denominator is 230,221 rows, of which 230,114
+currently have requestable permit numbers. The remaining 107 rows and the
+301,123 rows without certified anonymous adapters remain explicit source
+limitations and do not justify fabricated detail evidence.
 
 Transform and match the exact-ZIP Sunbiz slice:
 

@@ -16,6 +16,7 @@ import {
   parseLakeWalesPermitDetailHtml,
   parsePolkAccelaPermitDetailHtml,
   parseWinterHavenPermitDetailHtml,
+  redrivePolkPermitFetchErrors,
   retryPolkPermitOperation,
   runPolkPermitEnrichment,
 } from "../../scripts/polk/permit-enrichment.mjs";
@@ -370,6 +371,61 @@ describe("Polk permit enrichment execution controls", () => {
 
     expect(results).toEqual([2, 4, 6, 8, 10]);
     expect(maximumActive).toBe(2);
+  });
+
+  it("redrives only failed records while preserving successful evidence", async () => {
+    const successfulRecord = {
+      permitNumber: "BR-1",
+      agency: "POLK COUNTY",
+      sourceKey: "polk_county_accela",
+      sourceUrl: buildPolkAccelaDetailUrl("BR-1"),
+      status: "enriched",
+      detail: parsePolkAccelaPermitDetailHtml(
+        "<h1>Record BR-1:</h1><div>Record Status: Issued</div>",
+      ),
+      error: null,
+      retrievedAt: "2026-08-31T00:00:00.000Z",
+    };
+    const failedRecord = {
+      permitNumber: "BR-2",
+      agency: "POLK COUNTY",
+      sourceKey: "polk_county_accela",
+      sourceUrl: buildPolkAccelaDetailUrl("BR-2"),
+      status: "fetch_error",
+      detail: null,
+      error: "HTTP 429",
+      retrievedAt: "2026-08-31T00:00:00.000Z",
+    };
+    /** @type {string[]} */
+    const redrivenPermits = [];
+    const redrive = await redrivePolkPermitFetchErrors(
+      [successfulRecord, failedRecord],
+      [
+        { permitNumber: "BR-1", agency: "POLK COUNTY" },
+        { permitNumber: "BR-2", agency: "POLK COUNTY" },
+      ],
+      1,
+      async (candidate) => {
+        redrivenPermits.push(candidate.permitNumber);
+        return {
+          ...failedRecord,
+          status: "enriched",
+          detail: parsePolkAccelaPermitDetailHtml(
+            "<h1>Record BR-2:</h1><div>Record Status: Issued</div>",
+          ),
+          error: null,
+        };
+      },
+    );
+
+    expect(redrive.redrivenCount).toBe(1);
+    expect(redrivenPermits).toEqual(["BR-2"]);
+    expect(redrive.records[0]).toBe(successfulRecord);
+    expect(redrive.records[1]).toMatchObject({
+      permitNumber: "BR-2",
+      status: "enriched",
+      error: null,
+    });
   });
 
   it("resumes from validated atomic parts and rebuilds the JSONL handoff", async () => {
