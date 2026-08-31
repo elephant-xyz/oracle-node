@@ -20,8 +20,10 @@ import {
   mapBrowardPermitToDonphanRow,
 } from "../../scripts/broward-permit-query-artifact.mjs";
 import {
+  buildAccelaPermitUpsertValues,
   buildPermitUpsertValues,
   parsePermitLoadOptions,
+  readNormalizedAccelaPermitRecords,
   readNormalizedPermitRecords,
 } from "../../scripts/load-broward-permit-pilot-to-neon.mjs";
 import {
@@ -184,10 +186,16 @@ describe("Broward permit Neon pilot loader", () => {
         "pilot.jsonl",
         "--expected-records",
         "73",
+        "--accela-input",
+        "accela.jsonl",
+        "--expected-accela-records",
+        "14",
       ]),
     ).toEqual({
       inputPath: "pilot.jsonl",
       expectedRecords: 73,
+      accelaInputPath: "accela.jsonl",
+      expectedAccelaRecords: 14,
     });
     const directory = await createTemporaryDirectory();
     const inputPath = join(directory, "permits.private.jsonl");
@@ -199,6 +207,64 @@ describe("Broward permit Neon pilot loader", () => {
     await expect(readNormalizedPermitRecords(inputPath)).rejects.toThrow(
       /duplicate key/u,
     );
+  });
+
+  it("maps bounded Accela records without inventing dates", async () => {
+    const record = {
+      schemaVersion: 1,
+      source: "Accela",
+      sourceSystem: "broward_plantation_accela_permits",
+      jurisdiction: "Plantation",
+      retrievedAt: "2026-08-31T06:00:00Z",
+      sourceUrl: "https://aca.plantation.org/permit/1",
+      recordNumber: "B22-03630",
+      recordType: "Building",
+      recordStatus: "Closed",
+      workLocation: "100 TEST AVE",
+      parcelIdentifier: "504108BJ0140",
+      sourceParcelIdentifier: "504108BJ0140",
+      applicant: null,
+      licensedProfessional: null,
+      projectDescription: "PUBLIC PROJECT",
+      moreDetails: { Type: "Building" },
+      moreDetailsRawText: null,
+      inspectionsRawText: null,
+      completedInspections: [],
+      processingStatusRawText: null,
+      documentLinks: [],
+      relatedLinks: [],
+      rawText: "",
+      sourceSearchResult: { recordNumber: "B22-03630" },
+      idempotencyKey:
+        "broward_plantation_accela_permits:B22-03630",
+      provenance: { searchMethod: "parcel" },
+    };
+    const directory = await createTemporaryDirectory();
+    const inputPath = join(directory, "accela.private.jsonl");
+    await writeFile(inputPath, `${JSON.stringify(record)}\n`);
+    await expect(
+      readNormalizedAccelaPermitRecords(inputPath),
+    ).resolves.toMatchObject({
+      records: [expect.objectContaining({ recordNumber: "B22-03630" })],
+      sourceSha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+    });
+    const values = buildAccelaPermitUpsertValues(
+      /** @type {Parameters<typeof buildAccelaPermitUpsertValues>[0]} */ (
+        record
+      ),
+      {
+        propertyId: "11111111-1111-4111-8111-111111111111",
+        parcelId: "22222222-2222-4222-8222-222222222222",
+      },
+    );
+    expect(values).toMatchObject({
+      sourceSystem: "broward_plantation_accela_permits",
+      permitNumber: "B22-03630",
+      parcelIdentifier: "504108BJ0140",
+      improvementAction: "permit_record",
+      permitIssueDate: null,
+      applicationReceivedDate: null,
+    });
   });
 });
 

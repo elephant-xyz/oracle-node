@@ -23,7 +23,7 @@ const LOAD_LOCK_NAMESPACE = 12_011;
 const LOAD_LOCK_KEY = 3;
 const DEFAULT_INPUT =
   "downloads/broward/permit-acceptance-pilot/normalized-permits.private.jsonl";
-const LOAD_KEY = "broward-bcs-pilot-v1";
+const LOAD_KEY = "broward-supported-pilots-v2";
 
 /**
  * @typedef {import("./broward-permit-query-artifact.mjs").BrowardNormalizedPermit & {
@@ -56,6 +56,8 @@ const LOAD_KEY = "broward-bcs-pilot-v1";
  *   raw:Record<string,unknown>
  * }} BrowardNormalizedPermit
  *
+ * @typedef {import("./permit-source-adapters/broward-accela.mjs").BrowardAccelaPermitRecord} BrowardAccelaPermitRecord
+ *
  * @typedef {object} PermitParent
  * @property {string} propertyId - Canonical Broward appraiser property UUID.
  * @property {string} parcelId - Canonical Broward appraiser parcel UUID.
@@ -63,6 +65,8 @@ const LOAD_KEY = "broward-bcs-pilot-v1";
  * @typedef {object} PermitLoadOptions
  * @property {string} inputPath - Reconciled private normalized permit JSONL.
  * @property {number | null} expectedRecords - Optional exact record count.
+ * @property {string | null} accelaInputPath - Optional reconciled Accela JSONL.
+ * @property {number | null} expectedAccelaRecords - Optional exact Accela count.
  *
  * @typedef {object} PermitUpsertValues
  * @property {string} sourceSystem - County-prefixed permit source.
@@ -88,7 +92,7 @@ const LOAD_KEY = "broward-bcs-pilot-v1";
  * @property {string | null} projectDescription - Public project description.
  * @property {string | null} description - Public project title.
  * @property {Record<string, unknown>} moreDetails - Preserved public permit facts.
- * @property {BrowardNormalizedPermit} sourcePayload - Complete normalized public record.
+ * @property {Record<string, unknown>} sourcePayload - Complete normalized public record.
  */
 
 /**
@@ -100,6 +104,8 @@ const LOAD_KEY = "broward-bcs-pilot-v1";
 export function parsePermitLoadOptions(argv) {
   let inputPath = DEFAULT_INPUT;
   let expectedRecords = null;
+  let accelaInputPath = null;
+  let expectedAccelaRecords = null;
   for (let index = 0; index < argv.length; index += 2) {
     const flag = argv[index];
     const value = argv[index + 1];
@@ -111,8 +117,11 @@ export function parsePermitLoadOptions(argv) {
       throw new Error("Permit load options must be --flag value pairs");
     }
     if (flag === "--input") inputPath = value;
+    else if (flag === "--accela-input") accelaInputPath = value;
     else if (flag === "--expected-records") {
       expectedRecords = Number(value);
+    } else if (flag === "--expected-accela-records") {
+      expectedAccelaRecords = Number(value);
     } else {
       throw new Error(`Unknown permit load option: ${flag}`);
     }
@@ -123,7 +132,24 @@ export function parsePermitLoadOptions(argv) {
   ) {
     throw new Error("--expected-records must be a positive integer");
   }
-  return { inputPath, expectedRecords };
+  if (
+    expectedAccelaRecords !== null &&
+    (!Number.isInteger(expectedAccelaRecords) ||
+      expectedAccelaRecords < 1)
+  ) {
+    throw new Error("--expected-accela-records must be a positive integer");
+  }
+  if (expectedAccelaRecords !== null && accelaInputPath === null) {
+    throw new Error(
+      "--expected-accela-records requires --accela-input",
+    );
+  }
+  return {
+    inputPath,
+    expectedRecords,
+    accelaInputPath,
+    expectedAccelaRecords,
+  };
 }
 
 /**
@@ -153,6 +179,37 @@ export async function readNormalizedPermitRecords(inputPath) {
   }
   if (records.length === 0) {
     throw new Error("Normalized Broward permit JSONL is empty");
+  }
+  return { records, sourceSha256 };
+}
+
+/**
+ * Read and validate deduplicated Broward Accela permit JSONL.
+ *
+ * @param {string} inputPath - Private Accela normalized JSONL.
+ * @returns {Promise<{records:BrowardAccelaPermitRecord[],sourceSha256:string}>}
+ *   Unique Accela records and exact input checksum.
+ */
+export async function readNormalizedAccelaPermitRecords(inputPath) {
+  const text = await readFile(inputPath, "utf8");
+  const sourceSha256 = createHash("sha256").update(text).digest("hex");
+  /** @type {BrowardAccelaPermitRecord[]} */
+  const records = [];
+  const keys = new Set();
+  for (const line of text.split(/\r?\n/u)) {
+    if (line.trim() === "") continue;
+    const parsed = /** @type {unknown} */ (JSON.parse(line));
+    if (!isAccelaPermit(parsed)) {
+      throw new Error("Normalized Broward Accela JSONL contains an invalid row");
+    }
+    if (keys.has(parsed.idempotencyKey)) {
+      throw new Error("Normalized Broward Accela JSONL contains a duplicate key");
+    }
+    keys.add(parsed.idempotencyKey);
+    records.push(parsed);
+  }
+  if (records.length === 0) {
+    throw new Error("Normalized Broward Accela JSONL is empty");
   }
   return { records, sourceSha256 };
 }
@@ -213,7 +270,64 @@ export function buildPermitUpsertValues(record, parent) {
       source_object_id: record.source_object_id,
       source_record_kind: record.source_record_kind,
     },
-    sourcePayload: record,
+    sourcePayload:
+      /** @type {Record<string, unknown>} */ (
+        /** @type {unknown} */ (record)
+      ),
+  };
+}
+
+/**
+ * Build canonical query-db values for one reconciled Broward Accela record.
+ *
+ * Accela does not expose an unambiguous issue/application date in the bounded
+ * detail contract, so those fields remain null rather than being inferred from
+ * record numbers or free text.
+ *
+ * @param {BrowardAccelaPermitRecord} record - Reconciled Accela record.
+ * @param {PermitParent} parent - Exact appraiser property and parcel UUIDs.
+ * @returns {PermitUpsertValues} Idempotent property-improvement values.
+ */
+export function buildAccelaPermitUpsertValues(record, parent) {
+  return {
+    sourceSystem: record.sourceSystem,
+    sourceRecordKey: record.idempotencyKey,
+    sourceRecordHash: stableHash(record),
+    sourceArtifactUri: record.sourceUrl,
+    requestIdentifier: record.idempotencyKey,
+    propertyId: parent.propertyId,
+    parcelId: parent.parcelId,
+    parcelIdentifier: record.parcelIdentifier,
+    permitNumber: record.recordNumber,
+    improvementType: record.recordType,
+    improvementStatus: record.recordStatus,
+    improvementAction: "permit_record",
+    applicationReceivedDate: null,
+    permitIssueDate: null,
+    finalInspectionDate: null,
+    expirationDate: null,
+    workLocation: record.workLocation,
+    estimatedJobValue: null,
+    estimatedSqFt: null,
+    projectDescription: record.projectDescription,
+    description: record.projectDescription,
+    moreDetails: {
+      ...record.moreDetails,
+      schema_version: record.schemaVersion,
+      jurisdiction: record.jurisdiction,
+      applicant: record.applicant,
+      licensed_professional: record.licensedProfessional,
+      completed_inspections: record.completedInspections,
+      processing_status_raw_text: record.processingStatusRawText,
+      document_links: record.documentLinks,
+      related_links: record.relatedLinks,
+      source_search_result: record.sourceSearchResult,
+      provenance: record.provenance,
+    },
+    sourcePayload:
+      /** @type {Record<string, unknown>} */ (
+        /** @type {unknown} */ (record)
+      ),
   };
 }
 
@@ -225,15 +339,32 @@ export function buildPermitUpsertValues(record, parent) {
  *   Exact committed logical counts and source identity.
  */
 export async function loadBrowardPermitPilotToNeon(options) {
-  const { records, sourceSha256 } = await readNormalizedPermitRecords(
+  const bcs = await readNormalizedPermitRecords(
     options.inputPath,
   );
   if (
     options.expectedRecords !== null &&
-    records.length !== options.expectedRecords
+    bcs.records.length !== options.expectedRecords
   ) {
     throw new Error("Permit pilot record count differs from the required count");
   }
+  const accela =
+    options.accelaInputPath === null
+      ? { records: [], sourceSha256: null }
+      : await readNormalizedAccelaPermitRecords(options.accelaInputPath);
+  if (
+    options.expectedAccelaRecords !== null &&
+    accela.records.length !== options.expectedAccelaRecords
+  ) {
+    throw new Error(
+      "Accela pilot record count differs from the required count",
+    );
+  }
+  const sourceSha256 = stableHash({
+    accela: accela.sourceSha256,
+    bcs: bcs.sourceSha256,
+  });
+  const permitRecordCount = bcs.records.length + accela.records.length;
   const target = requireNeonTarget(process.env);
   const client = new Client({
     connectionString: target.connectionString,
@@ -248,12 +379,22 @@ export async function loadBrowardPermitPilotToNeon(options) {
     await ensureLoadControlTable(client);
     const parents = await readPermitParents(
       client,
-      [...new Set(records.map((record) => record.parcel_identifier))],
+      [
+        ...new Set([
+          ...bcs.records.map((record) => record.parcel_identifier),
+          ...accela.records.map((record) => record.parcelIdentifier),
+        ]),
+      ],
     );
+    const permitKeys = [
+      ...bcs.records.map((record) => record.record_key),
+      ...accela.records.map((record) => record.idempotencyKey),
+    ];
+    const inspectionKeys = bcs.records.flatMap(buildInspectionSourceKeys);
     let inspectionCount = 0;
     await client.query("BEGIN");
     try {
-      for (const record of records) {
+      for (const record of bcs.records) {
         const parent = parents.get(record.parcel_identifier);
         if (parent === undefined) {
           throw new Error("Permit record has no exact Broward appraisal parent");
@@ -266,7 +407,21 @@ export async function loadBrowardPermitPilotToNeon(options) {
           record,
         );
       }
-      await verifyLoadedRecords(client, records, inspectionCount);
+      for (const record of accela.records) {
+        const parent = parents.get(record.parcelIdentifier);
+        if (parent === undefined) {
+          throw new Error("Accela record has no exact Broward appraisal parent");
+        }
+        await upsertPropertyImprovement(
+          client,
+          buildAccelaPermitUpsertValues(record, parent),
+        );
+      }
+      await verifyLoadedRecords(
+        client,
+        permitKeys,
+        inspectionKeys,
+      );
       await client.query(
         `INSERT INTO ingest_control.broward_permit_loads (
            load_key, source_sha256, expected_property_improvements,
@@ -278,7 +433,7 @@ export async function loadBrowardPermitPilotToNeon(options) {
              EXCLUDED.expected_property_improvements,
            expected_inspections = EXCLUDED.expected_inspections,
            committed_at = now()`,
-        [LOAD_KEY, sourceSha256, records.length, inspectionCount],
+        [LOAD_KEY, sourceSha256, permitRecordCount, inspectionCount],
       );
       await client.query("COMMIT");
     } catch (error) {
@@ -286,7 +441,7 @@ export async function loadBrowardPermitPilotToNeon(options) {
       throw error;
     }
     return {
-      propertyImprovements: records.length,
+      propertyImprovements: permitRecordCount,
       inspections: inspectionCount,
       sourceSha256,
     };
@@ -326,6 +481,35 @@ function isNormalizedPermit(value) {
         !Array.isArray(inspection) &&
         typeof inspection.source_object_id === "string",
     )
+  );
+}
+
+/**
+ * @param {unknown} value - Candidate normalized Accela permit.
+ * @returns {value is BrowardAccelaPermitRecord} Whether stable load fields exist.
+ */
+function isAccelaPermit(value) {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const candidate =
+    /** @type {Partial<BrowardAccelaPermitRecord>} */ (value);
+  return (
+    typeof candidate.sourceSystem === "string" &&
+    /^broward_[a-z0-9_]+_permits$/u.test(candidate.sourceSystem) &&
+    typeof candidate.sourceUrl === "string" &&
+    typeof candidate.recordNumber === "string" &&
+    typeof candidate.recordType === "string" &&
+    typeof candidate.recordStatus === "string" &&
+    typeof candidate.parcelIdentifier === "string" &&
+    /^[A-Z0-9]{12}$/u.test(candidate.parcelIdentifier) &&
+    typeof candidate.idempotencyKey === "string" &&
+    typeof candidate.moreDetails === "object" &&
+    candidate.moreDetails !== null &&
+    !Array.isArray(candidate.moreDetails) &&
+    typeof candidate.provenance === "object" &&
+    candidate.provenance !== null &&
+    !Array.isArray(candidate.provenance)
   );
 }
 
@@ -601,22 +785,28 @@ async function upsertInspections(client, propertyImprovementId, record) {
 }
 
 /**
+ * Build stable inspection keys exactly as the inspection upsert does.
+ *
+ * @param {BrowardNormalizedPermit} record - Normalized BCS permit.
+ * @returns {string[]} Ordered source keys for all public inspections.
+ */
+function buildInspectionSourceKeys(record) {
+  return record.inspections.map((inspection, index) => {
+    const sourceObjectId =
+      typeof inspection.source_object_id === "string"
+        ? inspection.source_object_id
+        : String(index);
+    return `${record.record_key}:inspection:${sourceObjectId}`;
+  });
+}
+
+/**
  * @param {import("pg").Client} client - Transactional client.
- * @param {readonly BrowardNormalizedPermit[]} records - Expected permit rows.
- * @param {number} expectedInspectionCount - Expected inspection rows.
+ * @param {readonly string[]} permitKeys - Expected permit source keys.
+ * @param {readonly string[]} inspectionKeys - Expected inspection source keys.
  * @returns {Promise<void>} Resolves only after exact source-key reconciliation.
  */
-async function verifyLoadedRecords(client, records, expectedInspectionCount) {
-  const permitKeys = records.map((record) => record.record_key);
-  const inspectionKeys = records.flatMap((record) =>
-    record.inspections.map((inspection, index) => {
-      const sourceObjectId =
-        typeof inspection.source_object_id === "string"
-          ? inspection.source_object_id
-          : String(index);
-      return `${record.record_key}:inspection:${sourceObjectId}`;
-    }),
-  );
+async function verifyLoadedRecords(client, permitKeys, inspectionKeys) {
   const permitResult = await client.query(
     `SELECT count(*)::integer AS row_count,
             count(*) FILTER (
@@ -636,10 +826,10 @@ async function verifyLoadedRecords(client, records, expectedInspectionCount) {
     [inspectionKeys],
   );
   if (
-    Number(permitResult.rows[0]?.row_count) !== records.length ||
+    Number(permitResult.rows[0]?.row_count) !== permitKeys.length ||
     Number(permitResult.rows[0]?.unlinked_count) !== 0 ||
     Number(inspectionResult.rows[0]?.row_count) !==
-      expectedInspectionCount ||
+      inspectionKeys.length ||
     Number(inspectionResult.rows[0]?.unlinked_count) !== 0
   ) {
     throw new Error("Loaded Broward permit rows did not reconcile");
