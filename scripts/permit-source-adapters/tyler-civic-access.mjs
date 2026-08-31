@@ -625,27 +625,31 @@ export async function searchTylerDateWindow(
       pageNumber,
       pageSize,
     );
-    const response = await session.page.evaluate(
-      async (input) => {
-        const result = await fetch(input.endpoint, {
-          method: "POST",
-          headers: {
-            Accept: "application/json, text/plain, */*",
-            "Content-Type": "application/json;charset=UTF-8",
-            ...input.headers,
-          },
-          credentials: "include",
-          body: JSON.stringify(input.body),
-          signal: AbortSignal.timeout(input.timeoutMs),
-        });
-        return { status: result.status, text: await result.text() };
-      },
-      {
-        endpoint: session.endpoint,
-        headers: session.tenantHeaders,
-        body: requestBody,
-        timeoutMs: DEFAULT_SEARCH_TIMEOUT_MS,
-      },
+    const response = await promiseWithTimeout(
+      session.page.evaluate(
+        async (input) => {
+          const result = await fetch(input.endpoint, {
+            method: "POST",
+            headers: {
+              Accept: "application/json, text/plain, */*",
+              "Content-Type": "application/json;charset=UTF-8",
+              ...input.headers,
+            },
+            credentials: "include",
+            body: JSON.stringify(input.body),
+            signal: AbortSignal.timeout(input.timeoutMs),
+          });
+          return { status: result.status, text: await result.text() };
+        },
+        {
+          endpoint: session.endpoint,
+          headers: session.tenantHeaders,
+          body: requestBody,
+          timeoutMs: DEFAULT_SEARCH_TIMEOUT_MS,
+        },
+      ),
+      DEFAULT_SEARCH_TIMEOUT_MS + 5_000,
+      `${session.config.city} Tyler date request timed out`,
     );
     if (response.status !== 200) {
       throw new Error(
@@ -701,6 +705,30 @@ export async function searchTylerDateWindow(
     records: deduped,
     pages,
   };
+}
+
+/**
+ * Bound a browser-evaluation promise even when its in-page abort is ignored.
+ *
+ * @template Result
+ * @param {Promise<Result>} promise - Source operation.
+ * @param {number} timeoutMs - Maximum wall time.
+ * @param {string} message - Timeout error.
+ * @returns {Promise<Result>} Source result within the deadline.
+ */
+async function promiseWithTimeout(promise, timeoutMs, message) {
+  /** @type {NodeJS.Timeout | undefined} */
+  let timeout;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timeout = setTimeout(() => reject(new Error(message)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout);
+  }
 }
 
 /**
