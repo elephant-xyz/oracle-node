@@ -20,6 +20,11 @@ import {
   mapBrowardPermitToDonphanRow,
 } from "../../scripts/broward-permit-query-artifact.mjs";
 import {
+  buildPermitUpsertValues,
+  parsePermitLoadOptions,
+  readNormalizedPermitRecords,
+} from "../../scripts/load-broward-permit-pilot-to-neon.mjs";
+import {
   dedupeBrowardPermitPilotRecords,
   parseBrowardPermitPilotOptions,
   readBrowardPermitPilotFolios,
@@ -97,6 +102,105 @@ function permitRecord(overrides = {}) {
     ...overrides,
   };
 }
+
+/**
+ * Build the complete BCS shape consumed by the Neon permit loader.
+ *
+ * @returns {Record<string, unknown>} Complete normalized public permit record.
+ */
+function permitLoadRecord() {
+  return {
+    ...permitRecord(),
+    source_search_url: "https://dpepp.broward.org/BCS/Default.aspx",
+    source_list_url:
+      "https://dpepp.broward.org/BCS/Default.aspx?PossePresentation=ParcelPermitList",
+    source_folio_number: "0123456",
+    issuing_jurisdiction: "LAUDERDALE-BY-THE-SEA",
+    work_location: "218 E COMMERCIAL BLVD",
+    legal_description: "PUBLIC LEGAL DESCRIPTION",
+    contractor_name: "PUBLIC CONTRACTOR",
+    contractor_license: "PUBLIC-LICENSE",
+    building_use: "COMMERCIAL",
+    present_use: "OFFICE",
+    proposed_use: "OFFICE",
+    square_footage: 1_250,
+    occupancy_type: "BUSINESS",
+    construction_type: "TYPE II",
+    occupant_load: 10,
+    finish_floor_above_road: 1.5,
+    finish_floor_above_sea_level: 8.2,
+    is_roof_permit: false,
+    inspections: [
+      {
+        source_url: "https://dpepp.broward.org/BCS/inspection/1",
+        source_object_id: "1",
+        inspection_type: "BUILDING FINAL",
+        requested_date: "2005-05-03",
+        result: "Passed",
+        completed_date: "2005-05-04",
+      },
+    ],
+    raw: {
+      search_method: "ParcelID",
+      reference_number: "REF-1",
+      list_contractor: "PUBLIC CONTRACTOR",
+      detail_page_title: "Permit",
+    },
+  };
+}
+
+describe("Broward permit Neon pilot loader", () => {
+  it("builds exact parent-linked permit values and latest inspection evidence", () => {
+    const values = buildPermitUpsertValues(
+      /** @type {Parameters<typeof buildPermitUpsertValues>[0]} */ (
+        permitLoadRecord()
+      ),
+      {
+        propertyId: "11111111-1111-4111-8111-111111111111",
+        parcelId: "22222222-2222-4222-8222-222222222222",
+      },
+    );
+    expect(values).toMatchObject({
+      propertyId: "11111111-1111-4111-8111-111111111111",
+      parcelId: "22222222-2222-4222-8222-222222222222",
+      parcelIdentifier: "494318013550",
+      permitNumber: "04-07545",
+      improvementAction: "permit_record",
+      finalInspectionDate: "2005-05-04",
+      estimatedSqFt: 1_250,
+    });
+    expect(values.moreDetails).toMatchObject({
+      issuing_jurisdiction: "LAUDERDALE-BY-THE-SEA",
+      contractor_license: "PUBLIC-LICENSE",
+      source_object_id: "15703657",
+    });
+    expect(values.sourceRecordHash).toMatch(/^[a-f0-9]{64}$/u);
+  });
+
+  it("requires a unique reconciled input and an exact optional count", async () => {
+    expect(
+      parsePermitLoadOptions([
+        "--input",
+        "pilot.jsonl",
+        "--expected-records",
+        "73",
+      ]),
+    ).toEqual({
+      inputPath: "pilot.jsonl",
+      expectedRecords: 73,
+    });
+    const directory = await createTemporaryDirectory();
+    const inputPath = join(directory, "permits.private.jsonl");
+    const record = permitLoadRecord();
+    await writeFile(
+      inputPath,
+      `${JSON.stringify(record)}\n${JSON.stringify(record)}\n`,
+    );
+    await expect(readNormalizedPermitRecords(inputPath)).rejects.toThrow(
+      /duplicate key/u,
+    );
+  });
+});
 
 describe("Broward 32-jurisdiction permit registry", () => {
   it("registers every jurisdiction without treating BCS as countywide", () => {

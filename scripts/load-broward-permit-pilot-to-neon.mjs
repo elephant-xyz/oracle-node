@@ -1,0 +1,703 @@
+#!/usr/bin/env node
+// @ts-check
+
+/**
+ * Idempotently load the reconciled Broward permit pilot into verified Neon.
+ *
+ * The input is the private normalized JSONL produced by
+ * `run-broward-permit-pilot.mjs`. The loader never discovers or fetches permit
+ * sources. It writes only records that already passed the pilot's deduplication
+ * and reconciliation gates.
+ */
+
+import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import { pathToFileURL } from "node:url";
+
+import pg from "pg";
+
+const { Client } = pg;
+const EXPECTED_NEON_PROJECT_ID = "raspy-frost-51580436";
+const PRODUCTION_ENDPOINT_PREFIX = "ep-mute-leaf";
+const LOAD_LOCK_NAMESPACE = 12_011;
+const LOAD_LOCK_KEY = 3;
+const DEFAULT_INPUT =
+  "downloads/broward/permit-acceptance-pilot/normalized-permits.private.jsonl";
+const LOAD_KEY = "broward-bcs-pilot-v1";
+
+/**
+ * @typedef {import("./broward-permit-query-artifact.mjs").BrowardNormalizedPermit & {
+ *   source_search_url:string,
+ *   source_list_url:string,
+ *   source_folio_number:string,
+ *   issuing_jurisdiction:string,
+ *   work_location:string,
+ *   legal_description:string,
+ *   contractor_name:string|null,
+ *   contractor_license:string|null,
+ *   building_use:string|null,
+ *   present_use:string|null,
+ *   proposed_use:string|null,
+ *   square_footage:number|null,
+ *   occupancy_type:string|null,
+ *   construction_type:string|null,
+ *   occupant_load:number|null,
+ *   finish_floor_above_road:number|null,
+ *   finish_floor_above_sea_level:number|null,
+ *   is_roof_permit:boolean,
+ *   inspections:readonly {
+ *     source_url:string,
+ *     source_object_id:string,
+ *     inspection_type:string,
+ *     requested_date:string|null,
+ *     result:string,
+ *     completed_date:string|null
+ *   }[],
+ *   raw:Record<string,unknown>
+ * }} BrowardNormalizedPermit
+ *
+ * @typedef {object} PermitParent
+ * @property {string} propertyId - Canonical Broward appraiser property UUID.
+ * @property {string} parcelId - Canonical Broward appraiser parcel UUID.
+ *
+ * @typedef {object} PermitLoadOptions
+ * @property {string} inputPath - Reconciled private normalized permit JSONL.
+ * @property {number | null} expectedRecords - Optional exact record count.
+ *
+ * @typedef {object} PermitUpsertValues
+ * @property {string} sourceSystem - County-prefixed permit source.
+ * @property {string} sourceRecordKey - Stable source record identity.
+ * @property {string} sourceRecordHash - SHA-256 of normalized source payload.
+ * @property {string} sourceArtifactUri - Official permit detail URL.
+ * @property {string} requestIdentifier - Stable permit request key.
+ * @property {string} propertyId - Matched property UUID.
+ * @property {string} parcelId - Matched parcel UUID.
+ * @property {string} parcelIdentifier - Exact Broward folio.
+ * @property {string} permitNumber - Public permit/application number.
+ * @property {string} improvementType - Public permit type.
+ * @property {string} improvementStatus - Public source status.
+ * @property {"permit_record" | "master_application"} improvementAction
+ *   Explicit BCS source record kind.
+ * @property {string | null} applicationReceivedDate - ISO application date.
+ * @property {string | null} permitIssueDate - ISO issue date.
+ * @property {string | null} finalInspectionDate - Latest explicit completed inspection.
+ * @property {string | null} expirationDate - ISO expiration date.
+ * @property {string | null} workLocation - Public work location.
+ * @property {number | null} estimatedJobValue - Public estimated job value.
+ * @property {number | null} estimatedSqFt - Public square footage.
+ * @property {string | null} projectDescription - Public project description.
+ * @property {string | null} description - Public project title.
+ * @property {Record<string, unknown>} moreDetails - Preserved public permit facts.
+ * @property {BrowardNormalizedPermit} sourcePayload - Complete normalized public record.
+ */
+
+/**
+ * Parse the bounded loader CLI.
+ *
+ * @param {readonly string[]} argv - Arguments after the script path.
+ * @returns {PermitLoadOptions} Validated local input and reconciliation bound.
+ */
+export function parsePermitLoadOptions(argv) {
+  let inputPath = DEFAULT_INPUT;
+  let expectedRecords = null;
+  for (let index = 0; index < argv.length; index += 2) {
+    const flag = argv[index];
+    const value = argv[index + 1];
+    if (
+      typeof flag !== "string" ||
+      typeof value !== "string" ||
+      value.startsWith("--")
+    ) {
+      throw new Error("Permit load options must be --flag value pairs");
+    }
+    if (flag === "--input") inputPath = value;
+    else if (flag === "--expected-records") {
+      expectedRecords = Number(value);
+    } else {
+      throw new Error(`Unknown permit load option: ${flag}`);
+    }
+  }
+  if (
+    expectedRecords !== null &&
+    (!Number.isInteger(expectedRecords) || expectedRecords < 1)
+  ) {
+    throw new Error("--expected-records must be a positive integer");
+  }
+  return { inputPath, expectedRecords };
+}
+
+/**
+ * Read and validate reconciled normalized permit JSONL.
+ *
+ * @param {string} inputPath - Private normalized permit JSONL.
+ * @returns {Promise<{records:BrowardNormalizedPermit[],sourceSha256:string}>}
+ *   Unique source records and exact input checksum.
+ */
+export async function readNormalizedPermitRecords(inputPath) {
+  const text = await readFile(inputPath, "utf8");
+  const sourceSha256 = createHash("sha256").update(text).digest("hex");
+  /** @type {BrowardNormalizedPermit[]} */
+  const records = [];
+  const keys = new Set();
+  for (const line of text.split(/\r?\n/u)) {
+    if (line.trim() === "") continue;
+    const parsed = /** @type {unknown} */ (JSON.parse(line));
+    if (!isNormalizedPermit(parsed)) {
+      throw new Error("Normalized Broward permit JSONL contains an invalid row");
+    }
+    if (keys.has(parsed.record_key)) {
+      throw new Error("Normalized Broward permit JSONL contains a duplicate key");
+    }
+    keys.add(parsed.record_key);
+    records.push(parsed);
+  }
+  if (records.length === 0) {
+    throw new Error("Normalized Broward permit JSONL is empty");
+  }
+  return { records, sourceSha256 };
+}
+
+/**
+ * Build typed direct-table values for one reconciled permit.
+ *
+ * @param {BrowardNormalizedPermit} record - Valid normalized source record.
+ * @param {PermitParent} parent - Exact appraiser property and parcel UUIDs.
+ * @returns {PermitUpsertValues} Idempotent query-db values.
+ */
+export function buildPermitUpsertValues(record, parent) {
+  const completedDates = record.inspections
+    .map((inspection) => inspection.completed_date)
+    .filter((date) => date !== null)
+    .sort();
+  return {
+    sourceSystem: record.source_system,
+    sourceRecordKey: record.record_key,
+    sourceRecordHash: stableHash(record),
+    sourceArtifactUri: record.source_url,
+    requestIdentifier: record.record_key,
+    propertyId: parent.propertyId,
+    parcelId: parent.parcelId,
+    parcelIdentifier: record.parcel_identifier,
+    permitNumber: record.permit_number,
+    improvementType: record.record_type,
+    improvementStatus: record.record_status,
+    improvementAction:
+      record.source_record_kind === "master"
+        ? "master_application"
+        : "permit_record",
+    applicationReceivedDate: record.application_date,
+    permitIssueDate: record.permit_issue_date,
+    finalInspectionDate: completedDates.at(-1) ?? null,
+    expirationDate: record.expiration_date,
+    workLocation: record.work_location,
+    estimatedJobValue: record.job_value,
+    estimatedSqFt:
+      typeof record.square_footage === "number"
+        ? record.square_footage
+        : null,
+    projectDescription: record.project_description,
+    description: record.project_title,
+    moreDetails: {
+      issuing_jurisdiction: record.issuing_jurisdiction,
+      legal_description: record.legal_description,
+      contractor_name: record.contractor_name,
+      contractor_license: record.contractor_license,
+      building_use: record.building_use,
+      present_use: record.present_use,
+      proposed_use: record.proposed_use,
+      occupancy_type: record.occupancy_type,
+      construction_type: record.construction_type,
+      occupant_load: record.occupant_load,
+      finish_floor_above_road: record.finish_floor_above_road,
+      finish_floor_above_sea_level: record.finish_floor_above_sea_level,
+      source_object_id: record.source_object_id,
+      source_record_kind: record.source_record_kind,
+    },
+    sourcePayload: record,
+  };
+}
+
+/**
+ * Load all reconciled pilot records in one transaction and verify exact counts.
+ *
+ * @param {PermitLoadOptions} options - Input and expected-count gate.
+ * @returns {Promise<{propertyImprovements:number,inspections:number,sourceSha256:string}>}
+ *   Exact committed logical counts and source identity.
+ */
+export async function loadBrowardPermitPilotToNeon(options) {
+  const { records, sourceSha256 } = await readNormalizedPermitRecords(
+    options.inputPath,
+  );
+  if (
+    options.expectedRecords !== null &&
+    records.length !== options.expectedRecords
+  ) {
+    throw new Error("Permit pilot record count differs from the required count");
+  }
+  const target = requireNeonTarget(process.env);
+  const client = new Client({
+    connectionString: target.connectionString,
+    application_name: "broward-permit-pilot-loader",
+    connectionTimeoutMillis: 10_000,
+    statement_timeout: 120_000,
+  });
+  await client.connect();
+  try {
+    await verifyNeonTarget(client, target);
+    await acquireLoadLock(client);
+    await ensureLoadControlTable(client);
+    const parents = await readPermitParents(
+      client,
+      [...new Set(records.map((record) => record.parcel_identifier))],
+    );
+    let inspectionCount = 0;
+    await client.query("BEGIN");
+    try {
+      for (const record of records) {
+        const parent = parents.get(record.parcel_identifier);
+        if (parent === undefined) {
+          throw new Error("Permit record has no exact Broward appraisal parent");
+        }
+        const values = buildPermitUpsertValues(record, parent);
+        const result = await upsertPropertyImprovement(client, values);
+        inspectionCount += await upsertInspections(
+          client,
+          result.propertyImprovementId,
+          record,
+        );
+      }
+      await verifyLoadedRecords(client, records, inspectionCount);
+      await client.query(
+        `INSERT INTO ingest_control.broward_permit_loads (
+           load_key, source_sha256, expected_property_improvements,
+           expected_inspections
+         ) VALUES ($1,$2,$3,$4)
+         ON CONFLICT (load_key) DO UPDATE SET
+           source_sha256 = EXCLUDED.source_sha256,
+           expected_property_improvements =
+             EXCLUDED.expected_property_improvements,
+           expected_inspections = EXCLUDED.expected_inspections,
+           committed_at = now()`,
+        [LOAD_KEY, sourceSha256, records.length, inspectionCount],
+      );
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    }
+    return {
+      propertyImprovements: records.length,
+      inspections: inspectionCount,
+      sourceSha256,
+    };
+  } finally {
+    await client.end();
+  }
+}
+
+/**
+ * @param {unknown} value - Candidate normalized permit.
+ * @returns {value is BrowardNormalizedPermit} Whether required source fields exist.
+ */
+function isNormalizedPermit(value) {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const candidate =
+    /** @type {Partial<BrowardNormalizedPermit>} */ (value);
+  return (
+    typeof candidate.source_system === "string" &&
+    /^broward_[a-z0-9_]+_permits$/u.test(candidate.source_system) &&
+    typeof candidate.source_url === "string" &&
+    typeof candidate.source_object_id === "string" &&
+    (candidate.source_record_kind === "master" ||
+      candidate.source_record_kind === "permit") &&
+    typeof candidate.record_key === "string" &&
+    typeof candidate.parcel_identifier === "string" &&
+    /^[A-Z0-9]{12}$/u.test(candidate.parcel_identifier) &&
+    typeof candidate.permit_number === "string" &&
+    typeof candidate.record_status === "string" &&
+    typeof candidate.record_type === "string" &&
+    Array.isArray(candidate.inspections) &&
+    candidate.inspections.every(
+      (inspection) =>
+        typeof inspection === "object" &&
+        inspection !== null &&
+        !Array.isArray(inspection) &&
+        typeof inspection.source_object_id === "string",
+    )
+  );
+}
+
+/**
+ * @param {NodeJS.ProcessEnv} environment - Runtime secrets.
+ * @returns {{connectionString:string,expectedBranchId:string,expectedEndpointId:string}}
+ *   Validated direct Neon target.
+ */
+function requireNeonTarget(environment) {
+  const connectionString = environment.DATABASE_URL_UNPOOLED;
+  const expectedBranchId = environment.BROWARD_INGEST_NEON_BRANCH_ID;
+  const expectedEndpointId = environment.BROWARD_INGEST_NEON_ENDPOINT_ID;
+  if (typeof connectionString !== "string" || connectionString.trim() === "") {
+    throw new Error("DATABASE_URL_UNPOOLED is required");
+  }
+  const parsed = new URL(connectionString);
+  if (parsed.hostname.includes("-pooler")) {
+    throw new Error("Permit loading requires direct Neon");
+  }
+  if (
+    typeof expectedBranchId !== "string" ||
+    !/^br-[a-z0-9-]+$/u.test(expectedBranchId) ||
+    typeof expectedEndpointId !== "string" ||
+    !/^ep-[a-z0-9-]+$/u.test(expectedEndpointId) ||
+    expectedEndpointId.startsWith(PRODUCTION_ENDPOINT_PREFIX)
+  ) {
+    throw new Error("Verified Broward Neon IDs are required");
+  }
+  return { connectionString, expectedBranchId, expectedEndpointId };
+}
+
+/**
+ * @param {import("pg").Client} client - Connected direct client.
+ * @param {{expectedBranchId:string,expectedEndpointId:string}} target - Expected IDs.
+ * @returns {Promise<void>} Resolves after read-only identity proof.
+ */
+async function verifyNeonTarget(client, target) {
+  await client.query("BEGIN READ ONLY");
+  try {
+    const result = await client.query(
+      `SELECT current_setting('neon.project_id', true) AS project_id,
+              current_setting('neon.branch_id', true) AS branch_id,
+              current_setting('neon.endpoint_id', true) AS endpoint_id`,
+    );
+    const row = result.rows[0];
+    if (
+      row?.project_id !== EXPECTED_NEON_PROJECT_ID ||
+      row.branch_id !== target.expectedBranchId ||
+      row.endpoint_id !== target.expectedEndpointId
+    ) {
+      throw new Error("Permit load target is not isolated broward-ingest");
+    }
+    await client.query("ROLLBACK");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  }
+}
+
+/**
+ * @param {import("pg").Client} client - Identity-verified direct client.
+ * @returns {Promise<void>} Resolves only when this loader owns the permit lock.
+ */
+async function acquireLoadLock(client) {
+  const result = await client.query(
+    "SELECT pg_try_advisory_lock($1,$2) AS acquired",
+    [LOAD_LOCK_NAMESPACE, LOAD_LOCK_KEY],
+  );
+  if (result.rows[0]?.acquired !== true) {
+    throw new Error("Another Broward permit loader owns the writer lock");
+  }
+}
+
+/**
+ * @param {import("pg").Client} client - Identity-verified client.
+ * @returns {Promise<void>} Resolves after additive control DDL.
+ */
+async function ensureLoadControlTable(client) {
+  await client.query(`CREATE SCHEMA IF NOT EXISTS ingest_control`);
+  await client.query(
+    `CREATE TABLE IF NOT EXISTS ingest_control.broward_permit_loads (
+       load_key text PRIMARY KEY,
+       source_sha256 text NOT NULL CHECK (source_sha256 ~ '^[a-f0-9]{64}$'),
+       expected_property_improvements integer NOT NULL CHECK (
+         expected_property_improvements > 0
+       ),
+       expected_inspections integer NOT NULL CHECK (expected_inspections >= 0),
+       committed_at timestamptz NOT NULL DEFAULT now()
+     )`,
+  );
+}
+
+/**
+ * @param {import("pg").Client} client - Identity-verified client.
+ * @param {readonly string[]} folios - Distinct exact Broward folios.
+ * @returns {Promise<ReadonlyMap<string, PermitParent>>} Exact canonical parents.
+ */
+async function readPermitParents(client, folios) {
+  const result = await client.query(
+    `SELECT p.request_identifier, p.property_id, p.parcel_id
+     FROM public.properties p
+     WHERE p.source_system = 'broward_appraiser'
+       AND p.request_identifier = ANY($1::text[])`,
+    [folios],
+  );
+  /** @type {Map<string, PermitParent>} */
+  const parents = new Map();
+  for (const row of result.rows) {
+    if (
+      typeof row.request_identifier !== "string" ||
+      typeof row.property_id !== "string" ||
+      typeof row.parcel_id !== "string"
+    ) {
+      throw new Error("Broward permit parent row is incomplete");
+    }
+    if (parents.has(row.request_identifier)) {
+      throw new Error("Broward permit parent identity is duplicated");
+    }
+    parents.set(row.request_identifier, {
+      propertyId: row.property_id,
+      parcelId: row.parcel_id,
+    });
+  }
+  if (parents.size !== folios.length) {
+    throw new Error("One or more permit folios lack a loaded appraisal parent");
+  }
+  return parents;
+}
+
+/**
+ * @param {import("pg").Client} client - Transactional client.
+ * @param {PermitUpsertValues} values - Typed normalized permit values.
+ * @returns {Promise<{propertyImprovementId:string}>} Stable loaded row identity.
+ */
+async function upsertPropertyImprovement(client, values) {
+  const result = await client.query(
+    `INSERT INTO public.property_improvements (
+       property_id, parcel_id, request_identifier, permit_number,
+       improvement_type, improvement_status, improvement_action,
+       application_received_date, permit_issue_date, final_inspection_date,
+       expiration_date, estimated_job_value, estimated_sq_ft, source,
+       source_url, record_type, source_status, record_status, opened_date,
+       work_location, parcel_identifier, property_match_method,
+       property_match_confidence, project_description, description,
+       more_details, source_http_request, source_payload, source_system,
+       source_record_key, source_record_hash, source_artifact_uri
+     ) VALUES (
+       $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,
+       $8,$19,$20,'exact_folio','exact',$21,$22,$23::jsonb,$24::jsonb,
+       $25::jsonb,$26,$27,$28,$29
+     )
+     ON CONFLICT (source_system, source_record_key) DO UPDATE SET
+       property_id=EXCLUDED.property_id,
+       parcel_id=EXCLUDED.parcel_id,
+       permit_number=EXCLUDED.permit_number,
+       improvement_type=EXCLUDED.improvement_type,
+       improvement_status=EXCLUDED.improvement_status,
+       improvement_action=EXCLUDED.improvement_action,
+       application_received_date=EXCLUDED.application_received_date,
+       permit_issue_date=EXCLUDED.permit_issue_date,
+       final_inspection_date=EXCLUDED.final_inspection_date,
+       expiration_date=EXCLUDED.expiration_date,
+       estimated_job_value=EXCLUDED.estimated_job_value,
+       estimated_sq_ft=EXCLUDED.estimated_sq_ft,
+       source_url=EXCLUDED.source_url,
+       record_status=EXCLUDED.record_status,
+       work_location=EXCLUDED.work_location,
+       project_description=EXCLUDED.project_description,
+       description=EXCLUDED.description,
+       more_details=EXCLUDED.more_details,
+       source_http_request=EXCLUDED.source_http_request,
+       source_payload=EXCLUDED.source_payload,
+       source_record_hash=EXCLUDED.source_record_hash,
+       source_artifact_uri=EXCLUDED.source_artifact_uri,
+       loaded_at=now(),
+       updated_at=now()
+     RETURNING property_improvement_id`,
+    [
+      values.propertyId,
+      values.parcelId,
+      values.requestIdentifier,
+      values.permitNumber,
+      values.improvementType,
+      values.improvementStatus,
+      values.improvementAction,
+      values.applicationReceivedDate,
+      values.permitIssueDate,
+      values.finalInspectionDate,
+      values.expirationDate,
+      values.estimatedJobValue,
+      values.estimatedSqFt,
+      values.sourceSystem,
+      values.sourceArtifactUri,
+      values.improvementType,
+      values.improvementStatus,
+      values.improvementStatus,
+      values.workLocation,
+      values.parcelIdentifier,
+      values.projectDescription,
+      values.description,
+      JSON.stringify(values.moreDetails),
+      JSON.stringify({
+        method: "GET",
+        url: values.sourceArtifactUri,
+      }),
+      JSON.stringify(values.sourcePayload),
+      values.sourceSystem,
+      values.sourceRecordKey,
+      values.sourceRecordHash,
+      values.sourceArtifactUri,
+    ],
+  );
+  const id = result.rows[0]?.property_improvement_id;
+  if (typeof id !== "string") {
+    throw new Error("Permit upsert returned no property improvement ID");
+  }
+  return { propertyImprovementId: id };
+}
+
+/**
+ * @param {import("pg").Client} client - Transactional client.
+ * @param {string} propertyImprovementId - Parent permit UUID.
+ * @param {BrowardNormalizedPermit} record - Complete normalized permit.
+ * @returns {Promise<number>} Number of reconciled inspections.
+ */
+async function upsertInspections(client, propertyImprovementId, record) {
+  let count = 0;
+  for (const [index, inspection] of record.inspections.entries()) {
+    const sourceObjectId =
+      typeof inspection.source_object_id === "string"
+        ? inspection.source_object_id
+        : String(index);
+    const sourceRecordKey = `${record.record_key}:inspection:${sourceObjectId}`;
+    const sourceRecordHash = stableHash(inspection);
+    await client.query(
+      `INSERT INTO public.inspections (
+         property_improvement_id, inspection_status, permit_number,
+         requested_date, completed_date, result, inspection_type,
+         inspection_identifier, source_payload, source_system,
+         source_record_key, source_record_hash, source_artifact_uri
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12,$13)
+       ON CONFLICT (source_system, source_record_key) DO UPDATE SET
+         property_improvement_id=EXCLUDED.property_improvement_id,
+         inspection_status=EXCLUDED.inspection_status,
+         requested_date=EXCLUDED.requested_date,
+         completed_date=EXCLUDED.completed_date,
+         result=EXCLUDED.result,
+         inspection_type=EXCLUDED.inspection_type,
+         source_payload=EXCLUDED.source_payload,
+         source_record_hash=EXCLUDED.source_record_hash,
+         source_artifact_uri=EXCLUDED.source_artifact_uri,
+         loaded_at=now(),
+         updated_at=now()`,
+      [
+        propertyImprovementId,
+        inspection.result,
+        record.permit_number,
+        inspection.requested_date,
+        inspection.completed_date,
+        inspection.result,
+        inspection.inspection_type,
+        sourceObjectId,
+        JSON.stringify(inspection),
+        record.source_system,
+        sourceRecordKey,
+        sourceRecordHash,
+        inspection.source_url ?? record.source_url,
+      ],
+    );
+    count += 1;
+  }
+  return count;
+}
+
+/**
+ * @param {import("pg").Client} client - Transactional client.
+ * @param {readonly BrowardNormalizedPermit[]} records - Expected permit rows.
+ * @param {number} expectedInspectionCount - Expected inspection rows.
+ * @returns {Promise<void>} Resolves only after exact source-key reconciliation.
+ */
+async function verifyLoadedRecords(client, records, expectedInspectionCount) {
+  const permitKeys = records.map((record) => record.record_key);
+  const inspectionKeys = records.flatMap((record) =>
+    record.inspections.map((inspection, index) => {
+      const sourceObjectId =
+        typeof inspection.source_object_id === "string"
+          ? inspection.source_object_id
+          : String(index);
+      return `${record.record_key}:inspection:${sourceObjectId}`;
+    }),
+  );
+  const permitResult = await client.query(
+    `SELECT count(*)::integer AS row_count,
+            count(*) FILTER (
+              WHERE property_id IS NULL OR parcel_id IS NULL
+            )::integer AS unlinked_count
+     FROM public.property_improvements
+     WHERE source_record_key = ANY($1::text[])`,
+    [permitKeys],
+  );
+  const inspectionResult = await client.query(
+    `SELECT count(*)::integer AS row_count,
+            count(*) FILTER (
+              WHERE property_improvement_id IS NULL
+            )::integer AS unlinked_count
+     FROM public.inspections
+     WHERE source_record_key = ANY($1::text[])`,
+    [inspectionKeys],
+  );
+  if (
+    Number(permitResult.rows[0]?.row_count) !== records.length ||
+    Number(permitResult.rows[0]?.unlinked_count) !== 0 ||
+    Number(inspectionResult.rows[0]?.row_count) !==
+      expectedInspectionCount ||
+    Number(inspectionResult.rows[0]?.unlinked_count) !== 0
+  ) {
+    throw new Error("Loaded Broward permit rows did not reconcile");
+  }
+}
+
+/**
+ * Hash JSON with recursively sorted object keys for stable replay detection.
+ *
+ * @param {unknown} value - JSON-compatible source payload.
+ * @returns {string} Lowercase SHA-256.
+ */
+function stableHash(value) {
+  return createHash("sha256").update(stableJson(value)).digest("hex");
+}
+
+/**
+ * @param {unknown} value - JSON-compatible value.
+ * @returns {string} Deterministically ordered JSON text.
+ */
+function stableJson(value) {
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((entry) => stableJson(entry)).join(",")}]`;
+  }
+  const record = /** @type {Record<string, unknown>} */ (value);
+  return `{${Object.keys(record)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${stableJson(record[key])}`)
+    .join(",")}}`;
+}
+
+if (
+  typeof process.argv[1] === "string" &&
+  import.meta.url === pathToFileURL(process.argv[1]).href
+) {
+  loadBrowardPermitPilotToNeon(
+    parsePermitLoadOptions(process.argv.slice(2)),
+  )
+    .then((result) => {
+      console.log(
+        JSON.stringify({
+          event: "broward_permit_pilot_loaded",
+          propertyImprovements: result.propertyImprovements,
+          inspections: result.inspections,
+          sourceSha256: result.sourceSha256,
+        }),
+      );
+    })
+    .catch((error) => {
+      console.error(
+        JSON.stringify({
+          event: "broward_permit_pilot_load_failed",
+          message: error instanceof Error ? error.message : "Unknown error",
+        }),
+      );
+      process.exitCode = 1;
+    });
+}
