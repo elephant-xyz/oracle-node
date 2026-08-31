@@ -9,6 +9,8 @@
  */
 
 import { createServer } from "node:http";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import pg from "pg";
@@ -61,6 +63,48 @@ const DEFAULT_PORT = 47_832;
  * @property {string | number} permit_registry_jurisdictions - Current registry size.
  * @property {string | number} permit_sources_implemented - Implemented current routes.
  * @property {string | number} permit_sources_blocked - Blocked current routes.
+ * @property {string | number} permit_inventory_records - Current logical permit rows.
+ * @property {string | number} permit_inventory_matched - Permit rows linked to properties.
+ * @property {string | number} permit_inventory_unmatched - Valid unlinked permit rows.
+ * @property {string | number} permit_inventory_roofing - Explicit roofing rows.
+ * @property {string | number} permit_inventory_parcels - Distinct source parcel IDs.
+ * @property {string | number} permit_inventory_sources - Distinct source systems.
+ * @property {string | null} permit_inventory_loaded_at - Latest permit load time.
+ * @property {string | number} permit_bulk_source_rows - Largest bulk source snapshot.
+ * @property {string | number} permit_bulk_committed_rows - Durable bulk source rows.
+ * @property {string | number} permit_bulk_chunks - Durable bulk chunks.
+ * @property {string | number} permit_list_loaded_rows - Completed list-load rows.
+ * @property {string | number} permit_list_chunks - Completed list-load chunks.
+ * @property {string | number} sunbiz_match_roles - Exact matched address roles.
+ * @property {string | number} sunbiz_match_registrations - Distinct linked registrations.
+ * @property {string | number} sunbiz_match_properties - Distinct linked properties.
+ * @property {string | number} sunbiz_match_chunks - Durable full-run match chunks.
+ *
+ * @typedef {object} PermitEnumerationWorkerStatus
+ * @property {string} source - Public jurisdiction label.
+ * @property {"accela_csv" | "tyler_api"} family - Source mechanism.
+ * @property {"not_started" | "running" | "paused" | "complete"} status
+ *   Aggregate checkpoint activity state.
+ * @property {number} completedWindows - Durable completed windows.
+ * @property {number} pendingWindows - Remaining windows.
+ * @property {number} totalWindows - Initial source windows.
+ * @property {number} completionPercent - Window completion percentage.
+ * @property {number} accessibleRecords - Source records retained for loading.
+ * @property {number} excludedRecords - Explicit non-permit rows.
+ * @property {number} invalidRecords - Malformed source rows.
+ * @property {number} sourceMissingRecords - Reported but inaccessible rows.
+ * @property {string | null} updatedAt - Last durable checkpoint time.
+ *
+ * @typedef {object} PermitEnumerationStatus
+ * @property {PermitEnumerationWorkerStatus[]} workers - Fixed aggregate source list.
+ * @property {number} activeWorkers - Recently advancing workers.
+ * @property {number} completedWorkers - Fully exhausted workers.
+ * @property {number} completedWindows - Durable windows across workers.
+ * @property {number} totalWindows - Initial windows across workers.
+ * @property {number} accessibleRecords - Inventory rows captured locally.
+ * @property {number} excludedRecords - Explicit non-permit source rows.
+ * @property {number} invalidRecords - Malformed source rows.
+ * @property {number} sourceMissingRecords - Reported but inaccessible rows.
  *
  * @typedef {object} RecoveryDashboardStatus
  * @property {1} schemaVersion - Response schema version.
@@ -107,6 +151,27 @@ const DEFAULT_PORT = 47_832;
  *   currentSourcesImplemented: number,
  *   currentSourcesBlocked: number
  * }} permit - Durable bounded-pilot evidence and honest completeness state.
+ * @property {{
+ *   records:number,
+ *   matched:number,
+ *   unmatched:number,
+ *   roofing:number,
+ *   distinctParcels:number,
+ *   sourceSystems:number,
+ *   lastLoadedAt:string|null,
+ *   bulkSourceRows:number,
+ *   bulkCommittedRows:number,
+ *   bulkChunks:number,
+ *   listLoadedRows:number,
+ *   listChunks:number
+ * }} permitInventory - Current Neon permit inventory and durable load receipts.
+ * @property {PermitEnumerationStatus} permitEnumeration - Local tenant workers.
+ * @property {{
+ *   matchedAddressRoles:number,
+ *   registrations:number,
+ *   properties:number,
+ *   chunks:number
+ * }} sunbizMatch - Verified exact Broward Sunbiz property links.
  */
 
 /**
@@ -301,6 +366,25 @@ function buildPermitStatus(row) {
 }
 
 /**
+ * Return an empty aggregate worker status before local checkpoints are read.
+ *
+ * @returns {PermitEnumerationStatus} Empty fixed-shape status.
+ */
+function emptyPermitEnumerationStatus() {
+  return {
+    workers: [],
+    activeWorkers: 0,
+    completedWorkers: 0,
+    completedWindows: 0,
+    totalWindows: 0,
+    accessibleRecords: 0,
+    excludedRecords: 0,
+    invalidRecords: 0,
+    sourceMissingRecords: 0,
+  };
+}
+
+/**
  * Build the public aggregate response from one database row.
  *
  * @param {RecoveryAggregateRow} row - Aggregate-only query result.
@@ -357,7 +441,260 @@ export function buildRecoveryStatus(row, nowMs) {
       propertiesPerMinute: Math.round((recentProperties / 15) * 100) / 100,
     },
     permit: buildPermitStatus(row),
+    permitInventory: {
+      records: count(row.permit_inventory_records),
+      matched: count(row.permit_inventory_matched),
+      unmatched: count(row.permit_inventory_unmatched),
+      roofing: count(row.permit_inventory_roofing),
+      distinctParcels: count(row.permit_inventory_parcels),
+      sourceSystems: count(row.permit_inventory_sources),
+      lastLoadedAt: row.permit_inventory_loaded_at,
+      bulkSourceRows: count(row.permit_bulk_source_rows),
+      bulkCommittedRows: count(row.permit_bulk_committed_rows),
+      bulkChunks: count(row.permit_bulk_chunks),
+      listLoadedRows: count(row.permit_list_loaded_rows),
+      listChunks: count(row.permit_list_chunks),
+    },
+    permitEnumeration: emptyPermitEnumerationStatus(),
+    sunbizMatch: {
+      matchedAddressRoles: count(row.sunbiz_match_roles),
+      registrations: count(row.sunbiz_match_registrations),
+      properties: count(row.sunbiz_match_properties),
+      chunks: count(row.sunbiz_match_chunks),
+    },
   };
+}
+
+const PERMIT_ENUMERATION_CHECKPOINTS = Object.freeze([
+  {
+    source: "Hollywood",
+    family: "accela_csv",
+    relativePath:
+      "downloads/broward/accela-csv-windows/hollywood-full/checkpoint.private.json",
+  },
+  {
+    source: "Plantation",
+    family: "accela_csv",
+    relativePath:
+      "downloads/broward/accela-csv-windows/plantation-full-v2/checkpoint.private.json",
+  },
+  {
+    source: "Cooper City",
+    family: "accela_csv",
+    relativePath:
+      "downloads/broward/accela-csv-windows/cooper-city-full/checkpoint.private.json",
+  },
+  {
+    source: "Weston",
+    family: "accela_csv",
+    relativePath:
+      "downloads/broward/accela-csv-windows/weston-full/checkpoint.private.json",
+  },
+  {
+    source: "Pembroke Pines",
+    family: "tyler_api",
+    relativePath:
+      "downloads/broward/tyler-date-windows/pembroke-pines-full-30d/checkpoint.private.json",
+  },
+  {
+    source: "Hallandale Beach",
+    family: "tyler_api",
+    relativePath:
+      "downloads/broward/tyler-date-windows/hallandale-beach-full-30d/checkpoint.private.json",
+  },
+  {
+    source: "Miramar",
+    family: "tyler_api",
+    relativePath:
+      "downloads/broward/tyler-date-windows/miramar-full-2019/checkpoint.private.json",
+  },
+  {
+    source: "Oakland Park",
+    family: "tyler_api",
+    relativePath:
+      "downloads/broward/tyler-date-windows/oakland-park-full-30d/checkpoint.private.json",
+  },
+]);
+
+/**
+ * Read aggregate-only local permit enumerator checkpoints.
+ *
+ * @param {string} repositoryRoot - Repository root containing downloads.
+ * @param {number} [nowMs=Date.now()] - Snapshot time.
+ * @returns {Promise<PermitEnumerationStatus>} PII-free worker status.
+ */
+export async function readPermitEnumerationStatus(
+  repositoryRoot,
+  nowMs = Date.now(),
+) {
+  const workers = await Promise.all(
+    PERMIT_ENUMERATION_CHECKPOINTS.map(async (definition) => {
+      try {
+        const parsed = /** @type {unknown} */ (
+          JSON.parse(
+            await readFile(
+              path.resolve(repositoryRoot, definition.relativePath),
+              "utf8",
+            ),
+          )
+        );
+        if (
+          parsed === null ||
+          typeof parsed !== "object" ||
+          Array.isArray(parsed)
+        ) {
+          throw new Error("Permit enumeration checkpoint is not an object");
+        }
+        const checkpoint = /** @type {Record<string, unknown>} */ (parsed);
+        if (
+          !Array.isArray(checkpoint.pendingWindows) ||
+          checkpoint.completedWindows === null ||
+          typeof checkpoint.completedWindows !== "object" ||
+          Array.isArray(checkpoint.completedWindows) ||
+          typeof checkpoint.updatedAt !== "string"
+        ) {
+          throw new Error("Permit enumeration checkpoint is malformed");
+        }
+        const receipts = Object.values(
+          /** @type {Record<string, Record<string, unknown>>} */ (
+            checkpoint.completedWindows
+          ),
+        );
+        let accessibleRecords = 0;
+        let excludedRecords = 0;
+        let invalidRecords = 0;
+        let sourceMissingRecords = 0;
+        for (const receipt of receipts) {
+          if (definition.family === "accela_csv") {
+            accessibleRecords += safeAggregate(receipt.exportedRecordCount);
+            excludedRecords += safeAggregate(receipt.excludedNonPermitCount);
+          } else {
+            const total = safeAggregate(receipt.totalFound);
+            const invalid = safeAggregate(receipt.invalidRecordCount);
+            const missing = safeAggregate(receipt.sourceMissingRecordCount);
+            invalidRecords += invalid;
+            sourceMissingRecords += missing;
+            accessibleRecords += Math.max(0, total - invalid - missing);
+          }
+        }
+        const completedWindows = receipts.length;
+        const pendingWindows = checkpoint.pendingWindows.length;
+        const totalWindows = completedWindows + pendingWindows;
+        const updatedAt = checkpoint.updatedAt;
+        const updatedMs = Date.parse(updatedAt);
+        const complete = pendingWindows === 0;
+        const recentlyActive =
+          Number.isFinite(updatedMs) &&
+          nowMs - updatedMs >= 0 &&
+          nowMs - updatedMs <= 5 * 60_000;
+        return {
+          source: definition.source,
+          family:
+            /** @type {"accela_csv" | "tyler_api"} */ (
+              definition.family
+            ),
+          status:
+            complete
+              ? /** @type {"complete"} */ ("complete")
+              : recentlyActive
+                ? /** @type {"running"} */ ("running")
+                : /** @type {"paused"} */ ("paused"),
+          completedWindows,
+          pendingWindows,
+          totalWindows,
+          completionPercent:
+            totalWindows === 0
+              ? 0
+              : Math.round((completedWindows / totalWindows) * 100_000) /
+                1_000,
+          accessibleRecords,
+          excludedRecords,
+          invalidRecords,
+          sourceMissingRecords,
+          updatedAt,
+        };
+      } catch (error) {
+        if (isNodeError(error) && error.code === "ENOENT") {
+          return {
+            source: definition.source,
+            family:
+              /** @type {"accela_csv" | "tyler_api"} */ (
+                definition.family
+              ),
+            status: /** @type {"not_started"} */ ("not_started"),
+            completedWindows: 0,
+            pendingWindows: 0,
+            totalWindows: 0,
+            completionPercent: 0,
+            accessibleRecords: 0,
+            excludedRecords: 0,
+            invalidRecords: 0,
+            sourceMissingRecords: 0,
+            updatedAt: null,
+          };
+        }
+        throw error;
+      }
+    }),
+  );
+  return {
+    workers,
+    activeWorkers: workers.filter((worker) => worker.status === "running")
+      .length,
+    completedWorkers: workers.filter((worker) => worker.status === "complete")
+      .length,
+    completedWindows: workers.reduce(
+      (sum, worker) => sum + worker.completedWindows,
+      0,
+    ),
+    totalWindows: workers.reduce(
+      (sum, worker) => sum + worker.totalWindows,
+      0,
+    ),
+    accessibleRecords: workers.reduce(
+      (sum, worker) => sum + worker.accessibleRecords,
+      0,
+    ),
+    excludedRecords: workers.reduce(
+      (sum, worker) => sum + worker.excludedRecords,
+      0,
+    ),
+    invalidRecords: workers.reduce(
+      (sum, worker) => sum + worker.invalidRecords,
+      0,
+    ),
+    sourceMissingRecords: workers.reduce(
+      (sum, worker) => sum + worker.sourceMissingRecords,
+      0,
+    ),
+  };
+}
+
+/**
+ * Convert an optional checkpoint aggregate to a non-negative integer.
+ *
+ * @param {unknown} value - Optional receipt count.
+ * @returns {number} Safe count, with absent pre-version fields treated as zero.
+ */
+function safeAggregate(value) {
+  if (value === undefined || value === null) return 0;
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 0) {
+    throw new Error("Permit enumeration checkpoint has an invalid count");
+  }
+  return parsed;
+}
+
+/**
+ * Narrow an unknown error to a Node error with a string code.
+ *
+ * @param {unknown} value - Caught value.
+ * @returns {value is Error & {code:string}} Whether a code exists.
+ */
+function isNodeError(value) {
+  return (
+    value instanceof Error && "code" in value && typeof value.code === "string"
+  );
 }
 
 /**
@@ -389,11 +726,20 @@ async function verifyIdentity(client, options) {
  * Create a durable aggregate snapshot reader.
  *
  * @param {import("pg").Client} client - Identity-verified Neon client.
+ * @param {string} [repositoryRoot=process.cwd()] - Local checkpoint root.
  * @returns {() => Promise<RecoveryDashboardStatus>} Async snapshot function.
  */
-export function createRecoveryStatusReader(client) {
-  return async () => {
-    const result = await client.query(
+export function createRecoveryStatusReader(
+  client,
+  repositoryRoot = process.cwd(),
+) {
+  /** @type {Promise<RecoveryDashboardStatus> | null} */
+  let inFlight = null;
+  return () => {
+    if (inFlight !== null) return inFlight;
+    inFlight = (async () => {
+      const [result, permitEnumeration] = await Promise.all([
+        client.query(
       `WITH property_stats AS (
          SELECT
            count(*)::bigint AS property_count,
@@ -456,6 +802,57 @@ export function createRecoveryStatusReader(client) {
          LEFT JOIN ${CONTROL_SCHEMA}.broward_permit_status AS status
            ON status.pipeline_key = control.pipeline_key
          WHERE control.pipeline_key = 'broward-permit'
+       ),
+       permit_inventory_stats AS (
+         SELECT
+           count(*)::bigint AS permit_inventory_records,
+           count(*) FILTER (WHERE property_id IS NOT NULL)::bigint
+             AS permit_inventory_matched,
+           count(*) FILTER (WHERE property_id IS NULL)::bigint
+             AS permit_inventory_unmatched,
+           count(*) FILTER (
+             WHERE coalesce(
+               more_details->>'is_roof_permit',
+               more_details->>'isRoofPermit'
+             ) = 'true'
+           )::bigint AS permit_inventory_roofing,
+           count(DISTINCT parcel_identifier) FILTER (
+             WHERE parcel_identifier IS NOT NULL
+           )::bigint AS permit_inventory_parcels,
+           count(DISTINCT source_system)::bigint
+             AS permit_inventory_sources,
+           max(loaded_at)::text AS permit_inventory_loaded_at
+         FROM public.property_improvements
+         WHERE source_system LIKE 'broward%permits'
+       ),
+       permit_bulk_stats AS (
+         SELECT
+           coalesce(max(source_object_id_count),0)::bigint
+             AS permit_bulk_source_rows,
+           coalesce(max(committed_source_record_count),0)::bigint
+             AS permit_bulk_committed_rows,
+           coalesce(max(committed_chunk_count),0)::bigint
+             AS permit_bulk_chunks
+         FROM ${CONTROL_SCHEMA}.broward_bulk_permit_runs
+       ),
+       permit_list_load_stats AS (
+         SELECT
+           coalesce(sum(record_count),0)::bigint AS permit_list_loaded_rows,
+           count(*)::bigint AS permit_list_chunks
+         FROM ${CONTROL_SCHEMA}.broward_permit_list_load_chunks
+       ),
+       sunbiz_match_stats AS (
+         SELECT
+           count(*)::bigint AS sunbiz_match_roles,
+           count(DISTINCT business_registration_id)::bigint
+             AS sunbiz_match_registrations,
+           count(DISTINCT property_id)::bigint AS sunbiz_match_properties,
+           (
+             SELECT count(*)::bigint
+             FROM ${CONTROL_SCHEMA}.broward_sunbiz_match_chunks
+             WHERE job_id='broward-sunbiz-property-full-20260831'
+           ) AS sunbiz_match_chunks
+         FROM ${CONTROL_SCHEMA}.broward_sunbiz_property_matches
        )
        SELECT
          property_stats.*,
@@ -476,17 +873,29 @@ export function createRecoveryStatusReader(client) {
             completed_stats,
             chunk_stats,
             event_stats,
-            permit_stats`,
+            permit_stats,
+            permit_inventory_stats,
+            permit_bulk_stats,
+            permit_list_load_stats,
+            sunbiz_match_stats`,
       [SOURCE_SYSTEM],
-    );
-    const row = result.rows[0];
-    if (row === undefined) {
-      throw new Error("Neon returned no Broward recovery aggregate");
-    }
-    return buildRecoveryStatus(
-      /** @type {RecoveryAggregateRow} */ (row),
-      Date.now(),
-    );
+        ),
+        readPermitEnumerationStatus(repositoryRoot),
+      ]);
+      const row = result.rows[0];
+      if (row === undefined) {
+        throw new Error("Neon returned no Broward recovery aggregate");
+      }
+      const status = buildRecoveryStatus(
+        /** @type {RecoveryAggregateRow} */ (row),
+        Date.now(),
+      );
+      status.permitEnumeration = permitEnumeration;
+      return status;
+    })().finally(() => {
+      inFlight = null;
+    });
+    return inFlight;
   };
 }
 
@@ -578,6 +987,9 @@ const DASHBOARD_HTML = `<!doctype html>
     h1 { margin-bottom: .25rem; } h2 { color: #a9bed2; font-size: 1rem; }
     strong { display: block; font-size: 1.8rem; font-variant-numeric: tabular-nums; }
     progress { width: 100%; height: 1rem; }
+    table { width: 100%; margin: 1rem 0; border-collapse: collapse; }
+    th, td { padding: .55rem; border-bottom: 1px solid #29415a; text-align: left; }
+    td:nth-child(n+3) { font-variant-numeric: tabular-nums; text-align: right; }
     #error { color: #ff8290; }
   </style>
 </head>
@@ -597,7 +1009,30 @@ const DASHBOARD_HTML = `<!doctype html>
     <article><h2>Transform errors</h2><strong id="transform-errors">—</strong></article>
     <article><h2>Load errors</h2><strong id="load-errors">—</strong></article>
   </section>
-  <h2>Bounded permit routing pilot</h2>
+  <h2>Permit ingestion</h2>
+  <p id="permit-inventory-summary">Loading permit inventory…</p>
+  <section class="grid">
+    <article><h2>Neon permit records</h2><strong id="permit-inventory">—</strong></article>
+    <article><h2>Matched / unlinked</h2><strong id="permit-links">—</strong></article>
+    <article><h2>Roofing permits</h2><strong id="permit-roofing">—</strong></article>
+    <article><h2>Loaded source systems</h2><strong id="permit-systems">—</strong></article>
+    <article><h2>Bulk source rows</h2><strong id="permit-bulk">—</strong></article>
+    <article><h2>Local captured records</h2><strong id="permit-captured">—</strong></article>
+    <article><h2>Active / complete workers</h2><strong id="permit-workers">—</strong></article>
+    <article><h2>Completed windows</h2><strong id="permit-windows">—</strong></article>
+  </section>
+  <table aria-label="Permit tenant worker status">
+    <thead><tr><th>Jurisdiction</th><th>Source</th><th>Status</th><th>Windows</th><th>Records</th><th>Gaps</th></tr></thead>
+    <tbody id="permit-worker-rows"></tbody>
+  </table>
+  <h2>Sunbiz property matching</h2>
+  <section class="grid">
+    <article><h2>Matched registrations</h2><strong id="sunbiz-registrations">—</strong></article>
+    <article><h2>Matched properties</h2><strong id="sunbiz-properties">—</strong></article>
+    <article><h2>Exact address roles</h2><strong id="sunbiz-roles">—</strong></article>
+    <article><h2>Durable chunks</h2><strong id="sunbiz-chunks">—</strong></article>
+  </section>
+  <h2>Permit coverage boundary</h2>
   <p id="permit-summary">Loading durable permit evidence…</p>
   <section class="grid">
     <article><h2>Pilot status</h2><strong id="permit-pilot">—</strong></article>
@@ -632,6 +1067,48 @@ const DASHBOARD_HTML = `<!doctype html>
       set("source-errors", format.format(failures.sourceErrorAttempts));
       set("transform-errors", format.format(failures.transformErrorAttempts));
       set("load-errors", format.format(failures.loadErrorAttempts));
+      const inventory = status.permitInventory;
+      const enumeration = status.permitEnumeration;
+      set("permit-inventory", format.format(inventory.records));
+      set("permit-links", format.format(inventory.matched) + " / " + format.format(inventory.unmatched));
+      set("permit-roofing", format.format(inventory.roofing));
+      set("permit-systems", format.format(inventory.sourceSystems));
+      set("permit-bulk", format.format(inventory.bulkCommittedRows) + " / " + format.format(inventory.bulkSourceRows));
+      set("permit-captured", format.format(enumeration.accessibleRecords));
+      set("permit-workers", format.format(enumeration.activeWorkers) + " / " + format.format(enumeration.completedWorkers));
+      set("permit-windows", format.format(enumeration.completedWindows) + " / " + format.format(enumeration.totalWindows));
+      set(
+        "permit-inventory-summary",
+        format.format(inventory.records) + " loaded · " +
+          format.format(enumeration.accessibleRecords) + " locally captured · " +
+          format.format(enumeration.excludedRecords) + " excluded · " +
+          format.format(enumeration.invalidRecords + enumeration.sourceMissingRecords) + " source gaps",
+      );
+      const workerBody = document.getElementById("permit-worker-rows");
+      if (workerBody) {
+        const rows = enumeration.workers.map((worker) => {
+          const row = document.createElement("tr");
+          for (const value of [
+            worker.source,
+            worker.family.replaceAll("_", " "),
+            worker.status,
+            format.format(worker.completedWindows) + " / " + format.format(worker.totalWindows),
+            format.format(worker.accessibleRecords),
+            format.format(worker.invalidRecords + worker.sourceMissingRecords),
+          ]) {
+            const cell = document.createElement("td");
+            cell.textContent = value;
+            row.appendChild(cell);
+          }
+          return row;
+        });
+        workerBody.replaceChildren(...rows);
+      }
+      const sunbiz = status.sunbizMatch;
+      set("sunbiz-registrations", format.format(sunbiz.registrations));
+      set("sunbiz-properties", format.format(sunbiz.properties));
+      set("sunbiz-roles", format.format(sunbiz.matchedAddressRoles));
+      set("sunbiz-chunks", format.format(sunbiz.chunks));
       const permit = status.permit;
       set("permit-pilot", permit.pilotState.replaceAll("_", " "));
       set("permit-completeness", permit.countyCompleteness.replaceAll("_", " "));
@@ -648,7 +1125,7 @@ const DASHBOARD_HTML = `<!doctype html>
       set("error", "");
     } catch { set("error", "Aggregate status is temporarily unavailable; retrying."); }
   }
-  void refresh(); setInterval(() => void refresh(), 5000);
+  void refresh(); setInterval(() => void refresh(), 10000);
 </script>
 </main></body></html>`;
 

@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -18,6 +18,7 @@ import {
 import {
   buildRecoveryStatus,
   parseDashboardOptions,
+  readPermitEnumerationStatus,
 } from "../../scripts/broward-neon-recovery-dashboard.mjs";
 
 /** @type {string[]} */
@@ -420,6 +421,22 @@ describe("durable Broward Neon recovery", () => {
         permit_registry_jurisdictions: "32",
         permit_sources_implemented: "15",
         permit_sources_blocked: "17",
+        permit_inventory_records: "243939",
+        permit_inventory_matched: "192813",
+        permit_inventory_unmatched: "51126",
+        permit_inventory_roofing: "17483",
+        permit_inventory_parcels: "42522",
+        permit_inventory_sources: "13",
+        permit_inventory_loaded_at: "2026-08-31T20:50:00.000Z",
+        permit_bulk_source_rows: "204760",
+        permit_bulk_committed_rows: "204760",
+        permit_bulk_chunks: "205",
+        permit_list_loaded_rows: "28946",
+        permit_list_chunks: "29",
+        sunbiz_match_roles: "21512",
+        sunbiz_match_registrations: "12432",
+        sunbiz_match_properties: "9023",
+        sunbiz_match_chunks: "22",
       },
       Date.parse("2026-08-29T00:01:00.000Z"),
     );
@@ -457,9 +474,100 @@ describe("durable Broward Neon recovery", () => {
       currentSourcesImplemented: 15,
       currentSourcesBlocked: 17,
     });
+    expect(status.permitInventory).toEqual({
+      records: 243_939,
+      matched: 192_813,
+      unmatched: 51_126,
+      roofing: 17_483,
+      distinctParcels: 42_522,
+      sourceSystems: 13,
+      lastLoadedAt: "2026-08-31T20:50:00.000Z",
+      bulkSourceRows: 204_760,
+      bulkCommittedRows: 204_760,
+      bulkChunks: 205,
+      listLoadedRows: 28_946,
+      listChunks: 29,
+    });
+    expect(status.sunbizMatch).toEqual({
+      matchedAddressRoles: 21_512,
+      registrations: 12_432,
+      properties: 9_023,
+      chunks: 22,
+    });
     expect(JSON.stringify(status)).not.toContain("504108BJ0140");
     expect(JSON.stringify(status)).not.toContain("owner");
     expect(JSON.stringify(status)).not.toContain("address");
+  });
+
+  it("reads aggregate permit worker checkpoints without exposing source rows", async () => {
+    const root = await mkdtemp(
+      path.join(tmpdir(), "broward-recovery-dashboard-permits-"),
+    );
+    temporaryDirectories.push(root);
+    const hollywoodDirectory = path.join(
+      root,
+      "downloads/broward/accela-csv-windows/hollywood-full",
+    );
+    const oaklandDirectory = path.join(
+      root,
+      "downloads/broward/tyler-date-windows/oakland-park-full-30d",
+    );
+    await Promise.all([
+      mkdir(hollywoodDirectory, { recursive: true }),
+      mkdir(oaklandDirectory, { recursive: true }),
+    ]);
+    await writeFile(
+      path.join(hollywoodDirectory, "checkpoint.private.json"),
+      JSON.stringify({
+        pendingWindows: [{ startDate: "PRIVATE", endDate: "PRIVATE" }],
+        completedWindows: {
+          one: {
+            exportedRecordCount: 43,
+            excludedNonPermitCount: 2,
+          },
+        },
+        updatedAt: "2026-08-31T21:59:00.000Z",
+      }),
+    );
+    await writeFile(
+      path.join(oaklandDirectory, "checkpoint.private.json"),
+      JSON.stringify({
+        pendingWindows: [],
+        completedWindows: {
+          one: {
+            totalFound: 10,
+            invalidRecordCount: 0,
+            sourceMissingRecordCount: 1,
+          },
+        },
+        updatedAt: "2026-08-31T21:00:00.000Z",
+      }),
+    );
+    const status = await readPermitEnumerationStatus(
+      root,
+      Date.parse("2026-08-31T22:00:00.000Z"),
+    );
+    expect(status).toMatchObject({
+      activeWorkers: 1,
+      completedWorkers: 1,
+      completedWindows: 2,
+      totalWindows: 3,
+      accessibleRecords: 52,
+      excludedRecords: 2,
+      invalidRecords: 0,
+      sourceMissingRecords: 1,
+    });
+    expect(status.workers).toHaveLength(8);
+    expect(status.workers).toContainEqual(
+      expect.objectContaining({
+        source: "Hollywood",
+        status: "running",
+        completedWindows: 1,
+        pendingWindows: 1,
+        accessibleRecords: 43,
+      }),
+    );
+    expect(JSON.stringify(status)).not.toContain("PRIVATE");
   });
 
   it("requires branch IDs for the recovery dashboard", () => {
