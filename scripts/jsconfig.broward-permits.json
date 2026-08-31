@@ -19,6 +19,7 @@
   },
   "include": [
     "broward-folio.mjs",
+    "build-broward-roofing-bbb-worklist.mjs",
     "broward-permit-jurisdictions.mjs",
     "broward-permit-query-artifact.mjs",
     "load-broward-permit-list-to-neon.mjs",
