@@ -148,8 +148,46 @@ Local artifacts under `downloads/broward/permit-acceptance-pilot/`:
 - `reconciliation.json`; and
 - `donphan-evidence.json`.
 
-All are local validation artifacts and were not staged, loaded, published, or
-added to the public county catalog.
+All are private local validation artifacts. The reconciled records were later
+loaded to the isolated Broward Neon branch as described below; they were not
+published or added to the public county catalog.
+
+## Bounded Neon load and expanded source evidence
+
+On 2026-08-31, the identity-gated loader
+`scripts/load-broward-permit-pilot-to-neon.mjs` committed the reconciled pilot
+evidence to the isolated `broward-ingest` branch. A second identical load
+confirmed source-key idempotence:
+
+| Measure | Count |
+| --- | ---: |
+| Loaded property improvements | 104 |
+| Loaded public inspection records | 97 |
+| Distinct exact-folio parent parcels | 5 |
+| Distinct permit source systems | 6 |
+| Duplicate source keys | 0 |
+| Unlinked permit / inspection rows | 0 / 0 |
+
+Loaded permit rows by bounded source:
+
+- Broward BCS/POSSE: 73;
+- Hollywood Accela: 1;
+- Plantation Accela: 7;
+- Weston Accela: 6;
+- Pembroke Pines Tyler Civic Access: 7; and
+- Lauderdale-by-the-Sea Citizenserve: 10.
+
+The current-source probes also produced explicit valid zero-record results for
+Cooper City Accela, Miramar Tyler, and Southwest Ranches Citizenserve.
+
+These counts are evidence, not countywide completeness. Lauderdale-by-the-Sea
+reported 33 Citizenserve permits but the bounded detail pilot captured 10, so
+that source remains truncated. Fort Lauderdale exposed 50 Accela details,
+above the 20-detail pilot ceiling, and was failed closed without loading a
+partial result. Seventeen current jurisdiction routes remain
+blocked/unavailable. A countywide or supported-routes-only crawl requires an
+explicit run scope and source-pressure policy; it must not be inferred from
+this pilot.
 
 ## Query-db and Donphan evidence
 
