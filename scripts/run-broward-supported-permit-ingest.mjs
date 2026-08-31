@@ -35,6 +35,7 @@ const CONTROL_SCHEMA = "ingest_control";
 const LOCK_NAMESPACE = 12_011;
 const LOCK_KEY = 4;
 const MAX_CONCURRENCY = 4;
+const DEFAULT_PROBE_TIMEOUT_MS = 15 * 60_000;
 const DEFAULT_WORK_DIR = "downloads/broward/supported-permit-ingest";
 const TERMINAL_STATUSES = new Set([
   "records",
@@ -68,6 +69,7 @@ const TERMINAL_STATUSES = new Set([
  * @typedef {object} CommandResult
  * @property {number} exitCode - Child exit status.
  * @property {number} stderrBytes - Private child diagnostic byte count.
+ * @property {boolean} timedOut - Whether the hard probe deadline terminated it.
  */
 
 /**
@@ -368,7 +370,11 @@ async function probeBcs(candidate, itemDirectory) {
     "300",
   ]);
   if (command.exitCode !== 0) {
-    return { status: "failed", recordCount: 0, errorClass: "bcs_probe_failed" };
+    return {
+      status: "failed",
+      recordCount: 0,
+      errorClass: command.timedOut ? "probe_timeout" : "bcs_probe_failed",
+    };
   }
   const summary = await readJson(summaryPath);
   const recordCount = numberField(summary, "recordCount");
@@ -423,9 +429,14 @@ async function probeAccela(candidate, itemDirectory) {
   ]);
   if (command.exitCode !== 0) {
     return {
-      status: command.stderrBytes > 0 ? "truncated" : "failed",
+      status:
+        command.timedOut || command.stderrBytes === 0
+          ? "failed"
+          : "truncated",
       recordCount: 0,
-      errorClass: "accela_bounded_failure",
+      errorClass: command.timedOut
+        ? "probe_timeout"
+        : "accela_bounded_failure",
     };
   }
   const summary = await readJson(summaryPath);
@@ -476,7 +487,13 @@ async function probeMunicipal(candidate, itemDirectory) {
     "500",
   ]);
   if (command.exitCode !== 0) {
-    return { status: "failed", recordCount: 0, errorClass: "municipal_probe_failed" };
+    return {
+      status: "failed",
+      recordCount: 0,
+      errorClass: command.timedOut
+        ? "probe_timeout"
+        : "municipal_probe_failed",
+    };
   }
   const summary = await readJson(summaryPath);
   const recordCount = numberField(summary, "capturedPermitCount");
@@ -508,23 +525,55 @@ async function probeMunicipal(candidate, itemDirectory) {
  * Run a bounded child without exposing private stdout/stderr.
  *
  * @param {readonly string[]} args - Node script and non-secret arguments.
+ * @param {number} [timeoutMs=DEFAULT_PROBE_TIMEOUT_MS] - Hard process deadline.
  * @returns {Promise<CommandResult>} Aggregate-safe process result.
  */
-function runNode(args) {
+export function runNode(args, timeoutMs = DEFAULT_PROBE_TIMEOUT_MS) {
+  if (!Number.isInteger(timeoutMs) || timeoutMs < 1) {
+    throw new Error("Probe timeout must be a positive integer");
+  }
   return new Promise((resolvePromise) => {
     const child = spawn(process.execPath, [...args], {
       cwd: process.cwd(),
+      detached: process.platform !== "win32",
       stdio: ["ignore", "ignore", "pipe"],
     });
     let stderrBytes = 0;
+    let timedOut = false;
+    let settled = false;
+    /**
+     * @param {CommandResult} result - Final aggregate-safe process outcome.
+     * @returns {void}
+     */
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      resolvePromise(result);
+    };
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      if (
+        process.platform !== "win32" &&
+        typeof child.pid === "number"
+      ) {
+        try {
+          process.kill(-child.pid, "SIGKILL");
+        } catch {
+          child.kill("SIGKILL");
+        }
+      } else {
+        child.kill("SIGKILL");
+      }
+    }, timeoutMs);
     child.stderr.on("data", (chunk) => {
       stderrBytes += Buffer.byteLength(chunk);
     });
     child.once("error", () => {
-      resolvePromise({ exitCode: -1, stderrBytes });
+      finish({ exitCode: -1, stderrBytes, timedOut });
     });
     child.once("exit", (code) => {
-      resolvePromise({ exitCode: code ?? -1, stderrBytes });
+      finish({ exitCode: code ?? -1, stderrBytes, timedOut });
     });
   });
 }

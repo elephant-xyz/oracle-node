@@ -39,6 +39,7 @@ import {
 import {
   parseSupportedPermitOptions,
   processByRouteWithConcurrency,
+  runNode,
 } from "../../scripts/run-broward-supported-permit-ingest.mjs";
 import {
   parseDonphanToolResult,
@@ -410,6 +411,19 @@ describe("Broward supported-route permit ingest", () => {
     expect(events.indexOf("start:a:2")).toBeGreaterThan(
       events.indexOf("end:a:1"),
     );
+  });
+
+  it("terminates a probe process group at its hard deadline", async () => {
+    const startedAt = Date.now();
+    const result = await runNode(
+      ["-e", "setTimeout(() => undefined, 60_000)"],
+      50,
+    );
+    expect(result).toMatchObject({
+      exitCode: -1,
+      timedOut: true,
+    });
+    expect(Date.now() - startedAt).toBeLessThan(5_000);
   });
 });
 
