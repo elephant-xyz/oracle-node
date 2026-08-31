@@ -17,6 +17,7 @@
     "install-workspaces": "npm install --workspaces",
     "catalog:update": "node scripts/update-published-county-catalog.mjs",
     "broward:sunbiz:prepare": "node scripts/prepare-broward-sunbiz-local.mjs",
+    "broward:sunbiz:match-properties": "node scripts/match-broward-sunbiz-to-properties.mjs",
     "broward:dashboard": "node scripts/broward-ingestion-dashboard.mjs",
     "broward:recover": "node scripts/recover-broward-appraisal-to-neon.mjs",
     "broward:recovery-dashboard": "node scripts/broward-neon-recovery-dashboard.mjs",
