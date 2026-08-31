@@ -1,10 +1,7 @@
 ---
-name: county-open-data-publish
-description: Publish county property data from the query DB to IPFS as open data — one JSON file per property + a sharded index, uploaded to Filebase (S3-compatible IPFS), with a stable IPNS name re-pointed on every publish so downstream MCP/NEO never change. Use when exporting consolidated property JSON, uploading to Filebase, managing the IPNS pointer, or wiring an MCP server to read the published index.
-metadata:
-  author: elephant-xyz
+description: "Publish county property data from the query DB to IPFS as open data — one JSON file per property + a sharded index, uploaded to Filebase (S3-compatible IPFS), with a stable IPNS name re-pointed on every publish so downstream MCP/NEO never change. Use when exporting consolidated property JSON, uploading to Filebase, managing the IPNS pointer, or wiring an MCP server to read the published index."
+metadata: {"author":"elephant-xyz"}
 ---
-
 # County Open-Data Publish (IPFS)
 
 Publishes the county property dataset from the `elephant-query-db` DB to **public IPFS
@@ -109,6 +106,10 @@ structured columns winning when present. **Do NOT parse the state from the text*
 DB `state_code` is correct-or-null and NEO falls back to `parcel.stateCode`; a parsed
 token injects wrong values into the null rows. `latitude/longitude` come from the
 `geometries` table, not `addresses`.
+
+### Direct Parquet Export (Alternative Fast Path)
+
+For fast-publishing pipelines, property consolidation can be written directly to a flat Parquet table via `export-<county>-direct-parquet.ts`, bypassing relational JSON chunk generation when downstream consumers query through DuckDB over IPFS/IPNS (`county-query-table-publish`).
 
 ## Step 2 — Upload to Filebase
 

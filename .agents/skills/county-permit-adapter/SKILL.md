@@ -1,10 +1,7 @@
 ---
-name: county-permit-adapter
-description: Build a new county's permit-portal harvester as a vendor module for the permit-harvest service, by adapting the Accela template or writing a new vendor module, including source throughput checks and bulk-harvest vs runtime-retrieval decisions. Use when onboarding a county's permit portal, adding a permit vendor module, or debugging per-parcel permit harvest for a county.
-metadata:
-  author: elephant-xyz
+description: "Build a new county's permit-portal harvester as a vendor module for the permit-harvest service, by adapting the Accela template or writing a new vendor module, including source throughput checks and bulk-harvest vs runtime-retrieval decisions. Use when onboarding a county's permit portal, adding a permit vendor module, or debugging per-parcel permit harvest for a county."
+metadata: {"author":"elephant-xyz"}
 ---
-
 # County Permit Adapter
 
 The `PermitHarvest` Restate service (`services/permit-harvest.ts`) exposes
@@ -36,6 +33,80 @@ unmatched jurisdiction is recorded in the parcel's status JSON as `unrouted` (fa
 back to the county-level portal only when the catalog defines one), and per-jurisdiction
 coverage lives in the status artifacts. The canonical `{county, jobId, parcel_id}`
 payload is unchanged.
+
+### Municipal Portal Adapter Patterns
+
+1. **Accela Citizen Access** (`enrich-permits-accela.mjs`):
+   - Deep detail endpoint: `CapDetail.aspx?Module=Building&TabName=Building&altId=<PERMIT_NUMBER>`.
+   - Parse contractor tables, licensed professionals, trade materials (e.g. `Type of Material:` with multi-word capture `([A-Za-z0-9\s/]+)`), valuation, and inspection dates.
+2. **Click2Gov** (`temple-terrace-click2gov.mjs`):
+   - State cookie bootstrap (`SelectPermit.jsp`), parse 2-digit application year and permit sequence number (`YY - NNNN`).
+   - Extract permit details, fees, and contractor names.
+3. **MaintStar** (`plant-city-maintstar.mjs`):
+   - JSON search endpoint: `POST api/Public/Record/Search` with `{ recordNumber }`.
+   - Direct structured JSON extraction for status, issue dates, contractor license, and valuation.
+
+### Distributed Cloud Scraper Architecture (AWS Lambda)
+
+When deep permit enrichment exceeds local single-IP bandwidth (e.g. 500k+ permits across multiple portals taking 40-60+ hours locally), deploy a distributed AWS Lambda harvester (`lambdas/permit-enricher`):
+
+- **Interactive AWS Credential Verification & Setup**:
+  Before dispatching cloud scraping workers, verify authentication non-intrusively:
+  ```javascript
+  import { STSClient, GetCallerIdentityCommand } from "@aws-sdk/client-sts";
+
+  async function verifyAwsCredentials(region = "us-east-1") {
+    try {
+      const sts = new STSClient({ region });
+      const identity = await sts.send(new GetCallerIdentityCommand({}));
+      return { ok: true, account: identity.Account, arn: identity.Arn, userId: identity.UserId };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  }
+  ```
+  If unauthenticated, guide the operator through setting credentials (`aws configure`, `export AWS_PROFILE=...`, or `.env` variables). If the operator chooses not to configure AWS, fall back to the local warm worker pool.
+
+- **High-Throughput Connection Pooling**:
+  ```javascript
+  import { NodeHttpHandler } from "@smithy/node-http-handler";
+  import http from "node:http";
+  import https from "node:https";
+
+  const requestHandler = new NodeHttpHandler({
+    httpAgent: new http.Agent({ keepAlive: true, maxSockets: 300 }),
+    httpsAgent: new https.Agent({ keepAlive: true, maxSockets: 300 }),
+    socketAcquisitionWarningTimeout: 10000,
+  });
+  const lambda = new LambdaClient({ requestHandler });
+  ```
+- **Starvation-Free FIFO Queue Resolvers**:
+  ```javascript
+  const queueResolvers = [];
+  function acquireSlot() {
+    if (activeWorkers < MAX_CONCURRENCY) {
+      activeWorkers++;
+      return Promise.resolve();
+    }
+    return new Promise(resolve => queueResolvers.push(resolve));
+  }
+  function releaseSlot() {
+    activeWorkers--;
+    const next = queueResolvers.shift();
+    if (next) { activeWorkers++; next(); }
+  }
+  ```
+- **Accurate Cost Tracking & Budget Guard**:
+  ```javascript
+  function calculateLambdaCostUsd(durationMs, memoryMb = 512, architecture = "arm64") {
+    const gbSeconds = (durationMs / 1000) * (memoryMb / 1024);
+    const gbSecRate = architecture === "arm64" ? 0.0000133334 : 0.0000166667;
+    const requestRate = 0.0000002;
+    return (gbSeconds * gbSecRate) + requestRate;
+  }
+  ```
+- **Self-Healing Retry Buffer**:
+  Maintain in-flight retry queues for 429/500/timeouts; dynamically back off per-portal concurrency and sweep dead-letter records at end-of-stream before declaring completion.
 
 ## What a vendor module must provide
 

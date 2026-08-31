@@ -225,6 +225,23 @@ Monitor: batch events in the log, at most 1 CSV in the staging dir, `df -h` not 
 3. **VACUUM ANALYZE** parent tables after mass inserts — clears visibility maps so
    index-only scans stop heap-fetching.
 
+### Fast Bulk Loading Optimizations (PostgreSQL / Neon)
+
+When bulk loading millions of property records into PostgreSQL:
+- **UNLOGGED Staging Tables**: Use `CREATE UNLOGGED TABLE` for temporary batch staging. This eliminates write-ahead logging (WAL) overhead, accelerating `COPY FROM STDIN` by 3–5x.
+- **Post-COPY Index Creation**: Drop indexes on temporary staging tables before massive `COPY` ingestion, and recreate indexes only when the staging batch is complete.
+- **CTE Predicate Pushdown**: When merging into domain tables, always filter stage tables inside a CTE by `table_name` before performing joins:
+  ```sql
+  WITH stage_filtered AS (
+    SELECT * FROM public.bulk_stage WHERE table_name = 'property_valuations'
+  )
+  INSERT INTO property_valuations (...)
+  SELECT ... FROM stage_filtered sf
+  JOIN properties p ON p.source_record_key = sf.parent_source_record_key
+  ON CONFLICT (property_id, tax_year) DO UPDATE ...;
+  ```
+  Filtering early in the CTE prevents Cartesian join blowups and eliminates memory spills to temporary disk files.
+
 The remaining floor is `ON CONFLICT` unique-index maintenance on the multi-GB tables
 (`taxes`, `property_valuations`) — IO-bound, not plan-bound.
 

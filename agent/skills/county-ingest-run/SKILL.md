@@ -87,7 +87,7 @@ reboot resumes mid-chunk with no checkpoint files and no re-streaming
 Watch with `monitoring-county-ingestion`: Web UI at `http://localhost:9070`,
 `restate invocations list`, `restate sql` over `sys_invocation`/`state`.
 
-## 4. Ramp-up
+## 4. Ramp-up & Warm Worker Pool Optimization
 
 Raise the `CONCURRENCY_*` caps in `elephant-pipeline/.env` stepwise (`CONCURRENCY_PREPARE`,
 `CONCURRENCY_TRANSFORM`, `CONCURRENCY_PERMIT_<VENDOR>` — in-process gates per
@@ -102,6 +102,44 @@ minutes, then check error rates in the UI and the portal's health before the nex
 - **The limit is portal tolerance, not compute.** Your machine can always run more
   browser contexts than the county site will tolerate; ramp against the source's error
   rate, never against local headroom.
+
+### High-Throughput Transform Optimization: Warm Worker Pool (`TransformPool`)
+
+When transforming 500k+ parcels locally, spawning fresh Node.js subprocesses per parcel
+(`child_process.execFile` / `execPath`) creates severe process-spawning overhead, thrashing
+CPU cores, causing excessive fan noise, and dropping throughput to ~2-5 parcels/sec.
+
+**Always use a Warm Worker Pool (`TransformPool` via `child_process.fork`)**:
+1. Spawn a bounded pool of persistent child workers (`transform-worker.cjs`, sized to `os.cpus().length` or 8-16 workers).
+2. Workers pre-compile Cheerio and all transform scripts once on startup.
+3. IPC messages send `{ parcelDir }` to the next idle worker and return `{ success, error }`.
+4. Achieves **20–60+ parcels/sec** sustained throughput with low CPU overhead and no fan thrashing.
+
+### Memory Optimization: Streaming Seed CSV Processing
+
+Never load a 500k-row CSV roll into an in-memory array (`const rows = parse(fileContent)`).
+Large 300MB+ seed files will trigger `FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory`.
+
+**Always stream seeds with Node.js async generators**:
+```javascript
+export async function* streamSeedCsvRows(csvPath) {
+  const rl = readline.createInterface({
+    input: fs.createReadStream(csvPath),
+    crlfDelay: Infinity,
+  });
+  let header = null;
+  for await (const line of rl) {
+    if (!header) { header = parseCsvLine(line); continue; }
+    yield mapRow(header, parseCsvLine(line));
+  }
+}
+```
+
+### Fast Parallel File I/O & Zip Reading
+
+When loading or validating transformed parcels:
+- Prioritize reading `transformed_output.zip` using in-memory `AdmZip` rather than performing 15 sequential `fs.readFile()` calls for loose JSON files. This yields a **6.7x speedup** in disk I/O.
+- Batch directory iterations in chunks of 256–512 with `Promise.all`.
 
 ## 5. Failure handling
 

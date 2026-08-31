@@ -1,227 +1,250 @@
 ---
-name: county-ingest-run
-description: Deploy and run the end-to-end property-first ingestion for an onboarded county - pilot batch first, then the full backpressure-aware seed-feeder run with concurrency ramp-up. Use when starting, scaling, resuming, or wrapping up a county ingestion run on AWS.
-metadata:
-  author: elephant-xyz
+description: "Operate the end-to-end property-first ingestion run for an onboarded county on the local durable stack - pilot batch first, source-feasibility gate, then the full backpressure-aware run with stepwise concurrency ramp-up, plus the streamed incremental load+publish that lands the county in the query DB and re-publishes the query-table as the run ingests. Use when starting, scaling, resuming, monitoring failure classes, streaming load+publish, or wrapping up a county ingestion run."
+metadata: {"author":"elephant-xyz"}
 ---
-
 # County Ingest Run
 
 Prerequisites: `bootstrap-oracle-infra` checks pass; appraisal onboarding, transform
 validation, and the permit adapter are done for the county.
 
-Run parameters (AWS profile/region, job-id, pilot vs full scope, seed CSV) come from the
+Run parameters (county slug, jobId, pilot vs full scope, seed CSV) come from the
 `onboard-county` intake — don't re-ask what's already established. If entered directly
 without that context, ask for the missing parameters once before starting: a run sends
 sustained traffic to county websites and should never start on guessed inputs.
 
 ## Run shape
 
-Property-first: each parcel flows appraisal-prepare → transform (Structured Archive) →
-eligibility branch → permit harvest → Neon, individually. Input is ONLY the seed CSV
-(never re-derive work from Neon), drip-fed by a self-requeuing seed-feeder SQS message
-with backpressure — never dump the whole county into SQS at once (516k messages exceeds
-retention and removes flow control).
+Property-first: each parcel flows prepare → transform → validate (fail-closed) →
+eligibility branch → permit harvest → query DB, individually. Input is ONLY the seed CSV
+at `data/seeds/<county>.csv` (never re-derive work from the DB). The `CountyIngest`
+workflow (keyed `<county>-<jobId>`) fans into per-chunk `IngestChunk` children (~10k
+rows each, keyed `<county>-<jobId>-c<N>`) that dispatch `Parcel.process` in bounded
+windows; when appraisal dispatch completes it starts the `PermitFeed` workflow
+(keyed `<parent key>-permits`, so a redrive pass feeds its own `…-r2-permits`),
+which walks eligibility artifacts and dispatches permit
+harvests in its OWN bounded windows — neither side ever queues the whole county.
+Journal replay is the only checkpoint. See `durable-workflow-builder` patterns
+1 (backpressure feeder), 2 (layered concurrency), and 11 (chunked fan-out).
+
+Everything runs locally: `docker compose up -d` (Restate + Postgres), services
+process on :9080 (`npm run dev`), registered via
+`restate deployments register http://host.docker.internal:9080`. Egress must be US
+(`curl -s ipinfo.io/country` → `US`) — county portals geo-block.
 
 ## 1. Pilot (always first)
 
-1. Pick 10-50 parcels from the seed covering usage-type variability (include commercial so
-   the permit path is exercised, and residential to verify the skip path).
-2. Use the one-shot enqueue script pattern (`scripts/enqueue-lee-appraisal-property-first-from-seed.mjs`,
-   cloned/parameterized for the county) with `--limit`, a distinct `--job-id`
-   (`<county>-property-first-pilot-<date>`), and `--dry-run` first.
-3. Verify per parcel, in order: prepare zip → transform artifact → eligibility manifest →
-   (eligible only) permit-list + extracted permit JSONs in S3 → rows in Neon
-   (`properties`, permit tables) → completion-state object written.
+1. Pick ~25 parcels from the seed covering usage-type variability (commercial to exercise
+   the permit path, residential to verify the skip path). Stage them as a pilot seed CSV.
+2. Start the workflow with a distinct pilot jobId:
+
+   ```bash
+   curl localhost:8080/restate/send/CountyIngest/<county>-pilot-<date>/run \
+     --json '{"county":"<county>","jobId":"pilot-<date>","seedPath":"seeds/<county>-pilot.csv","chunkSize":10000,"batchSize":100,"window":25}'
+   ```
+
+3. Verify one parcel end-to-end, in order: `capture.zip` on disk
+   (`data/artifacts/appraisal/<county>/<jobId>/<folio>/`) → `transformed.zip` →
+   validation pass → DB row → `eligibility.json` (and, if eligible, permit artifacts
+   under `data/artifacts/permits/<county>/<jobId>/`).
 4. Verify a permit-less parcel completes cleanly and a residential parcel stops after
-   archive with a skip marker.
+   archive with `eligibility.json` showing `eligible: false` and no permit artifacts.
+5. Record pilot timings per source: observed latency, safe concurrency, retry/failure
+   rate, projected full-county duration.
 
-## 2. Full run
+## 2. Feasibility gate before full run
 
-Send the seed-feeder message (type `<county>-property-first-seed-feeder`) to the
-permit-harvest queue. Key message fields (see `validatePermitHarvestMessage()` for the
-contract):
+Project full-county duration from the pilot rate for every source that will be scraped:
 
-- `jobId` — `<county>-property-first-seed-all-<date>`; all S3 state is keyed by it
-- `sourceCsvS3Uri` — `s3://counties-seeds/<county>.csv`
-- `batchSize` (~100), `requeueDelaySeconds` (900), `sendDelayMs`
-- `skipExistingNeon: true` — dedupe against already-loaded parcels
-- `backpressureQueues` — caps per queue; starting point: workflow ≤250, prepare ≤5000,
-  transform ≤100, property-first-permit ≤200
-- output prefixes: seeds under `seed-inputs/<jobId>/`, workflow outputs under
-  `outputs/<jobId>/`, permit artifacts under `permit-harvest/<jobId>/`
+- If the estimated full acquisition is 48 hours or less, proceed with the measured safe
+  concurrency.
+- If any source is estimated above 48 hours, do not scale it by default. Ask the operator
+  whether to download artifacts anyway, ingest the source into the query DB, or retrieve
+  it at runtime.
+- If runtime retrieval is selected, ask which app/service owns the lookup and what the
+  runtime path should be (direct API call, server-side scrape, cached lookup, queued
+  background fetch). Record freshness, latency, and failure behavior before changing scope.
 
-The feeder checkpoints at `permit-harvest/<jobId>/feeder-state.json` (row offset) and
-self-requeues until `sourceExhausted`. Resume = send the same message again; the
-checkpoint prevents re-queuing.
+## 3. Full run
 
-## 3. Full-coverage permit redrive
-
-Use when a run was first gated to commercial/permit-priority appraiser usage types
-and the product decision changes to all-parcel permit coverage.
-
-1. Widen eligibility deliberately. For Lee, set
-   `PROPERTY_FIRST_PERMIT_ELIGIBLE_USAGE_TYPES=__ALL__` on both the transform worker
-   and the permit-harvest worker after deploying code that treats `__ALL__` as full
-   coverage. Empty/unset is NOT full coverage; it falls back to the default
-   commercial/permit-priority list.
-2. Do not replay the whole seed through appraisal if transformed outputs already
-   exist. Redrive from the existing
-   `outputs/<jobId>/**/property_first_permit_eligibility.json` manifests where
-   `shouldEnqueue=false`.
-3. Use the checkpointed helper (`scripts/redrive-lee-full-coverage-permits.mjs` for
-   Lee) in dry-run mode first, then a 50-parcel pilot, then the full run. Enqueue mode
-   requires `--ack-workers-full-coverage` after verifying both workers are deployed and
-   configured with `PROPERTY_FIRST_PERMIT_ELIGIBLE_USAGE_TYPES=__ALL__`. Messages must
-   keep `skipExisting=true`, `skipCompleted=true`, `loadToNeon=true`, and
-   `loadAppraisalToNeon=true` unless a fresh Neon reconciliation proves appraisal
-   loading should be skipped.
-4. The helper checkpoint belongs under the permit-harvest job prefix, e.g.
-   `permit-harvest/<jobId>/full-coverage-redrive-state.json`. Resume by rerunning the
-   same command; do not reset the checkpoint unless intentionally starting over. The
-   helper advances past malformed manifests and records them in checkpoint failure
-   metadata so one poison-pill object cannot block the county-scale run.
-5. Proxy capacity is required for a ~14-day Lee-scale run. Load real proxy credentials
-   before increasing permit concurrency beyond the direct-egress baseline. The
-   permit worker supports `PERMIT_HARVEST_PROXY_URL=<user:pass@host:port>` or
-   `PERMIT_HARVEST_PROXY_URLS` as a comma/newline-delimited list; without these env
-   vars, permit harvest uses direct Lambda egress even if the shared proxy table has
-   entries.
-6. Keep the redrive bounded by queue backpressure. Do not enqueue hundreds of
-   thousands of SQS messages at once; feed in batches and let the permit worker drain.
-
-## 3b. Transform-only redrive
-
-Use when a job has `output.zip` (prepare complete) for a large number of parcels
-but the transform stage failed or was never reached — producing no
-`<uuid>/transformed_output.zip`. This avoids re-scraping the appraisal site.
-
-The verified mechanism is **direct Lambda invocation** of the TransformWorkerFunction
-with `directInvocation: true` (same path used by the error-resolver). No SQS task
-token, no permit harvest, no SF execution needed.
-
-Script: `scripts/redrive-lee-transform-only.mjs` (Lee / `lee-fullcounty-20260619`).
-Adapt `--job-id`, `--bucket`, `--transform-fn` for other counties.
-
-### Workflow
-
-1. **Dry-run first** — enumerates every row folder that has `output.zip` but no
-   `<uuid>/transformed_output.zip`. Reports target count and estimated duration.
-   Full flat S3 scan (~2 min for 516k rows / 2M keys):
-   ```
-   AWS_PROFILE=elephant-oracle-node AWS_REGION=us-east-1 \
-     node scripts/redrive-lee-transform-only.mjs --dry-run
-   ```
-2. **Pilot (--limit 20)** — live-invoke a bounded set, verify each wrote
-   `transformed_output.zip`:
-   ```
-   AWS_PROFILE=elephant-oracle-node AWS_REGION=us-east-1 \
-     node scripts/redrive-lee-transform-only.mjs --limit 20
-   ```
-3. **Full run detached** — nohup into `.redrive-logs/`; survives shell exit:
-   ```
-   mkdir -p oracle-node/.redrive-logs
-   nohup env AWS_PROFILE=elephant-oracle-node AWS_REGION=us-east-1 \
-     node scripts/redrive-lee-transform-only.mjs \
-     > oracle-node/.redrive-logs/transform-redrive.log 2>&1 &
-   echo "PID: $!"
-   ```
-
-### Key parameters
-
-- `--concurrency <n>` — parallel Lambda invocations (default 100; Lambda fn has no
-  reserved-concurrency cap, event-source map MaxConcurrency=100).
-- `--limit <n>` — stop after N parcels (0 = unlimited).
-- `--checkpoint-every <n>` — write S3 checkpoint every N completed parcels (default 50).
-- `--reset-checkpoint` — restart from row 0, ignoring existing checkpoint.
-
-### Checkpoint
-
-Written to `s3://<bucket>/permit-harvest/<jobId>/transform-redrive-state.json`.
-Resume a partial run by re-running the same command (checkpoint skips already-done rows
-automatically). Full run at concurrency 100 takes ~5.8 h for ~70k missing parcels (~$18).
-
-### Verified pilot (2026-06-22)
-
-20/20 parcels succeeded at rows 200000-200019. Each wrote
-`<row>/<executionId>/transformed_output.zip` + `property_first_permit_eligibility.json`.
-Per-parcel duration 24-39 s (avg ~30 s). `directInvocation=true` confirmed transform-only
-— no permit harvest triggered.
-
-### Monitoring
+Same workflow, full seed:
 
 ```bash
-# Watch the log (detached run)
-tail -f oracle-node/.redrive-logs/transform-redrive.log
-
-# Check checkpoint state
-aws s3 cp s3://<bucket>/permit-harvest/<jobId>/transform-redrive-state.json - \
-  | python3 -m json.tool
-
-# Resume after interruption — just re-run the same full-run command
+curl localhost:8080/restate/send/CountyIngest/<county>-<jobId>/run \
+  --json '{"county":"<county>","jobId":"<jobId>","seedPath":"seeds/<county>.csv","chunkSize":10000,"batchSize":100,"window":25}'
 ```
 
-### After the transform redrive completes
+The workflow key `<county>-<jobId>` is the idempotency boundary: the same key is
+exactly-once — a resubmit cannot start a duplicate and is refused as "previously
+accepted". Treat that response as healthy, not an error. There is nothing else to name
+or dedupe.
 
-Load results to Neon via the `query-db-loading-matching` skill.
+Backpressure in two sentences: the feeder never enqueues the whole county — it dispatches
+`Parcel.process` in `window`-sized batches and admits the next batch only when the
+previous one completes. Per-chunk child workflows keep every journal small, so a crash or
+reboot resumes mid-chunk with no checkpoint files and no re-streaming
+(`durable-workflow-builder` patterns 1, 2, and 11).
 
-## 4. Ramp-up
+Watch with `monitoring-county-ingestion`: Web UI at `http://localhost:9070`,
+`restate invocations list`, `restate sql` over `sys_invocation`/`state`.
 
-1. Watch with `monitoring-county-ingestion` after each change; let each setting burn in
-   10+ minutes before the next.
-2. Raise prepare/transform event-source `MaximumConcurrency` stepwise (Lee: 6 → 50/50,
-   ~8.5k prepare/hour). Keep SQS max concurrency ≤ Lambda reserved concurrency.
-3. Keep permit worker concurrency low (2-4); county permit portals are the fragile link.
-4. Check after every step: Lambda `Errors`/`Throttles` = 0, DLQ depth = 0, Neon insert
-   rate moving, app-level prepare failure rate not climbing.
+## 4. Ramp-up & Warm Worker Pool Optimization
 
-## 5. Incremental coverage publish
+Raise the `CONCURRENCY_*` caps in `elephant-pipeline/.env` stepwise (`CONCURRENCY_PREPARE`,
+`CONCURRENCY_TRANSFORM`, `CONCURRENCY_PERMIT_<VENDOR>` — in-process gates per
+`durable-workflow-builder` pattern 2;
+the Restate UI does not tune concurrency on this stack) and restart the services process —
+safe mid-run, in-flight invocations resume from their journals. Let each step burn in 10+
+minutes, then check error rates in the UI and the portal's health before the next.
 
-For streamed county runs, the query DB publish path must advance both public IPNS pointers after
-each load/index refresh window:
+- Start conservative. Permit portals: cap 2. Accela degrades above ~4 concurrent — hard
+  lesson, treat ≤4 as a ceiling. Prepare grew to ~50 after burn-in in the reference
+  county; transform ~100.
+- **The limit is portal tolerance, not compute.** Your machine can always run more
+  browser contexts than the county site will tolerate; ramp against the source's error
+  rate, never against local headroom.
 
-- `oracle-query-table-<county>` for the partial query-table Parquet.
-- `oracle-dataset-coverage-<county>` for `dataset-coverage.json`, consumed by MCP
-  `getOracleDatasetInfo` and Miranda's website.
+### High-Throughput Transform Optimization: Warm Worker Pool (`TransformPool`)
 
-The coverage JSON is a public Filebase/IPFS contract only; do not point donphan, Miranda, or end
-users at an AWS S3 URL for coverage. S3 remains internal to the ingestion/load orchestration.
+When transforming 500k+ parcels locally, spawning fresh Node.js subprocesses per parcel
+(`child_process.execFile` / `execPath`) creates severe process-spawning overhead, thrashing
+CPU cores, causing excessive fan noise, and dropping throughput to ~2-5 parcels/sec.
 
-After both public pointers are verified, upsert the county in the repository-owned canonical
-catalog and include that catalog change in the county publication PR:
+**Always use a Warm Worker Pool (`TransformPool` via `child_process.fork`)**:
+1. Spawn a bounded pool of persistent child workers (`transform-worker.cjs`, sized to `os.cpus().length` or 8-16 workers).
+2. Workers pre-compile Cheerio and all transform scripts once on startup.
+3. IPC messages send `{ parcelDir }` to the next idle worker and return `{ success, error }`.
+4. Achieves **20–60+ parcels/sec** sustained throughput with low CPU overhead and no fan thrashing.
 
-```bash
-npm run catalog:update -- \
-  --county-key "<lower-kebab-county>" \
-  --county-name "<Display Name>" \
-  --state-code "<STATE>" \
-  --county-fips "<five-digit FIPS>" \
-  --query-table-url "<public IPNS URL>" \
-  --dataset-coverage-url "<public IPNS URL>" \
-  --updated-at "<latest dataset timestamp>"
+### Memory Optimization: Streaming Seed CSV Processing
+
+Never load a 500k-row CSV roll into an in-memory array (`const rows = parse(fileContent)`).
+Large 300MB+ seed files will trigger `FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory`.
+
+**Always stream seeds with Node.js async generators**:
+```javascript
+export async function* streamSeedCsvRows(csvPath) {
+  const rl = readline.createInterface({
+    input: fs.createReadStream(csvPath),
+    crlfDelay: Infinity,
+  });
+  let header = null;
+  for await (const line of rl) {
+    if (!header) { header = parseCsvLine(line); continue; }
+    yield mapRow(header, parseCsvLine(line));
+  }
+}
 ```
 
-The updater reads both required public artifacts back and rejects a coverage/county mismatch.
-Use `--permit-query-table-url` when a separate permit table is published. The tracked
-`catalog/published-counties.json` file is the authoritative enumeration contract consumed by
-Elephant MCP `listPublishedCounties` and scheduled consumers such as Watchog. Never add a county
-before its public URLs have been read back and validated. A county publication is incomplete
-until the catalog PR is merged.
+### Fast Parallel File I/O & Zip Reading
 
-## 6. Failure handling
+When loading or validating transformed parcels:
+- Prioritize reading `transformed_output.zip` using in-memory `AdmZip` rather than performing 15 sequential `fs.readFile()` calls for loose JSON files. This yields a **6.7x speedup** in disk I/O.
+- Batch directory iterations in chunks of 256–512 with `Promise.all`.
 
-- DLQ messages: inspect, fix root cause, redrive (`scripts/auto-fix-queue.sh`,
-  `scripts/resolve-error.sh`; error records in DynamoDB clear via `ElephantErrorResolved`).
-- If ingest silently stalls, FIRST check event source mappings are still `Enabled` — a
-  budget alarm once disabled them mid-run (`EmergencyStopEnabled` must stay `false`).
-- AccessDenied from the feeder → seeds-bucket permission missing on the worker role
-  (`SourceSeedBucketName` parameter).
-- Geo-block/outage: prepare failures spike — pause (disable mapping), restore network/VPN
-  or proxies, re-enable; SQS redelivery resumes work.
+## 5. Failure handling
 
-## 7. Wrap-up
+Failed steps retry with backoff and **pause at max attempts** — visible in the UI with
+the full journal. Inspect the journal, classify, act:
 
-- Feeder reports `sourceExhausted`; queues drain to 0; reconcile counts: seed rows vs
-  archived artifacts vs Neon properties vs permit-eligible vs permits loaded. Record final
-  numbers in `oracle-node/docs/<county>-county-findings.md`.
-- Commit code/docs (never data) to a `<county>-property-first-ingest` branch.
+- **DEAD** — permanent source conditions (parcel retired/renumbered, page loads with no
+  detail grid, selector permanently absent, true 404). Handlers record these
+  (`dead.json` + a dead status in the return) and return normally — never thrown, so one
+  dead parcel cannot fail its chunk (`durable-workflow-builder` pattern 5). Do not
+  chase: achievable county count =
+  seed − dead − current-invalid. A few record-heavy parcels can be unbounded-cost in
+  any practical budget — document those in the dead/slow tail too, rather than letting
+  them block wrap-up.
+- **RETRYABLE** — transient (timeouts, 5xx, nav failures, connection refused). Fix the
+  cause if needed, then `restate invocations resume <id>`.
+- **Ambiguous 500s**: disambiguate with a couple of unloaded probes (curl the detail URL
+  directly, no concurrent scrape load, ideally from more than one IP). 200 → load-induced,
+  back off concurrency and resume. Consistent 500 unloaded → source-side defect, treat as
+  dead tail.
+- **Never gate completion on an exact source count.** An exact `== source` assert against
+  a source with a dead tail loops forever. Gate on `loaded >= achievable`.
+
+See `durable-workflow-builder` pattern 5 for the full taxonomy.
+
+Geo-block or portal outage: pause the affected invocations (or stop the services
+process), fix egress (US VPN/proxy — verify `curl -s ipinfo.io/country` → `US`), resume;
+Restate redispatches. Machine crash or reboot: compose restarts the stack
+(`restart: unless-stopped`), but the services process must also be relaunched (run it
+supervised/detached for multi-day runs — see the `bootstrap-oracle-infra` gotchas);
+the run then resumes from its journals — no watchdog, no re-streaming.
+
+## 6. Streamed load + publish — queryable AS it ingests
+
+Runs alongside the full run so the county lands in the query DB and re-publishes
+incrementally, not in one batch at the end. (`Loader` and `Publish` must be authored
+per `durable-workflow-builder` patterns 8–10 before first use.)
+
+- `Loader` (virtual object keyed `<county>`) merges new artifacts into the DB
+  incrementally — single-writer per county, so bulk merges never deadlock. Don't also
+  bulk-load appraisal by hand mid-run; the incremental merge already covers it.
+- `Publish.requestPublish` marks the county pending; the `Publish` object's
+  self-scheduling `tick` runs the full publish sequence (consolidation first, then the
+  query-table — `durable-workflow-builder` pattern 10), coalescing all tracks' signals.
+- **PII gate**: the publish loop is a dry-run until a human approves once:
+
+  ```bash
+  curl localhost:8080/restate/call/Publish/<county>/approve --json '{}'
+  ```
+
+  Approval is durable state on the county's Publish object — flip it only when you
+  intend to publish per-property PII publicly.
+
+Details: `query-db-loading-matching` (loading/merges) and `county-query-table-publish`
+(export/publish).
+
+## 7. Redrives
+
+Two mechanisms cover every redrive case:
+
+- **Re-run a subset** (missing artifacts, transform-only re-runs, widened permit
+  eligibility): start a NEW `CountyIngest` workflow key (`<county>-<jobId>-r2`) with a
+  filtered seed but the SAME `jobId` payload field — the new key gives the pass
+  exactly-once, the unchanged jobId keeps artifacts in the same namespace so
+  skip-existing applies and already-done work is skipped, not re-scraped
+  (`durable-workflow-builder` patterns 3–4). Transform-only re-runs work because the
+  transform step skips only when capture hash AND transform version both match — a fixed
+  transform regenerates stale output without re-scraping.
+- **After a code fix**: on this single-endpoint local topology there is no second
+  deployment to resume onto — cancel the paused invocations and re-run them as a redrive
+  pass on the new code, or ship an in-place replay-compatible fix via `--force`
+  re-register (`durable-workflow-builder` authoring rule 2). Plain `resume` is for
+  world-fixes (egress, portal, disk), not code fixes.
+
+Permit-scope redrives use the eligibility sentinels (see `county-appraisal-onboarding`):
+an appraisal-only run sets the eligible-usage-types env to `__NONE__`; widening to full
+permit coverage later is a re-run with `__ALL__` — skip-existing makes the appraisal side
+a no-op. Never leave the variable unset: empty silently falls back to the commercial
+default list. The services process is shared across counties — resolve the
+county-scoped variable (`..._<COUNTY>`) first and use the bare variable only when a
+single county runs, or a redrive's sentinel change leaks into every concurrent county.
+Eligibility artifacts carry the policy fingerprint, so a same-job redrive with a changed
+sentinel recomputes eligibility instead of trusting stale `eligible: false` files. A
+redrive pass spawns its own `PermitFeed` under the new parent key, and the eligible
+index is rebuilt with the current policy fingerprint.
+
+After a redrive pass, re-scan the residual and loop (identify → re-run → re-identify)
+until it stops shrinking; the floor is the documented dead tail (classify per §5). When
+judging the residual, classify by errors **since the last redrive pass**, not all-time —
+a parcel that failed transiently three runs ago and succeeded since is not a residual.
+Confirm a dead tail with a sample redrive: re-run ~40 residual parcels live; 0/40
+recovered with ≥97% of the fresh errors carrying the dead signature ⇒ confirmed dead,
+stop chasing. Proxies do NOT help dead folios — the page loads fine (no geo-block), it
+just has no data.
+
+## 8. Wrap-up
+
+- `CountyIngest` completing means appraisal DISPATCH is done — permit harvests it sent
+  are still draining under their own caps. Wrap up only when: permit status artifacts
+  exist for every eligible parcel, the `Loader` watermark covers the final artifacts, and
+  a `Publish` tick ran after the last load. Reconcile with `monitoring-county-ingestion`:
+  at appraisal terminal state `seed = ready + dead + current-invalid`; DB completion is
+  verified separately (the `Loader` watermark covers the final artifacts, the distinct
+  DB folio count covers `ready`); then permit-eligible vs permits loaded.
+- Final publish: confirm the `Publish` tick ran post-approval and a smoke query answers
+  for the county (`county-query-table-publish`).
+- PR findings and any transform-script changes to `Counties-trasform-scripts`
+  (`gh pr create`); commit code/docs, never data.

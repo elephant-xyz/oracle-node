@@ -239,6 +239,16 @@ date, per-provider licences, the Foursquare copyright notice, and Elephant's own
 statement/date. `index.json` must repeat attribution in a machine-readable block and
 record release, row count, validation/PII decisions, and the artifact path.
 
+### DuckDB Querying of Places over IPNS
+
+When querying `places-table.parquet` hosted on Filebase IPNS via DuckDB or the MCP:
+```sql
+INSTALL httpfs;
+LOAD httpfs;
+SET unsafe_disable_etag_checks = true;
+SELECT * FROM 'https://ipfs.filebase.io/ipns/<places-ipns-key>/<county>/places-table.parquet' LIMIT 10;
+```
+
 Register the stable places-table URL in the county catalog only after public-gateway
 verification confirms `NOTICE.txt`, `index.json`, and Parquet all resolve from the
 places-family IPNS name.

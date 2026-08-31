@@ -77,16 +77,17 @@ their `data/artifacts/...` path or `downloads/` location.
    - Estimate total work from parcel count, result pages, permit/detail counts, or the
      source's published record count. Compute estimated elapsed time using measured
      latency, safe concurrency, required delays, and retry overhead.
-   - If the estimate is more than 48 hours for that source, stop treating full download as
-     the default. Ask the operator whether to download files anyway, ingest records into
-     the query DB, or retrieve the data at runtime. If runtime retrieval is chosen, ask
-     which app/service owns it and whether it should use direct API calls, server-side
-     scraping, cached lookup, queued background fetch, or another pattern.
-5. Identify the permit vendor by URL shape:
-   - `*.accela.com/<AGENCY>/...` → Accela Citizen Access. Record the agency code, module
-     name (usually `Permitting`), and record-number prefixes (used to classify record types).
-   - Otherwise capture the search flow with browser devtools and note the JSON/HTML
-     endpoints.
+   - **Evaluate Compute Strategy (Local vs Distributed AWS Lambda)**:
+     - *Local Execution*: Free compute, but bound by single-IP egress rate limits (e.g., Accela returns 429/500 above 6 req/sec from a single IP; total ETA can exceed 40-50 hours for 500k+ permits).
+     - *AWS Lambda Distributed Scraping*: Spreads requests across hundreds of transient IP addresses, allowing concurrency of 60-120 workers, reducing run time to 1-3 hours while keeping AWS compute cost low ($3-$15). Includes automated cost tracking, in-flight self-healing retry buffers, and end-of-stream dead-letter sweeps.
+   - If the local estimate is more than 48 hours for that source, stop treating full download as
+     the default. Ask the operator whether to run distributed cloud harvesting, ingest into
+     the query DB only, or retrieve at runtime.
+5. Identify the permit vendor and municipal portals by URL shape:
+   - `*.accela.com/<AGENCY>/...` → Accela Citizen Access (e.g. `HCFL`, `TAMPA`). Record agency code, module, and `altId` deep link structures (`CapDetail.aspx?Module=Building&TabName=Building&altId=<PERMIT>`).
+   - `*aspgov.com/Click2GovBP/...` → Click2Gov (e.g. Temple Terrace). Requires session cookie bootstrap and application year/number parsing.
+   - `*maintstar.com/...` → MaintStar Public Record API (e.g. Plant City). Uses JSON search endpoints (`api/Public/Record/Search`).
+   - `*pbc.gov/ePZB/...` or custom → Custom county portals. Note session tokens and CSRF headers.
 6. Capture 3-5 sample permit detail pages and 3-5 appraisal pages covering different
    property types (commercial, industrial, residential, condo, vacant) — save HTML to
    `downloads/<county>/samples/`. These become fixtures for transform validation and the

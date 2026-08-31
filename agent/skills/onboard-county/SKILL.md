@@ -26,23 +26,41 @@ supports it):
 3. **Seed data** — do you already have a parcel list / seed CSV (local file or staged
    at `data/seeds/<county>.csv`)? If not, do you know the county's bulk parcel-roll source,
    or should I research one?
-4. **Sources** — which appraiser portal and permit vendor, or should discovery determine
+4. **Sources & Compute Execution Mode** — which appraiser portal and permit vendor, or should discovery determine
    them? Any sources to explicitly avoid? Sunbiz corporate enrichment (FL) and BBB
    contractor enrichment: yes/no? Other candidates (tax collector, recorder, GIS, code
    enforcement) are added scope with their own harvest/transform plan; operator interest
    only puts a source into discovery — bulk acquisition still requires the feasibility
    check below.
-5. **Scope** — pilot (~25 parcels) then full county, or pilot only? Commercial-first
+   - **Compute Strategy (Local vs Cloud)**: For long-running deep scraping (e.g. Accela deep detail, 100k+ pages),
+     does the operator prefer:
+     - **Option A: Local Warm Worker Pool** (Zero AWS compute cost, single-IP rate-limited, persistent Node child processes).
+     - **Option B: Distributed AWS Lambda Harvester** (Multi-IP egress bypassing single-IP throttling, high throughput, automated cost tracking with `--maxCost` budget caps, self-healing in-flight retry buffer, and end-of-stream dead-letter sweeps).
+     
+     *Interactive AWS Credential Setup & Verification (When Option B is selected)*:
+     1. **Probe Active Identity**: Run `aws sts get-caller-identity` to check for active credentials.
+        - If active: Print `Account ID`, `ARN`, and active `AWS_REGION` and ask operator to confirm.
+        - If unauthenticated: Provide a frictionless 3-option setup walkthrough:
+          - *Method 1 (CLI / SSO)*: `aws configure` or `aws sso login --profile <name>`
+          - *Method 2 (Named Profile)*: `export AWS_PROFILE=<name>`
+          - *Method 3 (Env vars / .env)*: `export AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=... AWS_REGION=us-east-1`
+     2. **Pre-flight Check**: Verify Lambda invoke and S3 read/write permissions for the target deployment.
+     3. **Zero-Blocker Fallback**: If the operator chooses not to configure AWS, automatically fall back to **Option A (Local Warm Worker Pool)**.
+5. **Scope & Publishing Pathway** — pilot (~25 parcels) then full county, or pilot only? Commercial-first
    prioritization?
-6. **US egress** — running from outside the US? County portals geo-block; a US VPN/proxy
+   - **Publishing Pathway**:
+     - **Option 1: Direct DuckDB / Parquet Consolidation** (Recommended for fast publishing: in-process DuckDB/Parquet export with in-memory multi-source joins in ~15 mins, zero PostgreSQL bulk load overhead).
+     - **Option 2: PostgreSQL Warehouse Load** (Loads into Neon/Postgres relational tables using UNLOGGED staging tables and predicate pushdown in ~1-2 hours).
+6. **Live Telemetry & Dashboard** — Start the out-of-process 9-stage lifecycle dashboard (`node scripts/<county>/serve-dashboard.mjs --port=3888`) for real-time rolling-window throughput and ETA tracking without CPU overhead.
+7. **US egress** — running from outside the US? County portals geo-block; a US VPN/proxy
    is required before any local scraping.
-7. **Database** — local Postgres from the stack (default), or a different
+8. **Database** — local Postgres from the stack (default), or a different
    `DATABASE_URL`?
-8. **Existing assets** — prior transform scripts, browser flows, or findings docs for
+9. **Existing assets** — prior transform scripts, browser flows, or findings docs for
    this county? (Check `Counties-trasform-scripts` and the `elephant-pipeline`
    `transforms/`/`flows/`/`docs/` dirs, then confirm findings with the operator before
    redoing work.)
-9. **Publish/serve scope** — is public publishing in scope for this county? If yes: do
+10. **Publish/serve scope** — is public publishing in scope for this county? If yes: do
    Filebase credentials exist, and do the two per-county bucket/IPNS labels exist or need
    creating (`county-open-data-publish` / `county-query-table-publish`)? Where will the
    MCP be deployed (`deploy-open-data-mcp`)?
@@ -91,32 +109,37 @@ Track progress in the county's findings doc (PR'd to `Counties-trasform-scripts`
 7. **Pilot run** — `county-ingest-run` §pilot: ~25 parcels end-to-end, verify every
    artifact class plus DB rows, including residential-skip and permit-less paths. Apply
    the 48-hour feasibility gate before committing to full acquisition.
-8. **Full run** — `county-ingest-run`: start the `CountyIngest` feeder with a bounded
-   window, ramp concurrency stepwise, handle paused invocations. Monitor continuously
-   with `monitoring-county-ingestion`.
-9. **Enrichment** — `sunbiz-corporate-ingest` (FL counties) and `bbb-harvest` (national;
-   refresh as needed).
-10. **Reconcile & wrap-up** — `query-db-loading-matching` verification queries; record
-    final counts; commit code/docs (never data); confirm every artifact-persistence PR
-    (see below) is open and linked from the findings doc.
+8. **Full run & Warm Worker Pool** — `county-ingest-run`: start the `CountyIngest` feeder or
+   streamed `TransformPool` worker pool (pre-compiles Node VM, Cheerio, and transforms to
+   avoid subprocess spawning overhead; stream parcel seed rows with async generators to prevent
+   heap memory exhaustion). Monitor continuously with the 9-stage lifecycle dashboard (`monitoring-county-ingestion`).
+9. **Permit Deep Enrichment & Municipal Adapters** — `county-permit-adapter`: classify trades (roofing,
+   HVAC, solar, pool, plumbing), route municipal portals (Accela, Click2Gov, MaintStar), and run
+   either local warm workers or AWS Lambda distributed scraping with self-healing retry buffers.
+10. **Multi-Source Enrichment** — `sunbiz-corporate-ingest` (FL counties), `bbb-harvest` (multi-trade:
+   Roofing, HVAC, Solar), and `overture-places-ingest` (Census TIGER spatial boundary clipping).
+11. **Consolidation & Reconcile** — Choose Pathway:
+    - **Fast Direct Parquet Export** (`export-<county>-direct-parquet.ts`): build in-memory permit/BBB/Sunbiz
+      indexes and write validated Parquet directly in ~15 mins.
+    - **Postgres Bulk Loader** (`run-<county>-appraisal-bulk-load.ts`): unlogged staging tables, post-COPY
+      indexing, and CTE predicate pushdown.
 
-Stages 11–13 are conditional — run them only **when publishing is in scope** (the
+Stages 12–14 are conditional — run them only **when publishing is in scope** (the
 intake's publish-scope answer). When publishing is excluded, the run completes here,
 after query-DB reconciliation and the artifact/code handoff.
 
-11. **Publish open data** *(when publishing is in scope)* — `county-open-data-publish`: export the reconciled county →
+12. **Publish open data** *(when publishing is in scope)* — `county-open-data-publish`: export the reconciled county →
     1-file-per-property + sharded index → the county's OWN Filebase bucket → re-point its
     IPNS name. PII publish is gated: the loop dry-runs until a human POSTs the approve
     handler on the county's `Publish` object
     (`curl localhost:8080/restate/call/Publish/<county>/approve --json '{}'`).
     Verify published index CID == export index CID and correct `propertyCount` before
     declaring done.
-12. **Index & publish query table** *(when publishing is in scope)* — `county-query-table-publish`: export the flat
+13. **Index & publish query table** *(when publishing is in scope)* — `county-query-table-publish`: export the flat
     per-property query-table Parquet, pass the validation GATE (parquet rows == distinct
-    folio, 0 dup/null folios), publish to the county's OWN IPNS, wire the MCP's
-    `PROPERTY_QUERY_TABLE_MAP`. Needs stage 11's consolidation `manifest.json`
-    (`property_cid`). PII publish stays behind the same approval gate.
-13. **Serve via MCP → NEO** *(when publishing is in scope)* — `deploy-open-data-mcp`: add the county's IPNS name to the
+    folio, 0 dup/null folios), publish to the county's OWN IPNS (configure `SET unsafe_disable_etag_checks = true;`
+    for DuckDB HTTPFS range read compatibility), wire the MCP's `PROPERTY_QUERY_TABLE_MAP`.
+14. **Serve via MCP → NEO** *(when publishing is in scope)* — `deploy-open-data-mcp`: add the county's IPNS name to the
     MCP's `ORACLE_OPEN_DATA_IPNS_MAP`, restart the local MCP (or redeploy the hosted
     MCP) after changing environment variables, confirm NEO renders the county.
 

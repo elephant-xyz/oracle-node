@@ -107,6 +107,10 @@ DB `state_code` is correct-or-null and NEO falls back to `parcel.stateCode`; a p
 token injects wrong values into the null rows. `latitude/longitude` come from the
 `geometries` table, not `addresses`.
 
+### Direct Parquet Export (Alternative Fast Path)
+
+For fast-publishing pipelines, property consolidation can be written directly to a flat Parquet table via `export-<county>-direct-parquet.ts`, bypassing relational JSON chunk generation when downstream consumers query through DuckDB over IPFS/IPNS (`county-query-table-publish`).
+
 ## Step 2 — Upload to Filebase
 
 ```bash

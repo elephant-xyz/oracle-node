@@ -53,6 +53,29 @@ elephant MCP  (env PROPERTY_QUERY_TABLE_MAP)  → DuckDB view `properties`  → 
 All commands run in the **`elephant-query-db`** checkout, county-generic via
 `appraisalSourceForCounty(--county)` → `source_system='<county>_appraiser'`.
 
+### Fast Alternative: Direct In-Process Parquet Export Pipeline
+
+When publishing speed to IPFS/Filebase is prioritized, bypass relational database bulk loading entirely using the **Direct In-Process Parquet Consolidation** script (`export-<county>-direct-parquet.ts`):
+1. Loads parcel seeds and scans transformed appraisal artifacts (`transformed_output.zip` or JSON).
+2. Builds in-memory lookup maps for:
+   - Deep-enriched municipal/county permits.
+   - Sunbiz corporate entity registrations (by address hash & business name).
+   - Multi-trade BBB contractor quality scores (by license, phone, & name).
+3. Directly writes the flat ~37-column Parquet file (`data/artifacts/publish/<county>/query-table.parquet`) in **~15 minutes** (compared to 10+ hours for relational bulk staging and SQL joins).
+
+### DuckDB HTTPFS IPNS Range Read Resilience
+
+When querying mutable IPNS Parquet URLs over HTTPFS via DuckDB or the MCP, gateways can return changing ETags or Range 416 responses when IPNS pointers update.
+
+**Always configure DuckDB connection settings**:
+```sql
+INSTALL httpfs;
+LOAD httpfs;
+SET unsafe_disable_etag_checks = true;
+SET s3_use_ssl = true;
+```
+This disables strict ETag caching in DuckDB's HTTPFS range reader, ensuring stable querying across IPNS pointer mutations without unexpected HTTP 412/416 stream aborts.
+
 > The RTK proxy is an internal HTTP-proxy wrapper some operators route commands through;
 > if you don't use it, ignore this. If commands go through it, invoke as
 > `rtk proxy npm run export:query-table -- --county …` so the `--` passthrough flags

@@ -4,6 +4,35 @@ metadata: {"author":"elephant-xyz"}
 ---
 # Monitoring County Ingestion
 
+## Live Zero-Overhead 9-Stage Dashboard
+
+For visual monitoring without CPU or memory overhead on the ingestion workers, launch the independent dashboard server:
+
+```bash
+node scripts/<county>/serve-dashboard.mjs --port=3888
+```
+
+### Dashboard Architecture & Best Practices
+
+1. **Out-of-Process Polling**:
+   - The dashboard runs on its own isolated Node HTTP process (`http://localhost:3888`).
+   - It reads small JSON progress markers (`progress.json`, `enrichment-progress.json`, `appraisal-bulk-checkpoint.json`) emitted periodically by workers.
+   - Workers use 500ms debounced async writes to eliminate disk write contention.
+2. **9-Stage Lifecycle Tracker**:
+   - Tracks: **Overview**, **Discovery**, **Seed Roll**, **Appraisal Harvest**, **Permits & Trade**, **Sunbiz Corporate**, **BBB Roofer CRM**, **Warehouse**, **Publish & IPFS**.
+   - Highlights the current stage, displays completion percentage, and provides contextual "Next Step" action recommendations.
+3. **Deep-Link URL Routing**:
+   - Implements `history.pushState` client-side navigation (`/overview`, `/permits`, `/crm`, `/warehouse`, `/publish`).
+   - Preserves active tab state across page refreshes and browser reloads.
+4. **Accurate Rolling Rate & ETA Windowing**:
+   - Calculates throughput and ETA exclusively over the most recent 30–60 second sliding window.
+   - Uses active delta counts (`Δsucceeded + Δfailed`), excluding skipped/resumed parcels to prevent distorted 1000+ parcels/min initial spikes.
+   - Formats ETA clearly: `2h 15m remaining • Today at 4:30 PM • 14,200 parcels`.
+
+---
+
+## Command-Line & Durable State Monitoring
+
 All state lives in Restate, the `data/` directory, and Postgres — inspect them directly;
 there are no helper scripts.
 

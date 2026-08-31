@@ -1,10 +1,7 @@
 ---
-name: transform-v2-builder
-description: Help Elephant CLI users build, run, and debug transform v2 handler packages. Use when authoring or repairing county `handler.js` transform packages, using `elephant-cli transform --transform-version 2`, inspecting Browser Flow v2 captures, packaging `--transform-zip`, writing `writeJson`/`writeRelationship` calls, or validating transformed output.
-metadata:
-  author: elephant-xyz
+description: "Help Elephant CLI users build, run, and debug transform v2 handler packages. Use when authoring or repairing county `handler.js` transform packages, using `elephant-cli transform --transform-version 2`, inspecting Browser Flow v2 captures, packaging `--transform-zip`, writing `writeJson`/`writeRelationship` calls, or validating transformed output."
+metadata: {"author":"elephant-xyz"}
 ---
-
 # Transform v2 Builder
 
 ## When To Use
@@ -137,6 +134,17 @@ elephant-cli validate transformed-data.zip
 6. Feed transform errors, validation CSV rows, and relevant capture snippets back into the next repair cycle.
 
 When repairing a handler, change the smallest amount of handler code needed to address the observed transform or validation failure.
+
+## High-Throughput Batch Execution: Warm Worker Pools
+
+When running transforms across a full county (100k–500k+ parcels), executing `elephant-cli transform` in separate child processes per parcel is inefficient. Spawning fresh Node.js processes per parcel incurs heavy V8 startup and module compilation overhead.
+
+**Warm Worker Pool Implementation Guide**:
+- Create a persistent worker (`transform-worker.cjs`) that requires Cheerio and transform modules once on initialization.
+- Maintain an in-memory worker pool (`child_process.fork()`) with concurrency equal to the number of available CPU cores.
+- Communicate via IPC messages: send `{ parcelDir }` and await `{ success, error, stats }`.
+- Read inputs directly from `prepared_site.zip` using in-memory zip handlers (`AdmZip`) rather than unzipping to disk.
+- Result: Increases parcel transform speed from ~2-5 parcels/sec to **30-60+ parcels/sec** while drastically reducing memory churn and thermal throttling.
 
 ## Output Expectations
 
