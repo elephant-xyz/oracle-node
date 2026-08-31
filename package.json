@@ -24,6 +24,7 @@
     "broward:permits:pilot": "node scripts/run-broward-permit-pilot.mjs",
     "broward:permits:load-pilot": "node scripts/load-broward-permit-pilot-to-neon.mjs",
     "broward:permits:run-supported": "node scripts/run-broward-supported-permit-ingest.mjs",
+    "broward:permits:run-bulk": "node scripts/run-broward-bulk-permit-ingest.mjs",
     "query-post-logs": "node scripts/query_post_logs.js",
     "update-elephant-cli": "npm install @elephant-xyz/cli@latest --workspace=prepare/lambdas/downloader --workspace=workflow/lambdas/submit --workspace=workflow/lambdas/pre --workspace=workflow/lambdas/mvl"
   },
