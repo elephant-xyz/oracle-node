@@ -861,6 +861,10 @@ export function createRecoveryStatusReader(
          chunk_stats.*,
          event_stats.*,
          permit_stats.*,
+         permit_inventory_stats.*,
+         permit_bulk_stats.*,
+         permit_list_load_stats.*,
+         sunbiz_match_stats.*,
          EXISTS (
            SELECT 1
            FROM pg_locks
