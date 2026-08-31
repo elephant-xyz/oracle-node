@@ -27,6 +27,7 @@ import {
 import {
   buildTylerDateWindowRequest,
   isTylerRoofPermitCandidate,
+  nextSmallerTylerPageSize,
   normalizeTylerPermitDetailResponse,
   readTylerTotalPages,
 } from "../../scripts/permit-source-adapters/tyler-civic-access.mjs";
@@ -196,6 +197,10 @@ describe("Tyler vendor-wide application-date windows", () => {
       SearchModule: 1,
       PermitCriteria: { ApplyDateFrom: null },
     });
+    expect(nextSmallerTylerPageSize(100)).toBe(50);
+    expect(nextSmallerTylerPageSize(50)).toBe(25);
+    expect(nextSmallerTylerPageSize(25)).toBe(10);
+    expect(nextSmallerTylerPageSize(10)).toBeNull();
   });
 
   it("creates non-overlapping windows and validates anonymous Tyler tenants", () => {

@@ -705,6 +705,18 @@ export async function searchTylerDateWindow(
   const totalPages = expectedPages ?? 0;
   const deduped = dedupeAndSortNormalizedPermits(records);
   if (deduped.length + invalidRecordCount !== totalFound) {
+    const smallerPageSize = nextSmallerTylerPageSize(pageSize);
+    if (smallerPageSize !== null) {
+      return searchTylerDateWindow(
+        session,
+        startDate,
+        endDate,
+        smallerPageSize,
+        maxPages,
+        delayMs,
+        wait,
+      );
+    }
     throw new Error(
       `${session.config.city} Tyler accounted for ${String(deduped.length)} valid and ${String(invalidRecordCount)} invalid of ${String(totalFound)} date-window permits`,
     );
@@ -718,6 +730,19 @@ export async function searchTylerDateWindow(
     invalidRecordCount,
     pages,
   };
+}
+
+/**
+ * Return the next smaller public UI page size for pagination recovery.
+ *
+ * @param {number} pageSize - Current supported page size.
+ * @returns {10 | 25 | 50 | null} Smaller page size or null at minimum.
+ */
+export function nextSmallerTylerPageSize(pageSize) {
+  if (pageSize === 100) return 50;
+  if (pageSize === 50) return 25;
+  if (pageSize === 25) return 10;
+  return null;
 }
 
 /**
