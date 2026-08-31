@@ -1,0 +1,24 @@
+{
+  "requests": [
+    {
+      "key": "input",
+      "request": {
+        "method": "POST",
+        "url": "https://web.bcpa.net/BcpaClient/search.aspx/getParcelInformation",
+        "headers": {
+          "content-type": "application/json",
+          "accept": "application/json, text/javascript, */*; q=0.01",
+          "x-requested-with": "XMLHttpRequest",
+          "origin": "https://web.bcpa.net",
+          "referer": "https://web.bcpa.net/BcpaClient/search.aspx"
+        },
+        "json": {
+          "folioNumber": "{{=it.request_identifier}}",
+          "taxyear": "",
+          "action": "CURRENT",
+          "use": ""
+        }
+      }
+    }
+  ]
+}

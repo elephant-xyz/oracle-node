@@ -1,0 +1,45 @@
+<!doctype html>
+<html>
+  <head>
+    <title>Click2Gov Building Permit - Select Permit Results</title>
+  </head>
+  <body>
+    <table>
+      <thead>
+        <tr>
+          <th>Application Number</th>
+          <th>Address</th>
+          <th>Contractor/Other Name</th>
+          <th>Application Type</th>
+          <th>Application Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>
+            <a
+              href="selectpermit.html?OWASP_CSRFTOKEN=FIXTURE-ONLY&amp;permit.appYearAndNumber=26-00001234&amp;validatePermitView=true"
+              >26-00001234</a
+            >
+          </td>
+          <td>100 SAMPLE BLVD</td>
+          <td>PRIVATE FIXTURE OWNER</td>
+          <td>B-*ROOF RE-ROOF</td>
+          <td>APPROVED</td>
+        </tr>
+        <tr>
+          <td>
+            <a
+              href="selectpermit.html?permit.appYearAndNumber=26-00001234&amp;validatePermitView=true&amp;OWASP_CSRFTOKEN=ANOTHER-FIXTURE"
+              >26-00001234</a
+            >
+          </td>
+          <td>100 SAMPLE BLVD</td>
+          <td>PRIVATE FIXTURE CONTRACTOR</td>
+          <td>B-*ROOF RE-ROOF</td>
+          <td>APPROVED</td>
+        </tr>
+      </tbody>
+    </table>
+  </body>
+</html>

@@ -1,0 +1,246 @@
+# Broward local appraisal acceleration and safe migration
+
+Date: 2026-08-28  
+Scope: local appraisal capture/transform only; no AWS, database, or publication
+
+## Existing implementation and history review
+
+Repository history and read-only GitHub review did not find a second merged
+“warm handoff” implementation or a county pipeline with documented
+~500-parcel/minute throughput.
+
+- oracle-node commit `fd6c22d` is the proven Broward design: four long-lived
+  Elephant CLI parent processes with isolated `TMPDIR`s. This avoids repeated
+  CLI module startup and prevents the fact-sheet builder's fixed
+  `generated-htmls` directory from racing.
+- [oracle-node PR #191](https://github.com/elephant-xyz/oracle-node/pull/191)
+  contains the checkpointed Broward run and accepted 50-parcel artifacts.
+- [oracle-node PR #192](https://github.com/elephant-xyz/oracle-node/pull/192)
+  uses a normal bounded worker pool for Hillsborough, but starts transform
+  scripts per parcel and provides no faster artifact contract.
+- [elephant-cli PR #186](https://github.com/elephant-xyz/elephant-cli/pull/186)
+  is the upstream precedent for data-only transformation: it omits the single
+  `generateFactSheet(tempRoot)` call after the county scripts. It remains open,
+  so installed CLI 1.58.1 has no public switch.
+- [elephant-cli PR #108](https://github.com/elephant-xyz/elephant-cli/pull/108)
+  explored a complementary fact-sheet-only pass by copying transformed JSON to
+  the output before fact-sheet generation. It was closed and is not available
+  in CLI 1.58.1.
+
+The acceleration here keeps the proven long-lived isolated workers. A
+fail-closed in-memory loader applies PR #186's exact one-call omission only in
+query-data-only children; it does not patch `node_modules` on disk. The same
+guard routes Elephant CLI's exact four mapping-script calls and final extractor
+call through a serialized process-warm CommonJS executor. The unchanged county
+entrypoints rerun for every parcel, but Node process startup and dependency
+reloads are removed. If the upstream source no longer contains exactly the
+expected calls, the worker refuses to run. Publishable mode never registers the
+loader or warm script executor.
+
+The old fixed four-row barrier is also replaced with continuous warm handoffs:
+as soon as a worker finishes, it receives the next row. Results are held until
+the contiguous source-order prefix is complete, then `nextRowIndex` is
+atomically renamed into place exactly as before. There is never more than one
+parcel in flight per worker, so source concurrency remains capped at four.
+
+## Artifact contracts
+
+Publishable mode remains the default and keeps the existing layout:
+
+```text
+artifacts/<shard>/<folio>.zip
+captures/<shard>/<folio>.json.gz
+state.json
+results.ndjson
+```
+
+`--query-data-only` uses a separate default output and a deliberately
+incompatible artifact name:
+
+```text
+QUERY_DATA_ONLY_DO_NOT_PUBLISH.json
+query-data-only-artifacts/<shard>/<folio>.query-data-only.zip
+captures/<shard>/<folio>.json.gz
+state.json
+results.ndjson
+```
+
+Every data-only ZIP has all three independent guards:
+
+1. the nonstandard `.query-data-only.zip` suffix;
+2. a ZIP comment stating that it is not publishable;
+3. root `BROWARD_QUERY_DATA_ONLY_DO_NOT_PUBLISH.json` with
+   `publishable: false`.
+
+The artifact inspector rejects `fact_sheet.json`, HTML/assets,
+`*_has_fact_sheet` keys, references to `index.html`, and every broken relative
+IPLD file link. Fact-sheet relationships are not generated and no dangling
+`fact_sheet` reference is retained. A full transform of the same accepted pilot
+captures is used as a reference: every non-fact-sheet `data/*.json` filename
+and canonical JSON value must remain present.
+
+The deferred outputs are explicit:
+
+- `data/index.html`;
+- `data/fact_sheet.json`;
+- `data/relationship_*_to_fact_sheet.json`;
+- data-group `*_has_fact_sheet` relationship entries.
+
+Regeneration uses the preserved seed and compressed captures through the
+unchanged default publishable transform. Data-only ZIPs must never be supplied
+to an uploader. This intentionally reruns the county scripts during final
+publication preparation; the installed CLI's fact-sheet-only experiment was
+never merged, so claiming a supported incremental finalizer would be unsafe.
+
+## Zero-source-traffic pilot benchmark
+
+The accepted 50-parcel capture archive can be imported with
+`--capture-source`. When a capture source is supplied, a missing entry is a
+hard source error; the ingest does **not** fall back to BCPA. Imported captures
+are stored as private gzip JSON before transformation.
+
+```bash
+node scripts/ingest-broward-appraisal-local.mjs \
+  --seed /workspace/downloads/broward/broward-validation-sample-50.csv \
+  --scripts /tmp/Counties-trasform-scripts/broward/scripts \
+  --capture-source /workspace/downloads/broward/broward-validation-sample-50-captures.zip \
+  --output downloads/broward/benchmark-publishable \
+  --concurrency 4
+
+node scripts/ingest-broward-appraisal-local.mjs \
+  --query-data-only \
+  --seed /workspace/downloads/broward/broward-validation-sample-50.csv \
+  --scripts /tmp/Counties-trasform-scripts/broward/scripts \
+  --capture-source /workspace/downloads/broward/broward-validation-sample-50-captures.zip \
+  --output downloads/broward/benchmark-query-data-only-warm \
+  --concurrency 4
+```
+
+Both modes ran on the same 4-vCPU machine, seed, transform revision `5130a7f`,
+capture archive, and concurrency. Shell elapsed time includes worker startup,
+capture import/gzip, transforms, artifact writes, and checkpoints.
+
+| Mode                                    | Elapsed | Parcels/s | Parcels/min | Relative to same-pilot full |
+| --------------------------------------- | ------: | --------: | ----------: | --------------------------: |
+| Full publishable                        | 33.653s |     1.486 |        89.1 |                       1.00× |
+| Data-only, per-script process starts    | 12.418s |     4.026 |       241.6 |                       2.71× |
+| Data-only, process-warm script handoffs |  4.589s |    10.896 |       653.7 |                       7.33× |
+
+The final path is **4.39×** the reported active-run baseline of 2.48
+parcels/s (148.8/min). The same-pilot publishable rate is lower than that live
+average because the accepted sample deliberately spans four geometry
+complexity buckets and 20 usage types; the controlled same-capture 7.33× ratio
+is the fair mode comparison.
+
+All three benchmark invocations imported the provided archive. The capture
+source has no network fallback, so BCPA request count was zero.
+
+Validation command:
+
+```bash
+node scripts/validate-broward-query-data-only.mjs \
+  --artifacts downloads/broward/benchmark-query-data-only-warm/query-data-only-artifacts \
+  --captures /workspace/downloads/broward/broward-validation-sample-50-captures.zip \
+  --reference-artifacts downloads/broward/benchmark-publishable/artifacts \
+  --output downloads/broward/benchmark-query-data-only-warm-validation
+```
+
+Result:
+
+- classified artifacts: 50/50;
+- broken or deferred fact-sheet references: 0;
+- Elephant CLI Lexicon validation: 50/50;
+- full-transform semantic parity: 50/50, covering 2,569 retained JSON files;
+- query-loader dry run: 50 rows / 50 distinct folios;
+- query-table 37-column non-null counts: identical to the accepted pilot,
+  including all 50 parcel identifiers, coordinates, property types, usage
+  types, assessed values, market values, land values, and owners.
+
+The CLI printed its existing “unknown format `percentage`” schema warnings;
+they were also present in prior Broward validation and did not produce
+validation errors.
+
+## Resume and migration procedure
+
+Do not repurpose an existing output directory. Checkpoints now record
+`artifactMode` and `initialRowIndex`; a publishable checkpoint cannot resume in
+query-data-only mode, and a marked data-only directory refuses publishable
+mode.
+
+For a future migration after a run has stopped normally:
+
+1. Read but do not edit the old `state.json`.
+2. Copy its exact `nextRowIndex` value into `--start-row`.
+3. Use a new path containing `query-data-only`.
+4. Keep `--concurrency 4` or lower.
+5. Do not set `--capture-source` for uncaptured remaining rows. New responses
+   will continue to be gzip-compressed in the new output.
+6. Preserve the old output for rows before the handoff. Downstream loading must
+   combine old full artifacts before the boundary with classified data-only
+   artifacts at/after the boundary.
+
+```bash
+node scripts/ingest-broward-appraisal-local.mjs \
+  --query-data-only \
+  --start-row <exact-old-nextRowIndex> \
+  --seed downloads/broward/broward.csv \
+  --scripts /tmp/Counties-trasform-scripts/broward/scripts \
+  --output downloads/broward/full-query-data-only-from-<exact-old-nextRowIndex> \
+  --concurrency 4
+```
+
+Resume that new run with the identical command. Never use
+`--reset-checkpoint` for a resume.
+
+The active 534,309-row run must not be switched while it is running. The code
+path is designed for a new run or an operator-controlled handoff after a clean
+atomic checkpoint; this investigation does not stop, signal, inspect through
+tmux, or modify the live process/output.
+
+## Queue/source-pressure decision
+
+A separate remote capture queue would raise sustained request rate even if its
+instantaneous concurrency remained four, and would require a second durable
+cursor to reconcile with the active checkpoint. It is not enabled here.
+Compressed captures already form a durable local capture queue:
+`--capture-source` drains it with zero BCPA traffic, while a normal run keeps at
+most four source requests in flight. Continuous worker handoffs remove local
+barrier idle time without increasing the tested source concurrency ceiling.
+
+## Live handoff record (2026-08-28)
+
+The publishable process loaded before the acceleration commits had no signal
+handler for a graceful checkpoint stop. It checkpointed only after each ordered
+four-row window. The complete process group was therefore frozen first, and
+the already atomically renamed checkpoint was used as the immutable boundary:
+
+- old `nextRowIndex` and attempted count: **39,164**;
+- old successful publishable artifacts: **38,837**;
+- old failures: **327**;
+- frozen old-state SHA-256:
+  `edd6c48681eb98670da6a985ab35ca27a805a4236d45c0fbe89e70047097c95b`;
+- no old result rows existed at or above the boundary;
+- the old artifact for row 39,164 and old captures for rows
+  39,164–39,167 remain preserved in place but are explicitly excluded from
+  reconciliation.
+
+The immutable local manifest is
+`downloads/broward/full-query-data-only-from-39164/handoff-manifest.json`
+(SHA-256
+`37394e94b61b7a46c7cc570a250da4d2786836cbb578308b7c3e8ed4e1f4f02d`).
+The post-boundary runner uses transform revision `5130a7fa2680`, live BCPA
+capture mode, four workers, and no `--capture-source`:
+
+```bash
+node scripts/ingest-broward-appraisal-local.mjs \
+  --query-data-only \
+  --start-row 39164 \
+  --seed downloads/broward/broward.csv \
+  --scripts /tmp/Counties-trasform-scripts/broward/scripts \
+  --output downloads/broward/full-query-data-only-from-39164 \
+  --concurrency 4
+```
+
+Reconciliation is half-open and non-overlapping: use old publishable outcomes
+only for `[0, 39164)` and new query-data-only outcomes only for
+`[39164, 534309)`. Never infer the boundary from artifact presence.

@@ -2,6 +2,17 @@
 
 import puppeteer from "puppeteer";
 
+import {
+  checkpointCapturedPermit,
+  checkpointCompletedSearchPage,
+  createPermitAdapterCheckpoint,
+  normalizePermitSearchQuery,
+  readSourceNumber,
+  readSourceText,
+  validateOfficialHttpsUrl,
+  waitForPermitDelay,
+} from "./bounded-permit-common.mjs";
+
 /**
  * @typedef {object} TylerCivicAccessConfig
  * @property {string} portalBaseUrl - Civic Access base URL ending at `/apps/selfservice`.
@@ -197,6 +208,23 @@ function readApiResult(payload) {
       : [],
     TotalFound: readNumber(payload.Result.TotalFound),
   };
+}
+
+/**
+ * Read Tyler's total-page count, accepting zero for an empty result set.
+ *
+ * @param {unknown} payload - Parsed public search response.
+ * @returns {number} Non-negative source page count.
+ */
+export function readTylerTotalPages(payload) {
+  if (
+    !isRecord(payload) ||
+    payload.Success !== true ||
+    !isRecord(payload.Result)
+  ) {
+    throw new Error("Tyler search response has no pagination result");
+  }
+  return readNonNegativeInteger(payload.Result.TotalPages, "Tyler TotalPages");
 }
 
 /**
@@ -496,4 +524,657 @@ export async function probeTylerCivicAccess({
     records: dedupeAndSortNormalizedPermits(records),
     observations,
   };
+}
+
+/**
+ * @typedef {import("./bounded-permit-common.mjs").NormalizedMunicipalPermit} NormalizedMunicipalPermit
+ * @typedef {import("./bounded-permit-common.mjs").PermitAdapterCheckpoint} PermitAdapterCheckpoint
+ * @typedef {import("./bounded-permit-common.mjs").PermitSearchQuery} PermitSearchQuery
+ */
+
+/**
+ * Broward-compatible configuration for bounded Tyler source traversal.
+ *
+ * @typedef {TylerCivicAccessConfig & {
+ *   officialSourceUrl: string,
+ *   anonymousSearchCertified: boolean,
+ *   coverageNote: string
+ * }} BoundedTylerCivicAccessConfig
+ */
+
+/**
+ * One public permit entity retained from a Tyler search page.
+ *
+ * @typedef {object} TylerPermitCandidate
+ * @property {string} caseId - Public Civic Access entity identifier.
+ * @property {string} permitNumber - Public permit number.
+ * @property {Record<string, unknown>} entity - Search result used for reconciliation/fallbacks.
+ */
+
+/**
+ * Detail-parser context tying a Tyler result to its property-first lookup.
+ *
+ * @typedef {object} TylerPermitDetailContext
+ * @property {BoundedTylerCivicAccessConfig} config - Validated jurisdiction source configuration.
+ * @property {PermitSearchQuery} query - Exact submitted property query.
+ * @property {number} searchPage - One-based result page.
+ * @property {string} searchUrl - Exact public search route.
+ * @property {TylerPermitCandidate} candidate - Permit search entity being detailed.
+ */
+
+/**
+ * Per-page live-source evidence from a bounded Tyler probe.
+ *
+ * @typedef {object} TylerBoundedPageObservation
+ * @property {number} pageNumber - One-based result page.
+ * @property {number} httpStatus - Public search API status.
+ * @property {number} entityCount - Mixed-module entities on this page.
+ * @property {number} permitCandidateCount - Permit entities on this page.
+ * @property {number} reportedTotal - Total mixed-module results reported by Tyler.
+ * @property {number} reportedTotalPages - Total mixed-module pages reported by Tyler.
+ */
+
+/**
+ * Result of one bounded Tyler property-first adapter run.
+ *
+ * @typedef {object} TylerBoundedProbeResult
+ * @property {readonly NormalizedMunicipalPermit[]} records - Captured detail-backed records.
+ * @property {PermitAdapterCheckpoint} checkpoint - Durable resume state after this run.
+ * @property {readonly TylerBoundedPageObservation[]} observations - Search-page evidence.
+ * @property {number} reportedTotal - Largest mixed-module total observed.
+ * @property {number} reportedTotalPages - Largest page count observed.
+ * @property {boolean} paginationTruncated - Whether source pages exceeded the approved ceiling.
+ * @property {boolean} detailsTruncated - Whether detail candidates exceeded the approved ceiling.
+ */
+
+const MAX_BOUNDED_TYLER_PAGES = 3;
+const MAX_BOUNDED_TYLER_DETAILS = 10;
+const MIN_BOUNDED_TYLER_DETAIL_DELAY_MS = 250;
+
+/**
+ * Normalize a detail-backed public Tyler permit into the municipal contract.
+ *
+ * Search identity and detail identity must agree. Folio-mode records also must
+ * return the exact submitted 12-character parcel identifier; a global-search
+ * hit in some unrelated field is not accepted as property provenance.
+ * Assignee/contact fields present in Tyler's detail payload are never copied.
+ *
+ * @param {unknown} payload - Parsed `api/energov/permits/permitdetail` response.
+ * @param {TylerPermitDetailContext} context - Search/detail reconciliation context.
+ * @returns {NormalizedMunicipalPermit} Closed normalized permit row.
+ */
+export function normalizeTylerPermitDetailResponse(payload, context) {
+  const config = validateBoundedTylerConfig(context.config);
+  const query = normalizePermitSearchQuery(context.query);
+  if (
+    !Number.isInteger(context.searchPage) ||
+    context.searchPage < 1 ||
+    readSourceText(context.searchUrl) === null
+  ) {
+    throw new Error("Tyler detail context has invalid search provenance");
+  }
+  if (
+    !isRecord(payload) ||
+    payload.Success !== true ||
+    !isRecord(payload.Result)
+  ) {
+    const sourceMessage =
+      isRecord(payload) && typeof payload.ErrorMessage === "string"
+        ? payload.ErrorMessage
+        : null;
+    throw new Error(
+      sourceMessage ?? "Tyler permit detail returned an invalid response",
+    );
+  }
+
+  const detail = payload.Result;
+  const caseId = readSourceText(context.candidate.caseId);
+  const expectedPermitNumber = readSourceText(context.candidate.permitNumber);
+  const permitNumber = readSourceText(detail.PermitNumber);
+  if (
+    caseId === null ||
+    expectedPermitNumber === null ||
+    permitNumber === null
+  ) {
+    throw new Error("Tyler permit detail is missing source identity");
+  }
+  if (permitNumber !== expectedPermitNumber) {
+    throw new Error(
+      `Tyler detail permit ${permitNumber} differs from search result ${expectedPermitNumber}`,
+    );
+  }
+  const detailPermitId = readSourceText(detail.PermitId);
+  if (
+    detailPermitId !== null &&
+    detailPermitId.toLowerCase() !== caseId.toLowerCase()
+  ) {
+    throw new Error("Tyler detail entity differs from the search result");
+  }
+
+  const searchParcel = readSourceText(context.candidate.entity.MainParcel);
+  const detailParcel = readSourceText(detail.MainParcelNumber);
+  if (
+    searchParcel !== null &&
+    detailParcel !== null &&
+    searchParcel !== detailParcel
+  ) {
+    throw new Error("Tyler detail parcel differs from the search result");
+  }
+  const parcelIdentifier = detailParcel ?? searchParcel;
+  if (
+    query.kind === "folio" &&
+    (parcelIdentifier === null ||
+      parcelIdentifier.toUpperCase() !== query.value)
+  ) {
+    throw new Error(
+      `Tyler permit parcel does not match submitted folio ${query.value}`,
+    );
+  }
+
+  const recordType =
+    readSourceText(detail.PermitType) ??
+    readSourceText(context.candidate.entity.CaseType);
+  const workClass =
+    readSourceText(detail.WorkClassName) ??
+    readSourceText(context.candidate.entity.CaseWorkclass);
+  const detailUrl = buildPermitDetailUrl(config.portalBaseUrl, caseId);
+  const workLocation =
+    readTylerAddress(detail.MainAddress) ??
+    readSourceText(context.candidate.entity.AddressDisplay) ??
+    (isRecord(context.candidate.entity.Address)
+      ? readTylerAddress(context.candidate.entity.Address)
+      : null);
+
+  return {
+    source_system: config.sourceSystem,
+    source_vendor: "tyler_energov_civic_access",
+    source_url: detailUrl,
+    source_record_id: caseId,
+    record_key: `${config.sourceSystem}:${caseId}`,
+    city: config.city,
+    permit_number: permitNumber,
+    parcel_identifier: parcelIdentifier,
+    work_location: workLocation,
+    permit_issue_date:
+      readIsoDate(detail.IssueDate) ??
+      readIsoDate(context.candidate.entity.IssueDate),
+    application_date:
+      readIsoDate(detail.ApplyDate) ??
+      readIsoDate(context.candidate.entity.ApplyDate),
+    expiration_date:
+      readIsoDate(detail.ExpireDate) ??
+      readIsoDate(context.candidate.entity.ExpireDate),
+    finalized_date:
+      readIsoDate(detail.FinalizeDate) ??
+      readIsoDate(context.candidate.entity.FinalDate),
+    record_status:
+      readSourceText(detail.PermitStatus) ??
+      readSourceText(context.candidate.entity.CaseStatus),
+    record_type: recordType,
+    work_class: workClass,
+    project_description:
+      readSourceText(detail.Description) ??
+      readSourceText(context.candidate.entity.Description),
+    square_feet: readSourceNumber(detail.SquareFeet),
+    job_value: readSourceNumber(detail.Value),
+    is_roof_permit: /\broof(?:ing)?\b/iu.test(
+      [recordType, workClass].filter((value) => value !== null).join(" "),
+    ),
+    provenance: {
+      official_source_url: config.officialSourceUrl,
+      search_url: context.searchUrl,
+      detail_url: detailUrl,
+      query_kind: query.kind,
+      query_value: query.value,
+      search_page: context.searchPage,
+    },
+    raw: {
+      case_id: caseId,
+      ivr_number: readSourceText(detail.IVRNumber),
+      project_name:
+        readSourceText(detail.ProjectName) ??
+        readSourceText(context.candidate.entity.ProjectName),
+      district_name: readSourceText(detail.DistrictName),
+      issued: typeof detail.Issued === "boolean" ? detail.Issued : null,
+    },
+  };
+}
+
+/**
+ * Run a checkpointed, low-rate Tyler property-first lookup.
+ *
+ * The adapter uses the public hash routes exactly as the rendered Civic Access
+ * UI does. It validates the submitted keyword/page request, captures at most
+ * three ten-result pages and ten permit details, and accepts no credentials.
+ * A direct API call is intentionally not used because Tyler requires tenant
+ * bootstrap from the public portal session.
+ *
+ * @param {object} params - Bounded adapter parameters.
+ * @param {BoundedTylerCivicAccessConfig} params.config - Jurisdiction configuration.
+ * @param {PermitSearchQuery} params.query - Exact folio or situs-address query.
+ * @param {number} [params.maxPages=3] - Search-page ceiling, never above three.
+ * @param {number} [params.maxDetails=10] - Detail ceiling, never above ten.
+ * @param {number} [params.searchDelayMs=1500] - Delay between search pages, minimum 1000 ms.
+ * @param {number} [params.detailDelayMs=500] - Delay between detail pages, minimum 250 ms.
+ * @param {PermitAdapterCheckpoint} [params.checkpoint] - Optional validated resume state.
+ * @param {(checkpoint: PermitAdapterCheckpoint) => Promise<void>} [params.onCheckpoint] - Durable state callback after each detail/page.
+ * @param {number} [params.navigationTimeoutMs=45000] - Public route timeout.
+ * @param {number} [params.responseTimeoutMs=45000] - Public API response timeout.
+ * @returns {Promise<TylerBoundedProbeResult>} Captures, provenance, and resume state.
+ */
+export async function probeBoundedTylerCivicAccess({
+  config: rawConfig,
+  query: rawQuery,
+  maxPages = MAX_BOUNDED_TYLER_PAGES,
+  maxDetails = MAX_BOUNDED_TYLER_DETAILS,
+  searchDelayMs = 1_500,
+  detailDelayMs = 500,
+  checkpoint: suppliedCheckpoint,
+  onCheckpoint,
+  navigationTimeoutMs = DEFAULT_NAVIGATION_TIMEOUT_MS,
+  responseTimeoutMs = DEFAULT_SEARCH_TIMEOUT_MS,
+}) {
+  const config = validateBoundedTylerConfig(rawConfig);
+  const query = normalizePermitSearchQuery(rawQuery);
+  validateBoundedTylerLimits({
+    maxPages,
+    maxDetails,
+    searchDelayMs,
+    detailDelayMs,
+  });
+  let checkpoint =
+    suppliedCheckpoint ??
+    createPermitAdapterCheckpoint(config.sourceSystem, query);
+  assertCheckpointMatches(checkpoint, config.sourceSystem, query);
+  if (checkpoint.completedDetailIds.length > maxDetails) {
+    throw new Error(
+      "Tyler maxDetails is below the number already captured in checkpoint",
+    );
+  }
+
+  const executablePath = resolveChromeExecutablePath();
+  const browser = await puppeteer.launch({
+    headless: true,
+    ...(executablePath === null ? {} : { executablePath }),
+  });
+  /** @type {TylerBoundedPageObservation[]} */
+  const observations = [];
+  let reportedTotal = 0;
+  let reportedTotalPages = 0;
+  let paginationTruncated = false;
+  let detailsTruncated = false;
+
+  try {
+    for (let pageNumber = 1; pageNumber <= maxPages; pageNumber += 1) {
+      if (pageNumber > 1) await waitForPermitDelay(searchDelayMs);
+      const searchUrl = buildPagedSearchRouteUrl(
+        config.portalBaseUrl,
+        query.value,
+        pageNumber,
+      );
+      const searchPage = await browser.newPage();
+      /** @type {unknown} */
+      let payload;
+      let httpStatus = 0;
+      try {
+        const searchEndpoint =
+          `${config.portalBaseUrl}/api/energov/search/search`.toLowerCase();
+        const responsePromise = searchPage.waitForResponse(
+          (response) =>
+            response.url().toLowerCase() === searchEndpoint &&
+            response.request().method() === "POST",
+          { timeout: responseTimeoutMs },
+        );
+        await searchPage.goto(searchUrl, {
+          waitUntil: "domcontentloaded",
+          timeout: navigationTimeoutMs,
+        });
+        const response = await responsePromise;
+        assertTylerSearchRequest(response, query.value, pageNumber);
+        payload = /** @type {unknown} */ (await response.json());
+        httpStatus = response.status();
+      } finally {
+        await searchPage.close().catch(() => undefined);
+      }
+
+      const result = readApiResult(payload);
+      const totalPages = readTylerTotalPages(payload);
+      const totalFound = result.TotalFound ?? result.EntityResults.length;
+      reportedTotal = Math.max(reportedTotal, totalFound);
+      reportedTotalPages = Math.max(reportedTotalPages, totalPages);
+      paginationTruncated ||= totalPages > maxPages;
+
+      const candidates = readTylerPermitCandidates(result.EntityResults);
+      observations.push({
+        pageNumber,
+        httpStatus,
+        entityCount: result.EntityResults.length,
+        permitCandidateCount: candidates.length,
+        reportedTotal: totalFound,
+        reportedTotalPages: totalPages,
+      });
+
+      if (!checkpoint.completedSearchPages.includes(pageNumber)) {
+        let completedWholePage = true;
+        for (const candidate of candidates) {
+          if (checkpoint.completedDetailIds.includes(candidate.caseId)) {
+            continue;
+          }
+          if (checkpoint.completedDetailIds.length >= maxDetails) {
+            detailsTruncated = true;
+            completedWholePage = false;
+            break;
+          }
+          if (checkpoint.completedDetailIds.length > 0) {
+            await waitForPermitDelay(detailDelayMs);
+          }
+          const detail = await captureTylerPermitDetail({
+            browser,
+            config,
+            query,
+            candidate,
+            searchPage: pageNumber,
+            searchUrl,
+            navigationTimeoutMs,
+            responseTimeoutMs,
+          });
+          checkpoint = checkpointCapturedPermit(checkpoint, detail);
+          if (onCheckpoint !== undefined) await onCheckpoint(checkpoint);
+        }
+
+        if (completedWholePage) {
+          checkpoint = checkpointCompletedSearchPage(checkpoint, pageNumber);
+          if (onCheckpoint !== undefined) await onCheckpoint(checkpoint);
+        }
+      }
+
+      if (
+        detailsTruncated ||
+        pageNumber >= totalPages ||
+        checkpoint.completedDetailIds.length >= maxDetails
+      ) {
+        if (
+          checkpoint.completedDetailIds.length >= maxDetails &&
+          (pageNumber < totalPages ||
+            !checkpoint.completedSearchPages.includes(pageNumber))
+        ) {
+          detailsTruncated = true;
+        }
+        break;
+      }
+    }
+  } finally {
+    await browser.close().catch(() => undefined);
+  }
+
+  return {
+    records: checkpoint.records,
+    checkpoint,
+    observations,
+    reportedTotal,
+    reportedTotalPages,
+    paginationTruncated,
+    detailsTruncated,
+  };
+}
+
+/**
+ * Validate the extended Tyler source configuration and anonymous-access gate.
+ *
+ * @param {BoundedTylerCivicAccessConfig} rawConfig - Candidate source configuration.
+ * @returns {BoundedTylerCivicAccessConfig} Normalized configuration.
+ */
+function validateBoundedTylerConfig(rawConfig) {
+  const base = validateConfig(rawConfig);
+  if (rawConfig.anonymousSearchCertified !== true) {
+    throw new Error(
+      `${base.city} anonymous Tyler record search is not certified; login will not be attempted`,
+    );
+  }
+  const officialSourceUrl = validateOfficialHttpsUrl(
+    rawConfig.officialSourceUrl,
+    "Tyler officialSourceUrl",
+  );
+  const coverageNote = readSourceText(rawConfig.coverageNote);
+  if (coverageNote === null) {
+    throw new Error("Tyler coverageNote is required");
+  }
+  return {
+    ...base,
+    officialSourceUrl,
+    anonymousSearchCertified: true,
+    coverageNote,
+  };
+}
+
+/**
+ * Validate hard request ceilings before launching Chrome.
+ *
+ * @param {object} value - Candidate limits.
+ * @param {number} value.maxPages - Search page ceiling.
+ * @param {number} value.maxDetails - Detail ceiling.
+ * @param {number} value.searchDelayMs - Inter-page delay.
+ * @param {number} value.detailDelayMs - Inter-detail delay.
+ * @returns {void}
+ */
+function validateBoundedTylerLimits({
+  maxPages,
+  maxDetails,
+  searchDelayMs,
+  detailDelayMs,
+}) {
+  if (
+    !Number.isInteger(maxPages) ||
+    maxPages < 1 ||
+    maxPages > MAX_BOUNDED_TYLER_PAGES
+  ) {
+    throw new Error(
+      `Tyler maxPages must be an integer from 1 through ${String(MAX_BOUNDED_TYLER_PAGES)}`,
+    );
+  }
+  if (
+    !Number.isInteger(maxDetails) ||
+    maxDetails < 1 ||
+    maxDetails > MAX_BOUNDED_TYLER_DETAILS
+  ) {
+    throw new Error(
+      `Tyler maxDetails must be an integer from 1 through ${String(MAX_BOUNDED_TYLER_DETAILS)}`,
+    );
+  }
+  if (!Number.isInteger(searchDelayMs) || searchDelayMs < MIN_DELAY_MS) {
+    throw new Error(
+      `Tyler searchDelayMs must be at least ${String(MIN_DELAY_MS)}`,
+    );
+  }
+  if (
+    !Number.isInteger(detailDelayMs) ||
+    detailDelayMs < MIN_BOUNDED_TYLER_DETAIL_DELAY_MS
+  ) {
+    throw new Error(
+      `Tyler detailDelayMs must be at least ${String(MIN_BOUNDED_TYLER_DETAIL_DELAY_MS)}`,
+    );
+  }
+}
+
+/**
+ * Assert that supplied resume state is bound to the active query.
+ *
+ * @param {PermitAdapterCheckpoint} checkpoint - Candidate state.
+ * @param {string} sourceSystem - Active source key.
+ * @param {PermitSearchQuery} query - Active query.
+ * @returns {void}
+ */
+function assertCheckpointMatches(checkpoint, sourceSystem, query) {
+  if (
+    checkpoint.sourceSystem !== sourceSystem ||
+    checkpoint.query.kind !== query.kind ||
+    checkpoint.query.value !== query.value
+  ) {
+    throw new Error("Tyler checkpoint does not match source/query");
+  }
+}
+
+/**
+ * Build the rendered public route for one exact page.
+ *
+ * @param {string} portalBaseUrl - Validated portal base.
+ * @param {string} query - Exact property query.
+ * @param {number} pageNumber - One-based page.
+ * @returns {string} Public hash route.
+ */
+function buildPagedSearchRouteUrl(portalBaseUrl, query, pageNumber) {
+  const params = new URLSearchParams({
+    m: "1",
+    fm: "1",
+    ps: "10",
+    pn: String(pageNumber),
+    em: "true",
+    st: query,
+  });
+  return `${portalBaseUrl}#/search?${params.toString()}`;
+}
+
+/**
+ * Verify the rendered Tyler UI submitted the intended keyword and page.
+ *
+ * @param {import("puppeteer").HTTPResponse} response - Captured search API response.
+ * @param {string} expectedKeyword - Exact property query.
+ * @param {number} expectedPage - One-based requested page.
+ * @returns {void}
+ */
+function assertTylerSearchRequest(response, expectedKeyword, expectedPage) {
+  const postData = response.request().postData();
+  if (typeof postData !== "string") {
+    throw new Error("Tyler search request body is unavailable");
+  }
+  const parsed = /** @type {unknown} */ (JSON.parse(postData));
+  if (
+    !isRecord(parsed) ||
+    readSourceText(parsed.Keyword) !== expectedKeyword ||
+    parsed.ExactMatch !== true ||
+    parsed.PageNumber !== expectedPage ||
+    parsed.PageSize !== 10
+  ) {
+    throw new Error("Tyler UI submitted unexpected search parameters");
+  }
+}
+
+/**
+ * Retain only permit entities with complete public identity.
+ *
+ * @param {readonly unknown[]} entities - Mixed-module search entities.
+ * @returns {readonly TylerPermitCandidate[]} Permit candidates.
+ */
+function readTylerPermitCandidates(entities) {
+  /** @type {TylerPermitCandidate[]} */
+  const candidates = [];
+  for (const value of entities) {
+    if (!isRecord(value) || !isPermitEntity(value)) continue;
+    const caseId = readSourceText(value.CaseId);
+    const permitNumber = readSourceText(value.CaseNumber);
+    if (caseId === null || permitNumber === null) {
+      throw new Error("Tyler permit search result is missing identity");
+    }
+    candidates.push({ caseId, permitNumber, entity: value });
+  }
+  return candidates;
+}
+
+/**
+ * Capture one public detail through the initialized Tyler browser session.
+ *
+ * @param {object} params - Detail request parameters.
+ * @param {import("puppeteer").Browser} params.browser - Initialized browser.
+ * @param {BoundedTylerCivicAccessConfig} params.config - Validated source configuration.
+ * @param {PermitSearchQuery} params.query - Exact property query.
+ * @param {TylerPermitCandidate} params.candidate - Search result identity.
+ * @param {number} params.searchPage - One-based source result page.
+ * @param {string} params.searchUrl - Exact source search route.
+ * @param {number} params.navigationTimeoutMs - Route timeout.
+ * @param {number} params.responseTimeoutMs - API response timeout.
+ * @returns {Promise<NormalizedMunicipalPermit>} Detail-backed normalized row.
+ */
+async function captureTylerPermitDetail({
+  browser,
+  config,
+  query,
+  candidate,
+  searchPage,
+  searchUrl,
+  navigationTimeoutMs,
+  responseTimeoutMs,
+}) {
+  const page = await browser.newPage();
+  try {
+    const detailEndpoint =
+      `${config.portalBaseUrl}/api/energov/permits/permitdetail`.toLowerCase();
+    const responsePromise = page.waitForResponse(
+      (response) =>
+        response.url().toLowerCase() === detailEndpoint &&
+        response.request().method() === "POST",
+      { timeout: responseTimeoutMs },
+    );
+    await page.goto(
+      buildPermitDetailUrl(config.portalBaseUrl, candidate.caseId),
+      {
+        waitUntil: "domcontentloaded",
+        timeout: navigationTimeoutMs,
+      },
+    );
+    const response = await responsePromise;
+    const body = response.request().postData();
+    const parsedBody =
+      typeof body === "string"
+        ? /** @type {unknown} */ (JSON.parse(body))
+        : null;
+    if (
+      !isRecord(parsedBody) ||
+      readSourceText(parsedBody.EntityId)?.toLowerCase() !==
+        candidate.caseId.toLowerCase() ||
+      parsedBody.ModuleId !== 1
+    ) {
+      throw new Error("Tyler UI submitted unexpected permit detail identity");
+    }
+    const payload = /** @type {unknown} */ (await response.json());
+    return normalizeTylerPermitDetailResponse(payload, {
+      config,
+      query,
+      searchPage,
+      searchUrl,
+      candidate,
+    });
+  } finally {
+    await page.close().catch(() => undefined);
+  }
+}
+
+/**
+ * Read a Tyler address serialized either as text or a structured object.
+ *
+ * @param {unknown} value - Public Tyler address field.
+ * @returns {string | null} Display address or `null`.
+ */
+function readTylerAddress(value) {
+  const text = readSourceText(value);
+  if (text !== null) return text;
+  if (!isRecord(value)) return null;
+  return (
+    readSourceText(value.FullAddress) ??
+    readSourceText(value.AddressDisplay) ??
+    readSourceText(value.FormattedAddress)
+  );
+}
+
+/**
+ * Require a non-negative integer from a public pagination envelope.
+ *
+ * @param {unknown} value - Candidate count.
+ * @param {string} fieldName - Source field used in errors.
+ * @returns {number} Non-negative integer.
+ */
+function readNonNegativeInteger(value, fieldName) {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
+    throw new Error(`${fieldName} must be a non-negative integer`);
+  }
+  return value;
 }

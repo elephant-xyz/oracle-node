@@ -1,0 +1,1975 @@
+From de4f9d7fb626a9d7c8907d1e91b74e45d72cb23a Mon Sep 17 00:00:00 2001
+From: Cursor Agent <cursoragent@cursor.com>
+Date: Fri, 28 Aug 2026 16:00:21 +0000
+Subject: [PATCH 1/2] Add Broward local appraisal loader
+
+---
+ README.md                           |  33 ++
+ scripts/run-bulk-data-load.ts       | 267 +++++++----
+ src/loader/appraisal-artifacts.ts   | 268 +++++++++++
+ src/loader/appraisal-geometry.ts    |  14 +-
+ src/loader/appraisal-local-stage.ts | 675 ++++++++++++++++++++++++++++
+ src/loader/appraisal.ts             |  12 +-
+ src/loader/index.ts                 |   2 +
+ tests/broward-local-loader.test.ts  | 372 +++++++++++++++
+ 8 files changed, 1540 insertions(+), 103 deletions(-)
+ create mode 100644 src/loader/appraisal-artifacts.ts
+ create mode 100644 src/loader/appraisal-local-stage.ts
+ create mode 100644 tests/broward-local-loader.test.ts
+
+diff --git a/README.md b/README.md
+index fdbf9c43d7b3e719de7ddaf111286a83059a5468..dfb0fcae46e9cd08dd968c27543b8a516adc2958 100644
+--- a/README.md
++++ b/README.md
+@@ -62,3 +62,36 @@ npm run load:bulk -- \
+   --tracks bbb \
+   --bbb-prefix permit-harvest/bbb/category-data/browser-harvest-v1/profiles/
+ ```
++
++## Local appraisal artifacts
++
++The appraisal track can read canonical `<folio>.zip` artifacts from either a
++flat directory or a sharded tree such as
++`/workspace/downloads/broward/full-ingestion/artifacts/<shard>/<folio>.zip`.
++Supplying `--appraisal-local-dir` leaves the existing S3 bucket/prefix path
++unchanged and avoids AWS reads for the appraisal track.
++
++Use the bounded dry-run stage to validate the 50-artifact Broward pilot without
++`DATABASE_URL` or AWS credentials:
++
++```bash
++npm run load:bulk -- \
++  --tracks appraisal \
++  --jurisdiction-key broward_appraiser \
++  --appraisal-local-dir /workspace/downloads/broward/appraisal-validation-50 \
++  --dry-run \
++  --limit 50 \
++  --batch-size 50 \
++  --stage-dir .loader-runs/broward-pilot
++```
++
++The report reconciles artifacts, `properties`, parcels, distinct folios, and
++row-level source metadata. Batch CSVs are deleted after serialization, and the
++checkpoint in `--stage-dir` makes reruns skip completed artifacts. Use separate
++`--dry-run-checkpoint` and `--dry-run-report` paths when multiple validations
++share a stage directory.
++
++When a database is intentionally available, omit `--dry-run` to run the same
++local source through the existing resumable batch COPY/merge path. A positive
++`--batch-size` bounds staging disk usage to one batch. This repository does not
++load or publish data merely by configuring the local source.
+diff --git a/scripts/run-bulk-data-load.ts b/scripts/run-bulk-data-load.ts
+index 5b5ed33ab2516dcfca0b05b9d8f6797f0acd2a4d..00975fd9c597ff6833e6fbcd94674385c887d8f9 100644
+--- a/scripts/run-bulk-data-load.ts
++++ b/scripts/run-bulk-data-load.ts
+@@ -5,13 +5,11 @@ import type { Writable } from "node:stream";
+ import { pipeline } from "node:stream/promises";
+ import { fileURLToPath } from "node:url";
+ 
+-import AdmZip from "adm-zip";
+ import { GetObjectCommand, ListObjectsV2Command, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+ import { from as copyFrom } from "pg-copy-streams";
+ import { Client, Pool, type PoolClient } from "pg";
+ 
+ import {
+-  APPRAISAL_SOURCE_PAYLOAD_SIDECAR,
+   BULK_STAGE_COLUMNS,
+   addSunbizAddressReferencesToRows,
+   assertAppraisalPrefixIsScoped,
+@@ -23,7 +21,8 @@ import {
+   isLeePermitRecordSelected,
+   isSunbizAddressRecordSelected,
+   isSunbizClassRecordSelected,
+-  mapAppraisalTransformedFile,
++  listLocalAppraisalArtifacts,
++  mapAppraisalArtifactZip,
+   mapBbbBusinessProfile,
+   mapLeePermitDetail,
+   mapNormalizedCityPermit,
+@@ -33,16 +32,17 @@ import {
+   mapSunbizAnnualReportsFromRegistration,
+   mapSunbizClassRecord,
+   mergeBulkStageTable,
+-  parseAppraisalSourcePayloadSidecar,
+   parseS3Uri,
+   PLACES_TABLE_ORDER,
+   preparedRowsContainSelectedParcel,
+   readBulkTableColumns,
+   readJsonArtifactRecords,
++  readLocalAppraisalArtifactBuffer,
+   readSunbizAddressSourceRecordKey,
+   readSunbizRelatedAddressPair,
+   serializeBulkStageCsvHeader,
+   serializeBulkStageCsvRow,
++  stageLocalAppraisalDryRun,
+   type BulkMergeResult,
+   type BulkTableColumn,
+   type JsonObject,
+@@ -78,6 +78,7 @@ type PermitFormat = "accela-detail" | "normalized-jsonl";
+ 
+ type BulkLoaderOptions = {
+   readonly appraisalCountyName: string | null;
++  readonly appraisalLocalDir: string | null;
+   readonly appraisalPrefix: string;
+   readonly appraisalStateCode: string | null;
+   /** Artifacts per batch for disk-bounded appraisal loading. 0 = single-batch (legacy). */
+@@ -88,6 +89,9 @@ type BulkLoaderOptions = {
+   readonly placesRelease: string | null;
+   readonly bucket: string;
+   readonly concurrency: number;
++  readonly dryRun: boolean;
++  readonly dryRunCheckpoint: string | null;
++  readonly dryRunReport: string | null;
+   readonly envFile: string;
+   /** When true, skip appraisal artifacts whose URI is already loaded in Neon (cadence re-runs). */
+   readonly incremental: boolean;
+@@ -171,6 +175,7 @@ const APPRAISAL_JURISDICTION_METADATA = new Map<
+   { readonly countyName: string; readonly stateCode: string }
+ >([
+   ["lee_appraiser", { countyName: "Lee", stateCode: "FL" }],
++  ["broward_appraiser", { countyName: "Broward", stateCode: "FL" }],
+   ["miami_dade_appraiser", { countyName: "Miami-Dade", stateCode: "FL" }],
+   ["orange_appraiser", { countyName: "Orange", stateCode: "FL" }],
+   ["palm_beach_appraiser", { countyName: "Palm Beach", stateCode: "FL" }],
+@@ -276,11 +281,13 @@ const BBB_TABLE_ORDER: readonly LogicalTableName[] = [
+ const PLACES_TRACK_TABLE_ORDER: readonly LogicalTableName[] = PLACES_TABLE_ORDER;
+ 
+ /**
+- * Run the local bulk loader from S3 artifacts into Neon/Postgres.
++ * Run the bulk loader from S3 or local appraisal artifacts into Neon/Postgres.
+  *
+  * The loader stages mapper output into one local CSV file, streams that file into
+  * a temporary JSONB staging table with PostgreSQL `COPY FROM STDIN`, and then
+- * performs set-based idempotent merges into the final logical tables.
++ * performs set-based idempotent merges into the final logical tables. Explicit
++ * local dry-run mode stops after bounded staging and reconciliation, requiring
++ * neither AWS nor a database connection.
+  *
+  * @returns Promise that resolves once the selected phase completes.
+  */
+@@ -288,6 +295,52 @@ async function main(): Promise<void> {
+   const options = parseOptions(process.argv.slice(2));
+   loadEnvFile(options.envFile);
+ 
++  if (options.dryRun) {
++    if (
++      options.appraisalLocalDir === null ||
++      options.tracks.length !== 1 ||
++      options.tracks[0] !== "appraisal"
++    ) {
++      throw new Error(
++        "--dry-run requires --tracks appraisal and --appraisal-local-dir",
++      );
++    }
++    if (options.batchSize <= 0) {
++      throw new Error("--dry-run requires a positive --batch-size");
++    }
++    const report = await stageLocalAppraisalDryRun({
++      batchSize: options.batchSize,
++      checkpointFile:
++        options.dryRunCheckpoint ??
++        join(
++          options.stageDir,
++          `${options.jurisdictionKey}-local-appraisal-checkpoint.json`,
++        ),
++      concurrency: options.concurrency,
++      countyName: options.appraisalCountyName,
++      limit: options.limit,
++      reportFile:
++        options.dryRunReport ??
++        join(
++          options.stageDir,
++          `${options.jurisdictionKey}-local-appraisal-report.json`,
++        ),
++      rootDirectory: options.appraisalLocalDir,
++      sourceSystem: options.jurisdictionKey,
++      stageDirectory: options.stageDir,
++      stateCode: options.appraisalStateCode,
++    });
++    console.log(
++      JSON.stringify({ event: "local_appraisal_dry_run_finished", report }),
++    );
++    if (!report.passed) {
++      throw new Error(
++        `Local appraisal dry-run reconciliation failed; see ${options.dryRunReport ?? options.stageDir}`,
++      );
++    }
++    return;
++  }
++
+   const databaseUrl = process.env.DATABASE_URL;
+   if (databaseUrl === undefined || databaseUrl.trim().length === 0) {
+     throw new Error(`DATABASE_URL is required; expected it in ${options.envFile} or the environment`);
+@@ -546,9 +599,9 @@ async function stageSelectedTracks(params: {
+ }
+ 
+ /**
+- * Stage Lee appraiser transformed ZIP artifacts into the generic CSV file.
++ * Stage S3 or local appraiser transformed ZIP artifacts into the generic CSV file.
+  *
+- * @param params - Shared S3 client, options, counters, and row writer callback.
++ * @param params - Shared S3 client, source options, counters, and row writer callback.
+  * @returns Promise that resolves after appraisal artifacts have been visited.
+  */
+ async function stageAppraisal(params: {
+@@ -560,14 +613,14 @@ async function stageAppraisal(params: {
+   readonly s3: S3Client;
+   readonly writeRows: (rows: readonly PreparedRow[]) => Promise<void>;
+ }): Promise<void> {
+-  assertAppraisalPrefixIsScoped(params.options.appraisalPrefix);
++  if (params.options.appraisalLocalDir === null) {
++    assertAppraisalPrefixIsScoped(params.options.appraisalPrefix);
++  }
+   console.log(JSON.stringify({ event: "bulk_track_started", track: "appraisal" }));
+-  const baseArtifacts = listAppraisalArtifacts({
+-    bucket: params.options.bucket,
+-    limit: params.options.limit,
+-    prefix: params.options.appraisalPrefix,
+-    s3: params.s3,
+-  });
++  const baseArtifacts = listConfiguredAppraisalArtifacts(
++    params.options,
++    params.s3,
++  );
+   const artifactCount = await processAsyncIterable(
+     params.loadedArtifactUris === null
+       ? baseArtifacts
+@@ -575,50 +628,31 @@ async function stageAppraisal(params: {
+     params.options.concurrency,
+     async (artifact) => {
+       await stageArtifact(params, artifact.uri, async () => {
+-        const buffer = await readS3ObjectBuffer(params.s3, artifact.uri);
+-        const zip = new AdmZip(buffer);
+-        const sourcePayloadEntry = zip.getEntry(
+-          APPRAISAL_SOURCE_PAYLOAD_SIDECAR,
++        const buffer = await readConfiguredAppraisalArtifactBuffer(
++          params.options,
++          params.s3,
++          artifact.uri,
+         );
+-        const artifactSourcePayload =
+-          sourcePayloadEntry === null
+-            ? undefined
+-            : parseAppraisalSourcePayloadSidecar(
+-                sourcePayloadEntry.getData().toString("utf8"),
+-              );
+-        const rows: PreparedRow[] = [];
+-        let skippedRecords = 0;
+-        const entries = zip
+-          .getEntries()
+-          .filter((entry) => entry.isDirectory === false && /^data\/.+\.json$/.test(entry.entryName))
+-          .sort((left, right) => left.entryName.localeCompare(right.entryName));
+-
+-        for (const entry of entries) {
+-          const text = entry.getData().toString("utf8");
+-          const record: unknown = JSON.parse(text);
+-          const bundle = mapAppraisalTransformedFile({
+-            artifactSourcePayload,
+-            artifactUri: artifact.uri,
+-            countyName: params.options.appraisalCountyName,
+-            filePath: entry.entryName,
+-            record,
+-            sourceSystem: params.options.jurisdictionKey,
+-            stateCode: params.options.appraisalStateCode,
+-          });
+-          rows.push(...bundle.rows);
+-          skippedRecords += bundle.skippedRecords.length;
+-          params.counters.inputRecords += 1;
+-        }
++        const mapped = mapAppraisalArtifactZip({
++          artifactBuffer: buffer,
++          artifactUri: artifact.uri,
++          countyName: params.options.appraisalCountyName,
++          sourceSystem: params.options.jurisdictionKey,
++          stateCode: params.options.appraisalStateCode,
++        });
++        const rows = mapped.rows;
++        const skippedRecords = mapped.skippedRecords.length;
++        params.counters.inputRecords += mapped.inputRecords;
+ 
+         if (
+           params.scopeSelection !== null &&
+           !preparedRowsContainSelectedParcel(rows, params.scopeSelection)
+         ) {
+-          params.counters.filteredRecords += entries.length;
++          params.counters.filteredRecords += mapped.inputRecords;
+           params.counters.skippedRecords += skippedRecords;
+           return {
+-            filteredRecords: entries.length,
+-            inputRecords: entries.length,
++            filteredRecords: mapped.inputRecords,
++            inputRecords: mapped.inputRecords,
+             preparedRows: 0,
+             skippedRecords,
+           };
+@@ -630,7 +664,7 @@ async function stageAppraisal(params: {
+         params.counters.skippedRecords += skippedRecords;
+         return {
+           filteredRecords: 0,
+-          inputRecords: entries.length,
++          inputRecords: mapped.inputRecords,
+           preparedRows: rows.length,
+           skippedRecords,
+         };
+@@ -684,12 +718,21 @@ async function stageAndMergeAppraisalBatched(params: {
+   } = params;
+   const s3 = new S3Client({});
+ 
+-  assertAppraisalPrefixIsScoped(options.appraisalPrefix);
++  if (options.appraisalLocalDir === null) {
++    assertAppraisalPrefixIsScoped(options.appraisalPrefix);
++  }
+   await mkdir(options.stageDir, { recursive: true });
+ 
+   // Include batch-size in the checkpoint filename so runs with different batch
+   // sizes don't cross-contaminate each other's resume state.
+-  const batchCheckpointPath = join(options.stageDir, `appraisal-batch-checkpoint-n${options.batchSize}.json`);
++  const batchCheckpointPrefix =
++    options.appraisalLocalDir === null
++      ? "appraisal"
++      : `${options.jurisdictionKey}-local-appraisal`;
++  const batchCheckpointPath = join(
++    options.stageDir,
++    `${batchCheckpointPrefix}-batch-checkpoint-n${options.batchSize}.json`,
++  );
+   // Each incremental cadence run is an independent set of not-yet-loaded artifacts,
+   // so a prior cycle's batch checkpoint must not skip this cycle's (renumbered) batches.
+   const completedBatches = options.incremental
+@@ -702,12 +745,7 @@ async function stageAndMergeAppraisalBatched(params: {
+     completedBatches: [...completedBatches],
+   }));
+ 
+-  const baseArtifacts = listAppraisalArtifacts({
+-    bucket: options.bucket,
+-    limit: options.limit,
+-    prefix: options.appraisalPrefix,
+-    s3,
+-  });
++  const baseArtifacts = listConfiguredAppraisalArtifacts(options, s3);
+   const artifactIterator = loadedArtifactUris === null
+     ? baseArtifacts
+     : filterAlreadyLoaded(baseArtifacts, loadedArtifactUris, incrementalCounters);
+@@ -784,50 +822,31 @@ async function stageAndMergeAppraisalBatched(params: {
+       writer.write(serializeBulkStageCsvHeader());
+       await processIterable(artifacts, options.concurrency, async (artifact) => {
+         await stageArtifact({ counters: batchCounters }, artifact.uri, async () => {
+-          const buffer = await readS3ObjectBuffer(s3, artifact.uri);
+-          const zip = new AdmZip(buffer);
+-          const sourcePayloadEntry = zip.getEntry(
+-            APPRAISAL_SOURCE_PAYLOAD_SIDECAR,
++          const buffer = await readConfiguredAppraisalArtifactBuffer(
++            options,
++            s3,
++            artifact.uri,
+           );
+-          const artifactSourcePayload =
+-            sourcePayloadEntry === null
+-              ? undefined
+-              : parseAppraisalSourcePayloadSidecar(
+-                  sourcePayloadEntry.getData().toString("utf8"),
+-                );
+-          const rows: PreparedRow[] = [];
+-          let skippedRecords = 0;
+-          const entries = zip
+-            .getEntries()
+-            .filter((entry) => entry.isDirectory === false && /^data\/.+\.json$/.test(entry.entryName))
+-            .sort((left, right) => left.entryName.localeCompare(right.entryName));
+-
+-          for (const entry of entries) {
+-            const text = entry.getData().toString("utf8");
+-            const record: unknown = JSON.parse(text);
+-            const bundle = mapAppraisalTransformedFile({
+-              artifactSourcePayload,
+-              artifactUri: artifact.uri,
+-              countyName: params.options.appraisalCountyName,
+-              filePath: entry.entryName,
+-              record,
+-              sourceSystem: params.options.jurisdictionKey,
+-              stateCode: params.options.appraisalStateCode,
+-            });
+-            rows.push(...bundle.rows);
+-            skippedRecords += bundle.skippedRecords.length;
+-            batchCounters.inputRecords += 1;
+-          }
++          const mapped = mapAppraisalArtifactZip({
++            artifactBuffer: buffer,
++            artifactUri: artifact.uri,
++            countyName: options.appraisalCountyName,
++            sourceSystem: options.jurisdictionKey,
++            stateCode: options.appraisalStateCode,
++          });
++          const rows = mapped.rows;
++          const skippedRecords = mapped.skippedRecords.length;
++          batchCounters.inputRecords += mapped.inputRecords;
+ 
+           if (
+             scopeSelection !== null &&
+             !preparedRowsContainSelectedParcel(rows, scopeSelection)
+           ) {
+-            batchCounters.filteredRecords += entries.length;
++            batchCounters.filteredRecords += mapped.inputRecords;
+             batchCounters.skippedRecords += skippedRecords;
+             return {
+-              filteredRecords: entries.length,
+-              inputRecords: entries.length,
++              filteredRecords: mapped.inputRecords,
++              inputRecords: mapped.inputRecords,
+               preparedRows: 0,
+               skippedRecords,
+             };
+@@ -839,7 +858,7 @@ async function stageAndMergeAppraisalBatched(params: {
+           batchCounters.skippedRecords += skippedRecords;
+           return {
+             filteredRecords: 0,
+-            inputRecords: entries.length,
++            inputRecords: mapped.inputRecords,
+             preparedRows: rows.length,
+             skippedRecords,
+           };
+@@ -2149,6 +2168,52 @@ async function copyAndMergeStageFile(params: {
+   return results;
+ }
+ 
++/**
++ * Select the configured local or S3 appraisal artifact listing.
++ *
++ * Local mode recursively streams folio-named ZIP files and never calls AWS.
++ * S3 mode preserves the existing flat `transformed_output.zip` listing path.
++ *
++ * @param options - Bulk-loader appraisal source options.
++ * @param s3 - Existing S3 client used only when no local directory is configured.
++ * @returns Async artifact listing compatible with incremental and batched paths.
++ */
++function listConfiguredAppraisalArtifacts(
++  options: BulkLoaderOptions,
++  s3: S3Client,
++): AsyncIterable<S3ObjectListing> {
++  if (options.appraisalLocalDir !== null) {
++    return listLocalAppraisalArtifacts({
++      rootDirectory: options.appraisalLocalDir,
++      limit: options.limit,
++    });
++  }
++  return listAppraisalArtifacts({
++    bucket: options.bucket,
++    limit: options.limit,
++    prefix: options.appraisalPrefix,
++    s3,
++  });
++}
++
++/**
++ * Read configured appraisal bytes from local disk or S3.
++ *
++ * @param options - Bulk-loader appraisal source options.
++ * @param s3 - Existing S3 client used only for S3 artifact mode.
++ * @param artifactUri - URI emitted by the matching configured listing.
++ * @returns Complete ZIP bytes ready for the shared artifact mapper.
++ */
++function readConfiguredAppraisalArtifactBuffer(
++  options: BulkLoaderOptions,
++  s3: S3Client,
++  artifactUri: string,
++): Promise<Buffer> {
++  return options.appraisalLocalDir === null
++    ? readS3ObjectBuffer(s3, artifactUri)
++    : readLocalAppraisalArtifactBuffer(artifactUri);
++}
++
+ /**
+  * List transformed appraisal artifact URIs via a single flat recursive listing.
+  *
+@@ -2416,6 +2481,7 @@ function parseOptions(args: readonly string[]): BulkLoaderOptions {
+ 
+   return {
+     appraisalCountyName: jurisdictionMetadata.countyName,
++    appraisalLocalDir: values.get("appraisal-local-dir") ?? null,
+     appraisalPrefix: values.get("appraisal-prefix") ?? DEFAULT_APPRAISAL_PREFIX,
+     appraisalStateCode: jurisdictionMetadata.stateCode,
+     batchSize: parseBatchSize(values.get("batch-size"), values.get("incremental") === "true"),
+@@ -2426,6 +2492,9 @@ function parseOptions(args: readonly string[]): BulkLoaderOptions {
+     placesRelease: values.get("places-release") ?? null,
+     bucket: values.get("bucket") ?? DEFAULT_BUCKET,
+     concurrency: parseConcurrency(values.get("concurrency")),
++    dryRun: values.get("dry-run") === "true",
++    dryRunCheckpoint: values.get("dry-run-checkpoint") ?? null,
++    dryRunReport: values.get("dry-run-report") ?? null,
+     envFile: values.get("env-file") ?? ".env.local",
+     incremental: values.get("incremental") === "true",
+     jurisdictionKey,
+@@ -2747,6 +2816,7 @@ function emptyCounters(): MutableBulkCounters {
+ function redactedOptions(options: BulkLoaderOptions): JsonObject {
+   return {
+     appraisalCountyName: options.appraisalCountyName,
++    appraisalLocalDir: options.appraisalLocalDir,
+     appraisalPrefix: options.appraisalPrefix,
+     appraisalStateCode: options.appraisalStateCode,
+     batchSize: options.batchSize,
+@@ -2754,6 +2824,9 @@ function redactedOptions(options: BulkLoaderOptions): JsonObject {
+     placesPrefix: options.placesPrefix,
+     bucket: options.bucket,
+     concurrency: options.concurrency,
++    dryRun: options.dryRun,
++    dryRunCheckpoint: options.dryRunCheckpoint,
++    dryRunReport: options.dryRunReport,
+     envFile: options.envFile,
+     incremental: options.incremental,
+     jurisdictionKey: options.jurisdictionKey,
+diff --git a/src/loader/appraisal-artifacts.ts b/src/loader/appraisal-artifacts.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..b77198c542b5f484d8ba2b60ad98431343e33984
+--- /dev/null
++++ b/src/loader/appraisal-artifacts.ts
+@@ -0,0 +1,268 @@
++import { readFile, readdir, stat } from "node:fs/promises";
++import { basename, resolve } from "node:path";
++import { fileURLToPath, pathToFileURL } from "node:url";
++
++import AdmZip from "adm-zip";
++
++import {
++  APPRAISAL_SOURCE_PAYLOAD_SIDECAR,
++  mapAppraisalTransformedFile,
++  parseAppraisalSourcePayloadSidecar,
++} from "./appraisal.js";
++import { isJsonObject, readString } from "./normalizers.js";
++import type {
++  PreparedRow,
++  SkippedSourceRecord,
++} from "./types.js";
++
++export type AppraisalArtifactListing = {
++  readonly uri: string;
++  readonly size: number | null;
++};
++
++export type MappedAppraisalArtifact = {
++  readonly artifactUri: string;
++  readonly inputRecords: number;
++  readonly requestIdentifier: string | null;
++  readonly rows: readonly PreparedRow[];
++  readonly skippedRecords: readonly SkippedSourceRecord[];
++};
++
++export type AppraisalArtifactReconciliation = {
++  readonly artifactFolio: string;
++  readonly parcelFolios: readonly string[];
++  readonly parcelRows: number;
++  readonly propertyFolios: readonly string[];
++  readonly propertyRows: number;
++  readonly rowsWithRetainedSourceMetadata: number;
++};
++
++type ParsedAppraisalEntry = {
++  readonly filePath: string;
++  readonly record: unknown;
++};
++
++/**
++ * Enumerate transformed appraisal ZIPs from a local directory tree.
++ *
++ * The traversal keeps only canonical folio-named ZIP files such as
++ * `474131051910.zip`; prepare inputs such as
++ * `474131051910-prepared-input.zip` are deliberately excluded. Directory
++ * entries are sorted at each level, producing deterministic direct-file and
++ * sharded-directory order without materializing the full county inventory.
++ *
++ * @param params - Local root directory and optional maximum artifact count.
++ * @param params.rootDirectory - Direct-file or sharded transformed-artifact root.
++ * @param params.limit - Positive maximum number of artifacts, or `null` for all.
++ * @returns Async stream of canonical `file://` artifact URIs and byte sizes.
++ */
++export async function* listLocalAppraisalArtifacts(params: {
++  readonly rootDirectory: string;
++  readonly limit: number | null;
++}): AsyncGenerator<AppraisalArtifactListing> {
++  const rootDirectory = resolve(params.rootDirectory);
++  let yielded = 0;
++  for await (const artifactPath of walkLocalAppraisalArtifactPaths(rootDirectory)) {
++    if (params.limit !== null && yielded >= params.limit) return;
++    const artifactStat = await stat(artifactPath);
++    yield {
++      uri: pathToFileURL(artifactPath).href,
++      size: artifactStat.size,
++    };
++    yielded += 1;
++  }
++}
++
++/**
++ * Read one local appraisal ZIP into memory for immediate mapping.
++ *
++ * Callers process bounded artifact batches and release each returned buffer
++ * after mapping, so county-scale staging does not require a second artifact
++ * copy or an AWS client.
++ *
++ * @param artifactUri - Absolute path or canonical `file://` URI.
++ * @returns Complete ZIP bytes for `AdmZip`.
++ */
++export async function readLocalAppraisalArtifactBuffer(
++  artifactUri: string,
++): Promise<Buffer> {
++  const artifactPath = artifactUri.startsWith("file://")
++    ? fileURLToPath(artifactUri)
++    : resolve(artifactUri);
++  return readFile(artifactPath);
++}
++
++/**
++ * Map every JSON entity in one transformed appraisal ZIP.
++ *
++ * The artifact request identifier is derived before entity dispatch and passed
++ * to records such as `fact_sheet.json` that do not repeat it. Optional
++ * `data/source_payload.ndjson` provenance is retained by the existing appraisal
++ * mapper, while the ZIP URI is retained as `source_artifact_uri` on every
++ * prepared row.
++ *
++ * @param params - ZIP bytes, source identity, artifact URI, and jurisdiction metadata.
++ * @param params.artifactBuffer - Complete transformed ZIP bytes.
++ * @param params.artifactUri - Stable S3 or local file URI retained on mapped rows.
++ * @param params.countyName - County label written to parcel and address rows.
++ * @param params.sourceSystem - Appraiser source system and parcel jurisdiction key.
++ * @param params.stateCode - Two-letter state code written to parcel and address rows.
++ * @returns Parsed-record count, mapper rows, mapper skips, and derived request identifier.
++ */
++export function mapAppraisalArtifactZip(params: {
++  readonly artifactBuffer: Buffer;
++  readonly artifactUri: string;
++  readonly countyName: string | null;
++  readonly sourceSystem: string;
++  readonly stateCode: string | null;
++}): MappedAppraisalArtifact {
++  const zip = new AdmZip(params.artifactBuffer);
++  const sourcePayloadEntry = zip.getEntry(APPRAISAL_SOURCE_PAYLOAD_SIDECAR);
++  const artifactSourcePayload =
++    sourcePayloadEntry === null
++      ? undefined
++      : parseAppraisalSourcePayloadSidecar(
++          sourcePayloadEntry.getData().toString("utf8"),
++        );
++  const entries: readonly ParsedAppraisalEntry[] = zip
++    .getEntries()
++    .filter(
++      (entry) =>
++        entry.isDirectory === false && /^data\/.+\.json$/u.test(entry.entryName),
++    )
++    .sort((left, right) => left.entryName.localeCompare(right.entryName))
++    .map((entry) => ({
++      filePath: entry.entryName,
++      record: JSON.parse(entry.getData().toString("utf8")) as unknown,
++    }));
++  const requestIdentifier = deriveAppraisalArtifactRequestIdentifier(entries);
++  const rows: PreparedRow[] = [];
++  const skippedRecords: SkippedSourceRecord[] = [];
++
++  for (const entry of entries) {
++    const bundle = mapAppraisalTransformedFile({
++      artifactSourcePayload,
++      artifactUri: params.artifactUri,
++      countyName: params.countyName,
++      filePath: entry.filePath,
++      record: entry.record,
++      requestIdentifier,
++      sourceSystem: params.sourceSystem,
++      stateCode: params.stateCode,
++    });
++    rows.push(...bundle.rows);
++    skippedRecords.push(...bundle.skippedRecords);
++  }
++
++  return {
++    artifactUri: params.artifactUri,
++    inputRecords: entries.length,
++    requestIdentifier,
++    rows,
++    skippedRecords,
++  };
++}
++
++/**
++ * Reconcile the property and parcel identity emitted by one mapped artifact.
++ *
++ * The artifact filename is the expected Broward folio. Property and parcel
++ * folios come from `request_identifier`, preserving alphanumeric condominium
++ * identifiers that a digits-only matching projection would otherwise lose.
++ * Source metadata is considered retained only when the row has the configured
++ * artifact URI plus non-empty source-system, source-key, and source-hash fields.
++ *
++ * @param mapped - Complete mapped appraisal artifact.
++ * @returns Per-artifact property, parcel, folio, and provenance counters.
++ */
++export function reconcileMappedAppraisalArtifact(
++  mapped: MappedAppraisalArtifact,
++): AppraisalArtifactReconciliation {
++  const propertyRows = mapped.rows.filter((row) => row.tableName === "properties");
++  const parcelRows = mapped.rows.filter((row) => row.tableName === "parcels");
++  return {
++    artifactFolio: readAppraisalArtifactFolio(mapped.artifactUri),
++    parcelFolios: uniqueRequestIdentifiers(parcelRows),
++    parcelRows: parcelRows.length,
++    propertyFolios: uniqueRequestIdentifiers(propertyRows),
++    propertyRows: propertyRows.length,
++    rowsWithRetainedSourceMetadata: mapped.rows.filter(
++      (row) =>
++        row.values.source_artifact_uri === mapped.artifactUri &&
++        hasNonEmptyString(row.values.source_system) &&
++        hasNonEmptyString(row.values.source_record_key) &&
++        hasNonEmptyString(row.values.source_record_hash),
++    ).length,
++  };
++}
++
++/**
++ * Read the expected folio from a local or S3 artifact's leaf filename.
++ *
++ * @param artifactUri - Artifact URI ending in `<folio>.zip`.
++ * @returns Filename without the `.zip` extension.
++ * @throws Error when the URI does not identify a canonical folio ZIP.
++ */
++export function readAppraisalArtifactFolio(artifactUri: string): string {
++  const pathName = artifactUri.startsWith("file://")
++    ? fileURLToPath(artifactUri)
++    : new URL(artifactUri).pathname;
++  const fileName = basename(pathName);
++  if (!/^[A-Za-z0-9]+\.zip$/u.test(fileName)) {
++    throw new Error(`Appraisal artifact is not a canonical folio ZIP: ${artifactUri}`);
++  }
++  return fileName.slice(0, -".zip".length);
++}
++
++async function* walkLocalAppraisalArtifactPaths(
++  directory: string,
++): AsyncGenerator<string> {
++  const entries = (await readdir(directory, { withFileTypes: true })).sort(
++    (left, right) => left.name.localeCompare(right.name),
++  );
++  for (const entry of entries) {
++    const entryPath = resolve(directory, entry.name);
++    if (entry.isDirectory()) {
++      yield* walkLocalAppraisalArtifactPaths(entryPath);
++      continue;
++    }
++    if (entry.isFile() && /^[A-Za-z0-9]+\.zip$/u.test(entry.name)) {
++      yield entryPath;
++    }
++  }
++}
++
++function deriveAppraisalArtifactRequestIdentifier(
++  entries: readonly ParsedAppraisalEntry[],
++): string | null {
++  for (const preferredFileName of [
++    "data/property_seed.json",
++    "data/parcel.json",
++    "data/property.json",
++  ]) {
++    const entry = entries.find(
++      (candidate) => candidate.filePath === preferredFileName,
++    );
++    if (!isJsonObject(entry?.record)) continue;
++    const requestIdentifier = readString(entry.record.request_identifier);
++    if (requestIdentifier !== null) return requestIdentifier;
++  }
++  return null;
++}
++
++function uniqueRequestIdentifiers(
++  rows: readonly PreparedRow[],
++): readonly string[] {
++  return [
++    ...new Set(
++      rows.flatMap((row) => {
++        const requestIdentifier = readString(row.values.request_identifier);
++        return requestIdentifier === null ? [] : [requestIdentifier];
++      }),
++    ),
++  ].sort();
++}
++
++function hasNonEmptyString(value: unknown): value is string {
++  return typeof value === "string" && value.trim().length > 0;
++}
+diff --git a/src/loader/appraisal-geometry.ts b/src/loader/appraisal-geometry.ts
+index 3d635ef5bf3ec33752714d601769d1702337af15..25c40d5ff28b8234782d9e4d5e06c9d20e944fb1 100644
+--- a/src/loader/appraisal-geometry.ts
++++ b/src/loader/appraisal-geometry.ts
+@@ -272,10 +272,16 @@ function isClosedRing(ring: GeometryLinearRing): boolean {
+ 
+ function readGeometryFileIndex(fileName: string): number | null {
+   if (fileName === "geometry.json") return 0;
+-  const ordinal = /^geometry_(\d+)\.json$/u.exec(fileName)?.[1];
+-  if (ordinal === undefined) return null;
+-  const parsed = Number.parseInt(ordinal, 10);
+-  return Number.isInteger(parsed) && parsed > 0 ? parsed - 1 : null;
++  const oneBasedOrdinal = /^geometry_(\d+)\.json$/u.exec(fileName)?.[1];
++  if (oneBasedOrdinal !== undefined) {
++    const parsed = Number.parseInt(oneBasedOrdinal, 10);
++    return Number.isInteger(parsed) && parsed > 0 ? parsed - 1 : null;
++  }
++  const zeroBasedOrdinal =
++    /^geometry_parcel_(\d+)\.json$/u.exec(fileName)?.[1];
++  if (zeroBasedOrdinal === undefined) return null;
++  const parsed = Number.parseInt(zeroBasedOrdinal, 10);
++  return Number.isInteger(parsed) && parsed >= 0 ? parsed : null;
+ }
+ 
+ function selectRawPolygonIndex(params: {
+diff --git a/src/loader/appraisal-local-stage.ts b/src/loader/appraisal-local-stage.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..e3e850f03e7e8520d9ade1ed5407ae4e189f09f9
+--- /dev/null
++++ b/src/loader/appraisal-local-stage.ts
+@@ -0,0 +1,675 @@
++import { createWriteStream } from "node:fs";
++import {
++  mkdir,
++  readFile,
++  rename,
++  rm,
++  writeFile,
++} from "node:fs/promises";
++import { dirname, resolve } from "node:path";
++import type { Writable } from "node:stream";
++
++import {
++  listLocalAppraisalArtifacts,
++  mapAppraisalArtifactZip,
++  readLocalAppraisalArtifactBuffer,
++  reconcileMappedAppraisalArtifact,
++  type AppraisalArtifactListing,
++} from "./appraisal-artifacts.js";
++import {
++  serializeBulkStageCsvHeader,
++  serializeBulkStageCsvRow,
++} from "./bulk.js";
++
++const LOCAL_APPRAISAL_STAGE_SCHEMA_VERSION = 1;
++
++export type LocalAppraisalStageOptions = {
++  readonly batchSize: number;
++  readonly checkpointFile: string;
++  readonly concurrency: number;
++  readonly countyName: string | null;
++  readonly limit: number | null;
++  readonly reportFile: string;
++  readonly rootDirectory: string;
++  readonly sourceSystem: string;
++  readonly stageDirectory: string;
++  readonly stateCode: string | null;
++};
++
++export type LocalAppraisalStageCounters = {
++  readonly artifactsDiscovered: number;
++  readonly artifactsMapped: number;
++  readonly artifactsSkippedFromCheckpoint: number;
++  readonly failedArtifacts: number;
++  readonly inputRecords: number;
++  readonly parcelRows: number;
++  readonly preparedRows: number;
++  readonly properties: number;
++  readonly rowsWithRetainedSourceMetadata: number;
++  readonly skippedRecords: number;
++  readonly stagedRows: number;
++};
++
++export type LocalAppraisalStageFailure = {
++  readonly artifactUri: string;
++  readonly error: string;
++};
++
++export type LocalAppraisalStageReport = {
++  readonly schemaVersion: number;
++  readonly mode: "local-appraisal-stage-dry-run";
++  readonly source: {
++    readonly countyName: string | null;
++    readonly jurisdictionKey: string;
++    readonly limit: number | null;
++    readonly localDirectory: string;
++    readonly stateCode: string | null;
++  };
++  readonly counters: LocalAppraisalStageCounters;
++  readonly reconciliation: {
++    readonly artifactFolios: number;
++    readonly distinctParcelFolios: number;
++    readonly distinctPropertyFolios: number;
++    readonly folioSetsMatch: boolean;
++    readonly oneParcelPerArtifact: boolean;
++    readonly onePropertyPerArtifact: boolean;
++    readonly propertiesMatchDistinctFolios: boolean;
++    readonly sourceMetadataRetainedForEveryRow: boolean;
++    readonly staleCheckpointArtifacts: number;
++  };
++  readonly failures: readonly LocalAppraisalStageFailure[];
++  readonly passed: boolean;
++};
++
++type MutableLocalAppraisalStageCounters = {
++  artifactsDiscovered: number;
++  artifactsMapped: number;
++  artifactsSkippedFromCheckpoint: number;
++  failedArtifacts: number;
++  inputRecords: number;
++  parcelRows: number;
++  preparedRows: number;
++  properties: number;
++  rowsWithRetainedSourceMetadata: number;
++  skippedRecords: number;
++  stagedRows: number;
++};
++
++type LocalAppraisalStageCheckpoint = {
++  readonly schemaVersion: number;
++  readonly sourceSignature: string;
++  readonly completedArtifactUris: readonly string[];
++  readonly artifactFolios: readonly string[];
++  readonly parcelFolios: readonly string[];
++  readonly propertyFolios: readonly string[];
++  readonly counters: Omit<
++    LocalAppraisalStageCounters,
++    | "artifactsDiscovered"
++    | "artifactsSkippedFromCheckpoint"
++    | "failedArtifacts"
++  >;
++};
++
++type MutableLocalAppraisalStageState = {
++  readonly completedArtifactUris: Set<string>;
++  readonly artifactFolios: Set<string>;
++  readonly parcelFolios: Set<string>;
++  readonly propertyFolios: Set<string>;
++  readonly counters: MutableLocalAppraisalStageCounters;
++};
++
++type MappedLocalArtifactResult = {
++  readonly artifactUri: string;
++  readonly artifactFolio: string;
++  readonly inputRecords: number;
++  readonly parcelFolios: readonly string[];
++  readonly parcelRows: number;
++  readonly preparedRows: number;
++  readonly propertyFolios: readonly string[];
++  readonly propertyRows: number;
++  readonly rowsWithRetainedSourceMetadata: number;
++  readonly skippedRecords: number;
++  readonly stagedRows: number;
++};
++
++/**
++ * Stage and reconcile local appraisal artifacts without AWS or PostgreSQL.
++ *
++ * Artifacts are enumerated deterministically, processed in bounded batches, and
++ * serialized through the production bulk-stage CSV encoder. Each batch CSV is
++ * removed after successful serialization, while a checkpoint persists completed
++ * artifact URIs and aggregate folio evidence. Re-running with the same source
++ * signature skips completed artifacts and retries only failed or interrupted
++ * work. The final report proves property, parcel, distinct-folio, and source
++ * metadata reconciliation without opening a database connection.
++ *
++ * @param options - Local source, jurisdiction, bounded-processing, and output paths.
++ * @returns Machine-readable reconciliation report also written to `reportFile`.
++ */
++export async function stageLocalAppraisalDryRun(
++  options: LocalAppraisalStageOptions,
++): Promise<LocalAppraisalStageReport> {
++  validateLocalAppraisalStageOptions(options);
++  const normalizedOptions = {
++    ...options,
++    checkpointFile: resolve(options.checkpointFile),
++    reportFile: resolve(options.reportFile),
++    rootDirectory: resolve(options.rootDirectory),
++    stageDirectory: resolve(options.stageDirectory),
++  };
++  const sourceSignature = buildLocalAppraisalSourceSignature(normalizedOptions);
++  const state = await readLocalAppraisalStageState(
++    normalizedOptions.checkpointFile,
++    sourceSignature,
++  );
++  const failures: LocalAppraisalStageFailure[] = [];
++  const pendingBatch: AppraisalArtifactListing[] = [];
++  const seenCompletedArtifactUris = new Set<string>();
++  let artifactsDiscovered = 0;
++  let artifactsSkippedFromCheckpoint = 0;
++
++  await mkdir(normalizedOptions.stageDirectory, { recursive: true });
++  await mkdir(dirname(normalizedOptions.checkpointFile), { recursive: true });
++  await mkdir(dirname(normalizedOptions.reportFile), { recursive: true });
++
++  const flushPendingBatch = async (): Promise<void> => {
++    if (pendingBatch.length === 0) return;
++    const batch = pendingBatch.splice(0, pendingBatch.length);
++    const batchFile = resolve(
++      normalizedOptions.stageDirectory,
++      "appraisal-local-dry-run-batch.csv",
++    );
++    const results = await stageLocalAppraisalBatch({
++      artifacts: batch,
++      batchFile,
++      concurrency: normalizedOptions.concurrency,
++      countyName: normalizedOptions.countyName,
++      failures,
++      sourceSystem: normalizedOptions.sourceSystem,
++      stateCode: normalizedOptions.stateCode,
++    });
++    for (const result of results) {
++      applyMappedArtifactResult(state, result);
++      seenCompletedArtifactUris.add(result.artifactUri);
++    }
++    await writeLocalAppraisalStageCheckpoint({
++      checkpointFile: normalizedOptions.checkpointFile,
++      sourceSignature,
++      state,
++    });
++    await rm(batchFile, { force: true });
++  };
++
++  for await (const artifact of listLocalAppraisalArtifacts({
++    rootDirectory: normalizedOptions.rootDirectory,
++    limit: normalizedOptions.limit,
++  })) {
++    artifactsDiscovered += 1;
++    if (state.completedArtifactUris.has(artifact.uri)) {
++      artifactsSkippedFromCheckpoint += 1;
++      seenCompletedArtifactUris.add(artifact.uri);
++      continue;
++    }
++    pendingBatch.push(artifact);
++    if (pendingBatch.length >= normalizedOptions.batchSize) {
++      await flushPendingBatch();
++    }
++  }
++  await flushPendingBatch();
++
++  const staleCheckpointArtifacts =
++    state.completedArtifactUris.size - seenCompletedArtifactUris.size;
++  const counters: LocalAppraisalStageCounters = {
++    ...state.counters,
++    artifactsDiscovered,
++    artifactsSkippedFromCheckpoint,
++    failedArtifacts: failures.length,
++  };
++  const folioSetsMatch = setsEqual(
++    state.artifactFolios,
++    state.propertyFolios,
++  ) && setsEqual(state.artifactFolios, state.parcelFolios);
++  const reconciliation = {
++    artifactFolios: state.artifactFolios.size,
++    distinctParcelFolios: state.parcelFolios.size,
++    distinctPropertyFolios: state.propertyFolios.size,
++    folioSetsMatch,
++    oneParcelPerArtifact:
++      state.counters.parcelRows === state.completedArtifactUris.size,
++    onePropertyPerArtifact:
++      state.counters.properties === state.completedArtifactUris.size,
++    propertiesMatchDistinctFolios:
++      state.counters.properties === state.propertyFolios.size,
++    sourceMetadataRetainedForEveryRow:
++      state.counters.rowsWithRetainedSourceMetadata ===
++      state.counters.preparedRows,
++    staleCheckpointArtifacts,
++  };
++  const passed =
++    artifactsDiscovered > 0 &&
++    failures.length === 0 &&
++    staleCheckpointArtifacts === 0 &&
++    state.completedArtifactUris.size === artifactsDiscovered &&
++    reconciliation.oneParcelPerArtifact &&
++    reconciliation.onePropertyPerArtifact &&
++    reconciliation.propertiesMatchDistinctFolios &&
++    reconciliation.sourceMetadataRetainedForEveryRow &&
++    reconciliation.folioSetsMatch;
++  const report: LocalAppraisalStageReport = {
++    schemaVersion: LOCAL_APPRAISAL_STAGE_SCHEMA_VERSION,
++    mode: "local-appraisal-stage-dry-run",
++    source: {
++      countyName: normalizedOptions.countyName,
++      jurisdictionKey: normalizedOptions.sourceSystem,
++      limit: normalizedOptions.limit,
++      localDirectory: normalizedOptions.rootDirectory,
++      stateCode: normalizedOptions.stateCode,
++    },
++    counters,
++    reconciliation,
++    failures,
++    passed,
++  };
++  await writeJsonAtomically(normalizedOptions.reportFile, report);
++  return report;
++}
++
++/**
++ * Stage one bounded batch through the production CSV serializer.
++ *
++ * @param params - Artifact batch, jurisdiction, concurrency, output file, and failure sink.
++ * @returns Successfully mapped per-artifact reconciliation results.
++ */
++async function stageLocalAppraisalBatch(params: {
++  readonly artifacts: readonly AppraisalArtifactListing[];
++  readonly batchFile: string;
++  readonly concurrency: number;
++  readonly countyName: string | null;
++  readonly failures: LocalAppraisalStageFailure[];
++  readonly sourceSystem: string;
++  readonly stateCode: string | null;
++}): Promise<readonly MappedLocalArtifactResult[]> {
++  const writer = createWriteStream(params.batchFile, {
++    encoding: "utf8",
++    flags: "w",
++  });
++  const results: MappedLocalArtifactResult[] = [];
++  let nextRowIndex = 1;
++  writer.write(serializeBulkStageCsvHeader());
++  try {
++    await processWithConcurrency(
++      params.artifacts,
++      params.concurrency,
++      async (artifact) => {
++        try {
++          const artifactBuffer =
++            await readLocalAppraisalArtifactBuffer(artifact.uri);
++          const mapped = mapAppraisalArtifactZip({
++            artifactBuffer,
++            artifactUri: artifact.uri,
++            countyName: params.countyName,
++            sourceSystem: params.sourceSystem,
++            stateCode: params.stateCode,
++          });
++          const reconciliation = reconcileMappedAppraisalArtifact(mapped);
++          let chunk = "";
++          for (const row of mapped.rows) {
++            chunk += serializeBulkStageCsvRow({
++              rowIndex: nextRowIndex,
++              row,
++            });
++            nextRowIndex += 1;
++          }
++          if (chunk.length > 0 && !writer.write(chunk)) {
++            await waitForDrain(writer);
++          }
++          results.push({
++            artifactUri: artifact.uri,
++            artifactFolio: reconciliation.artifactFolio,
++            inputRecords: mapped.inputRecords,
++            parcelFolios: reconciliation.parcelFolios,
++            parcelRows: reconciliation.parcelRows,
++            preparedRows: mapped.rows.length,
++            propertyFolios: reconciliation.propertyFolios,
++            propertyRows: reconciliation.propertyRows,
++            rowsWithRetainedSourceMetadata:
++              reconciliation.rowsWithRetainedSourceMetadata,
++            skippedRecords: mapped.skippedRecords.length,
++            stagedRows: mapped.rows.length,
++          });
++        } catch (caught) {
++          params.failures.push({
++            artifactUri: artifact.uri,
++            error: caught instanceof Error ? caught.message : String(caught),
++          });
++        }
++      },
++    );
++  } finally {
++    writer.end();
++    await waitForFinish(writer);
++  }
++  return results;
++}
++
++/**
++ * Apply one successful artifact result to resumable aggregate state.
++ *
++ * @param state - Mutable checkpoint-backed counters and identity sets.
++ * @param result - Successfully mapped artifact summary.
++ */
++function applyMappedArtifactResult(
++  state: MutableLocalAppraisalStageState,
++  result: MappedLocalArtifactResult,
++): void {
++  state.completedArtifactUris.add(result.artifactUri);
++  state.artifactFolios.add(result.artifactFolio);
++  for (const folio of result.parcelFolios) state.parcelFolios.add(folio);
++  for (const folio of result.propertyFolios) state.propertyFolios.add(folio);
++  state.counters.artifactsMapped += 1;
++  state.counters.inputRecords += result.inputRecords;
++  state.counters.parcelRows += result.parcelRows;
++  state.counters.preparedRows += result.preparedRows;
++  state.counters.properties += result.propertyRows;
++  state.counters.rowsWithRetainedSourceMetadata +=
++    result.rowsWithRetainedSourceMetadata;
++  state.counters.skippedRecords += result.skippedRecords;
++  state.counters.stagedRows += result.stagedRows;
++}
++
++/**
++ * Read a compatible checkpoint or initialize empty staging state.
++ *
++ * @param checkpointFile - JSON checkpoint path.
++ * @param sourceSignature - Exact source/configuration signature for safe resume.
++ * @returns Mutable state hydrated from the checkpoint when present.
++ */
++async function readLocalAppraisalStageState(
++  checkpointFile: string,
++  sourceSignature: string,
++): Promise<MutableLocalAppraisalStageState> {
++  try {
++    const parsed: unknown = JSON.parse(await readFile(checkpointFile, "utf8"));
++    if (!isLocalAppraisalStageCheckpoint(parsed)) {
++      throw new Error(`Invalid local appraisal checkpoint: ${checkpointFile}`);
++    }
++    if (parsed.sourceSignature !== sourceSignature) {
++      throw new Error(
++        `Local appraisal checkpoint source does not match this run: ${checkpointFile}`,
++      );
++    }
++    return {
++      completedArtifactUris: new Set(parsed.completedArtifactUris),
++      artifactFolios: new Set(parsed.artifactFolios),
++      parcelFolios: new Set(parsed.parcelFolios),
++      propertyFolios: new Set(parsed.propertyFolios),
++      counters: {
++        ...emptyMutableLocalAppraisalStageCounters(),
++        ...parsed.counters,
++      },
++    };
++  } catch (caught) {
++    if (isMissingFileError(caught)) {
++      return emptyLocalAppraisalStageState();
++    }
++    throw caught;
++  }
++}
++
++/**
++ * Persist resumable state atomically after a completed artifact batch.
++ *
++ * @param params - Checkpoint path, source signature, and aggregate state.
++ */
++async function writeLocalAppraisalStageCheckpoint(params: {
++  readonly checkpointFile: string;
++  readonly sourceSignature: string;
++  readonly state: MutableLocalAppraisalStageState;
++}): Promise<void> {
++  const checkpoint: LocalAppraisalStageCheckpoint = {
++    schemaVersion: LOCAL_APPRAISAL_STAGE_SCHEMA_VERSION,
++    sourceSignature: params.sourceSignature,
++    completedArtifactUris: [...params.state.completedArtifactUris].sort(),
++    artifactFolios: [...params.state.artifactFolios].sort(),
++    parcelFolios: [...params.state.parcelFolios].sort(),
++    propertyFolios: [...params.state.propertyFolios].sort(),
++    counters: {
++      artifactsMapped: params.state.counters.artifactsMapped,
++      inputRecords: params.state.counters.inputRecords,
++      parcelRows: params.state.counters.parcelRows,
++      preparedRows: params.state.counters.preparedRows,
++      properties: params.state.counters.properties,
++      rowsWithRetainedSourceMetadata:
++        params.state.counters.rowsWithRetainedSourceMetadata,
++      skippedRecords: params.state.counters.skippedRecords,
++      stagedRows: params.state.counters.stagedRows,
++    },
++  };
++  await writeJsonAtomically(params.checkpointFile, checkpoint);
++}
++
++/**
++ * Build the immutable signature that prevents unsafe cross-run checkpoint reuse.
++ *
++ * @param options - Normalized local source and mapping configuration.
++ * @returns Stable JSON signature string.
++ */
++function buildLocalAppraisalSourceSignature(
++  options: LocalAppraisalStageOptions,
++): string {
++  return JSON.stringify({
++    schemaVersion: LOCAL_APPRAISAL_STAGE_SCHEMA_VERSION,
++    rootDirectory: resolve(options.rootDirectory),
++    sourceSystem: options.sourceSystem,
++    countyName: options.countyName,
++    stateCode: options.stateCode,
++    limit: options.limit,
++  });
++}
++
++/**
++ * Validate bounded local staging parameters before touching output files.
++ *
++ * @param options - Caller-supplied local stage options.
++ * @throws Error for non-positive batch/concurrency values or empty paths.
++ */
++function validateLocalAppraisalStageOptions(
++  options: LocalAppraisalStageOptions,
++): void {
++  if (!Number.isInteger(options.batchSize) || options.batchSize <= 0) {
++    throw new Error("Local appraisal dry-run batchSize must be a positive integer");
++  }
++  if (!Number.isInteger(options.concurrency) || options.concurrency <= 0) {
++    throw new Error("Local appraisal dry-run concurrency must be a positive integer");
++  }
++  for (const [name, value] of [
++    ["rootDirectory", options.rootDirectory],
++    ["stageDirectory", options.stageDirectory],
++    ["checkpointFile", options.checkpointFile],
++    ["reportFile", options.reportFile],
++    ["sourceSystem", options.sourceSystem],
++  ] as const) {
++    if (value.trim().length === 0) {
++      throw new Error(`Local appraisal dry-run ${name} must not be empty`);
++    }
++  }
++}
++
++/**
++ * Compare two string sets by exact membership.
++ *
++ * @param left - First identity set.
++ * @param right - Second identity set.
++ * @returns True when both sets contain exactly the same values.
++ */
++function setsEqual(left: ReadonlySet<string>, right: ReadonlySet<string>): boolean {
++  if (left.size !== right.size) return false;
++  for (const value of left) {
++    if (!right.has(value)) return false;
++  }
++  return true;
++}
++
++/**
++ * Write JSON through a sibling temporary file and atomic rename.
++ *
++ * @param path - Final JSON output path.
++ * @param value - JSON-serializable checkpoint or report value.
++ */
++async function writeJsonAtomically(path: string, value: unknown): Promise<void> {
++  const temporaryPath = `${path}.tmp`;
++  await writeFile(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
++  await rename(temporaryPath, path);
++}
++
++/**
++ * Run item handlers with a fixed upper concurrency bound.
++ *
++ * @param items - In-memory bounded artifact batch.
++ * @param concurrency - Maximum simultaneously running handlers.
++ * @param handler - Async artifact handler.
++ */
++async function processWithConcurrency<Item>(
++  items: readonly Item[],
++  concurrency: number,
++  handler: (item: Item) => Promise<void>,
++): Promise<void> {
++  const running = new Set<Promise<void>>();
++  for (const item of items) {
++    const task = handler(item).finally(() => {
++      running.delete(task);
++    });
++    running.add(task);
++    if (running.size >= concurrency) await Promise.race(running);
++  }
++  await Promise.all(running);
++}
++
++/**
++ * Wait until a backpressured writable stream accepts more data.
++ *
++ * @param writer - Active stage CSV stream.
++ */
++function waitForDrain(writer: Writable): Promise<void> {
++  return new Promise((resolvePromise, rejectPromise) => {
++    writer.once("drain", resolvePromise);
++    writer.once("error", rejectPromise);
++  });
++}
++
++/**
++ * Wait until a writable stream has flushed and closed.
++ *
++ * @param writer - Stage CSV stream after `end()`.
++ */
++function waitForFinish(writer: Writable): Promise<void> {
++  return new Promise((resolvePromise, rejectPromise) => {
++    writer.once("finish", resolvePromise);
++    writer.once("error", rejectPromise);
++  });
++}
++
++/**
++ * Construct empty mutable local-stage state.
++ *
++ * @returns New identity sets and zero-filled cumulative counters.
++ */
++function emptyLocalAppraisalStageState(): MutableLocalAppraisalStageState {
++  return {
++    completedArtifactUris: new Set(),
++    artifactFolios: new Set(),
++    parcelFolios: new Set(),
++    propertyFolios: new Set(),
++    counters: emptyMutableLocalAppraisalStageCounters(),
++  };
++}
++
++/**
++ * Construct zero-filled local-stage counters.
++ *
++ * @returns Mutable counters for current and cumulative staging evidence.
++ */
++function emptyMutableLocalAppraisalStageCounters(): MutableLocalAppraisalStageCounters {
++  return {
++    artifactsDiscovered: 0,
++    artifactsMapped: 0,
++    artifactsSkippedFromCheckpoint: 0,
++    failedArtifacts: 0,
++    inputRecords: 0,
++    parcelRows: 0,
++    preparedRows: 0,
++    properties: 0,
++    rowsWithRetainedSourceMetadata: 0,
++    skippedRecords: 0,
++    stagedRows: 0,
++  };
++}
++
++/**
++ * Validate persisted checkpoint structure without weakening strict types.
++ *
++ * @param value - Parsed unknown JSON value.
++ * @returns Whether the value has the complete checkpoint shape.
++ */
++function isLocalAppraisalStageCheckpoint(
++  value: unknown,
++): value is LocalAppraisalStageCheckpoint {
++  if (typeof value !== "object" || value === null) return false;
++  const candidate = value as Record<string, unknown>;
++  return (
++    candidate.schemaVersion === LOCAL_APPRAISAL_STAGE_SCHEMA_VERSION &&
++    typeof candidate.sourceSignature === "string" &&
++    isStringArray(candidate.completedArtifactUris) &&
++    isStringArray(candidate.artifactFolios) &&
++    isStringArray(candidate.parcelFolios) &&
++    isStringArray(candidate.propertyFolios) &&
++    isCheckpointCounters(candidate.counters)
++  );
++}
++
++/**
++ * Validate checkpoint cumulative counter fields.
++ *
++ * @param value - Unknown checkpoint `counters` member.
++ * @returns Whether every required cumulative counter is a finite number.
++ */
++function isCheckpointCounters(
++  value: unknown,
++): value is LocalAppraisalStageCheckpoint["counters"] {
++  if (typeof value !== "object" || value === null) return false;
++  const candidate = value as Record<string, unknown>;
++  return [
++    "artifactsMapped",
++    "inputRecords",
++    "parcelRows",
++    "preparedRows",
++    "properties",
++    "rowsWithRetainedSourceMetadata",
++    "skippedRecords",
++    "stagedRows",
++  ].every((key) => typeof candidate[key] === "number");
++}
++
++/**
++ * Validate an unknown value as an array of strings.
++ *
++ * @param value - Unknown parsed checkpoint member.
++ * @returns Whether the value is a string-only array.
++ */
++function isStringArray(value: unknown): value is readonly string[] {
++  return Array.isArray(value) && value.every((item) => typeof item === "string");
++}
++
++/**
++ * Identify a filesystem missing-file error.
++ *
++ * @param value - Unknown error thrown while reading a checkpoint.
++ * @returns Whether Node reported `ENOENT`.
++ */
++function isMissingFileError(value: unknown): value is NodeJS.ErrnoException {
++  return (
++    value instanceof Error &&
++    "code" in value &&
++    value.code === "ENOENT"
++  );
++}
+diff --git a/src/loader/appraisal.ts b/src/loader/appraisal.ts
+index f86230e155dd295cb57d2ce3f18875d3bc964337..d50907e980eb62cb751290aaeae22e1c082d2280 100644
+--- a/src/loader/appraisal.ts
++++ b/src/loader/appraisal.ts
+@@ -533,7 +533,11 @@ function mapKnownAppraisalRecord(
+   if (fileName === "unnormalized_address.json") {
+     return [mapUnnormalizedAddress(record, requestIdentifier, artifactUri, sourceSystem)];
+   }
+-  if (fileName === "address.json" || /^mailing_address_\d+\.json$/.test(fileName)) {
++  if (
++    fileName === "address.json" ||
++    fileName === "mailing_address.json" ||
++    /^mailing_address_\d+\.json$/.test(fileName)
++  ) {
+     return [
+       mapAddress(
+         record,
+@@ -577,7 +581,11 @@ function mapKnownAppraisalRecord(
+     return [mapPropertyChild("flood_storm_information", record, fileName, requestIdentifier, artifactUri, FLOOD_COLUMNS, sourceSystem)];
+   }
+   if (fileName === "fact_sheet.json") return [mapFactSheet(record, requestIdentifier, artifactUri, sourceSystem)];
+-  if (fileName === "geometry.json" || /^geometry_\d+\.json$/.test(fileName)) {
++  if (
++    fileName === "geometry.json" ||
++    /^geometry_\d+\.json$/.test(fileName) ||
++    /^geometry_parcel_\d+\.json$/.test(fileName)
++  ) {
+     return mapGeometryRows(
+       record,
+       fileName,
+diff --git a/src/loader/index.ts b/src/loader/index.ts
+index ca814eb897d63019d83ba72a5d6a8312d83e2856..3d9ac5bf1ccbe66ba2b4946a26c9ae4ad78a6450 100644
+--- a/src/loader/index.ts
++++ b/src/loader/index.ts
+@@ -1,5 +1,7 @@
+ export * from "./appraisal.js";
++export * from "./appraisal-artifacts.js";
+ export * from "./appraisal-geometry.js";
++export * from "./appraisal-local-stage.js";
+ export * from "./appraisal-source.js";
+ export * from "./artifacts.js";
+ export * from "./bbb.js";
+diff --git a/tests/broward-local-loader.test.ts b/tests/broward-local-loader.test.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..a2daa268533943d13d1d6237c632898ff613d4fd
+--- /dev/null
++++ b/tests/broward-local-loader.test.ts
+@@ -0,0 +1,372 @@
++import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
++import { tmpdir } from "node:os";
++import { dirname, join } from "node:path";
++import { pathToFileURL } from "node:url";
++
++import AdmZip from "adm-zip";
++import { afterEach, describe, expect, it } from "vitest";
++
++import { resolveAppraisalJurisdictionMetadata } from "../scripts/run-bulk-data-load.js";
++import {
++  listLocalAppraisalArtifacts,
++  mapAppraisalArtifactZip,
++  reconcileMappedAppraisalArtifact,
++  stageLocalAppraisalDryRun,
++  type JsonObject,
++  type LogicalTableName,
++  type PreparedRow,
++} from "../src/loader/index.js";
++
++const temporaryDirectories: string[] = [];
++
++afterEach(async () => {
++  await Promise.all(
++    temporaryDirectories.splice(0).map((directory) =>
++      rm(directory, { force: true, recursive: true }),
++    ),
++  );
++});
++
++describe("Broward local appraisal artifacts", () => {
++  it("registers Broward, Florida metadata for broward_appraiser", () => {
++    expect(
++      resolveAppraisalJurisdictionMetadata({
++        jurisdictionKey: "broward_appraiser",
++      }),
++    ).toEqual({
++      countyName: "Broward",
++      stateCode: "FL",
++    });
++  });
++
++  it("streams direct and sharded folio ZIPs in deterministic order", async () => {
++    const root = await createTemporaryDirectory();
++    await writeBrowardArtifact(join(root, "504108BJ0140.zip"), "504108BJ0140");
++    await writeBrowardArtifact(
++      join(root, "4741", "474131051910.zip"),
++      "474131051910",
++    );
++    await writeBrowardArtifact(
++      join(root, "4741", "474131051910-prepared-input.zip"),
++      "SHOULD_NOT_LOAD",
++    );
++    const listings = await collectAsync(
++      listLocalAppraisalArtifacts({ rootDirectory: root, limit: null }),
++    );
++
++    expect(listings.map((listing) => listing.uri)).toEqual([
++      pathToFileURL(join(root, "4741", "474131051910.zip")).href,
++      pathToFileURL(join(root, "504108BJ0140.zip")).href,
++    ]);
++    expect(listings.every((listing) => (listing.size ?? 0) > 0)).toBe(true);
++
++    const limited = await collectAsync(
++      listLocalAppraisalArtifacts({ rootDirectory: root, limit: 1 }),
++    );
++    expect(limited).toHaveLength(1);
++    expect(limited[0]?.uri).toContain("474131051910.zip");
++  });
++
++  it("maps Broward entities, geometry, alphanumeric folios, and provenance", async () => {
++    const root = await createTemporaryDirectory();
++    const artifactPath = join(root, "504108BJ0140.zip");
++    await writeBrowardArtifact(artifactPath, "504108BJ0140");
++    const artifactBuffer = await readFile(artifactPath);
++    const artifactUri = pathToFileURL(artifactPath).href;
++
++    const mapped = mapAppraisalArtifactZip({
++      artifactBuffer,
++      artifactUri,
++      countyName: "Broward",
++      sourceSystem: "broward_appraiser",
++      stateCode: "FL",
++    });
++    const parcel = findRow(mapped.rows, "parcels");
++    const property = findRow(mapped.rows, "properties");
++    const siteAddress = mapped.rows.find(
++      (row) =>
++        row.tableName === "addresses" &&
++        row.values.source_record_key ===
++          "broward_appraiser:504108BJ0140:address:site",
++    );
++    const mailingAddress = mapped.rows.find(
++      (row) =>
++        row.tableName === "addresses" &&
++        row.values.source_record_key ===
++          "broward_appraiser:504108BJ0140:address:mailing_address",
++    );
++    const reconciliation = reconcileMappedAppraisalArtifact(mapped);
++
++    expect(mapped.requestIdentifier).toBe("504108BJ0140");
++    expect(parcel.values).toMatchObject({
++      county_name: "Broward",
++      jurisdiction_key: "broward_appraiser",
++      parcel_identifier: "504108BJ0140",
++      request_identifier: "504108BJ0140",
++      source_artifact_uri: artifactUri,
++      source_system: "broward_appraiser",
++      state_code: "FL",
++    });
++    expect(property.values.request_identifier).toBe("504108BJ0140");
++    expect(property.values.source_payload).toMatchObject({
++      property_usage_type: "Residential",
++      request_identifier: "504108BJ0140",
++    });
++    expect(siteAddress?.values).toMatchObject({
++      county_name: "Broward",
++      state_code: "FL",
++    });
++    expect(mailingAddress?.values.state_code).toBe("FL");
++    expect(mapped.rows.map((row) => row.tableName)).toEqual(
++      expect.arrayContaining([
++        "fact_sheets",
++        "geometries",
++        "geometry_rings",
++        "property_valuations",
++        "taxes",
++      ]),
++    );
++    expect(reconciliation).toEqual({
++      artifactFolio: "504108BJ0140",
++      parcelFolios: ["504108BJ0140"],
++      parcelRows: 1,
++      propertyFolios: ["504108BJ0140"],
++      propertyRows: 1,
++      rowsWithRetainedSourceMetadata: mapped.rows.length,
++    });
++  });
++
++  it("stages bounded batches, reconciles counts, and resumes from checkpoint", async () => {
++    const root = await createTemporaryDirectory();
++    const outputs = await createTemporaryDirectory();
++    await writeBrowardArtifact(
++      join(root, "4741", "474131051910.zip"),
++      "474131051910",
++    );
++    await writeBrowardArtifact(
++      join(root, "5041", "504108BJ0140.zip"),
++      "504108BJ0140",
++    );
++    const options = {
++      batchSize: 1,
++      checkpointFile: join(outputs, "checkpoint.json"),
++      concurrency: 2,
++      countyName: "Broward",
++      limit: null,
++      reportFile: join(outputs, "report.json"),
++      rootDirectory: root,
++      sourceSystem: "broward_appraiser",
++      stageDirectory: join(outputs, "stage"),
++      stateCode: "FL",
++    } as const;
++
++    const first = await stageLocalAppraisalDryRun(options);
++    expect(first.passed).toBe(true);
++    expect(first.counters).toMatchObject({
++      artifactsDiscovered: 2,
++      artifactsMapped: 2,
++      artifactsSkippedFromCheckpoint: 0,
++      failedArtifacts: 0,
++      parcelRows: 2,
++      properties: 2,
++    });
++    expect(first.reconciliation).toEqual({
++      artifactFolios: 2,
++      distinctParcelFolios: 2,
++      distinctPropertyFolios: 2,
++      folioSetsMatch: true,
++      oneParcelPerArtifact: true,
++      onePropertyPerArtifact: true,
++      propertiesMatchDistinctFolios: true,
++      sourceMetadataRetainedForEveryRow: true,
++      staleCheckpointArtifacts: 0,
++    });
++    await expect(
++      readFile(
++        join(outputs, "stage", "appraisal-local-dry-run-batch.csv"),
++        "utf8",
++      ),
++    ).rejects.toMatchObject({ code: "ENOENT" });
++
++    const resumed = await stageLocalAppraisalDryRun(options);
++    expect(resumed.passed).toBe(true);
++    expect(resumed.counters).toMatchObject({
++      artifactsDiscovered: 2,
++      artifactsMapped: 2,
++      artifactsSkippedFromCheckpoint: 2,
++      properties: 2,
++    });
++    const persistedReport: unknown = JSON.parse(
++      await readFile(options.reportFile, "utf8"),
++    );
++    expect(persistedReport).toMatchObject({
++      passed: true,
++      source: {
++        countyName: "Broward",
++        jurisdictionKey: "broward_appraiser",
++        stateCode: "FL",
++      },
++    });
++  });
++
++  it("fails reconciliation when a ZIP filename and mapped folio disagree", async () => {
++    const root = await createTemporaryDirectory();
++    const outputs = await createTemporaryDirectory();
++    await writeBrowardArtifact(
++      join(root, "474131051910.zip"),
++      "504108BJ0140",
++    );
++
++    const report = await stageLocalAppraisalDryRun({
++      batchSize: 10,
++      checkpointFile: join(outputs, "checkpoint.json"),
++      concurrency: 1,
++      countyName: "Broward",
++      limit: null,
++      reportFile: join(outputs, "report.json"),
++      rootDirectory: root,
++      sourceSystem: "broward_appraiser",
++      stageDirectory: join(outputs, "stage"),
++      stateCode: "FL",
++    });
++
++    expect(report.passed).toBe(false);
++    expect(report.counters.properties).toBe(1);
++    expect(report.reconciliation).toMatchObject({
++      artifactFolios: 1,
++      distinctPropertyFolios: 1,
++      folioSetsMatch: false,
++    });
++  });
++});
++
++/**
++ * Create and register an isolated temporary directory for one test.
++ *
++ * @returns Absolute temporary directory path removed by `afterEach`.
++ */
++async function createTemporaryDirectory(): Promise<string> {
++  const directory = await mkdtemp(join(tmpdir(), "query-db-broward-loader-"));
++  temporaryDirectories.push(directory);
++  return directory;
++}
++
++/**
++ * Build a representative transformed Broward ZIP fixture.
++ *
++ * The fixture includes the direct property/parcel rows used for count
++ * reconciliation, unindexed Broward mailing/geometry filenames, a tax row, and
++ * a fact sheet without its own request identifier. Source HTTP metadata mirrors
++ * the BCPA POST provenance retained in real transformed artifacts.
++ *
++ * @param artifactPath - Destination ZIP path, including optional shard directories.
++ * @param folio - Exact numeric or alphanumeric Broward folio encoded in records.
++ */
++async function writeBrowardArtifact(
++  artifactPath: string,
++  folio: string,
++): Promise<void> {
++  await mkdir(dirname(artifactPath), { recursive: true });
++  const zip = new AdmZip();
++  const sourceHttpRequest = {
++    headers: { "content-type": "application/json" },
++    json: {
++      action: "CURRENT",
++      folioNumber: folio,
++      taxyear: "",
++      use: "",
++    },
++    method: "POST",
++    multiValueQueryString: {},
++    url: "https://web.bcpa.net/BcpaClient/search.aspx/getParcelInformation",
++  };
++  const withSource = (record: JsonObject): JsonObject => ({
++    source_http_request: sourceHttpRequest,
++    request_identifier: folio,
++    ...record,
++  });
++  const addJson = (entryName: string, record: JsonObject): void => {
++    zip.addFile(entryName, Buffer.from(JSON.stringify(record), "utf8"));
++  };
++
++  addJson("data/property_seed.json", withSource({ parcel_id: folio }));
++  addJson(
++    "data/property.json",
++    withSource({
++      parcel_identifier: folio,
++      property_type: "Unit",
++      property_usage_type: "Residential",
++    }),
++  );
++  addJson(
++    "data/address.json",
++    withSource({
++      county_name: "Broward",
++      latitude: 26.12,
++      longitude: -80.14,
++      unnormalized_address: "958 MOCKINGBIRD LANE # 513 PLANTATION, FL 33324",
++    }),
++  );
++  addJson(
++    "data/mailing_address.json",
++    withSource({
++      unnormalized_address: "100 OWNER WAY, PLANTATION, FL 33324",
++    }),
++  );
++  addJson(
++    "data/geometry_parcel_0.json",
++    withSource({
++      latitude: 26.12,
++      longitude: -80.14,
++      polygon: [
++        { longitude: -80.15, latitude: 26.11 },
++        { longitude: -80.13, latitude: 26.11 },
++        { longitude: -80.13, latitude: 26.13 },
++        { longitude: -80.15, latitude: 26.11 },
++      ],
++    }),
++  );
++  addJson(
++    "data/tax_1.json",
++    withSource({
++      property_assessed_value_amount: 200000,
++      property_market_value_amount: 250000,
++      tax_year: 2025,
++    }),
++  );
++  addJson("data/fact_sheet.json", {
++    full_generation_command: "fixture",
++    ipfs_url: "./index.html",
++  });
++  zip.writeZip(artifactPath);
++}
++
++/**
++ * Collect a finite async iterable for deterministic assertions.
++ *
++ * @param source - Async values to collect.
++ * @returns Values in yielded order.
++ */
++async function collectAsync<Value>(
++  source: AsyncIterable<Value>,
++): Promise<readonly Value[]> {
++  const values: Value[] = [];
++  for await (const value of source) values.push(value);
++  return values;
++}
++
++/**
++ * Require one prepared row of a logical table.
++ *
++ * @param rows - Prepared mapper rows.
++ * @param tableName - Logical table to locate.
++ * @returns First matching prepared row.
++ */
++function findRow(
++  rows: readonly PreparedRow[],
++  tableName: LogicalTableName,
++): PreparedRow {
++  const row = rows.find((candidate) => candidate.tableName === tableName);
++  if (row === undefined) throw new Error(`Missing row for ${tableName}`);
++  return row;
++}
+-- 
+2.43.0
+
+
+From ddf253f208528190dffb69152b2d46b3179ded38 Mon Sep 17 00:00:00 2001
+From: Cursor Agent <cursoragent@cursor.com>
+Date: Fri, 28 Aug 2026 16:01:42 +0000
+Subject: [PATCH 2/2] Clean up dry-run stream listeners
+
+---
+ src/loader/appraisal-local-stage.ts | 24 ++++++++++++++++++++----
+ 1 file changed, 20 insertions(+), 4 deletions(-)
+
+diff --git a/src/loader/appraisal-local-stage.ts b/src/loader/appraisal-local-stage.ts
+index e3e850f03e7e8520d9ade1ed5407ae4e189f09f9..6d27b34f161eaba6664d63b92dcb9785ad2a5f92 100644
+--- a/src/loader/appraisal-local-stage.ts
++++ b/src/loader/appraisal-local-stage.ts
+@@ -552,8 +552,16 @@ async function processWithConcurrency<Item>(
+  */
+ function waitForDrain(writer: Writable): Promise<void> {
+   return new Promise((resolvePromise, rejectPromise) => {
+-    writer.once("drain", resolvePromise);
+-    writer.once("error", rejectPromise);
++    const onDrain = (): void => {
++      writer.off("error", onError);
++      resolvePromise();
++    };
++    const onError = (error: Error): void => {
++      writer.off("drain", onDrain);
++      rejectPromise(error);
++    };
++    writer.once("drain", onDrain);
++    writer.once("error", onError);
+   });
+ }
+ 
+@@ -564,8 +572,16 @@ function waitForDrain(writer: Writable): Promise<void> {
+  */
+ function waitForFinish(writer: Writable): Promise<void> {
+   return new Promise((resolvePromise, rejectPromise) => {
+-    writer.once("finish", resolvePromise);
+-    writer.once("error", rejectPromise);
++    const onFinish = (): void => {
++      writer.off("error", onError);
++      resolvePromise();
++    };
++    const onError = (error: Error): void => {
++      writer.off("finish", onFinish);
++      rejectPromise(error);
++    };
++    writer.once("finish", onFinish);
++    writer.once("error", onError);
+   });
+ }
+ 
+-- 
+2.43.0
+

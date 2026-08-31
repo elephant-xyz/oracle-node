@@ -1,0 +1,48 @@
+{
+  "artifacts": [
+    {
+      "folio": "504108BJ0140",
+      "entries": {
+        "data/property.json": {
+          "parcel_identifier": "504108BJ0140",
+          "property_type": "Unit",
+          "property_usage_type": "Residential",
+          "property_structure_built_year": 1975,
+          "property_market_value_amount": 300000
+        },
+        "data/person_1.json": {
+          "first_name": "Privacy",
+          "last_name": "Fixture"
+        },
+        "data/mailing_address.json": {
+          "unnormalized_address": "123 FIXTURE STREET"
+        },
+        "data/relationship_person_has_mailing_address_1.json": {
+          "from": {
+            "/": "./person_1.json"
+          },
+          "to": {
+            "/": "./mailing_address.json"
+          }
+        }
+      }
+    },
+    {
+      "folio": "474135010090",
+      "entries": {
+        "data/property.json": {
+          "parcel_identifier": "474135010090",
+          "property_type": "Land",
+          "property_usage_type": "Commercial",
+          "property_market_value_amount": 125000
+        },
+        "data/company_1.json": {
+          "name": "PRIVATE FIXTURE COMPANY"
+        },
+        "data/mailing_address.json": {
+          "unnormalized_address": "P.O. BOX 123"
+        }
+      }
+    }
+  ]
+}

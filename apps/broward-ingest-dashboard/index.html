@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="robots" content="noindex,nofollow,noarchive" />
+    <meta
+      name="description"
+      content="Aggregate operational status for Broward County appraisal ingestion."
+    />
+    <title>Broward ingestion status</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main-content">Skip to dashboard</a>
+    <main id="main-content">
+      <header class="page-header">
+        <div>
+          <p class="eyebrow">Operations · Broward County</p>
+          <h1>Appraisal ingestion</h1>
+          <p class="subtitle">
+            Durable, aggregate-only progress from the isolated Neon branch
+          </p>
+        </div>
+        <div class="header-status">
+          <span
+            id="health-badge"
+            class="health-badge loading"
+            role="status"
+            aria-live="polite"
+          >
+            Loading
+          </span>
+          <span id="snapshot-time" class="snapshot-time"
+            >Waiting for status…</span
+          >
+        </div>
+      </header>
+
+      <section
+        id="system-notice"
+        class="system-notice"
+        aria-live="polite"
+        aria-atomic="true"
+      >
+        Connecting to the aggregate status service…
+      </section>
+
+      <section
+        class="panel progress-panel"
+        aria-labelledby="completion-heading"
+      >
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">County completion</p>
+            <h2 id="completion-heading">
+              <span id="completion-percent">—</span>
+            </h2>
+          </div>
+          <p id="completion-detail" class="section-detail">
+            Loading denominator…
+          </p>
+        </div>
+        <progress
+          id="completion-progress"
+          max="100"
+          value="0"
+          aria-label="Broward county appraisal ingestion completion"
+        ></progress>
+      </section>
+
+      <section class="metric-grid" aria-label="Ingestion counters">
+        <article class="panel metric-card">
+          <h2>Attempted</h2>
+          <strong id="attempted">—</strong>
+          <p>Unique county rows represented by the current checkpoint</p>
+        </article>
+        <article class="panel metric-card success">
+          <h2>Succeeded</h2>
+          <strong id="succeeded">—</strong>
+          <p>Verified durable property loads</p>
+        </article>
+        <article class="panel metric-card warning">
+          <h2>Source misses</h2>
+          <strong id="source-misses">—</strong>
+          <p>Terminal appraiser misses that advance completion</p>
+        </article>
+        <article class="panel metric-card danger">
+          <h2>Source failures</h2>
+          <strong id="source-failures">—</strong>
+          <p>Retryable source failure attempts</p>
+        </article>
+        <article class="panel metric-card danger">
+          <h2>Transform failures</h2>
+          <strong id="transform-failures">—</strong>
+          <p>Retryable transform failure attempts</p>
+        </article>
+        <article class="panel metric-card danger">
+          <h2>Load failures</h2>
+          <strong id="load-failures">—</strong>
+          <p>Database load failure attempts</p>
+        </article>
+        <article class="panel metric-card">
+          <h2>Throughput</h2>
+          <strong id="throughput">—</strong>
+          <p id="throughput-detail">Recent attempted rows</p>
+        </article>
+        <article class="panel metric-card">
+          <h2>ETA</h2>
+          <strong id="eta">—</strong>
+          <p id="eta-detail">Available only with a fresh heartbeat and rate</p>
+        </article>
+      </section>
+
+      <div class="detail-grid">
+        <section class="panel" aria-labelledby="runtime-heading">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Writer state</p>
+              <h2 id="runtime-heading">Runtime checkpoint</h2>
+            </div>
+          </div>
+          <dl class="definition-list">
+            <div>
+              <dt>Phase</dt>
+              <dd id="phase">—</dd>
+            </div>
+            <div>
+              <dt>Last heartbeat</dt>
+              <dd id="heartbeat">—</dd>
+            </div>
+            <div>
+              <dt>Heartbeat age</dt>
+              <dd id="heartbeat-age">—</dd>
+            </div>
+            <div>
+              <dt>Remaining</dt>
+              <dd id="remaining">—</dd>
+            </div>
+            <div>
+              <dt>County denominator</dt>
+              <dd id="denominator">—</dd>
+            </div>
+          </dl>
+        </section>
+
+        <section class="panel" aria-labelledby="coverage-heading">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Successful records</p>
+              <h2 id="coverage-heading">Category coverage</h2>
+            </div>
+          </div>
+          <ol id="category-coverage" class="coverage-list">
+            <li class="empty-state">Loading coverage…</li>
+          </ol>
+        </section>
+      </div>
+
+      <footer>
+        <p>
+          This view exposes aggregate counts and timestamps only. Folios,
+          owners, addresses, credentials, raw errors, and artifact metadata are
+          neither queried nor returned.
+        </p>
+        <p>Refreshes automatically every 10 seconds.</p>
+      </footer>
+    </main>
+    <script type="module" src="/src/client.ts"></script>
+  </body>
+</html>

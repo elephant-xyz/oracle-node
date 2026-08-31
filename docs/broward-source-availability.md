@@ -1,0 +1,109 @@
+# Broward source availability and official-custodian matrix
+
+Date: 2026-08-28  
+County: Broward County, Florida (`12011`)
+
+This closes the source-documentation acceptance gate. “Unavailable” below
+means no anonymous record-level endpoint was certified from official pages; it
+does not mean the public record does not exist. In those cases, the official
+municipal custodian or public-record route is recorded instead.
+
+## Countywide data categories
+
+| Category                 | Official source                                                                                                                                                                            | Availability                                                                                                                                                                                   |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Appraisal                | [Broward County Property Appraiser](https://web.bcpa.net/BcpaClient/#/Record-Search) and its `search.aspx/getParcelInformation` API                                                        | Public JSON; pilot certified 50/50                                                                                                                                                             |
+| Parcel geometry          | [BCPA ArcGIS Parcels layer](https://gisweb-adapters.bcpa.net/arcgis/rest/services/BCPA_EXTERNAL_JAN26/MapServer/16)                                                                        | Public ArcGIS JSON; official layer type is `esriGeometryPolygon`; 556,178 features and 534,309 unique folios                                                                                   |
+| Building permits         | Municipal sources below; [Broward Building Official Contacts](https://www.broward.org/CodeAppeals/Pages/BuildingContacts.aspx) identifies the official custodians                          | Fragmented across 31 municipalities plus the unincorporated Broward Municipal Services District                                                                                                |
+| Florida companies        | [Florida Department of State Division of Corporations](https://dos.fl.gov/sunbiz/) and [quarterly corporate data](https://dos.fl.gov/sunbiz/other-services/data-downloads/quarterly-data/) | Official statewide bulk files; reuse the existing Sunbiz fixed-width loader with Broward ZIP scope                                                                                             |
+| Business reputation      | [BBB API](https://developer.bbb.org/) and [API terms](https://developer.bbb.org/terms-of-use)                                                                                              | BBB is not a government registry. API access requires approval; complaint/review data is internal-use-only. No public Broward bulk source is available, and site aggregation is not authorized |
+| Tax collector (deferred) | [Broward County Tax Collector](https://browardtax.org/)                                                                                                                                    | Official source identified; not part of the accepted appraisal/permit/Sunbiz/BBB ingest scope                                                                                                  |
+| Recorder (deferred)      | [Broward Official Records](https://officialrecords.broward.org/) and [completed index files](https://www.broward.org/RecordsTaxesTreasury/Records/Pages/IndexFiles-Completed.aspx)         | Official source identified; interactive search is Cloudflare-protected. Bulk availability is 10 continuous days of quality-assured images and index data, outside this ingest scope            |
+
+## Permit jurisdictions
+
+Common official evidence:
+
+- [Broward Building Code](https://www.broward.org/building) states that county
+  Building Code Services handles the Broward Municipal Services District and
+  contracted cities.
+- [Broward BCS permit search](https://dpepp.broward.org/BCS/Default.aspx?PossePresentation=ParcelSearchByAddress)
+  exposes address/parcel search and lists every Broward municipality. The city
+  dropdown is not a countywide custody claim; BCS records are bounded to
+  BMSD/unincorporated and records BCS holds for contracted services.
+- The local-only
+  [BCS POSSE adapter pilot](./broward-bcs-permit-pilot.md) documents exact
+  Parcel ID submission, explicit empty/no-match behavior, source provenance,
+  detail normalization, and hard request limits.
+- The local-only
+  [municipal Accela adapters](./broward-accela-permit-adapters.md) provide
+  agency/module routing, exact alphanumeric folios, pagination/detail capture,
+  atomic resume state, explicit historical boundaries, and fail-closed
+  records/no-records/error outcomes for the five Accela jurisdictions below.
+- The local-only
+  [municipal vendor-family prototypes](./broward-municipal-permit-prototypes.md)
+  document reusable parsing/checkpoint contracts, bounded official-site
+  observations, and executable login/CAPTCHA/records-request skips for the
+  remaining Click2Gov, eSuite, Gov-Easy/GeoCivix, SmartGov, OpenGov,
+  CommunityCore, MGO Connect, eGovPLUS, and Sunrise routes.
+- The executable
+  [32-jurisdiction property-first registry and acceptance pilot](./broward-permit-acceptance-pilot.md)
+  derives each route from BCPA situs evidence, preserves unavailable/login/
+  CAPTCHA/custodian outcomes, and prevents municipality-wide BCS fallback.
+- [Broward ePermits OneStop](https://www.broward.org/ePermits/Pages/Contact.aspx)
+  documents the municipal/county split and links the municipal building
+  officials/support route.
+- The official [Building Official Contacts](https://www.broward.org/CodeAppeals/Pages/BuildingContacts.aspx)
+  directory is the fallback custodian route where no anonymous municipal
+  record endpoint was certified.
+
+| Jurisdiction                                         | Official record source or custodian evidence                                                                                                                                  | Status                                                                                                                                    |
+| ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| Broward Municipal Services District / unincorporated | [BCS parcel/address search](https://dpepp.broward.org/BCS/Default.aspx?PossePresentation=ParcelSearchByAddress)                                                               | Public search and bounded local-only property-first adapter certified                                                                     |
+| Coconut Creek                                        | [City permit-status search](https://www3.coconutcreek.gov/sd/permit/permit_status_01.asp)                                                                                     | Public permit/property/address search documented                                                                                          |
+| Cooper City                                          | [City Accela Citizen Access](https://aca-prod.accela.com/COOPER/)                                                                                                             | Local bounded adapter certified; validated folio returned an explicit no-records response                                                 |
+| Coral Springs                                        | [City eTRAKiT](https://etrakit.coralsprings.gov/eTRAKiT/Search/permit.aspx)                                                                                                   | `captcha_required`: reCAPTCHA blocks unattended certification and is not bypassed                                                         |
+| Dania Beach                                          | [City Tyler eSuite](https://cityofdaniabeachfl.nwerp.tylerapp.com/nwprod/eSuite.Permits/)                                                                                     | Bounded parser/checkpoint prototype; anonymous tenant transport is not implemented                                                        |
+| Davie                                                | [Town eSuite Permits](https://esuite.davie-fl.gov/eSuite.Permits/AdvancedSearchPage/AdvancedSearch.aspx)                                                                      | Bounded parser/checkpoint prototype; anonymous tenant transport is not implemented, and new 2026 submissions use a login-gated OAS system |
+| Deerfield Beach                                      | [Legacy Gov-Easy search](https://apps.gov-easy.com/Home/PermitInspection/Search?clientId=dce877e0-e162-4827-a60d-7249ec4e8fe2)                                                | Current GeoCivix is `login_required`; historical Gov-Easy is `captcha_required`; both are explicit no-request outcomes                    |
+| Fort Lauderdale                                      | [LauderBuild](https://aca3.accela.com/FTL/)                                                                                                                                   | Local bounded `Permits` adapter certified; one 7-detail probe completed, while a separate 50-result folio hit the 20-detail safety cap    |
+| Hallandale Beach                                     | [City Building Division FAQ](https://cohb.org/Faq.aspx?QID=75)                                                                                                                | Bounded Tyler adapter implemented; earliest migrated history and a matched live pilot control remain unverified                           |
+| Hillsboro Beach                                      | [Town CommunityCore portal](https://app.communitycore.com/app/public-portal/c98c7b46-2cba-4ba2-bbd5-7a76966f42dd)                                                             | `login_required`: account-required status, review, fee, and inspection access is skipped                                                  |
+| Hollywood                                            | [City permit-status search](https://apps.hollywoodfl.org/building/PermitStatus.aspx)                                                                                          | Current Accela adapter certified separately from the 1988-present legacy address source; older records use City archives                  |
+| Lauderdale-by-the-Sea                                | [Town Citizenserve](https://www6.citizenserve.com/Portal/PortalController?Action=showHomePage&ctzPagePrefix=Portal_&installationID=117)                                       | Bounded current Citizenserve adapter captured one detail; the 73 BCS records are historical town evidence only                            |
+| Lauderdale Lakes                                     | [City OpenGov search](https://lauderdalelakesfl.portal.opengov.com/search)                                                                                                    | Public landing documented, but rendered permit app currently reports inaccessible; fixture-only cursor prototype skips live GraphQL       |
+| Lauderhill                                           | [City eGovPLUS search](http://egov.lauderhill-fl.gov/eGovPlus83/permit/perm_status.aspx)                                                                                      | Bounded permit/folio/address and detail parser prototype certified on one exact public record                                             |
+| Lazy Lake                                            | [BCS parcel/address search](https://dpepp.broward.org/BCS/Default.aspx?PossePresentation=ParcelSearchByAddress)                                                               | BCS city list documents county search route; no separate village endpoint                                                                 |
+| Lighthouse Point                                     | [City SmartGov](https://ci-lighthousepoint-fl.smartgovcommunity.com/ApplicationPublic/ApplicationHome)                                                                        | Anonymous bounded search/empty-result and numbered-page parser certified; positive detail remains a blocker                               |
+| Margate                                              | [City Click2Gov](https://marg-egov.aspgov.com/Click2GovBP/selectpermit.html)                                                                                                  | Public application/address/parcel/name landing and shared bounded Click2Gov parser documented                                             |
+| Miramar                                              | [City online permitting](https://www.miramarfl.gov/Departments/Building-Planning-Zoning/Building-Permits-Inspections/Online-Permitting)                                       | Bounded Tyler adapter implemented; validated folio produced a typed empty result                                                          |
+| North Lauderdale                                     | [City EnerGov CSS](https://nlselfservice.nlauderdale.org/Energov_prod/SelfService#/home)                                                                                      | `login_required`: unattended login is skipped; use the City records route for property-wide records                                       |
+| Oakland Park                                         | [City Permit Access](https://oaklandparkfl.gov/312/Permit-Access)                                                                                                             | Bounded Tyler adapter implemented for post-2019-11-01 records; earlier records remain separate                                            |
+| Parkland                                             | [MGO Connect](https://www.mgoconnect.org/cp/portal)                                                                                                                           | `login_required`: the free-account permit/inspection search is an explicit no-request outcome                                             |
+| Pembroke Park                                        | [Town online permitting](https://www.tppfl.gov/194/Online-Permitting-System)                                                                                                  | `captcha_required`: Gov-Easy's numeric CAPTCHA is not bypassed; submissions require staff email                                           |
+| Pembroke Pines                                       | [City Tyler Civic Access](https://pembrokepinesfl-energovweb.tylerhost.net/apps/selfservice)                                                                                  | Bounded Tyler adapter captured one detail; portal completeness is not inferred                                                            |
+| Plantation                                           | [City Accela Citizen Access](https://aca.plantation.org/CitizenAccess/Cap/CapHome.aspx?TabName=Building&module=Building)                                                      | Local framed adapter certified; portal warns pre-2004 records may require City microfilm                                                  |
+| Pompano Beach                                        | [City Click2Gov](https://c2g.pompanobeachfl.gov/Click2GovBP/selectpermit.html)                                                                                                | Bounded Click2Gov result/detail prototype certified; broad rows cap before detail traversal                                               |
+| Sea Ranch Lakes                                      | [Broward building-official directory](https://www.broward.org/CodeAppeals/Pages/BuildingContacts.aspx)                                                                        | `custodian_only`: no anonymous record endpoint is certified                                                                               |
+| Southwest Ranches                                    | [Town Citizenserve](https://www6.citizenserve.com/Portal/PortalController?Action=showSearchPage&ctzPagePrefix=Portal_&installationID=117&original_contactID=0&original_iid=0) | Bounded Citizenserve adapter implemented; validated folio produced an explicit no-records result                                          |
+| Sunrise                                              | [City Building Records](https://www.sunrisefl.gov/departments-services/community-development/building/building-records)                                                       | `custodian_only`: microfilm/records-request routes are retained as no-submit outcomes; the page also returned 403 here                    |
+| Tamarac                                              | [City Property Permit History](https://tamarac.gov/672/Permit-History)                                                                                                        | Official Click2Gov address/parcel/application/name search and shared bounded parser documented                                            |
+| West Park                                            | [City Citizenserve](https://www6.citizenserve.com/Portal/PortalController?Action=showSearchPage&ctzPagePrefix=Portal_&installationID=261&original_contactID=0&original_iid=0) | Bounded Citizenserve adapter implemented; no matched checked-in pilot folio was available                                                 |
+| Weston                                               | [City Accela Citizen Access](https://aca-prod.accela.com/weston/Cap/CapHome.aspx?TabName=Building&module=Building)                                                            | Local bounded adapter certified; public records cover post-1997 history                                                                   |
+| Wilton Manors                                        | [City permit/public-record search guide](https://www.wiltonmanors.gov/DocumentCenter/View/9768/How-to-do-an-online-permit-record-search)                                      | Bounded Citizenserve adapter implemented; unavailable files still require the City records route                                          |
+
+## Operational conclusion
+
+Every requested category now has either a first-party source or a documented
+official custodian/unavailability route. This matrix does **not** claim that
+all 32 permit jurisdictions have ingestion adapters. Source discovery is
+closed, and all jurisdictions have an explicit route. Fifteen current routes
+point to bounded local adapters: two BCS, five Accela, four Tyler, and four
+Citizenserve. The other 17 are nine transport-unavailable prototypes/routes,
+four login-required routes, two CAPTCHA-required routes, and two
+custodian-only routes. The local pilot produced 73 queryable historical BCS
+records for Lauderdale-by-the-Sea only; it did not establish contemporary BMSD
+positive coverage. None of this municipal work is wired to AWS ingestion or
+publication. Production coverage and municipal permit acceptance still
+require the tenant-specific transport certification and positive examples
+documented above.
