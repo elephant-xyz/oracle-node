@@ -11,6 +11,13 @@ import {
   shouldKeepValidationEntry,
   stripQueryFromSourceHttpRequestTree,
   unwrapPropertyPrintHtml,
+  buildPrintPageUrl,
+  buildSeedJsonFiles,
+  buildSourceHttpRequest,
+  fetchPropertyPrintHtml,
+  hasCompletedTransform,
+  mapWithConcurrency,
+  parseSeedQueryString,
 } from "../../scripts/run-pinellas-local-ingest.mjs";
 
 const require = createRequire(import.meta.url);
@@ -67,9 +74,22 @@ describe("Pinellas local ingest helpers", () => {
       skipValidate: true,
       outputDirectory: "tmp/out",
       allRows: false,
+      skipExisting: true,
+      concurrency: 2,
+      transformMode: "scripts",
+      useCliPrepare: false,
     });
     expect(parseCliOptions(["--all"]).allRows).toBe(true);
+    expect(parseCliOptions(["--force", "--cli-transform", "--concurrency", "4"]))
+      .toMatchObject({
+        skipExisting: false,
+        transformMode: "elephant-cli",
+        concurrency: 4,
+      });
     expect(() => parseCliOptions(["--limit", "-1"])).toThrow(/positive integer/);
+    expect(() => parseCliOptions(["--concurrency", "0"])).toThrow(
+      /positive integer/,
+    );
   });
 
   it("drops leftover fact_sheet.json from the validate zip", () => {
@@ -107,6 +127,82 @@ describe("Pinellas local ingest helpers", () => {
     );
     expect(rewriteIpfsGatewayUrl("https://lexicon.elephant.xyz/json-schemas/schema-manifest.json")).toBe(
       "https://lexicon.elephant.xyz/json-schemas/schema-manifest.json",
+    );
+  });
+
+  it("keeps print query params off source_http_request.url and on multiValueQueryString", () => {
+    const url = buildPrintPageUrl("162805389030000430");
+    expect(url).toContain("s=162805389030000430");
+    expect(url).toContain("is_print=1");
+    expect(parseSeedQueryString("", "162805389030000430")).toEqual({
+      is_print: ["1"],
+      s: ["162805389030000430"],
+    });
+    const row = {
+      parcel_id: "162805389030000430",
+      county: "Pinellas",
+      situs_address: "3400 RUGBY CT, PALM HARBOR FL",
+      url: "https://www.pcpao.gov/property/detail/print",
+      method: "GET",
+      multiValueQueryString: `{"is_print":["1"],"s":["162805389030000430"]}`,
+    };
+    const seed = buildSeedJsonFiles(row);
+    expect(seed.propertySeed.parcel_id).toBe("162805389030000430");
+    expect(seed.propertySeed.source_http_request.url).not.toContain("?");
+    expect(seed.unnormalizedAddress.county_jurisdiction).toBe("Pinellas");
+    expect(buildSourceHttpRequest(row).url).toBe(
+      "https://www.pcpao.gov/property/detail/print",
+    );
+  });
+
+  it("fetches print HTML with a Chrome UA and retries 403", async () => {
+    /** @type {string[]} */
+    const userAgents = [];
+    /** @type {number} */
+    let calls = 0;
+    const html =
+      "<!DOCTYPE html><html><body><h1>Parcel Summary</h1>Owner Name</body></html>";
+    const fakeFetch = async (input, init) => {
+      calls += 1;
+      userAgents.push(
+        typeof init?.headers === "object" && init.headers !== null
+          ? String(
+              /** @type {Record<string, string>} */ (init.headers)["User-Agent"],
+            )
+          : "",
+      );
+      if (calls === 1) {
+        return new Response("denied", { status: 403 });
+      }
+      expect(String(input)).toContain("s=162805389030000430");
+      return new Response(html, { status: 200 });
+    };
+    const fetched = await fetchPropertyPrintHtml(
+      "162805389030000430",
+      /** @type {typeof fetch} */ (fakeFetch),
+      3,
+    );
+    expect(fetched).toContain("Parcel Summary");
+    expect(calls).toBe(2);
+    expect(userAgents[1]).toMatch(/Chrome\/124/);
+  });
+
+  it("runs a concurrency pool in input order", async () => {
+    const seen = [];
+    const mapped = await mapWithConcurrency([3, 2, 1], 2, async (value) => {
+      seen.push(value);
+      await new Promise((resolve) => {
+        setTimeout(resolve, value * 5);
+      });
+      return value * 10;
+    });
+    expect(mapped).toEqual([30, 20, 10]);
+    expect(seen).toHaveLength(3);
+  });
+
+  it("treats a transformed.zip as already complete", () => {
+    expect(hasCompletedTransform("/tmp/does-not-exist-pinellas-strap")).toBe(
+      false,
     );
   });
 });

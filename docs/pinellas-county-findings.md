@@ -210,24 +210,38 @@ entry. Structures/layouts/utilities remain 0 on print HTML (known mapping gap).
 | BBB | **No** | In scope later; not harvested |
 | Tax / clerk / code / BTR / FEMA | **No** | Out of pilot (table above) |
 
-### Full-county cloud ingest (2026-08-31)
+### Full-county local ingest (2026-08-31)
 
-Operator scope: **all tax parcels, appraisal only, AWS `elephant-oracle-node`**. Permits / Sunbiz / BBB are out of this run.
+Operator scope: **all tax parcels, appraisal only, this machine through public Filebase/IPFS**. AWS Step Functions / seed feeder are **out of this run**. Permits / Sunbiz / BBB are out of this run.
 
-**Seed of record (generated, not committed):** `data/seeds/pinellas.csv` via `scripts/build-pinellas-full-seed.mjs` from PCPA GIS tax parcels layer 157 (not the Accela address layer). Snapshot 2026-08-31T17:01:21Z: GIS count **311,582**, unique 18-digit STRAPs **311,566**, 1 invalid STRAP skipped, FIPS **12103**. Five print-page probes succeeded from US egress (~0.28s). Upload target once AWS creds exist: `s3://counties-seeds/pinellas.csv`.
+**Seed of record (generated, not committed):** `data/seeds/pinellas.csv` via `scripts/build-pinellas-full-seed.mjs` from PCPA GIS tax parcels layer 157 (not the Accela address layer). Snapshot 2026-08-31T17:01:21Z: GIS count **311,582**, unique 18-digit STRAPs **311,566**, 1 invalid STRAP skipped, FIPS **12103**.
 
-**Cloud start sequence (blocked until AWS credentials are in this environment):**
+**Local start sequence:**
 
-1. Upload `multi-request-flows/Pinellas.json` and `source-html-static-parts/pinellas.csv` to the environment bucket (`aws s3 sync`, same as `deploy-infra.sh`).
-2. Zip Pinellas transform scripts from `Counties-trasform-scripts/pinellas/scripts/` → `transforms/pinellas.zip` on `TRANSFORM_S3_PREFIX`.
-3. `MAX_CONCURRENCY=2 ./scripts/create-county-prepare-queue.sh Pinellas`
-4. Set `ELEPHANT_PREPARE_USE_BROWSER_Pinellas=false` on the Downloader Lambda (plain HTTP multi-request flow). Set `PROPERTY_FIRST_PERMIT_ELIGIBLE_USAGE_TYPES_PINELLAS=__NONE__` on the permit-harvest worker.
-5. Cloud **pilot** first (~25 STRAPs from the full seed, distinct jobId) before the full feeder.
-6. Full run: `node scripts/send-pinellas-seed-feeder.mjs --job-id pinellas-property-first-seed-all-20260831`
+```bash
+node scripts/run-pinellas-local-ingest.mjs \
+  --seed data/seeds/pinellas.csv \
+  --all \
+  --skip-validate \
+  --skip-existing \
+  --concurrency 2 \
+  --scripts /tmp/Counties-trasform-scripts/pinellas/scripts \
+  --output downloads/pinellas/local-ingest
+```
 
-48-hour gate: print HTML @ 0.28s × 311,566 serial ≈ **24 h**; conc 2 ≈ **12–14 h**. Under 48h. Start at concurrency 2.
+The ingest GETs print HTML with a Chrome UA (no `elephant-cli prepare`), runs the Pinellas scripts from `feat/pinellas-print-html-fallbacks`, and writes `downloads/pinellas/local-ingest/<STRAP>/transformed.zip`. Restart-safe: existing zips are skipped. Progress is `status.json`. Lexicon validate is skipped for the full roll (already proven 50/50 on the pilot).
 
-This cloud agent had **no AWS credentials / CLI** at kickoff, so the feeder was not sent.
+When the roll is complete:
+
+```bash
+node scripts/publish-pinellas-pilot-to-filebase.mjs \
+  --seed data/seeds/pinellas.csv \
+  --ingest-dir downloads/pinellas/local-ingest
+```
+
+That rebuilds the query-table parquet + coverage snapshot and re-points the **existing** Pinellas IPNS names (`oracle-query-table-pinellas`, `oracle-dataset-coverage-pinellas`). Filebase `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY` / `FILEBASE_API_TOKEN` are required at publish time.
+
+48-hour gate: print HTML @ 0.28s + local transform. Start at concurrency 2. Do not jump to 8; PCPAO is UA-sensitive.
 
 ## 7. Source feasibility
 
