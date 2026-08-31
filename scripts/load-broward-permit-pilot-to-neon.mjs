@@ -386,6 +386,7 @@ export function buildPermitUpsertValues(record, parent) {
     projectDescription: record.project_description,
     description: record.project_title,
     moreDetails: {
+      is_roof_permit: record.is_roof_permit,
       issuing_jurisdiction: record.issuing_jurisdiction,
       legal_description: record.legal_description,
       contractor_name: record.contractor_name,
@@ -459,6 +460,16 @@ export function buildAccelaPermitUpsertValues(record, parent) {
       applicant: record.applicant,
       licensed_professional: record.licensedProfessional,
       completed_inspections: record.completedInspections,
+      is_roof_permit: /\broof(?:ing)?\b/iu.test(
+        [
+          record.recordNumber,
+          record.recordType,
+          record.projectDescription,
+          record.rawText,
+        ]
+          .filter((value) => typeof value === "string")
+          .join(" "),
+      ),
       processing_status_raw_text: record.processingStatusRawText,
       document_links: record.documentLinks,
       related_links: record.relatedLinks,
@@ -907,12 +918,11 @@ async function upsertPropertyImprovement(client, values) {
        work_location, parcel_identifier, property_match_method,
        property_match_confidence, project_description, description,
        more_details, source_http_request, source_payload, source_system,
-       source_record_key, source_record_hash, source_artifact_uri,
-       is_roof_permit
+       source_record_key, source_record_hash, source_artifact_uri
      ) VALUES (
        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,
        $8,$19,$20,'exact_folio','exact',$21,$22,$23::jsonb,$24::jsonb,
-       $25::jsonb,$26,$27,$28,$29,$30
+       $25::jsonb,$26,$27,$28,$29
      )
      ON CONFLICT (source_system, source_record_key) DO UPDATE SET
        property_id=EXCLUDED.property_id,
@@ -937,7 +947,6 @@ async function upsertPropertyImprovement(client, values) {
        source_payload=EXCLUDED.source_payload,
        source_record_hash=EXCLUDED.source_record_hash,
        source_artifact_uri=EXCLUDED.source_artifact_uri,
-       is_roof_permit=EXCLUDED.is_roof_permit,
        loaded_at=now(),
        updated_at=now()
      RETURNING property_improvement_id`,
@@ -957,7 +966,6 @@ async function upsertPropertyImprovement(client, values) {
       values.estimatedSqFt,
       values.sourceSystem,
       values.sourceArtifactUri,
-      values.isRoofPermit,
       values.improvementType,
       values.improvementStatus,
       values.improvementStatus,
