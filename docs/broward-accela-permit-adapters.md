@@ -184,6 +184,16 @@ The 30-day production burn-in added two fail-closed source rules:
   shards or an official bulk export before its inventory can be called
   complete.
 
+The production inventory now uses Accela's own `Download results` CSV rather
+than treating the capped grid total as authoritative. A Hollywood one-day
+pilot exported 43/43 full permit numbers in 3.9 seconds. A Plantation two-day
+pilot exported 49 source rows and reconciled them as 30 permits plus 19
+explicit enforcement/business-tax/minor-development exclusions in 5.2
+seconds. CSV rows are merged with first-page identities for temporary records,
+and direct single-record redirects are retained when no export control is
+rendered. Each transient window gets up to three fresh browser sessions with a
+minimum five-second backoff.
+
 ## Bounded live evidence
 
 Live source traffic was limited to one validated appraisal folio in Hollywood,

@@ -41,11 +41,16 @@
   private checkpoints.
 - [x] Reconcile Tyler pilots: Pembroke Pines 30, Hallandale Beach 10, Miramar
   34, and Oakland Park 9 records.
+- [x] Complete and load Oakland Park post-2019 inventory: 28,946 accessible
+  permits, one explicit source-missing row, 22,991 exact property matches,
+  5,955 unlinked rows, and 29 durable Neon chunks.
 - [ ] Complete the healthy persistent Tyler runs. Production windows are 30
   days; Oakland Park begins at its certified 2019-11-01 boundary.
 - [x] Add a durable list-to-Neon loader using detail-compatible Accela/Tyler
   keys, exact Tyler folio links, 1,000-row commits, and richer-detail
   precedence.
+- [x] Replace capped Accela grid traversal with official per-window CSV
+  exports; reconcile CSV/list identities and explicit non-permit exclusions.
 - [ ] Implement Citizenserve type-wide enumeration after per-host pressure
   tests and parser drift repairs.
 - [ ] Obtain official bulk/custodian exports for routes that do not support

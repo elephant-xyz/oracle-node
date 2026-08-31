@@ -92,6 +92,14 @@ Exact 12-character folios link immediately; other permits remain valid
 unlinked rows. Loads use the shared permit writer lock and durable 1,000-row
 Neon chunks.
 
+Oakland Park completed its documented post-2019 Tyler inventory with 28,946
+accessible unique permits and one row reported by `TotalFound` but unavailable
+at every supported page size. The missing source row is recorded explicitly.
+The 28,946 accessible rows loaded to isolated Neon in 29 durable chunks:
+22,991 matched exact Broward folios and 5,955 remain valid unlinked permits.
+Tyler retries rebuild the complete tenant browser session after timeout or
+HTTP 401 instead of retrying inside expired state.
+
 ## Jurisdiction matrix
 
 | Jurisdiction          | Adapter/source                                 | Anonymous record status   | Boundary                                                                                                                                 |
