@@ -116,7 +116,6 @@ CPU cores, causing excessive fan noise, and dropping throughput to ~2-5 parcels/
 2. Workers pre-compile Cheerio and all transform scripts once on startup.
 3. IPC messages send `{ parcelDir }` to the next idle worker and return `{ success, error }`.
 4. Achieves **20–60+ parcels/sec** sustained throughput with low CPU overhead and no fan thrashing.
-
 ### Memory Optimization: Streaming Seed CSV Processing
 
 Never load a 500k-row CSV roll into an in-memory array (`const rows = parse(fileContent)`).
