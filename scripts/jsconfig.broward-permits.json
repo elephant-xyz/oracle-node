@@ -21,6 +21,7 @@
     "broward-folio.mjs",
     "broward-permit-jurisdictions.mjs",
     "broward-permit-query-artifact.mjs",
+    "load-broward-permit-list-to-neon.mjs",
     "load-broward-permit-pilot-to-neon.mjs",
     "run-broward-bulk-permit-ingest.mjs",
     "run-broward-permit-pilot.mjs",

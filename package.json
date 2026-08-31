@@ -25,6 +25,7 @@
     "broward:permits:load-pilot": "node scripts/load-broward-permit-pilot-to-neon.mjs",
     "broward:permits:run-supported": "node scripts/run-broward-supported-permit-ingest.mjs",
     "broward:permits:run-bulk": "node scripts/run-broward-bulk-permit-ingest.mjs",
+    "broward:permits:load-list": "node scripts/load-broward-permit-list-to-neon.mjs",
     "broward:permits:run-accela-windows": "node scripts/run-broward-accela-date-windows.mjs",
     "broward:permits:enqueue-accela-windows": "node scripts/enqueue-broward-accela-date-windows.mjs",
     "broward:permits:run-tyler-windows": "node scripts/run-broward-tyler-date-windows.mjs",
