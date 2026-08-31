@@ -868,6 +868,7 @@ describe("Broward official Accela CSV exports", () => {
       maxWindows: null,
       outputDirectory,
     };
+    let captureAttempts = 0;
     const summary = await runAccelaCsvWindows(options, {
       createBrowser: async () => ({
         close: async () => undefined,
@@ -877,6 +878,10 @@ describe("Broward official Accela CSV exports", () => {
         startDate,
         endDate,
       }) => {
+        captureAttempts += 1;
+        if (captureAttempts === 1) {
+          throw new Error("transient export failure");
+        }
         const [record] = parseBrowardAccelaCsvExport(
           [
             '"Date","Record Number","Record Type","Project Name","Address","Expiration Date","Status",',
@@ -906,6 +911,7 @@ describe("Broward official Accela CSV exports", () => {
       uniquePermitCount: 2,
       cappedDisplayedTotalWindowCount: 2,
     });
+    expect(captureAttempts).toBe(3);
     expect(
       (
         await readFile(

@@ -247,6 +247,7 @@ describe("Tyler vendor-wide application-date windows", () => {
     const searched = [];
     let sessions = 0;
     let closed = 0;
+    let searchAttempts = 0;
     const baseOptions = {
       sourceKey: "pembroke_pines",
       startDate: "2026-08-28",
@@ -269,6 +270,10 @@ describe("Tyler vendor-wide application-date windows", () => {
           closed += 1;
         },
         searchWindow: async (session, startDate, endDate) => {
+          searchAttempts += 1;
+          if (searchAttempts === 1) {
+            throw new Error("transient tenant failure");
+          }
           searched.push(`${startDate}:${endDate}`);
           const caseId = `case-${startDate}`;
           const record = {
@@ -338,8 +343,9 @@ describe("Tyler vendor-wide application-date windows", () => {
         "2026-08-28:2026-08-29",
         "2026-08-30:2026-08-31",
       ]);
-      expect(sessions).toBe(2);
-      expect(closed).toBe(2);
+      expect(searchAttempts).toBe(3);
+      expect(sessions).toBe(3);
+      expect(closed).toBe(3);
     } finally {
       await rm(outputDirectory, { recursive: true, force: true });
     }

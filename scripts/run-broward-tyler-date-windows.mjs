@@ -262,7 +262,7 @@ export async function runTylerDateWindows(options, dependencies = {}) {
   const closeSession =
     dependencies.closeSession ?? closeTylerDateWindowSession;
   const searchWindow = dependencies.searchWindow ?? searchTylerDateWindow;
-  const session = await createSession(config, logger);
+  let session = await createSession(config, logger);
   let processed = 0;
   try {
     while (
@@ -299,7 +299,9 @@ export async function runTylerDateWindows(options, dependencies = {}) {
             error:
               error instanceof Error ? error.message : "Unknown error",
           });
-          await wait(options.delayMs * attempt);
+          await closeSession(session);
+          await wait(Math.max(options.delayMs * attempt, 5_000));
+          session = await createSession(config, logger);
         }
       }
       if (result === undefined) {

@@ -234,7 +234,7 @@ export async function runAccelaCsvWindows(options, dependencies = {}) {
       /** @type {Record<string, unknown>} */ details = {},
     ) => console.error(JSON.stringify({ level: "error", message, ...details })),
   };
-  const browser = await createBrowser(logger);
+  let browser = await createBrowser(logger);
   let processed = 0;
   try {
     while (
@@ -272,7 +272,9 @@ export async function runAccelaCsvWindows(options, dependencies = {}) {
             error:
               error instanceof Error ? error.message : "Unknown error",
           });
-          await wait(options.delayMs * attempt);
+          await browser.close().catch(() => undefined);
+          await wait(Math.max(options.delayMs * attempt, 5_000));
+          browser = await createBrowser(logger);
         }
       }
       if (capture === undefined) {
