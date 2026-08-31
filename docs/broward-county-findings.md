@@ -143,7 +143,7 @@ mixed). Residential and ROW should skip.
 | Source                      | URL                                                         | Bulk?                       | In scope?                                                        |
 | --------------------------- | ----------------------------------------------------------- | --------------------------- | ---------------------------------------------------------------- |
 | Sunbiz (FL statewide)       | `https://dos.fl.gov/sunbiz/other-services/data-downloads/`  | yes                         | **yes** (reuse Lee; Broward ZIP prefixes only)                   |
-| BBB                         | national category harvest                                   | yes                         | **yes** (filter to Broward area)                                 |
+| BBB                         | `https://developer.bbb.org/`                                | approved API only           | Roofing-only private worklist ready; external requests blocked pending credentials |
 | Tax collector               | `https://browardtax.org/`                                   | unknown                     | discovery only                                                   |
 | Recorder / official records | `https://officialrecords.broward.org/`                      | 10-day FTP images           | Cloudflare on the search UI; out of ingest unless later approved |
 | County GIS (planning)       | `https://gis.browardcountyfl.org/` / `broward.org/Planning` | parcels are **fee from PA** | geometry taken from BCPA GIS instead                             |

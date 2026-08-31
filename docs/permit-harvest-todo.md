@@ -73,6 +73,18 @@
 - [ ] Add the verified Sunbiz match counts to the unpublished Broward query
   coverage artifact when permit jurisdiction reconciliation is complete.
 
+## Broward roofing-only BBB preparation
+
+- [x] Confirm ordinary Puppeteer receives BBB HTTP 403 / Cloudflare challenge.
+- [x] Do not bypass the challenge or run unauthorized site aggregation.
+- [x] Restrict the planned BBB scope to contractors on loaded roofing permits.
+- [x] Build a private worklist from 10,067 contractor-bearing roofing permits.
+- [x] Exclude 384 owner-builder/TBD placeholder permit rows.
+- [x] Reconcile 1,381 unique licensed contractor candidates with checksum.
+- [ ] Obtain approved BBB API credentials before issuing any external request.
+- [ ] Load only permitted BBB fields; complaint/review data remains
+  internal-use-only.
+
 ## Lee County all-permits harvest
 
 - [x] Confirm usable elephant-cli GitHub ref for Browser Flow v2 / Transform v2.
