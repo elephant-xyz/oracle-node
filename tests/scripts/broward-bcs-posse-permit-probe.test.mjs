@@ -317,9 +317,7 @@ describe("Broward BCS POSSE property-first permit pilot", () => {
       detailDelayMs: 275,
       roofOnly: false,
     });
-    expect(
-      parseOptions(["--pilot", "--roof-only"])?.roofOnly,
-    ).toBe(true);
+    expect(parseOptions(["--pilot", "--roof-only"])?.roofOnly).toBe(true);
     expect(() => parseOptions([])).toThrow("exactly one");
     expect(() =>
       parseOptions(["--pilot", "--parcel-id", "504108BJ0140"]),

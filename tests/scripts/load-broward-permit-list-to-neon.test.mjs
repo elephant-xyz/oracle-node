@@ -29,8 +29,7 @@ function accelaListRecord(overrides = {}) {
     description: "Reroofing",
     status: "Plans Received",
     recordType: "Roofing Permit",
-    recordKey:
-      "broward_hollywood_accela_permits:permit:STRUC-ROOF-26-001317",
+    recordKey: "broward_hollywood_accela_permits:permit:STRUC-ROOF-26-001317",
     sourceWindowKeys: ["20260830_20260831"],
     ...overrides,
   };
@@ -112,8 +111,7 @@ describe("Broward permit list Neon loading", () => {
       recordNumber: "STRUC-ROOF-25-000185",
       sourceUrl:
         "https://aca-prod.accela.com/HOLLYWOOD/Cap/CapDetail.aspx?altId=STRUC-ROOF-25-000185",
-      recordKey:
-        "broward_hollywood_accela_permits:permit:STRUC-ROOF-25-000185",
+      recordKey: "broward_hollywood_accela_permits:permit:STRUC-ROOF-25-000185",
       recordDate: "2025-01-16",
       recordType: "Roofing Permit",
       projectName: null,
@@ -152,8 +150,7 @@ describe("Broward permit list Neon loading", () => {
       parcel_id: "22222222-2222-4222-8222-222222222222",
       property_match_method: "exact_folio",
       property_match_confidence: "exact",
-      source_record_key:
-        "broward_pembroke_pines_tyler_permits:case-1",
+      source_record_key: "broward_pembroke_pines_tyler_permits:case-1",
     });
   });
 
@@ -169,7 +166,9 @@ describe("Broward permit list Neon loading", () => {
         `${JSON.stringify(record)}\n${JSON.stringify(record)}\n`,
       );
       await expect(readPermitListRecords(inputPath)).resolves.toMatchObject({
-        records: [expect.objectContaining({ permitNumber: record.recordNumber })],
+        records: [
+          expect.objectContaining({ permitNumber: record.recordNumber }),
+        ],
         duplicateCount: 1,
         inputSha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
       });

@@ -236,11 +236,7 @@ const ROOF_PERMIT_PATTERN = /\broof(?:ing)?\b/iu;
  */
 export function isBrowardAccelaRoofPermitCandidate(permit) {
   return ROOF_PERMIT_PATTERN.test(
-    [
-      permit.recordNumber,
-      permit.recordType,
-      permit.description,
-    ]
+    [permit.recordNumber, permit.recordType, permit.description]
       .filter((value) => typeof value === "string")
       .join(" "),
   );
@@ -472,11 +468,7 @@ function requireIsoDate(value, fieldName) {
  * @param {string} endDate - Inclusive ISO end date.
  * @returns {string} Stable date-window identity.
  */
-export function buildBrowardAccelaDateWindowKey(
-  source,
-  startDate,
-  endDate,
-) {
+export function buildBrowardAccelaDateWindowKey(source, startDate, endDate) {
   const start = requireIsoDate(startDate, "startDate");
   const end = requireIsoDate(endDate, "endDate");
   if (Date.parse(`${end}T00:00:00Z`) < Date.parse(`${start}T00:00:00Z`)) {
@@ -558,8 +550,7 @@ function readRecordNumber(value) {
  * @returns {string | null} Official detail route or null for malformed identity.
  */
 export function buildBrowardAccelaDetailUrlFromRecordId(recordId, source) {
-  const match =
-    /^([A-Z0-9]+)-([A-Z0-9]+)-([A-Z0-9]+)$/iu.exec(recordId.trim());
+  const match = /^([A-Z0-9]+)-([A-Z0-9]+)-([A-Z0-9]+)$/iu.exec(recordId.trim());
   if (match === null) return null;
   const url = new URL("./CapDetail.aspx", source.portalUrl);
   url.searchParams.set("Module", source.module);
@@ -666,10 +657,7 @@ export function extractBrowardAccelaPermitLinks({
     const hiddenRecordId = collapseText(
       row.find("input[id='RecordId']").first().attr("value"),
     );
-    const url = buildBrowardAccelaDetailUrlFromRecordId(
-      hiddenRecordId,
-      source,
-    );
+    const url = buildBrowardAccelaDetailUrlFromRecordId(hiddenRecordId, source);
     const recordNumber = readRecordNumber(
       row
         .find("[id$='_lblPermitNumber'],[id$='_lblPermitNumber1']")
@@ -1054,13 +1042,11 @@ export async function searchBrowardAccelaDateWindow({
   stopAfterFirstPageWhenTotalAtLeast,
   logger,
 }) {
-  const searchKey = buildBrowardAccelaDateWindowKey(
-    source,
-    startDate,
-    endDate,
-  );
+  const searchKey = buildBrowardAccelaDateWindowKey(source, startDate, endDate);
   if (!Number.isInteger(maxPages) || maxPages < 1 || maxPages > 200) {
-    throw new Error("Broward Accela date-window maxPages must be 1 through 200");
+    throw new Error(
+      "Broward Accela date-window maxPages must be 1 through 200",
+    );
   }
   if (
     stopAfterFirstPageWhenTotalAtLeast !== undefined &&
@@ -1276,9 +1262,7 @@ export async function searchBrowardAccelaDateWindow({
             return true;
           }
           const match =
-            /Showing\s+([0-9,]+\s*-\s*[0-9,]+\s+of\s+[0-9,]+)/i.exec(
-              bodyText,
-            );
+            /Showing\s+([0-9,]+\s*-\s*[0-9,]+\s+of\s+[0-9,]+)/i.exec(bodyText);
           const current =
             match === null ? null : match[1].replace(/\s+/g, " ").trim();
           return current !== null && current !== previousSummary;
@@ -1397,10 +1381,9 @@ export function parseBrowardAccelaCsvExportSummary(
     }
     const recordKey = `${source.sourceSystem}:permit:${recordNumber}`;
     const record = {
-      schemaVersion:
-        /** @type {"oracle-node.broward-accela-csv-list.v1"} */ (
-          "oracle-node.broward-accela-csv-list.v1"
-        ),
+      schemaVersion: /** @type {"oracle-node.broward-accela-csv-list.v1"} */ (
+        "oracle-node.broward-accela-csv-list.v1"
+      ),
       sourceSystem: source.sourceSystem,
       jurisdiction: source.jurisdiction,
       recordNumber,
@@ -1458,12 +1441,8 @@ export function parseBrowardAccelaCsvExport(
   startDate,
   endDate,
 ) {
-  return parseBrowardAccelaCsvExportSummary(
-    csvText,
-    source,
-    startDate,
-    endDate,
-  ).records;
+  return parseBrowardAccelaCsvExportSummary(csvText, source, startDate, endDate)
+    .records;
 }
 
 /**
@@ -1537,9 +1516,7 @@ export async function captureBrowardAccelaCsvWindow({
       context.url(),
       `CSV date-window ${sourceWindowKey}`,
     );
-    const displayedTotal = parseResultSummary(
-      htmlToText(searchHtml),
-    ).total;
+    const displayedTotal = parseResultSummary(htmlToText(searchHtml)).total;
     if (classification === "no_records") {
       return {
         startDate,
@@ -1572,10 +1549,9 @@ export async function captureBrowardAccelaCsvWindow({
     });
     if (directDetail !== null) {
       const record = {
-        schemaVersion:
-          /** @type {"oracle-node.broward-accela-csv-list.v1"} */ (
-            "oracle-node.broward-accela-csv-list.v1"
-          ),
+        schemaVersion: /** @type {"oracle-node.broward-accela-csv-list.v1"} */ (
+          "oracle-node.broward-accela-csv-list.v1"
+        ),
         sourceSystem: source.sourceSystem,
         jurisdiction: source.jurisdiction,
         recordNumber: directDetail.recordNumber,

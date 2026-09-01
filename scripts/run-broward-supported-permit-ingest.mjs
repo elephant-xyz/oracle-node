@@ -187,13 +187,9 @@ export async function runSupportedPermitIngest(options) {
           candidate.parcelHash,
         );
         try {
-          const outcome = await probeAndLoadCandidate(
-            candidate,
-            options,
-          );
+          const outcome = await probeAndLoadCandidate(candidate, options);
           const finalStatus =
-            outcome.status === "failed" &&
-            attempt + 1 >= options.maxAttempts
+            outcome.status === "failed" && attempt + 1 >= options.maxAttempts
               ? "failed_exhausted"
               : outcome.status;
           await checkpointItem(
@@ -207,26 +203,21 @@ export async function runSupportedPermitIngest(options) {
           );
           processed += 1;
           if (TERMINAL_STATUSES.has(finalStatus)) terminal += 1;
-          if (
-            finalStatus === "failed" ||
-            finalStatus === "failed_exhausted"
-          ) {
+          if (finalStatus === "failed" || finalStatus === "failed_exhausted") {
             failed += 1;
           }
         } catch {
           const finalStatus =
-            attempt + 1 >= options.maxAttempts
-              ? "failed_exhausted"
-              : "failed";
+            attempt + 1 >= options.maxAttempts ? "failed_exhausted" : "failed";
           await checkpointItem(
-              client,
-              options.jobId,
-              candidate,
-              finalStatus,
-              0,
-              attempt + 1,
-              "source_or_load_error",
-            );
+            client,
+            options.jobId,
+            candidate,
+            finalStatus,
+            0,
+            attempt + 1,
+            "source_or_load_error",
+          );
           processed += 1;
           failed += 1;
           if (finalStatus === "failed_exhausted") terminal += 1;
@@ -312,7 +303,9 @@ async function readCandidates(client, limit) {
     byJurisdiction.set(candidate.jurisdictionKey, group);
   }
   for (const group of byJurisdiction.values()) {
-    group.sort((left, right) => left.parcelHash.localeCompare(right.parcelHash));
+    group.sort((left, right) =>
+      left.parcelHash.localeCompare(right.parcelHash),
+    );
   }
   const interleaved = [];
   let offset = 0;
@@ -356,7 +349,11 @@ async function probeAndLoadCandidate(candidate, options) {
   ) {
     return probeMunicipal(candidate, itemDirectory, options);
   }
-  return { status: "failed_exhausted", recordCount: 0, errorClass: "unsupported_adapter" };
+  return {
+    status: "failed_exhausted",
+    recordCount: 0,
+    errorClass: "unsupported_adapter",
+  };
 }
 
 /**
@@ -447,13 +444,9 @@ async function probeAccela(candidate, itemDirectory, options) {
   if (command.exitCode !== 0) {
     return {
       status:
-        command.timedOut || command.stderrBytes === 0
-          ? "failed"
-          : "truncated",
+        command.timedOut || command.stderrBytes === 0 ? "failed" : "truncated",
       recordCount: 0,
-      errorClass: command.timedOut
-        ? "probe_timeout"
-        : "accela_bounded_failure",
+      errorClass: command.timedOut ? "probe_timeout" : "accela_bounded_failure",
     };
   }
   const summary = await readJson(summaryPath);
@@ -509,9 +502,7 @@ async function probeMunicipal(candidate, itemDirectory, options) {
     return {
       status: "failed",
       recordCount: 0,
-      errorClass: command.timedOut
-        ? "probe_timeout"
-        : "municipal_probe_failed",
+      errorClass: command.timedOut ? "probe_timeout" : "municipal_probe_failed",
     };
   }
   const summary = await readJson(summaryPath);
@@ -572,10 +563,7 @@ export function runNode(args, timeoutMs = DEFAULT_PROBE_TIMEOUT_MS) {
     };
     const timeout = setTimeout(() => {
       timedOut = true;
-      if (
-        process.platform !== "win32" &&
-        typeof child.pid === "number"
-      ) {
+      if (process.platform !== "win32" && typeof child.pid === "number") {
         try {
           process.kill(-child.pid, "SIGKILL");
         } catch {
@@ -730,8 +718,8 @@ async function registerRun(client, options, signature, candidateCount) {
     row?.config_signature !== signature ||
     Number(row.candidate_count) !== candidateCount ||
     Number(row.concurrency) !== options.concurrency ||
-    Number(row.max_attempts) !== options.maxAttempts
-    || row.scope !== options.scope
+    Number(row.max_attempts) !== options.maxAttempts ||
+    row.scope !== options.scope
   ) {
     throw new Error("Existing supported permit run config does not match");
   }
@@ -931,9 +919,7 @@ function candidateSignature(candidates, options) {
  * @returns {string} Lowercase SHA-256.
  */
 function hashFolio(folio) {
-  return createHash("sha256")
-    .update(`broward-permit:${folio}`)
-    .digest("hex");
+  return createHash("sha256").update(`broward-permit:${folio}`).digest("hex");
 }
 
 /**
@@ -1039,9 +1025,7 @@ if (
   typeof process.argv[1] === "string" &&
   import.meta.url === pathToFileURL(process.argv[1]).href
 ) {
-  runSupportedPermitIngest(
-    parseSupportedPermitOptions(process.argv.slice(2)),
-  )
+  runSupportedPermitIngest(parseSupportedPermitOptions(process.argv.slice(2)))
     .then((result) => {
       console.log(
         JSON.stringify({

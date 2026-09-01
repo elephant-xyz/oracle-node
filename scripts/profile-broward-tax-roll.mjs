@@ -191,14 +191,8 @@ export async function profileBrowardTaxRoll(options) {
     increment(dorUseCodeCounts, dorUseCode || "<missing>");
     increment(categoryCounts, classifyDorUseCode(dorUseCode));
     increment(basicStratumCounts, (row.BAS_STRT ?? "").trim() || "<missing>");
-    increment(
-      assessmentYearCounts,
-      (row.ASMNT_YR ?? "").trim() || "<missing>",
-    );
-    increment(
-      countyNumberCounts,
-      (row.CO_NO ?? "").trim() || "<missing>",
-    );
+    increment(assessmentYearCounts, (row.ASMNT_YR ?? "").trim() || "<missing>");
+    increment(countyNumberCounts, (row.CO_NO ?? "").trim() || "<missing>");
     increment(fileTypeCounts, (row.FILE_T ?? "").trim() || "<missing>");
     for (const [fieldName, value] of Object.entries(row)) {
       if (typeof value === "string" && value.trim() !== "") {
@@ -366,8 +360,7 @@ function selectPilotRow({
   } else if (
     !hasGisFolio &&
     dorUseCode === CONDOMINIUM_DOR_USE_CODE &&
-    (pilotBuckets.get("condominium_tax_only")?.length ?? 0) <
-      PILOT_BUCKET_SIZE
+    (pilotBuckets.get("condominium_tax_only")?.length ?? 0) < PILOT_BUCKET_SIZE
   ) {
     bucket = "condominium_tax_only";
   } else if (
@@ -434,20 +427,16 @@ async function writePilotFiles({
         sourceRowIndex: selected.sourceRowIndex,
         bucket: selected.bucket,
         hasGisFolio: selected.hasGisFolio,
-        parcelId: normalizeBrowardTaxRollParcelId(
-          selected.row.PARCEL_ID,
-        ),
+        parcelId: normalizeBrowardTaxRollParcelId(selected.row.PARCEL_ID),
       })),
       gisOnlyControls: gisOnlyFolios,
       malformedSourceRows: 0,
       malformedCoverage:
         "Synthetic malformed and leading-zero identifiers are covered by unit tests because the official source contains no malformed IDs.",
     };
-    await writeFile(
-      manifestPath,
-      `${JSON.stringify(manifest, null, 2)}\n`,
-      { mode: 0o600 },
-    );
+    await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, {
+      mode: 0o600,
+    });
   }
 }
 
@@ -495,9 +484,7 @@ function increment(counter, key) {
  */
 function sortedObject(counter) {
   return Object.fromEntries(
-    [...counter.entries()].sort(([left], [right]) =>
-      left.localeCompare(right),
-    ),
+    [...counter.entries()].sort(([left], [right]) => left.localeCompare(right)),
   );
 }
 
@@ -533,12 +520,14 @@ if (
 ) {
   profileBrowardTaxRoll(parseCliOptions(process.argv.slice(2)))
     .then((report) => {
-      const profile = /** @type {{sourceRows:number,uniqueValidParcelIds:number,condominiumRows:number}} */ (
-        report.profile
-      );
-      const gisJoin = /** @type {{matchedTaxRollToGis:number,taxRollOnly:number,gisOnly:number}} */ (
-        report.gisJoin
-      );
+      const profile =
+        /** @type {{sourceRows:number,uniqueValidParcelIds:number,condominiumRows:number}} */ (
+          report.profile
+        );
+      const gisJoin =
+        /** @type {{matchedTaxRollToGis:number,taxRollOnly:number,gisOnly:number}} */ (
+          report.gisJoin
+        );
       console.log(
         JSON.stringify({
           event: "broward_tax_roll_profile_completed",

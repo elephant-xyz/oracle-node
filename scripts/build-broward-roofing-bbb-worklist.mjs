@@ -19,10 +19,8 @@ import pg from "pg";
 const { Client } = pg;
 const EXPECTED_PROJECT_ID = "raspy-frost-51580436";
 const PRODUCTION_ENDPOINT_PREFIX = "ep-mute-leaf";
-const DEFAULT_OUTPUT_DIRECTORY =
-  "downloads/broward/bbb-roofing-worklist";
-const WORKLIST_SCHEMA_VERSION =
-  "oracle-node.broward-bbb-roofing-worklist.v1";
+const DEFAULT_OUTPUT_DIRECTORY = "downloads/broward/bbb-roofing-worklist";
+const WORKLIST_SCHEMA_VERSION = "oracle-node.broward-bbb-roofing-worklist.v1";
 
 /**
  * @typedef {object} RoofingBbbWorklistOptions
@@ -81,14 +79,12 @@ export function parseRoofingBbbWorklistOptions(argv) {
     }
     values.set(flag.slice(2), value);
   }
-  const outputDirectory =
-    values.get("output-dir") ?? DEFAULT_OUTPUT_DIRECTORY;
+  const outputDirectory = values.get("output-dir") ?? DEFAULT_OUTPUT_DIRECTORY;
   if (outputDirectory.length === 0) {
     throw new Error("--output-dir must not be empty");
   }
   const rawLimit = values.get("limit");
-  const limit =
-    rawLimit === undefined ? null : Number(rawLimit);
+  const limit = rawLimit === undefined ? null : Number(rawLimit);
   if (
     limit !== null &&
     (!Number.isInteger(limit) || limit < 1 || limit > 100_000)
@@ -179,20 +175,13 @@ export function buildRoofingBbbCandidates(rows) {
         ? row.contractor_name.replace(/\s+/gu, " ").trim()
         : "";
     const normalizedName = normalizeRoofingContractorName(rawName);
-    if (
-      normalizedName === null ||
-      isRoofingContractorPlaceholder(rawName)
-    ) {
+    if (normalizedName === null || isRoofingContractorPlaceholder(rawName)) {
       excludedPlaceholderPermits += 1;
       continue;
     }
-    const license = normalizeRoofingContractorLicense(
-      row.contractor_license,
-    );
+    const license = normalizeRoofingContractorLicense(row.contractor_license);
     const identityKey =
-      license === null
-        ? `name:${normalizedName}`
-        : `license:${license}`;
+      license === null ? `name:${normalizedName}` : `license:${license}`;
     const existing = candidates.get(identityKey) ?? {
       identityKey,
       names: new Map(),
@@ -229,8 +218,7 @@ export function buildRoofingBbbCandidates(rows) {
         contractorName:
           [...candidate.names.entries()].sort(
             ([leftName, leftCount], [rightName, rightCount]) =>
-              rightCount - leftCount ||
-              leftName.localeCompare(rightName),
+              rightCount - leftCount || leftName.localeCompare(rightName),
           )[0]?.[0] ?? "",
         contractorLicense: candidate.contractorLicense,
         roofingPermitCount: candidate.roofingPermitCount,
@@ -238,9 +226,7 @@ export function buildRoofingBbbCandidates(rows) {
         latestPermitDate: candidate.latestPermitDate,
         sourceSystems: [...candidate.sourceSystems].sort(),
       }))
-      .sort((left, right) =>
-        left.identityKey.localeCompare(right.identityKey),
-      ),
+      .sort((left, right) => left.identityKey.localeCompare(right.identityKey)),
     excludedPlaceholderPermits,
   };
 }
@@ -287,8 +273,7 @@ export async function buildBrowardRoofingBbbWorklist(options) {
          LIMIT $1`,
         [options.limit],
       );
-      rows =
-        /** @type {RoofingContractorPermitRow[]} */ (result.rows);
+      rows = /** @type {RoofingContractorPermitRow[]} */ (result.rows);
       await client.query("ROLLBACK");
     } catch (error) {
       await client.query("ROLLBACK");
@@ -319,10 +304,9 @@ export async function buildBrowardRoofingBbbWorklist(options) {
       0,
     ) + aggregate.excludedPlaceholderPermits;
   const summary = {
-    schemaVersion:
-      /** @type {typeof WORKLIST_SCHEMA_VERSION} */ (
-        WORKLIST_SCHEMA_VERSION
-      ),
+    schemaVersion: /** @type {typeof WORKLIST_SCHEMA_VERSION} */ (
+      WORKLIST_SCHEMA_VERSION
+    ),
     generatedAt: new Date().toISOString(),
     county: /** @type {"Broward"} */ ("Broward"),
     scope: /** @type {"roofing"} */ ("roofing"),
@@ -345,10 +329,7 @@ export async function buildBrowardRoofingBbbWorklist(options) {
   }
   await Promise.all([
     writePrivateAtomic(worklistPath, worklistText),
-    writePrivateAtomic(
-      summaryPath,
-      `${JSON.stringify(summary, null, 2)}\n`,
-    ),
+    writePrivateAtomic(summaryPath, `${JSON.stringify(summary, null, 2)}\n`),
   ]);
   return summary;
 }
@@ -444,10 +425,8 @@ if (
       console.log(
         JSON.stringify({
           event: "broward_bbb_roofing_worklist_built",
-          roofingPermitsWithContractor:
-            summary.roofingPermitsWithContractor,
-          excludedPlaceholderPermits:
-            summary.excludedPlaceholderPermits,
+          roofingPermitsWithContractor: summary.roofingPermitsWithContractor,
+          excludedPlaceholderPermits: summary.excludedPlaceholderPermits,
           candidateCount: summary.candidateCount,
           candidatesWithLicense: summary.candidatesWithLicense,
           candidatesByNameOnly: summary.candidatesByNameOnly,

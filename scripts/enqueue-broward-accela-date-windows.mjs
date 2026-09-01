@@ -84,10 +84,7 @@ export function parseEnqueueBrowardAccelaOptions(argv) {
     index += 1;
   }
   const rawSource = values.get("source");
-  if (
-    typeof rawSource !== "string" ||
-    !DATE_ENABLED_SOURCES.has(rawSource)
-  ) {
+  if (typeof rawSource !== "string" || !DATE_ENABLED_SOURCES.has(rawSource)) {
     throw new Error(
       "--source must be hollywood, plantation, cooper-city, or weston",
     );
@@ -131,16 +128,11 @@ export function parseEnqueueBrowardAccelaOptions(argv) {
       1,
       200,
     ),
-    queueUrl:
-      typeof rawQueueUrl === "string" ? rawQueueUrl : undefined,
+    queueUrl: typeof rawQueueUrl === "string" ? rawQueueUrl : undefined,
     stackName:
-      typeof rawStackName === "string"
-        ? rawStackName
-        : DEFAULT_STACK_NAME,
+      typeof rawStackName === "string" ? rawStackName : DEFAULT_STACK_NAME,
     outputPrefix:
-      typeof rawOutputPrefix === "string"
-        ? rawOutputPrefix
-        : undefined,
+      typeof rawOutputPrefix === "string" ? rawOutputPrefix : undefined,
     dryRun: values.get("dry-run") === true,
   };
 }

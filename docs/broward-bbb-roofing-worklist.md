@@ -39,14 +39,14 @@ npm run broward:bbb:roofing-worklist -- \
 
 ## Reconciliation
 
-| Metric | Count |
-| --- | ---: |
-| Loaded roofing permits | 22,414 |
-| Roofing permits with allow-listed contractor name | 10,067 |
-| Placeholder permit rows excluded | 384 |
-| Unique licensed contractor candidates | 1,381 |
-| Name-only candidates | 0 |
-| Source rows accounted for | 10,067 / 10,067 |
+| Metric                                            |           Count |
+| ------------------------------------------------- | --------------: |
+| Loaded roofing permits                            |          22,414 |
+| Roofing permits with allow-listed contractor name |          10,067 |
+| Placeholder permit rows excluded                  |             384 |
+| Unique licensed contractor candidates             |           1,381 |
+| Name-only candidates                              |               0 |
+| Source rows accounted for                         | 10,067 / 10,067 |
 
 Candidate artifact SHA-256:
 `a3027ada664703d3811253ccc26f8ca850bc18b3d8213883e492414c6f1c4ed9`.

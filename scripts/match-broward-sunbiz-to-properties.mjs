@@ -89,8 +89,7 @@ export function parseSunbizMatchOptions(argv) {
   const rawLimit = values.get("limit");
   return {
     jobId,
-    sourceCatalogPath:
-      values.get("source-catalog") ?? DEFAULT_SOURCE_CATALOG,
+    sourceCatalogPath: values.get("source-catalog") ?? DEFAULT_SOURCE_CATALOG,
     chunkSize: boundedInteger(
       values.get("chunk-size") ?? "1000",
       "chunk-size",
@@ -310,8 +309,7 @@ async function readMatchCandidates(client, zipCandidates, limit) {
       }
     }
     return {
-      businessRegistrationAddressId:
-        row.business_registration_address_id,
+      businessRegistrationAddressId: row.business_registration_address_id,
       businessRegistrationId: row.business_registration_id,
       originalAddressId: row.original_address_id,
       matchedAddressId: row.matched_address_id,
@@ -484,12 +482,7 @@ async function ensureControlTables(client) {
  * @param {string} candidateSha256 - Exact candidate hash.
  * @returns {Promise<void>} Resolves only for matching state.
  */
-async function registerRun(
-  client,
-  options,
-  candidateCount,
-  candidateSha256,
-) {
+async function registerRun(client, options, candidateCount, candidateSha256) {
   await client.query(
     `INSERT INTO ${CONTROL_SCHEMA}.broward_sunbiz_match_runs (
        job_id,candidate_count,candidate_sha256,chunk_size,status
@@ -617,9 +610,7 @@ if (
   typeof process.argv[1] === "string" &&
   import.meta.url === pathToFileURL(process.argv[1]).href
 ) {
-  matchBrowardSunbizToProperties(
-    parseSunbizMatchOptions(process.argv.slice(2)),
-  )
+  matchBrowardSunbizToProperties(parseSunbizMatchOptions(process.argv.slice(2)))
     .then((summary) => {
       console.log(
         JSON.stringify({

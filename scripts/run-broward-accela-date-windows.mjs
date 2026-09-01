@@ -23,8 +23,7 @@ import {
   searchBrowardAccelaDateWindow,
 } from "./permit-source-adapters/broward-accela.mjs";
 
-const CHECKPOINT_SCHEMA_VERSION =
-  "oracle-node.broward-accela-date-windows.v1";
+const CHECKPOINT_SCHEMA_VERSION = "oracle-node.broward-accela-date-windows.v1";
 const DATE_WINDOW_SOURCE_KEYS = new Set([
   "hollywood",
   "plantation",
@@ -192,11 +191,7 @@ export function parseBrowardAccelaDateWindowOptions(argv) {
  * @param {number} windowDays - Maximum inclusive days per window.
  * @returns {DateWindow[]} Chronological windows.
  */
-export function createBrowardAccelaDateWindows(
-  startDate,
-  endDate,
-  windowDays,
-) {
+export function createBrowardAccelaDateWindows(startDate, endDate, windowDays) {
   const start = requireIsoDate(startDate, "startDate");
   const end = requireIsoDate(endDate, "endDate");
   if (!Number.isInteger(windowDays) || windowDays < 1) {
@@ -211,9 +206,7 @@ export function createBrowardAccelaDateWindows(
   while (isoDateToMillis(cursor) <= isoDateToMillis(end)) {
     const candidateEnd = addDays(cursor, windowDays - 1);
     const actualEnd =
-      isoDateToMillis(candidateEnd) > isoDateToMillis(end)
-        ? end
-        : candidateEnd;
+      isoDateToMillis(candidateEnd) > isoDateToMillis(end) ? end : candidateEnd;
     windows.push({ startDate: cursor, endDate: actualEnd });
     cursor = addDays(actualEnd, 1);
   }
@@ -255,10 +248,7 @@ export function splitBrowardAccelaDateWindow(window) {
  * }} [dependencies={}] - Injectable test/runtime dependencies.
  * @returns {Promise<DateWindowRunSummary>} Aggregate-safe run summary.
  */
-export async function runBrowardAccelaDateWindows(
-  options,
-  dependencies = {},
-) {
+export async function runBrowardAccelaDateWindows(options, dependencies = {}) {
   const now = dependencies.now ?? (() => new Date().toISOString());
   const wait =
     dependencies.wait ??
@@ -284,11 +274,7 @@ export async function runBrowardAccelaDateWindows(
       mkdir(directory, { recursive: true, mode: 0o700 }),
     ),
   );
-  let checkpoint = await readOrCreateCheckpoint(
-    checkpointPath,
-    options,
-    now(),
-  );
+  let checkpoint = await readOrCreateCheckpoint(checkpointPath, options, now());
   const logger = {
     info: (
       /** @type {string} */ message,
@@ -539,7 +525,9 @@ async function aggregateTerminalWindows(
         typeof value.recordNumber !== "string" ||
         typeof value.url !== "string"
       ) {
-        throw new Error(`Terminal Accela window ${windowKey} has invalid links`);
+        throw new Error(
+          `Terminal Accela window ${windowKey} has invalid links`,
+        );
       }
       observations += 1;
       const recordKey = `${sourceSystem}:permit:${value.recordNumber}`;

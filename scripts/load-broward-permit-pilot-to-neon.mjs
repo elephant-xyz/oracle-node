@@ -182,8 +182,7 @@ export function parsePermitLoadOptions(argv) {
         throw new Error("--include-bcs must be true or false");
       }
       includeBcs = value === "true";
-    }
-    else if (flag === "--accela-input") accelaInputPath = value;
+    } else if (flag === "--accela-input") accelaInputPath = value;
     else if (flag === "--municipal-input") municipalInputPaths.push(value);
     else if (flag === "--expected-records") {
       expectedRecords = Number(value);
@@ -206,15 +205,12 @@ export function parsePermitLoadOptions(argv) {
   }
   if (
     expectedAccelaRecords !== null &&
-    (!Number.isInteger(expectedAccelaRecords) ||
-      expectedAccelaRecords < 1)
+    (!Number.isInteger(expectedAccelaRecords) || expectedAccelaRecords < 1)
   ) {
     throw new Error("--expected-accela-records must be a positive integer");
   }
   if (expectedAccelaRecords !== null && accelaInputPath === null) {
-    throw new Error(
-      "--expected-accela-records requires --accela-input",
-    );
+    throw new Error("--expected-accela-records requires --accela-input");
   }
   if (
     expectedMunicipalRecords !== null &&
@@ -223,13 +219,8 @@ export function parsePermitLoadOptions(argv) {
   ) {
     throw new Error("--expected-municipal-records must be positive");
   }
-  if (
-    expectedMunicipalRecords !== null &&
-    municipalInputPaths.length === 0
-  ) {
-    throw new Error(
-      "--expected-municipal-records requires --municipal-input",
-    );
+  if (expectedMunicipalRecords !== null && municipalInputPaths.length === 0) {
+    throw new Error("--expected-municipal-records requires --municipal-input");
   }
   return {
     inputPath,
@@ -259,10 +250,14 @@ export async function readNormalizedPermitRecords(inputPath) {
     if (line.trim() === "") continue;
     const parsed = /** @type {unknown} */ (JSON.parse(line));
     if (!isNormalizedPermit(parsed)) {
-      throw new Error("Normalized Broward permit JSONL contains an invalid row");
+      throw new Error(
+        "Normalized Broward permit JSONL contains an invalid row",
+      );
     }
     if (keys.has(parsed.record_key)) {
-      throw new Error("Normalized Broward permit JSONL contains a duplicate key");
+      throw new Error(
+        "Normalized Broward permit JSONL contains a duplicate key",
+      );
     }
     keys.add(parsed.record_key);
     records.push(parsed);
@@ -290,10 +285,14 @@ export async function readNormalizedAccelaPermitRecords(inputPath) {
     if (line.trim() === "") continue;
     const parsed = /** @type {unknown} */ (JSON.parse(line));
     if (!isAccelaPermit(parsed)) {
-      throw new Error("Normalized Broward Accela JSONL contains an invalid row");
+      throw new Error(
+        "Normalized Broward Accela JSONL contains an invalid row",
+      );
     }
     if (keys.has(parsed.idempotencyKey)) {
-      throw new Error("Normalized Broward Accela JSONL contains a duplicate key");
+      throw new Error(
+        "Normalized Broward Accela JSONL contains a duplicate key",
+      );
     }
     keys.add(parsed.idempotencyKey);
     records.push(parsed);
@@ -339,8 +338,7 @@ export async function readNormalizedMunicipalPermitRecords(inputPaths) {
   }
   return {
     records,
-    sourceSha256:
-      hashes.length === 0 ? null : stableHash(hashes.sort()),
+    sourceSha256: hashes.length === 0 ? null : stableHash(hashes.sort()),
   };
 }
 
@@ -379,9 +377,7 @@ export function buildPermitUpsertValues(record, parent) {
     workLocation: record.work_location,
     estimatedJobValue: record.job_value,
     estimatedSqFt:
-      typeof record.square_footage === "number"
-        ? record.square_footage
-        : null,
+      typeof record.square_footage === "number" ? record.square_footage : null,
     isRoofPermit: record.is_roof_permit,
     projectDescription: record.project_description,
     description: record.project_title,
@@ -402,10 +398,9 @@ export function buildPermitUpsertValues(record, parent) {
       source_object_id: record.source_object_id,
       source_record_kind: record.source_record_kind,
     },
-    sourcePayload:
-      /** @type {Record<string, unknown>} */ (
-        /** @type {unknown} */ (record)
-      ),
+    sourcePayload: /** @type {Record<string, unknown>} */ (
+      /** @type {unknown} */ (record)
+    ),
   };
 }
 
@@ -476,10 +471,9 @@ export function buildAccelaPermitUpsertValues(record, parent) {
       source_search_result: record.sourceSearchResult,
       provenance: record.provenance,
     },
-    sourcePayload:
-      /** @type {Record<string, unknown>} */ (
-        /** @type {unknown} */ (record)
-      ),
+    sourcePayload: /** @type {Record<string, unknown>} */ (
+      /** @type {unknown} */ (record)
+    ),
   };
 }
 
@@ -524,10 +518,9 @@ export function buildMunicipalPermitUpsertValues(record, parent) {
       provenance: record.provenance,
       raw: record.raw,
     },
-    sourcePayload:
-      /** @type {Record<string, unknown>} */ (
-        /** @type {unknown} */ (record)
-      ),
+    sourcePayload: /** @type {Record<string, unknown>} */ (
+      /** @type {unknown} */ (record)
+    ),
   };
 }
 
@@ -549,7 +542,9 @@ export async function loadBrowardPermitPilotToNeon(options) {
     options.expectedRecords !== null &&
     bcs.records.length !== options.expectedRecords
   ) {
-    throw new Error("Permit pilot record count differs from the required count");
+    throw new Error(
+      "Permit pilot record count differs from the required count",
+    );
   }
   const accela =
     options.accelaInputPath === null
@@ -580,9 +575,7 @@ export async function loadBrowardPermitPilotToNeon(options) {
     municipal: municipal.sourceSha256,
   });
   const permitRecordCount =
-    bcs.records.length +
-    accela.records.length +
-    municipal.records.length;
+    bcs.records.length + accela.records.length + municipal.records.length;
   const target = requireNeonTarget(process.env);
   const client = new Client({
     connectionString: target.connectionString,
@@ -595,16 +588,13 @@ export async function loadBrowardPermitPilotToNeon(options) {
     await verifyNeonTarget(client, target);
     await acquireLoadLock(client);
     await ensureLoadControlTable(client);
-    const parents = await readPermitParents(
-      client,
-      [
-        ...new Set([
-          ...bcs.records.map((record) => record.parcel_identifier),
-          ...accela.records.map((record) => record.parcelIdentifier),
-          ...municipal.records.map((record) => record.parcel_identifier),
-        ]),
-      ],
-    );
+    const parents = await readPermitParents(client, [
+      ...new Set([
+        ...bcs.records.map((record) => record.parcel_identifier),
+        ...accela.records.map((record) => record.parcelIdentifier),
+        ...municipal.records.map((record) => record.parcel_identifier),
+      ]),
+    ]);
     const permitKeys = [
       ...bcs.records.map((record) => record.record_key),
       ...accela.records.map((record) => record.idempotencyKey),
@@ -617,7 +607,9 @@ export async function loadBrowardPermitPilotToNeon(options) {
       for (const record of bcs.records) {
         const parent = parents.get(record.parcel_identifier);
         if (parent === undefined) {
-          throw new Error("Permit record has no exact Broward appraisal parent");
+          throw new Error(
+            "Permit record has no exact Broward appraisal parent",
+          );
         }
         const values = buildPermitUpsertValues(record, parent);
         const result = await upsertPropertyImprovement(client, values);
@@ -630,7 +622,9 @@ export async function loadBrowardPermitPilotToNeon(options) {
       for (const record of accela.records) {
         const parent = parents.get(record.parcelIdentifier);
         if (parent === undefined) {
-          throw new Error("Accela record has no exact Broward appraisal parent");
+          throw new Error(
+            "Accela record has no exact Broward appraisal parent",
+          );
         }
         await upsertPropertyImprovement(
           client,
@@ -649,11 +643,7 @@ export async function loadBrowardPermitPilotToNeon(options) {
           buildMunicipalPermitUpsertValues(record, parent),
         );
       }
-      await verifyLoadedRecords(
-        client,
-        permitKeys,
-        inspectionKeys,
-      );
+      await verifyLoadedRecords(client, permitKeys, inspectionKeys);
       await client.query(
         `INSERT INTO ingest_control.broward_permit_loads (
            load_key, source_sha256, expected_property_improvements,
@@ -690,8 +680,7 @@ function isNormalizedPermit(value) {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return false;
   }
-  const candidate =
-    /** @type {Partial<BrowardNormalizedPermit>} */ (value);
+  const candidate = /** @type {Partial<BrowardNormalizedPermit>} */ (value);
   return (
     typeof candidate.source_system === "string" &&
     /^broward_[a-z0-9_]+_permits$/u.test(candidate.source_system) &&
@@ -724,8 +713,7 @@ function isAccelaPermit(value) {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return false;
   }
-  const candidate =
-    /** @type {Partial<BrowardAccelaPermitRecord>} */ (value);
+  const candidate = /** @type {Partial<BrowardAccelaPermitRecord>} */ (value);
   return (
     typeof candidate.sourceSystem === "string" &&
     /^broward_[a-z0-9_]+_permits$/u.test(candidate.sourceSystem) &&
@@ -753,8 +741,9 @@ function isMunicipalPermit(value) {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return false;
   }
-  const candidate =
-    /** @type {Partial<BrowardMunicipalPermitRecord>} */ (value);
+  const candidate = /** @type {Partial<BrowardMunicipalPermitRecord>} */ (
+    value
+  );
   return (
     typeof candidate.source_system === "string" &&
     /^broward_[a-z0-9_]+_permits$/u.test(candidate.source_system) &&
@@ -1091,8 +1080,7 @@ async function verifyLoadedRecords(client, permitKeys, inspectionKeys) {
   if (
     Number(permitResult.rows[0]?.row_count) !== permitKeys.length ||
     Number(permitResult.rows[0]?.unlinked_count) !== 0 ||
-    Number(inspectionResult.rows[0]?.row_count) !==
-      inspectionKeys.length ||
+    Number(inspectionResult.rows[0]?.row_count) !== inspectionKeys.length ||
     Number(inspectionResult.rows[0]?.unlinked_count) !== 0
   ) {
     throw new Error("Loaded Broward permit rows did not reconcile");
@@ -1131,9 +1119,7 @@ if (
   typeof process.argv[1] === "string" &&
   import.meta.url === pathToFileURL(process.argv[1]).href
 ) {
-  loadBrowardPermitPilotToNeon(
-    parsePermitLoadOptions(process.argv.slice(2)),
-  )
+  loadBrowardPermitPilotToNeon(parsePermitLoadOptions(process.argv.slice(2)))
     .then((result) => {
       console.log(
         JSON.stringify({

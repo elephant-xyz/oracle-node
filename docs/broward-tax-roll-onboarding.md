@@ -67,21 +67,21 @@ fee/contract based and is not used.
 
 The downloaded source, not the report-page estimate, is the denominator:
 
-| Measure | Count |
-| --- | ---: |
-| NAL source rows | 754,061 |
-| Unique non-empty valid parcel IDs | 754,061 |
-| Duplicate parcel IDs / extra duplicate rows | 0 / 0 |
-| Missing parcel IDs | 0 |
-| Malformed parcel IDs | 0 |
-| 12-character parcel IDs | 754,061 |
-| Condominium rows (`DOR_UC=004`) | 253,185 |
-| Residential (`000-009`) | 695,249 |
-| Commercial/industrial (`010-049`) | 33,306 |
-| Agricultural (`050-069`) | 1,123 |
-| Institutional/government/utility (`070-098`) | 24,379 |
-| Non-agricultural acreage (`099`) | 4 |
-| Rows with packed exemption code/value pairs | 447,738 |
+| Measure                                      |   Count |
+| -------------------------------------------- | ------: |
+| NAL source rows                              | 754,061 |
+| Unique non-empty valid parcel IDs            | 754,061 |
+| Duplicate parcel IDs / extra duplicate rows  |   0 / 0 |
+| Missing parcel IDs                           |       0 |
+| Malformed parcel IDs                         |       0 |
+| 12-character parcel IDs                      | 754,061 |
+| Condominium rows (`DOR_UC=004`)              | 253,185 |
+| Residential (`000-009`)                      | 695,249 |
+| Commercial/industrial (`010-049`)            |  33,306 |
+| Agricultural (`050-069`)                     |   1,123 |
+| Institutional/government/utility (`070-098`) |  24,379 |
+| Non-agricultural acreage (`099`)             |       4 |
+| Rows with packed exemption code/value pairs  | 447,738 |
 
 All rows have `CO_NO=16`, `FILE_T=R`, and `ASMNT_YR=2025`. The separately
 profiled 2026 preliminary has 754,549 rows and 253,770 condominiums. Year/stage
@@ -115,17 +115,17 @@ Identifiers are uppercase 12-character alphanumeric strings. They are never
 parsed as numbers, so leading zeros and condominium letters are retained.
 Addresses are not keys.
 
-| Measure | Count |
-| --- | ---: |
-| Official GIS polygon features | 556,178 |
-| Distinct valid GIS folios | 534,309 |
-| NAL IDs matched to GIS folios | 521,663 |
-| NAL-only IDs | 232,398 |
-| GIS-only folios | 12,646 |
-| Condominium rows matched to GIS | 41,010 |
-| Condominium rows without GIS folio | 212,175 |
+| Measure                              |   Count |
+| ------------------------------------ | ------: |
+| Official GIS polygon features        | 556,178 |
+| Distinct valid GIS folios            | 534,309 |
+| NAL IDs matched to GIS folios        | 521,663 |
+| NAL-only IDs                         | 232,398 |
+| GIS-only folios                      |  12,646 |
+| Condominium rows matched to GIS      |  41,010 |
+| Condominium rows without GIS folio   | 212,175 |
 | Union of tax-roll IDs and GIS folios | 766,707 |
-| Unexplained NAL row difference | 0 |
+| Unexplained NAL row difference       |       0 |
 
 The NAL row is the canonical 2025 assessed-property population. Existing GIS
 properties retain their geometry. NAL-only units are valid canonical properties
@@ -142,21 +142,21 @@ Apply it after `elephant-query-db-broward-local-loader.patch`. It adds a
 streaming, checkpointed NAL loader and query tables for Lexicon
 `tax_exemption` and `tax_authority`.
 
-| NAL data | Query-db / Lexicon mapping |
-| --- | --- |
-| `PARCEL_ID` | canonical exact `request_identifier` / `parcel_identifier` |
-| `DOR_UC`, `PA_UC` | broad validated property classification; raw codes retained |
-| `JV`, `AV_NSD`, `TV_NSD`, `TV_SD` | market, assessed, non-school/county taxable, school taxable |
-| `LND_VAL`, `JV-LND_VAL` | land and explicitly derived building/other value |
-| `OWN_NAME` | `ownership.owned_by`; not guessed as a person or company |
-| owner mailing fields | source-specific mailing address |
-| physical address fields | source-specific situs address |
-| `S_LEGAL` | property legal description for NAL-only property stubs |
-| `ACT_YR_BLT`, `EFF_YR_BLT`, area/unit fields | existing property fields for NAL-only stubs |
-| `EXMPT_*` or packed `EXEMPTIONS` pairs | one `tax_exemption` per positive reported code/value |
-| `TAX_AUTH_CD` | `tax_authority.authority_account_identifier` |
-| two NAL sale slots | price, qualification code, deed book/page, instrument |
-| roll metadata | source checksum, URL, year, status, retrieval time, raw row payload |
+| NAL data                                     | Query-db / Lexicon mapping                                          |
+| -------------------------------------------- | ------------------------------------------------------------------- |
+| `PARCEL_ID`                                  | canonical exact `request_identifier` / `parcel_identifier`          |
+| `DOR_UC`, `PA_UC`                            | broad validated property classification; raw codes retained         |
+| `JV`, `AV_NSD`, `TV_NSD`, `TV_SD`            | market, assessed, non-school/county taxable, school taxable         |
+| `LND_VAL`, `JV-LND_VAL`                      | land and explicitly derived building/other value                    |
+| `OWN_NAME`                                   | `ownership.owned_by`; not guessed as a person or company            |
+| owner mailing fields                         | source-specific mailing address                                     |
+| physical address fields                      | source-specific situs address                                       |
+| `S_LEGAL`                                    | property legal description for NAL-only property stubs              |
+| `ACT_YR_BLT`, `EFF_YR_BLT`, area/unit fields | existing property fields for NAL-only stubs                         |
+| `EXMPT_*` or packed `EXEMPTIONS` pairs       | one `tax_exemption` per positive reported code/value                |
+| `TAX_AUTH_CD`                                | `tax_authority.authority_account_identifier`                        |
+| two NAL sale slots                           | price, qualification code, deed book/page, instrument               |
+| roll metadata                                | source checksum, URL, year, status, retrieval time, raw row payload |
 
 The NAL exposes only sale year/month, so the loader does not invent a day or
 populate `ownership_transfer_date`. Sale precision remains in the source

@@ -18,9 +18,7 @@ describe("permit harvest worker message helpers", () => {
       type: "broward-accela-list-window",
       jurisdictionKey: "hollywood",
     });
-    expect(
-      _private.buildBrowardAccelaSplitMessages(message),
-    ).toEqual([
+    expect(_private.buildBrowardAccelaSplitMessages(message)).toEqual([
       expect.objectContaining({
         jurisdictionKey: "hollywood",
         startDate: "2026-08-01",

@@ -119,17 +119,17 @@ durable truth is in
 
 Final reconciliation:
 
-| Metric | Count |
-| --- | ---: |
-| ArcGIS source rows | 204,760 |
-| Normalized source rows | 204,760 |
-| Unique `CASEKEY` logical permits | 204,751 |
-| Duplicate source rows | 9 |
-| Invalid source rows | 0 |
-| Conservative roofing classifications | 16,613 |
-| Source rows with exact BCPA property match | 159,584 |
-| Source rows retained unmatched | 45,176 |
-| Durable chunks | 205 / 205 |
+| Metric                                     |     Count |
+| ------------------------------------------ | --------: |
+| ArcGIS source rows                         |   204,760 |
+| Normalized source rows                     |   204,760 |
+| Unique `CASEKEY` logical permits           |   204,751 |
+| Duplicate source rows                      |         9 |
+| Invalid source rows                        |         0 |
+| Conservative roofing classifications       |    16,613 |
+| Source rows with exact BCPA property match |   159,584 |
+| Source rows retained unmatched             |    45,176 |
+| Durable chunks                             | 205 / 205 |
 
 After logical deduplication, Neon contains 204,751 bulk-backed rows: 159,580
 linked and 45,171 unlinked. Of 1,603 pre-existing rich LauderBuild portal

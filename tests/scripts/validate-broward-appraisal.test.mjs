@@ -48,9 +48,7 @@ describe("Broward prepare capture unwrap", () => {
             json: () =>
               Promise.resolve({
                 d: {
-                  parcelInfok__BackingField: [
-                    { folioNumber: "504108BJ0140" },
-                  ],
+                  parcelInfok__BackingField: [{ folioNumber: "504108BJ0140" }],
                 },
               }),
           });

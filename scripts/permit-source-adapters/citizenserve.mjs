@@ -295,11 +295,7 @@ export function parseCitizenserveSearchResultsHtml(
  */
 export function isCitizenserveRoofPermitCandidate(candidate) {
   return /\broof(?:ing)?\b/iu.test(
-    [
-      candidate.recordType,
-      candidate.workClass,
-      candidate.description,
-    ]
+    [candidate.recordType, candidate.workClass, candidate.description]
       .filter((value) => typeof value === "string")
       .join(" "),
   );

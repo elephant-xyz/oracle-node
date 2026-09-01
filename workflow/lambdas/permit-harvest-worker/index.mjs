@@ -2049,8 +2049,7 @@ async function processBrowardAccelaListWindow(message) {
     const prior = await readJsonFromS3(summaryUri);
     if (
       isRecord(prior) &&
-      prior.schemaVersion ===
-        "permit-harvest.broward-accela.window.v1" &&
+      prior.schemaVersion === "permit-harvest.broward-accela.window.v1" &&
       prior.processingComplete === true
     ) {
       consoleLogger.info("broward_accela_window_already_complete", {

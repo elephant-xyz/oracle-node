@@ -73,9 +73,7 @@ function fortLauderdaleFeature(overrides = {}) {
 describe("Fort Lauderdale official bulk permit normalization", () => {
   it("preserves folios and maps the portal-compatible permit identity", () => {
     expect(normalizeArcgisBrowardFolio("504108BJ0140")).toBe("504108BJ0140");
-    expect(normalizeArcgisBrowardFolio("5042-16-10-0030")).toBe(
-      "504216100030",
-    );
+    expect(normalizeArcgisBrowardFolio("5042-16-10-0030")).toBe("504216100030");
     expect(normalizeArcgisBrowardFolio(504216100030)).toBeNull();
     expect(arcgisEpochToIsoDate(Date.UTC(2025, 0, 2))).toBe("2025-01-02");
 
@@ -134,9 +132,9 @@ describe("Fort Lauderdale official bulk permit normalization", () => {
     );
     expect(detailUrl).toContain("capID3=00ABC");
     expect(accelaCaseKeyFromUrl(detailUrl)).toBe("25CAP-00000-00ABC");
-    expect(
-      buildFortLauderdalePermitUrl(null, "BLD-ROOF-25010001"),
-    ).toContain("PERMITID%3D%27BLD-ROOF-25010001%27");
+    expect(buildFortLauderdalePermitUrl(null, "BLD-ROOF-25010001")).toContain(
+      "PERMITID%3D%27BLD-ROOF-25010001%27",
+    );
   });
 
   it("does not collapse truncated duplicate permit labels", () => {
@@ -232,8 +230,7 @@ describe("durable Broward bulk permit runner", () => {
     ).toEqual({
       jobId: "broward-permits-ftl-bulk-pilot-20260831",
       sourceKey: "fort-lauderdale",
-      outputDirectory:
-        "downloads/broward/permit-bulk/fort-lauderdale",
+      outputDirectory: "downloads/broward/permit-bulk/fort-lauderdale",
       chunkSize: 50,
       limit: 100,
       load: false,
@@ -332,8 +329,7 @@ describe("durable Broward bulk permit runner", () => {
         "broward_fort_lauderdale_lauderbuild_permits:arcgis:case:25CAP-00000-00ABC",
       property_match_method: "exact_folio",
       property_match_confidence: "exact",
-      licensed_professional:
-        "PUBLIC ROOFING LLC (CCC1234567)",
+      licensed_professional: "PUBLIC ROOFING LLC (CCC1234567)",
     });
     expect(mapBulkPermitLoadRow(normalized, undefined)).toMatchObject({
       property_id: null,

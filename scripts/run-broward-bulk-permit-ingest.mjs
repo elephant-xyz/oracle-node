@@ -31,8 +31,7 @@ const PRODUCTION_ENDPOINT_PREFIX = "ep-mute-leaf";
 const CONTROL_SCHEMA = "ingest_control";
 const LOAD_LOCK_NAMESPACE = 12_011;
 const LOAD_LOCK_KEY = 3;
-const MANIFEST_SCHEMA_VERSION =
-  "oracle-node.broward-permit-bulk-manifest.v1";
+const MANIFEST_SCHEMA_VERSION = "oracle-node.broward-permit-bulk-manifest.v1";
 const DEFAULT_OUTPUT_DIRECTORY =
   "downloads/broward/permit-bulk/fort-lauderdale";
 
@@ -157,8 +156,7 @@ export function parseBulkPermitOptions(argv) {
       "--source currently supports only the verified fort-lauderdale feed",
     );
   }
-  const outputDirectory =
-    values.get("output-dir") ?? DEFAULT_OUTPUT_DIRECTORY;
+  const outputDirectory = values.get("output-dir") ?? DEFAULT_OUTPUT_DIRECTORY;
   if (outputDirectory.trim().length === 0) {
     throw new Error("--output-dir must not be empty");
   }
@@ -198,19 +196,13 @@ export function parseBulkPermitOptions(argv) {
  * }} [dependencies={}] - Injectable transport, clock, and database factory.
  * @returns {Promise<BulkPermitManifest>} Completed reconciled manifest.
  */
-export async function runBrowardBulkPermitIngest(
-  options,
-  dependencies = {},
-) {
+export async function runBrowardBulkPermitIngest(options, dependencies = {}) {
   const fetchImpl = dependencies.fetchImpl ?? fetch;
   const now = dependencies.now ?? (() => new Date().toISOString());
   const source = FORT_LAUDERDALE_PERMIT_ARCGIS_SOURCE;
   const outputDirectory = path.resolve(options.outputDirectory);
   const rawDirectory = path.join(outputDirectory, "raw-private");
-  const normalizedDirectory = path.join(
-    outputDirectory,
-    "normalized-private",
-  );
+  const normalizedDirectory = path.join(outputDirectory, "normalized-private");
   const invalidDirectory = path.join(outputDirectory, "invalid-private");
   const manifestPath = path.join(outputDirectory, "manifest.private.json");
   await Promise.all(
@@ -221,7 +213,9 @@ export async function runBrowardBulkPermitIngest(
 
   const allObjectIds = await fetchArcgisPermitObjectIds(source, fetchImpl);
   if (allObjectIds.length === 0) {
-    throw new Error("Fort Lauderdale bulk permit source returned no object IDs");
+    throw new Error(
+      "Fort Lauderdale bulk permit source returned no object IDs",
+    );
   }
   const selectedObjectIds =
     options.limit === null
@@ -275,11 +269,7 @@ export async function runBrowardBulkPermitIngest(
   );
 
   try {
-    for (
-      let chunkIndex = 0;
-      chunkIndex < expectedChunks;
-      chunkIndex += 1
-    ) {
+    for (let chunkIndex = 0; chunkIndex < expectedChunks; chunkIndex += 1) {
       const start = chunkIndex * options.chunkSize;
       const objectIds = selectedObjectIds.slice(
         start,
@@ -379,9 +369,8 @@ export async function runBrowardBulkPermitIngest(
         sourceRecordCount: capture.features.length,
         normalizedRecordCount: validRecords.length,
         invalidRecordCount: invalid.length,
-        roofRecordCount: validRecords.filter(
-          (record) => record.is_roof_permit,
-        ).length,
+        roofRecordCount: validRecords.filter((record) => record.is_roof_permit)
+          .length,
         matchedPropertyCount,
         unmatchedPropertyCount,
         rawSha256: sha256(capture.rawText),
@@ -479,10 +468,8 @@ async function readOrCreateManifest(
       manifest.sourceSystem !==
         FORT_LAUDERDALE_PERMIT_ARCGIS_SOURCE.sourceSystem ||
       manifest.sourceObjectIdCount !== sourceSnapshot.sourceObjectIdCount ||
-      manifest.sourceObjectIdsSha256 !==
-        sourceSnapshot.sourceObjectIdsSha256 ||
-      manifest.selectedObjectIdCount !==
-        sourceSnapshot.selectedObjectIdCount ||
+      manifest.sourceObjectIdsSha256 !== sourceSnapshot.sourceObjectIdsSha256 ||
+      manifest.selectedObjectIdCount !== sourceSnapshot.selectedObjectIdCount ||
       manifest.selectedObjectIdsSha256 !==
         sourceSnapshot.selectedObjectIdsSha256 ||
       manifest.chunkSize !== options.chunkSize ||
@@ -576,9 +563,7 @@ export function accelaCaseKeyFromUrl(value) {
   );
   return parts.every(
     (part) =>
-      typeof part === "string" &&
-      part.length > 0 &&
-      /^[A-Z0-9]+$/u.test(part),
+      typeof part === "string" && part.length > 0 && /^[A-Z0-9]+$/u.test(part),
   )
     ? parts.join("-")
     : null;
@@ -610,9 +595,7 @@ async function loadBulkPermitChunk(
   const folios = [
     ...new Set(
       records.flatMap((record) =>
-        record.parcel_identifier === null
-          ? []
-          : [record.parcel_identifier],
+        record.parcel_identifier === null ? [] : [record.parcel_identifier],
       ),
     ),
   ];
@@ -728,11 +711,7 @@ async function loadBulkPermitChunk(
  * @param {string | undefined} [existingPortalRecordKey] - Existing rich portal key.
  * @returns {BulkPermitLoadRow} Complete parameter row.
  */
-export function mapBulkPermitLoadRow(
-  record,
-  parent,
-  existingPortalRecordKey,
-) {
+export function mapBulkPermitLoadRow(record, parent, existingPortalRecordKey) {
   const sourceRequestUrl = new URL(
     FORT_LAUDERDALE_PERMIT_ARCGIS_SOURCE.queryUrl,
   );
@@ -774,8 +753,7 @@ export function mapBulkPermitLoadRow(
       bulk_transport: record.source_vendor,
       bulk_source_object_id: record.source_record_id,
       approved_date: record.approved_date,
-      certificate_of_occupancy_date:
-        record.certificate_of_occupancy_date,
+      certificate_of_occupancy_date: record.certificate_of_occupancy_date,
       contractor_name: record.contractor_name,
       contractor_license: record.contractor_license,
       is_roof_permit: record.is_roof_permit,
@@ -788,18 +766,15 @@ export function mapBulkPermitLoadRow(
       method: "GET",
       url: sourceRequestUrl.toString(),
     },
-    source_payload:
-      /** @type {Record<string, unknown>} */ (
-        /** @type {unknown} */ (record)
-      ),
+    source_payload: /** @type {Record<string, unknown>} */ (
+      /** @type {unknown} */ (record)
+    ),
     source_system: record.source_system,
     source_record_key: sourceRecordKey,
     source_record_hash: sourceRecordHash,
     source_artifact_uri: record.source_url,
-    property_match_method:
-      parent === undefined ? "unmatched" : "exact_folio",
-    property_match_confidence:
-      parent === undefined ? "unmatched" : "exact",
+    property_match_method: parent === undefined ? "unmatched" : "exact_folio",
+    property_match_confidence: parent === undefined ? "unmatched" : "exact",
     retrieved_at: record.retrieved_at,
   };
 }
@@ -1004,8 +979,7 @@ async function registerBulkRun(client, manifest) {
     row.source_url !== manifest.sourceUrl ||
     Number(row.source_object_id_count) !== manifest.sourceObjectIdCount ||
     row.source_object_ids_sha256 !== manifest.sourceObjectIdsSha256 ||
-    Number(row.selected_object_id_count) !==
-      manifest.selectedObjectIdCount ||
+    Number(row.selected_object_id_count) !== manifest.selectedObjectIdCount ||
     row.selected_object_ids_sha256 !== manifest.selectedObjectIdsSha256 ||
     Number(row.chunk_size) !== manifest.chunkSize
   ) {
@@ -1022,12 +996,7 @@ async function registerBulkRun(client, manifest) {
  * @param {string} rawSha256 - Exact raw artifact hash.
  * @returns {Promise<boolean>} Whether the matching commit exists.
  */
-async function isBulkChunkCommitted(
-  client,
-  jobId,
-  chunkIndex,
-  rawSha256,
-) {
+async function isBulkChunkCommitted(client, jobId, chunkIndex, rawSha256) {
   const result = await client.query(
     `SELECT raw_sha256 FROM ${CONTROL_SCHEMA}.broward_bulk_permit_chunks
      WHERE job_id=$1 AND chunk_index=$2`,
@@ -1127,8 +1096,7 @@ async function readNormalizedChunk(filePath) {
     .split(/\r?\n/u)
     .filter((line) => line.length > 0)
     .map(
-      (line) =>
-        /** @type {NormalizedBrowardArcgisPermit} */ (JSON.parse(line)),
+      (line) => /** @type {NormalizedBrowardArcgisPermit} */ (JSON.parse(line)),
     );
 }
 
@@ -1274,9 +1242,7 @@ if (
   typeof process.argv[1] === "string" &&
   import.meta.url === pathToFileURL(process.argv[1]).href
 ) {
-  runBrowardBulkPermitIngest(
-    parseBulkPermitOptions(process.argv.slice(2)),
-  )
+  runBrowardBulkPermitIngest(parseBulkPermitOptions(process.argv.slice(2)))
     .then((manifest) => {
       console.log(
         JSON.stringify({

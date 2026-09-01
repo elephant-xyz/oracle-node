@@ -21,9 +21,9 @@ describe("Broward roofing-only BBB worklist", () => {
       outputDirectory: "downloads/broward/bbb-roofing",
       limit: 100,
     });
-    expect(() =>
-      parseRoofingBbbWorklistOptions(["--limit", "0"]),
-    ).toThrow(/1 through 100000/u);
+    expect(() => parseRoofingBbbWorklistOptions(["--limit", "0"])).toThrow(
+      /1 through 100000/u,
+    );
   });
 
   it("normalizes business identities and rejects placeholders", () => {
@@ -80,9 +80,7 @@ describe("Broward roofing-only BBB worklist", () => {
         roofingPermitCount: 3,
         earliestPermitDate: "2025-02-01",
         latestPermitDate: "2026-02-01",
-        sourceSystems: [
-          "broward_fort_lauderdale_lauderbuild_permits",
-        ],
+        sourceSystems: ["broward_fort_lauderdale_lauderbuild_permits"],
       },
       {
         identityKey: "name:NAME ONLY ROOFS",

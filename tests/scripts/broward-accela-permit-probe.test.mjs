@@ -259,10 +259,7 @@ describe("Broward jurisdiction-specific Accela adapters", () => {
       </table>`;
     const source = BROWARD_ACCELA_SOURCES.hollywood;
     expect(
-      buildBrowardAccelaDetailUrlFromRecordId(
-        "26EST-00000-17950",
-        source,
-      ),
+      buildBrowardAccelaDetailUrlFromRecordId("26EST-00000-17950", source),
     ).toContain("capID3=17950");
     expect(
       extractBrowardAccelaPermitLinks({
@@ -553,11 +550,7 @@ describe("Broward jurisdiction-specific Accela adapters", () => {
 describe("Broward Accela vendor-wide date windows", () => {
   it("builds exact non-overlapping windows and stable source keys", () => {
     expect(
-      createBrowardAccelaDateWindows(
-        "2026-08-28",
-        "2026-08-31",
-        2,
-      ),
+      createBrowardAccelaDateWindows("2026-08-28", "2026-08-31", 2),
     ).toEqual([
       { startDate: "2026-08-28", endDate: "2026-08-29" },
       { startDate: "2026-08-30", endDate: "2026-08-31" },
@@ -768,10 +761,7 @@ describe("Broward Accela vendor-wide date windows", () => {
       uniquePermitCount: 0,
     });
     const checkpoint = JSON.parse(
-      await readFile(
-        join(outputDirectory, "checkpoint.private.json"),
-        "utf8",
-      ),
+      await readFile(join(outputDirectory, "checkpoint.private.json"), "utf8"),
     );
     expect(checkpoint.pendingWindows).toEqual([
       { startDate: "2005-11-17", endDate: "2005-11-17" },
@@ -795,16 +785,13 @@ describe("Broward official Accela CSV exports", () => {
     expect(records).toHaveLength(2);
     expect(records[1]).toMatchObject({
       recordNumber: "STRUC-ROOF-25-000185",
-      recordKey:
-        "broward_hollywood_accela_permits:permit:STRUC-ROOF-25-000185",
+      recordKey: "broward_hollywood_accela_permits:permit:STRUC-ROOF-25-000185",
       recordDate: "2025-01-16",
       expirationDate: "2025-09-02",
       isRoofPermit: true,
       sourceWindowKey: "hollywood:date:20250116_20250116",
     });
-    expect(records[1]?.sourceUrl).toContain(
-      "altId=STRUC-ROOF-25-000185",
-    );
+    expect(records[1]?.sourceUrl).toContain("altId=STRUC-ROOF-25-000185");
   });
 
   it("accepts Plantation Record No. and accounts for explicit non-permit modules", () => {
@@ -835,9 +822,7 @@ describe("Broward official Accela CSV exports", () => {
       join(tmpdir(), "broward-accela-csv-window-"),
     );
     temporaryDirectories.push(outputDirectory);
-    expect(
-      createAccelaCsvDateWindows("2025-01-01", "2025-01-03", 2),
-    ).toEqual([
+    expect(createAccelaCsvDateWindows("2025-01-01", "2025-01-03", 2)).toEqual([
       { startDate: "2025-01-01", endDate: "2025-01-02" },
       { startDate: "2025-01-03", endDate: "2025-01-03" },
     ]);
@@ -873,11 +858,7 @@ describe("Broward official Accela CSV exports", () => {
       createBrowser: async () => ({
         close: async () => undefined,
       }),
-      captureWindow: async ({
-        source,
-        startDate,
-        endDate,
-      }) => {
+      captureWindow: async ({ source, startDate, endDate }) => {
         captureAttempts += 1;
         if (captureAttempts === 1) {
           throw new Error("transient export failure");

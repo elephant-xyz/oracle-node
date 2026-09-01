@@ -38,9 +38,7 @@ describe("Broward tax-roll profile", () => {
     expect(classifyDorUseCode("004")).toBe("residential");
     expect(classifyDorUseCode("048")).toBe("commercial_industrial");
     expect(classifyDorUseCode("063")).toBe("agricultural");
-    expect(classifyDorUseCode("094")).toBe(
-      "institutional_government_utility",
-    );
+    expect(classifyDorUseCode("094")).toBe("institutional_government_utility");
     expect(classifyDorUseCode("099")).toBe("nonagricultural_acreage");
     expect(classifyDorUseCode("NAP")).toBe("invalid");
   });
@@ -155,9 +153,7 @@ describe("Broward tax-roll profile", () => {
       fileType: "NAL real property",
       napIncluded: false,
     });
-    const manifest = JSON.parse(
-      await readFile(pilotManifestPath, "utf8"),
-    );
+    const manifest = JSON.parse(await readFile(pilotManifestPath, "utf8"));
     expect(manifest.private).toBe(true);
     expect(manifest.publishable).toBe(false);
     expect(manifest.gisOnlyControls).toEqual(["444444444444"]);

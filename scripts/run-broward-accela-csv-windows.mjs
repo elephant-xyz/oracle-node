@@ -21,8 +21,7 @@ import {
   readBrowardAccelaSource,
 } from "./permit-source-adapters/broward-accela.mjs";
 
-const CHECKPOINT_SCHEMA_VERSION =
-  "oracle-node.broward-accela-csv-windows.v1";
+const CHECKPOINT_SCHEMA_VERSION = "oracle-node.broward-accela-csv-windows.v1";
 const SOURCE_KEYS = new Set([
   "hollywood",
   "plantation",
@@ -168,9 +167,7 @@ export function createAccelaCsvDateWindows(startDate, endDate, windowDays) {
   while (toMillis(cursor) <= toMillis(endDate)) {
     const candidateEnd = addDays(cursor, windowDays - 1);
     const actualEnd =
-      toMillis(candidateEnd) > toMillis(endDate)
-        ? endDate
-        : candidateEnd;
+      toMillis(candidateEnd) > toMillis(endDate) ? endDate : candidateEnd;
     windows.push({ startDate: cursor, endDate: actualEnd });
     cursor = addDays(actualEnd, 1);
   }
@@ -215,11 +212,7 @@ export async function runAccelaCsvWindows(options, dependencies = {}) {
       mkdir(directory, { recursive: true, mode: 0o700 }),
     ),
   );
-  let checkpoint = await readOrCreateCheckpoint(
-    checkpointPath,
-    options,
-    now(),
-  );
+  let checkpoint = await readOrCreateCheckpoint(checkpointPath, options, now());
   const logger = {
     info: (
       /** @type {string} */ message,
@@ -247,11 +240,7 @@ export async function runAccelaCsvWindows(options, dependencies = {}) {
       const windowKey = localWindowKey(window);
       const windowDirectory = path.join(windowsDirectory, windowKey);
       let capture;
-      for (
-        let attempt = 1;
-        attempt <= options.maxAttempts;
-        attempt += 1
-      ) {
+      for (let attempt = 1; attempt <= options.maxAttempts; attempt += 1) {
         try {
           capture = await captureWindow({
             browser,
@@ -269,8 +258,7 @@ export async function runAccelaCsvWindows(options, dependencies = {}) {
             startDate: window.startDate,
             endDate: window.endDate,
             attempt,
-            error:
-              error instanceof Error ? error.message : "Unknown error",
+            error: error instanceof Error ? error.message : "Unknown error",
           });
           await browser.close().catch(() => undefined);
           await wait(Math.max(options.delayMs * attempt, 5_000));
@@ -332,10 +320,7 @@ export async function runAccelaCsvWindows(options, dependencies = {}) {
   } finally {
     await browser.close().catch(() => undefined);
   }
-  const aggregate = await aggregateWindows(
-    checkpoint,
-    normalizedListPath,
-  );
+  const aggregate = await aggregateWindows(checkpoint, normalizedListPath);
   const summary = {
     status:
       checkpoint.pendingWindows.length === 0
@@ -344,15 +329,12 @@ export async function runAccelaCsvWindows(options, dependencies = {}) {
     sourceKey: source.key,
     sourceSystem: source.sourceSystem,
     windowsProcessedThisInvocation: processed,
-    completedWindowCount: Object.keys(
-      checkpoint.completedWindows,
-    ).length,
+    completedWindowCount: Object.keys(checkpoint.completedWindows).length,
     pendingWindowCount: checkpoint.pendingWindows.length,
     exportedRecordObservations: aggregate.exportedRecordObservations,
     uniquePermitCount: aggregate.uniquePermitCount,
     duplicatePermitObservations: aggregate.duplicatePermitObservations,
-    cappedDisplayedTotalWindowCount:
-      aggregate.cappedDisplayedTotalWindowCount,
+    cappedDisplayedTotalWindowCount: aggregate.cappedDisplayedTotalWindowCount,
     excludedNonPermitCount: aggregate.excludedNonPermitCount,
     normalizedListPath,
     checkpointPath,
@@ -402,8 +384,7 @@ async function aggregateWindows(checkpoint, normalizedListPath) {
         throw new Error("Accela CSV permit identity is malformed");
       }
       observations += 1;
-      const record =
-        /** @type {BrowardAccelaCsvPermitRecord} */ (value);
+      const record = /** @type {BrowardAccelaCsvPermitRecord} */ (value);
       const existing = records.get(record.recordKey);
       if (
         existing !== undefined &&
@@ -607,9 +588,7 @@ if (
   typeof process.argv[1] === "string" &&
   import.meta.url === pathToFileURL(process.argv[1]).href
 ) {
-  runAccelaCsvWindows(
-    parseAccelaCsvWindowOptions(process.argv.slice(2)),
-  )
+  runAccelaCsvWindows(parseAccelaCsvWindowOptions(process.argv.slice(2)))
     .then((summary) => {
       console.log(
         JSON.stringify({

@@ -532,9 +532,7 @@ export async function runBrowardAccelaProbe(options) {
           state.reportedTotal = searchResult.reportedTotal;
           state.excludedNonPermitCount = searchResult.excludedNonPermitCount;
           state.permits = options.roofOnly
-            ? searchResult.permits.filter(
-                isBrowardAccelaRoofPermitCandidate,
-              )
+            ? searchResult.permits.filter(isBrowardAccelaRoofPermitCandidate)
             : searchResult.permits;
           state.searchCapturePaths = [];
           for (const page of searchResult.pages) {
@@ -685,7 +683,7 @@ export async function runBrowardAccelaProbe(options) {
     startedAt,
     completedAt: new Date().toISOString(),
     isCuratedPilot: options.isCuratedPilot,
-      roofOnly: options.roofOnly,
+    roofOnly: options.roofOnly,
     publicAnonymousSearch: true,
     targetCount: options.targets.length,
     maxTargetsPerJurisdiction: MAX_TARGETS_PER_JURISDICTION,

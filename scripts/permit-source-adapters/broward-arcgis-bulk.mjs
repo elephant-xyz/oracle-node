@@ -114,9 +114,7 @@ export function arcgisEpochToIsoDate(value) {
     return null;
   }
   const date = new Date(value);
-  return Number.isNaN(date.getTime())
-    ? null
-    : date.toISOString().slice(0, 10);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString().slice(0, 10);
 }
 
 /**
@@ -160,9 +158,7 @@ export function normalizeArcgisBrowardFolio(value) {
  */
 export function isArcgisRoofPermit(values) {
   return ROOF_PATTERN.test(
-    values
-      .filter((value) => typeof value === "string")
-      .join(" "),
+    values.filter((value) => typeof value === "string").join(" "),
   );
 }
 
@@ -180,9 +176,7 @@ export function buildFortLauderdalePermitUrl(caseKeyValue, permitNumber) {
       ? null
       : /^([A-Z0-9]+)-([A-Z0-9]+)-([A-Z0-9]+)$/u.exec(caseKey);
   if (parts !== null) {
-    const url = new URL(
-      "https://aca-prod.accela.com/FTL/Cap/CapDetail.aspx",
-    );
+    const url = new URL("https://aca-prod.accela.com/FTL/Cap/CapDetail.aspx");
     url.searchParams.set("Module", "Permits");
     url.searchParams.set("TabName", "Permits");
     url.searchParams.set("capID1", parts[1] ?? "");
@@ -193,7 +187,10 @@ export function buildFortLauderdalePermitUrl(caseKeyValue, permitNumber) {
     return url.toString();
   }
   const fallback = new URL(FORT_LAUDERDALE_PERMIT_ARCGIS_SOURCE.queryUrl);
-  fallback.searchParams.set("where", `PERMITID='${permitNumber.replaceAll("'", "''")}'`);
+  fallback.searchParams.set(
+    "where",
+    `PERMITID='${permitNumber.replaceAll("'", "''")}'`,
+  );
   fallback.searchParams.set("outFields", "*");
   fallback.searchParams.set("returnGeometry", "false");
   fallback.searchParams.set("f", "json");
@@ -220,8 +217,7 @@ export function normalizeFortLauderdaleArcgisPermit(feature, retrievedAt) {
   }
   const source = FORT_LAUDERDALE_PERMIT_ARCGIS_SOURCE;
   const sourceRecordId = String(objectId);
-  const accelaCaseKey =
-    optionalText(attributes.CASEKEY)?.toUpperCase() ?? null;
+  const accelaCaseKey = optionalText(attributes.CASEKEY)?.toUpperCase() ?? null;
   const globalId = optionalText(attributes.GlobalID);
   const stableIdentity =
     accelaCaseKey === null
@@ -232,10 +228,7 @@ export function normalizeFortLauderdaleArcgisPermit(feature, retrievedAt) {
   const recordType = optionalText(attributes.PERMITTYPE);
   const description = optionalText(attributes.PERMITDESC);
   const locationDescription = optionalText(attributes.LOCDESC);
-  const sourceUrl = buildFortLauderdalePermitUrl(
-    accelaCaseKey,
-    permitNumber,
-  );
+  const sourceUrl = buildFortLauderdalePermitUrl(accelaCaseKey, permitNumber);
   const sourcePayload = Object.freeze({
     object_id: objectId,
     global_id: globalId,
@@ -276,8 +269,7 @@ export function normalizeFortLauderdaleArcgisPermit(feature, retrievedAt) {
       city: source.jurisdiction,
       permit_number: permitNumber,
       parcel_identifier: normalizeArcgisBrowardFolio(attributes.PARCELID),
-      work_location:
-        optionalText(attributes.FULLADDR) ?? locationDescription,
+      work_location: optionalText(attributes.FULLADDR) ?? locationDescription,
       application_date: arcgisEpochToIsoDate(attributes.SUBMITDT),
       approved_date: arcgisEpochToIsoDate(attributes.APPROVEDT),
       certificate_of_occupancy_date: arcgisEpochToIsoDate(attributes.COISSUE),
@@ -319,9 +311,7 @@ export function normalizeFortLauderdaleArcgisPermit(feature, retrievedAt) {
  * @returns {string} Snapshot identity.
  */
 export function hashArcgisObjectIds(objectIds) {
-  return createHash("sha256")
-    .update(objectIds.join("\n"))
-    .digest("hex");
+  return createHash("sha256").update(objectIds.join("\n")).digest("hex");
 }
 
 /**
@@ -333,7 +323,9 @@ export function hashArcgisObjectIds(objectIds) {
  */
 async function readArcgisJson(response) {
   if (!response.ok) {
-    throw new Error(`ArcGIS permit source returned HTTP ${String(response.status)}`);
+    throw new Error(
+      `ArcGIS permit source returned HTTP ${String(response.status)}`,
+    );
   }
   const parsed = /** @type {unknown} */ (await response.json());
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
@@ -374,9 +366,7 @@ export async function fetchArcgisPermitObjectIds(source, fetchImpl = fetch) {
     !Array.isArray(ids) ||
     !ids.every(
       (value) =>
-        typeof value === "number" &&
-        Number.isInteger(value) &&
-        value >= 0,
+        typeof value === "number" && Number.isInteger(value) && value >= 0,
     )
   ) {
     throw new Error("ArcGIS permit source returned invalid object IDs");
@@ -409,9 +399,7 @@ export async function fetchArcgisPermitFeatures(
     objectIds.length > source.maxChunkSize ||
     !objectIds.every(
       (value) =>
-        typeof value === "number" &&
-        Number.isInteger(value) &&
-        value >= 0,
+        typeof value === "number" && Number.isInteger(value) && value >= 0,
     )
   ) {
     throw new Error(
@@ -435,7 +423,9 @@ export async function fetchArcgisPermitFeatures(
     signal: AbortSignal.timeout(120_000),
   });
   if (!response.ok) {
-    throw new Error(`ArcGIS permit source returned HTTP ${String(response.status)}`);
+    throw new Error(
+      `ArcGIS permit source returned HTTP ${String(response.status)}`,
+    );
   }
   const rawText = await response.text();
   const parsed = /** @type {unknown} */ (JSON.parse(rawText));

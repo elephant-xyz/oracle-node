@@ -168,11 +168,7 @@ describe("durable Broward Neon recovery", () => {
       }),
     ).rejects.toThrow(/durable commit failed/u);
 
-    expect(events).toEqual([
-      "prepare:1:0",
-      "prepare:2:1",
-      "commit:1",
-    ]);
+    expect(events).toEqual(["prepare:1:0", "prepare:2:1", "commit:1"]);
   });
 
   it("builds a deterministic seed signature without numeric folio coercion", async () => {

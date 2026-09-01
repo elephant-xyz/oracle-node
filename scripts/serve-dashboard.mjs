@@ -153,11 +153,7 @@ export async function getBrowardLifecycleStatus(
     }
   } catch (error) {
     if (
-      !(
-        error instanceof Error &&
-        "code" in error &&
-        error.code === "ENOENT"
-      )
+      !(error instanceof Error && "code" in error && error.code === "ENOENT")
     ) {
       throw error;
     }
@@ -191,18 +187,16 @@ export async function getBrowardLifecycleStatus(
         status: appraisalComplete ? "completed" : "in_progress",
         count: properties,
         target: county.targetParcels,
-        pct: (
-          (properties / Math.max(1, county.targetParcels)) *
-          100
-        ).toFixed(2),
+        pct: ((properties / Math.max(1, county.targetParcels)) * 100).toFixed(
+          2,
+        ),
         speed: 0,
         eta: null,
       },
       sourcing: {
         number: 4,
         title: "Permits & Sourcing",
-        status:
-          capturedPermits > permits ? "in_progress" : "partially_loaded",
+        status: capturedPermits > permits ? "in_progress" : "partially_loaded",
         permits: {
           count: permits,
           capturedCount: capturedPermits,
@@ -709,11 +703,7 @@ export function startDashboardServer(opts) {
         }
       } else {
         res.end(
-          JSON.stringify(
-            { status: "not_configured", samples: [] },
-            null,
-            2,
-          ),
+          JSON.stringify({ status: "not_configured", samples: [] }, null, 2),
         );
       }
       return;
