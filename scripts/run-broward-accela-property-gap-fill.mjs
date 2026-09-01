@@ -30,8 +30,7 @@ import {
 } from "./permit-source-adapters/broward-accela.mjs";
 import { retryAccelaCsvCooldownMs } from "./run-broward-accela-csv-windows.mjs";
 
-const GAP_CHECKPOINT_SCHEMA =
-  "oracle-node.broward-accela-property-gap-fill.v1";
+const GAP_CHECKPOINT_SCHEMA = "oracle-node.broward-accela-property-gap-fill.v1";
 const SOURCE_CITIES = Object.freeze({
   plantation: Object.freeze(["PLANTATION"]),
   "cooper-city": Object.freeze(["COOPER CITY"]),
@@ -79,11 +78,11 @@ const SOURCE_CITIES = Object.freeze({
  * @typedef {Record<string, string | undefined>} SeedRow
  *
  * @typedef {object} GapFillDependencies
- * @property {typeof createBrowardAccelaBrowser | undefined} [createBrowser]
- * @property {typeof searchBrowardAccelaParcel | undefined} [searchParcel]
- * @property {() => string | undefined} [now]
- * @property {() => number | undefined} [random]
- * @property {(milliseconds:number) => Promise<void> | undefined} [wait]
+ * @property {(() => Promise<import("puppeteer").Browser>)} [createBrowser]
+ * @property {typeof searchBrowardAccelaParcel} [searchParcel]
+ * @property {() => string} [now]
+ * @property {() => number} [random]
+ * @property {(milliseconds:number) => Promise<void>} [wait]
  *
  * @typedef {object} GapFillSummary
  * @property {"partial" | "cooling_down" | "seed_exhausted"} status
@@ -123,9 +122,7 @@ export function parsePropertyGapFillOptions(argv) {
     sourceKey !== "cooper-city" &&
     sourceKey !== "weston"
   ) {
-    throw new Error(
-      "--source must be plantation, cooper-city, or weston",
-    );
+    throw new Error("--source must be plantation, cooper-city, or weston");
   }
   return {
     sourceKey,
@@ -232,7 +229,9 @@ export async function runPropertyGapFill(options, dependencies = {}) {
   const wait =
     dependencies.wait ??
     ((milliseconds) =>
-      new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds)));
+      new Promise((resolvePromise) =>
+        setTimeout(resolvePromise, milliseconds),
+      ));
   const createBrowser =
     dependencies.createBrowser ??
     (() =>
@@ -241,18 +240,14 @@ export async function runPropertyGapFill(options, dependencies = {}) {
         warn: () => undefined,
         error: () => undefined,
       }));
-  const searchParcel =
-    dependencies.searchParcel ?? searchBrowardAccelaParcel;
+  const searchParcel = dependencies.searchParcel ?? searchBrowardAccelaParcel;
   const source = readBrowardAccelaSource(options.sourceKey);
   const mainCheckpointPath = path.join(
     options.outputDirectory,
     "checkpoint.private.json",
   );
   const gapDirectory = path.join(options.outputDirectory, "property-gap-fill");
-  const gapCheckpointPath = path.join(
-    gapDirectory,
-    "checkpoint.private.json",
-  );
+  const gapCheckpointPath = path.join(gapDirectory, "checkpoint.private.json");
   const gapRecordsPath = path.join(gapDirectory, "records.private.jsonl");
   await mkdir(gapDirectory, { recursive: true, mode: 0o700 });
   const mainCheckpoint = readMainCheckpoint(
@@ -272,19 +267,17 @@ export async function runPropertyGapFill(options, dependencies = {}) {
     now(),
   );
   const existingPlan = checkpoint.plans[windowKey];
-  const plan =
-    existingPlan ??
-    ({
-      startDate: shardPlan.startDate,
-      endDate: shardPlan.endDate,
-      nextSeedRowIndex: 0,
-      inspectedPropertyCount: 0,
-      retainedRecordCount: 0,
-      existingRecordCount: 0,
-      undatedRecordCount: 0,
-      seedExhausted: false,
-      updatedAt: now(),
-    });
+  const plan = existingPlan ?? {
+    startDate: shardPlan.startDate,
+    endDate: shardPlan.endDate,
+    nextSeedRowIndex: 0,
+    inspectedPropertyCount: 0,
+    retainedRecordCount: 0,
+    existingRecordCount: 0,
+    undatedRecordCount: 0,
+    seedExhausted: false,
+    updatedAt: now(),
+  };
   if (
     plan.startDate !== shardPlan.startDate ||
     plan.endDate !== shardPlan.endDate
@@ -372,8 +365,7 @@ export async function runPropertyGapFill(options, dependencies = {}) {
             plan.retainedRecordCount + reconciled.retained.length,
           existingRecordCount:
             plan.existingRecordCount + reconciled.existingCount,
-          undatedRecordCount:
-            plan.undatedRecordCount + reconciled.undatedCount,
+          undatedRecordCount: plan.undatedRecordCount + reconciled.undatedCount,
           updatedAt,
         };
         Object.assign(plan, nextPlan);
@@ -532,7 +524,9 @@ async function readOrCreateGapCheckpoint(
       parsed.seedSha256 !== seedSha256 ||
       !isRecord(parsed.plans)
     ) {
-      throw new Error("Property gap-fill checkpoint is malformed or mismatched");
+      throw new Error(
+        "Property gap-fill checkpoint is malformed or mismatched",
+      );
     }
     return /** @type {GapFillCheckpoint} */ (parsed);
   } catch (error) {
@@ -641,7 +635,10 @@ function classifyGapFillFailure(error) {
     if (error.code === "incomplete_pagination") return "incomplete_pagination";
     return "source_error";
   }
-  if (error instanceof Error && /timeout|timed out|exceeded/iu.test(error.message)) {
+  if (
+    error instanceof Error &&
+    /timeout|timed out|exceeded/iu.test(error.message)
+  ) {
     return "timeout";
   }
   if (error instanceof Error && /\bcap(?:ped)?\b/iu.test(error.message)) {
@@ -711,11 +708,7 @@ function requireText(value, name) {
  */
 function readInteger(value, name, minimum, maximum) {
   const parsed = Number(value);
-  if (
-    !Number.isInteger(parsed) ||
-    parsed < minimum ||
-    parsed > maximum
-  ) {
+  if (!Number.isInteger(parsed) || parsed < minimum || parsed > maximum) {
     throw new Error(
       `${name} must be an integer from ${String(minimum)} through ${String(maximum)}`,
     );

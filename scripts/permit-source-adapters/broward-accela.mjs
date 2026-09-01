@@ -2321,11 +2321,7 @@ async function captureAccelaListOnlyPages({
  * @param {string} sourceWindowKey - Stable date-window key.
  * @returns {BrowardAccelaCsvPermitRecord[]} List-backed inventory records.
  */
-export function csvRecordsFromPermitLinks(
-  links,
-  source,
-  sourceWindowKey,
-) {
+export function csvRecordsFromPermitLinks(links, source, sourceWindowKey) {
   return links.map((link) => ({
     schemaVersion: "oracle-node.broward-accela-csv-list.v1",
     sourceSystem: source.sourceSystem,
