@@ -462,9 +462,7 @@ export async function runAccelaCsvWindows(options, dependencies = {}) {
               recordTypeShard: nextShard.key,
               reason,
             });
-            if (
-              failedShardKeys.size >= MAX_FAILED_SHARDS_PER_INVOCATION
-            ) {
+            if (failedShardKeys.size >= MAX_FAILED_SHARDS_PER_INVOCATION) {
               throw new Error(
                 `${source.jurisdiction} Accela reached the bounded ${String(MAX_FAILED_SHARDS_PER_INVOCATION)}-shard failure limit`,
               );
