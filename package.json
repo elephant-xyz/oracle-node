@@ -16,6 +16,7 @@
     "format:check": "prettier --check .",
     "install-workspaces": "npm install --workspaces",
     "catalog:update": "node scripts/update-published-county-catalog.mjs",
+    "catalog:mcp-maps": "node scripts/print-mcp-env-maps.mjs",
     "polk:appraisal:local": "node scripts/build-polk-local-appraisal.mjs",
     "polk:status": "node scripts/polk-local-status.mjs",
     "polk:dashboard": "node scripts/polk-local-dashboard.mjs",
