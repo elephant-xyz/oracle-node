@@ -94,12 +94,20 @@ const SOURCE_KEYS = new Set([
  * @property {string | undefined} [rawCsvSha256] - Exact export hash when present.
  * @property {string} completedAt - ISO completion time.
  *
+ * @typedef {object} AccelaCsvShardFailure
+ * @property {"timeout" | "source_cap" | "incomplete_pagination" | "source_error"} reason
+ *   Aggregate-safe terminal classification for one bounded invocation.
+ * @property {number} attemptCycles - Number of invocations that exhausted this shard.
+ * @property {string} failedAt - ISO latest bounded failure time.
+ *
  * @typedef {object} AccelaCsvShardPlan
  * @property {string} startDate - Inclusive parent start.
  * @property {string} endDate - Inclusive parent end.
  * @property {"record_type"} dimension - Exhaustive public split dimension.
  * @property {AccelaCsvRecordTypeShard[]} expectedShards - Frozen complete option set.
  * @property {Record<string, AccelaCsvShardReceipt>} completedShards - Durable shard receipts.
+ * @property {Record<string, AccelaCsvShardFailure> | undefined} [failedShards]
+ *   Safe failure receipts; these never count as completed coverage.
  * @property {string} createdAt - ISO plan creation time.
  *
  * @typedef {object} AccelaCsvSplitReceipt
@@ -326,6 +334,7 @@ export async function runAccelaCsvWindows(options, dependencies = {}) {
   /** @type {import("puppeteer").Browser | null} */
   let browser = null;
   let processed = 0;
+  const attemptedShardKeys = new Set();
 
   /**
    * Capture one source operation with a hard wall deadline and a newly built
@@ -401,7 +410,9 @@ export async function runAccelaCsvWindows(options, dependencies = {}) {
       const shardPlan = checkpoint.shardPlans[windowKey];
       if (shardPlan !== undefined) {
         const nextShard = shardPlan.expectedShards.find(
-          (shard) => shardPlan.completedShards[shard.key] === undefined,
+          (shard) =>
+            shardPlan.completedShards[shard.key] === undefined &&
+            !attemptedShardKeys.has(shard.key),
         );
         if (nextShard !== undefined) {
           const shardDirectory = path.join(
@@ -409,11 +420,50 @@ export async function runAccelaCsvWindows(options, dependencies = {}) {
             "record-type-shards",
             nextShard.key,
           );
-          const capture = await captureRecoverably(
-            window,
-            nextShard,
-            shardDirectory,
-          );
+          /** @type {Awaited<ReturnType<typeof captureBrowardAccelaCsvWindow>> | undefined} */
+          let capture;
+          try {
+            capture = await captureRecoverably(
+              window,
+              nextShard,
+              shardDirectory,
+            );
+          } catch (error) {
+            attemptedShardKeys.add(nextShard.key);
+            const priorFailure = shardPlan.failedShards?.[nextShard.key];
+            const reason = classifyRecordTypeShardFailure(error);
+            checkpoint = {
+              ...checkpoint,
+              shardPlans: {
+                ...checkpoint.shardPlans,
+                [windowKey]: {
+                  ...shardPlan,
+                  failedShards: {
+                    ...shardPlan.failedShards,
+                    [nextShard.key]: {
+                      reason,
+                      attemptCycles: (priorFailure?.attemptCycles ?? 0) + 1,
+                      failedAt: now(),
+                    },
+                  },
+                },
+              },
+              updatedAt: now(),
+            };
+            await writeCheckpoint(checkpointPath, checkpoint);
+            processed += 1;
+            logger.warn("broward_accela_csv_record_type_shard_deferred", {
+              sourceKey: source.key,
+              startDate: window.startDate,
+              endDate: window.endDate,
+              recordTypeShard: nextShard.key,
+              reason,
+            });
+            continue;
+          }
+          if (capture === undefined) {
+            throw new Error("Accela record-type capture disappeared");
+          }
           const shardReceipt = await writeShardCapture({
             capture,
             shard: nextShard,
@@ -428,6 +478,11 @@ export async function runAccelaCsvWindows(options, dependencies = {}) {
               ...checkpoint.shardPlans,
               [windowKey]: {
                 ...shardPlan,
+                failedShards: Object.fromEntries(
+                  Object.entries(shardPlan.failedShards ?? {}).filter(
+                    ([key]) => key !== nextShard.key,
+                  ),
+                ),
                 completedShards: {
                   ...shardPlan.completedShards,
                   [nextShard.key]: shardReceipt,
@@ -436,9 +491,18 @@ export async function runAccelaCsvWindows(options, dependencies = {}) {
             },
             updatedAt: now(),
           };
+          attemptedShardKeys.add(nextShard.key);
           await writeCheckpoint(checkpointPath, checkpoint);
           processed += 1;
           continue;
+        }
+        const incompleteShardCount = shardPlan.expectedShards.filter(
+          (shard) => shardPlan.completedShards[shard.key] === undefined,
+        ).length;
+        if (incompleteShardCount > 0) {
+          throw new Error(
+            `${source.jurisdiction} Accela has ${String(incompleteShardCount)} unreconciled record-type shards after bounded attempts`,
+          );
         }
         checkpoint = await finalizeRecordTypeShardPlan({
           checkpoint,
@@ -783,6 +847,7 @@ function createRecordTypeShardPlan(capture, window, createdAt) {
     dimension: "record_type",
     expectedShards,
     completedShards: {},
+    failedShards: {},
     createdAt,
   };
 }
@@ -1005,6 +1070,26 @@ function isRetryableCaptureError(error) {
     error instanceof BrowardAccelaSourceError &&
     (error.code === "access_blocked" || error.code === "identity_mismatch")
   );
+}
+
+/**
+ * Reduce one exhausted record-type failure to an allowlisted checkpoint code.
+ * Raw source errors, URLs, and record values are never persisted.
+ *
+ * @param {unknown} error - Exhausted shard capture error.
+ * @returns {AccelaCsvShardFailure["reason"]} Safe failure classification.
+ */
+function classifyRecordTypeShardFailure(error) {
+  if (
+    error instanceof BrowardAccelaSourceError &&
+    error.code === "incomplete_pagination"
+  ) {
+    return "incomplete_pagination";
+  }
+  const message = error instanceof Error ? error.message : "";
+  if (/capped at 100|source cap/iu.test(message)) return "source_cap";
+  if (/timed out|timeout|Waiting failed/iu.test(message)) return "timeout";
+  return "source_error";
 }
 
 /**

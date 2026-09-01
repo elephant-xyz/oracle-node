@@ -1128,6 +1128,7 @@ describe("Broward official Accela CSV exports", () => {
     const operations = [];
     /** @type {number[]} */
     const searchOutcomeTimeouts = [];
+    let buildingFailuresRemaining = 2;
     const captureWindow = async ({
       source,
       startDate,
@@ -1139,6 +1140,13 @@ describe("Broward official Accela CSV exports", () => {
         recordTypeShard === null ? "parent" : recordTypeShard.label;
       operations.push(operation);
       searchOutcomeTimeouts.push(searchOutcomeTimeoutMs);
+      if (
+        recordTypeShard?.label === "Building Permit" &&
+        buildingFailuresRemaining > 0
+      ) {
+        buildingFailuresRemaining -= 1;
+        throw new Error("Waiting failed: 90000ms exceeded");
+      }
       const label = recordTypeShard?.label ?? "Building Permit";
       const suffix =
         recordTypeShard === null
@@ -1207,13 +1215,26 @@ describe("Broward official Accela CSV exports", () => {
       completedShards: {},
     });
 
-    await runAccelaCsvWindows(options, dependencies);
+    await runAccelaCsvWindows(
+      { ...options, maxWindows: 2 },
+      dependencies,
+    );
     checkpoint = JSON.parse(
       await readFile(join(outputDirectory, "checkpoint.private.json"), "utf8"),
     );
     expect(
       Object.keys(Object.values(checkpoint.shardPlans)[0].completedShards),
     ).toHaveLength(1);
+    expect(
+      Object.values(checkpoint.shardPlans)[0].failedShards,
+    ).toEqual(
+      expect.objectContaining({
+        "record-type-25d182bab06ba7fa": expect.objectContaining({
+          reason: "timeout",
+          attemptCycles: 1,
+        }),
+      }),
+    );
 
     const completed = await runAccelaCsvWindows(
       { ...options, maxWindows: null },
@@ -1228,9 +1249,13 @@ describe("Broward official Accela CSV exports", () => {
     expect(operations).toEqual([
       "parent",
       "Building Permit",
+      "Building Permit",
       "Electrical Permit",
+      "Building Permit",
     ]);
-    expect(searchOutcomeTimeouts).toEqual([60_000, 90_000, 90_000]);
+    expect(searchOutcomeTimeouts).toEqual([
+      60_000, 90_000, 90_000, 90_000, 90_000,
+    ]);
     checkpoint = JSON.parse(
       await readFile(join(outputDirectory, "checkpoint.private.json"), "utf8"),
     );
