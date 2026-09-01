@@ -48,8 +48,7 @@ export const BROWARD_BCS_ADAPTER_KEY = "broward-bcs-posse";
 export const BROWARD_ACCELA_ADAPTER_KEY = "broward-accela";
 export const BROWARD_TYLER_CIVIC_ACCESS_ADAPTER_KEY = "tyler-civic-access";
 export const BROWARD_CITIZENSERVE_ADAPTER_KEY = "citizenserve";
-export const BROWARD_COCONUT_CREEK_ADAPTER_KEY =
-  "coconut-creek-permit-status";
+export const BROWARD_COCONUT_CREEK_ADAPTER_KEY = "coconut-creek-permit-status";
 export const BROWARD_CLICK2GOV_ADAPTER_KEY = "click2gov";
 export const BROWARD_TYLER_ESUITE_ADAPTER_KEY = "tyler-esuite";
 export const BROWARD_SMARTGOV_ADAPTER_KEY = "granicus-smartgov";
