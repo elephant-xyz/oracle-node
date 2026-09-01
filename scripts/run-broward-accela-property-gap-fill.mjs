@@ -292,6 +292,9 @@ export async function runPropertyGapFill(options, dependencies = {}) {
   if (Number.isFinite(nextAttemptMs) && nextAttemptMs > currentMs) {
     return buildSummary(options.sourceKey, windowKey, plan, 0, checkpoint);
   }
+  if (plan.seedExhausted) {
+    return buildSummary(options.sourceKey, windowKey, plan, 0, checkpoint);
+  }
   const existingKeys = await readRecordKeys(
     path.join(options.outputDirectory, "normalized-list.private.jsonl"),
   );
