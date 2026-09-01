@@ -717,9 +717,7 @@ export async function runAccelaCsvWindows(options, dependencies = {}) {
     nextAttemptAt: coolingDown
       ? (checkpoint.cooldown?.nextAttemptAt ?? null)
       : null,
-    deferredReason: coolingDown
-      ? (checkpoint.cooldown?.reason ?? null)
-      : null,
+    deferredReason: coolingDown ? (checkpoint.cooldown?.reason ?? null) : null,
     completedAt,
   };
   await writePrivateAtomic(
@@ -1225,12 +1223,7 @@ export function retryAccelaCsvCooldownMs(attemptCount, random) {
  * @param {() => number} random - Injectable jitter source.
  * @returns {AccelaCsvCooldown} Complete durable circuit-breaker state.
  */
-function createAccelaCsvCooldown(
-  reason,
-  attemptCount,
-  scheduledAt,
-  random,
-) {
+function createAccelaCsvCooldown(reason, attemptCount, scheduledAt, random) {
   const scheduledMs = Date.parse(scheduledAt);
   if (!Number.isFinite(scheduledMs)) {
     throw new Error("Accela cooldown timestamp is invalid");

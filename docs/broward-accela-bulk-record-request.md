@@ -63,8 +63,7 @@ inventory recovery.
 - [Building Code Services](https://www.westonfl.org/government/building-code-services)
   is the responsible permit department.
 - [Obtaining Building Plans](https://www.westonfl.org/government/building-code-services/obtaining-building-plans)
-  documents separate historical handling for buildings constructed before
-  2005. This inventory request should ask for permit metadata, not plans, and
+  documents separate historical handling for buildings constructed before 2005. This inventory request should ask for permit metadata, not plans, and
   must state the unresolved Accela date windows explicitly.
 
 ## Acceptance gate
