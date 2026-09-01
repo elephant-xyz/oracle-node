@@ -29,7 +29,7 @@ const TARGET_JURISDICTIONS = Object.freeze({
   "cooper-city": "Cooper City",
   weston: "Weston",
 });
-const SEED_COLUMNS = Object.freeze([
+const SEED_COLUMNS = /** @type {const} */ ([
   "request_identifier",
   "jurisdiction_key",
   "city",
