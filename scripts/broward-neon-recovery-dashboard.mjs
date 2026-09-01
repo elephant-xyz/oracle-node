@@ -784,7 +784,7 @@ async function readPermitGapFillActivity(
     }
     const checkpoint = /** @type {Record<string, unknown>} */ (parsed);
     if (
-      !isRecord(checkpoint.plans) ||
+      !isPlainRecord(checkpoint.plans) ||
       typeof checkpoint.updatedAt !== "string"
     ) {
       throw new Error("Permit property gap-fill checkpoint is malformed");
@@ -792,7 +792,7 @@ async function readPermitGapFillActivity(
     let retainedRecordCount = 0;
     let activePlan = false;
     for (const value of Object.values(checkpoint.plans)) {
-      if (!isRecord(value) || typeof value.seedExhausted !== "boolean") {
+      if (!isPlainRecord(value) || typeof value.seedExhausted !== "boolean") {
         throw new Error("Permit property gap-fill plan is malformed");
       }
       retainedRecordCount += safeAggregate(value.retainedRecordCount);
@@ -820,6 +820,16 @@ async function readPermitGapFillActivity(
     if (isNodeError(error) && error.code === "ENOENT") return null;
     throw error;
   }
+}
+
+/**
+ * Narrow an unknown parsed JSON value to a non-array record.
+ *
+ * @param {unknown} value - Candidate JSON value.
+ * @returns {value is Record<string, unknown>} True for plain object-shaped data.
+ */
+function isPlainRecord(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 /**
