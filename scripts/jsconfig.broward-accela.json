@@ -19,7 +19,9 @@
     "maxNodeModuleJsDepth": 0
   },
   "include": [
+    "broward-permit-jurisdictions.mjs",
     "broward-folio.mjs",
+    "build-broward-accela-property-seed.mjs",
     "enqueue-broward-accela-date-windows.mjs",
     "permit-source-adapters/broward-accela.mjs",
     "probe-broward-accela-permits.mjs",

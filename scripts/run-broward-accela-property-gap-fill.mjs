@@ -30,7 +30,11 @@ import {
 } from "./permit-source-adapters/broward-accela.mjs";
 import { retryAccelaCsvCooldownMs } from "./run-broward-accela-csv-windows.mjs";
 
-const GAP_CHECKPOINT_SCHEMA = "oracle-node.broward-accela-property-gap-fill.v1";
+const GAP_CHECKPOINT_SCHEMA = "oracle-node.broward-accela-property-gap-fill.v2";
+const LEGACY_GAP_CHECKPOINT_SCHEMA =
+  "oracle-node.broward-accela-property-gap-fill.v1";
+const DEFAULT_VERIFIED_SEED_PATH =
+  "downloads/broward/broward-accela-property-seed.private.csv";
 const SOURCE_CITIES = Object.freeze({
   plantation: Object.freeze(["PLANTATION"]),
   "cooper-city": Object.freeze(["COOPER CITY"]),
@@ -70,6 +74,8 @@ const SOURCE_CITIES = Object.freeze({
  * @property {typeof GAP_CHECKPOINT_SCHEMA} schemaVersion - Schema marker.
  * @property {GapFillSourceKey} sourceKey - Jurisdiction identity.
  * @property {string} seedSha256 - Immutable verified seed identity.
+ * @property {{seedSha256:string,supersededAt:string,reason:"unqualified_gis_seed"}[]} supersededSeeds
+ *   Preserved identities of unused seeds replaced during fail-closed migration.
  * @property {Record<string, GapFillPlan>} plans - Partial plans by unresolved window.
  * @property {GapFillCooldown | null} cooldown - Durable circuit breaker.
  * @property {string} startedAt - ISO first-run time.
@@ -127,7 +133,7 @@ export function parsePropertyGapFillOptions(argv) {
   return {
     sourceKey,
     seedPath: path.resolve(
-      values.get("seed") ?? "downloads/broward/broward.csv",
+      values.get("seed") ?? DEFAULT_VERIFIED_SEED_PATH,
     ),
     outputDirectory: path.resolve(
       requireText(values.get("output-dir"), "--output-dir"),
@@ -161,6 +167,9 @@ export function parsePropertyGapFillOptions(argv) {
  * @returns {boolean} True only for an exact normalized municipality name.
  */
 export function isPropertyGapFillSeedRow(sourceKey, row) {
+  if (typeof row.jurisdiction_key === "string") {
+    return row.jurisdiction_key.trim() === sourceKey;
+  }
   const city = (row.city ?? "").replace(/\s+/gu, " ").trim().toUpperCase();
   return SOURCE_CITIES[sourceKey].includes(city);
 }
@@ -307,6 +316,7 @@ export async function runPropertyGapFill(options, dependencies = {}) {
   for (const key of gapRecords.keys()) existingKeys.add(key);
   let propertiesProcessed = 0;
   let rowIndex = 0;
+  let matchingSeedRowCount = 0;
   let reachedEof = true;
   /** @type {import("puppeteer").Browser | null} */
   let browser = null;
@@ -318,8 +328,9 @@ export async function runPropertyGapFill(options, dependencies = {}) {
       const row = /** @type {SeedRow} */ (value);
       const currentRowIndex = rowIndex;
       rowIndex += 1;
-      if (currentRowIndex < plan.nextSeedRowIndex) continue;
       if (!isPropertyGapFillSeedRow(options.sourceKey, row)) continue;
+      matchingSeedRowCount += 1;
+      if (currentRowIndex < plan.nextSeedRowIndex) continue;
       if (
         options.maxProperties > 0 &&
         propertiesProcessed >= options.maxProperties
@@ -432,6 +443,11 @@ export async function runPropertyGapFill(options, dependencies = {}) {
     await browser?.close().catch(() => undefined);
   }
   if (reachedEof && checkpoint.cooldown === null) {
+    if (matchingSeedRowCount === 0) {
+      throw new Error(
+        "Verified property seed has no rows for the requested jurisdiction",
+      );
+    }
     const updatedAt = now();
     const exhaustedPlan = { ...plan, seedExhausted: true, updatedAt };
     checkpoint = {
@@ -531,16 +547,66 @@ async function readOrCreateGapCheckpoint(
     );
     if (
       !isRecord(parsed) ||
-      parsed.schemaVersion !== GAP_CHECKPOINT_SCHEMA ||
       parsed.sourceKey !== sourceKey ||
-      parsed.seedSha256 !== seedSha256 ||
+      (parsed.schemaVersion !== GAP_CHECKPOINT_SCHEMA &&
+        parsed.schemaVersion !== LEGACY_GAP_CHECKPOINT_SCHEMA) ||
+      typeof parsed.seedSha256 !== "string" ||
       !isRecord(parsed.plans)
     ) {
       throw new Error(
         "Property gap-fill checkpoint is malformed or mismatched",
       );
     }
-    return /** @type {GapFillCheckpoint} */ (parsed);
+    if (parsed.seedSha256 === seedSha256) {
+      return {
+        ...(/** @type {Omit<GapFillCheckpoint,"schemaVersion" | "supersededSeeds">} */ (
+          parsed
+        )),
+        schemaVersion: GAP_CHECKPOINT_SCHEMA,
+        supersededSeeds: readSupersededSeeds(parsed.supersededSeeds),
+      };
+    }
+    if (!isUnusedGapCheckpoint(parsed)) {
+      throw new Error(
+        "Property gap-fill checkpoint seed changed after source evidence was recorded",
+      );
+    }
+    /** @type {Record<string, GapFillPlan>} */
+    const resetPlans = {};
+    for (const [windowKey, value] of Object.entries(parsed.plans)) {
+      if (!isRecord(value)) {
+        throw new Error("Property gap-fill checkpoint plan is malformed");
+      }
+      const prior = /** @type {GapFillPlan} */ (value);
+      resetPlans[windowKey] = {
+        ...prior,
+        nextSeedRowIndex: 0,
+        inspectedPropertyCount: 0,
+        retainedRecordCount: 0,
+        existingRecordCount: 0,
+        undatedRecordCount: 0,
+        seedExhausted: false,
+        updatedAt: startedAt,
+      };
+    }
+    return {
+      schemaVersion: GAP_CHECKPOINT_SCHEMA,
+      sourceKey,
+      seedSha256,
+      supersededSeeds: [
+        ...readSupersededSeeds(parsed.supersededSeeds),
+        {
+          seedSha256: parsed.seedSha256,
+          supersededAt: startedAt,
+          reason: "unqualified_gis_seed",
+        },
+      ],
+      plans: resetPlans,
+      cooldown: null,
+      startedAt:
+        typeof parsed.startedAt === "string" ? parsed.startedAt : startedAt,
+      updatedAt: startedAt,
+    };
   } catch (error) {
     if (!isNodeError(error) || error.code !== "ENOENT") throw error;
   }
@@ -548,11 +614,61 @@ async function readOrCreateGapCheckpoint(
     schemaVersion: GAP_CHECKPOINT_SCHEMA,
     sourceKey,
     seedSha256,
+    supersededSeeds: [],
     plans: {},
     cooldown: null,
     startedAt,
     updatedAt: startedAt,
   };
+}
+
+/**
+ * Confirm a seed can be superseded without discarding property-source work.
+ * Only a checkpoint with no attempted property, retained record, duplicate,
+ * undated observation, or active cooldown is eligible.
+ *
+ * @param {Record<string, unknown>} checkpoint - Parsed legacy/current state.
+ * @returns {boolean} True when replacing only an unused seed classification.
+ */
+function isUnusedGapCheckpoint(checkpoint) {
+  if (checkpoint.cooldown !== null && checkpoint.cooldown !== undefined) {
+    return false;
+  }
+  if (!isRecord(checkpoint.plans)) return false;
+  return Object.values(checkpoint.plans).every(
+    (value) =>
+      isRecord(value) &&
+      value.nextSeedRowIndex === 0 &&
+      value.inspectedPropertyCount === 0 &&
+      value.retainedRecordCount === 0 &&
+      value.existingRecordCount === 0 &&
+      value.undatedRecordCount === 0,
+  );
+}
+
+/**
+ * Read prior unused-seed identities without trusting arbitrary checkpoint data.
+ *
+ * @param {unknown} value - Candidate superseded-seed list.
+ * @returns {{seedSha256:string,supersededAt:string,reason:"unqualified_gis_seed"}[]}
+ *   Valid preserved migration receipts.
+ */
+function readSupersededSeeds(value) {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) =>
+    isRecord(entry) &&
+    typeof entry.seedSha256 === "string" &&
+    typeof entry.supersededAt === "string" &&
+    entry.reason === "unqualified_gis_seed"
+      ? [
+          {
+            seedSha256: entry.seedSha256,
+            supersededAt: entry.supersededAt,
+            reason: /** @type {const} */ ("unqualified_gis_seed"),
+          },
+        ]
+      : [],
+  );
 }
 
 /**

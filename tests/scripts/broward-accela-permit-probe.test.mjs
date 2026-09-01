@@ -1,4 +1,11 @@
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -47,6 +54,11 @@ import {
   runAccelaCsvWindows,
   splitAccelaCsvDateWindow,
 } from "../../scripts/run-broward-accela-csv-windows.mjs";
+import {
+  createBrowardAccelaPropertySeedRows,
+  parseAccelaPropertySeedOptions,
+  renderBrowardAccelaPropertySeedRow,
+} from "../../scripts/build-broward-accela-property-seed.mjs";
 import {
   isPropertyGapFillSeedRow,
   parsePropertyGapFillOptions,
@@ -854,6 +866,32 @@ describe("Broward official Accela CSV exports", () => {
       parentCheckpointPath,
       `${JSON.stringify(parentCheckpoint)}\n`,
     );
+    const gapDirectory = join(outputDirectory, "property-gap-fill");
+    await mkdir(gapDirectory);
+    await writeFile(
+      join(gapDirectory, "checkpoint.private.json"),
+      `${JSON.stringify({
+        schemaVersion: "oracle-node.broward-accela-property-gap-fill.v1",
+        sourceKey: "plantation",
+        seedSha256: "unqualified-gis-seed",
+        plans: {
+          "20260831_20260831": {
+            startDate: "2026-08-31",
+            endDate: "2026-08-31",
+            nextSeedRowIndex: 0,
+            inspectedPropertyCount: 0,
+            retainedRecordCount: 0,
+            existingRecordCount: 0,
+            undatedRecordCount: 0,
+            seedExhausted: true,
+            updatedAt: "2026-09-01T22:00:00.000Z",
+          },
+        },
+        cooldown: null,
+        startedAt: "2026-09-01T22:00:00.000Z",
+        updatedAt: "2026-09-01T22:00:00.000Z",
+      })}\n`,
+    );
     await writeFile(
       join(outputDirectory, "normalized-list.private.jsonl"),
       `${JSON.stringify({
@@ -946,6 +984,21 @@ describe("Broward official Accela CSV exports", () => {
         "utf8",
       ),
     ).toContain("NOVEL-1");
+    const migratedCheckpoint = JSON.parse(
+      await readFile(
+        join(outputDirectory, "property-gap-fill", "checkpoint.private.json"),
+        "utf8",
+      ),
+    );
+    expect(migratedCheckpoint).toMatchObject({
+      schemaVersion: "oracle-node.broward-accela-property-gap-fill.v2",
+      supersededSeeds: [
+        {
+          seedSha256: "unqualified-gis-seed",
+          reason: "unqualified_gis_seed",
+        },
+      ],
+    });
   });
 
   it("parses bounded gap-fill options and uses exact seed jurisdiction names", () => {
@@ -970,6 +1023,65 @@ describe("Broward official Accela CSV exports", () => {
     expect(
       isPropertyGapFillSeedRow("cooper-city", { city: "Cooper City area" }),
     ).toBe(false);
+    expect(
+      isPropertyGapFillSeedRow("cooper-city", {
+        jurisdiction_key: "cooper-city",
+        city: "",
+      }),
+    ).toBe(true);
+    expect(
+      isPropertyGapFillSeedRow("cooper-city", {
+        jurisdiction_key: "plantation",
+        city: "Cooper City",
+      }),
+    ).toBe(false);
+  });
+
+  it("builds a deterministic Accela seed only from exact BCPA jurisdiction evidence", () => {
+    expect(parseAccelaPropertySeedOptions([]).outputPath).toMatch(
+      /broward-accela-property-seed\.private\.csv$/u,
+    );
+    const result = createBrowardAccelaPropertySeedRows([
+      {
+        request_identifier: "504100000002",
+        unnormalized_address: "2 PRIVATE STREET WESTON FL 33326",
+      },
+      {
+        request_identifier: "504100000001",
+        unnormalized_address: "1 PRIVATE STREET PLANTATION FL 33324",
+      },
+      {
+        request_identifier: "504100000003",
+        unnormalized_address: "3 PRIVATE STREET FORT LAUDERDALE FL 33301",
+      },
+      {
+        request_identifier: "invalid",
+        unnormalized_address: "4 PRIVATE STREET COOPER CITY FL 33330",
+      },
+      {
+        request_identifier: "504100000004",
+        unnormalized_address: "NO REGISTERED CITY",
+      },
+    ]);
+    expect(result).toMatchObject({
+      inputCount: 5,
+      invalidCount: 1,
+      unresolvedCount: 1,
+      otherJurisdictionCount: 1,
+      duplicateCount: 0,
+    });
+    expect(
+      result.rows.map((row) => ({
+        folio: row.request_identifier,
+        jurisdiction: row.jurisdiction_key,
+      })),
+    ).toEqual([
+      { folio: "504100000001", jurisdiction: "plantation" },
+      { folio: "504100000002", jurisdiction: "weston" },
+    ]);
+    expect(renderBrowardAccelaPropertySeedRow(result.rows[0])).toContain(
+      ",plantation,Plantation,",
+    );
   });
 
   it("accepts list-only mode only after exact page and identity reconciliation", () => {
