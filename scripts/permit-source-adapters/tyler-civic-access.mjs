@@ -18,8 +18,8 @@ import {
  * @typedef {object} TylerCivicAccessConfig
  * @property {string} portalBaseUrl - Civic Access public hash-route base, optionally including a trailing tenant slug.
  * @property {string | undefined} [apiBaseUrl] - Optional same-origin API base when the public tenant slug follows `/SelfService`.
- * @property {string | undefined} [expectedTenantId] - Optional exact public tenant header identity.
- * @property {string | undefined} [expectedTenantName] - Optional exact public tenant name paired with `expectedTenantId`.
+ * @property {string | null | undefined} [expectedTenantId] - Optional exact public tenant header identity.
+ * @property {string | null | undefined} [expectedTenantName] - Optional exact public tenant name paired with `expectedTenantId`.
  * @property {boolean | undefined} [strictListReconciliation] - Whether list enumeration must account for every source-reported row.
  * @property {string} city - Issuing city written to normalized permit rows.
  * @property {string} sourceSystem - City-level source key ending in `_permits`.

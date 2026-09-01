@@ -77,7 +77,7 @@ const { Client } = pg;
  */
 
 /**
- * @typedef {"records" | "no_permits" | "adapter_unavailable" | "captcha_required" | "login_required" | "custodian_only" | "egress_unavailable" | "request_cap_reached" | "source_failed"} BrowardPermitSourceOutcomeStatus
+ * @typedef {"records" | "no_permits" | "adapter_unavailable" | "captcha_required" | "login_required" | "no_anonymous_search" | "custodian_only" | "egress_unavailable" | "request_cap_reached" | "source_failed"} BrowardPermitSourceOutcomeStatus
  */
 
 /**
@@ -86,7 +86,7 @@ const { Client } = pg;
  * @property {string} sourceName - Official source display name.
  * @property {string} sourceUrl - Official source/custodian URL.
  * @property {string | null} adapterKey - Vendor adapter key.
- * @property {"current" | "historical"} coverageKind - Current or historical custody.
+ * @property {"current" | "historical" | "supplemental"} coverageKind - Current, historical, or explicitly supplemental custody.
  * @property {boolean} attempted - Whether an official permit endpoint was requested.
  * @property {BrowardPermitSourceOutcomeStatus} status - Explicit source terminal status.
  * @property {number} recordCount - Normalized source records returned for this parcel.
@@ -1123,7 +1123,9 @@ function isSourceOutcome(value) {
     typeof value.sourceName === "string" &&
     typeof value.sourceUrl === "string" &&
     (typeof value.adapterKey === "string" || value.adapterKey === null) &&
-    (value.coverageKind === "current" || value.coverageKind === "historical") &&
+    (value.coverageKind === "current" ||
+      value.coverageKind === "historical" ||
+      value.coverageKind === "supplemental") &&
     typeof value.attempted === "boolean" &&
     [
       "records",
@@ -1131,6 +1133,7 @@ function isSourceOutcome(value) {
       "adapter_unavailable",
       "captcha_required",
       "login_required",
+      "no_anonymous_search",
       "custodian_only",
       "egress_unavailable",
       "request_cap_reached",
