@@ -149,9 +149,7 @@ describe("universal dashboard server & county registry", () => {
     expect(dashboardHtml).toContain('id="permitRouteStatusCard"');
     expect(dashboardHtml).toContain('id="permitRouteBlockerGroups"');
     expect(dashboardHtml).toContain('id="permitPausedWorkerList"');
-    expect(dashboardHtml).toContain(
-      "Operational pauses are shown separately",
-    );
+    expect(dashboardHtml).toContain("Operational pauses are shown separately");
   });
 
   it("resolves county metadata by key with fallback", () => {

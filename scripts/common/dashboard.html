@@ -2607,23 +2607,19 @@
                 }),
               );
             }
-            const pausedWorkers =
-              srcStage.operationalWorkers?.paused || [];
+            const pausedWorkers = srcStage.operationalWorkers?.paused || [];
             const pausedWorkerList = document.getElementById(
               "permitPausedWorkerList",
             );
             if (pausedWorkerList) {
               pausedWorkerList.replaceChildren(
-                ...(
-                  pausedWorkers.length === 0
-                    ? [{ source: "No workers are paused", reason: "" }]
-                    : pausedWorkers
+                ...(pausedWorkers.length === 0
+                  ? [{ source: "No workers are paused", reason: "" }]
+                  : pausedWorkers
                 ).map((worker) => {
                   const item = document.createElement("li");
                   item.textContent = worker.reason
-                    ? worker.source +
-                      " — " +
-                      worker.reason.replaceAll("_", " ")
+                    ? worker.source + " — " + worker.reason.replaceAll("_", " ")
                     : worker.source;
                   return item;
                 }),

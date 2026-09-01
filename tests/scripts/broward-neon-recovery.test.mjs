@@ -520,11 +520,7 @@ describe("durable Broward Neon recovery", () => {
         kind: "source_policy",
         label: "CAPTCHA required",
         count: 3,
-        jurisdictions: [
-          "Coral Springs",
-          "Hillsboro Beach",
-          "Pembroke Park",
-        ],
+        jurisdictions: ["Coral Springs", "Hillsboro Beach", "Pembroke Park"],
       },
       {
         key: "login_required",
@@ -548,9 +544,9 @@ describe("durable Broward Neon recovery", () => {
         jurisdictions: ["Sea Ranch Lakes"],
       },
     ]);
-    expect(
-      routes.implementedCurrentRoutes + routes.blockedCurrentRoutes,
-    ).toBe(routes.totalCurrentRoutes);
+    expect(routes.implementedCurrentRoutes + routes.blockedCurrentRoutes).toBe(
+      routes.totalCurrentRoutes,
+    );
     expect(
       routes.blockerCategories.reduce(
         (sum, category) => sum + category.count,

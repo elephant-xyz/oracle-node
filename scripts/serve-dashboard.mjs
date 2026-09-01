@@ -421,10 +421,7 @@ function readBrowardPermitRouteStatus(value) {
       candidate,
       "Broward permit blocker category",
     );
-    const key = requirePublicLabel(
-      category.key,
-      "Broward permit blocker key",
-    );
+    const key = requirePublicLabel(category.key, "Broward permit blocker key");
     if (!(key in BROWARD_ROUTE_CATEGORY_METADATA)) {
       throw new Error("Broward permit blocker category is unknown");
     }
