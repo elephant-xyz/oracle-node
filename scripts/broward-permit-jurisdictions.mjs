@@ -43,11 +43,17 @@
  * @property {string | null} rawAddress - Collapsed BCPA situs-address text used for fallback matching.
  */
 
-export const BROWARD_PERMIT_REGISTRY_VERSION = "2026-09-01.1";
+export const BROWARD_PERMIT_REGISTRY_VERSION = "2026-09-01.2";
 export const BROWARD_BCS_ADAPTER_KEY = "broward-bcs-posse";
 export const BROWARD_ACCELA_ADAPTER_KEY = "broward-accela";
 export const BROWARD_TYLER_CIVIC_ACCESS_ADAPTER_KEY = "tyler-civic-access";
 export const BROWARD_CITIZENSERVE_ADAPTER_KEY = "citizenserve";
+export const BROWARD_COCONUT_CREEK_ADAPTER_KEY =
+  "coconut-creek-permit-status";
+export const BROWARD_CLICK2GOV_ADAPTER_KEY = "click2gov";
+export const BROWARD_TYLER_ESUITE_ADAPTER_KEY = "tyler-esuite";
+export const BROWARD_SMARTGOV_ADAPTER_KEY = "granicus-smartgov";
+export const BROWARD_EGOVPLUS_ADAPTER_KEY = "egovplus";
 const BCS_URL =
   "https://dpepp.broward.org/BCS/Default.aspx?PossePresentation=ParcelSearchByAddress";
 const BUILDING_CONTACTS_URL =
@@ -124,13 +130,13 @@ export const BROWARD_PERMIT_JURISDICTIONS = Object.freeze([
     name: "Coconut Creek",
     aliases: ["COCONUT CREEK", "COCONUT CRK"],
     primarySource: currentSource({
-      sourceKey: "coconut_creek_permit_status",
+      sourceKey: "broward_coconut_creek_permit_status",
       sourceName: "Coconut Creek Permit Status",
       sourceUrl: "https://www3.coconutcreek.gov/sd/permit/permit_status_01.asp",
-      adapterKey: "coconut-creek-permit-status",
-      status: "adapter_unavailable",
+      adapterKey: BROWARD_COCONUT_CREEK_ADAPTER_KEY,
+      status: "implemented",
       reason:
-        "Anonymous official search is documented; no local adapter is implemented.",
+        "The bounded anonymous legacy ASP transport reconciled one exact private-folio search, selected detail, and stable permit identity.",
     }),
   }),
   jurisdiction({
@@ -167,14 +173,14 @@ export const BROWARD_PERMIT_JURISDICTIONS = Object.freeze([
     name: "Dania Beach",
     aliases: ["DANIA", "DANIA BEACH"],
     primarySource: currentSource({
-      sourceKey: "dania_beach_tyler_esuite",
+      sourceKey: "broward_dania_beach_tyler_esuite_permits",
       sourceName: "Dania Beach Tyler eSuite",
       sourceUrl:
-        "https://cityofdaniabeachfl.nwerp.tylerapp.com/nwprod/eSuite.Permits/",
-      adapterKey: "tyler-esuite",
-      status: "adapter_unavailable",
+        "https://cityofdaniabeachfl.nwerp.tylerapp.com/nwprod/eSuite.Permits/AdvancedSearchPage/AdvancedSearch.aspx",
+      adapterKey: BROWARD_TYLER_ESUITE_ADAPTER_KEY,
+      status: "implemented",
       reason:
-        "Anonymous official search is documented; no eSuite adapter is implemented.",
+        "The bounded anonymous eSuite transport reconciled one private address page and ten same-session permit details.",
     }),
   }),
   jurisdiction({
@@ -182,14 +188,14 @@ export const BROWARD_PERMIT_JURISDICTIONS = Object.freeze([
     name: "Davie",
     aliases: ["DAVIE"],
     primarySource: currentSource({
-      sourceKey: "davie_esuite",
+      sourceKey: "broward_davie_tyler_esuite_permits",
       sourceName: "Davie eSuite Permits",
       sourceUrl:
         "https://esuite.davie-fl.gov/eSuite.Permits/AdvancedSearchPage/AdvancedSearch.aspx",
-      adapterKey: "tyler-esuite",
-      status: "adapter_unavailable",
+      adapterKey: BROWARD_TYLER_ESUITE_ADAPTER_KEY,
+      status: "implemented",
       reason:
-        "Public address inquiry is documented; no eSuite adapter is implemented.",
+        "The bounded anonymous eSuite transport reconciled one private address page and ten same-session details. eSuite public history does not establish completeness for new 2026 OAS submissions.",
     }),
   }),
   jurisdiction({
@@ -315,13 +321,13 @@ export const BROWARD_PERMIT_JURISDICTIONS = Object.freeze([
     name: "Lauderdale Lakes",
     aliases: ["LAUDERDALE LAKES"],
     primarySource: currentSource({
-      sourceKey: "lauderdale_lakes_opengov",
+      sourceKey: "broward_lauderdale_lakes_opengov_permits",
       sourceName: "Lauderdale Lakes OpenGov",
       sourceUrl: "https://lauderdalelakesfl.portal.opengov.com/search",
       adapterKey: "opengov",
       status: "adapter_unavailable",
       reason:
-        "Public record search is documented; no OpenGov adapter is implemented.",
+        "The official OpenGov landing still renders the permitting application inaccessible, so the fixture parser remains disabled and no GraphQL request is issued.",
     }),
   }),
   jurisdiction({
@@ -329,14 +335,14 @@ export const BROWARD_PERMIT_JURISDICTIONS = Object.freeze([
     name: "Lauderhill",
     aliases: ["LAUDERHILL"],
     primarySource: currentSource({
-      sourceKey: "lauderhill_egovplus",
+      sourceKey: "broward_lauderhill_egovplus_permits",
       sourceName: "Lauderhill eGovPLUS",
       sourceUrl:
         "http://egov.lauderhill-fl.gov/eGovPlus83/permit/perm_status.aspx",
-      adapterKey: "egovplus",
-      status: "adapter_unavailable",
+      adapterKey: BROWARD_EGOVPLUS_ADAPTER_KEY,
+      status: "implemented",
       reason:
-        "Public folio/address search is documented; no eGovPLUS adapter is implemented.",
+        "The bounded anonymous eGovPLUS transport reconciled a private folio search and one exact permit detail over the official legacy route.",
     }),
   }),
   jurisdiction({
@@ -357,14 +363,14 @@ export const BROWARD_PERMIT_JURISDICTIONS = Object.freeze([
     name: "Lighthouse Point",
     aliases: ["LIGHTHOUSE POINT", "LIGHTHOUSE PT"],
     primarySource: currentSource({
-      sourceKey: "lighthouse_point_smartgov",
+      sourceKey: "broward_lighthouse_point_smartgov_permits",
       sourceName: "Lighthouse Point SmartGov",
       sourceUrl:
         "https://ci-lighthousepoint-fl.smartgovcommunity.com/ApplicationPublic/ApplicationHome",
-      adapterKey: "granicus-smartgov",
-      status: "adapter_unavailable",
+      adapterKey: BROWARD_SMARTGOV_ADAPTER_KEY,
+      status: "implemented",
       reason:
-        "Anonymous official search is documented; no SmartGov adapter is implemented.",
+        "The bounded anonymous SmartGov transport reconciled a private folio to the source's explicit no-results response; positive detail normalization remains fixture-covered.",
     }),
   }),
   jurisdiction({
@@ -372,13 +378,13 @@ export const BROWARD_PERMIT_JURISDICTIONS = Object.freeze([
     name: "Margate",
     aliases: ["MARGATE"],
     primarySource: currentSource({
-      sourceKey: "margate_click2gov",
+      sourceKey: "broward_margate_click2gov_permits",
       sourceName: "Margate Click2Gov",
       sourceUrl: "https://marg-egov.aspgov.com/Click2GovBP/selectpermit.html",
-      adapterKey: "click2gov",
-      status: "adapter_unavailable",
+      adapterKey: BROWARD_CLICK2GOV_ADAPTER_KEY,
+      status: "implemented",
       reason:
-        "Public parcel/address search is documented; no Click2Gov adapter is implemented.",
+        "The shared bounded anonymous Click2Gov transport reconciled one exact private permit and same-session detail.",
     }),
   }),
   jurisdiction({
@@ -489,13 +495,13 @@ export const BROWARD_PERMIT_JURISDICTIONS = Object.freeze([
     name: "Pompano Beach",
     aliases: ["POMPANO", "POMPANO BEACH"],
     primarySource: currentSource({
-      sourceKey: "pompano_beach_click2gov",
+      sourceKey: "broward_pompano_beach_click2gov_permits",
       sourceName: "Pompano Beach Click2Gov",
       sourceUrl: "https://c2g.pompanobeachfl.gov/Click2GovBP/selectpermit.html",
-      adapterKey: "click2gov",
-      status: "adapter_unavailable",
+      adapterKey: BROWARD_CLICK2GOV_ADAPTER_KEY,
+      status: "implemented",
       reason:
-        "Public parcel/address search is identified; no Click2Gov adapter is implemented.",
+        "The shared bounded anonymous Click2Gov transport reconciled one exact private permit and same-session detail.",
     }),
   }),
   jurisdiction({
@@ -573,13 +579,13 @@ export const BROWARD_PERMIT_JURISDICTIONS = Object.freeze([
     name: "Tamarac",
     aliases: ["TAMARAC"],
     primarySource: currentSource({
-      sourceKey: "tamarac_click2gov",
+      sourceKey: "broward_tamarac_click2gov_permits",
       sourceName: "Tamarac Click2Gov",
       sourceUrl: "https://e-gov.tamarac.org/Click2GovBP/selectpermit.html",
-      adapterKey: "click2gov",
-      status: "adapter_unavailable",
+      adapterKey: BROWARD_CLICK2GOV_ADAPTER_KEY,
+      status: "implemented",
       reason:
-        "Public property permit history is documented; no Click2Gov adapter is implemented.",
+        "The shared bounded anonymous Click2Gov transport reconciled one exact private permit and same-session detail.",
     }),
   }),
   jurisdiction({

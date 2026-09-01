@@ -52,8 +52,7 @@ export const BROWARD_MUNICIPAL_PERMIT_JURISDICTIONS = Object.freeze([
     jurisdiction: "Coconut Creek",
     sourceSystem: "broward_coconut_creek_permit_status",
     protocol: "coconut_creek",
-    searchUrl:
-      "https://www3.coconutcreek.gov/sd/permit/permit_status_01.asp",
+    searchUrl: "https://www3.coconutcreek.gov/sd/permit/permit_status_01.asp",
     officialEvidenceUrl:
       "https://www3.coconutcreek.gov/sd/permit/permit_status_01.asp",
     accessMode: "anonymous",
@@ -72,7 +71,7 @@ export const BROWARD_MUNICIPAL_PERMIT_JURISDICTIONS = Object.freeze([
   defineJurisdiction({
     key: "pompano_beach",
     jurisdiction: "Pompano Beach",
-    sourceSystem: "pompano_beach_click2gov_permits",
+    sourceSystem: "broward_pompano_beach_click2gov_permits",
     protocol: "click2gov",
     searchUrl: "https://c2g.pompanobeachfl.gov/Click2GovBP/selectpermit.html",
     officialEvidenceUrl:
@@ -87,7 +86,7 @@ export const BROWARD_MUNICIPAL_PERMIT_JURISDICTIONS = Object.freeze([
   defineJurisdiction({
     key: "tamarac",
     jurisdiction: "Tamarac",
-    sourceSystem: "tamarac_click2gov_permits",
+    sourceSystem: "broward_tamarac_click2gov_permits",
     protocol: "click2gov",
     searchUrl: "https://e-gov.tamarac.org/Click2GovBP/selectpermit.html",
     officialEvidenceUrl: "https://tamarac.gov/672/Permit-History",
@@ -101,7 +100,7 @@ export const BROWARD_MUNICIPAL_PERMIT_JURISDICTIONS = Object.freeze([
   defineJurisdiction({
     key: "margate",
     jurisdiction: "Margate",
-    sourceSystem: "margate_click2gov_permits",
+    sourceSystem: "broward_margate_click2gov_permits",
     protocol: "click2gov",
     searchUrl: "https://marg-egov.aspgov.com/Click2GovBP/selectpermit.html",
     officialEvidenceUrl:
@@ -116,7 +115,7 @@ export const BROWARD_MUNICIPAL_PERMIT_JURISDICTIONS = Object.freeze([
   defineJurisdiction({
     key: "davie",
     jurisdiction: "Davie",
-    sourceSystem: "davie_tyler_esuite_permits",
+    sourceSystem: "broward_davie_tyler_esuite_permits",
     protocol: "tyler_esuite",
     searchUrl:
       "https://esuite.davie-fl.gov/eSuite.Permits/AdvancedSearchPage/AdvancedSearch.aspx",
@@ -139,7 +138,7 @@ export const BROWARD_MUNICIPAL_PERMIT_JURISDICTIONS = Object.freeze([
   defineJurisdiction({
     key: "dania_beach",
     jurisdiction: "Dania Beach",
-    sourceSystem: "dania_beach_tyler_esuite_permits",
+    sourceSystem: "broward_dania_beach_tyler_esuite_permits",
     protocol: "tyler_esuite",
     searchUrl:
       "https://cityofdaniabeachfl.nwerp.tylerapp.com/nwprod/eSuite.Permits/AdvancedSearchPage/AdvancedSearch.aspx",
@@ -204,7 +203,7 @@ export const BROWARD_MUNICIPAL_PERMIT_JURISDICTIONS = Object.freeze([
   defineJurisdiction({
     key: "lighthouse_point",
     jurisdiction: "Lighthouse Point",
-    sourceSystem: "lighthouse_point_smartgov_permits",
+    sourceSystem: "broward_lighthouse_point_smartgov_permits",
     protocol: "smartgov",
     searchUrl:
       "https://ci-lighthousepoint-fl.smartgovcommunity.com/ApplicationPublic/ApplicationSearchAdvanced",
@@ -226,7 +225,7 @@ export const BROWARD_MUNICIPAL_PERMIT_JURISDICTIONS = Object.freeze([
   defineJurisdiction({
     key: "lauderdale_lakes",
     jurisdiction: "Lauderdale Lakes",
-    sourceSystem: "lauderdale_lakes_opengov_permits",
+    sourceSystem: "broward_lauderdale_lakes_opengov_permits",
     protocol: "opengov",
     searchUrl: "https://lauderdalelakesfl.portal.opengov.com/search",
     officialEvidenceUrl: "https://lauderdalelakesfl.portal.opengov.com/search",
@@ -288,7 +287,7 @@ export const BROWARD_MUNICIPAL_PERMIT_JURISDICTIONS = Object.freeze([
   defineJurisdiction({
     key: "lauderhill",
     jurisdiction: "Lauderhill",
-    sourceSystem: "lauderhill_egovplus_permits",
+    sourceSystem: "broward_lauderhill_egovplus_permits",
     protocol: "egovplus",
     searchUrl:
       "http://egov.lauderhill-fl.gov/eGovPlus83/permit/perm_status.aspx",

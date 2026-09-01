@@ -108,7 +108,7 @@ the heartbeat, counters, recent throughput, and complete category snapshot.
 The second migration adds three aggregate-only permit relations:
 
 - `broward_permit_control` fixes the 50-parcel/5-source-attempt bounds and the
-  32-route registry coverage (15 implemented, 17 blocked);
+  32-route registry coverage (24 implemented, 8 blocked);
 - `broward_permit_status` exists only after a reconciled bounded pilot is
   recorded; absence remains `not_recorded` and its counters stay null in the
   dashboard rather than being inferred as zero; and

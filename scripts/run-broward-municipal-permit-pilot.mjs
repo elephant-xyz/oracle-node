@@ -178,7 +178,9 @@ export function parseBrowardMunicipalPilotOptions(args) {
  */
 async function readOptionalJson(filePath) {
   try {
-    return /** @type {unknown} */ (JSON.parse(await readFile(filePath, "utf8")));
+    return /** @type {unknown} */ (
+      JSON.parse(await readFile(filePath, "utf8"))
+    );
   } catch (caught) {
     if (
       caught instanceof Error &&
@@ -322,10 +324,7 @@ export async function runBrowardMunicipalPilot(options) {
     completed: result.checkpoint?.completed ?? false,
     queryDigest: result.checkpoint?.queryDigest ?? null,
   });
-  await writePrivateFile(
-    summaryPath,
-    `${JSON.stringify(summary, null, 2)}\n`,
-  );
+  await writePrivateFile(summaryPath, `${JSON.stringify(summary, null, 2)}\n`);
   return summary;
 }
 

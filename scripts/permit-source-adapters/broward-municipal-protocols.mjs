@@ -101,10 +101,7 @@ function collectLabeledFields($) {
         const labelCell = cells[index];
         const valueCell = cells[index + 1];
         if (labelCell !== undefined && valueCell !== undefined) {
-          add(
-            readSelectionText($(labelCell)),
-            readSelectionText($(valueCell)),
-          );
+          add(readSelectionText($(labelCell)), readSelectionText($(valueCell)));
         }
       }
     } else {
@@ -128,7 +125,7 @@ function collectLabeledFields($) {
     const label = $(labelElement);
     const targetId = label.attr("for");
     let value = null;
-    if (targetId !== undefined) {
+    if (targetId !== undefined && targetId.length > 0) {
       const target = $("[id]")
         .filter((_index, element) => $(element).attr("id") === targetId)
         .first();
@@ -137,7 +134,9 @@ function collectLabeledFields($) {
         readSelectionText(target) ??
         readSelectionText(label.parent().children().not(label));
     } else {
-      value = readSelectionText(label.parent().children().not(label));
+      value =
+        readSelectionText(label.next()) ??
+        readSelectionText(label.parent().children().not(label));
     }
     add(readSelectionText(label), value);
   }
@@ -240,18 +239,18 @@ function canonicalSourceUrl(config, href) {
     config.protocol === "coconut_creek"
       ? "/sd/permit/"
       : config.protocol === "click2gov"
-      ? "/Click2GovBP/"
-      : config.protocol === "tyler_esuite"
-        ? searchUrl.pathname.slice(
-            0,
-            searchUrl.pathname.toLowerCase().indexOf("/esuite.permits/") +
-              "/eSuite.Permits/".length,
-          )
-        : config.protocol === "egovplus"
-          ? "/eGovPlus83/"
-          : config.protocol === "smartgov"
-            ? "/ApplicationPublic/"
-            : "/";
+        ? "/Click2GovBP/"
+        : config.protocol === "tyler_esuite"
+          ? searchUrl.pathname.slice(
+              0,
+              searchUrl.pathname.toLowerCase().indexOf("/esuite.permits/") +
+                "/eSuite.Permits/".length,
+            )
+          : config.protocol === "egovplus"
+            ? "/eGovPlus83/"
+            : config.protocol === "smartgov"
+              ? "/ApplicationPublic/"
+              : "/";
   if (
     parsed.origin !== searchUrl.origin ||
     !parsed.pathname.toLowerCase().startsWith(protocolPrefix.toLowerCase()) ||

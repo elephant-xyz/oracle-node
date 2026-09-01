@@ -175,8 +175,7 @@ describe("Broward municipal permit jurisdiction routing", () => {
     const deerfield = getBrowardMunicipalPermitConfig("deerfield_beach");
     const sunrise = getBrowardMunicipalPermitConfig("sunrise");
     const davie = getBrowardMunicipalPermitConfig("davie");
-    const coconutCreek =
-      getBrowardMunicipalPermitConfig("coconut_creek");
+    const coconutCreek = getBrowardMunicipalPermitConfig("coconut_creek");
 
     expect(deerfield.supplementalRoutes).toEqual(
       expect.arrayContaining([
@@ -327,7 +326,7 @@ describe("Broward municipal live transport form contracts", () => {
       value: "26-00001234",
     });
     expect(click.body.get("permit.appYear")).toBe("26");
-    expect(click.body.get("permit.appNumber")).toBe("00001234");
+    expect(click.body.get("permit.appNumber")).toBe("1234");
     expect(() =>
       buildClick2GovSearchBody(clickLanding, clickConfig, {
         kind: "folio",
@@ -744,14 +743,14 @@ describe("reusable bounded capture and checkpoints", () => {
       nextPage: 1,
       completed: true,
       seenReferenceKeys: [
-        "pompano_beach_click2gov_permits:1",
-        "pompano_beach_click2gov_permits:2",
-        "pompano_beach_click2gov_permits:3",
+        "broward_pompano_beach_click2gov_permits:1",
+        "broward_pompano_beach_click2gov_permits:2",
+        "broward_pompano_beach_click2gov_permits:3",
       ],
       capturedRecordKeys: [
-        "pompano_beach_click2gov_permits:1",
-        "pompano_beach_click2gov_permits:2",
-        "pompano_beach_click2gov_permits:3",
+        "broward_pompano_beach_click2gov_permits:1",
+        "broward_pompano_beach_click2gov_permits:2",
+        "broward_pompano_beach_click2gov_permits:3",
       ],
     });
     expect(checkpoints).toHaveLength(5);
@@ -768,8 +767,8 @@ describe("reusable bounded capture and checkpoints", () => {
     const initial = createMunicipalCheckpoint(config, queries);
     const partial = {
       ...initial,
-      seenReferenceKeys: ["pompano_beach_click2gov_permits:1"],
-      capturedRecordKeys: ["pompano_beach_click2gov_permits:1"],
+      seenReferenceKeys: ["broward_pompano_beach_click2gov_permits:1"],
+      capturedRecordKeys: ["broward_pompano_beach_click2gov_permits:1"],
     };
     const details = vi.fn(async (sourceReference) =>
       buildNormalizedRecord(config, sourceReference),

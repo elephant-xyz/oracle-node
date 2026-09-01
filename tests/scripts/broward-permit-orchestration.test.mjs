@@ -544,12 +544,12 @@ describe("Broward 32-jurisdiction permit registry", () => {
       BROWARD_PERMIT_JURISDICTIONS.filter(
         (entry) => entry.primarySource.status === "implemented",
       ),
-    ).toHaveLength(16);
+    ).toHaveLength(24);
     expect(
       BROWARD_PERMIT_JURISDICTIONS.filter(
         (entry) => entry.primarySource.status === "adapter_unavailable",
       ),
-    ).toHaveLength(9);
+    ).toHaveLength(1);
     expect(
       BROWARD_PERMIT_JURISDICTIONS.filter(
         (entry) => entry.primarySource.status === "login_required",
@@ -781,8 +781,8 @@ describe("checkpointed local Broward permit pilot", () => {
       allRecordsAccountedFor: true,
       queryRowsMatchUniqueRecords: true,
       allJurisdictionsRegistered: true,
-      currentSourceJurisdictionsImplemented: 16,
-      currentSourceJurisdictionsBlocked: 16,
+      currentSourceJurisdictionsImplemented: 24,
+      currentSourceJurisdictionsBlocked: 8,
     });
     expect(first.acceptance).toEqual({
       localPilotPassed: true,

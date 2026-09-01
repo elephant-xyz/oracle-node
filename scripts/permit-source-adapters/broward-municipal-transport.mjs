@@ -110,12 +110,7 @@ function updateCookieJar(header, jar) {
  * @returns {{request:(url:string|URL,init?:RequestInit)=>Promise<MunicipalHttpResult>}}
  *   Private same-origin request session.
  */
-function createHttpSession(
-  originUrl,
-  fetchImpl,
-  timeoutMs,
-  maxResponseBytes,
-) {
+function createHttpSession(originUrl, fetchImpl, timeoutMs, maxResponseBytes) {
   const cookies = new Map();
 
   return {
@@ -238,7 +233,9 @@ export function parseMunicipalStreetAddress(value) {
 function validateRawResultRowLimit(value) {
   const limit = value ?? DEFAULT_RAW_RESULT_ROW_LIMIT;
   if (!Number.isInteger(limit) || limit < 2 || limit > 100) {
-    throw new Error("Municipal raw result row limit must be from 2 through 100");
+    throw new Error(
+      "Municipal raw result row limit must be from 2 through 100",
+    );
   }
   return limit;
 }
@@ -272,9 +269,7 @@ export function buildClick2GovSearchBody(landingHtml, config, query) {
           .length === 1,
     )
     .first();
-  const csrfToken = form
-    .find('input[name="OWASP_CSRFTOKEN"]')
-    .attr("value");
+  const csrfToken = form.find('input[name="OWASP_CSRFTOKEN"]').attr("value");
   if (form.length === 0 || csrfToken === undefined || csrfToken.length === 0) {
     throw new Error("Click2Gov landing lacks its expected anonymous form");
   }
@@ -288,7 +283,7 @@ export function buildClick2GovSearchBody(landingHtml, config, query) {
         validatePermitView: "true",
         searchType,
         "permit.appYear": /** @type {string} */ (match[1]),
-        "permit.appNumber": /** @type {string} */ (match[2]),
+        "permit.appNumber": String(Number(match[2])),
         finish: "Continue",
         OWASP_CSRFTOKEN: csrfToken,
       }),
@@ -427,8 +422,7 @@ export function buildSmartGovSearchBody(landingHtml, query) {
  * @returns {BrowardMunicipalTransport} Same-origin protocol transport.
  */
 function createDirectHttpTransport(config, dependencies) {
-  const timeoutMs =
-    dependencies.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+  const timeoutMs = dependencies.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
   const maxResponseBytes =
     dependencies.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES;
   const rawResultRowLimit = validateRawResultRowLimit(
@@ -453,6 +447,8 @@ function createDirectHttpTransport(config, dependencies) {
   );
   /** @type {string | null} */
   let click2GovCsrfToken = null;
+  /** @type {Map<string, string>} */
+  const click2GovDirectDetails = new Map();
   /** @type {string | null} */
   let smartGovResultHtml = null;
 
@@ -466,11 +462,7 @@ function createDirectHttpTransport(config, dependencies) {
           throw new Error("Click2Gov returned unsupported pagination");
         }
         const landing = await session.request(config.searchUrl);
-        const request = buildClick2GovSearchBody(
-          landing.text,
-          config,
-          query,
-        );
+        const request = buildClick2GovSearchBody(landing.text, config, query);
         const result = await session.request(config.searchUrl, {
           method: "POST",
           headers: {
@@ -484,6 +476,33 @@ function createDirectHttpTransport(config, dependencies) {
         click2GovCsrfToken =
           $('input[name="OWASP_CSRFTOKEN"]').first().attr("value") ??
           request.csrfToken;
+        if (/Status Detail/iu.test($("title").text())) {
+          if (query.kind !== "permit_number") {
+            throw new Error(
+              "Click2Gov returned an unexpected direct detail response",
+            );
+          }
+          const detailUrl = new URL(config.searchUrl);
+          detailUrl.searchParams.set("permit.appYearAndNumber", query.value);
+          detailUrl.searchParams.set("validatePermitView", "true");
+          click2GovDirectDetails.set(query.value, result.text);
+          return {
+            references: [
+              {
+                sourceRecordId: query.value,
+                permitNumber: query.value,
+                detailUrl: detailUrl.toString(),
+                sourcePage: page,
+                listData: {
+                  address: null,
+                  record_status: null,
+                  record_type: null,
+                },
+              },
+            ],
+            nextPage: null,
+          };
+        }
         return parseClick2GovSearchHtml(result.text, config, {
           sourcePage: page,
           maxRows: rawResultRowLimit,
@@ -579,6 +598,17 @@ function createDirectHttpTransport(config, dependencies) {
     },
     fetchDetail: async (reference, query) => {
       if (config.protocol === "click2gov") {
+        const directDetail = click2GovDirectDetails.get(
+          reference.sourceRecordId,
+        );
+        if (directDetail !== undefined) {
+          click2GovDirectDetails.delete(reference.sourceRecordId);
+          return parseClick2GovDetailHtml(directDetail, {
+            config,
+            reference,
+            query,
+          });
+        }
         const requestUrl = new URL(reference.detailUrl);
         if (click2GovCsrfToken !== null) {
           requestUrl.searchParams.set("OWASP_CSRFTOKEN", click2GovCsrfToken);
@@ -674,9 +704,7 @@ async function selectUniqueEsuiteAddress(page, address) {
     );
   });
   const expected = address.replace(/\s+/gu, " ").trim().toUpperCase();
-  const candidates = await page.$$(
-    'span[id$="autoCompletePanel"] div',
-  );
+  const candidates = await page.$$('span[id$="autoCompletePanel"] div');
   /** @type {import("puppeteer").ElementHandle<Element>[]} */
   const matches = [];
   for (const candidate of candidates) {
@@ -741,8 +769,7 @@ async function advanceEsuitePage(page, targetPage) {
  * @returns {Promise<BrowardMunicipalTransport>} Persistent anonymous browser transport.
  */
 async function createEsuiteTransport(config, dependencies) {
-  const timeoutMs =
-    dependencies.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+  const timeoutMs = dependencies.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
   if (
     !Number.isInteger(timeoutMs) ||
     timeoutMs < 1_000 ||
@@ -784,11 +811,9 @@ async function createEsuiteTransport(config, dependencies) {
         if (query.kind === "address") {
           await selectUniqueEsuiteAddress(searchPage, query.value);
         } else if (query.kind === "permit_number") {
-          await searchPage.type(
-            'input[id$="txtPermitNumber"]',
-            query.value,
-            { delay: 10 },
-          );
+          await searchPage.type('input[id$="txtPermitNumber"]', query.value, {
+            delay: 10,
+          });
         } else {
           throw new Error("eSuite does not expose an anonymous folio field");
         }
@@ -808,14 +833,10 @@ async function createEsuiteTransport(config, dependencies) {
         await advanceEsuitePage(searchPage, pageNumber);
         activePage = pageNumber;
       }
-      return parseTylerEsuiteSearchHtml(
-        await searchPage.content(),
-        config,
-        {
-          sourcePage: pageNumber,
-          maxRows: rawResultRowLimit,
-        },
-      );
+      return parseTylerEsuiteSearchHtml(await searchPage.content(), config, {
+        sourcePage: pageNumber,
+        maxRows: rawResultRowLimit,
+      });
     },
     fetchDetail: async (reference, query) => {
       const detailPage = await browser.newPage();
@@ -916,10 +937,7 @@ export async function probeBoundedBrowardMunicipalPermits({
   }
   const limits = validateMunicipalProbeLimits(rawLimits);
   const queries = validateMunicipalQueries(rawQueries, limits.maxQueries);
-  const transport = await createBrowardMunicipalTransport(
-    config,
-    dependencies,
-  );
+  const transport = await createBrowardMunicipalTransport(config, dependencies);
   try {
     return await runBoundedMunicipalCapture({
       config,
