@@ -2226,26 +2226,35 @@ async function captureAccelaListOnlyPages({
         currentHtml,
       );
     }
-    await context.waitForFunction(
-      (priorSummary) => {
-        const text = document.body?.innerText ?? "";
-        if (
-          /access denied|captcha|technical difficulties|unable to proceed|Object reference not set|error\(s\) occurred on current page|temporarily unavailable/i.test(
-            text,
-          )
-        ) {
-          return true;
-        }
-        const match = /Showing\s+([0-9,]+\s*-\s*[0-9,]+\s+of\s+[0-9,]+)/i.exec(
-          text,
-        );
-        const current =
-          match === null ? null : match[1].replace(/\s+/g, " ").trim();
-        return current !== null && current !== priorSummary;
-      },
-      { timeout: 60_000 },
-      previousSummary,
-    );
+    try {
+      await context.waitForFunction(
+        (priorSummary) => {
+          const text = document.body?.innerText ?? "";
+          if (
+            /access denied|captcha|technical difficulties|unable to proceed|Object reference not set|error\(s\) occurred on current page|temporarily unavailable/i.test(
+              text,
+            )
+          ) {
+            return true;
+          }
+          const match =
+            /Showing\s+([0-9,]+\s*-\s*[0-9,]+\s+of\s+[0-9,]+)/i.exec(text);
+          const current =
+            match === null ? null : match[1].replace(/\s+/g, " ").trim();
+          return current !== null && current !== priorSummary;
+        },
+        { timeout: 60_000 },
+        previousSummary,
+      );
+    } catch (error) {
+      throw new BrowardAccelaSourceError(
+        "incomplete_pagination",
+        source,
+        `${source.jurisdiction} Accela list-only next page did not become ready: ${error instanceof Error ? error.message : "bounded page timeout"}`,
+        context.url(),
+        await context.content(),
+      );
+    }
     htmlPages.push(await context.content());
   }
   return {
