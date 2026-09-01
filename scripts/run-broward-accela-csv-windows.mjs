@@ -292,7 +292,9 @@ export async function runAccelaCsvWindows(options, dependencies = {}) {
   const maxPages = options.maxPages ?? 200;
   const windowTimeoutMs = options.windowTimeoutMs ?? 120_000;
   const source = readBrowardAccelaSource(options.sourceKey);
-  const supportsRecordTypeShards = RECORD_TYPE_SHARD_SOURCE_KEYS.has(source.key);
+  const supportsRecordTypeShards = RECORD_TYPE_SHARD_SOURCE_KEYS.has(
+    source.key,
+  );
   const outputDirectory = path.resolve(options.outputDirectory);
   const windowsDirectory = path.join(outputDirectory, "windows-private");
   const checkpointPath = path.join(outputDirectory, "checkpoint.private.json");
@@ -356,10 +358,7 @@ export async function runAccelaCsvWindows(options, dependencies = {}) {
               supportsRecordTypeShards && recordTypeShard === null,
             searchOutcomeTimeoutMs:
               source.key === "plantation" && recordTypeShard !== null
-                ? Math.min(
-                    90_000,
-                    Math.max(30_000, windowTimeoutMs - 15_000),
-                  )
+                ? Math.min(90_000, Math.max(30_000, windowTimeoutMs - 15_000))
                 : 60_000,
             logger,
           }),

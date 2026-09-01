@@ -1108,7 +1108,9 @@ async function waitForSearchOutcome(context, timeoutMs = 60_000) {
     timeoutMs < 30_000 ||
     timeoutMs > 180_000
   ) {
-    throw new Error("Accela search outcome timeout must be 30000 through 180000");
+    throw new Error(
+      "Accela search outcome timeout must be 30000 through 180000",
+    );
   }
   await context.waitForFunction(
     () => {

@@ -460,10 +460,7 @@ describe("Tyler vendor-wide application-date windows", () => {
         pendingWindowCount: 2,
       });
       const checkpoint = JSON.parse(
-        await readFile(
-          join(splitDirectory, "checkpoint.private.json"),
-          "utf8",
-        ),
+        await readFile(join(splitDirectory, "checkpoint.private.json"), "utf8"),
       );
       expect(checkpoint.pendingWindows).toEqual([
         { startDate: "2026-08-30", endDate: "2026-08-30" },
