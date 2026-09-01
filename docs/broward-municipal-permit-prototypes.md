@@ -38,18 +38,18 @@ details.
 Pilots used existing private appraisal evidence. The table contains aggregate
 results only.
 
-| Protocol                 | Jurisdictions                   |                              Live bounded result | Disposition                                                 |
-| ------------------------ | ------------------------------- | -----------------------------------------------: | ----------------------------------------------------------- |
-| Coconut Creek legacy ASP | Coconut Creek                   |       1 search page, 1 selected detail, 1 record | implemented                                                 |
-| Click2Gov                | Margate, Pompano Beach, Tamarac |         each: 1 exact search, 1 detail, 1 record | implemented                                                 |
-| Tyler/New World eSuite   | Dania Beach, Davie              |     each: 1 address page, 10 details, 10 records | implemented through persistent isolated headless Chromium   |
-| SmartGov                 | Lighthouse Point                | 1 folio search, explicit empty result, 0 details | implemented; positive detail remains fixture-covered        |
-| eGovPLUS                 | Lauderhill                      |               1 exact search, 1 detail, 1 record | implemented                                                 |
-| OpenGov/ViewPoint        | Lauderdale Lakes                |                  0 requests, `landing_only` skip | blocked: official rendered application reports inaccessible |
+| Protocol                 | Jurisdictions                   |                              Live bounded result | Disposition                                                  |
+| ------------------------ | ------------------------------- | -----------------------------------------------: | ------------------------------------------------------------ |
+| Coconut Creek legacy ASP | Coconut Creek                   |       1 search page, 1 selected detail, 1 record | implemented                                                  |
+| Click2Gov                | Margate, Pompano Beach, Tamarac |         each: 1 exact search, 1 detail, 1 record | implemented                                                  |
+| Tyler/New World eSuite   | Dania Beach, Davie              |     each: 1 address page, 10 details, 10 records | implemented through persistent isolated headless Chromium    |
+| SmartGov                 | Lighthouse Point                | 1 folio search, explicit empty result, 0 details | implemented; positive detail remains fixture-covered         |
+| eGovPLUS                 | Lauderhill                      |               1 exact search, 1 detail, 1 record | implemented                                                  |
+| OpenGov/ViewPoint        | Lauderdale Lakes                |                  0 requests, `landing_only` skip | blocked: official rendered application reports inaccessible  |
 | Gov-Easy / GeoCivix      | Deerfield Beach, Pembroke Park  | Pembroke manual session: 17 pages, 166 list rows | CAPTCHA remains required; unattended transport stays blocked |
-| CommunityCore            | Hillsboro Beach                 |                                       0 requests | blocked by reCAPTCHA                                        |
-| MGO Connect              | Parkland                        |                                       0 requests | blocked by login                                            |
-| Tyler EnerGov            | Sunrise                         |         shared Tyler adapter, tracked separately | implemented                                                 |
+| CommunityCore            | Hillsboro Beach                 |                                       0 requests | blocked by reCAPTCHA                                         |
+| MGO Connect              | Parkland                        |                                       0 requests | blocked by login                                             |
+| Tyler EnerGov            | Sunrise                         |         shared Tyler adapter, tracked separately | implemented                                                  |
 
 Davie eSuite remains an explicitly bounded public-history/status route. The
 separate 2026 OAS submission system is login-gated, so eSuite results do not

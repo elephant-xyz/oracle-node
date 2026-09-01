@@ -81,8 +81,7 @@ function govEasyListRecord(overrides = {}) {
     sourceSystem: "broward_pembroke_park_gov_easy_permits",
     jurisdiction: "Pembroke Park",
     sourceRecordId: "12345",
-    recordKey:
-      "broward_pembroke_park_gov_easy_permits:application:12345",
+    recordKey: "broward_pembroke_park_gov_easy_permits:application:12345",
     permitNumber: "PP-ROOF-2026-0001",
     jobName: "ROOF REPLACEMENT",
     status: "Issued",
