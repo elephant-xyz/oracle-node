@@ -129,3 +129,51 @@ This evidence does not change the source policy. Gov-Easy remains
 only the records returned by that exact keyword search; it is not proof of all
 Pembroke Park roofing permits, all Pembroke Park permits, historical
 completeness, or anonymous access.
+
+## Coral Springs manually authorized capped list evidence
+
+A user-authorized, already-open Chrome tab with a manually completed eTRAKiT
+reCAPTCHA is attached in place. The adapter never launches or refreshes a
+browser, reads or changes cookies/tokens, or copies the CAPTCHA response. It
+allow-lists only list `RECORDID`, permit number/type/status, site address, and
+folio; owner and contractor columns, contacts, details, fees, and PDFs are
+excluded.
+
+The approved `Permit Type` `Contains` `ROOF` search reports 59,379 matches, but
+the Telerik grid exposes only 50 pages of 20 rows (1,000). The exact deployed
+contract is an ASP.NET POST with `__VIEWSTATE`, no `__EVENTVALIDATION` input,
+and grid command
+`__doPostBack('ctl00$cplMain$rgSearchRslts',
+'FireCommand:ctl00$cplMain$rgSearchRslts$ctl00;Page;…')`. The capture invokes
+the rendered next-page control sequentially, waits at least six seconds between
+postbacks, and atomically checkpoints each reconciled page before consuming the
+next clipboard envelope. CAPTCHA/session material is never persisted.
+
+No exhaustive partition has been proved:
+
+- The live search-field taxonomy is permit number, site address, permit type,
+  owner, contractor, folio, and status. There is no applied, issued, final, or
+  other date input; this is direct form evidence, not an inference from result
+  columns.
+- Only one field/operator/value criterion is accepted per search, so a roofing
+  condition cannot be intersected with a permit-number year/range or folio.
+- Permit type is free text rather than a complete enumerable taxonomy.
+  Exact-type values observed in the capped slice cannot prove that no other
+  roofing type exists beyond the cap.
+- The page exposes an Excel action, but its all-results/cap semantics are not
+  certified and the grid includes owner/contractor columns. It is not invoked
+  or treated as a safe bulk contract.
+- The permit-number namespace and historical start are not certified.
+  Prefix/year partitions would therefore have unproved gaps.
+
+Consequently, even a fully reconciled 1,000-row capture is labeled
+`bounded_capped_keyword_slice`, while the executable registry remains
+`captcha_required`. The gap plan is (1) property-first exact-folio retrieval
+for the finite Coral Springs appraisal property set during future manually
+authorized sessions, with missing/duplicate/conflict receipts and no owner
+fields; and (2) a public-records bulk request for a non-personal permit export
+limited to stable record ID, permit number/type/status, lifecycle dates, site
+address, and folio. Property-first coverage is useful for parcel linkage but
+cannot by itself prove permits with absent or bad folios; only a reconciled
+custodian export can close that residual gap. No request is submitted by this
+implementation.

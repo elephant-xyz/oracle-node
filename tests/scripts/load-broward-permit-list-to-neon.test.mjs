@@ -99,6 +99,46 @@ function govEasyListRecord(overrides = {}) {
   };
 }
 
+/**
+ * Build one synthetic allow-listed Coral Springs eTRAKiT row.
+ *
+ * @param {number} index - One-based fixture record.
+ * @param {number} page - One-based source page.
+ * @param {Record<string, unknown>} [overrides] - Field overrides.
+ * @returns {Record<string, unknown>} eTRAKiT list record.
+ */
+function etrakitListRecord(index, page, overrides = {}) {
+  const sourceRecordId = `TEST:${String(index).padStart(19, "0")}`;
+  return {
+    schemaVersion: "oracle-node.broward-etrakit-list.v1",
+    sourceSystem: "broward_coral_springs_etrakit_permits",
+    jurisdiction: "Coral Springs",
+    sourceRecordId,
+    recordKey: `broward_coral_springs_etrakit_permits:record:${sourceRecordId}`,
+    permitNumber: `TEST-${String(index).padStart(6, "0")}`,
+    recordType: "RESIDENTIAL REROOF",
+    status: "Issued",
+    address: "SYNTHETIC LOCATION",
+    folio: "000000000001",
+    sourceUrl:
+      "https://etrakit.coralsprings.gov/eTRAKiT/Search/permit.aspx",
+    sourcePages: [page],
+    isRoofPermit: true,
+    coverage: {
+      queryField: "Permit Type",
+      queryOperator: "Contains",
+      queryValue: "ROOF",
+      sourceReportedCount: 59_379,
+      exposedRecordCap: 1_000,
+      exposedPageCount: 50,
+      pageSize: 20,
+      completenessBoundary: "bounded_capped_keyword_slice",
+      countEvidence: "operator_observed_source_result",
+    },
+    ...overrides,
+  };
+}
+
 describe("Broward permit list Neon loading", () => {
   it("parses an immutable chunked load job", () => {
     expect(
@@ -239,6 +279,65 @@ describe("Broward permit list Neon loading", () => {
         }),
       ),
     ).toThrow("Unsupported Broward permit list row");
+  });
+
+  it("maps Coral Springs list rows with exact folios and capped coverage", () => {
+    const normalized = normalizePermitListRecord(etrakitListRecord(1, 1));
+    expect(normalized).toMatchObject({
+      sourceSystem: "broward_coral_springs_etrakit_permits",
+      sourceRecordKey:
+        "broward_coral_springs_etrakit_permits:record:TEST:0000000000000000001",
+      parcelIdentifier: "000000000001",
+      applicationDate: null,
+      permitIssueDate: null,
+      isRoofPermit: true,
+      sourcePayload: {
+        schema_version: "oracle-node.broward-etrakit-list.v1",
+        coverage: {
+          sourceReportedCount: 59_379,
+          exposedRecordCap: 1_000,
+          completenessBoundary: "bounded_capped_keyword_slice",
+        },
+      },
+    });
+    expect(mapPermitListLoadRow(normalized, undefined)).toMatchObject({
+      property_match_method: "unmatched",
+      source_http_request: {
+        method: "POST",
+        access: "manual_captcha_authorized_session",
+        payload_persisted: false,
+      },
+    });
+  });
+
+  it("loads Coral Springs only after all 50 exposed pages reconcile", async () => {
+    const directory = await mkdtemp(
+      join(tmpdir(), "broward-etrakit-list-load-"),
+    );
+    try {
+      const inputPath = join(directory, "input.jsonl");
+      const records = Array.from({ length: 1_000 }, (_value, index) =>
+        etrakitListRecord(index + 1, Math.floor(index / 20) + 1),
+      );
+      await writeFile(
+        inputPath,
+        `${records.map((record) => JSON.stringify(record)).join("\n")}\n`,
+      );
+      await expect(readPermitListRecords(inputPath)).resolves.toMatchObject({
+        records: expect.arrayContaining([
+          expect.objectContaining({
+            sourceSystem: "broward_coral_springs_etrakit_permits",
+          }),
+        ]),
+        duplicateCount: 0,
+      });
+      await writeFile(inputPath, `${JSON.stringify(records[0])}\n`);
+      await expect(readPermitListRecords(inputPath)).rejects.toThrow(
+        "not the reconciled 1000-row exposed slice",
+      );
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 
   it("deduplicates exact input and rejects conflicting source keys", async () => {

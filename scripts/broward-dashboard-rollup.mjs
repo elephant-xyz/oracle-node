@@ -28,6 +28,9 @@ const PIPELINE_KEY = "broward";
  * @property {number} permitParcels - Distinct source parcel identifiers.
  * @property {number} permitSourceSystems - Distinct permit source systems.
  * @property {string | null} permitLastLoadedAt - Latest permit load timestamp.
+ * @property {number} coralEtrakitRecords - Loaded Coral Springs slice rows.
+ * @property {number} coralEtrakitMatched - Coral rows linked by exact folio.
+ * @property {number} coralEtrakitRoofing - Source-query-backed roofing rows.
  * @property {number} sunbizMatchedRoles - Exact Sunbiz address-role links.
  * @property {number} sunbizRegistrations - Distinct linked registrations.
  * @property {number} sunbizProperties - Distinct linked properties.
@@ -54,6 +57,15 @@ export async function ensureBrowardDashboardRollup(client) {
          permit_source_systems >= 0
        ),
        permit_last_loaded_at timestamptz,
+       coral_etrakit_records integer NOT NULL DEFAULT 0 CHECK (
+         coral_etrakit_records >= 0
+       ),
+       coral_etrakit_matched integer NOT NULL DEFAULT 0 CHECK (
+         coral_etrakit_matched >= 0
+       ),
+       coral_etrakit_roofing integer NOT NULL DEFAULT 0 CHECK (
+         coral_etrakit_roofing >= 0
+       ),
        sunbiz_matched_roles integer NOT NULL CHECK (
          sunbiz_matched_roles >= 0
        ),
@@ -63,6 +75,15 @@ export async function ensureBrowardDashboardRollup(client) {
        sunbiz_properties integer NOT NULL CHECK (sunbiz_properties >= 0),
        refreshed_at timestamptz NOT NULL DEFAULT now()
      )`,
+  );
+  await client.query(
+    `ALTER TABLE ${CONTROL_SCHEMA}.broward_dashboard_rollup
+       ADD COLUMN IF NOT EXISTS coral_etrakit_records integer NOT NULL
+         DEFAULT 0 CHECK (coral_etrakit_records >= 0),
+       ADD COLUMN IF NOT EXISTS coral_etrakit_matched integer NOT NULL
+         DEFAULT 0 CHECK (coral_etrakit_matched >= 0),
+       ADD COLUMN IF NOT EXISTS coral_etrakit_roofing integer NOT NULL
+         DEFAULT 0 CHECK (coral_etrakit_roofing >= 0)`,
   );
 }
 
@@ -92,7 +113,21 @@ export async function refreshBrowardDashboardRollup(client) {
            WHERE parcel_identifier IS NOT NULL
          )::integer AS permit_parcels,
          count(DISTINCT source_system)::integer AS permit_source_systems,
-         max(loaded_at) AS permit_last_loaded_at
+         max(loaded_at) AS permit_last_loaded_at,
+         count(*) FILTER (
+           WHERE source_system='broward_coral_springs_etrakit_permits'
+         )::integer AS coral_etrakit_records,
+         count(*) FILTER (
+           WHERE source_system='broward_coral_springs_etrakit_permits'
+             AND property_id IS NOT NULL
+         )::integer AS coral_etrakit_matched,
+         count(*) FILTER (
+           WHERE source_system='broward_coral_springs_etrakit_permits'
+             AND coalesce(
+               more_details->>'is_roof_permit',
+               more_details->>'isRoofPermit'
+             )='true'
+         )::integer AS coral_etrakit_roofing
        FROM public.property_improvements
        WHERE source_system LIKE 'broward%permits'
      ),
@@ -107,15 +142,18 @@ export async function refreshBrowardDashboardRollup(client) {
      INSERT INTO ${CONTROL_SCHEMA}.broward_dashboard_rollup (
        pipeline_key,permit_records,permit_matched,permit_unmatched,
        permit_roofing,permit_parcels,permit_source_systems,
-       permit_last_loaded_at,sunbiz_matched_roles,sunbiz_registrations,
+       permit_last_loaded_at,coral_etrakit_records,coral_etrakit_matched,
+       coral_etrakit_roofing,sunbiz_matched_roles,sunbiz_registrations,
        sunbiz_properties,refreshed_at
      )
      SELECT
        $1,permit_stats.permit_records,permit_stats.permit_matched,
        permit_stats.permit_unmatched,permit_stats.permit_roofing,
        permit_stats.permit_parcels,permit_stats.permit_source_systems,
-       permit_stats.permit_last_loaded_at,sunbiz_stats.sunbiz_matched_roles,
-       sunbiz_stats.sunbiz_registrations,sunbiz_stats.sunbiz_properties,now()
+       permit_stats.permit_last_loaded_at,permit_stats.coral_etrakit_records,
+       permit_stats.coral_etrakit_matched,permit_stats.coral_etrakit_roofing,
+       sunbiz_stats.sunbiz_matched_roles,sunbiz_stats.sunbiz_registrations,
+       sunbiz_stats.sunbiz_properties,now()
      FROM permit_stats,sunbiz_stats
      ON CONFLICT (pipeline_key) DO UPDATE SET
        permit_records=EXCLUDED.permit_records,
@@ -125,6 +163,9 @@ export async function refreshBrowardDashboardRollup(client) {
        permit_parcels=EXCLUDED.permit_parcels,
        permit_source_systems=EXCLUDED.permit_source_systems,
        permit_last_loaded_at=EXCLUDED.permit_last_loaded_at,
+       coral_etrakit_records=EXCLUDED.coral_etrakit_records,
+       coral_etrakit_matched=EXCLUDED.coral_etrakit_matched,
+       coral_etrakit_roofing=EXCLUDED.coral_etrakit_roofing,
        sunbiz_matched_roles=EXCLUDED.sunbiz_matched_roles,
        sunbiz_registrations=EXCLUDED.sunbiz_registrations,
        sunbiz_properties=EXCLUDED.sunbiz_properties,
@@ -155,6 +196,9 @@ export async function refreshBrowardDashboardRollup(client) {
         : typeof row.permit_last_loaded_at === "string"
           ? row.permit_last_loaded_at
           : null,
+    coralEtrakitRecords: readCount(row.coral_etrakit_records),
+    coralEtrakitMatched: readCount(row.coral_etrakit_matched),
+    coralEtrakitRoofing: readCount(row.coral_etrakit_roofing),
     sunbizMatchedRoles: readCount(row.sunbiz_matched_roles),
     sunbizRegistrations: readCount(row.sunbiz_registrations),
     sunbizProperties: readCount(row.sunbiz_properties),

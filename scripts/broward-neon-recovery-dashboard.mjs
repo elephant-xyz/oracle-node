@@ -78,6 +78,9 @@ const DEFAULT_PORT = 47_832;
  * @property {string | number} permit_bulk_chunks - Durable bulk chunks.
  * @property {string | number} permit_list_loaded_rows - Completed list-load rows.
  * @property {string | number} permit_list_chunks - Completed list-load chunks.
+ * @property {string | number} coral_etrakit_loaded - Loaded Coral slice rows.
+ * @property {string | number} coral_etrakit_linked - Exact-folio-linked Coral rows.
+ * @property {string | number} coral_etrakit_roofing - Loaded roofing rows.
  * @property {string | number} sunbiz_match_roles - Exact matched address roles.
  * @property {string | number} sunbiz_match_registrations - Distinct linked registrations.
  * @property {string | number} sunbiz_match_properties - Distinct linked properties.
@@ -209,6 +212,22 @@ const DEFAULT_PORT = 47_832;
  *   listLoadedRows:number,
  *   listChunks:number
  * }} permitInventory - Current Neon permit inventory and durable load receipts.
+ * @property {{
+ *   reported:number,
+ *   exposed:number,
+ *   paged:number,
+ *   unique:number,
+ *   details:number,
+ *   loaded:number,
+ *   linked:number,
+ *   roofing:number,
+ *   completedPages:number,
+ *   totalPages:number,
+ *   captureComplete:boolean,
+ *   completenessBoundary:"bounded_capped_keyword_slice",
+ *   captchaPrerequisite:"manual_authorization_required",
+ *   registryStatus:"captcha_required"
+ * }} coralSpringsPermit - Separate capped Coral Springs evidence.
  * @property {PermitEnumerationStatus} permitEnumeration - Local tenant workers.
  * @property {{
  *   matchedAddressRoles:number,
@@ -625,6 +644,22 @@ export function buildRecoveryStatus(row, nowMs) {
       listLoadedRows: count(row.permit_list_loaded_rows),
       listChunks: count(row.permit_list_chunks),
     },
+    coralSpringsPermit: {
+      reported: 59_379,
+      exposed: 1_000,
+      paged: 0,
+      unique: 0,
+      details: 0,
+      loaded: count(row.coral_etrakit_loaded),
+      linked: count(row.coral_etrakit_linked),
+      roofing: count(row.coral_etrakit_roofing),
+      completedPages: 0,
+      totalPages: 50,
+      captureComplete: false,
+      completenessBoundary: "bounded_capped_keyword_slice",
+      captchaPrerequisite: "manual_authorization_required",
+      registryStatus: "captcha_required",
+    },
     permitEnumeration: emptyPermitEnumerationStatus(),
     sunbizMatch: {
       matchedAddressRoles: count(row.sunbiz_match_roles),
@@ -633,6 +668,91 @@ export function buildRecoveryStatus(row, nowMs) {
       chunks: count(row.sunbiz_match_chunks),
     },
   };
+}
+
+const CORAL_ETRAKIT_CHECKPOINT_PATH =
+  "downloads/broward/coral-springs-etrakit/roof-permit-type-capped-20260901/checkpoint.private.json";
+
+/**
+ * Read aggregate-only Coral Springs capture progress.
+ *
+ * Stable IDs, row digests, list values, and session material are never
+ * returned. Missing private state is represented as an uncaptured capped
+ * source, not as complete or anonymously accessible.
+ *
+ * @param {string} repositoryRoot - Repository containing ignored checkpoint.
+ * @returns {Promise<Pick<
+ *   RecoveryDashboardStatus["coralSpringsPermit"],
+ *   "reported" | "exposed" | "paged" | "unique" | "details" |
+ *   "completedPages" | "totalPages" | "captureComplete" |
+ *   "completenessBoundary" | "captchaPrerequisite" | "registryStatus"
+ * >>} Aggregate private-checkpoint projection.
+ */
+export async function readCoralSpringsEtrakitStatus(repositoryRoot) {
+  try {
+    const parsed = /** @type {unknown} */ (
+      JSON.parse(
+        await readFile(
+          path.resolve(repositoryRoot, CORAL_ETRAKIT_CHECKPOINT_PATH),
+          "utf8",
+        ),
+      )
+    );
+    if (!isPlainRecord(parsed) || !isPlainRecord(parsed.completedPages)) {
+      throw new Error("Coral Springs eTRAKiT checkpoint is malformed");
+    }
+    const reported = safeAggregate(parsed.sourceReportedCount);
+    const totalPages = safeAggregate(parsed.expectedPageCount);
+    const pageSize = safeAggregate(parsed.expectedPageSize);
+    const paged = safeAggregate(parsed.capturedRowCount);
+    const unique = safeAggregate(parsed.uniqueRecordCount);
+    const duplicate = safeAggregate(parsed.duplicateRecordCount);
+    const conflicts = safeAggregate(parsed.conflictRecordCount);
+    const completedPages = Object.keys(parsed.completedPages).length;
+    if (
+      reported !== 59_379 ||
+      totalPages !== 50 ||
+      pageSize !== 20 ||
+      completedPages > totalPages ||
+      paged !== unique + duplicate ||
+      conflicts !== 0 ||
+      typeof parsed.completed !== "boolean" ||
+      (parsed.completed &&
+        (completedPages !== totalPages || paged !== totalPages * pageSize))
+    ) {
+      throw new Error("Coral Springs eTRAKiT aggregates do not reconcile");
+    }
+    return {
+      reported,
+      exposed: totalPages * pageSize,
+      paged,
+      unique,
+      details: 0,
+      completedPages,
+      totalPages,
+      captureComplete: parsed.completed,
+      completenessBoundary: "bounded_capped_keyword_slice",
+      captchaPrerequisite: "manual_authorization_required",
+      registryStatus: "captcha_required",
+    };
+  } catch (error) {
+    if (isNodeError(error) && error.code === "ENOENT") {
+      return {
+        reported: 59_379,
+        exposed: 1_000,
+        paged: 0,
+        unique: 0,
+        details: 0,
+        completedPages: 0,
+        totalPages: 50,
+        captureComplete: false,
+        completenessBoundary: "bounded_capped_keyword_slice",
+        captchaPrerequisite: "manual_authorization_required",
+        registryStatus: "captcha_required",
+      };
+    }
+    throw error;
+  }
 }
 
 const PERMIT_ENUMERATION_CHECKPOINTS = Object.freeze([
@@ -1124,7 +1244,7 @@ export function createRecoveryStatusReader(
   return () => {
     if (inFlight !== null) return inFlight;
     inFlight = (async () => {
-      const [result, permitEnumeration] = await Promise.all([
+      const [result, permitEnumeration, coralCapture] = await Promise.all([
         client.query(
           `WITH property_stats AS (
          SELECT
@@ -1197,7 +1317,13 @@ export function createRecoveryStatusReader(
            coalesce(permit_parcels,0)::bigint AS permit_inventory_parcels,
            coalesce(permit_source_systems,0)::bigint
              AS permit_inventory_sources,
-           permit_last_loaded_at::text AS permit_inventory_loaded_at
+           permit_last_loaded_at::text AS permit_inventory_loaded_at,
+           coalesce(coral_etrakit_records,0)::bigint
+             AS coral_etrakit_loaded,
+           coalesce(coral_etrakit_matched,0)::bigint
+             AS coral_etrakit_linked,
+           coalesce(coral_etrakit_roofing,0)::bigint
+             AS coral_etrakit_roofing
          FROM ${CONTROL_SCHEMA}.broward_dashboard_rollup
          WHERE pipeline_key='broward'
        ),
@@ -1260,6 +1386,7 @@ export function createRecoveryStatusReader(
             sunbiz_match_stats`,
         ),
         readPermitEnumerationStatus(repositoryRoot),
+        readCoralSpringsEtrakitStatus(repositoryRoot),
       ]);
       const row = result.rows[0];
       if (row === undefined) {
@@ -1270,6 +1397,10 @@ export function createRecoveryStatusReader(
         Date.now(),
       );
       status.permitEnumeration = permitEnumeration;
+      status.coralSpringsPermit = {
+        ...status.coralSpringsPermit,
+        ...coralCapture,
+      };
       return status;
     })().finally(() => {
       inFlight = null;
@@ -1513,6 +1644,16 @@ const DASHBOARD_HTML = `<!doctype html>
     <article><h2>Active / complete workers</h2><strong id="permit-workers">—</strong></article>
     <article><h2>Completed windows</h2><strong id="permit-windows">—</strong></article>
   </section>
+  <h2>Coral Springs eTRAKiT capped slice</h2>
+  <p class="route-note">Manual CAPTCHA authorization is still required. The 1,000 exposed rows are a bounded slice of 59,379 reported roofing matches, not complete jurisdiction coverage.</p>
+  <section class="grid">
+    <article><h2>Reported / exposed</h2><strong id="coral-reported">—</strong></article>
+    <article><h2>Paged / unique</h2><strong id="coral-captured">—</strong></article>
+    <article><h2>Loaded / linked</h2><strong id="coral-loaded">—</strong></article>
+    <article><h2>Loaded roofing</h2><strong id="coral-roofing">—</strong></article>
+    <article><h2>Capture pages</h2><strong id="coral-pages">—</strong></article>
+    <article><h2>Coverage</h2><strong id="coral-coverage">—</strong></article>
+  </section>
   <table aria-label="Permit tenant worker status">
     <thead><tr><th>Jurisdiction</th><th>Source</th><th>Status</th><th>Windows</th><th>Records</th><th>Gaps</th></tr></thead>
     <tbody id="permit-worker-rows"></tbody>
@@ -1589,6 +1730,13 @@ const DASHBOARD_HTML = `<!doctype html>
       set("permit-captured", format.format(enumeration.accessibleRecords));
       set("permit-workers", format.format(enumeration.activeWorkers) + " / " + format.format(enumeration.completedWorkers));
       set("permit-windows", format.format(enumeration.completedWindows) + " / " + format.format(enumeration.totalWindows));
+      const coral = status.coralSpringsPermit;
+      set("coral-reported", format.format(coral.reported) + " / " + format.format(coral.exposed));
+      set("coral-captured", format.format(coral.paged) + " / " + format.format(coral.unique));
+      set("coral-loaded", format.format(coral.loaded) + " / " + format.format(coral.linked));
+      set("coral-roofing", format.format(coral.roofing));
+      set("coral-pages", format.format(coral.completedPages) + " / " + format.format(coral.totalPages));
+      set("coral-coverage", coral.captureComplete ? "bounded slice complete" : "bounded slice partial");
       set(
         "permit-inventory-summary",
         format.format(inventory.records) + " loaded · " +

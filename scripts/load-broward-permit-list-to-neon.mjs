@@ -27,6 +27,10 @@ const LOAD_LOCK_KEY = 3;
 const CONTROL_SCHEMA = "ingest_control";
 const PEMBROKE_PARK_GOV_EASY_SEARCH_URL =
   "https://apps.gov-easy.com/Home/PermitInspection/Search?clientId=d60f9827-2c53-44a4-9037-31e1de2b3f09";
+const CORAL_SPRINGS_ETRAKIT_SEARCH_URL =
+  "https://etrakit.coralsprings.gov/eTRAKiT/Search/permit.aspx";
+const CORAL_SPRINGS_ETRAKIT_SOURCE_SYSTEM =
+  "broward_coral_springs_etrakit_permits";
 
 /**
  * @typedef {object} PermitListLoadOptions
@@ -101,6 +105,34 @@ const PEMBROKE_PARK_GOV_EASY_SEARCH_URL =
  *   queryValue:"ROOF",
  *   sourceReportedCount:number
  * }>} coverage - Exact keyword-slice provenance and reported denominator.
+ *
+ * @typedef {object} EtrakitListRecord
+ * @property {"oracle-node.broward-etrakit-list.v1"} schemaVersion
+ *   Privacy-minimized list schema.
+ * @property {"broward_coral_springs_etrakit_permits"} sourceSystem
+ *   Stable source system.
+ * @property {"Coral Springs"} jurisdiction - Issuing jurisdiction.
+ * @property {string} sourceRecordId - Stable eTRAKiT RECORDID.
+ * @property {string} recordKey - Source-system-qualified stable identity.
+ * @property {string} permitNumber - Public permit number.
+ * @property {string | null} recordType - Public permit type.
+ * @property {string | null} status - Public permit status.
+ * @property {string | null} address - Public site address.
+ * @property {string | null} folio - Public list folio.
+ * @property {string} sourceUrl - Token-free official search URL.
+ * @property {number[]} sourcePages - One-based exposed result pages.
+ * @property {boolean} isRoofPermit - Source-query-backed classification.
+ * @property {Readonly<{
+ *   queryField:"Permit Type",
+ *   queryOperator:"Contains",
+ *   queryValue:"ROOF",
+ *   sourceReportedCount:59379,
+ *   exposedRecordCap:1000,
+ *   exposedPageCount:50,
+ *   pageSize:20,
+ *   completenessBoundary:"bounded_capped_keyword_slice",
+ *   countEvidence:"operator_observed_source_result"
+ * }>} coverage - Explicit capped coverage boundary.
  *
  * @typedef {object} NormalizedPermitListRecord
  * @property {string} sourceSystem - Jurisdiction source system.
@@ -222,15 +254,75 @@ export async function readPermitListRecords(inputPath) {
   if (sourceCount === 0) {
     throw new Error("Broward permit list input is empty");
   }
-  return {
-    records: [...byKey.values()]
+  const records = [...byKey.values()]
       .map((entry) => entry.record)
       .sort((left, right) =>
         left.sourceRecordKey.localeCompare(right.sourceRecordKey),
-      ),
+      );
+  validateCompletedEtrakitSlice(records, sourceCount, sourceCount - byKey.size);
+  return {
+    records,
     inputSha256: createHash("sha256").update(text).digest("hex"),
     duplicateCount: sourceCount - byKey.size,
   };
+}
+
+/**
+ * Require the Coral Springs input to be the fully reconciled exposed slice.
+ *
+ * This proves all 50 source pages are represented exactly once before any row
+ * is loadable. It deliberately does not upgrade the capped keyword slice to
+ * complete roofing or jurisdiction coverage.
+ *
+ * @param {readonly NormalizedPermitListRecord[]} records - Unique input rows.
+ * @param {number} sourceCount - Parsed JSONL rows before deduplication.
+ * @param {number} duplicateCount - Exact duplicate input rows.
+ * @returns {void}
+ */
+function validateCompletedEtrakitSlice(
+  records,
+  sourceCount,
+  duplicateCount,
+) {
+  const etrakitRecords = records.filter(
+    (record) => record.sourceSystem === CORAL_SPRINGS_ETRAKIT_SOURCE_SYSTEM,
+  );
+  if (etrakitRecords.length === 0) return;
+  if (
+    etrakitRecords.length !== records.length ||
+    etrakitRecords.length !== 1_000 ||
+    sourceCount !== 1_000 ||
+    duplicateCount !== 0
+  ) {
+    throw new Error(
+      "Coral Springs eTRAKiT input is not the reconciled 1000-row exposed slice",
+    );
+  }
+  /** @type {Map<number, number>} */
+  const pageCounts = new Map();
+  for (const record of etrakitRecords) {
+    const payload = record.sourcePayload;
+    const pages = payload.sourcePages;
+    if (
+      !Array.isArray(pages) ||
+      pages.length !== 1 ||
+      !Number.isInteger(pages[0])
+    ) {
+      throw new Error("Coral Springs eTRAKiT page provenance is incomplete");
+    }
+    const page = /** @type {number} */ (pages[0]);
+    pageCounts.set(page, (pageCounts.get(page) ?? 0) + 1);
+  }
+  for (let page = 1; page <= 50; page += 1) {
+    if (pageCounts.get(page) !== 20) {
+      throw new Error(
+        "Coral Springs eTRAKiT page provenance does not reconcile",
+      );
+    }
+  }
+  if (pageCounts.size !== 50) {
+    throw new Error("Coral Springs eTRAKiT contains an out-of-range page");
+  }
 }
 
 /**
@@ -313,6 +405,29 @@ export function normalizePermitListRecord(value) {
       },
     };
   }
+  if (isEtrakitListRecord(value)) {
+    return {
+      sourceSystem: value.sourceSystem,
+      sourceRecordKey: value.recordKey,
+      permitNumber: value.permitNumber,
+      sourceUrl: value.sourceUrl,
+      jurisdiction: value.jurisdiction,
+      parcelIdentifier: normalizeArcgisBrowardFolio(value.folio),
+      workLocation: value.address,
+      applicationDate: null,
+      permitIssueDate: null,
+      expirationDate: null,
+      finalizedDate: null,
+      recordStatus: value.status,
+      recordType: value.recordType,
+      description: null,
+      isRoofPermit: value.isRoofPermit,
+      sourcePayload: {
+        schema_version: "oracle-node.broward-etrakit-list.v1",
+        ...value,
+      },
+    };
+  }
   if (isTylerListRecord(value)) {
     return {
       sourceSystem: value.source_system,
@@ -373,7 +488,15 @@ export function mapPermitListLoadRow(record, parent) {
       is_roof_permit: record.isRoofPermit,
       list_source_payload: record.sourcePayload,
     },
-    source_http_request: { method: "GET", url: record.sourceUrl },
+    source_http_request:
+      record.sourceSystem === CORAL_SPRINGS_ETRAKIT_SOURCE_SYSTEM
+        ? {
+            method: "POST",
+            url: record.sourceUrl,
+            access: "manual_captcha_authorized_session",
+            payload_persisted: false,
+          }
+        : { method: "GET", url: record.sourceUrl },
     source_payload: record.sourcePayload,
     source_system: record.sourceSystem,
     source_record_key: record.sourceRecordKey,
@@ -848,6 +971,50 @@ function isGovEasyListRecord(value) {
   }
   return [value.jobName, value.status, value.address].every(
     (fieldValue) => fieldValue === null || typeof fieldValue === "string",
+  );
+}
+
+/**
+ * Validate one privacy-minimized Coral Springs eTRAKiT list row.
+ *
+ * CAPTCHA responses, ViewState, cookies, owner/contractor/contact fields, and
+ * detail payloads are intentionally absent from this accepted contract.
+ *
+ * @param {unknown} value - Candidate parsed JSONL row.
+ * @returns {value is EtrakitListRecord} Whether the capped row is valid.
+ */
+function isEtrakitListRecord(value) {
+  if (!isRecord(value) || !isRecord(value.coverage)) return false;
+  return (
+    value.schemaVersion === "oracle-node.broward-etrakit-list.v1" &&
+    value.sourceSystem === CORAL_SPRINGS_ETRAKIT_SOURCE_SYSTEM &&
+    value.jurisdiction === "Coral Springs" &&
+    typeof value.sourceRecordId === "string" &&
+    /^[A-Z0-9_:-]+$/iu.test(value.sourceRecordId) &&
+    value.recordKey ===
+      `${CORAL_SPRINGS_ETRAKIT_SOURCE_SYSTEM}:record:${value.sourceRecordId}` &&
+    typeof value.permitNumber === "string" &&
+    value.permitNumber.length > 0 &&
+    (value.recordType === null || typeof value.recordType === "string") &&
+    (value.status === null || typeof value.status === "string") &&
+    (value.address === null || typeof value.address === "string") &&
+    (value.folio === null || typeof value.folio === "string") &&
+    value.sourceUrl === CORAL_SPRINGS_ETRAKIT_SEARCH_URL &&
+    Array.isArray(value.sourcePages) &&
+    value.sourcePages.every(
+      (page) => Number.isInteger(page) && page >= 1 && page <= 50,
+    ) &&
+    value.isRoofPermit === true &&
+    value.coverage.queryField === "Permit Type" &&
+    value.coverage.queryOperator === "Contains" &&
+    value.coverage.queryValue === "ROOF" &&
+    value.coverage.sourceReportedCount === 59_379 &&
+    value.coverage.exposedRecordCap === 1_000 &&
+    value.coverage.exposedPageCount === 50 &&
+    value.coverage.pageSize === 20 &&
+    value.coverage.completenessBoundary ===
+      "bounded_capped_keyword_slice" &&
+    value.coverage.countEvidence === "operator_observed_source_result"
   );
 }
 

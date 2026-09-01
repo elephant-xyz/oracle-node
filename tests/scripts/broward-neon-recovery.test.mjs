@@ -20,6 +20,7 @@ import {
   buildRecoveryStatus,
   parseDashboardOptions,
   readAccelaCsvReceiptAccessibleCount,
+  readCoralSpringsEtrakitStatus,
   readPermitEnumerationStatus,
 } from "../../scripts/broward-neon-recovery-dashboard.mjs";
 
@@ -431,6 +432,9 @@ describe("durable Broward Neon recovery", () => {
         permit_bulk_chunks: "205",
         permit_list_loaded_rows: "28946",
         permit_list_chunks: "29",
+        coral_etrakit_loaded: "1000",
+        coral_etrakit_linked: "780",
+        coral_etrakit_roofing: "1000",
         sunbiz_match_roles: "21512",
         sunbiz_match_registrations: "12432",
         sunbiz_match_properties: "9023",
@@ -487,6 +491,22 @@ describe("durable Broward Neon recovery", () => {
       listLoadedRows: 28_946,
       listChunks: 29,
     });
+    expect(status.coralSpringsPermit).toEqual({
+      reported: 59_379,
+      exposed: 1_000,
+      paged: 0,
+      unique: 0,
+      details: 0,
+      loaded: 1_000,
+      linked: 780,
+      roofing: 1_000,
+      completedPages: 0,
+      totalPages: 50,
+      captureComplete: false,
+      completenessBoundary: "bounded_capped_keyword_slice",
+      captchaPrerequisite: "manual_authorization_required",
+      registryStatus: "captcha_required",
+    });
     expect(status.sunbizMatch).toEqual({
       matchedAddressRoles: 21_512,
       registrations: 12_432,
@@ -496,6 +516,75 @@ describe("durable Broward Neon recovery", () => {
     expect(JSON.stringify(status)).not.toContain("504108BJ0140");
     expect(JSON.stringify(status)).not.toContain("owner");
     expect(JSON.stringify(status)).not.toContain("address");
+  });
+
+  it("projects only reconciled Coral Springs checkpoint aggregates", async () => {
+    const root = await mkdtemp(
+      path.join(tmpdir(), "broward-coral-etrakit-dashboard-"),
+    );
+    temporaryDirectories.push(root);
+    const directory = path.join(
+      root,
+      "downloads/broward/coral-springs-etrakit/roof-permit-type-capped-20260901",
+    );
+    await mkdir(directory, { recursive: true });
+    /** @type {Record<string, {page:number,rowCount:number,rowDigest:string}>} */
+    const completedPages = {};
+    for (let page = 1; page <= 50; page += 1) {
+      completedPages[String(page)] = {
+        page,
+        rowCount: 20,
+        rowDigest: "0".repeat(64),
+      };
+    }
+    await writeFile(
+      path.join(directory, "checkpoint.private.json"),
+      JSON.stringify({
+        schemaVersion:
+          "oracle-node.broward-etrakit-capture-checkpoint.v1",
+        sourceSystem: "broward_coral_springs_etrakit_permits",
+        sourceReportedCount: 59_379,
+        expectedPageCount: 50,
+        expectedPageSize: 20,
+        completedPages,
+        capturedRowCount: 1_000,
+        uniqueRecordCount: 1_000,
+        duplicateRecordCount: 0,
+        conflictRecordCount: 0,
+        completed: true,
+        updatedAt: "2026-09-01T23:00:00.000Z",
+      }),
+    );
+    await expect(readCoralSpringsEtrakitStatus(root)).resolves.toEqual({
+      reported: 59_379,
+      exposed: 1_000,
+      paged: 1_000,
+      unique: 1_000,
+      details: 0,
+      completedPages: 50,
+      totalPages: 50,
+      captureComplete: true,
+      completenessBoundary: "bounded_capped_keyword_slice",
+      captchaPrerequisite: "manual_authorization_required",
+      registryStatus: "captcha_required",
+    });
+    await writeFile(
+      path.join(directory, "checkpoint.private.json"),
+      JSON.stringify({
+        sourceReportedCount: 59_379,
+        expectedPageCount: 50,
+        expectedPageSize: 20,
+        completedPages,
+        capturedRowCount: 1_000,
+        uniqueRecordCount: 999,
+        duplicateRecordCount: 0,
+        conflictRecordCount: 0,
+        completed: true,
+      }),
+    );
+    await expect(readCoralSpringsEtrakitStatus(root)).rejects.toThrow(
+      "do not reconcile",
+    );
   });
 
   it("reconciles current permit routes without counting supplemental coverage", () => {
