@@ -582,10 +582,17 @@ describe("durable Broward Neon recovery", () => {
       root,
       "downloads/broward/accela-csv-windows/plantation-full-v2",
     );
+    const cooperDirectory = path.join(
+      root,
+      "downloads/broward/accela-csv-windows/cooper-city-full",
+    );
     await Promise.all([
       mkdir(hollywoodDirectory, { recursive: true }),
       mkdir(oaklandDirectory, { recursive: true }),
       mkdir(plantationDirectory, { recursive: true }),
+      mkdir(path.join(cooperDirectory, "property-gap-fill"), {
+        recursive: true,
+      }),
     ]);
     await writeFile(
       path.join(hollywoodDirectory, "checkpoint.private.json"),
@@ -629,16 +636,43 @@ describe("durable Broward Neon recovery", () => {
         },
       }),
     );
+    await writeFile(
+      path.join(cooperDirectory, "checkpoint.private.json"),
+      JSON.stringify({
+        pendingWindows: [{ startDate: "PRIVATE", endDate: "PRIVATE" }],
+        completedWindows: {},
+        updatedAt: "2026-08-31T20:00:00.000Z",
+        cooldown: null,
+      }),
+    );
+    await writeFile(
+      path.join(
+        cooperDirectory,
+        "property-gap-fill",
+        "checkpoint.private.json",
+      ),
+      JSON.stringify({
+        plans: {
+          one: {
+            inspectedPropertyCount: 1,
+            retainedRecordCount: 2,
+            seedExhausted: false,
+          },
+        },
+        cooldown: null,
+        updatedAt: "2026-08-31T21:59:30.000Z",
+      }),
+    );
     const status = await readPermitEnumerationStatus(
       root,
       Date.parse("2026-08-31T22:00:00.000Z"),
     );
     expect(status).toMatchObject({
-      activeWorkers: 1,
+      activeWorkers: 2,
       completedWorkers: 1,
       completedWindows: 2,
       totalWindows: 4,
-      accessibleRecords: 52,
+      accessibleRecords: 54,
       excludedRecords: 2,
       invalidRecords: 0,
       sourceMissingRecords: 1,
@@ -658,6 +692,14 @@ describe("durable Broward Neon recovery", () => {
         status: "cooling_down",
         cooldownReason: "timeout",
         nextAttemptAt: "2026-08-31T23:00:00.000Z",
+      }),
+    );
+    expect(status.workers).toContainEqual(
+      expect.objectContaining({
+        source: "Cooper City",
+        status: "running",
+        accessibleRecords: 2,
+        updatedAt: "2026-08-31T21:59:30.000Z",
       }),
     );
     expect(status.workers).toContainEqual(

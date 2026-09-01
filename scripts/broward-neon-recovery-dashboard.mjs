@@ -640,6 +640,7 @@ const PERMIT_ENUMERATION_CHECKPOINTS = Object.freeze([
     source: "Hollywood",
     family: "accela_csv",
     pauseReason: "checkpoint_stale",
+    gapRelativePath: null,
     relativePath:
       "downloads/broward/accela-csv-windows/hollywood-full/checkpoint.private.json",
   },
@@ -647,6 +648,8 @@ const PERMIT_ENUMERATION_CHECKPOINTS = Object.freeze([
     source: "Plantation",
     family: "accela_csv",
     pauseReason: "timeout",
+    gapRelativePath:
+      "downloads/broward/accela-csv-windows/plantation-full-v2/property-gap-fill/checkpoint.private.json",
     relativePath:
       "downloads/broward/accela-csv-windows/plantation-full-v2/checkpoint.private.json",
   },
@@ -654,6 +657,8 @@ const PERMIT_ENUMERATION_CHECKPOINTS = Object.freeze([
     source: "Cooper City",
     family: "accela_csv",
     pauseReason: "source_cap",
+    gapRelativePath:
+      "downloads/broward/accela-csv-windows/cooper-city-full/property-gap-fill/checkpoint.private.json",
     relativePath:
       "downloads/broward/accela-csv-windows/cooper-city-full/checkpoint.private.json",
   },
@@ -661,6 +666,8 @@ const PERMIT_ENUMERATION_CHECKPOINTS = Object.freeze([
     source: "Weston",
     family: "accela_csv",
     pauseReason: "source_cap",
+    gapRelativePath:
+      "downloads/broward/accela-csv-windows/weston-full/property-gap-fill/checkpoint.private.json",
     relativePath:
       "downloads/broward/accela-csv-windows/weston-full/checkpoint.private.json",
   },
@@ -668,6 +675,7 @@ const PERMIT_ENUMERATION_CHECKPOINTS = Object.freeze([
     source: "Pembroke Pines",
     family: "tyler_api",
     pauseReason: "checkpoint_stale",
+    gapRelativePath: null,
     relativePath:
       "downloads/broward/tyler-date-windows/pembroke-pines-full-30d/checkpoint.private.json",
   },
@@ -675,6 +683,7 @@ const PERMIT_ENUMERATION_CHECKPOINTS = Object.freeze([
     source: "Hallandale Beach",
     family: "tyler_api",
     pauseReason: "timeout",
+    gapRelativePath: null,
     relativePath:
       "downloads/broward/tyler-date-windows/hallandale-beach-full-30d/checkpoint.private.json",
   },
@@ -682,6 +691,7 @@ const PERMIT_ENUMERATION_CHECKPOINTS = Object.freeze([
     source: "Miramar",
     family: "tyler_api",
     pauseReason: "checkpoint_stale",
+    gapRelativePath: null,
     relativePath:
       "downloads/broward/tyler-date-windows/miramar-full-2019/checkpoint.private.json",
   },
@@ -689,6 +699,7 @@ const PERMIT_ENUMERATION_CHECKPOINTS = Object.freeze([
     source: "Oakland Park",
     family: "tyler_api",
     pauseReason: "checkpoint_stale",
+    gapRelativePath: null,
     relativePath:
       "downloads/broward/tyler-date-windows/oakland-park-full-30d/checkpoint.private.json",
   },
@@ -733,6 +744,82 @@ function readPermitEnumerationCooldown(value, nowMs) {
       ),
     nextAttemptAt: cooldown.nextAttemptAt,
   };
+}
+
+/**
+ * Read aggregate-only property gap-fill activity. Property evidence can make a
+ * capped source operationally active or cooling, but it never completes the
+ * parent date window.
+ *
+ * @param {string} repositoryRoot - Repository root containing private state.
+ * @param {string | null} relativePath - Optional gap checkpoint path.
+ * @param {number} nowMs - Dashboard snapshot epoch.
+ * @returns {Promise<{
+ *   activePlan:boolean,
+ *   recentlyActive:boolean,
+ *   retainedRecordCount:number,
+ *   updatedAt:string,
+ *   updatedMs:number,
+ *   cooldown:{reason:"timeout" | "source_cap" | "incomplete_pagination" | "source_error",nextAttemptAt:string} | null
+ * } | null>} Public-safe partial strategy activity, when present.
+ */
+async function readPermitGapFillActivity(
+  repositoryRoot,
+  relativePath,
+  nowMs,
+) {
+  if (relativePath === null) return null;
+  try {
+    const parsed = /** @type {unknown} */ (
+      JSON.parse(
+        await readFile(path.resolve(repositoryRoot, relativePath), "utf8"),
+      )
+    );
+    if (
+      parsed === null ||
+      typeof parsed !== "object" ||
+      Array.isArray(parsed)
+    ) {
+      throw new Error("Permit property gap-fill checkpoint is not an object");
+    }
+    const checkpoint = /** @type {Record<string, unknown>} */ (parsed);
+    if (
+      !isRecord(checkpoint.plans) ||
+      typeof checkpoint.updatedAt !== "string"
+    ) {
+      throw new Error("Permit property gap-fill checkpoint is malformed");
+    }
+    let retainedRecordCount = 0;
+    let activePlan = false;
+    for (const value of Object.values(checkpoint.plans)) {
+      if (!isRecord(value) || typeof value.seedExhausted !== "boolean") {
+        throw new Error("Permit property gap-fill plan is malformed");
+      }
+      retainedRecordCount += safeAggregate(value.retainedRecordCount);
+      if (!value.seedExhausted) activePlan = true;
+    }
+    const updatedMs = Date.parse(checkpoint.updatedAt);
+    if (!Number.isFinite(updatedMs)) {
+      throw new Error("Permit property gap-fill timestamp is invalid");
+    }
+    const recentlyActive =
+      activePlan &&
+      nowMs - updatedMs >= 0 &&
+      nowMs - updatedMs <= 5 * 60_000;
+    return {
+      activePlan,
+      recentlyActive,
+      retainedRecordCount,
+      updatedAt: checkpoint.updatedAt,
+      updatedMs,
+      cooldown: activePlan
+        ? readPermitEnumerationCooldown(checkpoint.cooldown, nowMs)
+        : null,
+    };
+  } catch (error) {
+    if (isNodeError(error) && error.code === "ENOENT") return null;
+    throw error;
+  }
 }
 
 /**
@@ -799,17 +886,32 @@ export async function readPermitEnumerationStatus(
         const completedWindows = receipts.length;
         const pendingWindows = checkpoint.pendingWindows.length;
         const totalWindows = completedWindows + pendingWindows;
-        const updatedAt = checkpoint.updatedAt;
-        const updatedMs = Date.parse(updatedAt);
+        const parentUpdatedAt = checkpoint.updatedAt;
+        const parentUpdatedMs = Date.parse(parentUpdatedAt);
         const complete = pendingWindows === 0;
-        const cooldown = readPermitEnumerationCooldown(
+        const parentCooldown = readPermitEnumerationCooldown(
           checkpoint.cooldown,
           nowMs,
         );
-        const recentlyActive =
-          Number.isFinite(updatedMs) &&
-          nowMs - updatedMs >= 0 &&
-          nowMs - updatedMs <= 5 * 60_000;
+        const gapFill = await readPermitGapFillActivity(
+          repositoryRoot,
+          definition.gapRelativePath,
+          nowMs,
+        );
+        accessibleRecords += gapFill?.retainedRecordCount ?? 0;
+        const gapFillOwnsActivity = gapFill?.activePlan === true;
+        const cooldown = gapFillOwnsActivity
+          ? (gapFill.cooldown ?? parentCooldown)
+          : parentCooldown;
+        const recentlyActive = gapFillOwnsActivity
+          ? gapFill.recentlyActive
+          : Number.isFinite(parentUpdatedMs) &&
+            nowMs - parentUpdatedMs >= 0 &&
+            nowMs - parentUpdatedMs <= 5 * 60_000;
+        const updatedAt =
+          gapFill !== null && gapFill.updatedMs > parentUpdatedMs
+            ? gapFill.updatedAt
+            : parentUpdatedAt;
         const status = complete
           ? /** @type {"complete"} */ ("complete")
           : cooldown !== null
