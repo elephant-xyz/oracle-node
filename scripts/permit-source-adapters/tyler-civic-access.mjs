@@ -601,8 +601,21 @@ export async function createTylerDateWindowSession(rawConfig, logger) {
  * @returns {Promise<void>} Resolves after browser resources close.
  */
 export async function closeTylerDateWindowSession(session) {
-  await session.page.close().catch(() => undefined);
-  await session.browser.close().catch(() => undefined);
+  const browserProcess = session.browser.process();
+  try {
+    await promiseWithTimeout(
+      (async () => {
+        await session.page.close().catch(() => undefined);
+        await session.browser.close().catch(() => undefined);
+      })(),
+      15_000,
+      `${session.config.city} Tyler session close timed out`,
+    );
+  } catch {
+    if (browserProcess !== null && browserProcess.exitCode === null) {
+      browserProcess.kill("SIGKILL");
+    }
+  }
 }
 
 /**

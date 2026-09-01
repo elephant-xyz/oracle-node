@@ -72,7 +72,7 @@ describe("universal dashboard server & county registry", () => {
           accessibleRecords: 430_087,
           pausedWorkers: [
             { source: "Plantation", reason: "timeout" },
-            { source: "Weston", reason: "missing_export" },
+            { source: "Weston", reason: "source_cap" },
           ],
         },
         sunbizMatch: { registrations: 12_432, properties: 9_023 },
@@ -99,7 +99,7 @@ describe("universal dashboard server & county registry", () => {
             operationalWorkers: {
               paused: [
                 { source: "Plantation", reason: "timeout" },
-                { source: "Weston", reason: "missing_export" },
+                { source: "Weston", reason: "source_cap" },
               ],
             },
             permits: {

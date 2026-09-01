@@ -1099,9 +1099,17 @@ async function verifyAccelaSubmittedCriteria(
  * explicit no-result marker, or explicit source/access failure.
  *
  * @param {AccelaDomContext} context - Current page or named Accela frame.
+ * @param {number} [timeoutMs=60000] - Finite source outcome deadline.
  * @returns {Promise<void>} Resolves only on a classifiable outcome.
  */
-async function waitForSearchOutcome(context) {
+async function waitForSearchOutcome(context, timeoutMs = 60_000) {
+  if (
+    !Number.isInteger(timeoutMs) ||
+    timeoutMs < 30_000 ||
+    timeoutMs > 180_000
+  ) {
+    throw new Error("Accela search outcome timeout must be 30000 through 180000");
+  }
   await context.waitForFunction(
     () => {
       const text = document.body?.innerText ?? "";
@@ -1113,7 +1121,7 @@ async function waitForSearchOutcome(context) {
         )
       );
     },
-    { timeout: 60_000 },
+    { timeout: timeoutMs },
   );
 }
 
@@ -1772,7 +1780,8 @@ export function reconcileBrowardAccelaListPages({
  * @param {string} params.downloadDirectory - Existing/private window directory.
  * @param {number | undefined} [params.maxPages] - Bounded list-only page ceiling.
  * @param {BrowardAccelaRecordTypeShard | null | undefined} [params.recordTypeShard] - Optional exact public record-type filter.
- * @param {boolean | undefined} [params.stopAtCappedProbe] - Return non-terminal first-page evidence before an unsharded capped Plantation export.
+ * @param {boolean | undefined} [params.stopAtCappedProbe] - Return non-terminal first-page evidence before an unsharded capped export.
+ * @param {number | undefined} [params.searchOutcomeTimeoutMs] - Finite wait for the source to render a search result.
  * @param {Logger} params.logger - Structured logger.
  * @returns {Promise<BrowardAccelaCsvWindowResult>} Official exported window.
  */
@@ -1785,6 +1794,7 @@ export async function captureBrowardAccelaCsvWindow({
   maxPages = 200,
   recordTypeShard = null,
   stopAtCappedProbe = false,
+  searchOutcomeTimeoutMs = 60_000,
   logger,
 }) {
   const sourceWindowKey = buildBrowardAccelaDateWindowKey(
@@ -1842,7 +1852,7 @@ export async function captureBrowardAccelaCsvWindow({
       await selectAccelaRecordType(context, source, recordTypeShard);
     }
     await context.click(DEFAULT_SELECTORS.submit);
-    await waitForSearchOutcome(context);
+    await waitForSearchOutcome(context, searchOutcomeTimeoutMs);
     const searchHtml = await context.content();
     const classification = requireSuccessfulPageClassification(
       searchHtml,

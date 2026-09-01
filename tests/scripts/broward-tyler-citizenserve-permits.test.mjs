@@ -38,6 +38,8 @@ import {
   createTylerDateWindows,
   parseTylerDateWindowOptions,
   runTylerDateWindows,
+  splitTylerDateWindow,
+  tylerPageSizeForAttempt,
 } from "../../scripts/run-broward-tyler-date-windows.mjs";
 
 const fixtureDirectory = new URL(
@@ -294,6 +296,18 @@ describe("Tyler vendor-wide application-date windows", () => {
       sourceKey: "sunrise",
       maxWindows: 1,
     });
+    expect(
+      splitTylerDateWindow({
+        startDate: "2026-08-28",
+        endDate: "2026-08-31",
+      }),
+    ).toEqual([
+      { startDate: "2026-08-28", endDate: "2026-08-29" },
+      { startDate: "2026-08-30", endDate: "2026-08-31" },
+    ]);
+    expect(tylerPageSizeForAttempt(100, 1)).toBe(100);
+    expect(tylerPageSizeForAttempt(100, 2)).toBe(50);
+    expect(tylerPageSizeForAttempt(100, 3)).toBe(25);
   });
 
   it("checkpoints and resumes a persistent tenant window run", async () => {
@@ -304,6 +318,7 @@ describe("Tyler vendor-wide application-date windows", () => {
     let sessions = 0;
     let closed = 0;
     let searchAttempts = 0;
+    const attemptedPageSizes = [];
     const baseOptions = {
       sourceKey: "pembroke_pines",
       startDate: "2026-08-28",
@@ -325,8 +340,9 @@ describe("Tyler vendor-wide application-date windows", () => {
         closeSession: async () => {
           closed += 1;
         },
-        searchWindow: async (session, startDate, endDate) => {
+        searchWindow: async (session, startDate, endDate, pageSize) => {
           searchAttempts += 1;
+          attemptedPageSizes.push(pageSize);
           if (searchAttempts === 1) {
             throw new Error("transient tenant failure");
           }
@@ -397,10 +413,89 @@ describe("Tyler vendor-wide application-date windows", () => {
         "2026-08-30:2026-08-31",
       ]);
       expect(searchAttempts).toBe(3);
+      expect(attemptedPageSizes).toEqual([100, 50, 100]);
       expect(sessions).toBe(3);
       expect(closed).toBe(3);
     } finally {
       await rm(outputDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("splits an exhausted transient Tyler window and bounds a hung attempt", async () => {
+    const splitDirectory = await mkdtemp(
+      join(tmpdir(), "broward-tyler-window-split-"),
+    );
+    const timeoutDirectory = await mkdtemp(
+      join(tmpdir(), "broward-tyler-window-timeout-"),
+    );
+    const baseOptions = {
+      sourceKey: "hallandale_beach",
+      startDate: "2026-08-30",
+      endDate: "2026-08-31",
+      windowDays: 2,
+      pageSize: 100,
+      maxPages: 200,
+      delayMs: 1_000,
+      maxAttempts: 1,
+      maxWindows: 1,
+      outputDirectory: splitDirectory,
+    };
+    let closes = 0;
+    const dependencies = {
+      createSession: async (config) => ({ config }),
+      closeSession: async () => {
+        closes += 1;
+      },
+      searchWindow: async () => {
+        throw new Error("TimeoutError: signal timed out");
+      },
+      wait: async () => undefined,
+      now: () => "2026-09-01T20:00:00.000Z",
+    };
+    try {
+      const split = await runTylerDateWindows(baseOptions, dependencies);
+      expect(split).toMatchObject({
+        status: "paused",
+        completedWindowCount: 0,
+        pendingWindowCount: 2,
+      });
+      const checkpoint = JSON.parse(
+        await readFile(
+          join(splitDirectory, "checkpoint.private.json"),
+          "utf8",
+        ),
+      );
+      expect(checkpoint.pendingWindows).toEqual([
+        { startDate: "2026-08-30", endDate: "2026-08-30" },
+        { startDate: "2026-08-31", endDate: "2026-08-31" },
+      ]);
+      expect(checkpoint.splitWindows["20260830_20260831"]).toMatchObject({
+        reason: "timeout_or_throttle",
+      });
+      expect(closes).toBe(2);
+
+      await expect(
+        runTylerDateWindows(
+          {
+            ...baseOptions,
+            startDate: "2026-08-31",
+            endDate: "2026-08-31",
+            windowDays: 1,
+            outputDirectory: timeoutDirectory,
+          },
+          {
+            ...dependencies,
+            searchWindow: () => new Promise(() => undefined),
+            attemptTimeoutMs: 5,
+            closeTimeoutMs: 5,
+          },
+        ),
+      ).rejects.toThrow("Tyler window attempt timed out");
+    } finally {
+      await Promise.all([
+        rm(splitDirectory, { recursive: true, force: true }),
+        rm(timeoutDirectory, { recursive: true, force: true }),
+      ]);
     }
   });
 });

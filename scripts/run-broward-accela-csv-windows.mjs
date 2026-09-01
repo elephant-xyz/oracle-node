@@ -23,6 +23,11 @@ import {
 } from "./permit-source-adapters/broward-accela.mjs";
 
 const CHECKPOINT_SCHEMA_VERSION = "oracle-node.broward-accela-csv-windows.v1";
+const RECORD_TYPE_SHARD_SOURCE_KEYS = new Set([
+  "plantation",
+  "cooper-city",
+  "weston",
+]);
 const SOURCE_KEYS = new Set([
   "hollywood",
   "plantation",
@@ -287,6 +292,7 @@ export async function runAccelaCsvWindows(options, dependencies = {}) {
   const maxPages = options.maxPages ?? 200;
   const windowTimeoutMs = options.windowTimeoutMs ?? 120_000;
   const source = readBrowardAccelaSource(options.sourceKey);
+  const supportsRecordTypeShards = RECORD_TYPE_SHARD_SOURCE_KEYS.has(source.key);
   const outputDirectory = path.resolve(options.outputDirectory);
   const windowsDirectory = path.join(outputDirectory, "windows-private");
   const checkpointPath = path.join(outputDirectory, "checkpoint.private.json");
@@ -347,14 +353,21 @@ export async function runAccelaCsvWindows(options, dependencies = {}) {
             maxPages,
             recordTypeShard,
             stopAtCappedProbe:
-              source.key === "plantation" && recordTypeShard === null,
+              supportsRecordTypeShards && recordTypeShard === null,
+            searchOutcomeTimeoutMs:
+              source.key === "plantation" && recordTypeShard !== null
+                ? Math.min(
+                    90_000,
+                    Math.max(30_000, windowTimeoutMs - 15_000),
+                  )
+                : 60_000,
             logger,
           }),
           windowTimeoutMs,
           `${source.jurisdiction} Accela capture exceeded ${String(windowTimeoutMs)}ms`,
         );
       } catch (error) {
-        await browser.close().catch(() => undefined);
+        await closeAccelaBrowserWithinDeadline(browser);
         browser = null;
         if (!isRetryableCaptureError(error) || attempt >= options.maxAttempts) {
           throw error;
@@ -466,7 +479,7 @@ export async function runAccelaCsvWindows(options, dependencies = {}) {
         throw error;
       }
 
-      if (source.key === "plantation" && capture.displayedTotalCapped) {
+      if (supportsRecordTypeShards && capture.displayedTotalCapped) {
         await writeCaptureArtifacts({
           capture,
           sourceKey: source.key,
@@ -479,7 +492,7 @@ export async function runAccelaCsvWindows(options, dependencies = {}) {
             checkpointPath,
             window,
             windowKey,
-            reason: "plantation_displayed_total_cap",
+            reason: `${source.key}_displayed_total_cap`,
             completedAt: now(),
           });
           processed += 1;
@@ -487,7 +500,7 @@ export async function runAccelaCsvWindows(options, dependencies = {}) {
             sourceKey: source.key,
             startDate: window.startDate,
             endDate: window.endDate,
-            reason: "plantation_displayed_total_cap",
+            reason: `${source.key}_displayed_total_cap`,
           });
           continue;
         }
@@ -560,7 +573,7 @@ export async function runAccelaCsvWindows(options, dependencies = {}) {
       browser
     );
     if (finalBrowser !== null) {
-      await finalBrowser.close().catch(() => undefined);
+      await closeAccelaBrowserWithinDeadline(finalBrowser);
     }
   }
   const aggregate = await aggregateWindows(checkpoint, normalizedListPath);
@@ -725,7 +738,7 @@ async function writeShardCapture({
 
 /**
  * Freeze the complete public record-type option set for a capped one-day
- * Plantation window. The exact values, labels, and order become durable state.
+ * Accela window. The exact values, labels, and order become durable state.
  *
  * @param {Awaited<ReturnType<typeof captureBrowardAccelaCsvWindow>>} capture - Capped parent evidence.
  * @param {DateWindow} window - One-day parent.
@@ -740,7 +753,7 @@ function createRecordTypeShardPlan(capture, window, createdAt) {
   const shards = new Map();
   for (const option of capture.availableRecordTypes) {
     if (!option.value.startsWith("Building/")) {
-      throw new Error("Plantation record-type option escaped Building module");
+      throw new Error("Accela record-type option escaped Building module");
     }
     const key = `record-type-${createHash("sha256")
       .update(option.value)
@@ -748,7 +761,7 @@ function createRecordTypeShardPlan(capture, window, createdAt) {
       .slice(0, 16)}`;
     const existing = shards.get(option.value);
     if (existing !== undefined) {
-      throw new Error("Plantation record-type options contain a duplicate");
+      throw new Error("Accela record-type options contain a duplicate");
     }
     shards.set(option.value, { key, ...option });
   }
@@ -759,11 +772,11 @@ function createRecordTypeShardPlan(capture, window, createdAt) {
   );
   if (expectedShards.length === 0) {
     throw new Error(
-      "Plantation capped one-day window exposes no record-type shards",
+      "Accela capped one-day window exposes no record-type shards",
     );
   }
   if (new Set(expectedShards.map((shard) => shard.key)).size !== shards.size) {
-    throw new Error("Plantation record-type shard keys conflict");
+    throw new Error("Accela record-type shard keys conflict");
   }
   return {
     startDate: window.startDate,
@@ -1038,6 +1051,30 @@ export function retryAccelaCsvBackoffMs(delayMs, attempt, random) {
  */
 function retryBackoffMs(delayMs, attempt, random) {
   return retryAccelaCsvBackoffMs(delayMs, attempt, random);
+}
+
+/**
+ * Close one browser within a fixed wall deadline. A timed-out Puppeteer close
+ * can otherwise strand the worker after its source attempt already failed.
+ * Only the child Chromium process owned by this capture is force-terminated.
+ *
+ * @param {import("puppeteer").Browser} browser - Capture-owned browser.
+ * @returns {Promise<void>} Resolves after graceful close or bounded cleanup.
+ */
+async function closeAccelaBrowserWithinDeadline(browser) {
+  const browserProcess =
+    typeof browser.process === "function" ? browser.process() : null;
+  try {
+    await promiseWithTimeout(
+      browser.close(),
+      15_000,
+      "Accela browser close timed out",
+    );
+  } catch {
+    if (browserProcess !== null && browserProcess.exitCode === null) {
+      browserProcess.kill("SIGKILL");
+    }
+  }
 }
 
 /**

@@ -18,10 +18,13 @@ import { BROWARD_PERMIT_JURISDICTIONS } from "./permit-source-adapters/broward-p
 import {
   closeTylerDateWindowSession,
   createTylerDateWindowSession,
+  nextSmallerTylerPageSize,
   searchTylerDateWindow,
 } from "./permit-source-adapters/tyler-civic-access.mjs";
 
 const CHECKPOINT_SCHEMA_VERSION = "oracle-node.broward-tyler-date-windows.v1";
+const DEFAULT_WINDOW_ATTEMPT_TIMEOUT_MS = 300_000;
+const DEFAULT_SESSION_CLOSE_TIMEOUT_MS = 20_000;
 const TYLER_SOURCE_KEYS = new Set([
   "pembroke_pines",
   "hallandale_beach",
@@ -59,12 +62,21 @@ const TYLER_SOURCE_KEYS = new Set([
  * @property {string} linksPath - Private normalized page records.
  * @property {string} completedAt - ISO completion timestamp.
  *
+ * @typedef {object} TylerDateSplitReceipt
+ * @property {string} startDate - Inclusive parent start.
+ * @property {string} endDate - Inclusive parent end.
+ * @property {[DateWindow, DateWindow]} children - Exhaustive adjacent halves.
+ * @property {"timeout_or_throttle"} reason - Safe split classification.
+ * @property {string} completedAt - ISO split timestamp.
+ *
  * @typedef {object} TylerDateCheckpoint
  * @property {typeof CHECKPOINT_SCHEMA_VERSION} schemaVersion - Schema marker.
  * @property {TylerSourceKey} sourceKey - Tenant identity.
  * @property {string} configurationSha256 - Immutable run hash.
  * @property {DateWindow[]} pendingWindows - Remaining chronological windows.
  * @property {Record<string, CompletedTylerWindow>} completedWindows - Receipts.
+ * @property {Record<string, TylerDateSplitReceipt>} splitWindows
+ *   Non-terminal parent windows replaced by exhaustive halves.
  * @property {string} startedAt - ISO first start.
  * @property {string} updatedAt - ISO durable update.
  *
@@ -191,6 +203,55 @@ export function createTylerDateWindows(startDate, endDate, windowDays) {
 }
 
 /**
+ * Select the public UI page size for one transient attempt. Retries reduce
+ * response payload size without changing the durable run configuration or
+ * accepting partial pages.
+ *
+ * @param {number} configuredPageSize - Requested supported UI page size.
+ * @param {number} attempt - One-based retry attempt.
+ * @returns {10 | 25 | 50 | 100} Supported page size for this attempt.
+ */
+export function tylerPageSizeForAttempt(configuredPageSize, attempt) {
+  if (
+    ![10, 25, 50, 100].includes(configuredPageSize) ||
+    !Number.isInteger(attempt) ||
+    attempt < 1
+  ) {
+    throw new Error("Tyler adaptive page-size inputs are invalid");
+  }
+  let pageSize = /** @type {10 | 25 | 50 | 100} */ (configuredPageSize);
+  for (let index = 1; index < attempt; index += 1) {
+    pageSize = nextSmallerTylerPageSize(pageSize) ?? pageSize;
+  }
+  return pageSize;
+}
+
+/**
+ * Split one multi-day Tyler range into adjacent exhaustive UTC halves.
+ *
+ * @param {DateWindow} window - Validated source window.
+ * @returns {[DateWindow, DateWindow]} Ordered non-overlapping children.
+ */
+export function splitTylerDateWindow(window) {
+  const daySpan = inclusiveDaySpan(window);
+  if (daySpan < 2) {
+    throw new Error("Cannot split a one-day Tyler window");
+  }
+  const firstDays = Math.ceil(daySpan / 2);
+  const first = {
+    startDate: window.startDate,
+    endDate: addDays(window.startDate, firstDays - 1),
+  };
+  return [
+    first,
+    {
+      startDate: addDays(first.endDate, 1),
+      endDate: window.endDate,
+    },
+  ];
+}
+
+/**
  * Run or resume a persistent Tyler tenant session.
  *
  * @param {TylerDateWindowOptions} options - Validated options.
@@ -199,7 +260,9 @@ export function createTylerDateWindows(startDate, endDate, windowDays) {
  *   wait?:(milliseconds:number)=>Promise<void>,
  *   createSession?:typeof createTylerDateWindowSession,
  *   closeSession?:typeof closeTylerDateWindowSession,
- *   searchWindow?:typeof searchTylerDateWindow
+ *   searchWindow?:typeof searchTylerDateWindow,
+ *   attemptTimeoutMs?:number,
+ *   closeTimeoutMs?:number
  * }} [dependencies={}] - Injectable runtime dependencies.
  * @returns {Promise<TylerDateWindowSummary>} Reconciled run summary.
  */
@@ -252,6 +315,10 @@ export async function runTylerDateWindows(options, dependencies = {}) {
     dependencies.createSession ?? createTylerDateWindowSession;
   const closeSession = dependencies.closeSession ?? closeTylerDateWindowSession;
   const searchWindow = dependencies.searchWindow ?? searchTylerDateWindow;
+  const attemptTimeoutMs =
+    dependencies.attemptTimeoutMs ?? DEFAULT_WINDOW_ATTEMPT_TIMEOUT_MS;
+  const closeTimeoutMs =
+    dependencies.closeTimeoutMs ?? DEFAULT_SESSION_CLOSE_TIMEOUT_MS;
   let session = await createSession(config, logger);
   let processed = 0;
   try {
@@ -263,34 +330,75 @@ export async function runTylerDateWindows(options, dependencies = {}) {
       if (window === undefined) break;
       if (processed > 0) await wait(options.delayMs);
       let result;
+      /** @type {unknown} */
+      let terminalError;
       for (let attempt = 1; attempt <= options.maxAttempts; attempt += 1) {
+        const pageSize = tylerPageSizeForAttempt(options.pageSize, attempt);
         try {
-          result = await searchWindow(
-            session,
-            window.startDate,
-            window.endDate,
-            options.pageSize,
-            options.maxPages,
-            options.delayMs,
-            wait,
+          result = await promiseWithTimeout(
+            searchWindow(
+              session,
+              window.startDate,
+              window.endDate,
+              pageSize,
+              options.maxPages,
+              options.delayMs,
+              wait,
+            ),
+            attemptTimeoutMs,
+            `${config.city} Tyler window attempt timed out`,
           );
           break;
         } catch (error) {
-          if (attempt >= options.maxAttempts) throw error;
+          terminalError = error;
+          if (attempt >= options.maxAttempts) break;
           logger.warn("broward_tyler_date_window_retry", {
             sourceKey: options.sourceKey,
             startDate: window.startDate,
             endDate: window.endDate,
             attempt,
+            pageSize,
             error: error instanceof Error ? error.message : "Unknown error",
           });
-          await closeSession(session);
+          await closeTylerSessionWithinDeadline(
+            session,
+            closeSession,
+            closeTimeoutMs,
+          );
           await wait(Math.max(options.delayMs * attempt, 5_000));
           session = await createSession(config, logger);
         }
       }
       if (result === undefined) {
-        throw new Error("Tyler date window exhausted without a result");
+        if (
+          inclusiveDaySpan(window) > 1 &&
+          isTylerCompletenessFailure(terminalError)
+        ) {
+          await closeTylerSessionWithinDeadline(
+            session,
+            closeSession,
+            closeTimeoutMs,
+          );
+          session = await createSession(config, logger);
+          checkpoint = await splitPendingTylerWindow({
+            checkpoint,
+            checkpointPath,
+            window,
+            completedAt: now(),
+          });
+          processed += 1;
+          logger.warn("broward_tyler_date_window_split", {
+            sourceKey: options.sourceKey,
+            startDate: window.startDate,
+            endDate: window.endDate,
+            reason: "timeout_or_throttle",
+          });
+          continue;
+        }
+        throw (
+          terminalError ??
+          new Error("Tyler date window exhausted without a result")
+        );
       }
       const windowKey = localWindowKey(window);
       const windowDirectory = path.join(windowsDirectory, windowKey);
@@ -350,7 +458,11 @@ export async function runTylerDateWindows(options, dependencies = {}) {
       processed += 1;
     }
   } finally {
-    await closeSession(session);
+    await closeTylerSessionWithinDeadline(
+      session,
+      closeSession,
+      closeTimeoutMs,
+    );
   }
   const aggregate = await aggregateWindows(checkpoint, normalizedListPath);
   const summary = {
@@ -377,6 +489,128 @@ export async function runTylerDateWindows(options, dependencies = {}) {
     `${JSON.stringify(summary, null, 2)}\n`,
   );
   return summary;
+}
+
+/**
+ * Close a tenant session without allowing Puppeteer cleanup to strand the
+ * enumerator. The production closer independently terminates its owned browser
+ * process when graceful cleanup exceeds its own deadline.
+ *
+ * @param {Parameters<typeof closeTylerDateWindowSession>[0]} session - Open tenant session.
+ * @param {typeof closeTylerDateWindowSession} closeSession - Injectable closer.
+ * @param {number} timeoutMs - Maximum close wall time.
+ * @returns {Promise<void>} Resolves after close or bounded abandonment.
+ */
+async function closeTylerSessionWithinDeadline(
+  session,
+  closeSession,
+  timeoutMs,
+) {
+  await promiseWithTimeout(
+    closeSession(session),
+    timeoutMs,
+    "Tyler session cleanup timed out",
+  ).catch(() => undefined);
+}
+
+/**
+ * Replace the first pending Tyler parent with exhaustive adjacent halves.
+ * Completed windows and all prior receipts remain byte-for-byte referenced.
+ *
+ * @param {object} params - Durable split state.
+ * @param {TylerDateCheckpoint} params.checkpoint - Current checkpoint.
+ * @param {string} params.checkpointPath - Existing private checkpoint path.
+ * @param {DateWindow} params.window - Current first pending range.
+ * @param {string} params.completedAt - Split completion timestamp.
+ * @returns {Promise<TylerDateCheckpoint>} Persisted checkpoint with children.
+ */
+async function splitPendingTylerWindow({
+  checkpoint,
+  checkpointPath,
+  window,
+  completedAt,
+}) {
+  const children = splitTylerDateWindow(window);
+  const windowKey = localWindowKey(window);
+  const nextCheckpoint = {
+    ...checkpoint,
+    pendingWindows: [...children, ...checkpoint.pendingWindows.slice(1)],
+    splitWindows: {
+      ...checkpoint.splitWindows,
+      [windowKey]: {
+        startDate: window.startDate,
+        endDate: window.endDate,
+        children,
+        reason: /** @type {"timeout_or_throttle"} */ ("timeout_or_throttle"),
+        completedAt,
+      },
+    },
+    updatedAt: completedAt,
+  };
+  await writePrivateAtomic(
+    checkpointPath,
+    `${JSON.stringify(nextCheckpoint, null, 2)}\n`,
+  );
+  return nextCheckpoint;
+}
+
+/**
+ * Identify only transient source failures for which an exhaustive date split
+ * can reduce response size without changing search semantics.
+ *
+ * @param {unknown} error - Terminal attempt failure.
+ * @returns {boolean} Whether a multi-day range may be safely divided.
+ */
+function isTylerCompletenessFailure(error) {
+  if (!(error instanceof Error)) return false;
+  return /timed out|timeout|signal timed out|HTTP (?:429|5\d\d)|exceeds maxPages|totals changed/iu.test(
+    error.message,
+  );
+}
+
+/**
+ * Bound one async operation even when Puppeteer or an in-page fetch ignores
+ * its own cancellation signal.
+ *
+ * @template Result
+ * @param {Promise<Result>} promise - Operation to bound.
+ * @param {number} timeoutMs - Positive finite deadline.
+ * @param {string} message - Stable timeout error.
+ * @returns {Promise<Result>} Result completed within the deadline.
+ */
+async function promiseWithTimeout(promise, timeoutMs, message) {
+  if (!Number.isInteger(timeoutMs) || timeoutMs < 1) {
+    throw new Error("Tyler operation timeout must be a positive integer");
+  }
+  /** @type {NodeJS.Timeout | undefined} */
+  let timeout;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, rejectPromise) => {
+        timeout = setTimeout(
+          () => rejectPromise(new Error(message)),
+          timeoutMs,
+        );
+      }),
+    ]);
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout);
+  }
+}
+
+/**
+ * Count inclusive UTC days in one validated Tyler window.
+ *
+ * @param {DateWindow} window - Inclusive date range.
+ * @returns {number} Positive day span.
+ */
+function inclusiveDaySpan(window) {
+  return (
+    Math.floor(
+      (toMillis(window.endDate) - toMillis(window.startDate)) / 86_400_000,
+    ) + 1
+  );
 }
 
 /**
@@ -482,13 +716,22 @@ async function readOrCreateCheckpoint(checkpointPath, options, startedAt) {
       parsed.sourceKey !== options.sourceKey ||
       parsed.configurationSha256 !== configurationSha256 ||
       !Array.isArray(parsed.pendingWindows) ||
-      !isRecord(parsed.completedWindows)
+      !isRecord(parsed.completedWindows) ||
+      (parsed.splitWindows !== undefined && !isRecord(parsed.splitWindows))
     ) {
       throw new Error(
         "Existing Tyler checkpoint does not match run configuration",
       );
     }
-    return /** @type {TylerDateCheckpoint} */ (parsed);
+    return {
+      .../** @type {TylerDateCheckpoint} */ (parsed),
+      splitWindows:
+        parsed.splitWindows === undefined
+          ? {}
+          : /** @type {Record<string, TylerDateSplitReceipt>} */ (
+              parsed.splitWindows
+            ),
+    };
   } catch (error) {
     if (!isNodeError(error) || error.code !== "ENOENT") throw error;
   }
@@ -502,6 +745,7 @@ async function readOrCreateCheckpoint(checkpointPath, options, startedAt) {
       options.windowDays,
     ),
     completedWindows: {},
+    splitWindows: {},
     startedAt,
     updatedAt: startedAt,
   };

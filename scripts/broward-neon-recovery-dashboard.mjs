@@ -97,12 +97,12 @@ const DEFAULT_PORT = 47_832;
  * @property {number} invalidRecords - Malformed source rows.
  * @property {number} sourceMissingRecords - Reported but inaccessible rows.
  * @property {string | null} updatedAt - Last durable checkpoint time.
- * @property {"timeout" | "missing_controls" | "missing_export" | "checkpoint_stale" | null} pauseReason
+ * @property {"timeout" | "missing_controls" | "missing_export" | "source_cap" | "checkpoint_stale" | null} pauseReason
  *   Allowlisted operational reason when this worker is paused.
  *
  * @typedef {object} PausedPermitEnumerationWorker
  * @property {string} source - Public jurisdiction label.
- * @property {"timeout" | "missing_controls" | "missing_export" | "checkpoint_stale"} reason
+ * @property {"timeout" | "missing_controls" | "missing_export" | "source_cap" | "checkpoint_stale"} reason
  *   Allowlisted operational reason containing no source record or raw error.
  *
  * @typedef {object} PermitEnumerationStatus
@@ -641,14 +641,14 @@ const PERMIT_ENUMERATION_CHECKPOINTS = Object.freeze([
   {
     source: "Cooper City",
     family: "accela_csv",
-    pauseReason: "missing_controls",
+    pauseReason: "source_cap",
     relativePath:
       "downloads/broward/accela-csv-windows/cooper-city-full/checkpoint.private.json",
   },
   {
     source: "Weston",
     family: "accela_csv",
-    pauseReason: "missing_export",
+    pauseReason: "source_cap",
     relativePath:
       "downloads/broward/accela-csv-windows/weston-full/checkpoint.private.json",
   },
@@ -662,7 +662,7 @@ const PERMIT_ENUMERATION_CHECKPOINTS = Object.freeze([
   {
     source: "Hallandale Beach",
     family: "tyler_api",
-    pauseReason: "checkpoint_stale",
+    pauseReason: "timeout",
     relativePath:
       "downloads/broward/tyler-date-windows/hallandale-beach-full-30d/checkpoint.private.json",
   },
@@ -776,7 +776,7 @@ export async function readPermitEnumerationStatus(
           updatedAt,
           pauseReason:
             status === "paused"
-              ? /** @type {"timeout" | "missing_controls" | "missing_export" | "checkpoint_stale"} */ (
+              ? /** @type {"timeout" | "missing_controls" | "missing_export" | "source_cap" | "checkpoint_stale"} */ (
                   definition.pauseReason
                 )
               : null,

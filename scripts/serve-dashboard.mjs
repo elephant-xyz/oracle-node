@@ -55,7 +55,7 @@ const DASHBOARD_HTML_PATH = resolve(__dirname, "common/dashboard.html");
  *
  * @typedef {object} UniversalPausedPermitWorker
  * @property {string} source - Public jurisdiction label.
- * @property {"timeout" | "missing_controls" | "missing_export" | "checkpoint_stale"} reason
+ * @property {"timeout" | "missing_controls" | "missing_export" | "source_cap" | "checkpoint_stale"} reason
  *   Allowlisted operational pause reason.
  */
 
@@ -494,6 +494,7 @@ function readBrowardPausedPermitWorkers(value, implementedJurisdictions) {
     "timeout",
     "missing_controls",
     "missing_export",
+    "source_cap",
     "checkpoint_stale",
   ]);
   const workerSources = new Set();
@@ -518,7 +519,7 @@ function readBrowardPausedPermitWorkers(value, implementedJurisdictions) {
     return {
       source,
       reason:
-        /** @type {"timeout" | "missing_controls" | "missing_export" | "checkpoint_stale"} */ (
+        /** @type {"timeout" | "missing_controls" | "missing_export" | "source_cap" | "checkpoint_stale"} */ (
           reason
         ),
     };

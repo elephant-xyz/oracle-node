@@ -996,6 +996,107 @@ describe("Broward official Accela CSV exports", () => {
     });
   });
 
+  it("plans exhaustive record-type shards for capped one-day tenant lists", async () => {
+    const outputDirectory = await mkdtemp(
+      join(tmpdir(), "broward-accela-tenant-type-shards-"),
+    );
+    temporaryDirectories.push(outputDirectory);
+    const calls = [];
+    const dependencies = {
+      createBrowser: async () => ({
+        close: async () => undefined,
+      }),
+      captureWindow: async ({
+        source,
+        startDate,
+        endDate,
+        recordTypeShard,
+        stopAtCappedProbe,
+      }) => {
+        calls.push({
+          sourceKey: source.key,
+          recordTypeShard,
+          stopAtCappedProbe,
+        });
+        return {
+          startDate,
+          endDate,
+          sourceWindowKey: `${source.key}:date:${startDate}:${endDate}`,
+          displayedTotal: 100,
+          displayedTotalCapped: true,
+          captureMode: "capped_probe",
+          records: [],
+          sourceRowCount: 0,
+          excludedNonPermitCount: 0,
+          duplicateRecordCount: 0,
+          pageCount: 1,
+          availableRecordTypes: [
+            {
+              value: "Building/Building Permit/NA/NA",
+              label: "Building Permit",
+            },
+            {
+              value: "Building/Electrical Permit/NA/NA",
+              label: "Electrical Permit",
+            },
+          ],
+          recordTypeShard,
+          rawCsv: "",
+          rawSearchHtml: "<html>capped</html>",
+          rawListPages: ["<html>capped</html>"],
+        };
+      },
+      wait: async () => undefined,
+      random: () => 0,
+      now: () => "2026-09-01T20:00:00.000Z",
+    };
+    for (const sourceKey of ["weston", "cooper-city"]) {
+      const sourceOutputDirectory = join(outputDirectory, sourceKey);
+      const summary = await runAccelaCsvWindows(
+        {
+          sourceKey,
+          startDate: "2006-04-22",
+          endDate: "2006-04-22",
+          windowDays: 1,
+          delayMs: 1_000,
+          maxAttempts: 1,
+          maxPages: 200,
+          windowTimeoutMs: 120_000,
+          maxWindows: 1,
+          outputDirectory: sourceOutputDirectory,
+        },
+        dependencies,
+      );
+      expect(summary).toMatchObject({
+        status: "paused",
+        completedWindowCount: 0,
+        pendingWindowCount: 1,
+      });
+      const checkpoint = JSON.parse(
+        await readFile(
+          join(sourceOutputDirectory, "checkpoint.private.json"),
+          "utf8",
+        ),
+      );
+      expect(
+        checkpoint.shardPlans["20060422_20060422"].expectedShards,
+      ).toHaveLength(2);
+      expect(checkpoint.completedWindows).toEqual({});
+    }
+    expect(calls).toEqual([
+      {
+        sourceKey: "weston",
+        recordTypeShard: null,
+        stopAtCappedProbe: true,
+      },
+      {
+        sourceKey: "cooper-city",
+        recordTypeShard: null,
+        stopAtCappedProbe: true,
+      },
+    ]);
+  });
+
   it("checkpoints and resumes exhaustive Plantation record-type shards", async () => {
     const outputDirectory = await mkdtemp(
       join(tmpdir(), "broward-accela-record-type-shards-"),
@@ -1025,15 +1126,19 @@ describe("Broward official Accela CSV exports", () => {
     ];
     /** @type {string[]} */
     const operations = [];
+    /** @type {number[]} */
+    const searchOutcomeTimeouts = [];
     const captureWindow = async ({
       source,
       startDate,
       endDate,
       recordTypeShard,
+      searchOutcomeTimeoutMs,
     }) => {
       const operation =
         recordTypeShard === null ? "parent" : recordTypeShard.label;
       operations.push(operation);
+      searchOutcomeTimeouts.push(searchOutcomeTimeoutMs);
       const label = recordTypeShard?.label ?? "Building Permit";
       const suffix =
         recordTypeShard === null
@@ -1125,6 +1230,7 @@ describe("Broward official Accela CSV exports", () => {
       "Building Permit",
       "Electrical Permit",
     ]);
+    expect(searchOutcomeTimeouts).toEqual([60_000, 90_000, 90_000]);
     checkpoint = JSON.parse(
       await readFile(join(outputDirectory, "checkpoint.private.json"), "utf8"),
     );
