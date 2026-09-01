@@ -120,8 +120,7 @@ function etrakitListRecord(index, page, overrides = {}) {
     status: "Issued",
     address: "SYNTHETIC LOCATION",
     folio: "000000000001",
-    sourceUrl:
-      "https://etrakit.coralsprings.gov/eTRAKiT/Search/permit.aspx",
+    sourceUrl: "https://etrakit.coralsprings.gov/eTRAKiT/Search/permit.aspx",
     sourcePages: [page],
     isRoofPermit: true,
     coverage: {

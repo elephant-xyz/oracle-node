@@ -255,10 +255,10 @@ export async function readPermitListRecords(inputPath) {
     throw new Error("Broward permit list input is empty");
   }
   const records = [...byKey.values()]
-      .map((entry) => entry.record)
-      .sort((left, right) =>
-        left.sourceRecordKey.localeCompare(right.sourceRecordKey),
-      );
+    .map((entry) => entry.record)
+    .sort((left, right) =>
+      left.sourceRecordKey.localeCompare(right.sourceRecordKey),
+    );
   validateCompletedEtrakitSlice(records, sourceCount, sourceCount - byKey.size);
   return {
     records,
@@ -279,11 +279,7 @@ export async function readPermitListRecords(inputPath) {
  * @param {number} duplicateCount - Exact duplicate input rows.
  * @returns {void}
  */
-function validateCompletedEtrakitSlice(
-  records,
-  sourceCount,
-  duplicateCount,
-) {
+function validateCompletedEtrakitSlice(records, sourceCount, duplicateCount) {
   const etrakitRecords = records.filter(
     (record) => record.sourceSystem === CORAL_SPRINGS_ETRAKIT_SOURCE_SYSTEM,
   );
@@ -1012,8 +1008,7 @@ function isEtrakitListRecord(value) {
     value.coverage.exposedRecordCap === 1_000 &&
     value.coverage.exposedPageCount === 50 &&
     value.coverage.pageSize === 20 &&
-    value.coverage.completenessBoundary ===
-      "bounded_capped_keyword_slice" &&
+    value.coverage.completenessBoundary === "bounded_capped_keyword_slice" &&
     value.coverage.countEvidence === "operator_observed_source_result"
   );
 }

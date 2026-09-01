@@ -87,10 +87,7 @@ describe("Coral Springs existing-session eTRAKiT capture", () => {
       ]),
     ).toEqual(options);
     expect(() =>
-      parseEtrakitCaptureOptions([
-        "--output-dir",
-        "downloads/private-coral",
-      ]),
+      parseEtrakitCaptureOptions(["--output-dir", "downloads/private-coral"]),
     ).toThrow("--reported-count");
     expect(() =>
       parseEtrakitCaptureOptions([

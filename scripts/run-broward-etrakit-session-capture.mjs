@@ -26,8 +26,7 @@ const SEARCH_PATH = "/eTRAKiT/Search/permit.aspx";
 const SCHEMA_VERSION = "oracle-node.broward-etrakit-list.v1";
 const CHECKPOINT_SCHEMA_VERSION =
   "oracle-node.broward-etrakit-capture-checkpoint.v1";
-const SUMMARY_SCHEMA_VERSION =
-  "oracle-node.broward-etrakit-capture-summary.v1";
+const SUMMARY_SCHEMA_VERSION = "oracle-node.broward-etrakit-capture-summary.v1";
 
 /**
  * @typedef {object} EtrakitCaptureOptions
@@ -214,7 +213,10 @@ function readBoundedInteger(value, flag, minimum, maximum) {
  */
 function optionalText(value) {
   if (typeof value !== "string") return null;
-  const normalized = value.replace(/\u00a0/gu, " ").replace(/\s+/gu, " ").trim();
+  const normalized = value
+    .replace(/\u00a0/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
   return normalized === "" ? null : normalized;
 }
 
@@ -316,7 +318,9 @@ export function validateEtrakitBrowserContract(
       `Buttons to move Next/Previous page ${String(expectedPage)} of ${String(options.expectedPageCount)}`,
     )
   ) {
-    throw new Error("eTRAKiT browser result contract is not the approved slice");
+    throw new Error(
+      "eTRAKiT browser result contract is not the approved slice",
+    );
   }
   if (contract.eventValidationPresent !== false) {
     throw new Error(
@@ -339,7 +343,9 @@ export function validateEtrakitBrowserContract(
  */
 export function reconcileEtrakitPage(records, rows, page, options) {
   if (rows.length !== options.expectedPageSize) {
-    throw new Error("eTRAKiT page row count does not match the exposed contract");
+    throw new Error(
+      "eTRAKiT page row count does not match the exposed contract",
+    );
   }
   let duplicateCount = 0;
   /** @type {string[]} */
@@ -525,30 +531,32 @@ async function typeConsoleExpression(windowId, expression) {
  * @returns {Promise<void>} Resolves after clipboard ownership is established.
  */
 async function setClipboardMarker(marker) {
-  await new Promise((resolvePromise, rejectPromise) => {
-    const child = spawn("xclip", ["-selection", "clipboard"], {
-      stdio: ["pipe", "ignore", "ignore"],
-    });
-    let settled = false;
-    const finish = (/** @type {Error | null} */ error) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      if (error === null) resolvePromise();
-      else rejectPromise(error);
-    };
-    const timer = setTimeout(() => {
-      /*
-       * A live xclip process owns the selection until the browser replaces it.
-       * Ownership, rather than process exit, is the successful steady state.
-       */
-      finish(null);
-    }, 100);
-    child.on("error", () => {
-      finish(new Error("xclip could not establish clipboard ownership"));
-    });
-    child.stdin.end(marker);
-  });
+  await /** @type {Promise<void>} */ (
+    new Promise((resolvePromise, rejectPromise) => {
+      const child = spawn("xclip", ["-selection", "clipboard"], {
+        stdio: ["pipe", "ignore", "ignore"],
+      });
+      let settled = false;
+      const finish = (/** @type {Error | null} */ error) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        if (error === null) resolvePromise();
+        else rejectPromise(error);
+      };
+      const timer = setTimeout(() => {
+        /*
+         * A live xclip process owns the selection until the browser replaces it.
+         * Ownership, rather than process exit, is the successful steady state.
+         */
+        finish(null);
+      }, 100);
+      child.on("error", () => {
+        finish(new Error("xclip could not establish clipboard ownership"));
+      });
+      child.stdin.end(marker);
+    })
+  );
 }
 
 /**
@@ -557,11 +565,10 @@ async function setClipboardMarker(marker) {
  * @returns {Promise<string>} Clipboard contents retained only in memory.
  */
 async function readClipboard() {
-  return runProcess(
-    "xclip",
-    ["-selection", "clipboard", "-o"],
-    { timeoutMs: 3_000, maxBytes: 2_000_000 },
-  );
+  return runProcess("xclip", ["-selection", "clipboard", "-o"], {
+    timeoutMs: 3_000,
+    maxBytes: 2_000_000,
+  });
 }
 
 /**
@@ -586,12 +593,7 @@ async function wait(delayMs) {
  * @param {number} deadlineMs - Finite clipboard deadline.
  * @returns {Promise<Record<string, unknown>>} Parsed exchange object.
  */
-async function executeConsoleExchange(
-  windowId,
-  expression,
-  nonce,
-  deadlineMs,
-) {
+async function executeConsoleExchange(windowId, expression, nonce, deadlineMs) {
   const marker = `etrakit-capture-pending:${nonce}`;
   await setClipboardMarker(marker);
   await typeConsoleExpression(windowId, expression);
@@ -741,11 +743,7 @@ async function readOptionalJson(filePath) {
       JSON.parse(await readFile(filePath, "utf8"))
     );
   } catch (error) {
-    if (
-      error instanceof Error &&
-      "code" in error &&
-      error.code === "ENOENT"
-    ) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
       return undefined;
     }
     throw error;
@@ -794,11 +792,7 @@ async function readExistingRecords(filePath) {
   try {
     text = await readFile(filePath, "utf8");
   } catch (error) {
-    if (
-      error instanceof Error &&
-      "code" in error &&
-      error.code === "ENOENT"
-    ) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
       return records;
     }
     throw error;
@@ -822,10 +816,7 @@ async function readExistingRecords(filePath) {
     ) {
       throw new Error("eTRAKiT private JSONL identity is invalid");
     }
-    records.set(
-      candidate.recordKey,
-      /** @type {EtrakitListRecord} */ (parsed),
-    );
+    records.set(candidate.recordKey, /** @type {EtrakitListRecord} */ (parsed));
   }
   return records;
 }
@@ -890,11 +881,7 @@ async function readExpectedBrowserPage(windowId, expectedPage, options) {
         options.consoleDeadlineMs,
       );
       const envelope = readBrowserCaptureEnvelope(raw);
-      validateEtrakitBrowserContract(
-        envelope.contract,
-        expectedPage,
-        options,
-      );
+      validateEtrakitBrowserContract(envelope.contract, expectedPage, options);
       return envelope;
     } catch {
       await wait(500);
@@ -926,7 +913,12 @@ async function waitForPumpedBrowserPage(
       try {
         parsed = /** @type {unknown} */ (JSON.parse(contents));
       } catch {
-        throw new Error("eTRAKiT page pump returned non-JSON data");
+        /*
+         * Clipboard ownership is global to the desktop. Ignore unrelated
+         * non-JSON values without reading, logging, or persisting them.
+         */
+        await wait(100);
+        continue;
       }
       if (
         parsed !== null &&
@@ -991,8 +983,7 @@ export async function runEtrakitSessionCapture(options) {
   const completedPageNumbers = Object.keys(completedPages)
     .map(Number)
     .sort((left, right) => left - right);
-  const firstPendingPage =
-    (completedPageNumbers.at(-1) ?? 0) + 1;
+  const firstPendingPage = (completedPageNumbers.at(-1) ?? 0) + 1;
   if (
     completedPageNumbers.some((page, index) => page !== index + 1) ||
     firstPendingPage > options.expectedPageCount
@@ -1034,7 +1025,10 @@ export async function runEtrakitSessionCapture(options) {
     completedPages[String(page)] = reconciled.receipt;
     capturedRowCount += reconciled.receipt.rowCount;
     duplicateRecordCount += reconciled.duplicateCount;
-    await writePrivateFile(recordsPath, renderEtrakitListJsonl(records.values()));
+    await writePrivateFile(
+      recordsPath,
+      renderEtrakitListJsonl(records.values()),
+    );
     /** @type {EtrakitCaptureCheckpoint} */
     const checkpoint = {
       schemaVersion: CHECKPOINT_SCHEMA_VERSION,
@@ -1056,8 +1050,7 @@ export async function runEtrakitSessionCapture(options) {
     );
   }
 
-  const exposedRecordCap =
-    options.expectedPageCount * options.expectedPageSize;
+  const exposedRecordCap = options.expectedPageCount * options.expectedPageSize;
   if (
     capturedRowCount !== exposedRecordCap ||
     records.size + duplicateRecordCount !== capturedRowCount
@@ -1075,10 +1068,8 @@ export async function runEtrakitSessionCapture(options) {
     conflictRecordCount: /** @type {const} */ (0),
     detailRecordCount: /** @type {const} */ (0),
     completedPageCount: options.expectedPageCount,
-    completenessBoundary:
-      /** @type {const} */ ("bounded_capped_keyword_slice"),
-    captchaPrerequisite:
-      /** @type {const} */ ("manual_authorization_reused"),
+    completenessBoundary: /** @type {const} */ ("bounded_capped_keyword_slice"),
+    captchaPrerequisite: /** @type {const} */ ("manual_authorization_reused"),
     registryStatus: /** @type {const} */ ("captcha_required"),
   });
   await writePrivateFile(

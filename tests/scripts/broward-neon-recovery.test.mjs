@@ -540,8 +540,7 @@ describe("durable Broward Neon recovery", () => {
     await writeFile(
       path.join(directory, "checkpoint.private.json"),
       JSON.stringify({
-        schemaVersion:
-          "oracle-node.broward-etrakit-capture-checkpoint.v1",
+        schemaVersion: "oracle-node.broward-etrakit-capture-checkpoint.v1",
         sourceSystem: "broward_coral_springs_etrakit_permits",
         sourceReportedCount: 59_379,
         expectedPageCount: 50,
