@@ -227,13 +227,14 @@ node scripts/run-pinellas-local-ingest.mjs \
   --concurrency 4 \
   --fetch-concurrency 8 \
   --fetch-timeout-ms 12000 \
+  --transform-timeout-ms 60000 \
   --scripts downloads/Counties-trasform-scripts/pinellas/scripts \
   --output downloads/pinellas/local-ingest
 ```
 
-The ingest GETs print HTML with a Chrome UA (12s timeout, 8 in-flight fetches), runs Pinellas scripts in **persistent workers** (no per-parcel Node spawn), and writes `downloads/pinellas/local-ingest/<STRAP>/transformed.zip`. Restart-safe: existing zips are skipped in a pre-scan. Progress is `status.json`. Lexicon validate is skipped for the full roll (already proven 50/50 on the pilot).
+The ingest GETs print HTML with a Chrome UA (12s timeout, 8 in-flight fetches), runs Pinellas scripts in **persistent workers** (no per-parcel Node spawn), and writes `downloads/pinellas/local-ingest/<STRAP>/transformed.zip`. Restart-safe: existing zips are skipped in a pre-scan (tiny or non-PKZIP files are treated as incomplete). Progress is `status.json` (30s heartbeat plus `lastCompletedAt` so a stall is visible). Lexicon validate is skipped for the full roll (already proven 50/50 on the pilot).
 
-Hung print GETs previously stalled the run for hours; `--fetch-timeout-ms` aborts those. Do not jump fetch concurrency past 8 without watching for PCPAO 403s.
+Hung print GETs previously stalled the run for hours; `--fetch-timeout-ms` aborts those. Stuck county-script workers are SIGKILL’d after `--transform-timeout-ms` and replaced. A thrown print fetch no longer aborts the 311k run — that parcel is retried up to 3 times, then recorded in `failures.jsonl` (append-only across restarts). Six consecutive PCPAO 403/429s pause new print GETs for 15–60s. SIGINT/SIGTERM drains in-flight parcels and leaves the rest for `--skip-existing`. Do not jump fetch concurrency past 8 without watching for PCPAO 403s.
 
 When the roll is complete:
 

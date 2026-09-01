@@ -2,13 +2,14 @@
 
 import { fork, spawn } from "node:child_process";
 import { createRequire } from "node:module";
-import { existsSync } from "node:fs";
+import { existsSync, closeSync, openSync, readSync, statSync } from "node:fs";
 import {
   appendFile,
   mkdir,
   mkdtemp,
   readdir,
   readFile,
+  rename,
   rm,
   writeFile,
 } from "node:fs/promises";
@@ -36,6 +37,14 @@ const LOCAL_IPFS_GATEWAY = "http://127.0.0.1:8080";
 const DEFAULT_CONCURRENCY = 4;
 const DEFAULT_FETCH_CONCURRENCY = 8;
 const DEFAULT_FETCH_TIMEOUT_MS = 12000;
+const DEFAULT_TRANSFORM_TIMEOUT_MS = 60000;
+const DEFAULT_WORKER_SPAWN_TIMEOUT_MS = 20000;
+const MIN_TRANSFORMED_ZIP_BYTES = 200;
+const ZIP_LOCAL_FILE_MAGIC = Buffer.from([0x50, 0x4b, 0x03, 0x04]);
+const RATE_LIMIT_PAUSE_AFTER = 6;
+const RATE_LIMIT_PAUSE_MS = 15000;
+const RATE_LIMIT_PAUSE_MAX_MS = 60000;
+const PARCEL_ATTEMPTS = 3;
 const PRINT_URL = "https://www.pcpao.gov/property/detail/print";
 const PRINT_USER_AGENT =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
@@ -67,6 +76,7 @@ const FALLBACK_SCRIPTS_DIRECTORIES = Object.freeze([
  * @property {number} concurrency - Maximum in-flight transforms (CPU-bound).
  * @property {number} fetchConcurrency - Maximum in-flight PCPAO print GETs.
  * @property {number} fetchTimeoutMs - Abort a hung print GET after this many ms.
+ * @property {number} transformTimeoutMs - Kill a stuck county-script worker after this many ms.
  * @property {TransformMode} transformMode - How county scripts are executed.
  * @property {boolean} useCliPrepare - When true, fetch via `elephant-cli prepare` instead of direct HTTP.
  *
@@ -100,6 +110,10 @@ const FALLBACK_SCRIPTS_DIRECTORIES = Object.freeze([
  * @typedef {object} IngestStatusSnapshot
  * @property {string} startedAt - ISO timestamp when the run began.
  * @property {string} updatedAt - ISO timestamp of this snapshot.
+ * @property {string | null} lastCompletedAt - ISO timestamp of the last finished parcel.
+ * @property {string | null} lastCompletedParcelId - STRAP of the last finished parcel.
+ * @property {number} inFlight - Parcels currently fetching or transforming.
+ * @property {boolean} stopping - True after SIGINT/SIGTERM; remaining seed rows are left for restart.
  * @property {number} total - Selected seed rows.
  * @property {number} completed - Finished workers (success, skip, or fail).
  * @property {number} skippedExisting - Parcels reused from disk.
@@ -113,6 +127,16 @@ const FALLBACK_SCRIPTS_DIRECTORIES = Object.freeze([
  * @typedef {object} TransformPool
  * @property {(workDir: string) => Promise<string | null>} transform - Run county scripts in `workDir`.
  * @property {() => Promise<void>} close - Kill persistent workers.
+ *
+ * @typedef {object} RateLimitGate
+ * @property {() => Promise<void>} beforeFetch - Wait out a 403/429 pause.
+ * @property {() => void} noteSuccess - Reset consecutive rate-limit failures.
+ * @property {(error: unknown) => void} noteFailure - Record a fetch/transform error.
+ *
+ * @typedef {object} RateLimitGateOptions
+ * @property {number} [pauseAfter] - Consecutive 403/429s before pausing.
+ * @property {number} [pauseMs] - Base pause once the threshold is hit.
+ * @property {number} [maxPauseMs] - Cap on the pause.
  */
 
 /**
@@ -246,6 +270,7 @@ export function parseCliOptions(argv) {
     concurrency: DEFAULT_CONCURRENCY,
     fetchConcurrency: DEFAULT_FETCH_CONCURRENCY,
     fetchTimeoutMs: DEFAULT_FETCH_TIMEOUT_MS,
+    transformTimeoutMs: DEFAULT_TRANSFORM_TIMEOUT_MS,
     transformMode: "scripts",
     useCliPrepare: false,
   };
@@ -291,6 +316,8 @@ export function parseCliOptions(argv) {
       options.fetchConcurrency = Number.parseInt(value, 10);
     } else if (flag === "--fetch-timeout-ms") {
       options.fetchTimeoutMs = Number.parseInt(value, 10);
+    } else if (flag === "--transform-timeout-ms") {
+      options.transformTimeoutMs = Number.parseInt(value, 10);
     } else throw new Error(`Unknown option: ${flag}`);
   }
   if (
@@ -313,6 +340,12 @@ export function parseCliOptions(argv) {
     options.fetchTimeoutMs <= 0
   ) {
     throw new Error("--fetch-timeout-ms must be a positive integer");
+  }
+  if (
+    !Number.isInteger(options.transformTimeoutMs) ||
+    options.transformTimeoutMs <= 0
+  ) {
+    throw new Error("--transform-timeout-ms must be a positive integer");
   }
   return options;
 }
@@ -469,13 +502,112 @@ export function buildSeedJsonFiles(row) {
 }
 
 /**
- * True when a parcel directory already has a transformed archive.
+ * True when a parcel directory already has a non-empty PKZIP `transformed.zip`.
+ * Tiny or non-zip files are treated as incomplete so a crashed write is retried.
  *
  * @param {string} parcelDir - Per-STRAP output directory.
- * @returns {boolean} Whether `transformed.zip` exists.
+ * @returns {boolean} Whether a usable `transformed.zip` exists.
  */
 export function hasCompletedTransform(parcelDir) {
-  return existsSync(path.join(parcelDir, "transformed.zip"));
+  const zipPath = path.join(parcelDir, "transformed.zip");
+  try {
+    const stats = statSync(zipPath);
+    if (!stats.isFile() || stats.size < MIN_TRANSFORMED_ZIP_BYTES) return false;
+    const fd = openSync(zipPath, "r");
+    try {
+      const magic = Buffer.alloc(4);
+      const bytesRead = readSync(fd, magic, 0, 4, 0);
+      return bytesRead === 4 && magic.equals(ZIP_LOCAL_FILE_MAGIC);
+    } finally {
+      closeSync(fd);
+    }
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Whether a parcel failure is worth retrying (timeouts, 403/429/5xx, dead worker).
+ *
+ * @param {unknown} error - Error or message.
+ * @returns {boolean} True when another attempt may succeed.
+ */
+export function isRetryableIngestError(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    /HTTP (403|429|500|502|503|504)/.test(message) ||
+    /timed out|timeout|aborted|AbortError/i.test(message) ||
+    /transform worker exited|transform timed out/i.test(message) ||
+    /ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|UND_ERR|fetch failed/i.test(
+      message,
+    )
+  );
+}
+
+/**
+ * Backoff before retrying a print GET or parcel ingest.
+ *
+ * @param {unknown} error - Previous failure.
+ * @param {number} attempt - 1-based attempt that just failed.
+ * @returns {number} Milliseconds to wait.
+ */
+export function retryDelayMs(error, attempt) {
+  const message = error instanceof Error ? error.message : String(error);
+  const base = /HTTP (403|429)/.test(message) ? 2000 : 250;
+  return base * 2 ** (attempt - 1);
+}
+
+/**
+ * Errors that should stop the whole ingest instead of skipping one parcel.
+ *
+ * @param {unknown} error - Error or message.
+ * @returns {boolean} True when continuing would make things worse.
+ */
+export function isFatalIngestError(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  return /ENOSPC|EROFS|ENOMEM|EMFILE/.test(message);
+}
+
+/**
+ * Shared 403/429 pause so concurrent print GETs do not stampede PCPAO.
+ *
+ * @param {object} [options] - Thresholds.
+ * @param {number} [options.pauseAfter] - Consecutive 403/429s before pausing.
+ * @param {number} [options.pauseMs] - Base pause once the threshold is hit.
+ * @param {number} [options.maxPauseMs] - Cap on the pause.
+ * @returns {RateLimitGate} Gate used around print fetches.
+ */
+export function createRateLimitGate(options = {}) {
+  const pauseAfter = options.pauseAfter ?? RATE_LIMIT_PAUSE_AFTER;
+  const pauseMs = options.pauseMs ?? RATE_LIMIT_PAUSE_MS;
+  const maxPauseMs = options.maxPauseMs ?? RATE_LIMIT_PAUSE_MAX_MS;
+  let consecutive = 0;
+  let pausedUntilMs = 0;
+  return {
+    async beforeFetch() {
+      const waitMs = pausedUntilMs - Date.now();
+      if (waitMs > 0) await sleep(waitMs);
+    },
+    noteSuccess() {
+      consecutive = 0;
+    },
+    noteFailure(error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!/HTTP (403|429)/.test(message)) return;
+      consecutive += 1;
+      if (consecutive < pauseAfter) return;
+      const extra = Math.min(consecutive - pauseAfter, 2);
+      const waitMs = Math.min(maxPauseMs, pauseMs * 2 ** extra);
+      pausedUntilMs = Math.max(pausedUntilMs, Date.now() + waitMs);
+      console.error(
+        JSON.stringify({
+          event: "pinellas_rate_limit_pause",
+          consecutive,
+          pauseMs: waitMs,
+        }),
+      );
+    },
+  };
 }
 
 /**
@@ -486,9 +618,15 @@ export function hasCompletedTransform(parcelDir) {
  * @param {readonly T[]} items - Work items.
  * @param {number} concurrency - Worker count.
  * @param {(item: T, index: number) => Promise<R>} worker - Per-item mapper.
+ * @param {() => boolean} [shouldStop] - When true, remaining items are left unprocessed.
  * @returns {Promise<R[]>} Results in input order.
  */
-export async function mapWithConcurrency(items, concurrency, worker) {
+export async function mapWithConcurrency(
+  items,
+  concurrency,
+  worker,
+  shouldStop = () => false,
+) {
   /** @type {R[]} */
   const results = new Array(items.length);
   let nextIndex = 0;
@@ -497,6 +635,7 @@ export async function mapWithConcurrency(items, concurrency, worker) {
   await Promise.all(
     Array.from({ length: workerCount }, async () => {
       while (true) {
+        if (shouldStop()) return;
         const index = nextIndex;
         nextIndex += 1;
         if (index >= items.length) return;
@@ -545,12 +684,15 @@ export function createLimiter(max) {
 
 /**
  * Launch persistent Pinellas script workers (one Node process, many parcels).
+ * Dead workers are replaced. A job that does not finish in `timeoutMs` is
+ * killed so the pool cannot stall the way unbounded `fetch` did.
  *
  * @param {object} params - Pool parameters.
  * @param {string} params.workerPath - Absolute path to `pinellas-transform-worker.cjs`.
  * @param {string} params.scriptsDirectory - County scripts folder.
  * @param {number} params.size - Worker count.
  * @param {string} params.nodeModulesPath - `NODE_PATH` so scripts can `require("cheerio")`.
+ * @param {number} [params.timeoutMs] - Per-job timeout.
  * @returns {Promise<TransformPool>} IPC pool.
  */
 export async function createTransformPool({
@@ -558,23 +700,121 @@ export async function createTransformPool({
   scriptsDirectory,
   size,
   nodeModulesPath,
+  timeoutMs = DEFAULT_TRANSFORM_TIMEOUT_MS,
 }) {
   /** @type {import("node:child_process").ChildProcess[]} */
   const workers = [];
   /** @type {import("node:child_process").ChildProcess[]} */
   const idle = [];
-  /** @type {Array<(worker: import("node:child_process").ChildProcess) => void>} */
+  /** @type {Array<(worker: import("node:child_process").ChildProcess | null) => void>} */
   const waiters = [];
   let nextJobId = 1;
+  let closed = false;
+
+  /**
+   * @param {import("node:child_process").ChildProcess} worker - Worker to drop.
+   * @returns {void}
+   */
+  function forgetWorker(worker) {
+    const workerIndex = workers.indexOf(worker);
+    if (workerIndex >= 0) workers.splice(workerIndex, 1);
+    const idleIndex = idle.indexOf(worker);
+    if (idleIndex >= 0) idle.splice(idleIndex, 1);
+  }
+
+  /**
+   * @returns {Promise<import("node:child_process").ChildProcess>} Ready worker.
+   */
+  function spawnWorker() {
+    if (closed) {
+      return Promise.reject(new Error("transform pool is closed"));
+    }
+    const worker = fork(workerPath, [], {
+      stdio: ["ignore", "ignore", "ignore", "ipc"],
+      env: { ...process.env, NODE_PATH: nodeModulesPath },
+    });
+    workers.push(worker);
+    let accepted = false;
+    worker.on("exit", () => {
+      forgetWorker(worker);
+      if (closed || !accepted) return;
+      spawnWorker()
+        .then((replacement) => {
+          release(replacement);
+        })
+        .catch((error) => {
+          console.error(
+            JSON.stringify({
+              event: "pinellas_transform_worker_respawn_failed",
+              error: error instanceof Error ? error.message : String(error),
+            }),
+          );
+        });
+    });
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const spawnTimer = setTimeout(() => {
+        finish(new Error("transform worker spawn timed out"));
+        worker.kill("SIGKILL");
+      }, DEFAULT_WORKER_SPAWN_TIMEOUT_MS);
+      /**
+       * @param {Error | null} error - Failure, or null on ready.
+       * @returns {void}
+       */
+      const finish = (error) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(spawnTimer);
+        worker.off("message", onReady);
+        worker.off("error", onError);
+        if (error !== null) {
+          reject(error);
+          return;
+        }
+        accepted = true;
+        resolve(worker);
+      };
+      /**
+       * @param {unknown} message - IPC payload.
+       * @returns {void}
+       */
+      const onReady = (message) => {
+        if (
+          message !== null &&
+          typeof message === "object" &&
+          "type" in message &&
+          message.type === "ready"
+        ) {
+          finish(null);
+        }
+      };
+      /**
+       * @param {Error} error - Spawn failure.
+       * @returns {void}
+       */
+      const onError = (error) => {
+        finish(error);
+      };
+      worker.on("message", onReady);
+      worker.once("error", onError);
+      worker.once("exit", () => {
+        finish(new Error("transform worker exited before ready"));
+      });
+    });
+  }
 
   /**
    * @returns {Promise<import("node:child_process").ChildProcess>} Idle worker.
    */
   function takeIdle() {
+    if (closed) return Promise.reject(new Error("transform pool is closed"));
     const existing = idle.pop();
     if (existing !== undefined) return Promise.resolve(existing);
-    return new Promise((resolve) => {
-      waiters.push(resolve);
+    return new Promise((resolve, reject) => {
+      waiters.push((worker) => {
+        if (worker === null) reject(new Error("transform pool is closed"));
+        else resolve(worker);
+      });
     });
   }
 
@@ -583,34 +823,16 @@ export async function createTransformPool({
    * @returns {void}
    */
   function release(worker) {
+    if (closed || worker.exitCode !== null || worker.signalCode !== null) {
+      return;
+    }
     const waiter = waiters.shift();
     if (waiter !== undefined) waiter(worker);
     else idle.push(worker);
   }
 
   for (let index = 0; index < size; index += 1) {
-    const worker = fork(workerPath, [], {
-      stdio: ["ignore", "ignore", "ignore", "ipc"],
-      env: { ...process.env, NODE_PATH: nodeModulesPath },
-    });
-    workers.push(worker);
-    await new Promise((resolve, reject) => {
-      const onReady = (message) => {
-        if (
-          message !== null &&
-          typeof message === "object" &&
-          "type" in message &&
-          message.type === "ready"
-        ) {
-          worker.off("message", onReady);
-          worker.off("error", reject);
-          resolve(undefined);
-        }
-      };
-      worker.on("message", onReady);
-      worker.once("error", reject);
-    });
-    idle.push(worker);
+    idle.push(await spawnWorker());
   }
 
   return {
@@ -619,7 +841,28 @@ export async function createTransformPool({
       const id = nextJobId;
       nextJobId += 1;
       try {
-        const result = await new Promise((resolve, reject) => {
+        return await new Promise((resolve, reject) => {
+          let settled = false;
+          const timer = setTimeout(() => {
+            finish(
+              new Error(`transform timed out after ${timeoutMs}ms`),
+            );
+            worker.kill("SIGKILL");
+          }, timeoutMs);
+          /**
+           * @param {Error | null} error - Failure, or null on success.
+           * @param {string | null} [usageType] - Usage type.
+           * @returns {void}
+           */
+          const finish = (error, usageType) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            worker.off("message", onMessage);
+            worker.off("exit", onExit);
+            if (error !== null) reject(error);
+            else resolve(usageType ?? null);
+          };
           /**
            * @param {unknown} message - IPC payload.
            * @returns {void}
@@ -630,39 +873,71 @@ export async function createTransformPool({
               message
             );
             if (record.id !== id) return;
-            worker.off("message", onMessage);
             if (record.type === "ok") {
-              resolve(
+              finish(
+                null,
                 typeof record.propertyUsageType === "string"
                   ? record.propertyUsageType
                   : null,
               );
               return;
             }
-            reject(
+            finish(
               new Error(
-                typeof record.error === "string" ? record.error : "transform worker failed",
+                typeof record.error === "string"
+                  ? record.error
+                  : "transform worker failed",
               ),
             );
           };
+          /**
+           * @param {number | null} code - Exit code.
+           * @param {NodeJS.Signals | null} signal - Kill signal.
+           * @returns {void}
+           */
+          const onExit = (code, signal) => {
+            finish(
+              new Error(`transform worker exited (${code}/${signal ?? "none"})`),
+            );
+          };
           worker.on("message", onMessage);
-          worker.send({
-            type: "run",
-            id,
-            scriptsDirectory,
-            workDir,
+          worker.once("exit", onExit);
+          worker.once("error", (error) => {
+            finish(error);
           });
+          try {
+            worker.send({
+              type: "run",
+              id,
+              scriptsDirectory,
+              workDir,
+            });
+          } catch (error) {
+            finish(
+              error instanceof Error ? error : new Error(String(error)),
+            );
+          }
         });
-        return result;
       } finally {
-        release(worker);
+        if (worker.exitCode === null && worker.signalCode === null) {
+          release(worker);
+        }
       }
     },
     async close() {
+      closed = true;
+      while (waiters.length > 0) {
+        const waiter = waiters.shift();
+        if (waiter !== undefined) waiter(null);
+      }
       await Promise.all(
         workers.map(
           (worker) =>
             new Promise((resolve) => {
+              if (worker.exitCode !== null || worker.signalCode !== null) {
+                resolve(undefined);
+                return;
+              }
               worker.once("exit", () => resolve(undefined));
               worker.kill("SIGKILL");
             }),
@@ -691,11 +966,14 @@ export function resolveScriptsDirectory(configured, repoRoot) {
 }
 
 /**
- * Fetch PCPAO print HTML with a Chrome UA. Retries UA-sensitive 403/429/5xx.
+ * Fetch PCPAO print HTML with a Chrome UA. Retries UA-sensitive 403/429/5xx
+ * and timeouts; does not retry empty or non-HTML pages.
  *
  * @param {string} strap - 18-digit STRAP.
  * @param {typeof fetch} [fetchImpl] - Injected fetch.
  * @param {number} [attempts] - Total tries.
+ * @param {number} [timeoutMs] - Abort a hung print GET after this many ms.
+ * @param {RateLimitGate | null} [rateLimitGate] - Shared 403/429 pause.
  * @returns {Promise<string>} Print HTML.
  */
 export async function fetchPropertyPrintHtml(
@@ -703,12 +981,14 @@ export async function fetchPropertyPrintHtml(
   fetchImpl = fetch,
   attempts = 4,
   timeoutMs = DEFAULT_FETCH_TIMEOUT_MS,
+  rateLimitGate = null,
 ) {
   const url = buildPrintPageUrl(strap);
   /** @type {Error} */
   let lastError = new Error(`PCPAO print fetch failed for ${strap}`);
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
+      if (rateLimitGate !== null) await rateLimitGate.beforeFetch();
       const response = await fetchImpl(url, {
         headers: {
           "User-Agent": PRINT_USER_AGENT,
@@ -726,11 +1006,13 @@ export async function fetchPropertyPrintHtml(
       if (!/Parcel Summary/i.test(html)) {
         throw new Error(`PCPAO print HTML is missing Parcel Summary for ${strap}`);
       }
+      rateLimitGate?.noteSuccess();
       return html;
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
-      if (attempt === attempts) break;
-      await sleep(250 * 2 ** (attempt - 1));
+      rateLimitGate?.noteFailure(lastError);
+      if (attempt === attempts || !isRetryableIngestError(lastError)) break;
+      await sleep(retryDelayMs(lastError, attempt));
     }
   }
   throw lastError;
@@ -881,12 +1163,18 @@ async function injectSourceHttpRequest(dataDir, sourceHttpRequest, requestIdenti
  * @returns {Promise<void>} Resolves when written.
  */
 async function zipDataDirectory(dataDir, zipPath) {
+  const tmpPath = `${zipPath}.tmp`;
+  await rm(tmpPath, { force: true });
   const zip = new AdmZip();
   const names = await readdir(dataDir);
+  if (!names.includes("property.json")) {
+    throw new Error("transform produced no data/property.json");
+  }
   for (const name of names) {
     zip.addLocalFile(path.join(dataDir, name), "data");
   }
-  zip.writeZip(zipPath);
+  zip.writeZip(tmpPath);
+  await rename(tmpPath, zipPath);
 }
 
 /**
@@ -966,6 +1254,7 @@ async function transformWithCountyScripts({
  * @param {string} params.repoRoot - oracle-node root.
  * @param {TransformPool | null} params.transformPool - Persistent workers, or null for CLI transform.
  * @param {string | null} [params.html] - Pre-fetched print HTML.
+ * @param {RateLimitGate | null} [params.rateLimitGate] - Shared 403/429 pause for fallback fetches.
  * @returns {Promise<ParcelIngestResult>} Per-parcel outcome.
  */
 async function ingestParcel({
@@ -976,6 +1265,7 @@ async function ingestParcel({
   repoRoot,
   transformPool,
   html = null,
+  rateLimitGate = null,
 }) {
   const parcelId = row.parcel_id;
   const useGroup = row.use_group ?? "";
@@ -1015,6 +1305,7 @@ async function ingestParcel({
           fetch,
           4,
           options.fetchTimeoutMs,
+          rateLimitGate,
         );
       }
     }
@@ -1092,6 +1383,7 @@ async function ingestParcel({
         };
       }
     }
+    await rm(path.join(parcelDir, "error.txt"), { force: true });
     return {
       parcelId,
       useGroup,
@@ -1103,6 +1395,7 @@ async function ingestParcel({
       skippedExisting: false,
     };
   } catch (error) {
+    if (isFatalIngestError(error)) throw error;
     await writeFile(
       path.join(parcelDir, "error.txt"),
       error instanceof Error ? error.message : String(error),
@@ -1303,7 +1596,6 @@ export async function runLocalIngest(options) {
   /** @type {ParcelIngestResult[]} */
   const failures = [];
   const failuresPath = path.join(outputDirectory, "failures.jsonl");
-  await writeFile(failuresPath, "", "utf8");
   const resolvedOptions = { ...options, outputDirectory };
   const workerPath = path.join(repoRoot, "scripts", "pinellas-transform-worker.cjs");
   const transformPool =
@@ -1313,87 +1605,214 @@ export async function runLocalIngest(options) {
           scriptsDirectory,
           size: options.concurrency,
           nodeModulesPath: path.join(repoRoot, "node_modules"),
+          timeoutMs: options.transformTimeoutMs,
         })
       : null;
   const transformLimit = createLimiter(options.concurrency);
+  const rateLimitGate = createRateLimitGate();
+  let stopping = false;
+  let inFlight = 0;
+  /** @type {string | null} */
+  let lastCompletedAt = null;
+  /** @type {string | null} */
+  let lastCompletedParcelId = null;
 
   /**
-   * @param {IngestStatusSnapshot} snapshot - Counts.
-   * @returns {Promise<void>}
+   * @param {NodeJS.Signals} signal - Stop signal.
+   * @returns {void}
    */
-  async function recordProgress(snapshot) {
-    await writeStatusSnapshot(outputDirectory, snapshot);
-    console.log(JSON.stringify({ event: "pinellas_ingest_progress", ...snapshot }));
+  const onStopSignal = (signal) => {
+    if (stopping) {
+      console.error(
+        JSON.stringify({ event: "pinellas_ingest_forced_exit", signal }),
+      );
+      process.exit(130);
+    }
+    stopping = true;
+    console.error(
+      JSON.stringify({ event: "pinellas_ingest_stop_requested", signal }),
+    );
+  };
+  process.on("SIGINT", onStopSignal);
+  process.on("SIGTERM", onStopSignal);
+
+  /**
+   * @returns {IngestStatusSnapshot} Current counts.
+   */
+  function snapshot() {
+    return {
+      startedAt,
+      updatedAt: new Date().toISOString(),
+      lastCompletedAt,
+      lastCompletedParcelId,
+      inFlight,
+      stopping,
+      total: rows.length,
+      completed,
+      skippedExisting,
+      transformsPassed,
+      transformsFailed,
+      concurrency: options.concurrency,
+      fetchConcurrency: options.fetchConcurrency,
+      seedPath: options.seedPath,
+      outputDirectory,
+    };
   }
 
-  await recordProgress({
-    startedAt,
-    updatedAt: startedAt,
-    total: rows.length,
-    completed,
-    skippedExisting,
-    transformsPassed,
-    transformsFailed,
-    concurrency: options.concurrency,
-    fetchConcurrency: options.fetchConcurrency,
-    seedPath: options.seedPath,
-    outputDirectory,
-  });
+  /**
+   * @param {SeedRow} row - Seed row.
+   * @param {string} error - Failure message.
+   * @returns {ParcelIngestResult} Failed parcel result.
+   */
+  function failedResult(row, error) {
+    return {
+      parcelId: row.parcel_id,
+      useGroup: row.use_group ?? "",
+      prepareSuccess: false,
+      transformSuccess: false,
+      validationSuccess: null,
+      propertyUsageType: null,
+      error,
+      skippedExisting: false,
+    };
+  }
+
+  /**
+   * @param {IngestStatusSnapshot} status - Counts.
+   * @returns {Promise<void>}
+   */
+  async function recordProgress(status) {
+    await writeStatusSnapshot(outputDirectory, status);
+    console.log(JSON.stringify({ event: "pinellas_ingest_progress", ...status }));
+  }
+
+  await recordProgress(snapshot());
+
+  const heartbeat = setInterval(() => {
+    recordProgress(snapshot()).catch(() => {});
+  }, 30000);
+  heartbeat.unref();
 
   try {
     await mapWithConcurrency(
       pending,
       options.fetchConcurrency,
       async (row) => {
-        const html = options.useCliPrepare
-          ? null
-          : await fetchPropertyPrintHtml(
-              row.parcel_id,
-              fetch,
-              4,
-              options.fetchTimeoutMs,
+        if (stopping) {
+          return {
+            parcelId: row.parcel_id,
+            useGroup: row.use_group ?? "",
+            prepareSuccess: true,
+            transformSuccess: true,
+            validationSuccess: null,
+            propertyUsageType: null,
+            error: null,
+            skippedExisting: true,
+          };
+        }
+        inFlight += 1;
+        try {
+          /** @type {ParcelIngestResult | null} */
+          let result = null;
+          /** @type {string | null | undefined} */
+          let html = options.useCliPrepare ? null : undefined;
+          for (let attempt = 1; attempt <= PARCEL_ATTEMPTS; attempt += 1) {
+            if (stopping) break;
+            try {
+              if (!options.useCliPrepare && typeof html !== "string") {
+                html = await fetchPropertyPrintHtml(
+                  row.parcel_id,
+                  fetch,
+                  4,
+                  options.fetchTimeoutMs,
+                  rateLimitGate,
+                );
+              }
+              result = await transformLimit.run(() =>
+                ingestParcel({
+                  row,
+                  options: resolvedOptions,
+                  scriptsZipPath,
+                  scriptsDirectory,
+                  repoRoot,
+                  transformPool,
+                  html: typeof html === "string" ? html : null,
+                  rateLimitGate,
+                }),
+              );
+              if (result.transformSuccess) break;
+              if (isFatalIngestError(result.error)) {
+                throw new Error(result.error ?? "fatal ingest error");
+              }
+              if (
+                attempt === PARCEL_ATTEMPTS ||
+                !isRetryableIngestError(result.error ?? "failed")
+              ) {
+                break;
+              }
+              if (
+                /HTTP |fetch failed|timeout|aborted|ECONN|ETIMEDOUT|EAI_AGAIN/i.test(
+                  result.error ?? "",
+                )
+              ) {
+                html = undefined;
+              }
+              await sleep(retryDelayMs(result.error ?? "failed", attempt));
+            } catch (error) {
+              if (isFatalIngestError(error)) throw error;
+              const message =
+                error instanceof Error ? error.message : String(error);
+              result = failedResult(row, message);
+              html = undefined;
+              if (
+                attempt === PARCEL_ATTEMPTS ||
+                !isRetryableIngestError(error)
+              ) {
+                break;
+              }
+              await sleep(retryDelayMs(error, attempt));
+            }
+          }
+          if (result === null) {
+            result = failedResult(
+              row,
+              stopping ? "ingest stopped" : "ingest produced no result",
             );
-        const result = await transformLimit.run(() =>
-          ingestParcel({
-            row,
-            options: resolvedOptions,
-            scriptsZipPath,
-            scriptsDirectory,
-            repoRoot,
-            transformPool,
-            html,
-          }),
-        );
-        completed += 1;
-        if (result.transformSuccess) transformsPassed += 1;
-        else {
-          transformsFailed += 1;
-          failures.push(result);
-          await appendFile(failuresPath, `${JSON.stringify(result)}\n`, "utf8");
+          }
+          if (stopping && !result.transformSuccess) {
+            return result;
+          }
+          completed += 1;
+          lastCompletedAt = new Date().toISOString();
+          lastCompletedParcelId = row.parcel_id;
+          if (result.transformSuccess) transformsPassed += 1;
+          else {
+            transformsFailed += 1;
+            failures.push(result);
+            await appendFile(
+              failuresPath,
+              `${JSON.stringify(result)}\n`,
+              "utf8",
+            );
+          }
+          if (
+            completed === skippedExisting + 1 ||
+            completed % 25 === 0 ||
+            completed === rows.length
+          ) {
+            await recordProgress(snapshot());
+          }
+          return result;
+        } finally {
+          inFlight -= 1;
         }
-        if (
-          completed === skippedExisting + 1 ||
-          completed % 25 === 0 ||
-          completed === rows.length
-        ) {
-          await recordProgress({
-            startedAt,
-            updatedAt: new Date().toISOString(),
-            total: rows.length,
-            completed,
-            skippedExisting,
-            transformsPassed,
-            transformsFailed,
-            concurrency: options.concurrency,
-            fetchConcurrency: options.fetchConcurrency,
-            seedPath: options.seedPath,
-            outputDirectory,
-          });
-        }
-        return result;
       },
+      () => stopping,
     );
   } finally {
+    clearInterval(heartbeat);
+    process.off("SIGINT", onStopSignal);
+    process.off("SIGTERM", onStopSignal);
     await transformPool?.close();
   }
 

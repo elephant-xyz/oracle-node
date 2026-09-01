@@ -15,10 +15,14 @@ import {
   buildSeedJsonFiles,
   buildSourceHttpRequest,
   createLimiter,
+  createRateLimitGate,
   fetchPropertyPrintHtml,
   hasCompletedTransform,
+  isFatalIngestError,
+  isRetryableIngestError,
   mapWithConcurrency,
   parseSeedQueryString,
+  retryDelayMs,
 } from "../../scripts/run-pinellas-local-ingest.mjs";
 
 const require = createRequire(import.meta.url);
@@ -80,6 +84,8 @@ describe("Pinellas local ingest helpers", () => {
       fetchConcurrency: 8,
       transformMode: "scripts",
       useCliPrepare: false,
+      fetchTimeoutMs: 12000,
+      transformTimeoutMs: 60000,
     });
     expect(parseCliOptions(["--all"]).allRows).toBe(true);
     expect(parseCliOptions(["--force", "--cli-transform", "--concurrency", "4"]))
@@ -93,8 +99,14 @@ describe("Pinellas local ingest helpers", () => {
         fetchConcurrency: 8,
         fetchTimeoutMs: 5000,
       });
+    expect(
+      parseCliOptions(["--transform-timeout-ms", "15000"]).transformTimeoutMs,
+    ).toBe(15000);
     expect(() => parseCliOptions(["--concurrency", "0"])).toThrow(
       /positive integer/,
+    );
+    expect(() => parseCliOptions(["--fetch-timeout-ms", "0"])).toThrow(
+      /--fetch-timeout-ms/,
     );
   });
 
@@ -194,6 +206,25 @@ describe("Pinellas local ingest helpers", () => {
     expect(userAgents[1]).toMatch(/Chrome\/124/);
   });
 
+  it("does not retry empty print HTML that is missing Parcel Summary", async () => {
+    /** @type {number} */
+    let calls = 0;
+    const fakeFetch = async () => {
+      calls += 1;
+      return new Response("<!DOCTYPE html><html><body>placeholder</body></html>", {
+        status: 200,
+      });
+    };
+    await expect(
+      fetchPropertyPrintHtml(
+        "052816389030000430",
+        /** @type {typeof fetch} */ (fakeFetch),
+        4,
+      ),
+    ).rejects.toThrow(/Parcel Summary/);
+    expect(calls).toBe(1);
+  });
+
   it("runs a concurrency pool in input order", async () => {
     const seen = [];
     const mapped = await mapWithConcurrency([3, 2, 1], 2, async (value) => {
@@ -207,7 +238,94 @@ describe("Pinellas local ingest helpers", () => {
     expect(seen).toHaveLength(3);
   });
 
-  it("treats a transformed.zip as already complete", () => {
+  it("leaves remaining items unprocessed when shouldStop becomes true", async () => {
+    /** @type {number[]} */
+    const seen = [];
+    let stop = false;
+    const mapped = await mapWithConcurrency(
+      [1, 2, 3, 4, 5, 6],
+      2,
+      async (value) => {
+        seen.push(value);
+        if (seen.length >= 2) stop = true;
+        await new Promise((resolve) => {
+          setTimeout(resolve, 10);
+        });
+        return value;
+      },
+      () => stop,
+    );
+    expect(seen.length).toBeLessThan(6);
+    expect(mapped.filter((value) => value !== undefined).length).toBe(seen.length);
+  });
+
+  it("skips a parcel only when transformed.zip is a real zip of at least 200 bytes", async () => {
+    const { mkdtemp, mkdir, writeFile, rm } = await import("node:fs/promises");
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const dir = await mkdtemp(path.join(os.tmpdir(), "pinellas-skip-"));
+    const parcelDir = path.join(dir, "162805389030000430");
+    await mkdir(parcelDir, { recursive: true });
+    expect(hasCompletedTransform(parcelDir)).toBe(false);
+    await writeFile(path.join(parcelDir, "transformed.zip"), "ok");
+    expect(hasCompletedTransform(parcelDir)).toBe(false);
+    await writeFile(
+      path.join(parcelDir, "transformed.zip"),
+      Buffer.concat([Buffer.from([0x50, 0x4b, 0x03, 0x04]), Buffer.alloc(196, 0x20)]),
+    );
+    expect(hasCompletedTransform(parcelDir)).toBe(true);
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it("retries transient fetch and worker failures with longer backoff on 403/429", () => {
+    expect(isRetryableIngestError(new Error("PCPAO print HTTP 403 for x"))).toBe(
+      true,
+    );
+    expect(isRetryableIngestError(new Error("PCPAO print HTTP 429 for x"))).toBe(
+      true,
+    );
+    expect(isRetryableIngestError(new Error("transform timed out after 60000ms"))).toBe(
+      true,
+    );
+    expect(
+      isRetryableIngestError(new Error("transform worker exited (1/SIGKILL)")),
+    ).toBe(true);
+    expect(isRetryableIngestError(new Error("ECONNRESET"))).toBe(true);
+    expect(isRetryableIngestError(new Error("PINELLAS_SCRIPT_EXIT_1"))).toBe(
+      false,
+    );
+    expect(isRetryableIngestError(new Error("missing Parcel Summary"))).toBe(
+      false,
+    );
+    expect(retryDelayMs(new Error("PCPAO print HTTP 403 for x"), 1)).toBe(2000);
+    expect(retryDelayMs(new Error("PCPAO print HTTP 500 for x"), 2)).toBe(500);
+    expect(isFatalIngestError(new Error("ENOSPC: no space left"))).toBe(true);
+    expect(isFatalIngestError(new Error("PCPAO print HTTP 403 for x"))).toBe(
+      false,
+    );
+  });
+
+  it("pauses print fetches after a burst of 403s", async () => {
+    const gate = createRateLimitGate({
+      pauseAfter: 2,
+      pauseMs: 40,
+      maxPauseMs: 40,
+    });
+    gate.noteFailure(new Error("PCPAO print HTTP 403 for a"));
+    const started = Date.now();
+    await gate.beforeFetch();
+    expect(Date.now() - started).toBeLessThan(20);
+    gate.noteFailure(new Error("PCPAO print HTTP 403 for b"));
+    const pausedStarted = Date.now();
+    await gate.beforeFetch();
+    expect(Date.now() - pausedStarted).toBeGreaterThanOrEqual(30);
+    gate.noteSuccess();
+    const afterSuccess = Date.now();
+    await gate.beforeFetch();
+    expect(Date.now() - afterSuccess).toBeLessThan(20);
+  });
+
+  it("treats a missing transformed.zip as incomplete", () => {
     expect(hasCompletedTransform("/tmp/does-not-exist-pinellas-strap")).toBe(
       false,
     );
