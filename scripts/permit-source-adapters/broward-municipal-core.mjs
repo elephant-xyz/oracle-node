@@ -3,7 +3,7 @@
 import { createHash } from "node:crypto";
 
 /**
- * @typedef {"click2gov" | "tyler_esuite" | "tyler_energov" | "gov_easy" | "smartgov" | "opengov" | "communitycore" | "mgo_connect" | "egovplus" | "records_request"} BrowardMunicipalProtocol
+ * @typedef {"coconut_creek" | "click2gov" | "tyler_esuite" | "tyler_energov" | "gov_easy" | "smartgov" | "opengov" | "communitycore" | "mgo_connect" | "egovplus" | "records_request"} BrowardMunicipalProtocol
  */
 
 /**
@@ -487,6 +487,7 @@ export function renderMunicipalPermitJsonl(records) {
  * @param {unknown} [params.checkpoint] - Optional parsed checkpoint to resume.
  * @param {(query: BrowardMunicipalQuery, page: number | string) => Promise<BrowardMunicipalSearchPage>} params.fetchSearchPage - Protocol search/page transport and parser.
  * @param {(reference: BrowardMunicipalSearchReference, query: BrowardMunicipalQuery) => Promise<NormalizedBrowardMunicipalPermit>} params.fetchDetail - Protocol detail transport and parser.
+ * @param {(record: NormalizedBrowardMunicipalPermit) => Promise<void>} [params.onRecord] - Optional idempotent private record sink called before its checkpoint identity advances.
  * @param {(checkpoint: BrowardMunicipalCheckpoint) => Promise<void>} [params.onCheckpoint] - Optional local checkpoint sink.
  * @param {(milliseconds: number) => Promise<void>} [params.wait] - Injectable serialized delay.
  * @returns {Promise<BrowardMunicipalProbeResult>} Explicit skip or completed result.
@@ -498,6 +499,7 @@ export async function runBoundedMunicipalCapture({
   checkpoint: rawCheckpoint,
   fetchSearchPage,
   fetchDetail,
+  onRecord = async () => {},
   onCheckpoint = async () => {},
   wait = (milliseconds) =>
     new Promise((resolve) => {
@@ -609,6 +611,7 @@ export async function runBoundedMunicipalCapture({
           `Broward municipal detail identity mismatch for ${reference.permitNumber}`,
         );
       }
+      await onRecord(record);
       records.push(record);
       capturedSet.add(key);
       capturedRecordKeys = [...capturedSet].sort((left, right) =>

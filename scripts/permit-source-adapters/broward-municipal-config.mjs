@@ -28,9 +28,7 @@ function defineJurisdiction(config) {
 }
 
 const CLICK2GOV_CAPABILITIES = Object.freeze({
-  searchBy: Object.freeze(
-    /** @type {const} */ (["permit_number", "address", "folio"]),
-  ),
+  searchBy: Object.freeze(/** @type {const} */ (["permit_number", "address"])),
   pagination: /** @type {const} */ ("client_all"),
   detail: /** @type {const} */ ("same_session"),
   inspections: true,
@@ -50,6 +48,28 @@ const ESUITE_CAPABILITIES = Object.freeze({
  */
 export const BROWARD_MUNICIPAL_PERMIT_JURISDICTIONS = Object.freeze([
   defineJurisdiction({
+    key: "coconut_creek",
+    jurisdiction: "Coconut Creek",
+    sourceSystem: "broward_coconut_creek_permit_status",
+    protocol: "coconut_creek",
+    searchUrl:
+      "https://www3.coconutcreek.gov/sd/permit/permit_status_01.asp",
+    officialEvidenceUrl:
+      "https://www3.coconutcreek.gov/sd/permit/permit_status_01.asp",
+    accessMode: "anonymous",
+    probeStatus: "enabled",
+    accessNote:
+      "The official legacy status application anonymously accepts exact permit, property-id, and address searches. Search selection and detail retrieval rotate an ASP session and are serialized.",
+    capabilities: {
+      searchBy: ["permit_number", "address", "folio"],
+      pagination: "client_all",
+      detail: "same_session",
+      inspections: false,
+      planReview: false,
+    },
+    supplementalRoutes: [],
+  }),
+  defineJurisdiction({
     key: "pompano_beach",
     jurisdiction: "Pompano Beach",
     sourceSystem: "pompano_beach_click2gov_permits",
@@ -60,7 +80,7 @@ export const BROWARD_MUNICIPAL_PERMIT_JURISDICTIONS = Object.freeze([
     accessMode: "anonymous",
     probeStatus: "enabled",
     accessNote:
-      "Anonymous application/address/parcel search is available; broad result pages must hit the local row cap before any detail traversal.",
+      "Anonymous application and address search is available. The segmented source parcel fields have no certified BCPA-folio mapping and are not submitted by the adapter; broad result pages fail at the local row cap before detail traversal.",
     capabilities: CLICK2GOV_CAPABILITIES,
     supplementalRoutes: [],
   }),
@@ -74,7 +94,7 @@ export const BROWARD_MUNICIPAL_PERMIT_JURISDICTIONS = Object.freeze([
     accessMode: "anonymous",
     probeStatus: "enabled",
     accessNote:
-      "The official city instructions certify anonymous application/address/parcel/name history search; authenticated application functions are out of scope.",
+      "The official city instructions certify anonymous application/address/parcel/name history search. The adapter uses only application/address fields because no BCPA-to-segmented-parcel mapping is certified; authenticated application functions are out of scope.",
     capabilities: CLICK2GOV_CAPABILITIES,
     supplementalRoutes: [],
   }),
@@ -89,7 +109,7 @@ export const BROWARD_MUNICIPAL_PERMIT_JURISDICTIONS = Object.freeze([
     accessMode: "anonymous",
     probeStatus: "enabled",
     accessNote:
-      "Anonymous Click2Gov history search is available; the separate inspection scheduler and plan-review portals are not traversed.",
+      "Anonymous Click2Gov application/address history search is available. Segmented parcel fields are not used without a certified BCPA mapping; the separate inspection scheduler and plan-review portals are not traversed.",
     capabilities: CLICK2GOV_CAPABILITIES,
     supplementalRoutes: [],
   }),

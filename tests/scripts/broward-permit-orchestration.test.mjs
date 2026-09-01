@@ -514,6 +514,7 @@ describe("Broward 32-jurisdiction permit registry", () => {
     }
 
     const municipalAdapterKeys = new Map([
+      ["coconut_creek", "coconut-creek-permit-status"],
       ["click2gov", "click2gov"],
       ["tyler_esuite", "tyler-esuite"],
       ["tyler_energov", BROWARD_TYLER_CIVIC_ACCESS_ADAPTER_KEY],
@@ -525,7 +526,7 @@ describe("Broward 32-jurisdiction permit registry", () => {
       ["egovplus", "egovplus"],
       ["records_request", null],
     ]);
-    expect(BROWARD_MUNICIPAL_PERMIT_JURISDICTIONS).toHaveLength(13);
+    expect(BROWARD_MUNICIPAL_PERMIT_JURISDICTIONS).toHaveLength(14);
     for (const config of BROWARD_MUNICIPAL_PERMIT_JURISDICTIONS) {
       const jurisdiction = unifiedByKey.get(config.key.replaceAll("_", "-"));
       const routes =

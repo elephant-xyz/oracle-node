@@ -21,6 +21,8 @@ import {
   normalizeOpenGovDetailPayload,
   parseClick2GovDetailHtml,
   parseClick2GovSearchHtml,
+  parseCoconutCreekDetailHtml,
+  parseCoconutCreekSearchHtml,
   parseEgovPlusDetailHtml,
   parseEgovPlusSearchHtml,
   parseOpenGovSearchPayload,
@@ -29,6 +31,15 @@ import {
   parseTylerEsuiteDetailHtml,
   parseTylerEsuiteSearchHtml,
 } from "../../scripts/permit-source-adapters/broward-municipal-protocols.mjs";
+import {
+  buildClick2GovSearchBody,
+  buildCoconutCreekSearchBody,
+  buildEgovPlusSearchBody,
+  buildSmartGovSearchBody,
+  parseMunicipalStreetAddress,
+  probeBoundedBrowardMunicipalPermits,
+} from "../../scripts/permit-source-adapters/broward-municipal-transport.mjs";
+import { parseBrowardMunicipalPilotOptions } from "../../scripts/run-broward-municipal-permit-pilot.mjs";
 
 const FIXTURE_ROOT = new URL(
   "../fixtures/broward-municipal-permits/",
@@ -36,6 +47,8 @@ const FIXTURE_ROOT = new URL(
 );
 
 const [
+  coconutCreekSearch,
+  coconutCreekDetail,
   clickSearch,
   clickDetail,
   esuiteSearch,
@@ -48,6 +61,8 @@ const [
   openGovDetail,
 ] = await Promise.all(
   [
+    "coconut-creek-search.html",
+    "coconut-creek-detail.html",
     "click2gov-search.html",
     "click2gov-detail.html",
     "esuite-search.html",
@@ -121,6 +136,7 @@ describe("Broward municipal permit jurisdiction routing", () => {
         (config) => config.jurisdiction,
       ),
     ).toEqual([
+      "Coconut Creek",
       "Pompano Beach",
       "Tamarac",
       "Margate",
@@ -141,6 +157,7 @@ describe("Broward municipal permit jurisdiction routing", () => {
       ),
     ).toEqual(
       new Set([
+        "coconut_creek",
         "click2gov",
         "tyler_esuite",
         "tyler_energov",
@@ -158,6 +175,8 @@ describe("Broward municipal permit jurisdiction routing", () => {
     const deerfield = getBrowardMunicipalPermitConfig("deerfield_beach");
     const sunrise = getBrowardMunicipalPermitConfig("sunrise");
     const davie = getBrowardMunicipalPermitConfig("davie");
+    const coconutCreek =
+      getBrowardMunicipalPermitConfig("coconut_creek");
 
     expect(deerfield.supplementalRoutes).toEqual(
       expect.arrayContaining([
@@ -171,6 +190,15 @@ describe("Broward municipal permit jurisdiction routing", () => {
     expect(davie.supplementalRoutes[0]).toMatchObject({
       purpose: "new_2026_submissions",
       accessMode: "login_required",
+    });
+    expect(coconutCreek).toMatchObject({
+      protocol: "coconut_creek",
+      accessMode: "anonymous",
+      probeStatus: "enabled",
+      capabilities: {
+        searchBy: ["permit_number", "address", "folio"],
+        pagination: "client_all",
+      },
     });
     expect(sunrise).toMatchObject({
       sourceSystem: "broward_sunrise_tyler_permits",
@@ -253,6 +281,134 @@ describe("Broward municipal folio and query safety", () => {
   });
 });
 
+describe("Broward municipal live transport form contracts", () => {
+  it("parses bounded addresses and populates exactly one legacy search mode", () => {
+    expect(parseMunicipalStreetAddress("100 NE SAMPLE BLVD")).toEqual({
+      houseNumber: "100",
+      direction: "NE",
+      streetName: "SAMPLE",
+      suffix: "BLVD",
+    });
+    expect(() => parseMunicipalStreetAddress("SAMPLE ADDRESS")).toThrow(
+      "house number",
+    );
+
+    const coconutBody = buildCoconutCreekSearchBody({
+      kind: "folio",
+      value: "484205AB0010",
+    });
+    expect(Object.fromEntries(coconutBody)).toMatchObject({
+      permit_no: "",
+      parcel_id: "484205AB0010",
+      house_num: "",
+      street: "",
+    });
+    const egovBody = buildEgovPlusSearchBody({
+      kind: "address",
+      value: "5581 W OAKLAND PARK BLVD",
+    });
+    expect(Object.fromEntries(egovBody)).toMatchObject({
+      permit_no: "",
+      parcel_id: "",
+      house_num: "5581",
+      street: "W OAKLAND PARK BLVD",
+    });
+  });
+
+  it("keeps Click2Gov parcel segmentation disabled and SmartGov people fields blank", () => {
+    const clickLanding = `<!doctype html><form>
+      <input name="validatePermitView" value="true">
+      <input name="searchType" value="0">
+      <input name="OWASP_CSRFTOKEN" value="private-token">
+    </form>`;
+    const clickConfig = getBrowardMunicipalPermitConfig("pompano_beach");
+    const click = buildClick2GovSearchBody(clickLanding, clickConfig, {
+      kind: "permit_number",
+      value: "26-00001234",
+    });
+    expect(click.body.get("permit.appYear")).toBe("26");
+    expect(click.body.get("permit.appNumber")).toBe("00001234");
+    expect(() =>
+      buildClick2GovSearchBody(clickLanding, clickConfig, {
+        kind: "folio",
+        value: "484205AB0010",
+      }),
+    ).toThrow("mapping is not certified");
+
+    const smartBody = buildSmartGovSearchBody(
+      '<input name="_conv" value="private-conversation">',
+      { kind: "folio", value: "484205AB0010" },
+    );
+    expect(smartBody.get("PrimaryParcel.Parcel.ParcelNumber")).toBe(
+      "484205AB0010",
+    );
+    expect(smartBody.get("PrimaryContact.Contact.DisplayName")).toBe("");
+    expect(smartBody.get("PrimaryContractor.Contact.DisplayName")).toBe("");
+  });
+
+  it("parses a local-only pilot without exposing query values in fixed metadata", () => {
+    const options = parseBrowardMunicipalPilotOptions([
+      "--jurisdiction",
+      "lauderhill",
+      "--folio",
+      "494123AB0020",
+      "--output-dir",
+      "downloads/private",
+      "--max-details",
+      "2",
+    ]);
+    expect(options).toMatchObject({
+      jurisdictionKey: "lauderhill",
+      query: { kind: "folio", value: "494123AB0020" },
+      limits: { maxQueries: 1, maxDetailPages: 2 },
+      requestTimeoutMs: 30_000,
+    });
+    expect(() =>
+      parseBrowardMunicipalPilotOptions([
+        "--jurisdiction",
+        "pompano_beach",
+        "--folio",
+        "484205AB0010",
+        "--output-dir",
+        "downloads/private",
+      ]),
+    ).toThrow("does not support");
+  });
+});
+
+describe("Coconut Creek legacy permit-status protocol", () => {
+  it("selects one session detail and omits owner/payment fields", () => {
+    const config = getBrowardMunicipalPermitConfig("coconut_creek");
+    const page = parseCoconutCreekSearchHtml(coconutCreekSearch, config);
+    expect(page.references).toHaveLength(1);
+    const sourceReference = page.references[0];
+    expect(sourceReference).toMatchObject({
+      sourceRecordId: "26001234",
+      permitNumber: "26001234",
+      listData: {
+        record_status: "Issued",
+        record_type: "Roof",
+      },
+    });
+    expect(sourceReference).toBeDefined();
+    const record = parseCoconutCreekDetailHtml(coconutCreekDetail, {
+      config,
+      reference: sourceReference,
+      query: { kind: "folio", value: "484205AB0010" },
+    });
+    expect(record).toMatchObject({
+      source_protocol: "coconut_creek",
+      permit_number: "26001234",
+      parcel_identifier: "484205AB0010",
+      query_folio: "484205AB0010",
+      record_status: "Issued",
+      record_type: "Roof",
+      is_roof_permit: true,
+    });
+    expect(JSON.stringify(record)).not.toMatch(/PRIVATE FIXTURE/iu);
+  });
+});
+
 describe("Click2Gov protocol", () => {
   it("deduplicates contact-expanded rows and strips session tokens", () => {
     const config = getBrowardMunicipalPermitConfig("pompano_beach");
@@ -309,6 +465,84 @@ describe("Click2Gov protocol", () => {
     expect(JSON.stringify(record)).not.toMatch(
       /PRIVATE FIXTURE OWNER|PRIVATE INSPECTOR|555-0100/,
     );
+  });
+});
+
+describe("anonymous municipal transport orchestration", () => {
+  it("maintains Click2Gov cookies and persists a record before checkpoint advancement", async () => {
+    const landing = `<!doctype html><html><body><form action="selectpermit.html" method="post">
+      <input name="validatePermitView" value="true">
+      <input name="searchType" value="0">
+      <input name="OWASP_CSRFTOKEN" value="private-token-1">
+    </form></body></html>`;
+    const requests = [];
+    const fetchImpl = vi.fn(async (url, init = {}) => {
+      const parsedUrl = new URL(String(url));
+      const method = init.method ?? "GET";
+      requests.push({
+        method,
+        path: parsedUrl.pathname,
+        hasCookie: new Headers(init.headers).has("cookie"),
+      });
+      if (method === "GET" && requests.length === 1) {
+        return new Response(landing, {
+          status: 200,
+          headers: { "Set-Cookie": "JSESSIONID=private-session-1; Path=/" },
+        });
+      }
+      if (method === "POST") {
+        return new Response(clickSearch, {
+          status: 200,
+          headers: { "Set-Cookie": "JSESSIONID=private-session-2; Path=/" },
+        });
+      }
+      return new Response(clickDetail, { status: 200 });
+    });
+    const durableEvents = [];
+    const result = await probeBoundedBrowardMunicipalPermits({
+      config: getBrowardMunicipalPermitConfig("pompano_beach"),
+      queries: [{ kind: "permit_number", value: "26-00001234" }],
+      limits: {
+        maxQueries: 1,
+        maxSearchPages: 1,
+        maxResults: 1,
+        maxDetailPages: 1,
+        delayMs: 1_000,
+      },
+      dependencies: { fetchImpl },
+      wait: async () => {},
+      onRecord: async (record) => {
+        durableEvents.push(`record:${record.record_key}`);
+      },
+      onCheckpoint: async (checkpoint) => {
+        durableEvents.push(
+          `checkpoint:${String(checkpoint.capturedRecordKeys.length)}`,
+        );
+      },
+    });
+
+    expect(result.status).toBe("completed");
+    expect(result.records).toHaveLength(1);
+    expect(requests).toEqual([
+      {
+        method: "GET",
+        path: "/Click2GovBP/selectpermit.html",
+        hasCookie: false,
+      },
+      {
+        method: "POST",
+        path: "/Click2GovBP/selectpermit.html",
+        hasCookie: true,
+      },
+      {
+        method: "GET",
+        path: "/Click2GovBP/selectpermit.html",
+        hasCookie: true,
+      },
+    ]);
+    expect(durableEvents[0]).toMatch(/^record:/u);
+    expect(durableEvents[1]).toBe("checkpoint:1");
+    expect(durableEvents.at(-1)).toBe("checkpoint:1");
   });
 });
 

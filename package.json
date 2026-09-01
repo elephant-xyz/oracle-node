@@ -25,6 +25,7 @@
     "broward:recovery-dashboard": "node scripts/broward-neon-recovery-dashboard.mjs",
     "broward:tax-roll:profile": "node scripts/profile-broward-tax-roll.mjs",
     "broward:permits:pilot": "node scripts/run-broward-permit-pilot.mjs",
+    "broward:permits:pilot-municipal": "node scripts/run-broward-municipal-permit-pilot.mjs",
     "broward:permits:load-pilot": "node scripts/load-broward-permit-pilot-to-neon.mjs",
     "broward:permits:run-supported": "node scripts/run-broward-supported-permit-ingest.mjs",
     "broward:permits:run-bulk": "node scripts/run-broward-bulk-permit-ingest.mjs",
