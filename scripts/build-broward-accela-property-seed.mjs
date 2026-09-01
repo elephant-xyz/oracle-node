@@ -194,8 +194,7 @@ export async function buildBrowardAccelaPropertySeed(
          AND p.request_identifier IS NOT NULL
          AND a.unnormalized_address IS NOT NULL`,
     );
-    const candidates =
-      /** @type {BrowardPropertyCandidate[]} */ (result.rows);
+    const candidates = /** @type {BrowardPropertyCandidate[]} */ (result.rows);
     const built = createBrowardAccelaPropertySeedRows(candidates);
     if (built.rows.length === 0) {
       throw new Error("Verified Broward target produced no Accela seed rows");
@@ -209,9 +208,7 @@ export async function buildBrowardAccelaPropertySeed(
     for (const row of built.rows) {
       jurisdictionCounts[row.jurisdiction_key] += 1;
     }
-    for (const [jurisdictionKey, count] of Object.entries(
-      jurisdictionCounts,
-    )) {
+    for (const [jurisdictionKey, count] of Object.entries(jurisdictionCounts)) {
       if (count === 0) {
         throw new Error(
           `Verified Broward target produced no ${jurisdictionKey} seed rows`,
@@ -238,9 +235,7 @@ export async function buildBrowardAccelaPropertySeed(
  * @returns {string} Escaped field.
  */
 function encodeCsvCell(value) {
-  return /[",\r\n]/u.test(value)
-    ? `"${value.replaceAll('"', '""')}"`
-    : value;
+  return /[",\r\n]/u.test(value) ? `"${value.replaceAll('"', '""')}"` : value;
 }
 
 /**
@@ -269,7 +264,9 @@ async function verifyTarget(client, target) {
     row.branch_id !== target.expectedBranchId ||
     row.endpoint_id !== target.expectedEndpointId
   ) {
-    throw new Error("Accela property seed target is not isolated broward-ingest");
+    throw new Error(
+      "Accela property seed target is not isolated broward-ingest",
+    );
   }
 }
 

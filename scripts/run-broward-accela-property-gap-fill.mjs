@@ -132,9 +132,7 @@ export function parsePropertyGapFillOptions(argv) {
   }
   return {
     sourceKey,
-    seedPath: path.resolve(
-      values.get("seed") ?? DEFAULT_VERIFIED_SEED_PATH,
-    ),
+    seedPath: path.resolve(values.get("seed") ?? DEFAULT_VERIFIED_SEED_PATH),
     outputDirectory: path.resolve(
       requireText(values.get("output-dir"), "--output-dir"),
     ),
@@ -559,9 +557,9 @@ async function readOrCreateGapCheckpoint(
     }
     if (parsed.seedSha256 === seedSha256) {
       return {
-        ...(/** @type {Omit<GapFillCheckpoint,"schemaVersion" | "supersededSeeds">} */ (
+        .../** @type {Omit<GapFillCheckpoint,"schemaVersion" | "supersededSeeds">} */ (
           parsed
-        )),
+        ),
         schemaVersion: GAP_CHECKPOINT_SCHEMA,
         supersededSeeds: readSupersededSeeds(parsed.supersededSeeds),
       };
