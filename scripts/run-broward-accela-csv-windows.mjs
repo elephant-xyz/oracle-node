@@ -556,7 +556,12 @@ export async function runAccelaCsvWindows(options, dependencies = {}) {
       processed += 1;
     }
   } finally {
-    if (browser !== null) await browser.close().catch(() => undefined);
+    const finalBrowser = /** @type {import("puppeteer").Browser | null} */ (
+      browser
+    );
+    if (finalBrowser !== null) {
+      await finalBrowser.close().catch(() => undefined);
+    }
   }
   const aggregate = await aggregateWindows(checkpoint, normalizedListPath);
   const summary = {
