@@ -285,12 +285,17 @@ export async function runPropertyGapFill(options, dependencies = {}) {
     throw new Error("Property gap-fill plan conflicts with parent window");
   }
   const currentMs = Date.parse(now());
+  const parentNextAttemptMs =
+    mainCheckpoint.nextAttemptAt === null
+      ? Number.NEGATIVE_INFINITY
+      : Date.parse(mainCheckpoint.nextAttemptAt);
   const nextAttemptMs =
     checkpoint.cooldown === null
       ? Number.NEGATIVE_INFINITY
       : Date.parse(checkpoint.cooldown.nextAttemptAt);
-  if (Number.isFinite(nextAttemptMs) && nextAttemptMs > currentMs) {
-    return buildSummary(options.sourceKey, windowKey, plan, 0, checkpoint);
+  const safeAttemptMs = Math.max(parentNextAttemptMs, nextAttemptMs);
+  if (Number.isFinite(safeAttemptMs) && safeAttemptMs > currentMs) {
+    await wait(safeAttemptMs - currentMs);
   }
   if (plan.seedExhausted) {
     return buildSummary(options.sourceKey, windowKey, plan, 0, checkpoint);
@@ -486,7 +491,7 @@ function buildSummary(
 /**
  * @param {unknown} value
  * @param {GapFillSourceKey} sourceKey
- * @returns {{shardPlans:Record<string,{startDate:string,endDate:string}>}}
+ * @returns {{shardPlans:Record<string,{startDate:string,endDate:string}>,nextAttemptAt:string | null}}
  */
 function readMainCheckpoint(value, sourceKey) {
   if (
@@ -500,7 +505,11 @@ function readMainCheckpoint(value, sourceKey) {
     /** @type {Record<string,{startDate:string,endDate:string}>} */ (
       value.shardPlans
     );
-  return { shardPlans };
+  const nextAttemptAt =
+    isRecord(value.cooldown) && typeof value.cooldown.nextAttemptAt === "string"
+      ? value.cooldown.nextAttemptAt
+      : null;
+  return { shardPlans, nextAttemptAt };
 }
 
 /**
