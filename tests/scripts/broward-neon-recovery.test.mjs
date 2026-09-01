@@ -16,6 +16,7 @@ import {
   verifyNeonTarget,
 } from "../../scripts/recover-broward-appraisal-to-neon.mjs";
 import {
+  buildBrowardPermitRouteStatus,
   buildRecoveryStatus,
   parseDashboardOptions,
   readAccelaCsvReceiptAccessibleCount,
@@ -468,9 +469,10 @@ describe("durable Broward Neon recovery", () => {
       allRecordsAccounted: true,
       queryRowsMatch: true,
       registryJurisdictions: 32,
-      currentSourcesImplemented: 15,
-      currentSourcesBlocked: 17,
+      currentSourcesImplemented: 24,
+      currentSourcesBlocked: 8,
     });
+    expect(status.permitRoutes).toEqual(buildBrowardPermitRouteStatus());
     expect(status.permitInventory).toEqual({
       records: 243_939,
       matched: 192_813,
@@ -496,6 +498,77 @@ describe("durable Broward Neon recovery", () => {
     expect(JSON.stringify(status)).not.toContain("address");
   });
 
+  it("reconciles current permit routes without counting supplemental coverage", () => {
+    const routes = buildBrowardPermitRouteStatus();
+    expect(routes).toMatchObject({
+      registryVersion: "2026-09-01.2",
+      totalCurrentRoutes: 32,
+      implementedCurrentRoutes: 24,
+      blockedCurrentRoutes: 8,
+    });
+    expect(routes.implementedJurisdictions).toHaveLength(24);
+    expect(routes.blockerCategories).toEqual([
+      {
+        key: "software_or_transport",
+        kind: "software_transport",
+        label: "Software / transport",
+        count: 1,
+        jurisdictions: ["Lauderdale Lakes"],
+      },
+      {
+        key: "captcha_required",
+        kind: "source_policy",
+        label: "CAPTCHA required",
+        count: 3,
+        jurisdictions: [
+          "Coral Springs",
+          "Hillsboro Beach",
+          "Pembroke Park",
+        ],
+      },
+      {
+        key: "login_required",
+        kind: "source_policy",
+        label: "Login required",
+        count: 2,
+        jurisdictions: ["North Lauderdale", "Parkland"],
+      },
+      {
+        key: "no_anonymous_search",
+        kind: "source_policy",
+        label: "No anonymous search",
+        count: 1,
+        jurisdictions: ["Deerfield Beach"],
+      },
+      {
+        key: "custodian_only",
+        kind: "source_policy",
+        label: "Custodian only",
+        count: 1,
+        jurisdictions: ["Sea Ranch Lakes"],
+      },
+    ]);
+    expect(
+      routes.implementedCurrentRoutes + routes.blockedCurrentRoutes,
+    ).toBe(routes.totalCurrentRoutes);
+    expect(
+      routes.blockerCategories.reduce(
+        (sum, category) => sum + category.count,
+        0,
+      ),
+    ).toBe(routes.blockedCurrentRoutes);
+    expect(
+      routes.blockerCategories.find(
+        (category) => category.key === "captcha_required",
+      )?.jurisdictions,
+    ).not.toContain("Deerfield Beach");
+    expect(
+      routes.blockerCategories.find(
+        (category) => category.key === "custodian_only",
+      )?.jurisdictions,
+    ).not.toContain("Sunrise");
+  });
+
   it("reads aggregate permit worker checkpoints without exposing source rows", async () => {
     const root = await mkdtemp(
       path.join(tmpdir(), "broward-recovery-dashboard-permits-"),
@@ -509,9 +582,14 @@ describe("durable Broward Neon recovery", () => {
       root,
       "downloads/broward/tyler-date-windows/oakland-park-full-30d",
     );
+    const plantationDirectory = path.join(
+      root,
+      "downloads/broward/accela-csv-windows/plantation-full-v2",
+    );
     await Promise.all([
       mkdir(hollywoodDirectory, { recursive: true }),
       mkdir(oaklandDirectory, { recursive: true }),
+      mkdir(plantationDirectory, { recursive: true }),
     ]);
     await writeFile(
       path.join(hollywoodDirectory, "checkpoint.private.json"),
@@ -540,6 +618,14 @@ describe("durable Broward Neon recovery", () => {
         updatedAt: "2026-08-31T21:00:00.000Z",
       }),
     );
+    await writeFile(
+      path.join(plantationDirectory, "checkpoint.private.json"),
+      JSON.stringify({
+        pendingWindows: [{ startDate: "PRIVATE", endDate: "PRIVATE" }],
+        completedWindows: {},
+        updatedAt: "2026-08-31T20:00:00.000Z",
+      }),
+    );
     const status = await readPermitEnumerationStatus(
       root,
       Date.parse("2026-08-31T22:00:00.000Z"),
@@ -548,13 +634,16 @@ describe("durable Broward Neon recovery", () => {
       activeWorkers: 1,
       completedWorkers: 1,
       completedWindows: 2,
-      totalWindows: 3,
+      totalWindows: 4,
       accessibleRecords: 52,
       excludedRecords: 2,
       invalidRecords: 0,
       sourceMissingRecords: 1,
     });
     expect(status.workers).toHaveLength(8);
+    expect(status.pausedWorkers).toEqual([
+      { source: "Plantation", reason: "timeout" },
+    ]);
     expect(status.workers).toContainEqual(
       expect.objectContaining({
         source: "Hollywood",
@@ -565,6 +654,7 @@ describe("durable Broward Neon recovery", () => {
       }),
     );
     expect(JSON.stringify(status)).not.toContain("PRIVATE");
+    expect(buildBrowardPermitRouteStatus().blockedCurrentRoutes).toBe(8);
   });
 
   it("counts legacy, canonical, and list-only Accela receipts compatibly", () => {

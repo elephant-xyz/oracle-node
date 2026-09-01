@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -13,6 +13,7 @@ import {
   getLifecycleStatus,
   parseServerArgs,
 } from "../../scripts/serve-dashboard.mjs";
+import { buildBrowardPermitRouteStatus } from "../../scripts/broward-neon-recovery-dashboard.mjs";
 
 describe("universal dashboard server & county registry", () => {
   it("parses CLI arguments with defaults", () => {
@@ -58,6 +59,7 @@ describe("universal dashboard server & county registry", () => {
         path.join(bbbDirectory, "summary.private.json"),
         JSON.stringify({ candidateCount: 1_381 }),
       );
+      const permitRoutes = buildBrowardPermitRouteStatus();
       const lifecycle = await getBrowardLifecycleStatus(root, async () => ({
         progress: { properties: 534_309 },
         permitInventory: {
@@ -65,7 +67,14 @@ describe("universal dashboard server & county registry", () => {
           roofing: 22_414,
           matched: 192_813,
         },
-        permitEnumeration: { accessibleRecords: 430_087 },
+        permitRoutes,
+        permitEnumeration: {
+          accessibleRecords: 430_087,
+          pausedWorkers: [
+            { source: "Plantation", reason: "timeout" },
+            { source: "Weston", reason: "missing_export" },
+          ],
+        },
         sunbizMatch: { registrations: 12_432, properties: 9_023 },
       }));
       expect(lifecycle).toMatchObject({
@@ -82,6 +91,17 @@ describe("universal dashboard server & county registry", () => {
           },
           sourcing: {
             status: "in_progress",
+            permitRoutes: {
+              totalCurrentRoutes: 32,
+              implementedCurrentRoutes: 24,
+              blockedCurrentRoutes: 8,
+            },
+            operationalWorkers: {
+              paused: [
+                { source: "Plantation", reason: "timeout" },
+                { source: "Weston", reason: "missing_export" },
+              ],
+            },
             permits: {
               count: 243_939,
               capturedCount: 430_087,
@@ -103,9 +123,35 @@ describe("universal dashboard server & county registry", () => {
       expect(JSON.stringify(lifecycle)).not.toMatch(
         /555-01|Roofing Pros|Atlantic Coast Roofing/iu,
       );
+      const sourcing = lifecycle.stages.sourcing;
+      expect(
+        sourcing.permitRoutes.implementedCurrentRoutes +
+          sourcing.permitRoutes.blockedCurrentRoutes,
+      ).toBe(sourcing.permitRoutes.totalCurrentRoutes);
+      expect(
+        sourcing.permitRoutes.blockerCategories.reduce(
+          (sum, category) => sum + category.count,
+          0,
+        ),
+      ).toBe(sourcing.permitRoutes.blockedCurrentRoutes);
+      expect(sourcing.operationalWorkers.paused).toHaveLength(2);
+      expect(sourcing.permitRoutes.blockedCurrentRoutes).toBe(8);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
+  });
+
+  it("includes a universal permit-route and operational-pause view", async () => {
+    const dashboardHtml = await readFile(
+      path.resolve(process.cwd(), "scripts/common/dashboard.html"),
+      "utf8",
+    );
+    expect(dashboardHtml).toContain('id="permitRouteStatusCard"');
+    expect(dashboardHtml).toContain('id="permitRouteBlockerGroups"');
+    expect(dashboardHtml).toContain('id="permitPausedWorkerList"');
+    expect(dashboardHtml).toContain(
+      "Operational pauses are shown separately",
+    );
   });
 
   it("resolves county metadata by key with fallback", () => {

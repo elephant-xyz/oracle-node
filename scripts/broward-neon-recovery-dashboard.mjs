@@ -16,6 +16,10 @@ import { pathToFileURL } from "node:url";
 import pg from "pg";
 
 import { BROWARD_ROW_DENOMINATOR } from "./broward-ingestion-dashboard.mjs";
+import {
+  BROWARD_PERMIT_JURISDICTIONS,
+  BROWARD_PERMIT_REGISTRY_VERSION,
+} from "./broward-permit-jurisdictions.mjs";
 
 const { Pool } = pg;
 const EXPECTED_PROJECT_ID = "raspy-frost-51580436";
@@ -93,9 +97,18 @@ const DEFAULT_PORT = 47_832;
  * @property {number} invalidRecords - Malformed source rows.
  * @property {number} sourceMissingRecords - Reported but inaccessible rows.
  * @property {string | null} updatedAt - Last durable checkpoint time.
+ * @property {"timeout" | "missing_controls" | "missing_export" | "checkpoint_stale" | null} pauseReason
+ *   Allowlisted operational reason when this worker is paused.
+ *
+ * @typedef {object} PausedPermitEnumerationWorker
+ * @property {string} source - Public jurisdiction label.
+ * @property {"timeout" | "missing_controls" | "missing_export" | "checkpoint_stale"} reason
+ *   Allowlisted operational reason containing no source record or raw error.
  *
  * @typedef {object} PermitEnumerationStatus
  * @property {PermitEnumerationWorkerStatus[]} workers - Fixed aggregate source list.
+ * @property {PausedPermitEnumerationWorker[]} pausedWorkers
+ *   Paused jobs, kept separate from current source-route blockers.
  * @property {number} activeWorkers - Recently advancing workers.
  * @property {number} completedWorkers - Fully exhausted workers.
  * @property {number} completedWindows - Durable windows across workers.
@@ -104,6 +117,25 @@ const DEFAULT_PORT = 47_832;
  * @property {number} excludedRecords - Explicit non-permit source rows.
  * @property {number} invalidRecords - Malformed source rows.
  * @property {number} sourceMissingRecords - Reported but inaccessible rows.
+ *
+ * @typedef {"software_or_transport" | "captcha_required" | "login_required" | "no_anonymous_search" | "custodian_only"} PermitRouteBlockerKey
+ *
+ * @typedef {object} PermitRouteBlockerCategory
+ * @property {PermitRouteBlockerKey} key - Stable blocker category.
+ * @property {"software_transport" | "source_policy"} kind
+ *   Whether implementation work can address the route or the source imposes the barrier.
+ * @property {string} label - Public dashboard category label.
+ * @property {number} count - Number of blocked current routes in this category.
+ * @property {string[]} jurisdictions - Sorted public jurisdiction names.
+ *
+ * @typedef {object} BrowardPermitRouteStatus
+ * @property {string} registryVersion - Executable registry version.
+ * @property {number} totalCurrentRoutes - Current primary routes only.
+ * @property {number} implementedCurrentRoutes - Implemented current primary routes.
+ * @property {number} blockedCurrentRoutes - Fail-closed current primary routes.
+ * @property {string[]} implementedJurisdictions - Sorted implemented jurisdiction names.
+ * @property {PermitRouteBlockerCategory[]} blockerCategories
+ *   Exhaustive deterministic categories whose counts sum to blockedCurrentRoutes.
  *
  * @typedef {object} RecoveryDashboardStatus
  * @property {1} schemaVersion - Response schema version.
@@ -150,6 +182,8 @@ const DEFAULT_PORT = 47_832;
  *   currentSourcesImplemented: number,
  *   currentSourcesBlocked: number
  * }} permit - Durable bounded-pilot evidence and honest completeness state.
+ * @property {BrowardPermitRouteStatus} permitRoutes
+ *   Registry-derived current-route implementation and blocker status.
  * @property {{
  *   records:number,
  *   matched:number,
@@ -266,21 +300,138 @@ function nullableCount(value) {
 }
 
 /**
+ * Ordered, exhaustive mapping from fail-closed registry statuses to public
+ * blocker categories.
+ *
+ * @type {readonly {
+ *   key: PermitRouteBlockerKey,
+ *   kind: "software_transport" | "source_policy",
+ *   label: string,
+ *   statuses: readonly string[]
+ * }[]}
+ */
+const PERMIT_ROUTE_BLOCKER_DEFINITIONS = Object.freeze([
+  Object.freeze({
+    key: "software_or_transport",
+    kind: "software_transport",
+    label: "Software / transport",
+    statuses: Object.freeze(["adapter_unavailable", "egress_unavailable"]),
+  }),
+  Object.freeze({
+    key: "captcha_required",
+    kind: "source_policy",
+    label: "CAPTCHA required",
+    statuses: Object.freeze(["captcha_required"]),
+  }),
+  Object.freeze({
+    key: "login_required",
+    kind: "source_policy",
+    label: "Login required",
+    statuses: Object.freeze(["login_required"]),
+  }),
+  Object.freeze({
+    key: "no_anonymous_search",
+    kind: "source_policy",
+    label: "No anonymous search",
+    statuses: Object.freeze(["no_anonymous_search"]),
+  }),
+  Object.freeze({
+    key: "custodian_only",
+    kind: "source_policy",
+    label: "Custodian only",
+    statuses: Object.freeze(["custodian_only"]),
+  }),
+]);
+
+/**
+ * Build the current-route implementation summary directly from the executable
+ * jurisdiction registry. Only each jurisdiction's primary `current` route is
+ * counted; historical and supplemental routes never enter this denominator.
+ *
+ * @returns {BrowardPermitRouteStatus} Reconciled public route status.
+ */
+export function buildBrowardPermitRouteStatus() {
+  /** @type {string[]} */
+  const implementedJurisdictions = [];
+  /** @type {Map<PermitRouteBlockerKey, string[]>} */
+  const blockedJurisdictions = new Map(
+    PERMIT_ROUTE_BLOCKER_DEFINITIONS.map((definition) => [definition.key, []]),
+  );
+  const currentSourceKeys = new Set();
+  for (const entry of BROWARD_PERMIT_JURISDICTIONS) {
+    const route = entry.primarySource;
+    if (route.coverageKind !== "current") {
+      throw new Error(
+        `Broward primary permit route is not current: ${entry.name}`,
+      );
+    }
+    if (currentSourceKeys.has(route.sourceKey)) {
+      throw new Error(
+        `Duplicate Broward current permit route: ${route.sourceKey}`,
+      );
+    }
+    currentSourceKeys.add(route.sourceKey);
+    if (route.status === "implemented") {
+      implementedJurisdictions.push(entry.name);
+      continue;
+    }
+    const definition = PERMIT_ROUTE_BLOCKER_DEFINITIONS.find((candidate) =>
+      candidate.statuses.includes(route.status),
+    );
+    if (definition === undefined) {
+      throw new Error(`Unclassified Broward permit blocker: ${route.status}`);
+    }
+    blockedJurisdictions.get(definition.key)?.push(entry.name);
+  }
+  implementedJurisdictions.sort((left, right) => left.localeCompare(right));
+  const blockerCategories = PERMIT_ROUTE_BLOCKER_DEFINITIONS.map(
+    (definition) => {
+      const names = blockedJurisdictions.get(definition.key) ?? [];
+      names.sort((left, right) => left.localeCompare(right));
+      return {
+        key: /** @type {PermitRouteBlockerKey} */ (definition.key),
+        kind: /** @type {"software_transport" | "source_policy"} */ (
+          definition.kind
+        ),
+        label: definition.label,
+        count: names.length,
+        jurisdictions: names,
+      };
+    },
+  );
+  const blockedCurrentRoutes = blockerCategories.reduce(
+    (sum, category) => sum + category.count,
+    0,
+  );
+  const totalCurrentRoutes = BROWARD_PERMIT_JURISDICTIONS.length;
+  if (
+    implementedJurisdictions.length + blockedCurrentRoutes !==
+    totalCurrentRoutes
+  ) {
+    throw new Error("Broward permit route categories do not reconcile");
+  }
+  return {
+    registryVersion: BROWARD_PERMIT_REGISTRY_VERSION,
+    totalCurrentRoutes,
+    implementedCurrentRoutes: implementedJurisdictions.length,
+    blockedCurrentRoutes,
+    implementedJurisdictions,
+    blockerCategories,
+  };
+}
+
+/**
  * Build the aggregate-only permit status from control and optional pilot rows.
  *
  * @param {RecoveryAggregateRow} row - Combined recovery dashboard row.
+ * @param {BrowardPermitRouteStatus} permitRoutes
+ *   Current executable-registry route status.
  * @returns {RecoveryDashboardStatus["permit"]} Public permit status.
  */
-function buildPermitStatus(row) {
-  const registryJurisdictions = count(row.permit_registry_jurisdictions);
-  const currentSourcesImplemented = count(row.permit_sources_implemented);
-  const currentSourcesBlocked = count(row.permit_sources_blocked);
-  if (
-    currentSourcesImplemented + currentSourcesBlocked !==
-    registryJurisdictions
-  ) {
-    throw new Error("Permit route aggregates do not reconcile");
-  }
+function buildPermitStatus(row, permitRoutes) {
+  const registryJurisdictions = permitRoutes.totalCurrentRoutes;
+  const currentSourcesImplemented = permitRoutes.implementedCurrentRoutes;
+  const currentSourcesBlocked = permitRoutes.blockedCurrentRoutes;
   const recordedAt =
     row.permit_recorded_at instanceof Date
       ? row.permit_recorded_at.toISOString()
@@ -377,6 +528,7 @@ function buildPermitStatus(row) {
 function emptyPermitEnumerationStatus() {
   return {
     workers: [],
+    pausedWorkers: [],
     activeWorkers: 0,
     completedWorkers: 0,
     completedWindows: 0,
@@ -409,6 +561,7 @@ export function buildRecoveryStatus(row, nowMs) {
   const durableCompleted = verifiedProperties + terminalSourceMisses;
   const remaining = Math.max(0, BROWARD_ROW_DENOMINATOR - durableCompleted);
   const recentProperties = count(row.recent_properties);
+  const permitRoutes = buildBrowardPermitRouteStatus();
   return {
     schemaVersion: 1,
     generatedAt: new Date(nowMs).toISOString(),
@@ -444,7 +597,8 @@ export function buildRecoveryStatus(row, nowMs) {
       windowMinutes: 15,
       propertiesPerMinute: Math.round((recentProperties / 15) * 100) / 100,
     },
-    permit: buildPermitStatus(row),
+    permit: buildPermitStatus(row, permitRoutes),
+    permitRoutes,
     permitInventory: {
       records: count(row.permit_inventory_records),
       matched: count(row.permit_inventory_matched),
@@ -473,48 +627,56 @@ const PERMIT_ENUMERATION_CHECKPOINTS = Object.freeze([
   {
     source: "Hollywood",
     family: "accela_csv",
+    pauseReason: "checkpoint_stale",
     relativePath:
       "downloads/broward/accela-csv-windows/hollywood-full/checkpoint.private.json",
   },
   {
     source: "Plantation",
     family: "accela_csv",
+    pauseReason: "timeout",
     relativePath:
       "downloads/broward/accela-csv-windows/plantation-full-v2/checkpoint.private.json",
   },
   {
     source: "Cooper City",
     family: "accela_csv",
+    pauseReason: "missing_controls",
     relativePath:
       "downloads/broward/accela-csv-windows/cooper-city-full/checkpoint.private.json",
   },
   {
     source: "Weston",
     family: "accela_csv",
+    pauseReason: "missing_export",
     relativePath:
       "downloads/broward/accela-csv-windows/weston-full/checkpoint.private.json",
   },
   {
     source: "Pembroke Pines",
     family: "tyler_api",
+    pauseReason: "checkpoint_stale",
     relativePath:
       "downloads/broward/tyler-date-windows/pembroke-pines-full-30d/checkpoint.private.json",
   },
   {
     source: "Hallandale Beach",
     family: "tyler_api",
+    pauseReason: "checkpoint_stale",
     relativePath:
       "downloads/broward/tyler-date-windows/hallandale-beach-full-30d/checkpoint.private.json",
   },
   {
     source: "Miramar",
     family: "tyler_api",
+    pauseReason: "checkpoint_stale",
     relativePath:
       "downloads/broward/tyler-date-windows/miramar-full-2019/checkpoint.private.json",
   },
   {
     source: "Oakland Park",
     family: "tyler_api",
+    pauseReason: "checkpoint_stale",
     relativePath:
       "downloads/broward/tyler-date-windows/oakland-park-full-30d/checkpoint.private.json",
   },
@@ -591,14 +753,15 @@ export async function readPermitEnumerationStatus(
           Number.isFinite(updatedMs) &&
           nowMs - updatedMs >= 0 &&
           nowMs - updatedMs <= 5 * 60_000;
+        const status = complete
+          ? /** @type {"complete"} */ ("complete")
+          : recentlyActive
+            ? /** @type {"running"} */ ("running")
+            : /** @type {"paused"} */ ("paused");
         return {
           source: definition.source,
           family: /** @type {"accela_csv" | "tyler_api"} */ (definition.family),
-          status: complete
-            ? /** @type {"complete"} */ ("complete")
-            : recentlyActive
-              ? /** @type {"running"} */ ("running")
-              : /** @type {"paused"} */ ("paused"),
+          status,
           completedWindows,
           pendingWindows,
           totalWindows,
@@ -611,6 +774,12 @@ export async function readPermitEnumerationStatus(
           invalidRecords,
           sourceMissingRecords,
           updatedAt,
+          pauseReason:
+            status === "paused"
+              ? /** @type {"timeout" | "missing_controls" | "missing_export" | "checkpoint_stale"} */ (
+                  definition.pauseReason
+                )
+              : null,
         };
       } catch (error) {
         if (isNodeError(error) && error.code === "ENOENT") {
@@ -629,14 +798,26 @@ export async function readPermitEnumerationStatus(
             invalidRecords: 0,
             sourceMissingRecords: 0,
             updatedAt: null,
+            pauseReason: null,
           };
         }
         throw error;
       }
     }),
   );
+  /** @type {PausedPermitEnumerationWorker[]} */
+  const pausedWorkers = [];
+  for (const worker of workers) {
+    if (worker.status === "paused" && worker.pauseReason !== null) {
+      pausedWorkers.push({
+        source: worker.source,
+        reason: worker.pauseReason,
+      });
+    }
+  }
   return {
     workers,
+    pausedWorkers,
     activeWorkers: workers.filter((worker) => worker.status === "running")
       .length,
     completedWorkers: workers.filter((worker) => worker.status === "complete")
@@ -1113,6 +1294,11 @@ const DASHBOARD_HTML = `<!doctype html>
     table { width: 100%; margin: 1rem 0; border-collapse: collapse; }
     th, td { padding: .55rem; border-bottom: 1px solid #29415a; text-align: left; }
     td:nth-child(n+3) { font-variant-numeric: tabular-nums; text-align: right; }
+    .route-groups { display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); gap: .75rem; }
+    .route-group { padding: .8rem; border: 1px solid #29415a; border-radius: .6rem; background: #0b1929; }
+    .route-group h3 { margin: 0 0 .4rem; font-size: .95rem; }
+    .route-group p, .route-note { color: #a9bed2; }
+    .route-group p { margin: 0; }
     #error { color: #ff8290; }
   </style>
 </head>
@@ -1148,6 +1334,9 @@ const DASHBOARD_HTML = `<!doctype html>
     <thead><tr><th>Jurisdiction</th><th>Source</th><th>Status</th><th>Windows</th><th>Records</th><th>Gaps</th></tr></thead>
     <tbody id="permit-worker-rows"></tbody>
   </table>
+  <h2>Paused operational workers</h2>
+  <p class="route-note">Checkpoint pauses are operational states and are not source-route blockers.</p>
+  <ul id="permit-paused-workers"><li>Loading worker state…</li></ul>
   <h2>Sunbiz property matching</h2>
   <section class="grid">
     <article><h2>Matched registrations</h2><strong id="sunbiz-registrations">—</strong></article>
@@ -1165,6 +1354,20 @@ const DASHBOARD_HTML = `<!doctype html>
     <article><h2>Queryable records</h2><strong id="permit-records">—</strong></article>
     <article><h2>Current routes</h2><strong id="permit-routes">—</strong></article>
   </section>
+  <h2>Current permit route implementation</h2>
+  <p class="route-note">Counts include one current primary route per jurisdiction. Historical and supplemental routes are excluded.</p>
+  <section class="grid">
+    <article><h2>Total current routes</h2><strong id="permit-route-total">—</strong></article>
+    <article><h2>Implemented</h2><strong id="permit-route-implemented">—</strong></article>
+    <article><h2>Blocked</h2><strong id="permit-route-blocked">—</strong></article>
+  </section>
+  <div class="route-groups">
+    <section class="route-group">
+      <h3>Implemented jurisdictions</h3>
+      <p id="permit-route-implemented-names">Loading route status…</p>
+    </section>
+    <div id="permit-route-blocker-groups"></div>
+  </div>
   <p id="error"></p>
   <p>Only aggregate counts and timestamps are exposed. Refreshes every five seconds.</p>
 <script>
@@ -1227,18 +1430,57 @@ const DASHBOARD_HTML = `<!doctype html>
         });
         workerBody.replaceChildren(...rows);
       }
+      const pausedWorkers = enumeration.pausedWorkers;
+      const pausedWorkerList = document.getElementById("permit-paused-workers");
+      if (pausedWorkerList) {
+        if (pausedWorkers.length === 0) {
+          const item = document.createElement("li");
+          item.textContent = "No workers are paused.";
+          pausedWorkerList.replaceChildren(item);
+        } else {
+          pausedWorkerList.replaceChildren(
+            ...pausedWorkers.map((worker) => {
+              const item = document.createElement("li");
+              item.textContent = worker.source + " — " + worker.reason.replaceAll("_", " ");
+              return item;
+            }),
+          );
+        }
+      }
       const sunbiz = status.sunbizMatch;
       set("sunbiz-registrations", format.format(sunbiz.registrations));
       set("sunbiz-properties", format.format(sunbiz.properties));
       set("sunbiz-roles", format.format(sunbiz.matchedAddressRoles));
       set("sunbiz-chunks", format.format(sunbiz.chunks));
       const permit = status.permit;
+      const routes = status.permitRoutes;
       set("permit-pilot", permit.pilotState.replaceAll("_", " "));
       set("permit-completeness", permit.countyCompleteness.replaceAll("_", " "));
       set("permit-sample", nullable(permit.sampleParcels));
       set("permit-attempts", nullable(permit.sourceAttempts));
       set("permit-records", nullable(permit.queryRows));
       set("permit-routes", format.format(permit.currentSourcesImplemented) + " implemented / " + format.format(permit.currentSourcesBlocked) + " blocked");
+      set("permit-route-total", format.format(routes.totalCurrentRoutes));
+      set("permit-route-implemented", format.format(routes.implementedCurrentRoutes));
+      set("permit-route-blocked", format.format(routes.blockedCurrentRoutes));
+      set("permit-route-implemented-names", routes.implementedJurisdictions.join(", "));
+      const routeGroups = document.getElementById("permit-route-blocker-groups");
+      if (routeGroups) {
+        routeGroups.replaceChildren(
+          ...routes.blockerCategories.map((category) => {
+            const group = document.createElement("section");
+            group.className = "route-group";
+            const heading = document.createElement("h3");
+            heading.textContent = category.label + " (" + format.format(category.count) + ")";
+            const names = document.createElement("p");
+            names.textContent = category.jurisdictions.length === 0
+              ? "None"
+              : category.jurisdictions.join(", ");
+            group.append(heading, names);
+            return group;
+          }),
+        );
+      }
       set(
         "permit-summary",
         permit.pilotState === "not_recorded"

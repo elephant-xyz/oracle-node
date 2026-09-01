@@ -1426,6 +1426,56 @@
           </div>
         </div>
 
+        <div class="card" id="permitRouteStatusCard" hidden>
+          <h3>Current Permit Route Implementation</h3>
+          <div
+            style="
+              display: grid;
+              grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+              gap: 12px;
+              margin: 12px 0;
+            "
+          >
+            <div>
+              <div class="value" id="permitRouteTotalVal">--</div>
+              <div class="sub">Total current routes</div>
+            </div>
+            <div>
+              <div
+                class="value"
+                style="color: var(--success)"
+                id="permitRouteImplementedVal"
+              >
+                --
+              </div>
+              <div class="sub">Implemented</div>
+            </div>
+            <div>
+              <div
+                class="value"
+                style="color: var(--warning)"
+                id="permitRouteBlockedVal"
+              >
+                --
+              </div>
+              <div class="sub">Blocked</div>
+            </div>
+          </div>
+          <p class="sub">
+            One current primary route per jurisdiction; historical and
+            supplemental routes are excluded.
+          </p>
+          <h3 style="margin-top: 14px">Implemented Jurisdictions</h3>
+          <p class="sub" id="permitRouteImplementedNames">--</p>
+          <div id="permitRouteBlockerGroups"></div>
+          <h3 style="margin-top: 14px">Paused Operational Workers</h3>
+          <p class="sub">
+            Operational pauses are shown separately and do not increase the
+            blocked-route count.
+          </p>
+          <ul id="permitPausedWorkerList"></ul>
+        </div>
+
         <!-- Trade Breakdown Cards -->
         <div class="card">
           <h3>Permit Trade Distribution</h3>
@@ -2516,6 +2566,71 @@
               "badge badge-blue";
             document.getElementById("stepStatus4").innerText =
               "50 Multi-Source";
+          }
+
+          const permitRouteCard = document.getElementById(
+            "permitRouteStatusCard",
+          );
+          const permitRoutes = srcStage?.permitRoutes;
+          if (permitRouteCard && permitRoutes) {
+            permitRouteCard.hidden = false;
+            document.getElementById("permitRouteTotalVal").innerText =
+              permitRoutes.totalCurrentRoutes.toLocaleString();
+            document.getElementById("permitRouteImplementedVal").innerText =
+              permitRoutes.implementedCurrentRoutes.toLocaleString();
+            document.getElementById("permitRouteBlockedVal").innerText =
+              permitRoutes.blockedCurrentRoutes.toLocaleString();
+            document.getElementById("permitRouteImplementedNames").innerText =
+              permitRoutes.implementedJurisdictions.join(", ");
+            const blockerGroups = document.getElementById(
+              "permitRouteBlockerGroups",
+            );
+            if (blockerGroups) {
+              blockerGroups.replaceChildren(
+                ...permitRoutes.blockerCategories.map((category) => {
+                  const group = document.createElement("section");
+                  group.style.marginTop = "12px";
+                  const heading = document.createElement("h3");
+                  heading.textContent =
+                    category.label +
+                    " (" +
+                    category.count.toLocaleString() +
+                    ")";
+                  const names = document.createElement("p");
+                  names.className = "sub";
+                  names.textContent =
+                    category.jurisdictions.length === 0
+                      ? "None"
+                      : category.jurisdictions.join(", ");
+                  group.append(heading, names);
+                  return group;
+                }),
+              );
+            }
+            const pausedWorkers =
+              srcStage.operationalWorkers?.paused || [];
+            const pausedWorkerList = document.getElementById(
+              "permitPausedWorkerList",
+            );
+            if (pausedWorkerList) {
+              pausedWorkerList.replaceChildren(
+                ...(
+                  pausedWorkers.length === 0
+                    ? [{ source: "No workers are paused", reason: "" }]
+                    : pausedWorkers
+                ).map((worker) => {
+                  const item = document.createElement("li");
+                  item.textContent = worker.reason
+                    ? worker.source +
+                      " — " +
+                      worker.reason.replaceAll("_", " ")
+                    : worker.source;
+                  return item;
+                }),
+              );
+            }
+          } else if (permitRouteCard) {
+            permitRouteCard.hidden = true;
           }
 
           const pubStage = data.stages?.publish;

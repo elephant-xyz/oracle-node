@@ -34,6 +34,29 @@ const DASHBOARD_HTML_PATH = resolve(__dirname, "common/dashboard.html");
  * @property {string} county
  * @property {string} outputRoot
  * @property {boolean} open
+ *
+ * @typedef {"software_or_transport" | "captcha_required" | "login_required" | "no_anonymous_search" | "custodian_only"} UniversalPermitRouteBlockerKey
+ *
+ * @typedef {object} UniversalPermitRouteBlockerCategory
+ * @property {UniversalPermitRouteBlockerKey} key - Stable blocker category.
+ * @property {"software_transport" | "source_policy"} kind - Actionability class.
+ * @property {string} label - Public category label.
+ * @property {number} count - Reconciled blocked-route count.
+ * @property {string[]} jurisdictions - Public jurisdiction names.
+ *
+ * @typedef {object} UniversalPermitRouteStatus
+ * @property {string} registryVersion - Executable registry version.
+ * @property {number} totalCurrentRoutes - Current primary-route denominator.
+ * @property {number} implementedCurrentRoutes - Implemented current routes.
+ * @property {number} blockedCurrentRoutes - Fail-closed current routes.
+ * @property {string[]} implementedJurisdictions - Public implemented names.
+ * @property {UniversalPermitRouteBlockerCategory[]} blockerCategories
+ *   Exhaustive blocker categories.
+ *
+ * @typedef {object} UniversalPausedPermitWorker
+ * @property {string} source - Public jurisdiction label.
+ * @property {"timeout" | "missing_controls" | "missing_export" | "checkpoint_stale"} reason
+ *   Allowlisted operational pause reason.
  */
 
 /**
@@ -106,6 +129,11 @@ export async function getBrowardLifecycleStatus(
   const enumeration = requireObject(
     status.permitEnumeration,
     "Broward permit enumeration",
+  );
+  const permitRoutes = readBrowardPermitRouteStatus(status.permitRoutes);
+  const pausedPermitWorkers = readBrowardPausedPermitWorkers(
+    enumeration.pausedWorkers,
+    permitRoutes.implementedJurisdictions,
   );
   const sunbiz = requireObject(status.sunbizMatch, "Broward Sunbiz match");
   const properties = requireNonNegativeNumber(
@@ -197,6 +225,10 @@ export async function getBrowardLifecycleStatus(
         number: 4,
         title: "Permits & Sourcing",
         status: capturedPermits > permits ? "in_progress" : "partially_loaded",
+        permitRoutes,
+        operationalWorkers: {
+          paused: pausedPermitWorkers,
+        },
         permits: {
           count: permits,
           capturedCount: capturedPermits,
@@ -281,6 +313,219 @@ function requireNonNegativeNumber(value, label) {
     throw new Error(`${label} is invalid`);
   }
   return parsed;
+}
+
+const BROWARD_ROUTE_CATEGORY_METADATA = Object.freeze({
+  software_or_transport: Object.freeze({
+    kind: "software_transport",
+    label: "Software / transport",
+  }),
+  captcha_required: Object.freeze({
+    kind: "source_policy",
+    label: "CAPTCHA required",
+  }),
+  login_required: Object.freeze({
+    kind: "source_policy",
+    label: "Login required",
+  }),
+  no_anonymous_search: Object.freeze({
+    kind: "source_policy",
+    label: "No anonymous search",
+  }),
+  custodian_only: Object.freeze({
+    kind: "source_policy",
+    label: "Custodian only",
+  }),
+});
+
+/**
+ * Require one non-empty public label.
+ *
+ * @param {unknown} value - Candidate label.
+ * @param {string} fieldName - Field name for a safe validation error.
+ * @returns {string} Trimmed public label.
+ */
+function requirePublicLabel(value, fieldName) {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new Error(`${fieldName} is invalid`);
+  }
+  return value.trim();
+}
+
+/**
+ * Require an array of unique non-empty public labels.
+ *
+ * @param {unknown} value - Candidate label collection.
+ * @param {string} fieldName - Field name for a safe validation error.
+ * @returns {string[]} Copied unique labels.
+ */
+function requirePublicLabels(value, fieldName) {
+  if (!Array.isArray(value)) {
+    throw new Error(`${fieldName} is missing`);
+  }
+  const labels = value.map((label) => requirePublicLabel(label, fieldName));
+  if (new Set(labels).size !== labels.length) {
+    throw new Error(`${fieldName} contains duplicates`);
+  }
+  return labels;
+}
+
+/**
+ * Validate the private Broward route summary before exposing it through the
+ * universal dashboard. Reconciliation is repeated at this boundary so stale
+ * or partial upstream payloads fail closed.
+ *
+ * @param {unknown} value - Private aggregate route payload.
+ * @returns {UniversalPermitRouteStatus} Clean universal route summary.
+ */
+function readBrowardPermitRouteStatus(value) {
+  const input = requireObject(value, "Broward permit routes");
+  const registryVersion = requirePublicLabel(
+    input.registryVersion,
+    "Broward permit registry version",
+  );
+  const totalCurrentRoutes = requireNonNegativeNumber(
+    input.totalCurrentRoutes,
+    "Broward total permit routes",
+  );
+  const implementedCurrentRoutes = requireNonNegativeNumber(
+    input.implementedCurrentRoutes,
+    "Broward implemented permit routes",
+  );
+  const blockedCurrentRoutes = requireNonNegativeNumber(
+    input.blockedCurrentRoutes,
+    "Broward blocked permit routes",
+  );
+  if (
+    !Number.isSafeInteger(totalCurrentRoutes) ||
+    !Number.isSafeInteger(implementedCurrentRoutes) ||
+    !Number.isSafeInteger(blockedCurrentRoutes) ||
+    implementedCurrentRoutes + blockedCurrentRoutes !== totalCurrentRoutes
+  ) {
+    throw new Error("Broward permit route totals do not reconcile");
+  }
+  const implementedJurisdictions = requirePublicLabels(
+    input.implementedJurisdictions,
+    "Broward implemented permit jurisdictions",
+  );
+  if (implementedJurisdictions.length !== implementedCurrentRoutes) {
+    throw new Error("Broward implemented permit routes do not reconcile");
+  }
+  if (!Array.isArray(input.blockerCategories)) {
+    throw new Error("Broward permit blocker categories are missing");
+  }
+  /** @type {Set<UniversalPermitRouteBlockerKey>} */
+  const seenCategoryKeys = new Set();
+  const blockerCategories = input.blockerCategories.map((candidate) => {
+    const category = requireObject(
+      candidate,
+      "Broward permit blocker category",
+    );
+    const key = requirePublicLabel(
+      category.key,
+      "Broward permit blocker key",
+    );
+    if (!(key in BROWARD_ROUTE_CATEGORY_METADATA)) {
+      throw new Error("Broward permit blocker category is unknown");
+    }
+    const typedKey = /** @type {UniversalPermitRouteBlockerKey} */ (key);
+    if (seenCategoryKeys.has(typedKey)) {
+      throw new Error("Broward permit blocker category is duplicated");
+    }
+    seenCategoryKeys.add(typedKey);
+    const metadata = BROWARD_ROUTE_CATEGORY_METADATA[typedKey];
+    const count = requireNonNegativeNumber(
+      category.count,
+      "Broward permit blocker count",
+    );
+    const jurisdictions = requirePublicLabels(
+      category.jurisdictions,
+      "Broward blocked permit jurisdictions",
+    );
+    if (!Number.isSafeInteger(count) || count !== jurisdictions.length) {
+      throw new Error("Broward permit blocker category does not reconcile");
+    }
+    return {
+      key: typedKey,
+      kind: /** @type {"software_transport" | "source_policy"} */ (
+        metadata.kind
+      ),
+      label: metadata.label,
+      count,
+      jurisdictions,
+    };
+  });
+  if (
+    seenCategoryKeys.size !==
+      Object.keys(BROWARD_ROUTE_CATEGORY_METADATA).length ||
+    blockerCategories.reduce((sum, category) => sum + category.count, 0) !==
+      blockedCurrentRoutes
+  ) {
+    throw new Error("Broward permit blocker categories do not reconcile");
+  }
+  const allJurisdictions = [
+    ...implementedJurisdictions,
+    ...blockerCategories.flatMap((category) => category.jurisdictions),
+  ];
+  if (new Set(allJurisdictions).size !== totalCurrentRoutes) {
+    throw new Error("Broward current permit jurisdictions do not reconcile");
+  }
+  return {
+    registryVersion,
+    totalCurrentRoutes,
+    implementedCurrentRoutes,
+    blockedCurrentRoutes,
+    implementedJurisdictions,
+    blockerCategories,
+  };
+}
+
+/**
+ * Validate allowlisted operational pauses independently of source blockers.
+ * A paused enumerator must belong to an implemented route; this prevents a
+ * runtime checkpoint state from inflating or masquerading as blocked coverage.
+ *
+ * @param {unknown} value - Candidate paused worker list.
+ * @param {readonly string[]} implementedJurisdictions - Registry-derived implemented names.
+ * @returns {UniversalPausedPermitWorker[]} Clean operational pause list.
+ */
+function readBrowardPausedPermitWorkers(value, implementedJurisdictions) {
+  if (!Array.isArray(value)) {
+    throw new Error("Broward paused permit workers are missing");
+  }
+  const allowedReasons = new Set([
+    "timeout",
+    "missing_controls",
+    "missing_export",
+    "checkpoint_stale",
+  ]);
+  const workerSources = new Set();
+  return value.map((candidate) => {
+    const worker = requireObject(candidate, "Broward paused permit worker");
+    const source = requirePublicLabel(
+      worker.source,
+      "Broward paused permit worker source",
+    );
+    const reason = requirePublicLabel(
+      worker.reason,
+      "Broward paused permit worker reason",
+    );
+    if (
+      workerSources.has(source) ||
+      !implementedJurisdictions.includes(source) ||
+      !allowedReasons.has(reason)
+    ) {
+      throw new Error("Broward paused permit worker does not reconcile");
+    }
+    workerSources.add(source);
+    return {
+      source,
+      reason:
+        /** @type {"timeout" | "missing_controls" | "missing_export" | "checkpoint_stale"} */ (
+          reason
+        ),
+    };
+  });
 }
 
 /**
