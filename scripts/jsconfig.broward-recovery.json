@@ -21,6 +21,7 @@
     "arcgis-to-geojson-utils.d.ts",
     "ingest-broward-appraisal-local.mjs",
     "recover-broward-appraisal-to-neon.mjs",
+    "broward-dashboard-rollup.mjs",
     "broward-neon-recovery-dashboard.mjs",
     "profile-broward-tax-roll.mjs"
   ]

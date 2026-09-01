@@ -17,8 +17,7 @@ import pg from "pg";
 
 import { BROWARD_ROW_DENOMINATOR } from "./broward-ingestion-dashboard.mjs";
 
-const { Client } = pg;
-const SOURCE_SYSTEM = "broward_appraiser";
+const { Pool } = pg;
 const EXPECTED_PROJECT_ID = "raspy-frost-51580436";
 const PRODUCTION_ENDPOINT_PREFIX = "ep-mute-leaf";
 const CONTROL_SCHEMA = "ingest_control";
@@ -172,6 +171,11 @@ const DEFAULT_PORT = 47_832;
  *   properties:number,
  *   chunks:number
  * }} sunbizMatch - Verified exact Broward Sunbiz property links.
+ * @property {{
+ *   stale:boolean,
+ *   lastSuccessfulAt:string,
+ *   snapshotAgeSeconds:number
+ * } | undefined} [dashboardHealth] - Resilient-reader snapshot state.
  */
 
 /**
@@ -589,24 +593,19 @@ export async function readPermitEnumerationStatus(
           nowMs - updatedMs <= 5 * 60_000;
         return {
           source: definition.source,
-          family:
-            /** @type {"accela_csv" | "tyler_api"} */ (
-              definition.family
-            ),
-          status:
-            complete
-              ? /** @type {"complete"} */ ("complete")
-              : recentlyActive
-                ? /** @type {"running"} */ ("running")
-                : /** @type {"paused"} */ ("paused"),
+          family: /** @type {"accela_csv" | "tyler_api"} */ (definition.family),
+          status: complete
+            ? /** @type {"complete"} */ ("complete")
+            : recentlyActive
+              ? /** @type {"running"} */ ("running")
+              : /** @type {"paused"} */ ("paused"),
           completedWindows,
           pendingWindows,
           totalWindows,
           completionPercent:
             totalWindows === 0
               ? 0
-              : Math.round((completedWindows / totalWindows) * 100_000) /
-                1_000,
+              : Math.round((completedWindows / totalWindows) * 100_000) / 1_000,
           accessibleRecords,
           excludedRecords,
           invalidRecords,
@@ -617,10 +616,9 @@ export async function readPermitEnumerationStatus(
         if (isNodeError(error) && error.code === "ENOENT") {
           return {
             source: definition.source,
-            family:
-              /** @type {"accela_csv" | "tyler_api"} */ (
-                definition.family
-              ),
+            family: /** @type {"accela_csv" | "tyler_api"} */ (
+              definition.family
+            ),
             status: /** @type {"not_started"} */ ("not_started"),
             completedWindows: 0,
             pendingWindows: 0,
@@ -647,10 +645,7 @@ export async function readPermitEnumerationStatus(
       (sum, worker) => sum + worker.completedWindows,
       0,
     ),
-    totalWindows: workers.reduce(
-      (sum, worker) => sum + worker.totalWindows,
-      0,
-    ),
+    totalWindows: workers.reduce((sum, worker) => sum + worker.totalWindows, 0),
     accessibleRecords: workers.reduce(
       (sum, worker) => sum + worker.accessibleRecords,
       0,
@@ -700,7 +695,7 @@ function isNodeError(value) {
 /**
  * Verify dashboard connection identity using Neon server settings.
  *
- * @param {import("pg").Client} client - Connected direct Neon client.
+ * @param {import("pg").Client | import("pg").PoolClient} client - Connected direct Neon client.
  * @param {DashboardOptions} options - Required branch and endpoint IDs.
  * @returns {Promise<void>} Resolves only for the isolated target.
  */
@@ -725,7 +720,7 @@ async function verifyIdentity(client, options) {
 /**
  * Create a durable aggregate snapshot reader.
  *
- * @param {import("pg").Client} client - Identity-verified Neon client.
+ * @param {import("pg").Client | import("pg").PoolClient} client - Identity-verified Neon client.
  * @param {string} [repositoryRoot=process.cwd()] - Local checkpoint root.
  * @returns {() => Promise<RecoveryDashboardStatus>} Async snapshot function.
  */
@@ -740,12 +735,11 @@ export function createRecoveryStatusReader(
     inFlight = (async () => {
       const [result, permitEnumeration] = await Promise.all([
         client.query(
-      `WITH property_stats AS (
+          `WITH property_stats AS (
          SELECT
            count(*)::bigint AS property_count,
-           count(DISTINCT request_identifier)::bigint AS distinct_folios
-         FROM public.properties
-         WHERE source_system = $1
+           count(*)::bigint AS distinct_folios
+         FROM ${CONTROL_SCHEMA}.broward_appraisal_completed_items
        ),
        terminal_stats AS (
          SELECT count(*)::bigint AS terminal_source_misses
@@ -805,25 +799,16 @@ export function createRecoveryStatusReader(
        ),
        permit_inventory_stats AS (
          SELECT
-           count(*)::bigint AS permit_inventory_records,
-           count(*) FILTER (WHERE property_id IS NOT NULL)::bigint
-             AS permit_inventory_matched,
-           count(*) FILTER (WHERE property_id IS NULL)::bigint
-             AS permit_inventory_unmatched,
-           count(*) FILTER (
-             WHERE coalesce(
-               more_details->>'is_roof_permit',
-               more_details->>'isRoofPermit'
-             ) = 'true'
-           )::bigint AS permit_inventory_roofing,
-           count(DISTINCT parcel_identifier) FILTER (
-             WHERE parcel_identifier IS NOT NULL
-           )::bigint AS permit_inventory_parcels,
-           count(DISTINCT source_system)::bigint
+           coalesce(permit_records,0)::bigint AS permit_inventory_records,
+           coalesce(permit_matched,0)::bigint AS permit_inventory_matched,
+           coalesce(permit_unmatched,0)::bigint AS permit_inventory_unmatched,
+           coalesce(permit_roofing,0)::bigint AS permit_inventory_roofing,
+           coalesce(permit_parcels,0)::bigint AS permit_inventory_parcels,
+           coalesce(permit_source_systems,0)::bigint
              AS permit_inventory_sources,
-           max(loaded_at)::text AS permit_inventory_loaded_at
-         FROM public.property_improvements
-         WHERE source_system LIKE 'broward%permits'
+           permit_last_loaded_at::text AS permit_inventory_loaded_at
+         FROM ${CONTROL_SCHEMA}.broward_dashboard_rollup
+         WHERE pipeline_key='broward'
        ),
        permit_bulk_stats AS (
          SELECT
@@ -843,16 +828,16 @@ export function createRecoveryStatusReader(
        ),
        sunbiz_match_stats AS (
          SELECT
-           count(*)::bigint AS sunbiz_match_roles,
-           count(DISTINCT business_registration_id)::bigint
-             AS sunbiz_match_registrations,
-           count(DISTINCT property_id)::bigint AS sunbiz_match_properties,
+           sunbiz_matched_roles::bigint AS sunbiz_match_roles,
+           sunbiz_registrations::bigint AS sunbiz_match_registrations,
+           sunbiz_properties::bigint AS sunbiz_match_properties,
            (
              SELECT count(*)::bigint
              FROM ${CONTROL_SCHEMA}.broward_sunbiz_match_chunks
              WHERE job_id='broward-sunbiz-property-full-20260831'
            ) AS sunbiz_match_chunks
-         FROM ${CONTROL_SCHEMA}.broward_sunbiz_property_matches
+         FROM ${CONTROL_SCHEMA}.broward_dashboard_rollup
+         WHERE pipeline_key='broward'
        )
        SELECT
          property_stats.*,
@@ -882,7 +867,6 @@ export function createRecoveryStatusReader(
             permit_bulk_stats,
             permit_list_load_stats,
             sunbiz_match_stats`,
-      [SOURCE_SYSTEM],
         ),
         readPermitEnumerationStatus(repositoryRoot),
       ]);
@@ -901,6 +885,114 @@ export function createRecoveryStatusReader(
     });
     return inFlight;
   };
+}
+
+/**
+ * Create a reconnecting, coalesced dashboard reader with stale fallback.
+ *
+ * A fresh pool client is identity-verified for every uncached snapshot. A
+ * broken Neon socket is destroyed instead of becoming a permanently stuck
+ * shared client. When a refresh fails after a successful read, callers receive
+ * the last verified aggregate marked stale.
+ *
+ * @param {import("pg").Pool} pool - Direct Neon connection pool.
+ * @param {DashboardOptions} options - Required isolated target IDs.
+ * @param {string} [repositoryRoot=process.cwd()] - Local checkpoint root.
+ * @param {number} [cacheMs=10000] - Fresh snapshot cache duration.
+ * @param {number} [timeoutMs=25000] - Hard refresh wall timeout.
+ * @returns {() => Promise<RecoveryDashboardStatus>} Resilient status reader.
+ */
+export function createResilientRecoveryStatusReader(
+  pool,
+  options,
+  repositoryRoot = process.cwd(),
+  cacheMs = 10_000,
+  timeoutMs = 25_000,
+) {
+  /** @type {Promise<RecoveryDashboardStatus> | null} */
+  let inFlight = null;
+  /** @type {RecoveryDashboardStatus | null} */
+  let lastSuccessful = null;
+  let lastSuccessfulAtMs = 0;
+
+  return () => {
+    const nowMs = Date.now();
+    if (
+      lastSuccessful !== null &&
+      nowMs - lastSuccessfulAtMs >= 0 &&
+      nowMs - lastSuccessfulAtMs < cacheMs
+    ) {
+      return Promise.resolve(lastSuccessful);
+    }
+    if (inFlight !== null) return inFlight;
+    inFlight = (async () => {
+      const client = await pool.connect();
+      let destroyClient = false;
+      try {
+        await verifyIdentity(client, options);
+        const status = await withDashboardTimeout(
+          createRecoveryStatusReader(client, repositoryRoot)(),
+          timeoutMs,
+        );
+        const completedAtMs = Date.now();
+        status.dashboardHealth = {
+          stale: false,
+          lastSuccessfulAt: new Date(completedAtMs).toISOString(),
+          snapshotAgeSeconds: 0,
+        };
+        lastSuccessful = status;
+        lastSuccessfulAtMs = completedAtMs;
+        return status;
+      } catch (error) {
+        destroyClient = true;
+        if (lastSuccessful !== null) {
+          const fallback = structuredClone(lastSuccessful);
+          fallback.generatedAt = new Date().toISOString();
+          fallback.dashboardHealth = {
+            stale: true,
+            lastSuccessfulAt: new Date(lastSuccessfulAtMs).toISOString(),
+            snapshotAgeSeconds: Math.max(
+              0,
+              Math.round((Date.now() - lastSuccessfulAtMs) / 1_000),
+            ),
+          };
+          return fallback;
+        }
+        throw error;
+      } finally {
+        client.release(destroyClient);
+      }
+    })().finally(() => {
+      inFlight = null;
+    });
+    return inFlight;
+  };
+}
+
+/**
+ * Apply a hard wall timeout to one aggregate refresh.
+ *
+ * @template Result
+ * @param {Promise<Result>} promise - Refresh operation.
+ * @param {number} timeoutMs - Maximum wall time.
+ * @returns {Promise<Result>} Result before timeout.
+ */
+async function withDashboardTimeout(promise, timeoutMs) {
+  /** @type {NodeJS.Timeout | undefined} */
+  let timeout;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, rejectPromise) => {
+        timeout = setTimeout(
+          () => rejectPromise(new Error("Dashboard refresh timed out")),
+          timeoutMs,
+        );
+      }),
+    ]);
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout);
+  }
 }
 
 /**
@@ -1144,16 +1236,31 @@ async function runDashboard(options) {
   if (typeof databaseUrl !== "string" || databaseUrl.trim().length === 0) {
     throw new Error("DATABASE_URL_UNPOOLED is required");
   }
-  const client = new Client({
+  const pool = new Pool({
     connectionString: databaseUrl,
     application_name: "broward-neon-recovery-dashboard",
     connectionTimeoutMillis: 10_000,
     statement_timeout: 30_000,
+    query_timeout: 30_000,
+    max: 2,
+    idleTimeoutMillis: 30_000,
   });
-  await client.connect();
-  await verifyIdentity(client, options);
+  pool.on("error", (error) => {
+    console.error(
+      JSON.stringify({
+        event: "broward_recovery_dashboard_pool_error",
+        message: error instanceof Error ? error.message : "Unknown pool error",
+      }),
+    );
+  });
+  const identityClient = await pool.connect();
+  try {
+    await verifyIdentity(identityClient, options);
+  } finally {
+    identityClient.release();
+  }
   const server = createRecoveryDashboardServer(
-    createRecoveryStatusReader(client),
+    createResilientRecoveryStatusReader(pool, options),
   );
   server.listen(options.port, options.host, () => {
     console.log(

@@ -16,6 +16,7 @@ import { pathToFileURL } from "node:url";
 
 import pg from "pg";
 
+import { refreshBrowardDashboardRollup } from "./broward-dashboard-rollup.mjs";
 import { normalizeArcgisBrowardFolio } from "./permit-source-adapters/broward-arcgis-bulk.mjs";
 
 const { Client } = pg;
@@ -258,11 +259,7 @@ export function normalizePermitListRecord(value) {
       recordType: value.recordType,
       description: value.description,
       isRoofPermit: /\broof(?:ing)?\b/iu.test(
-        [
-          value.recordNumber,
-          value.recordType,
-          value.description,
-        ]
+        [value.recordNumber, value.recordType, value.description]
           .filter((part) => typeof part === "string")
           .join(" "),
       ),
@@ -279,9 +276,7 @@ export function normalizePermitListRecord(value) {
       permitNumber: value.permit_number,
       sourceUrl: value.source_url,
       jurisdiction: value.city,
-      parcelIdentifier: normalizeArcgisBrowardFolio(
-        value.parcel_identifier,
-      ),
+      parcelIdentifier: normalizeArcgisBrowardFolio(value.parcel_identifier),
       workLocation: value.work_location,
       applicationDate: value.raw.applied_date,
       permitIssueDate: value.permit_issue_date,
@@ -340,10 +335,8 @@ export function mapPermitListLoadRow(record, parent) {
     source_record_key: record.sourceRecordKey,
     source_record_hash: stableHash(record),
     source_artifact_uri: record.sourceUrl,
-    property_match_method:
-      parent === undefined ? "unmatched" : "exact_folio",
-    property_match_confidence:
-      parent === undefined ? "unmatched" : "exact",
+    property_match_method: parent === undefined ? "unmatched" : "exact_folio",
+    property_match_confidence: parent === undefined ? "unmatched" : "exact",
   };
 }
 
@@ -390,10 +383,7 @@ export async function loadPermitListToNeon(options) {
       offset += options.chunkSize, chunkIndex += 1
     ) {
       if (committed.has(chunkIndex)) continue;
-      const records = input.records.slice(
-        offset,
-        offset + options.chunkSize,
-      );
+      const records = input.records.slice(offset, offset + options.chunkSize);
       await loadChunk(client, options.jobId, chunkIndex, records);
     }
     const aggregate = await client.query(
@@ -415,6 +405,7 @@ export async function loadPermitListToNeon(options) {
        WHERE job_id=$1`,
       [options.jobId],
     );
+    await refreshBrowardDashboardRollup(client);
     return {
       sourceRecordCount: input.records.length + input.duplicateCount,
       uniqueRecordCount: input.records.length,
@@ -442,9 +433,7 @@ async function loadChunk(client, jobId, chunkIndex, records) {
   const folios = [
     ...new Set(
       records.flatMap((record) =>
-        record.parcelIdentifier === null
-          ? []
-          : [record.parcelIdentifier],
+        record.parcelIdentifier === null ? [] : [record.parcelIdentifier],
       ),
     ),
   ];
@@ -842,9 +831,7 @@ if (
   typeof process.argv[1] === "string" &&
   import.meta.url === pathToFileURL(process.argv[1]).href
 ) {
-  loadPermitListToNeon(
-    parsePermitListLoadOptions(process.argv.slice(2)),
-  )
+  loadPermitListToNeon(parsePermitListLoadOptions(process.argv.slice(2)))
     .then((result) => {
       console.log(
         JSON.stringify({

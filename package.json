@@ -20,6 +20,7 @@
     "broward:sunbiz:prepare": "node scripts/prepare-broward-sunbiz-local.mjs",
     "broward:sunbiz:match-properties": "node scripts/match-broward-sunbiz-to-properties.mjs",
     "broward:dashboard": "node scripts/broward-ingestion-dashboard.mjs",
+    "broward:dashboard:refresh-rollup": "node scripts/broward-dashboard-rollup.mjs",
     "broward:recover": "node scripts/recover-broward-appraisal-to-neon.mjs",
     "broward:recovery-dashboard": "node scripts/broward-neon-recovery-dashboard.mjs",
     "broward:tax-roll:profile": "node scripts/profile-broward-tax-roll.mjs",
