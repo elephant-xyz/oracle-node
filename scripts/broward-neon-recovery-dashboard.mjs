@@ -763,11 +763,7 @@ function readPermitEnumerationCooldown(value, nowMs) {
  *   cooldown:{reason:"timeout" | "source_cap" | "incomplete_pagination" | "source_error",nextAttemptAt:string} | null
  * } | null>} Public-safe partial strategy activity, when present.
  */
-async function readPermitGapFillActivity(
-  repositoryRoot,
-  relativePath,
-  nowMs,
-) {
+async function readPermitGapFillActivity(repositoryRoot, relativePath, nowMs) {
   if (relativePath === null) return null;
   try {
     const parsed = /** @type {unknown} */ (
@@ -803,9 +799,7 @@ async function readPermitGapFillActivity(
       throw new Error("Permit property gap-fill timestamp is invalid");
     }
     const recentlyActive =
-      activePlan &&
-      nowMs - updatedMs >= 0 &&
-      nowMs - updatedMs <= 5 * 60_000;
+      activePlan && nowMs - updatedMs >= 0 && nowMs - updatedMs <= 5 * 60_000;
     return {
       activePlan,
       recentlyActive,
