@@ -23,6 +23,7 @@ import {
 } from "./permit-source-adapters/broward-accela.mjs";
 
 const CHECKPOINT_SCHEMA_VERSION = "oracle-node.broward-accela-csv-windows.v1";
+const MAX_FAILED_SHARDS_PER_INVOCATION = 3;
 const RECORD_TYPE_SHARD_SOURCE_KEYS = new Set([
   "plantation",
   "cooper-city",
@@ -335,6 +336,7 @@ export async function runAccelaCsvWindows(options, dependencies = {}) {
   let browser = null;
   let processed = 0;
   const attemptedShardKeys = new Set();
+  const failedShardKeys = new Set();
 
   /**
    * Capture one source operation with a hard wall deadline and a newly built
@@ -452,6 +454,7 @@ export async function runAccelaCsvWindows(options, dependencies = {}) {
             };
             await writeCheckpoint(checkpointPath, checkpoint);
             processed += 1;
+            failedShardKeys.add(nextShard.key);
             logger.warn("broward_accela_csv_record_type_shard_deferred", {
               sourceKey: source.key,
               startDate: window.startDate,
@@ -459,6 +462,13 @@ export async function runAccelaCsvWindows(options, dependencies = {}) {
               recordTypeShard: nextShard.key,
               reason,
             });
+            if (
+              failedShardKeys.size >= MAX_FAILED_SHARDS_PER_INVOCATION
+            ) {
+              throw new Error(
+                `${source.jurisdiction} Accela reached the bounded ${String(MAX_FAILED_SHARDS_PER_INVOCATION)}-shard failure limit`,
+              );
+            }
             continue;
           }
           if (capture === undefined) {

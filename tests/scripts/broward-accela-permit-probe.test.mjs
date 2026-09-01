@@ -1018,6 +1018,9 @@ describe("Broward official Accela CSV exports", () => {
           recordTypeShard,
           stopAtCappedProbe,
         });
+        if (recordTypeShard !== null) {
+          throw new Error("Waiting failed: bounded source timeout");
+        }
         return {
           startDate,
           endDate,
@@ -1038,6 +1041,10 @@ describe("Broward official Accela CSV exports", () => {
             {
               value: "Building/Electrical Permit/NA/NA",
               label: "Electrical Permit",
+            },
+            {
+              value: "Building/Mechanical Permit/NA/NA",
+              label: "Mechanical Permit",
             },
           ],
           recordTypeShard,
@@ -1080,7 +1087,7 @@ describe("Broward official Accela CSV exports", () => {
       );
       expect(
         checkpoint.shardPlans["20060422_20060422"].expectedShards,
-      ).toHaveLength(2);
+      ).toHaveLength(3);
       expect(checkpoint.completedWindows).toEqual({});
     }
     expect(calls).toEqual([
@@ -1095,6 +1102,35 @@ describe("Broward official Accela CSV exports", () => {
         stopAtCappedProbe: true,
       },
     ]);
+    const westonOutputDirectory = join(outputDirectory, "weston");
+    await expect(
+      runAccelaCsvWindows(
+        {
+          sourceKey: "weston",
+          startDate: "2006-04-22",
+          endDate: "2006-04-22",
+          windowDays: 1,
+          delayMs: 1_000,
+          maxAttempts: 1,
+          maxPages: 200,
+          windowTimeoutMs: 120_000,
+          maxWindows: null,
+          outputDirectory: westonOutputDirectory,
+        },
+        dependencies,
+      ),
+    ).rejects.toThrow("bounded 3-shard failure limit");
+    const boundedCheckpoint = JSON.parse(
+      await readFile(
+        join(westonOutputDirectory, "checkpoint.private.json"),
+        "utf8",
+      ),
+    );
+    expect(
+      Object.values(
+        boundedCheckpoint.shardPlans["20060422_20060422"].failedShards,
+      ),
+    ).toHaveLength(3);
   });
 
   it("checkpoints and resumes exhaustive Plantation record-type shards", async () => {
