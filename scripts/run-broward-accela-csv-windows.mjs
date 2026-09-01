@@ -105,6 +105,8 @@ const SOURCE_KEYS = new Set([
  * @property {string} failedAt - ISO latest bounded failure time.
  * @property {string | undefined} [nextAttemptAt] - Earliest safe retry time; absent in legacy receipts.
  * @property {number | undefined} [cooldownMs] - Applied exponential cooldown; absent in legacy receipts.
+ * @property {string | undefined} [evidencePath] - Private terminal HTML artifact, when available.
+ * @property {string | undefined} [evidenceSha256] - Integrity hash for private terminal evidence.
  *
  * @typedef {object} AccelaCsvCooldown
  * @property {AccelaCsvDeferredReason} reason - Public-safe circuit-breaker reason.
@@ -478,6 +480,11 @@ export async function runAccelaCsvWindows(options, dependencies = {}) {
               failedAt,
               random,
             );
+            const failureEvidence = await writeAccelaFailureEvidence(
+              error,
+              shardDirectory,
+              failedAt,
+            );
             checkpoint = {
               ...checkpoint,
               cooldown,
@@ -493,6 +500,7 @@ export async function runAccelaCsvWindows(options, dependencies = {}) {
                       failedAt,
                       nextAttemptAt: cooldown.nextAttemptAt,
                       cooldownMs: cooldown.cooldownMs,
+                      ...failureEvidence,
                     },
                   },
                 },
@@ -725,6 +733,36 @@ export async function runAccelaCsvWindows(options, dependencies = {}) {
     `${JSON.stringify(summary, null, 2)}\n`,
   );
   return summary;
+}
+
+/**
+ * Persist terminal source HTML privately without exposing it in logs or the
+ * dashboard. Generic timeouts have no response body and therefore produce no
+ * artifact.
+ *
+ * @param {unknown} error - Terminal capture error.
+ * @param {string} directory - Private shard directory.
+ * @param {string} failedAt - ISO failure time used for a unique filename.
+ * @returns {Promise<{evidencePath?:string,evidenceSha256?:string}>}
+ *   Private evidence metadata safe for a private checkpoint.
+ */
+async function writeAccelaFailureEvidence(error, directory, failedAt) {
+  if (
+    !(error instanceof BrowardAccelaSourceError) ||
+    typeof error.responseHtml !== "string" ||
+    error.responseHtml.length === 0
+  ) {
+    return {};
+  }
+  const filename = `source-failure-${failedAt.replaceAll(/[^0-9]/gu, "")}.private.html`;
+  const evidencePath = path.join(directory, "failure-evidence", filename);
+  await writePrivateAtomic(evidencePath, error.responseHtml);
+  return {
+    evidencePath,
+    evidenceSha256: createHash("sha256")
+      .update(error.responseHtml)
+      .digest("hex"),
+  };
 }
 
 /**

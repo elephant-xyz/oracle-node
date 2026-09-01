@@ -76,6 +76,7 @@ import {
  * @property {string | null} description - Search-result description or project name, when present.
  * @property {string | null} status - Search-result status, when present.
  * @property {string | null} recordType - Search-result record type, when present.
+ * @property {string | null | undefined} [recordDate] - Search-result record/file date text, when present.
  * @property {string} sourceSearchKey - Stable jurisdiction-and-folio search key.
  * @property {number} sourcePage - One-based result page on which the record was discovered.
  */
@@ -657,6 +658,10 @@ export function extractBrowardAccelaPermitLinks({
       description: cellByHeader(["description", "project name"], 3),
       status: cellByHeader(["status", "record status"], 4),
       recordType: cellByHeader(["record type", "type"], -1),
+      recordDate: cellByHeader(
+        ["date", "record date", "file date", "opened date"],
+        -1,
+      ),
       sourceSearchKey: searchKey,
       sourcePage: pageNumber,
     });
@@ -1872,7 +1877,17 @@ export async function captureBrowardAccelaCsvWindow({
       toAccelaDate(endDate),
     );
     await context.click(DEFAULT_SELECTORS.submit);
-    await waitForSearchOutcome(context, searchOutcomeTimeoutMs);
+    try {
+      await waitForSearchOutcome(context, searchOutcomeTimeoutMs);
+    } catch (error) {
+      throw new BrowardAccelaSourceError(
+        "unexpected_response",
+        source,
+        `${source.jurisdiction} Accela type/date search outcome did not become ready: ${error instanceof Error ? error.message : "bounded source timeout"}`,
+        context.url(),
+        await context.content(),
+      );
+    }
     const searchHtml = await context.content();
     const classification = requireSuccessfulPageClassification(
       searchHtml,
@@ -2306,7 +2321,11 @@ async function captureAccelaListOnlyPages({
  * @param {string} sourceWindowKey - Stable date-window key.
  * @returns {BrowardAccelaCsvPermitRecord[]} List-backed inventory records.
  */
-function csvRecordsFromPermitLinks(links, source, sourceWindowKey) {
+export function csvRecordsFromPermitLinks(
+  links,
+  source,
+  sourceWindowKey,
+) {
   return links.map((link) => ({
     schemaVersion: "oracle-node.broward-accela-csv-list.v1",
     sourceSystem: source.sourceSystem,
@@ -2314,7 +2333,7 @@ function csvRecordsFromPermitLinks(links, source, sourceWindowKey) {
     recordNumber: link.recordNumber,
     sourceUrl: link.url,
     recordKey: `${source.sourceSystem}:permit:${link.recordNumber}`,
-    recordDate: null,
+    recordDate: parseAccelaCsvDate(link.recordDate),
     recordType: link.recordType,
     projectName: link.description,
     address: link.address,

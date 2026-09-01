@@ -47,6 +47,11 @@ import {
   runAccelaCsvWindows,
   splitAccelaCsvDateWindow,
 } from "../../scripts/run-broward-accela-csv-windows.mjs";
+import {
+  isPropertyGapFillSeedRow,
+  parsePropertyGapFillOptions,
+  runPropertyGapFill,
+} from "../../scripts/run-broward-accela-property-gap-fill.mjs";
 
 const fixtureDirectory = new URL(
   "../fixtures/broward-accela/",
@@ -814,6 +819,157 @@ describe("Broward official Accela CSV exports", () => {
       "record_type_selected",
       "refreshed_date_controls_ready",
     ]);
+  });
+
+  it("retains property-first evidence without completing an unresolved parent", async () => {
+    const outputDirectory = await mkdtemp(
+      join(tmpdir(), "broward-accela-property-gap-fill-"),
+    );
+    temporaryDirectories.push(outputDirectory);
+    const seedPath = join(outputDirectory, "verified-seed.private.csv");
+    const parentCheckpointPath = join(
+      outputDirectory,
+      "checkpoint.private.json",
+    );
+    const parentCheckpoint = {
+      schemaVersion: "oracle-node.broward-accela-csv-windows.v1",
+      sourceKey: "plantation",
+      shardPlans: {
+        "20260831_20260831": {
+          startDate: "2026-08-31",
+          endDate: "2026-08-31",
+        },
+      },
+    };
+    await writeFile(
+      seedPath,
+      [
+        "request_identifier,city,address",
+        "504100000001,Plantation,PRIVATE",
+        "504100000002,Fort Lauderdale,PRIVATE",
+        "504100000003,Plantation,PRIVATE",
+      ].join("\n"),
+    );
+    await writeFile(
+      parentCheckpointPath,
+      `${JSON.stringify(parentCheckpoint)}\n`,
+    );
+    await writeFile(
+      join(outputDirectory, "normalized-list.private.jsonl"),
+      `${JSON.stringify({
+        recordKey: "broward_plantation_accela_permits:permit:EXISTING-1",
+      })}\n`,
+    );
+    const before = await readFile(parentCheckpointPath, "utf8");
+    const summary = await runPropertyGapFill(
+      {
+        sourceKey: "plantation",
+        seedPath,
+        outputDirectory,
+        maxProperties: 1,
+        maxPages: 2,
+        delayMs: 30_000,
+      },
+      {
+        createBrowser: async () => ({
+          close: async () => undefined,
+        }),
+        searchParcel: async ({ source }) => ({
+          status: "records",
+          searchKey: "private",
+          parcelIdentifier: "504100000001",
+          source,
+          permits: [
+            {
+              recordNumber: "EXISTING-1",
+              url: `${source.portalUrl}&altId=EXISTING-1`,
+              address: null,
+              description: null,
+              status: "Issued",
+              recordType: "Building Permit",
+              recordDate: "08/31/2026",
+              sourceSearchKey: "private",
+              sourcePage: 1,
+            },
+            {
+              recordNumber: "NOVEL-1",
+              url: `${source.portalUrl}&altId=NOVEL-1`,
+              address: null,
+              description: null,
+              status: "Issued",
+              recordType: "Electrical Permit",
+              recordDate: "08/31/2026",
+              sourceSearchKey: "private",
+              sourcePage: 1,
+            },
+            {
+              recordNumber: "UNDATED-1",
+              url: `${source.portalUrl}&altId=UNDATED-1`,
+              address: null,
+              description: null,
+              status: "Issued",
+              recordType: "Plumbing Permit",
+              recordDate: null,
+              sourceSearchKey: "private",
+              sourcePage: 1,
+            },
+          ],
+          pages: [
+            {
+              pageNumber: 1,
+              url: source.portalUrl,
+              resultSummary: "aggregate fixture",
+              html: "<html>private fixture</html>",
+            },
+          ],
+          reportedTotal: 3,
+          excludedNonPermitCount: 0,
+        }),
+        now: () => "2026-09-01T23:00:00.000Z",
+        random: () => 0,
+        wait: async () => undefined,
+      },
+    );
+    expect(summary).toMatchObject({
+      status: "partial",
+      propertiesProcessedThisInvocation: 1,
+      inspectedPropertyCount: 1,
+      retainedRecordCount: 1,
+      existingRecordCount: 1,
+      undatedRecordCount: 1,
+      completenessEstablished: false,
+    });
+    expect(await readFile(parentCheckpointPath, "utf8")).toBe(before);
+    expect(
+      await readFile(
+        join(outputDirectory, "property-gap-fill", "records.private.jsonl"),
+        "utf8",
+      ),
+    ).toContain("NOVEL-1");
+  });
+
+  it("parses bounded gap-fill options and uses exact seed jurisdiction names", () => {
+    expect(
+      parsePropertyGapFillOptions([
+        "--source",
+        "cooper-city",
+        "--output-dir",
+        "downloads/private",
+        "--max-properties",
+        "2",
+      ]),
+    ).toMatchObject({
+      sourceKey: "cooper-city",
+      maxProperties: 2,
+      maxPages: 10,
+      delayMs: 30_000,
+    });
+    expect(
+      isPropertyGapFillSeedRow("cooper-city", { city: " Cooper   City " }),
+    ).toBe(true);
+    expect(
+      isPropertyGapFillSeedRow("cooper-city", { city: "Cooper City area" }),
+    ).toBe(false);
   });
 
   it("accepts list-only mode only after exact page and identity reconciliation", () => {
