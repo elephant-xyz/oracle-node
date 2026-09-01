@@ -700,13 +700,6 @@ async function writeShardCapture({
   ) {
     throw new Error("Accela record-type shard source rows do not reconcile");
   }
-  for (const record of capture.records) {
-    if (record.recordType !== shard.label) {
-      throw new Error(
-        "Accela record-type shard returned an out-of-shard record",
-      );
-    }
-  }
   const written = await writeCaptureArtifacts({
     capture,
     sourceKey,
@@ -838,6 +831,13 @@ async function finalizeRecordTypeShardPlan({
     if (!isRecord(payload) || !Array.isArray(payload.records)) {
       throw new Error("Accela record-type shard artifact is malformed");
     }
+    if (
+      !isRecord(payload.recordTypeShard) ||
+      payload.recordTypeShard.value !== shard.value ||
+      payload.recordTypeShard.label !== shard.label
+    ) {
+      throw new Error("Accela record-type shard artifact filter differs");
+    }
     if (payload.records.length !== receipt.recordCount) {
       throw new Error("Accela record-type shard receipt count differs");
     }
@@ -845,8 +845,7 @@ async function finalizeRecordTypeShardPlan({
       if (
         !isRecord(value) ||
         typeof value.recordKey !== "string" ||
-        typeof value.recordNumber !== "string" ||
-        value.recordType !== shard.label
+        typeof value.recordNumber !== "string"
       ) {
         throw new Error("Accela record-type shard identity is malformed");
       }

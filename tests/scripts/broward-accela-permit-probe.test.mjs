@@ -1047,7 +1047,8 @@ describe("Broward official Accela CSV exports", () => {
         sourceUrl: `${source.portalUrl}&altId=B26-${suffix}`,
         recordKey: `${source.sourceSystem}:permit:B26-${suffix}`,
         recordDate: startDate,
-        recordType: label,
+        recordType:
+          recordTypeShard === null ? label : `${label} public subtype`,
         projectName: null,
         address: null,
         expirationDate: null,
