@@ -671,7 +671,7 @@ describe("durable Broward Neon recovery", () => {
       activeWorkers: 2,
       completedWorkers: 1,
       completedWindows: 2,
-      totalWindows: 4,
+      totalWindows: 5,
       accessibleRecords: 54,
       excludedRecords: 2,
       invalidRecords: 0,
