@@ -46,7 +46,7 @@ results only.
 | SmartGov                 | Lighthouse Point                | 1 folio search, explicit empty result, 0 details | implemented; positive detail remains fixture-covered        |
 | eGovPLUS                 | Lauderhill                      |               1 exact search, 1 detail, 1 record | implemented                                                 |
 | OpenGov/ViewPoint        | Lauderdale Lakes                |                  0 requests, `landing_only` skip | blocked: official rendered application reports inaccessible |
-| Gov-Easy / GeoCivix      | Deerfield Beach, Pembroke Park  |                                       0 requests | blocked by CAPTCHA or no anonymous current search           |
+| Gov-Easy / GeoCivix      | Deerfield Beach, Pembroke Park  | Pembroke manual session: 17 pages, 166 list rows | CAPTCHA remains required; unattended transport stays blocked |
 | CommunityCore            | Hillsboro Beach                 |                                       0 requests | blocked by reCAPTCHA                                        |
 | MGO Connect              | Parkland                        |                                       0 requests | blocked by login                                            |
 | Tyler EnerGov            | Sunrise                         |         shared Tyler adapter, tracked separately | implemented                                                 |
@@ -108,3 +108,24 @@ Springs, Hillsboro Beach, and Pembroke Park require CAPTCHA; North Lauderdale
 and Parkland require login; Deerfield has no anonymous current search and a
 CAPTCHA-protected historical route; Sea Ranch Lakes is custodian-only, with
 BCS evidence supplemental rather than proof of municipal completeness.
+
+## Pembroke Park manually validated list evidence
+
+A user-authorized browser session with a manually completed Gov-Easy CAPTCHA
+was reused in place without refreshing the page or reading, solving, or
+persisting CAPTCHA/session material. The `Job Name=ROOF` search reported 166
+results across 17 pages. All 17 pages reconciled to 166 list rows and 166 stable
+application identities, with zero duplicates, conflicting identities, invalid
+rows, or missing permit-number/status/location/job-name fields.
+
+The allow-listed list capture omits owner and contractor names and does not
+collect contact, payment, or PDF data. The existing standalone-word roofing
+rule classifies 149 of the 166 rows; the remaining 17 stay in the keyword slice
+without being relabeled roofing. No detail pages were required for stable list
+identity, status, and work location.
+
+This evidence does not change the source policy. Gov-Easy remains
+`captcha_required` and blocked for unattended transport. The captured slice is
+only the records returned by that exact keyword search; it is not proof of all
+Pembroke Park roofing permits, all Pembroke Park permits, historical
+completeness, or anonymous access.

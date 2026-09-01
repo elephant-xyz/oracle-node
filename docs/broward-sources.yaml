@@ -302,7 +302,13 @@ permits:
   - jurisdiction: Pembroke Park
     official: https://www.tppfl.gov/194/Online-Permitting-System
     vendor: Gov-Easy
-    status: captcha-skip-documented
+    status: captcha-required-manual-session-bounded-list-evidence
+    access_prerequisite: user-completed numeric CAPTCHA in the preserved browser session
+    proven_slice: Job Name=ROOF keyword search
+    source_reported_results: 166
+    captured_pages: 17
+    captured_unique_records: 166
+    coverage_limit: keyword slice only; not all roofing permits or all permits
   - jurisdiction: Sea Ranch Lakes
     supplemental_portal: https://dpepp.broward.org/BCS/Default.aspx?PossePresentation=ParcelSearchByAddress
     supplemental_scope: county-held-or-associated-approvals-not-complete-village-permits

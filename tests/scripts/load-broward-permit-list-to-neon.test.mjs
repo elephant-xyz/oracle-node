@@ -66,6 +66,40 @@ function tylerListRecord(overrides = {}) {
   };
 }
 
+/**
+ * Build one allow-listed Pembroke Park Gov-Easy list artifact row.
+ *
+ * Values are synthetic and deliberately omit owner, contractor, contact,
+ * payment, CAPTCHA, and browser-session fields.
+ *
+ * @param {Record<string, unknown>} [overrides] - Field overrides.
+ * @returns {Record<string, unknown>} Gov-Easy list record.
+ */
+function govEasyListRecord(overrides = {}) {
+  return {
+    schemaVersion: "oracle-node.broward-gov-easy-list.v1",
+    sourceSystem: "broward_pembroke_park_gov_easy_permits",
+    jurisdiction: "Pembroke Park",
+    sourceRecordId: "12345",
+    recordKey:
+      "broward_pembroke_park_gov_easy_permits:application:12345",
+    permitNumber: "PP-ROOF-2026-0001",
+    jobName: "ROOF REPLACEMENT",
+    status: "Issued",
+    address: "100 SAMPLE ST",
+    sourceUrl:
+      "https://apps.gov-easy.com/Home/PermitInspection/Search?clientId=d60f9827-2c53-44a4-9037-31e1de2b3f09",
+    sourcePage: 1,
+    isRoofPermit: true,
+    coverage: {
+      queryField: "Job Name",
+      queryValue: "ROOF",
+      sourceReportedCount: 166,
+    },
+    ...overrides,
+  };
+}
+
 describe("Broward permit list Neon loading", () => {
   it("parses an immutable chunked load job", () => {
     expect(
@@ -152,6 +186,60 @@ describe("Broward permit list Neon loading", () => {
       property_match_confidence: "exact",
       source_record_key: "broward_pembroke_pines_tyler_permits:case-1",
     });
+  });
+
+  it("maps a manually authorized Gov-Easy list row without inferring a parcel", () => {
+    const normalized = normalizePermitListRecord(govEasyListRecord());
+    expect(normalized).toMatchObject({
+      sourceSystem: "broward_pembroke_park_gov_easy_permits",
+      sourceRecordKey:
+        "broward_pembroke_park_gov_easy_permits:application:12345",
+      permitNumber: "PP-ROOF-2026-0001",
+      parcelIdentifier: null,
+      recordType: null,
+      description: "ROOF REPLACEMENT",
+      isRoofPermit: true,
+      sourcePayload: {
+        schema_version: "oracle-node.broward-gov-easy-list.v1",
+        coverage: {
+          queryField: "Job Name",
+          queryValue: "ROOF",
+          sourceReportedCount: 166,
+        },
+      },
+    });
+    expect(mapPermitListLoadRow(normalized, undefined)).toMatchObject({
+      property_id: null,
+      parcel_id: null,
+      property_match_method: "unmatched",
+      property_match_confidence: "unmatched",
+      source_system: "broward_pembroke_park_gov_easy_permits",
+      more_details: {
+        list_inventory: true,
+        is_roof_permit: true,
+      },
+    });
+  });
+
+  it("preserves conservative non-roof classification inside the ROOF keyword slice", () => {
+    const normalized = normalizePermitListRecord(
+      govEasyListRecord({
+        jobName: "REROOF",
+        isRoofPermit: false,
+      }),
+    );
+    expect(normalized.isRoofPermit).toBe(false);
+    expect(() =>
+      normalizePermitListRecord(
+        govEasyListRecord({
+          coverage: {
+            queryField: "Job Name",
+            queryValue: "ALL",
+            sourceReportedCount: 166,
+          },
+        }),
+      ),
+    ).toThrow("Unsupported Broward permit list row");
   });
 
   it("deduplicates exact input and rejects conflicting source keys", async () => {

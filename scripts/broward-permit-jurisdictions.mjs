@@ -456,7 +456,7 @@ export const BROWARD_PERMIT_JURISDICTIONS = Object.freeze([
       adapterKey: "gov-easy",
       status: "captcha_required",
       reason:
-        "The official Gov-Easy status search requires a numeric CAPTCHA and is skipped without bypass.",
+        "The official Gov-Easy status search requires a manually completed numeric CAPTCHA, so unattended execution remains blocked and skips without bypass. A user-authorized validated session can prove only its bounded query slice, never anonymous access or complete permit coverage.",
     }),
   }),
   jurisdiction({

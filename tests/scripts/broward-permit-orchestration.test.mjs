@@ -621,6 +621,16 @@ describe("Broward 32-jurisdiction permit registry", () => {
     ).toBe("captcha_required");
     expect(
       BROWARD_PERMIT_JURISDICTIONS.find(
+        (entry) => entry.key === "pembroke-park",
+      )?.primarySource,
+    ).toMatchObject({
+      status: "captcha_required",
+      reason: expect.stringMatching(
+        /user-authorized validated session.*never anonymous access/iu,
+      ),
+    });
+    expect(
+      BROWARD_PERMIT_JURISDICTIONS.find(
         (entry) => entry.key === "deerfield-beach",
       )?.primarySource.status,
     ).toBe("no_anonymous_search");

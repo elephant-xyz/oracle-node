@@ -182,7 +182,7 @@ export const BROWARD_MUNICIPAL_PERMIT_JURISDICTIONS = Object.freeze([
   defineJurisdiction({
     key: "pembroke_park",
     jurisdiction: "Pembroke Park",
-    sourceSystem: "pembroke_park_gov_easy_permits",
+    sourceSystem: "broward_pembroke_park_gov_easy_permits",
     protocol: "gov_easy",
     searchUrl:
       "https://apps.gov-easy.com/Home/PermitInspection/Search?clientId=d60f9827-2c53-44a4-9037-31e1de2b3f09",
@@ -190,7 +190,7 @@ export const BROWARD_MUNICIPAL_PERMIT_JURISDICTIONS = Object.freeze([
     accessMode: "captcha_required",
     probeStatus: "blocked",
     accessNote:
-      "The official town page links Gov-Easy for status, but the shared search requires a numeric CAPTCHA. Submissions require staff email and are not an anonymous data route.",
+      "The official town page links Gov-Easy for status, but the shared search requires a numeric CAPTCHA. A user-authorized manually validated browser session may support a bounded private capture while it remains valid; unattended transport stays blocked, and a keyword slice is not complete permit or roofing coverage.",
     capabilities: {
       searchBy: ["permit_number", "address", "folio"],
       pagination: "numbered",

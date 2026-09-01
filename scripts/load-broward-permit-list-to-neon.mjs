@@ -25,6 +25,8 @@ const PRODUCTION_ENDPOINT_PREFIX = "ep-mute-leaf";
 const LOAD_LOCK_NAMESPACE = 12_011;
 const LOAD_LOCK_KEY = 3;
 const CONTROL_SCHEMA = "ingest_control";
+const PEMBROKE_PARK_GOV_EASY_SEARCH_URL =
+  "https://apps.gov-easy.com/Home/PermitInspection/Search?clientId=d60f9827-2c53-44a4-9037-31e1de2b3f09";
 
 /**
  * @typedef {object} PermitListLoadOptions
@@ -80,6 +82,25 @@ const CONTROL_SCHEMA = "ingest_control";
  * @property {string | null} status - Exported status.
  * @property {boolean} isRoofPermit - Conservative classification.
  * @property {string} sourceWindowKey - Source date window.
+ *
+ * @typedef {object} GovEasyListRecord
+ * @property {"oracle-node.broward-gov-easy-list.v1"} schemaVersion - Gov-Easy list schema.
+ * @property {string} sourceSystem - Broward-prefixed jurisdiction source system.
+ * @property {"Pembroke Park"} jurisdiction - Issuing jurisdiction.
+ * @property {string} sourceRecordId - Stable Gov-Easy application identity.
+ * @property {string} recordKey - Source-system and application identity key.
+ * @property {string} permitNumber - Public permit number.
+ * @property {string | null} jobName - Public job-name list field.
+ * @property {string | null} status - Public permit status.
+ * @property {string | null} address - Public job location.
+ * @property {string} sourceUrl - Official token-free Gov-Easy search URL.
+ * @property {number} sourcePage - One-based source result page.
+ * @property {boolean} isRoofPermit - Conservative standalone-word classification.
+ * @property {Readonly<{
+ *   queryField:"Job Name",
+ *   queryValue:"ROOF",
+ *   sourceReportedCount:number
+ * }>} coverage - Exact keyword-slice provenance and reported denominator.
  *
  * @typedef {object} NormalizedPermitListRecord
  * @property {string} sourceSystem - Jurisdiction source system.
@@ -265,6 +286,29 @@ export function normalizePermitListRecord(value) {
       ),
       sourcePayload: {
         schema_version: "oracle-node.broward-accela-list.v1",
+        ...value,
+      },
+    };
+  }
+  if (isGovEasyListRecord(value)) {
+    return {
+      sourceSystem: value.sourceSystem,
+      sourceRecordKey: value.recordKey,
+      permitNumber: value.permitNumber,
+      sourceUrl: value.sourceUrl,
+      jurisdiction: value.jurisdiction,
+      parcelIdentifier: null,
+      workLocation: value.address,
+      applicationDate: null,
+      permitIssueDate: null,
+      expirationDate: null,
+      finalizedDate: null,
+      recordStatus: value.status,
+      recordType: null,
+      description: value.jobName,
+      isRoofPermit: value.isRoofPermit,
+      sourcePayload: {
+        schema_version: "oracle-node.broward-gov-easy-list.v1",
         ...value,
       },
     };
@@ -764,6 +808,46 @@ function isAccelaCsvListRecord(value) {
     typeof value.recordKey === "string" &&
     typeof value.isRoofPermit === "boolean" &&
     typeof value.sourceWindowKey === "string"
+  );
+}
+
+/**
+ * Validate a manually CAPTCHA-authorized Gov-Easy list row.
+ *
+ * The row contract is intentionally list-only: CAPTCHA/session material,
+ * owner and contractor names, contacts, payments, and subordinate detail-grid
+ * payloads are not accepted. Access remains unavailable to unattended
+ * transports; this validator only consumes an already completed private
+ * inventory.
+ *
+ * @param {unknown} value - Candidate row.
+ * @returns {value is GovEasyListRecord} Whether the allow-listed row is valid.
+ */
+function isGovEasyListRecord(value) {
+  if (!isRecord(value) || !isRecord(value.coverage)) return false;
+  if (
+    value.schemaVersion !== "oracle-node.broward-gov-easy-list.v1" ||
+    value.sourceSystem !== "broward_pembroke_park_gov_easy_permits" ||
+    value.jurisdiction !== "Pembroke Park" ||
+    typeof value.sourceRecordId !== "string" ||
+    !/^\d{1,20}$/u.test(value.sourceRecordId) ||
+    value.recordKey !==
+      `${value.sourceSystem}:application:${value.sourceRecordId}` ||
+    typeof value.permitNumber !== "string" ||
+    value.permitNumber.length === 0 ||
+    value.sourceUrl !== PEMBROKE_PARK_GOV_EASY_SEARCH_URL ||
+    typeof value.sourcePage !== "number" ||
+    !Number.isInteger(value.sourcePage) ||
+    value.sourcePage < 1 ||
+    typeof value.isRoofPermit !== "boolean" ||
+    value.coverage.queryField !== "Job Name" ||
+    value.coverage.queryValue !== "ROOF" ||
+    value.coverage.sourceReportedCount !== 166
+  ) {
+    return false;
+  }
+  return [value.jobName, value.status, value.address].every(
+    (fieldValue) => fieldValue === null || typeof fieldValue === "string",
   );
 }
 

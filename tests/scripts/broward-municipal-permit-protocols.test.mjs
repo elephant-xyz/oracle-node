@@ -216,6 +216,8 @@ describe("Broward municipal permit jurisdiction routing", () => {
   });
 
   it("makes login, CAPTCHA, temporary availability, and records-request skips explicit", () => {
+    const pembrokePark =
+      getBrowardMunicipalPermitConfig("pembroke_park");
     expect(
       decideMunicipalSourceAccess(
         getBrowardMunicipalPermitConfig("hillsboro_beach"),
@@ -231,10 +233,13 @@ describe("Broward municipal permit jurisdiction routing", () => {
       ).reason,
     ).toBe("captcha_required");
     expect(
-      decideMunicipalSourceAccess(
-        getBrowardMunicipalPermitConfig("pembroke_park"),
-      ).reason,
+      decideMunicipalSourceAccess(pembrokePark).reason,
     ).toBe("captcha_required");
+    expect(pembrokePark).toMatchObject({
+      sourceSystem: "broward_pembroke_park_gov_easy_permits",
+      accessMode: "captcha_required",
+      probeStatus: "blocked",
+    });
     expect(
       decideMunicipalSourceAccess(
         getBrowardMunicipalPermitConfig("lauderdale_lakes"),
