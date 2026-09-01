@@ -57,6 +57,12 @@ const DASHBOARD_HTML_PATH = resolve(__dirname, "common/dashboard.html");
  * @property {string} source - Public jurisdiction label.
  * @property {"timeout" | "missing_controls" | "missing_export" | "source_cap" | "checkpoint_stale"} reason
  *   Allowlisted operational pause reason.
+ *
+ * @typedef {object} UniversalCoolingPermitWorker
+ * @property {string} source - Public jurisdiction label.
+ * @property {"timeout" | "source_cap" | "incomplete_pagination" | "source_error"} reason
+ *   Allowlisted source circuit-breaker reason.
+ * @property {string} nextAttemptAt - Earliest safe automatic retry.
  */
 
 /**
@@ -135,6 +141,19 @@ export async function getBrowardLifecycleStatus(
     enumeration.pausedWorkers,
     permitRoutes.implementedJurisdictions,
   );
+  const coolingPermitWorkers = readBrowardCoolingPermitWorkers(
+    enumeration.coolingWorkers,
+    permitRoutes.implementedJurisdictions,
+  );
+  if (
+    coolingPermitWorkers.some((coolingWorker) =>
+      pausedPermitWorkers.some(
+        (pausedWorker) => pausedWorker.source === coolingWorker.source,
+      ),
+    )
+  ) {
+    throw new Error("Broward operational worker states overlap");
+  }
   const sunbiz = requireObject(status.sunbizMatch, "Broward Sunbiz match");
   const properties = requireNonNegativeNumber(
     progress.properties,
@@ -228,6 +247,7 @@ export async function getBrowardLifecycleStatus(
         permitRoutes,
         operationalWorkers: {
           paused: pausedPermitWorkers,
+          coolingDown: coolingPermitWorkers,
         },
         permits: {
           count: permits,
@@ -522,6 +542,60 @@ function readBrowardPausedPermitWorkers(value, implementedJurisdictions) {
         /** @type {"timeout" | "missing_controls" | "missing_export" | "source_cap" | "checkpoint_stale"} */ (
           reason
         ),
+    };
+  });
+}
+
+/**
+ * Validate public-safe circuit-breaker state independently of paused workers
+ * and source-route blockers.
+ *
+ * @param {unknown} value - Candidate cooling worker list.
+ * @param {readonly string[]} implementedJurisdictions - Registry-derived implemented names.
+ * @returns {UniversalCoolingPermitWorker[]} Clean cooldown list.
+ */
+function readBrowardCoolingPermitWorkers(value, implementedJurisdictions) {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) {
+    throw new Error("Broward cooling permit workers are missing");
+  }
+  const allowedReasons = new Set([
+    "timeout",
+    "source_cap",
+    "incomplete_pagination",
+    "source_error",
+  ]);
+  const workerSources = new Set();
+  return value.map((candidate) => {
+    const worker = requireObject(candidate, "Broward cooling permit worker");
+    const source = requirePublicLabel(
+      worker.source,
+      "Broward cooling permit worker source",
+    );
+    const reason = requirePublicLabel(
+      worker.reason,
+      "Broward cooling permit worker reason",
+    );
+    const nextAttemptAt = requirePublicLabel(
+      worker.nextAttemptAt,
+      "Broward cooling permit worker next attempt",
+    );
+    if (
+      workerSources.has(source) ||
+      !implementedJurisdictions.includes(source) ||
+      !allowedReasons.has(reason) ||
+      !Number.isFinite(Date.parse(nextAttemptAt))
+    ) {
+      throw new Error("Broward cooling permit worker does not reconcile");
+    }
+    workerSources.add(source);
+    return {
+      source,
+      reason:
+        /** @type {"timeout" | "source_cap" | "incomplete_pagination" | "source_error"} */ (
+          reason
+        ),
+      nextAttemptAt,
     };
   });
 }

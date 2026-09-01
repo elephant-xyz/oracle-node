@@ -23,7 +23,8 @@ import {
 } from "./permit-source-adapters/broward-accela.mjs";
 
 const CHECKPOINT_SCHEMA_VERSION = "oracle-node.broward-accela-csv-windows.v1";
-const MAX_FAILED_SHARDS_PER_INVOCATION = 3;
+const BASE_SOURCE_COOLDOWN_MS = 30 * 60_000;
+const MAX_SOURCE_COOLDOWN_MS = 12 * 60 * 60_000;
 const RECORD_TYPE_SHARD_SOURCE_KEYS = new Set([
   "plantation",
   "cooper-city",
@@ -95,11 +96,22 @@ const SOURCE_KEYS = new Set([
  * @property {string | undefined} [rawCsvSha256] - Exact export hash when present.
  * @property {string} completedAt - ISO completion time.
  *
+ * @typedef {"timeout" | "source_cap" | "incomplete_pagination" | "source_error"} AccelaCsvDeferredReason
+ *
  * @typedef {object} AccelaCsvShardFailure
- * @property {"timeout" | "source_cap" | "incomplete_pagination" | "source_error"} reason
+ * @property {AccelaCsvDeferredReason} reason
  *   Aggregate-safe terminal classification for one bounded invocation.
  * @property {number} attemptCycles - Number of invocations that exhausted this shard.
  * @property {string} failedAt - ISO latest bounded failure time.
+ * @property {string | undefined} [nextAttemptAt] - Earliest safe retry time; absent in legacy receipts.
+ * @property {number | undefined} [cooldownMs] - Applied exponential cooldown; absent in legacy receipts.
+ *
+ * @typedef {object} AccelaCsvCooldown
+ * @property {AccelaCsvDeferredReason} reason - Public-safe circuit-breaker reason.
+ * @property {number} attemptCount - Consecutive source failures since progress.
+ * @property {number} cooldownMs - Finite exponential delay.
+ * @property {string} scheduledAt - ISO failure time.
+ * @property {string} nextAttemptAt - Earliest safe request time.
  *
  * @typedef {object} AccelaCsvShardPlan
  * @property {string} startDate - Inclusive parent start.
@@ -126,13 +138,15 @@ const SOURCE_KEYS = new Set([
  * @property {Record<string, AccelaCsvWindowReceipt>} completedWindows - Receipts.
  * @property {Record<string, AccelaCsvShardPlan>} shardPlans - In-progress one-day exhaustive shard plans.
  * @property {Record<string, AccelaCsvSplitReceipt>} splitWindows - Non-terminal parent split evidence.
+ * @property {AccelaCsvCooldown | null | undefined} [cooldown]
+ *   Backward-compatible worker-level circuit breaker.
  * @property {string} startedAt - ISO first start.
  * @property {string} updatedAt - ISO latest update.
  *
  * @typedef {import("./permit-source-adapters/broward-accela.mjs").BrowardAccelaCsvPermitRecord} BrowardAccelaCsvPermitRecord
  *
  * @typedef {object} AccelaCsvRunSummary
- * @property {"paused" | "complete"} status - Run state.
+ * @property {"paused" | "cooling_down" | "complete"} status - Run state.
  * @property {string} sourceKey - Source key.
  * @property {string} sourceSystem - Source-system key.
  * @property {number} windowsProcessedThisInvocation - New completed windows.
@@ -145,6 +159,8 @@ const SOURCE_KEYS = new Set([
  * @property {number} excludedNonPermitCount - Whole-run explicit exclusions.
  * @property {string} normalizedListPath - Final private JSONL.
  * @property {string} checkpointPath - Private checkpoint.
+ * @property {string | null} nextAttemptAt - Earliest circuit-breaker retry.
+ * @property {AccelaCsvDeferredReason | null} deferredReason - Safe cooldown reason.
  * @property {string} completedAt - ISO summary timestamp.
  */
 
@@ -336,7 +352,7 @@ export async function runAccelaCsvWindows(options, dependencies = {}) {
   let browser = null;
   let processed = 0;
   const attemptedShardKeys = new Set();
-  const failedShardKeys = new Set();
+  const honoredCooldowns = new Set();
 
   /**
    * Capture one source operation with a hard wall deadline and a newly built
@@ -404,6 +420,26 @@ export async function runAccelaCsvWindows(options, dependencies = {}) {
       checkpoint.pendingWindows.length > 0 &&
       (options.maxWindows === null || processed < options.maxWindows)
     ) {
+      const cooldownWaitMs = readRemainingCooldownMs(
+        checkpoint.cooldown,
+        now(),
+      );
+      if (
+        cooldownWaitMs > 0 &&
+        checkpoint.cooldown !== null &&
+        checkpoint.cooldown !== undefined &&
+        !honoredCooldowns.has(checkpoint.cooldown.nextAttemptAt)
+      ) {
+        if (options.maxWindows !== null) break;
+        logger.info("broward_accela_csv_worker_cooling_down", {
+          sourceKey: source.key,
+          reason: checkpoint.cooldown.reason,
+          nextAttemptAt: checkpoint.cooldown.nextAttemptAt,
+        });
+        await wait(cooldownWaitMs);
+        honoredCooldowns.add(checkpoint.cooldown.nextAttemptAt);
+        continue;
+      }
       const window = checkpoint.pendingWindows[0];
       if (window === undefined) break;
       if (processed > 0) await wait(options.delayMs);
@@ -434,8 +470,17 @@ export async function runAccelaCsvWindows(options, dependencies = {}) {
             attemptedShardKeys.add(nextShard.key);
             const priorFailure = shardPlan.failedShards?.[nextShard.key];
             const reason = classifyRecordTypeShardFailure(error);
+            const failedAt = now();
+            const attemptCycles = (priorFailure?.attemptCycles ?? 0) + 1;
+            const cooldown = createAccelaCsvCooldown(
+              reason,
+              (checkpoint.cooldown?.attemptCount ?? 0) + 1,
+              failedAt,
+              random,
+            );
             checkpoint = {
               ...checkpoint,
+              cooldown,
               shardPlans: {
                 ...checkpoint.shardPlans,
                 [windowKey]: {
@@ -444,8 +489,10 @@ export async function runAccelaCsvWindows(options, dependencies = {}) {
                     ...shardPlan.failedShards,
                     [nextShard.key]: {
                       reason,
-                      attemptCycles: (priorFailure?.attemptCycles ?? 0) + 1,
-                      failedAt: now(),
+                      attemptCycles,
+                      failedAt,
+                      nextAttemptAt: cooldown.nextAttemptAt,
+                      cooldownMs: cooldown.cooldownMs,
                     },
                   },
                 },
@@ -454,19 +501,14 @@ export async function runAccelaCsvWindows(options, dependencies = {}) {
             };
             await writeCheckpoint(checkpointPath, checkpoint);
             processed += 1;
-            failedShardKeys.add(nextShard.key);
             logger.warn("broward_accela_csv_record_type_shard_deferred", {
               sourceKey: source.key,
               startDate: window.startDate,
               endDate: window.endDate,
               recordTypeShard: nextShard.key,
               reason,
+              nextAttemptAt: cooldown.nextAttemptAt,
             });
-            if (failedShardKeys.size >= MAX_FAILED_SHARDS_PER_INVOCATION) {
-              throw new Error(
-                `${source.jurisdiction} Accela reached the bounded ${String(MAX_FAILED_SHARDS_PER_INVOCATION)}-shard failure limit`,
-              );
-            }
             continue;
           }
           if (capture === undefined) {
@@ -482,6 +524,7 @@ export async function runAccelaCsvWindows(options, dependencies = {}) {
           });
           checkpoint = {
             ...checkpoint,
+            cooldown: null,
             shardPlans: {
               ...checkpoint.shardPlans,
               [windowKey]: {
@@ -508,9 +551,8 @@ export async function runAccelaCsvWindows(options, dependencies = {}) {
           (shard) => shardPlan.completedShards[shard.key] === undefined,
         ).length;
         if (incompleteShardCount > 0) {
-          throw new Error(
-            `${source.jurisdiction} Accela has ${String(incompleteShardCount)} unreconciled record-type shards after bounded attempts`,
-          );
+          attemptedShardKeys.clear();
+          continue;
         }
         checkpoint = await finalizeRecordTypeShardPlan({
           checkpoint,
@@ -606,6 +648,7 @@ export async function runAccelaCsvWindows(options, dependencies = {}) {
       });
       checkpoint = {
         ...checkpoint,
+        cooldown: null,
         pendingWindows: checkpoint.pendingWindows.slice(1),
         completedWindows: {
           ...checkpoint.completedWindows,
@@ -648,11 +691,17 @@ export async function runAccelaCsvWindows(options, dependencies = {}) {
     }
   }
   const aggregate = await aggregateWindows(checkpoint, normalizedListPath);
+  const completedAt = now();
+  const coolingDown =
+    checkpoint.pendingWindows.length > 0 &&
+    readRemainingCooldownMs(checkpoint.cooldown, completedAt) > 0;
   const summary = {
     status:
       checkpoint.pendingWindows.length === 0
         ? /** @type {"complete"} */ ("complete")
-        : /** @type {"paused"} */ ("paused"),
+        : coolingDown
+          ? /** @type {"cooling_down"} */ ("cooling_down")
+          : /** @type {"paused"} */ ("paused"),
     sourceKey: source.key,
     sourceSystem: source.sourceSystem,
     windowsProcessedThisInvocation: processed,
@@ -665,7 +714,13 @@ export async function runAccelaCsvWindows(options, dependencies = {}) {
     excludedNonPermitCount: aggregate.excludedNonPermitCount,
     normalizedListPath,
     checkpointPath,
-    completedAt: now(),
+    nextAttemptAt: coolingDown
+      ? (checkpoint.cooldown?.nextAttemptAt ?? null)
+      : null,
+    deferredReason: coolingDown
+      ? (checkpoint.cooldown?.reason ?? null)
+      : null,
+    completedAt,
   };
   await writePrivateAtomic(
     summaryPath,
@@ -987,6 +1042,7 @@ async function finalizeRecordTypeShardPlan({
   delete shardPlans[windowKey];
   const nextCheckpoint = {
     ...checkpoint,
+    cooldown: null,
     pendingWindows: checkpoint.pendingWindows.slice(1),
     completedWindows: {
       ...checkpoint.completedWindows,
@@ -1131,6 +1187,79 @@ export function retryAccelaCsvBackoffMs(delayMs, attempt, random) {
     Math.max(5_000, delayMs) * 2 ** Math.max(0, attempt - 1),
   );
   return Math.min(60_000, base + Math.floor(base * 0.25 * fraction));
+}
+
+/**
+ * Compute a conservative exponential source cooldown with bounded positive
+ * jitter. A successful reconciled shard/window resets the worker-level
+ * consecutive attempt count.
+ *
+ * @param {number} attemptCount - One-based consecutive terminal failures.
+ * @param {() => number} random - Injectable random fraction in [0, 1).
+ * @returns {number} Cooldown between 30 minutes and 12 hours.
+ */
+export function retryAccelaCsvCooldownMs(attemptCount, random) {
+  if (!Number.isInteger(attemptCount) || attemptCount < 1) {
+    throw new Error("Accela cooldown attempt count must be positive");
+  }
+  const fraction = random();
+  if (!Number.isFinite(fraction) || fraction < 0 || fraction >= 1) {
+    throw new Error("Accela cooldown random fraction must be in [0,1)");
+  }
+  const base = Math.min(
+    MAX_SOURCE_COOLDOWN_MS,
+    BASE_SOURCE_COOLDOWN_MS * 2 ** Math.min(attemptCount - 1, 20),
+  );
+  return Math.min(
+    MAX_SOURCE_COOLDOWN_MS,
+    base + Math.floor(base * 0.25 * fraction),
+  );
+}
+
+/**
+ * Create one durable worker-level cooldown and its exact next retry time.
+ *
+ * @param {AccelaCsvDeferredReason} reason - Aggregate-safe failure reason.
+ * @param {number} attemptCount - Consecutive terminal failure count.
+ * @param {string} scheduledAt - ISO failure timestamp.
+ * @param {() => number} random - Injectable jitter source.
+ * @returns {AccelaCsvCooldown} Complete durable circuit-breaker state.
+ */
+function createAccelaCsvCooldown(
+  reason,
+  attemptCount,
+  scheduledAt,
+  random,
+) {
+  const scheduledMs = Date.parse(scheduledAt);
+  if (!Number.isFinite(scheduledMs)) {
+    throw new Error("Accela cooldown timestamp is invalid");
+  }
+  const cooldownMs = retryAccelaCsvCooldownMs(attemptCount, random);
+  return {
+    reason,
+    attemptCount,
+    cooldownMs,
+    scheduledAt,
+    nextAttemptAt: new Date(scheduledMs + cooldownMs).toISOString(),
+  };
+}
+
+/**
+ * Calculate the finite remaining circuit-breaker delay.
+ *
+ * @param {AccelaCsvCooldown | null | undefined} cooldown - Optional legacy-safe state.
+ * @param {string} currentTime - Current ISO timestamp.
+ * @returns {number} Non-negative milliseconds remaining.
+ */
+function readRemainingCooldownMs(cooldown, currentTime) {
+  if (cooldown === null || cooldown === undefined) return 0;
+  const currentMs = Date.parse(currentTime);
+  const nextAttemptMs = Date.parse(cooldown.nextAttemptAt);
+  if (!Number.isFinite(currentMs) || !Number.isFinite(nextAttemptMs)) {
+    throw new Error("Accela cooldown state contains an invalid timestamp");
+  }
+  return Math.max(0, nextAttemptMs - currentMs);
 }
 
 /**
@@ -1309,7 +1438,10 @@ async function readOrCreateCheckpoint(checkpointPath, options, startedAt) {
       !Array.isArray(parsed.pendingWindows) ||
       !isRecord(parsed.completedWindows) ||
       (parsed.shardPlans !== undefined && !isRecord(parsed.shardPlans)) ||
-      (parsed.splitWindows !== undefined && !isRecord(parsed.splitWindows))
+      (parsed.splitWindows !== undefined && !isRecord(parsed.splitWindows)) ||
+      (parsed.cooldown !== undefined &&
+        parsed.cooldown !== null &&
+        !isRecord(parsed.cooldown))
     ) {
       throw new Error(
         "Existing Accela CSV checkpoint does not match run configuration",
@@ -1329,6 +1461,10 @@ async function readOrCreateCheckpoint(checkpointPath, options, startedAt) {
           : /** @type {Record<string, AccelaCsvSplitReceipt>} */ (
               parsed.splitWindows
             ),
+      cooldown:
+        parsed.cooldown === undefined
+          ? null
+          : /** @type {AccelaCsvCooldown | null} */ (parsed.cooldown),
     };
   } catch (error) {
     if (!isNodeError(error) || error.code !== "ENOENT") throw error;
@@ -1345,6 +1481,7 @@ async function readOrCreateCheckpoint(checkpointPath, options, startedAt) {
     completedWindows: {},
     shardPlans: {},
     splitWindows: {},
+    cooldown: null,
     startedAt,
     updatedAt: startedAt,
   };

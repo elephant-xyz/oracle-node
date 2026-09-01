@@ -26,6 +26,7 @@ import {
   reconcileBrowardAccelaListPages,
   readBrowardAccelaCheckpoint,
   readBrowardAccelaSource,
+  selectAccelaRecordType,
   writeBrowardAccelaCheckpoint,
 } from "../../scripts/permit-source-adapters/broward-accela.mjs";
 import {
@@ -42,6 +43,7 @@ import {
   createAccelaCsvDateWindows,
   parseAccelaCsvWindowOptions,
   retryAccelaCsvBackoffMs,
+  retryAccelaCsvCooldownMs,
   runAccelaCsvWindows,
   splitAccelaCsvDateWindow,
 } from "../../scripts/run-broward-accela-csv-windows.mjs";
@@ -774,6 +776,46 @@ describe("Broward Accela vendor-wide date windows", () => {
 });
 
 describe("Broward official Accela CSV exports", () => {
+  it("waits for the record-type WebForms postback before using refreshed controls", async () => {
+    const events = [];
+    let evaluation = 0;
+    const shard = {
+      value: "Building/Electrical Permit/NA/NA",
+      label: "Electrical Permit",
+    };
+    const context = {
+      evaluate: async () => {
+        evaluation += 1;
+        return evaluation === 1 ? true : shard;
+      },
+      waitForNavigation: async () => {
+        events.push("navigation_registered");
+        return null;
+      },
+      select: async () => {
+        events.push("record_type_selected");
+        return [shard.value];
+      },
+      waitForFunction: async () => {
+        events.push("refreshed_date_controls_ready");
+      },
+      url: () => BROWARD_ACCELA_SOURCES.plantation.portalUrl,
+      content: async () => "<html>fixture</html>",
+    };
+
+    await selectAccelaRecordType(
+      context,
+      BROWARD_ACCELA_SOURCES.plantation,
+      shard,
+    );
+
+    expect(events).toEqual([
+      "navigation_registered",
+      "record_type_selected",
+      "refreshed_date_controls_ready",
+    ]);
+  });
+
   it("accepts list-only mode only after exact page and identity reconciliation", () => {
     const source = BROWARD_ACCELA_SOURCES.hollywood;
     const sourceWindowKey = buildBrowardAccelaDateWindowKey(
@@ -869,6 +911,9 @@ describe("Broward official Accela CSV exports", () => {
     ]);
     expect(retryAccelaCsvBackoffMs(1_000, 1, () => 0.5)).toBe(5_625);
     expect(retryAccelaCsvBackoffMs(1_000, 2, () => 0.5)).toBe(11_250);
+    expect(retryAccelaCsvCooldownMs(1, () => 0)).toBe(1_800_000);
+    expect(retryAccelaCsvCooldownMs(2, () => 0.5)).toBe(4_050_000);
+    expect(retryAccelaCsvCooldownMs(20, () => 0.5)).toBe(43_200_000);
     expect(() => retryAccelaCsvBackoffMs(1_000, 1, () => 1)).toThrow(
       "must be in [0,1)",
     );
@@ -1103,23 +1148,26 @@ describe("Broward official Accela CSV exports", () => {
       },
     ]);
     const westonOutputDirectory = join(outputDirectory, "weston");
-    await expect(
-      runAccelaCsvWindows(
-        {
-          sourceKey: "weston",
-          startDate: "2006-04-22",
-          endDate: "2006-04-22",
-          windowDays: 1,
-          delayMs: 1_000,
-          maxAttempts: 1,
-          maxPages: 200,
-          windowTimeoutMs: 120_000,
-          maxWindows: null,
-          outputDirectory: westonOutputDirectory,
-        },
-        dependencies,
-      ),
-    ).rejects.toThrow("bounded 3-shard failure limit");
+    const cooling = await runAccelaCsvWindows(
+      {
+        sourceKey: "weston",
+        startDate: "2006-04-22",
+        endDate: "2006-04-22",
+        windowDays: 1,
+        delayMs: 1_000,
+        maxAttempts: 1,
+        maxPages: 200,
+        windowTimeoutMs: 120_000,
+        maxWindows: 1,
+        outputDirectory: westonOutputDirectory,
+      },
+      dependencies,
+    );
+    expect(cooling).toMatchObject({
+      status: "cooling_down",
+      deferredReason: "timeout",
+      nextAttemptAt: "2026-09-01T20:30:00.000Z",
+    });
     const boundedCheckpoint = JSON.parse(
       await readFile(
         join(westonOutputDirectory, "checkpoint.private.json"),
@@ -1130,7 +1178,13 @@ describe("Broward official Accela CSV exports", () => {
       Object.values(
         boundedCheckpoint.shardPlans["20060422_20060422"].failedShards,
       ),
-    ).toHaveLength(3);
+    ).toHaveLength(1);
+    expect(boundedCheckpoint.cooldown).toMatchObject({
+      reason: "timeout",
+      attemptCount: 1,
+      cooldownMs: 1_800_000,
+      nextAttemptAt: "2026-09-01T20:30:00.000Z",
+    });
   });
 
   it("checkpoints and resumes exhaustive Plantation record-type shards", async () => {
@@ -1165,6 +1219,7 @@ describe("Broward official Accela CSV exports", () => {
     /** @type {number[]} */
     const searchOutcomeTimeouts = [];
     let buildingFailuresRemaining = 2;
+    let currentTime = "2026-09-01T18:00:00.000Z";
     const captureWindow = async ({
       source,
       startDate,
@@ -1231,7 +1286,7 @@ describe("Broward official Accela CSV exports", () => {
       captureWindow,
       wait: async () => undefined,
       random: () => 0,
-      now: () => "2026-09-01T18:00:00.000Z",
+      now: () => currentTime,
     };
     const planned = await runAccelaCsvWindows(options, dependencies);
     expect(planned).toMatchObject({
@@ -1251,13 +1306,20 @@ describe("Broward official Accela CSV exports", () => {
       completedShards: {},
     });
 
-    await runAccelaCsvWindows({ ...options, maxWindows: 2 }, dependencies);
+    const cooling = await runAccelaCsvWindows(
+      { ...options, maxWindows: 2 },
+      dependencies,
+    );
+    expect(cooling).toMatchObject({
+      status: "cooling_down",
+      deferredReason: "timeout",
+    });
     checkpoint = JSON.parse(
       await readFile(join(outputDirectory, "checkpoint.private.json"), "utf8"),
     );
     expect(
       Object.keys(Object.values(checkpoint.shardPlans)[0].completedShards),
-    ).toHaveLength(1);
+    ).toHaveLength(0);
     expect(Object.values(checkpoint.shardPlans)[0].failedShards).toEqual(
       expect.objectContaining({
         "record-type-25d182bab06ba7fa": expect.objectContaining({
@@ -1266,6 +1328,17 @@ describe("Broward official Accela CSV exports", () => {
         }),
       }),
     );
+    currentTime = new Date(
+      Date.parse(checkpoint.cooldown.nextAttemptAt) + 1,
+    ).toISOString();
+    await runAccelaCsvWindows(options, dependencies);
+    checkpoint = JSON.parse(
+      await readFile(join(outputDirectory, "checkpoint.private.json"), "utf8"),
+    );
+    expect(
+      Object.keys(Object.values(checkpoint.shardPlans)[0].completedShards),
+    ).toHaveLength(1);
+    expect(checkpoint.cooldown).toBeNull();
 
     const completed = await runAccelaCsvWindows(
       { ...options, maxWindows: null },
@@ -1281,8 +1354,8 @@ describe("Broward official Accela CSV exports", () => {
       "parent",
       "Building Permit",
       "Building Permit",
-      "Electrical Permit",
       "Building Permit",
+      "Electrical Permit",
     ]);
     expect(searchOutcomeTimeouts).toEqual([
       60_000, 90_000, 90_000, 90_000, 90_000,

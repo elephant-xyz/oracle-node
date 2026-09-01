@@ -620,6 +620,13 @@ describe("durable Broward Neon recovery", () => {
         pendingWindows: [{ startDate: "PRIVATE", endDate: "PRIVATE" }],
         completedWindows: {},
         updatedAt: "2026-08-31T20:00:00.000Z",
+        cooldown: {
+          reason: "timeout",
+          attemptCount: 2,
+          cooldownMs: 3_600_000,
+          scheduledAt: "2026-08-31T22:00:00.000Z",
+          nextAttemptAt: "2026-08-31T23:00:00.000Z",
+        },
       }),
     );
     const status = await readPermitEnumerationStatus(
@@ -637,9 +644,22 @@ describe("durable Broward Neon recovery", () => {
       sourceMissingRecords: 1,
     });
     expect(status.workers).toHaveLength(8);
-    expect(status.pausedWorkers).toEqual([
-      { source: "Plantation", reason: "timeout" },
+    expect(status.pausedWorkers).toEqual([]);
+    expect(status.coolingWorkers).toEqual([
+      {
+        source: "Plantation",
+        reason: "timeout",
+        nextAttemptAt: "2026-08-31T23:00:00.000Z",
+      },
     ]);
+    expect(status.workers).toContainEqual(
+      expect.objectContaining({
+        source: "Plantation",
+        status: "cooling_down",
+        cooldownReason: "timeout",
+        nextAttemptAt: "2026-08-31T23:00:00.000Z",
+      }),
+    );
     expect(status.workers).toContainEqual(
       expect.objectContaining({
         source: "Hollywood",

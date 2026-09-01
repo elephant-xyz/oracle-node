@@ -1474,6 +1474,12 @@
             blocked-route count.
           </p>
           <ul id="permitPausedWorkerList"></ul>
+          <h3 style="margin-top: 14px">Cooling-Down Operational Workers</h3>
+          <p class="sub">
+            Source circuit breakers retry automatically at the displayed safe
+            time and do not increase the blocked-route count.
+          </p>
+          <ul id="permitCoolingWorkerList"></ul>
         </div>
 
         <!-- Trade Breakdown Cards -->
@@ -2620,6 +2626,35 @@
                   const item = document.createElement("li");
                   item.textContent = worker.reason
                     ? worker.source + " — " + worker.reason.replaceAll("_", " ")
+                    : worker.source;
+                  return item;
+                }),
+              );
+            }
+            const coolingWorkers =
+              srcStage.operationalWorkers?.coolingDown || [];
+            const coolingWorkerList = document.getElementById(
+              "permitCoolingWorkerList",
+            );
+            if (coolingWorkerList) {
+              coolingWorkerList.replaceChildren(
+                ...(coolingWorkers.length === 0
+                  ? [
+                      {
+                        source: "No workers are cooling down",
+                        reason: "",
+                        nextAttemptAt: "",
+                      },
+                    ]
+                  : coolingWorkers
+                ).map((worker) => {
+                  const item = document.createElement("li");
+                  item.textContent = worker.reason
+                    ? worker.source +
+                      " — " +
+                      worker.reason.replaceAll("_", " ") +
+                      "; next safe retry " +
+                      worker.nextAttemptAt
                     : worker.source;
                   return item;
                 }),

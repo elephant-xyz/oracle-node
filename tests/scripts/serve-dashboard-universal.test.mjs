@@ -74,6 +74,13 @@ describe("universal dashboard server & county registry", () => {
             { source: "Plantation", reason: "timeout" },
             { source: "Weston", reason: "source_cap" },
           ],
+          coolingWorkers: [
+            {
+              source: "Cooper City",
+              reason: "source_cap",
+              nextAttemptAt: "2026-09-02T01:00:00.000Z",
+            },
+          ],
         },
         sunbizMatch: { registrations: 12_432, properties: 9_023 },
       }));
@@ -100,6 +107,13 @@ describe("universal dashboard server & county registry", () => {
               paused: [
                 { source: "Plantation", reason: "timeout" },
                 { source: "Weston", reason: "source_cap" },
+              ],
+              coolingDown: [
+                {
+                  source: "Cooper City",
+                  reason: "source_cap",
+                  nextAttemptAt: "2026-09-02T01:00:00.000Z",
+                },
               ],
             },
             permits: {
@@ -135,6 +149,7 @@ describe("universal dashboard server & county registry", () => {
         ),
       ).toBe(sourcing.permitRoutes.blockedCurrentRoutes);
       expect(sourcing.operationalWorkers.paused).toHaveLength(2);
+      expect(sourcing.operationalWorkers.coolingDown).toHaveLength(1);
       expect(sourcing.permitRoutes.blockedCurrentRoutes).toBe(8);
     } finally {
       await rm(root, { recursive: true, force: true });
@@ -149,6 +164,7 @@ describe("universal dashboard server & county registry", () => {
     expect(dashboardHtml).toContain('id="permitRouteStatusCard"');
     expect(dashboardHtml).toContain('id="permitRouteBlockerGroups"');
     expect(dashboardHtml).toContain('id="permitPausedWorkerList"');
+    expect(dashboardHtml).toContain('id="permitCoolingWorkerList"');
     expect(dashboardHtml).toContain("Operational pauses are shown separately");
   });
 

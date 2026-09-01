@@ -1012,11 +1012,29 @@ async function readAccelaRecordTypeShards(context) {
  * @param {BrowardAccelaRecordTypeShard} shard - Frozen public option.
  * @returns {Promise<void>} Resolves after exact option verification.
  */
-async function selectAccelaRecordType(context, source, shard) {
-  const selected = await context.select(
-    DEFAULT_SELECTORS.recordType,
-    shard.value,
-  );
+export async function selectAccelaRecordType(context, source, shard) {
+  const usesPostback = await context.evaluate((selector) => {
+    const select = document.querySelector(selector);
+    if (!(select instanceof HTMLSelectElement)) return false;
+    return /__doPostBack\s*\(/u.test(select.getAttribute("onchange") ?? "");
+  }, DEFAULT_SELECTORS.recordType);
+  const navigation = usesPostback
+    ? context.waitForNavigation({
+        waitUntil: "domcontentloaded",
+        timeout: 60_000,
+      })
+    : Promise.resolve(null);
+  const [selected] = await Promise.all([
+    context.select(DEFAULT_SELECTORS.recordType, shard.value),
+    navigation,
+  ]);
+  if (usesPostback) {
+    await waitForAccelaDateControls(
+      context,
+      source,
+      "record-type selection postback",
+    );
+  }
   const observed = await context.evaluate((selector) => {
     const select = document.querySelector(selector);
     if (!(select instanceof HTMLSelectElement)) return null;
@@ -1839,6 +1857,9 @@ export async function captureBrowardAccelaCsvWindow({
         initialHtml,
       );
     }
+    if (recordTypeShard !== null) {
+      await selectAccelaRecordType(context, source, recordTypeShard);
+    }
     await setAccelaInput(context, DEFAULT_SELECTORS.parcel, "");
     await setAccelaInput(
       context,
@@ -1850,9 +1871,6 @@ export async function captureBrowardAccelaCsvWindow({
       DEFAULT_SELECTORS.endDate,
       toAccelaDate(endDate),
     );
-    if (recordTypeShard !== null) {
-      await selectAccelaRecordType(context, source, recordTypeShard);
-    }
     await context.click(DEFAULT_SELECTORS.submit);
     await waitForSearchOutcome(context, searchOutcomeTimeoutMs);
     const searchHtml = await context.content();

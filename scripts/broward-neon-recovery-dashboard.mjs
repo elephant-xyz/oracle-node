@@ -86,7 +86,7 @@ const DEFAULT_PORT = 47_832;
  * @typedef {object} PermitEnumerationWorkerStatus
  * @property {string} source - Public jurisdiction label.
  * @property {"accela_csv" | "tyler_api"} family - Source mechanism.
- * @property {"not_started" | "running" | "paused" | "complete"} status
+ * @property {"not_started" | "running" | "cooling_down" | "paused" | "complete"} status
  *   Aggregate checkpoint activity state.
  * @property {number} completedWindows - Durable completed windows.
  * @property {number} pendingWindows - Remaining windows.
@@ -99,16 +99,27 @@ const DEFAULT_PORT = 47_832;
  * @property {string | null} updatedAt - Last durable checkpoint time.
  * @property {"timeout" | "missing_controls" | "missing_export" | "source_cap" | "checkpoint_stale" | null} pauseReason
  *   Allowlisted operational reason when this worker is paused.
+ * @property {"timeout" | "source_cap" | "incomplete_pagination" | "source_error" | null} cooldownReason
+ *   Allowlisted source circuit-breaker reason while cooling down.
+ * @property {string | null} nextAttemptAt - Earliest safe automatic retry.
  *
  * @typedef {object} PausedPermitEnumerationWorker
  * @property {string} source - Public jurisdiction label.
  * @property {"timeout" | "missing_controls" | "missing_export" | "source_cap" | "checkpoint_stale"} reason
  *   Allowlisted operational reason containing no source record or raw error.
  *
+ * @typedef {object} CoolingPermitEnumerationWorker
+ * @property {string} source - Public jurisdiction label.
+ * @property {"timeout" | "source_cap" | "incomplete_pagination" | "source_error"} reason
+ *   Allowlisted circuit-breaker reason.
+ * @property {string} nextAttemptAt - Earliest safe automatic retry.
+ *
  * @typedef {object} PermitEnumerationStatus
  * @property {PermitEnumerationWorkerStatus[]} workers - Fixed aggregate source list.
  * @property {PausedPermitEnumerationWorker[]} pausedWorkers
  *   Paused jobs, kept separate from current source-route blockers.
+ * @property {CoolingPermitEnumerationWorker[]} coolingWorkers
+ *   Workers waiting for their durable source cooldown.
  * @property {number} activeWorkers - Recently advancing workers.
  * @property {number} completedWorkers - Fully exhausted workers.
  * @property {number} completedWindows - Durable windows across workers.
@@ -529,6 +540,7 @@ function emptyPermitEnumerationStatus() {
   return {
     workers: [],
     pausedWorkers: [],
+    coolingWorkers: [],
     activeWorkers: 0,
     completedWorkers: 0,
     completedWindows: 0,
@@ -683,6 +695,47 @@ const PERMIT_ENUMERATION_CHECKPOINTS = Object.freeze([
 ]);
 
 /**
+ * Read only the public-safe fields from a durable Accela circuit breaker.
+ *
+ * @param {unknown} value - Optional checkpoint cooldown.
+ * @param {number} nowMs - Dashboard snapshot epoch.
+ * @returns {{reason:"timeout" | "source_cap" | "incomplete_pagination" | "source_error",nextAttemptAt:string} | null}
+ *   Active future cooldown, or null when absent/expired.
+ */
+function readPermitEnumerationCooldown(value, nowMs) {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Permit enumeration cooldown is malformed");
+  }
+  const cooldown = /** @type {Record<string, unknown>} */ (value);
+  const allowedReasons = new Set([
+    "timeout",
+    "source_cap",
+    "incomplete_pagination",
+    "source_error",
+  ]);
+  if (
+    typeof cooldown.reason !== "string" ||
+    !allowedReasons.has(cooldown.reason) ||
+    typeof cooldown.nextAttemptAt !== "string"
+  ) {
+    throw new Error("Permit enumeration cooldown is malformed");
+  }
+  const nextAttemptMs = Date.parse(cooldown.nextAttemptAt);
+  if (!Number.isFinite(nextAttemptMs)) {
+    throw new Error("Permit enumeration cooldown timestamp is invalid");
+  }
+  if (nextAttemptMs <= nowMs) return null;
+  return {
+    reason:
+      /** @type {"timeout" | "source_cap" | "incomplete_pagination" | "source_error"} */ (
+        cooldown.reason
+      ),
+    nextAttemptAt: cooldown.nextAttemptAt,
+  };
+}
+
+/**
  * Read aggregate-only local permit enumerator checkpoints.
  *
  * @param {string} repositoryRoot - Repository root containing downloads.
@@ -749,15 +802,21 @@ export async function readPermitEnumerationStatus(
         const updatedAt = checkpoint.updatedAt;
         const updatedMs = Date.parse(updatedAt);
         const complete = pendingWindows === 0;
+        const cooldown = readPermitEnumerationCooldown(
+          checkpoint.cooldown,
+          nowMs,
+        );
         const recentlyActive =
           Number.isFinite(updatedMs) &&
           nowMs - updatedMs >= 0 &&
           nowMs - updatedMs <= 5 * 60_000;
         const status = complete
           ? /** @type {"complete"} */ ("complete")
-          : recentlyActive
-            ? /** @type {"running"} */ ("running")
-            : /** @type {"paused"} */ ("paused");
+          : cooldown !== null
+            ? /** @type {"cooling_down"} */ ("cooling_down")
+            : recentlyActive
+              ? /** @type {"running"} */ ("running")
+              : /** @type {"paused"} */ ("paused");
         return {
           source: definition.source,
           family: /** @type {"accela_csv" | "tyler_api"} */ (definition.family),
@@ -780,6 +839,8 @@ export async function readPermitEnumerationStatus(
                   definition.pauseReason
                 )
               : null,
+          cooldownReason: cooldown?.reason ?? null,
+          nextAttemptAt: cooldown?.nextAttemptAt ?? null,
         };
       } catch (error) {
         if (isNodeError(error) && error.code === "ENOENT") {
@@ -799,6 +860,8 @@ export async function readPermitEnumerationStatus(
             sourceMissingRecords: 0,
             updatedAt: null,
             pauseReason: null,
+            cooldownReason: null,
+            nextAttemptAt: null,
           };
         }
         throw error;
@@ -807,6 +870,8 @@ export async function readPermitEnumerationStatus(
   );
   /** @type {PausedPermitEnumerationWorker[]} */
   const pausedWorkers = [];
+  /** @type {CoolingPermitEnumerationWorker[]} */
+  const coolingWorkers = [];
   for (const worker of workers) {
     if (worker.status === "paused" && worker.pauseReason !== null) {
       pausedWorkers.push({
@@ -814,10 +879,22 @@ export async function readPermitEnumerationStatus(
         reason: worker.pauseReason,
       });
     }
+    if (
+      worker.status === "cooling_down" &&
+      worker.cooldownReason !== null &&
+      worker.nextAttemptAt !== null
+    ) {
+      coolingWorkers.push({
+        source: worker.source,
+        reason: worker.cooldownReason,
+        nextAttemptAt: worker.nextAttemptAt,
+      });
+    }
   }
   return {
     workers,
     pausedWorkers,
+    coolingWorkers,
     activeWorkers: workers.filter((worker) => worker.status === "running")
       .length,
     completedWorkers: workers.filter((worker) => worker.status === "complete")
@@ -1337,6 +1414,9 @@ const DASHBOARD_HTML = `<!doctype html>
   <h2>Paused operational workers</h2>
   <p class="route-note">Checkpoint pauses are operational states and are not source-route blockers.</p>
   <ul id="permit-paused-workers"><li>Loading worker state…</li></ul>
+  <h2>Cooling-down operational workers</h2>
+  <p class="route-note">Source circuit breakers retry automatically at the displayed safe time and are not source-route blockers.</p>
+  <ul id="permit-cooling-workers"><li>Loading cooldown state…</li></ul>
   <h2>Sunbiz property matching</h2>
   <section class="grid">
     <article><h2>Matched registrations</h2><strong id="sunbiz-registrations">—</strong></article>
@@ -1442,6 +1522,23 @@ const DASHBOARD_HTML = `<!doctype html>
             ...pausedWorkers.map((worker) => {
               const item = document.createElement("li");
               item.textContent = worker.source + " — " + worker.reason.replaceAll("_", " ");
+              return item;
+            }),
+          );
+        }
+      }
+      const coolingWorkers = enumeration.coolingWorkers;
+      const coolingWorkerList = document.getElementById("permit-cooling-workers");
+      if (coolingWorkerList) {
+        if (coolingWorkers.length === 0) {
+          const item = document.createElement("li");
+          item.textContent = "No workers are cooling down.";
+          coolingWorkerList.replaceChildren(item);
+        } else {
+          coolingWorkerList.replaceChildren(
+            ...coolingWorkers.map((worker) => {
+              const item = document.createElement("li");
+              item.textContent = worker.source + " — " + worker.reason.replaceAll("_", " ") + "; next safe retry " + worker.nextAttemptAt;
               return item;
             }),
           );
