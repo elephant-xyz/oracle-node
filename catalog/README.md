@@ -33,6 +33,9 @@ deterministically. Coverage is mandatory; `permitQueryTableUrl` and
   not the county. For example, 50 ingested of 50 expected is 100% of the
   published subset and is still not full-county coverage.
 
+Chester, Hillsborough, and Pinellas are currently pilot-scoped. They remain
+discoverable, but consumers must not treat them as full-county fact sources.
+
 The catalog schema is `1.1`; every entry must declare this scope. New coverage
 artifacts must carry the identical object. The updater rejects malformed or
 different coverage scope but permits an older immutable coverage artifact that

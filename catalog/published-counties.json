@@ -1,7 +1,41 @@
 {
   "schemaVersion": "1.1",
-  "generatedAt": "2026-08-27T20:05:00.000Z",
+  "generatedAt": "2026-09-01T17:06:37.000Z",
   "counties": [
+    {
+      "countyKey": "chester",
+      "countyName": "Chester",
+      "stateCode": "PA",
+      "countyFips": "42029",
+      "status": "published",
+      "publicationScope": {
+        "schemaVersion": "1.0",
+        "level": "pilot",
+        "denominatorBasis": "published_subset"
+      },
+      "queryTableUrl": "https://ipfs.filebase.io/ipns/k51qzi5uqu5dho0b79m6k93jdthnpjf6j9d6abn2jl7rjro0e31icjpg83vy0f",
+      "datasetCoverageUrl": "https://ipfs.filebase.io/ipns/k51qzi5uqu5djzghr538v7zskwn586juujd2nxzsox3fqr66konxwzlb08sebg",
+      "permitQueryTableUrl": null,
+      "placesTableUrl": null,
+      "updatedAt": "2026-08-12T21:46:00.000Z"
+    },
+    {
+      "countyKey": "hillsborough",
+      "countyName": "Hillsborough",
+      "stateCode": "FL",
+      "countyFips": "12057",
+      "status": "published",
+      "publicationScope": {
+        "schemaVersion": "1.0",
+        "level": "pilot",
+        "denominatorBasis": "published_subset"
+      },
+      "queryTableUrl": "https://ipfs.filebase.io/ipns/k51qzi5uqu5diqz0l68gfi22qk0w8aqhsm7pcgje535uz8vhu8p37ynm2po0fh",
+      "datasetCoverageUrl": "https://ipfs.filebase.io/ipns/k51qzi5uqu5di5jghjwbpumnr2vt1crmaycqmtx673kw8pqp8dymecuig5x8jb/",
+      "permitQueryTableUrl": null,
+      "placesTableUrl": null,
+      "updatedAt": "2026-08-30T00:25:00.000Z"
+    },
     {
       "countyKey": "lee",
       "countyName": "Lee",
@@ -35,6 +69,23 @@
       "permitQueryTableUrl": null,
       "placesTableUrl": null,
       "updatedAt": "2026-07-07T09:58:45.095Z"
+    },
+    {
+      "countyKey": "montgomery",
+      "countyName": "Montgomery",
+      "stateCode": "PA",
+      "countyFips": "42091",
+      "status": "published",
+      "publicationScope": {
+        "schemaVersion": "1.0",
+        "level": "full",
+        "denominatorBasis": "county_total"
+      },
+      "queryTableUrl": "https://ipfs.filebase.io/ipns/k51qzi5uqu5dknn192e4mzltecz3cul4byog3x9oydaxsiecf1huk3woqrkpnj",
+      "datasetCoverageUrl": "https://ipfs.filebase.io/ipns/k51qzi5uqu5djrxnqch9zhkm7n4m0ieep6zgbdo6tkvy5xqwn7uy94jfucndjm",
+      "permitQueryTableUrl": "https://ipfs.filebase.io/ipns/k51qzi5uqu5dhmzrqgeg0dgdqwoey1of8qxi00fph5ea3z9niqujvmzcz009d8",
+      "placesTableUrl": null,
+      "updatedAt": "2026-08-29T20:45:00.000Z"
     },
     {
       "countyKey": "orange",
@@ -71,6 +122,40 @@
       "updatedAt": "2026-07-02T14:21:44.544Z"
     },
     {
+      "countyKey": "pinellas",
+      "countyName": "Pinellas",
+      "stateCode": "FL",
+      "countyFips": "12103",
+      "status": "published",
+      "publicationScope": {
+        "schemaVersion": "1.0",
+        "level": "pilot",
+        "denominatorBasis": "published_subset"
+      },
+      "queryTableUrl": "https://ipfs.filebase.io/ipns/k51qzi5uqu5dhmo3zv6xvidksgvsqkfer3nw1s4v7bcbafpl66btpyab3zv9ir",
+      "datasetCoverageUrl": "https://ipfs.filebase.io/ipns/k51qzi5uqu5djrzm8n599i98ey7rpmwpbphgk8tvo5d6zjkfeqcmbrg7lh03xl/",
+      "permitQueryTableUrl": null,
+      "placesTableUrl": null,
+      "updatedAt": "2026-08-28T09:30:10.000Z"
+    },
+    {
+      "countyKey": "polk",
+      "countyName": "Polk",
+      "stateCode": "FL",
+      "countyFips": "12105",
+      "status": "published",
+      "publicationScope": {
+        "schemaVersion": "1.0",
+        "level": "full",
+        "denominatorBasis": "county_total"
+      },
+      "queryTableUrl": "https://ipfs.filebase.io/ipns/k51qzi5uqu5dj7acu8xg9ugfk670m8b185q4h7pz2gp8cv3mos15ftb4yz6w7o",
+      "datasetCoverageUrl": "https://ipfs.filebase.io/ipns/k51qzi5uqu5diaoycedqekfs0osktwx8py1h8s7h0gspga18rksi3kumrs52nq/",
+      "permitQueryTableUrl": null,
+      "placesTableUrl": "https://ipfs.filebase.io/ipns/k51qzi5uqu5di1ej4dfw5658dz4log0cu9ussp413xgcc5q6ry4datziq5vi63/polk/places-table.parquet",
+      "updatedAt": "2026-08-31T13:29:48.000Z"
+    },
+    {
       "countyKey": "rock-island",
       "countyName": "Rock Island",
       "stateCode": "IL",
@@ -86,23 +171,6 @@
       "permitQueryTableUrl": "https://ipfs.filebase.io/ipns/k51qzi5uqu5di42nblo5nuk94aj7af393d9y5vhqxp5dtxikzso0wt14v3p0wa",
       "placesTableUrl": null,
       "updatedAt": "2026-08-14T22:34:30.000Z"
-    },
-    {
-      "countyKey": "hillsborough",
-      "countyName": "Hillsborough",
-      "stateCode": "FL",
-      "countyFips": "12057",
-      "status": "published",
-      "publicationScope": {
-        "schemaVersion": "1.0",
-        "level": "pilot",
-        "denominatorBasis": "published_subset"
-      },
-      "queryTableUrl": "https://ipfs.filebase.io/ipns/k51qzi5uqu5diqz0l68gfi22qk0w8aqhsm7pcgje535uz8vhu8p37ynm2po0fh",
-      "datasetCoverageUrl": "https://ipfs.filebase.io/ipns/k51qzi5uqu5di5jghjwbpumnr2vt1crmaycqmtx673kw8pqp8dymecuig5x8jb/",
-      "permitQueryTableUrl": null,
-      "placesTableUrl": null,
-      "updatedAt": "2026-08-27T20:05:00.000Z"
     }
   ]
 }

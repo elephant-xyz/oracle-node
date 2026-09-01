@@ -16,6 +16,12 @@ const fullPublicationScope = {
   denominatorBasis: "county_total",
 };
 
+const pilotPublicationScope = {
+  schemaVersion: "1.0",
+  level: "pilot",
+  denominatorBasis: "published_subset",
+};
+
 const baseCatalog = {
   schemaVersion: "1.1",
   generatedAt: "2026-07-24T00:00:00.000Z",
@@ -46,13 +52,39 @@ describe("published county catalog", () => {
 
     expect(result.counties.length).toBeGreaterThan(0);
     expect(result.counties.map((county) => county.countyKey)).toEqual([
+      "chester",
       "hillsborough",
       "lee",
       "miami-dade",
+      "montgomery",
       "orange",
       "palm-beach",
+      "pinellas",
+      "polk",
       "rock-island",
     ]);
+
+    const countiesByKey = Object.fromEntries(
+      result.counties.map((county) => [county.countyKey, county]),
+    );
+    for (const countyKey of ["chester", "hillsborough", "pinellas"]) {
+      expect(countiesByKey[countyKey].publicationScope).toEqual(
+        pilotPublicationScope,
+      );
+    }
+    for (const countyKey of [
+      "lee",
+      "miami-dade",
+      "montgomery",
+      "orange",
+      "palm-beach",
+      "polk",
+      "rock-island",
+    ]) {
+      expect(countiesByKey[countyKey].publicationScope).toEqual(
+        fullPublicationScope,
+      );
+    }
   });
 
   it("normalizes county keys", () => {
@@ -73,7 +105,6 @@ describe("published county catalog", () => {
         queryTableUrl: "https://example.com/alameda.parquet",
         datasetCoverageUrl: "https://example.com/alameda-coverage.json",
         permitQueryTableUrl: null,
-        placesTableUrl: null,
         updatedAt: "2026-07-24T10:00:00.000Z",
       },
       "2026-07-24T10:01:00.000Z",
@@ -303,6 +334,27 @@ describe("published county catalog", () => {
       url: "https://example.com/lee-places.parquet",
       method: "HEAD",
     });
+  });
+
+  it("accepts a coverage artifact identified by countyKey", async () => {
+    const fetchImpl = async (_url, init) =>
+      init?.method === "HEAD"
+        ? new Response(null, { status: 200 })
+        : new Response(
+            JSON.stringify({
+              countyKey: "lee",
+              stateCode: "FL",
+              countyFips: "12071",
+            }),
+            { status: 200 },
+          );
+
+    await expect(
+      verifyPublishedCountyArtifacts(
+        validateCatalog(baseCatalog).counties[0],
+        fetchImpl,
+      ),
+    ).resolves.toBeUndefined();
   });
 
   it("rejects coverage for a different county", async () => {

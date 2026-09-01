@@ -340,24 +340,47 @@ export async function verifyPublishedCountyArtifacts(
   if (
     typeof coverage !== "object" ||
     coverage === null ||
-    Array.isArray(coverage) ||
-    typeof (/** @type {Record<string, unknown>} */ (coverage).county) !==
-      "string"
+    Array.isArray(coverage)
   ) {
     throw new Error("dataset coverage response is missing county identity");
   }
-  const coverageCounty = normalizeCountyKey(
-    /** @type {string} */ (
-      /** @type {Record<string, unknown>} */ (coverage).county
-    ),
+  const coverageRecord = /** @type {Record<string, unknown>} */ (coverage);
+  const coverageCountyFields = ["county", "countyKey"].filter(
+    (field) => coverageRecord[field] !== undefined,
   );
-  if (coverageCounty !== county.countyKey) {
+  if (coverageCountyFields.length === 0) {
+    throw new Error("dataset coverage response is missing county identity");
+  }
+  for (const field of coverageCountyFields) {
+    if (typeof coverageRecord[field] !== "string") {
+      throw new Error(`dataset coverage ${field} must be a string`);
+    }
+    const coverageCounty = normalizeCountyKey(
+      /** @type {string} */ (coverageRecord[field]),
+    );
+    if (coverageCounty !== county.countyKey) {
+      throw new Error(
+        `dataset coverage ${field} '${coverageCounty}' does not match '${county.countyKey}'`,
+      );
+    }
+  }
+  if (
+    coverageRecord.stateCode !== undefined &&
+    coverageRecord.stateCode !== county.stateCode
+  ) {
     throw new Error(
-      `dataset coverage county '${coverageCounty}' does not match '${county.countyKey}'`,
+      `dataset coverage stateCode '${String(coverageRecord.stateCode)}' does not match '${county.stateCode}'`,
     );
   }
-  const coverageScope = /** @type {Record<string, unknown>} */ (coverage)
-    .publicationScope;
+  if (
+    coverageRecord.countyFips !== undefined &&
+    coverageRecord.countyFips !== county.countyFips
+  ) {
+    throw new Error(
+      `dataset coverage countyFips '${String(coverageRecord.countyFips)}' does not match '${county.countyFips}'`,
+    );
+  }
+  const coverageScope = coverageRecord.publicationScope;
   if (coverageScope !== undefined) {
     assertPublicationScope(coverageScope, "dataset coverage publicationScope");
     if (
