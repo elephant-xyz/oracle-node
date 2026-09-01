@@ -1,6 +1,6 @@
 # Broward municipal permit vendor-family prototypes
 
-Date: 2026-08-29  
+Date: 2026-09-01
 Scope: local-only source-contract prototypes; no harvest, cloud service, database,
 publication, login, CAPTCHA solution, or records request
 
@@ -36,13 +36,14 @@ callers cannot lower the configured delay.
 | Click2Gov                | Pompano Beach, Tamarac, Margate       | application/address/parcel result parsing; contact-expanded row dedupe; session-token removal; same-session detail parsing | bounded anonymous transport may be added                                     |
 | Tyler/New World eSuite   | Davie, Dania Beach                    | permit/address result parsing; numeric permit-id dedupe; numbered-page checkpoint; same-session detail and inspections     | bounded anonymous transport may be added                                     |
 | Gov-Easy                 | Deerfield Beach legacy, Pembroke Park | route/capability metadata only                                                                                             | skip: six-digit numeric CAPTCHA                                              |
-| GeoCivix                 | Deerfield Beach current records       | split-route metadata                                                                                                       | skip: secure/login route                                                     |
+| GeoCivix                 | Deerfield Beach current records       | split-route metadata                                                                                                       | skip: applicant portal has no anonymous public permit search                 |
 | SmartGov                 | Lighthouse Point                      | advanced-search result, numbered page, public detail, and inspection parsing                                               | anonymous prototype; positive detail still needs certification               |
 | OpenGov/ViewPoint        | Lauderdale Lakes                      | GraphQL edge/detail fixture parser and opaque-cursor checkpoint support                                                    | landing-only skip while the rendered application reports itself inaccessible |
-| CommunityCore            | Hillsboro Beach                       | official route metadata                                                                                                    | skip: account required                                                       |
+| CommunityCore            | Hillsboro Beach                       | anonymous address/permit/parcel UI and public detail-route metadata; owner search excluded                                 | skip: reCAPTCHA header validation blocks search API                          |
 | MGO Connect              | Parkland                              | official route metadata                                                                                                    | skip: account required                                                       |
 | eGovPLUS                 | Lauderhill                            | permit/folio/address results; client-all result contract; public detail and inspection parsing                             | bounded anonymous transport may be added                                     |
-| Official records request | Sunrise                               | microfilm/building-record route, official request form, and city-clerk fallback                                            | skip: do not send a request                                                  |
+| Tyler EnerGov            | Sunrise                               | shared tenant-aware Tyler paging, totals reconciliation, deadlines, private checkpoints, and list/detail normalization     | bounded anonymous adapter implemented                                        |
+| Official records request | Sunrise supplemental                  | microfilm/building-record route, official request form, and city-clerk fallback                                            | skip: do not send a request                                                  |
 
 Davie eSuite is explicitly legacy/public history, not complete 2026 coverage.
 The config retains the city's separate Avolve OAS submission route as
@@ -179,6 +180,35 @@ inaccessible. No GraphQL request was made. The checked-in GraphQL fixtures
 exercise cursor/detail normalization only; `probeStatus: landing_only`
 prevents a live transport call.
 
+### CommunityCore
+
+Hillsboro Beach's anonymous `search-permits` route returned HTTP 200 and
+offered Jobsite Address, Permit Number, Parcel Number, and Owner. Automation
+allows only address, permit number, and parcel/folio metadata; owner search is
+excluded. Public record routes expose permit/property information, workflow,
+plan reviews, and inspections.
+
+A synthetic no-match Permit Number submission displayed
+`reCaptcha header validation failed.` before any CommunityCore search API
+request was sent. No challenge was solved and no token was generated,
+replayed, or fabricated. The route is therefore `captcha_required`, not
+`login_required`, and remains an executable no-request outcome.
+
+### Sunrise EnerGov
+
+The official `SunriseFL Prod` tenant loaded anonymously with tenant ID `1`,
+reported `require_authentication=false`, and returned HTTP 200 from public
+permit setup and search APIs with the tenant headers produced by the UI.
+Sunrise places its tenant slug after `/SelfService` while API calls use the
+parent `/SelfService/api` path, so the reusable Tyler configuration records
+both URLs explicitly instead of rewriting them heuristically.
+
+The existing Tyler date-window/list implementation now accepts Sunrise and
+retains its hard page ceilings, changing-total checks, fallback page sizes,
+stable Case ID identity, deadlines, owner-only raw/checkpoint files, and
+type/work-class-only roofing classification. Portal coverage is not treated as
+proof of complete historical City records.
+
 ### eGovPLUS
 
 Lauderhill's official HTTP-only landing returned HTTP 200 and exposed permit,
@@ -204,18 +234,15 @@ were not retained.
 
 No record request or authenticated/challenged source request was attempted:
 
-- Hillsboro Beach CommunityCore: account required;
+- Hillsboro Beach CommunityCore: reCAPTCHA required;
 - Parkland MGO Connect: free account required;
-- Deerfield GeoCivix: secure/login route;
+- Deerfield GeoCivix: applicant portal with no anonymous public permit search;
 - Deerfield and Pembroke Park Gov-Easy: CAPTCHA;
-- Sunrise: building records are primarily microfilm and the official page
-  directs open-permit/public-record inquiries to
-  `BuildingRecords@sunrisefl.gov`.
 
-Sunrise's official building-record page returned the already documented access
-denial from this environment. The configuration retains the official 2025
-building-record request form and city-clerk custodian page but never sends
-email or submits a form.
+Sunrise's anonymous EnerGov public-information route is now handled by the
+shared Tyler adapter. The configuration still retains the official 2025
+building-record request form and city-clerk custodian page for records absent
+from the portal, but never sends email or submits a form.
 
 ## Remaining blockers
 
@@ -225,18 +252,18 @@ email or submits a form.
 2. eSuite result postbacks and detail URLs are session-bound. A production
    transport needs tenant-specific autocomplete and numbered-postback
    certification before expansion beyond explicit probes.
-3. Gov-Easy is blocked by CAPTCHA, and Deerfield's current GeoCivix side is
-   login-gated. Completeness requires a custodian-supplied route or records
-   request.
+3. Gov-Easy is blocked by CAPTCHA, and Deerfield's current GeoCivix side is an
+   applicant portal without anonymous public permit search. Completeness
+   requires a custodian-supplied route or records request.
 4. SmartGov still needs one known positive official Lighthouse Point example
    to certify the detail parser against live markup.
 5. OpenGov must remain landing-only until the official Lauderdale Lakes search
    renders normally and an anonymous GraphQL contract can be observed without
    a challenge.
-6. CommunityCore and MGO Connect have no certified anonymous record-level
-   access.
-7. Sunrise is a human records-request workflow with potential retrieval/open-
-   permit fees, not an unattended permit endpoint.
+6. CommunityCore's anonymous UI is CAPTCHA-required at search submission, and
+   MGO Connect has no certified anonymous record-level access.
+7. Sunrise online results must be reconciled as portal records only; the
+   no-submit City records route remains necessary for absent/microfilm history.
 
 No AWS credentials, queues, databases, appraisal ingestion, IPFS, or
 publication paths are imported or used by these prototypes.

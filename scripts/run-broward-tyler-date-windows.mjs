@@ -21,17 +21,17 @@ import {
   searchTylerDateWindow,
 } from "./permit-source-adapters/tyler-civic-access.mjs";
 
-const CHECKPOINT_SCHEMA_VERSION =
-  "oracle-node.broward-tyler-date-windows.v1";
+const CHECKPOINT_SCHEMA_VERSION = "oracle-node.broward-tyler-date-windows.v1";
 const TYLER_SOURCE_KEYS = new Set([
   "pembroke_pines",
   "hallandale_beach",
   "miramar",
   "oakland_park",
+  "sunrise",
 ]);
 
 /**
- * @typedef {"pembroke_pines" | "hallandale_beach" | "miramar" | "oakland_park"} TylerSourceKey
+ * @typedef {"pembroke_pines" | "hallandale_beach" | "miramar" | "oakland_park" | "sunrise"} TylerSourceKey
  *
  * @typedef {object} DateWindow
  * @property {string} startDate - Inclusive application date.
@@ -109,12 +109,9 @@ export function parseTylerDateWindowOptions(argv) {
     values.set(flag.slice(2), value);
   }
   const rawSource = values.get("source");
-  if (
-    typeof rawSource !== "string" ||
-    !TYLER_SOURCE_KEYS.has(rawSource)
-  ) {
+  if (typeof rawSource !== "string" || !TYLER_SOURCE_KEYS.has(rawSource)) {
     throw new Error(
-      "--source must be pembroke_pines, hallandale_beach, miramar, or oakland_park",
+      "--source must be pembroke_pines, hallandale_beach, miramar, oakland_park, or sunrise",
     );
   }
   const sourceKey = /** @type {TylerSourceKey} */ (rawSource);
@@ -186,9 +183,7 @@ export function createTylerDateWindows(startDate, endDate, windowDays) {
   while (toMillis(cursor) <= toMillis(endDate)) {
     const candidateEnd = addDays(cursor, windowDays - 1);
     const actualEnd =
-      toMillis(candidateEnd) > toMillis(endDate)
-        ? endDate
-        : candidateEnd;
+      toMillis(candidateEnd) > toMillis(endDate) ? endDate : candidateEnd;
     windows.push({ startDate: cursor, endDate: actualEnd });
     cursor = addDays(actualEnd, 1);
   }
@@ -238,11 +233,7 @@ export async function runTylerDateWindows(options, dependencies = {}) {
       mkdir(directory, { recursive: true, mode: 0o700 }),
     ),
   );
-  let checkpoint = await readOrCreateCheckpoint(
-    checkpointPath,
-    options,
-    now(),
-  );
+  let checkpoint = await readOrCreateCheckpoint(checkpointPath, options, now());
   const logger = {
     info: (
       /** @type {string} */ message,
@@ -259,8 +250,7 @@ export async function runTylerDateWindows(options, dependencies = {}) {
   };
   const createSession =
     dependencies.createSession ?? createTylerDateWindowSession;
-  const closeSession =
-    dependencies.closeSession ?? closeTylerDateWindowSession;
+  const closeSession = dependencies.closeSession ?? closeTylerDateWindowSession;
   const searchWindow = dependencies.searchWindow ?? searchTylerDateWindow;
   let session = await createSession(config, logger);
   let processed = 0;
@@ -273,11 +263,7 @@ export async function runTylerDateWindows(options, dependencies = {}) {
       if (window === undefined) break;
       if (processed > 0) await wait(options.delayMs);
       let result;
-      for (
-        let attempt = 1;
-        attempt <= options.maxAttempts;
-        attempt += 1
-      ) {
+      for (let attempt = 1; attempt <= options.maxAttempts; attempt += 1) {
         try {
           result = await searchWindow(
             session,
@@ -296,8 +282,7 @@ export async function runTylerDateWindows(options, dependencies = {}) {
             startDate: window.startDate,
             endDate: window.endDate,
             attempt,
-            error:
-              error instanceof Error ? error.message : "Unknown error",
+            error: error instanceof Error ? error.message : "Unknown error",
           });
           await closeSession(session);
           await wait(Math.max(options.delayMs * attempt, 5_000));
@@ -367,10 +352,7 @@ export async function runTylerDateWindows(options, dependencies = {}) {
   } finally {
     await closeSession(session);
   }
-  const aggregate = await aggregateWindows(
-    checkpoint,
-    normalizedListPath,
-  );
+  const aggregate = await aggregateWindows(checkpoint, normalizedListPath);
   const summary = {
     status:
       checkpoint.pendingWindows.length === 0
@@ -379,9 +361,7 @@ export async function runTylerDateWindows(options, dependencies = {}) {
     sourceKey: options.sourceKey,
     sourceSystem: config.sourceSystem,
     windowsProcessedThisInvocation: processed,
-    completedWindowCount: Object.keys(
-      checkpoint.completedWindows,
-    ).length,
+    completedWindowCount: Object.keys(checkpoint.completedWindows).length,
     pendingWindowCount: checkpoint.pendingWindows.length,
     sourceRecordObservations: aggregate.sourceRecordObservations,
     uniquePermitCount: aggregate.uniquePermitCount,
@@ -662,9 +642,7 @@ if (
   typeof process.argv[1] === "string" &&
   import.meta.url === pathToFileURL(process.argv[1]).href
 ) {
-  runTylerDateWindows(
-    parseTylerDateWindowOptions(process.argv.slice(2)),
-  )
+  runTylerDateWindows(parseTylerDateWindowOptions(process.argv.slice(2)))
     .then((summary) => {
       console.log(
         JSON.stringify({

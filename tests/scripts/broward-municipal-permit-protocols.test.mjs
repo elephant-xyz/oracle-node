@@ -143,13 +143,13 @@ describe("Broward municipal permit jurisdiction routing", () => {
       new Set([
         "click2gov",
         "tyler_esuite",
+        "tyler_energov",
         "gov_easy",
         "smartgov",
         "opengov",
         "communitycore",
         "mgo_connect",
         "egovplus",
-        "records_request",
       ]),
     );
   });
@@ -162,8 +162,8 @@ describe("Broward municipal permit jurisdiction routing", () => {
     expect(deerfield.supplementalRoutes).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          purpose: "current_permits_from_2025",
-          accessMode: "login_required",
+          purpose: "current_applicant_portal_from_2025",
+          accessMode: "no_anonymous_search",
           url: "https://deerfieldbeach.geocivix.com/secure/",
         }),
       ]),
@@ -171,6 +171,16 @@ describe("Broward municipal permit jurisdiction routing", () => {
     expect(davie.supplementalRoutes[0]).toMatchObject({
       purpose: "new_2026_submissions",
       accessMode: "login_required",
+    });
+    expect(sunrise).toMatchObject({
+      sourceSystem: "broward_sunrise_tyler_permits",
+      protocol: "tyler_energov",
+      accessMode: "anonymous",
+      probeStatus: "enabled",
+      capabilities: {
+        searchBy: ["permit_number", "address", "folio"],
+        pagination: "numbered",
+      },
     });
     expect(sunrise.supplementalRoutes.map((route) => route.purpose)).toEqual([
       "official_building_records_request_form",
@@ -183,7 +193,7 @@ describe("Broward municipal permit jurisdiction routing", () => {
       decideMunicipalSourceAccess(
         getBrowardMunicipalPermitConfig("hillsboro_beach"),
       ).reason,
-    ).toBe("login_required");
+    ).toBe("captcha_required");
     expect(
       decideMunicipalSourceAccess(getBrowardMunicipalPermitConfig("parkland"))
         .reason,
@@ -206,7 +216,7 @@ describe("Broward municipal permit jurisdiction routing", () => {
     expect(
       decideMunicipalSourceAccess(getBrowardMunicipalPermitConfig("sunrise"))
         .reason,
-    ).toBe("records_request");
+    ).toBe("anonymous_certified");
   });
 });
 
@@ -583,6 +593,14 @@ describe("reusable bounded capture and checkpoints", () => {
     });
     expect(skipped.status).toBe("skipped");
     expect(skipped.access.reason).toBe("captcha_required");
+    const hillsboroSkipped = await runBoundedMunicipalCapture({
+      config: getBrowardMunicipalPermitConfig("hillsboro_beach"),
+      queries: [],
+      fetchSearchPage: search,
+      fetchDetail: detail,
+    });
+    expect(hillsboroSkipped.status).toBe("skipped");
+    expect(hillsboroSkipped.access.reason).toBe("captcha_required");
     expect(search).not.toHaveBeenCalled();
     expect(detail).not.toHaveBeenCalled();
   });

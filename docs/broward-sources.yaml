@@ -155,8 +155,8 @@ permit_source_documentation:
   local_pilot: ../scripts/run-broward-permit-pilot.mjs
   pilot_evidence: ./broward-permit-acceptance-pilot.md
   jurisdiction_count: 32
-  current_implemented_jurisdictions: 15
-  current_blocked_jurisdictions: 17
+  current_implemented_jurisdictions: 16
+  current_blocked_jurisdictions: 16
   bounded_evidence:
     bcs_records: 73
     bcs_scope: historical-lauderdale-by-the-sea-only
@@ -243,16 +243,18 @@ permits:
   - jurisdiction: Deerfield Beach
     portal: https://apps.gov-easy.com/Home/PermitInspection/Search?clientId=dce877e0-e162-4827-a60d-7249ec4e8fe2
     current_portal: https://deerfieldbeach.geocivix.com/secure/
-    status: captcha-and-login-skips-documented
+    status: legacy-captcha-and-current-no-anonymous-search
   - jurisdiction: Hallandale Beach
     official: https://cohb.org/Faq.aspx?QID=75
     vendor: Tyler EnerGov
     adapter: ../scripts/probe-broward-municipal-permits.mjs
     status: implemented-local-bounded
   - jurisdiction: Hillsboro Beach
-    portal: https://app.communitycore.com/app/public-portal/c98c7b46-2cba-4ba2-bbd5-7a76966f42dd
+    portal: https://app.communitycore.com/app/public-portal/c98c7b46-2cba-4ba2-bbd5-7a76966f42dd/search-permits
     vendor: CommunityCore
-    status: account-search-documented
+    search: jobsite address | permit number | parcel number | owner
+    automated_search: permit number | address | parcel only
+    status: captcha-required-no-request
   - jurisdiction: Lauderdale Lakes
     portal: https://lauderdalelakesfl.portal.opengov.com/search
     vendor: OpenGov
@@ -302,6 +304,8 @@ permits:
     vendor: Gov-Easy
     status: captcha-skip-documented
   - jurisdiction: Sea Ranch Lakes
+    supplemental_portal: https://dpepp.broward.org/BCS/Default.aspx?PossePresentation=ParcelSearchByAddress
+    supplemental_scope: county-held-or-associated-approvals-not-complete-village-permits
     status: custodian-documented
   - jurisdiction: Southwest Ranches
     portal: https://www6.citizenserve.com/Portal/PortalController?Action=showSearchPage&ctzPagePrefix=Portal_&installationID=117&original_contactID=0&original_iid=0
@@ -309,11 +313,17 @@ permits:
     adapter: ../scripts/probe-broward-municipal-permits.mjs
     status: implemented-local-bounded
   - jurisdiction: Sunrise
-    portal: https://www.sunrisefl.gov/openforbusiness
+    portal: https://energov.sunrisefl.gov/EnerGov_Prod/SelfService/SunriseFL%20Prod#/search?category=permits
+    direct_permit_route: https://energov.sunrisefl.gov/EnerGov_Prod/SelfService/SunriseFL%20Prod#/permits
+    vendor: Tyler EnerGov / Civic Access
+    tenant_id: 1
+    tenant_name: SunriseFL Prod
+    require_authentication: false
+    adapter: ../scripts/permit-source-adapters/tyler-civic-access.mjs
     official_records: https://www.sunrisefl.gov/departments-services/community-development/building/building-records
     official_records_form: https://www.sunrisefl.gov/home/showpublisheddocument/8444/638949136343770000
     official_records_custodian: https://www.sunrisefl.gov/departments-services/city-clerk/public-records-lien-searches
-    status: records-request-documented # self-service returned 403 from this egress
+    status: implemented-local-bounded
   - jurisdiction: Tamarac
     portal: https://e-gov.tamarac.org/Click2GovBP/selectpermit.html
     official: https://tamarac.gov/672/Permit-History

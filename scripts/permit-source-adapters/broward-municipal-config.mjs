@@ -153,10 +153,10 @@ export const BROWARD_MUNICIPAL_PERMIT_JURISDICTIONS = Object.freeze([
     },
     supplementalRoutes: [
       {
-        purpose: "current_permits_from_2025",
+        purpose: "current_applicant_portal_from_2025",
         url: "https://deerfieldbeach.geocivix.com/secure/",
-        accessMode: "login_required",
-        note: "Current GeoCivix route is explicitly secure/login-gated; use the city records-request route for complete cross-system history.",
+        accessMode: "no_anonymous_search",
+        note: "Current GeoCivix is an applicant portal with no anonymous public permit search. The adapter does not register, authenticate, or infer record coverage from this route.",
       },
     ],
   }),
@@ -229,19 +229,19 @@ export const BROWARD_MUNICIPAL_PERMIT_JURISDICTIONS = Object.freeze([
     sourceSystem: "hillsboro_beach_communitycore_permits",
     protocol: "communitycore",
     searchUrl:
-      "https://app.communitycore.com/app/public-portal/c98c7b46-2cba-4ba2-bbd5-7a76966f42dd",
+      "https://app.communitycore.com/app/public-portal/c98c7b46-2cba-4ba2-bbd5-7a76966f42dd/search-permits",
     officialEvidenceUrl:
-      "https://app.communitycore.com/app/public-portal/c98c7b46-2cba-4ba2-bbd5-7a76966f42dd",
-    accessMode: "login_required",
+      "https://app.communitycore.com/app/public-portal/c98c7b46-2cba-4ba2-bbd5-7a76966f42dd/search-permits",
+    accessMode: "captcha_required",
     probeStatus: "blocked",
     accessNote:
-      "CommunityCore requires an account for permit status, review comments, fees, and inspections; no anonymous record endpoint is called.",
+      "The anonymous UI offers jobsite-address, permit-number, parcel-number, and owner fields, but a permit-number test stopped at 'reCaptcha header validation failed' before any search API request. No CAPTCHA is solved or bypassed, and owner search is excluded.",
     capabilities: {
-      searchBy: [],
+      searchBy: ["permit_number", "address", "folio"],
       pagination: "none",
-      detail: "none",
-      inspections: false,
-      planReview: false,
+      detail: "public_url",
+      inspections: true,
+      planReview: true,
     },
     supplementalRoutes: [],
   }),
@@ -290,22 +290,22 @@ export const BROWARD_MUNICIPAL_PERMIT_JURISDICTIONS = Object.freeze([
   defineJurisdiction({
     key: "sunrise",
     jurisdiction: "Sunrise",
-    sourceSystem: "sunrise_building_records_request",
-    protocol: "records_request",
+    sourceSystem: "broward_sunrise_tyler_permits",
+    protocol: "tyler_energov",
     searchUrl:
-      "https://www.sunrisefl.gov/departments-services/community-development/building/building-records",
+      "https://energov.sunrisefl.gov/EnerGov_Prod/SelfService/SunriseFL%20Prod#/search?category=permits",
     officialEvidenceUrl:
-      "https://www.sunrisefl.gov/departments-services/community-development/building/building-records",
-    accessMode: "records_request",
-    probeStatus: "blocked",
+      "https://energov.sunrisefl.gov/EnerGov_Prod/SelfService/SunriseFL%20Prod#/search?category=permits",
+    accessMode: "anonymous",
+    probeStatus: "enabled",
     accessNote:
-      "Building records are held on microfilm. The official route directs open-permit and public-record inquiries to BuildingRecords@sunrisefl.gov; this adapter records the route but never sends a request.",
+      "The official SunriseFL Prod tenant reports authentication is not required and exposes anonymous permit search/setup APIs. The shared bounded Tyler adapter uses tenant headers, strict page totals, deadlines, private checkpoints, and no credentials.",
     capabilities: {
-      searchBy: [],
-      pagination: "none",
-      detail: "none",
-      inspections: false,
-      planReview: false,
+      searchBy: ["permit_number", "address", "folio"],
+      pagination: "numbered",
+      detail: "public_url",
+      inspections: true,
+      planReview: true,
     },
     supplementalRoutes: [
       {

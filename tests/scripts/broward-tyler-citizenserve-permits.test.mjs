@@ -25,10 +25,12 @@ import {
   parseCitizenserveSearchResultsHtml,
 } from "../../scripts/permit-source-adapters/citizenserve.mjs";
 import {
+  buildTylerApiUrl,
   buildTylerDateWindowRequest,
   isTylerRoofPermitCandidate,
   nextSmallerTylerPageSize,
   normalizeTylerPermitDetailResponse,
+  reconcileTylerDateWindowCounts,
   readTylerTotalPages,
 } from "../../scripts/permit-source-adapters/tyler-civic-access.mjs";
 import { parseOptions } from "../../scripts/probe-broward-municipal-permits.mjs";
@@ -53,6 +55,7 @@ const [tylerDetail, citizenserveResults, citizenserveDetail] =
   ]);
 
 const pembrokePines = getBrowardPermitJurisdiction("pembroke_pines");
+const sunrise = getBrowardPermitJurisdiction("sunrise");
 const lauderdaleByTheSea = getBrowardPermitJurisdiction(
   "lauderdale_by_the_sea",
 );
@@ -95,6 +98,7 @@ describe("Broward Tyler and Citizenserve jurisdiction routing", () => {
       "hallandale_beach",
       "miramar",
       "oakland_park",
+      "sunrise",
       "north_lauderdale",
       "lauderdale_by_the_sea",
       "southwest_ranches",
@@ -105,7 +109,7 @@ describe("Broward Tyler and Citizenserve jurisdiction routing", () => {
       Object.values(BROWARD_PERMIT_JURISDICTIONS).filter(
         (config) => config.vendor === "tyler-civic-access",
       ),
-    ).toHaveLength(5);
+    ).toHaveLength(6);
     expect(
       Object.values(BROWARD_PERMIT_JURISDICTIONS).filter(
         (config) => config.vendor === "citizenserve",
@@ -121,6 +125,29 @@ describe("Broward Tyler and Citizenserve jurisdiction routing", () => {
     expect(BROWARD_PERMIT_JURISDICTIONS.oakland_park.coverageNote).toContain(
       "after 2019-11-01",
     );
+    expect(sunrise).toMatchObject({
+      sourceSystem: "broward_sunrise_tyler_permits",
+      anonymousSearchCertified: true,
+      apiBaseUrl: "https://energov.sunrisefl.gov/EnerGov_Prod/SelfService",
+      expectedTenantId: "1",
+      expectedTenantName: "SunriseFL Prod",
+      strictListReconciliation: true,
+    });
+    expect(buildTylerApiUrl(sunrise, "api/energov/search/search")).toBe(
+      "https://energov.sunrisefl.gov/EnerGov_Prod/SelfService/api/energov/search/search",
+    );
+    expect(() =>
+      buildTylerApiUrl(
+        { ...sunrise, apiBaseUrl: "https://example.test/SelfService" },
+        "api/energov/search/search",
+      ),
+    ).toThrow(/share the public portal origin/u);
+    expect(() =>
+      buildTylerApiUrl(
+        { ...sunrise, expectedTenantName: undefined },
+        "api/energov/search/search",
+      ),
+    ).toThrow(/configured together/u);
   });
 
   it("preserves exact alphanumeric folios and supports situs-address mode", () => {
@@ -201,12 +228,26 @@ describe("Tyler vendor-wide application-date windows", () => {
     expect(nextSmallerTylerPageSize(50)).toBe(25);
     expect(nextSmallerTylerPageSize(25)).toBe(10);
     expect(nextSmallerTylerPageSize(10)).toBeNull();
+    expect(
+      reconcileTylerDateWindowCounts({
+        totalFound: 10,
+        uniquePermitCount: 9,
+        invalidRecordCount: 0,
+        strict: false,
+      }),
+    ).toBe(1);
+    expect(() =>
+      reconcileTylerDateWindowCounts({
+        totalFound: 10,
+        uniquePermitCount: 9,
+        invalidRecordCount: 0,
+        strict: true,
+      }),
+    ).toThrow(/strict list reconciliation/u);
   });
 
   it("creates non-overlapping windows and validates anonymous Tyler tenants", () => {
-    expect(
-      createTylerDateWindows("2026-08-28", "2026-08-31", 2),
-    ).toEqual([
+    expect(createTylerDateWindows("2026-08-28", "2026-08-31", 2)).toEqual([
       { startDate: "2026-08-28", endDate: "2026-08-29" },
       { startDate: "2026-08-30", endDate: "2026-08-31" },
     ]);
@@ -238,6 +279,21 @@ describe("Tyler vendor-wide application-date windows", () => {
         "2026-01-02",
       ]),
     ).toThrow(/pembroke_pines/u);
+    expect(
+      parseTylerDateWindowOptions([
+        "--source",
+        "sunrise",
+        "--start-date",
+        "2026-09-01",
+        "--end-date",
+        "2026-09-01",
+        "--max-windows",
+        "1",
+      ]),
+    ).toMatchObject({
+      sourceKey: "sunrise",
+      maxWindows: 1,
+    });
   });
 
   it("checkpoints and resumes a persistent tenant window run", async () => {
@@ -319,10 +375,7 @@ describe("Tyler vendor-wide application-date windows", () => {
         wait: async () => undefined,
         now: () => "2026-08-31T18:00:00.000Z",
       };
-      const first = await runTylerDateWindows(
-        baseOptions,
-        dependencies,
-      );
+      const first = await runTylerDateWindows(baseOptions, dependencies);
       expect(first).toMatchObject({
         status: "paused",
         completedWindowCount: 1,

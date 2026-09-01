@@ -8,11 +8,11 @@
  */
 
 /**
- * @typedef {"implemented" | "adapter_unavailable" | "captcha_required" | "login_required" | "custodian_only" | "egress_unavailable"} BrowardPermitSourceStatus
+ * @typedef {"implemented" | "adapter_unavailable" | "captcha_required" | "login_required" | "no_anonymous_search" | "custodian_only" | "egress_unavailable"} BrowardPermitSourceStatus
  */
 
 /**
- * @typedef {"current" | "historical"} BrowardPermitCoverageKind
+ * @typedef {"current" | "historical" | "supplemental"} BrowardPermitCoverageKind
  */
 
 /**
@@ -43,7 +43,7 @@
  * @property {string | null} rawAddress - Collapsed BCPA situs-address text used for fallback matching.
  */
 
-export const BROWARD_PERMIT_REGISTRY_VERSION = "2026-08-29.2";
+export const BROWARD_PERMIT_REGISTRY_VERSION = "2026-09-01.1";
 export const BROWARD_BCS_ADAPTER_KEY = "broward-bcs-posse";
 export const BROWARD_ACCELA_ADAPTER_KEY = "broward-accela";
 export const BROWARD_TYLER_CIVIC_ACCESS_ADAPTER_KEY = "tyler-civic-access";
@@ -201,9 +201,9 @@ export const BROWARD_PERMIT_JURISDICTIONS = Object.freeze([
       sourceName: "Deerfield Beach GeoCivix",
       sourceUrl: "https://deerfieldbeach.geocivix.com/secure/",
       adapterKey: "geocivix",
-      status: "login_required",
+      status: "no_anonymous_search",
       reason:
-        "Current post-2025 GeoCivix records are login-gated; unattended login is skipped.",
+        "Current GeoCivix is an applicant portal with no anonymous public permit search; registration and authentication are never attempted.",
     }),
     supplementalSources: [
       Object.freeze({
@@ -257,11 +257,11 @@ export const BROWARD_PERMIT_JURISDICTIONS = Object.freeze([
       sourceKey: "hillsboro_beach_communitycore",
       sourceName: "Hillsboro Beach CommunityCore",
       sourceUrl:
-        "https://app.communitycore.com/app/public-portal/c98c7b46-2cba-4ba2-bbd5-7a76966f42dd",
+        "https://app.communitycore.com/app/public-portal/c98c7b46-2cba-4ba2-bbd5-7a76966f42dd/search-permits",
       adapterKey: "communitycore",
-      status: "login_required",
+      status: "captcha_required",
       reason:
-        "Record status and inspection access require an account; unattended login is skipped.",
+        "The anonymous permit search UI is public, but a normal permit-number test failed reCAPTCHA header validation before any search API call; no CAPTCHA is solved or bypassed.",
     }),
   }),
   jurisdiction({
@@ -509,8 +509,21 @@ export const BROWARD_PERMIT_JURISDICTIONS = Object.freeze([
       adapterKey: null,
       status: "custodian_only",
       reason:
-        "Only the official municipal custodian is certified; no anonymous record endpoint is available.",
+        "The village custodian is authoritative because no complete anonymous municipal permit search is available.",
     }),
+    supplementalSources: [
+      Object.freeze({
+        sourceKey: "sea_ranch_lakes_supplemental_bcs_posse",
+        sourceName:
+          "Supplemental Broward BCS-held / associated approval records",
+        sourceUrl: BCS_URL,
+        adapterKey: BROWARD_BCS_ADAPTER_KEY,
+        status: "implemented",
+        coverageKind: "supplemental",
+        reason:
+          "BCS may expose county-held or associated approval records labeled Sea Ranch Lakes; those rows are supplemental and never establish a complete village permit inventory.",
+      }),
+    ],
   }),
   jurisdiction({
     key: "southwest-ranches",
@@ -532,15 +545,28 @@ export const BROWARD_PERMIT_JURISDICTIONS = Object.freeze([
     name: "Sunrise",
     aliases: ["SUNRISE"],
     primarySource: currentSource({
-      sourceKey: "sunrise_building_records",
-      sourceName: "Sunrise Building Records",
+      sourceKey: "broward_sunrise_tyler_permits",
+      sourceName: "Sunrise EnerGov public information",
       sourceUrl:
-        "https://www.sunrisefl.gov/departments-services/community-development/building/building-records",
-      adapterKey: null,
-      status: "custodian_only",
+        "https://energov.sunrisefl.gov/EnerGov_Prod/SelfService/SunriseFL%20Prod#/search?category=permits",
+      adapterKey: BROWARD_TYLER_CIVIC_ACCESS_ADAPTER_KEY,
+      status: "implemented",
       reason:
-        "The official microfilm/records-request custodian route is not submitted; its page also returned HTTP 403 from this environment.",
+        "The bounded anonymous SunriseFL Prod Tyler adapter is implemented with tenant-aware API routing and strict list reconciliation; portal results are not treated as complete historical holdings.",
     }),
+    supplementalSources: [
+      Object.freeze({
+        sourceKey: "sunrise_building_records_custodian",
+        sourceName: "Sunrise Building Records",
+        sourceUrl:
+          "https://www.sunrisefl.gov/departments-services/community-development/building/building-records",
+        adapterKey: null,
+        status: "custodian_only",
+        coverageKind: "historical",
+        reason:
+          "The City building-records route remains the custodian fallback for microfilm or records absent from the anonymous portal; no request, email, or form is submitted.",
+      }),
+    ],
   }),
   jurisdiction({
     key: "tamarac",
@@ -755,8 +781,9 @@ function buildRawSitusAddress(record) {
  * Return every source route that must be reconciled for one parcel.
  *
  * The primary route is always retained, even when inaccessible. Supplemental
- * routes are limited to registry-certified historical custody such as
- * Lauderdale-by-the-Sea records already proven in BCS.
+ * routes are limited to registry-certified historical custody or explicitly
+ * labeled supplemental county-held approvals. Supplemental BCS records never
+ * prove complete municipal coverage.
  *
  * @param {BrowardPermitJurisdiction} entry - Resolved jurisdiction registry row.
  * @returns {readonly BrowardPermitSourceRoute[]} Current route followed by bounded historical routes.

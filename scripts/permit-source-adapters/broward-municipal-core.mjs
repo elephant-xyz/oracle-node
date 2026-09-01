@@ -3,11 +3,11 @@
 import { createHash } from "node:crypto";
 
 /**
- * @typedef {"click2gov" | "tyler_esuite" | "gov_easy" | "smartgov" | "opengov" | "communitycore" | "mgo_connect" | "egovplus" | "records_request"} BrowardMunicipalProtocol
+ * @typedef {"click2gov" | "tyler_esuite" | "tyler_energov" | "gov_easy" | "smartgov" | "opengov" | "communitycore" | "mgo_connect" | "egovplus" | "records_request"} BrowardMunicipalProtocol
  */
 
 /**
- * @typedef {"anonymous" | "login_required" | "captcha_required" | "records_request"} BrowardMunicipalAccessMode
+ * @typedef {"anonymous" | "login_required" | "captcha_required" | "no_anonymous_search" | "records_request"} BrowardMunicipalAccessMode
  */
 
 /**
@@ -130,7 +130,7 @@ import { createHash } from "node:crypto";
 /**
  * @typedef {object} BrowardMunicipalAccessDecision
  * @property {"probe" | "skip"} action - Whether network search/detail work is allowed.
- * @property {"anonymous_certified" | "login_required" | "captcha_required" | "records_request" | "landing_only" | "blocked"} reason - Machine-readable access disposition.
+ * @property {"anonymous_certified" | "login_required" | "captcha_required" | "no_anonymous_search" | "records_request" | "landing_only" | "blocked"} reason - Machine-readable access disposition.
  * @property {string} note - Operator-facing explanation.
  */
 
@@ -298,6 +298,13 @@ export function decideMunicipalSourceAccess(config) {
     return {
       action: "skip",
       reason: "captcha_required",
+      note: config.accessNote,
+    };
+  }
+  if (config.accessMode === "no_anonymous_search") {
+    return {
+      action: "skip",
+      reason: "no_anonymous_search",
       note: config.accessNote,
     };
   }

@@ -251,8 +251,7 @@ describe("Broward permit Neon pilot loader", () => {
       relatedLinks: [],
       rawText: "",
       sourceSearchResult: { recordNumber: "B22-03630" },
-      idempotencyKey:
-        "broward_plantation_accela_permits:B22-03630",
+      idempotencyKey: "broward_plantation_accela_permits:B22-03630",
       provenance: { searchMethod: "parcel" },
     };
     const directory = await createTemporaryDirectory();
@@ -414,9 +413,7 @@ describe("Broward supported-route permit ingest", () => {
       },
     );
     expect(maximumActive).toBe(2);
-    expect(events.indexOf("start:c:1")).toBeLessThan(
-      events.indexOf("end:a:1"),
-    );
+    expect(events.indexOf("start:c:1")).toBeLessThan(events.indexOf("end:a:1"));
     expect(events.indexOf("start:a:2")).toBeGreaterThan(
       events.indexOf("end:a:1"),
     );
@@ -491,7 +488,7 @@ describe("Broward 32-jurisdiction permit registry", () => {
     }
 
     expect(Object.keys(BROWARD_TYLER_CITIZENSERVE_JURISDICTIONS)).toHaveLength(
-      9,
+      10,
     );
     for (const config of Object.values(
       BROWARD_TYLER_CITIZENSERVE_JURISDICTIONS,
@@ -519,6 +516,7 @@ describe("Broward 32-jurisdiction permit registry", () => {
     const municipalAdapterKeys = new Map([
       ["click2gov", "click2gov"],
       ["tyler_esuite", "tyler-esuite"],
+      ["tyler_energov", BROWARD_TYLER_CIVIC_ACCESS_ADAPTER_KEY],
       ["gov_easy", "gov-easy"],
       ["smartgov", "granicus-smartgov"],
       ["opengov", "opengov"],
@@ -545,7 +543,7 @@ describe("Broward 32-jurisdiction permit registry", () => {
       BROWARD_PERMIT_JURISDICTIONS.filter(
         (entry) => entry.primarySource.status === "implemented",
       ),
-    ).toHaveLength(15);
+    ).toHaveLength(16);
     expect(
       BROWARD_PERMIT_JURISDICTIONS.filter(
         (entry) => entry.primarySource.status === "adapter_unavailable",
@@ -555,17 +553,22 @@ describe("Broward 32-jurisdiction permit registry", () => {
       BROWARD_PERMIT_JURISDICTIONS.filter(
         (entry) => entry.primarySource.status === "login_required",
       ),
-    ).toHaveLength(4);
+    ).toHaveLength(2);
+    expect(
+      BROWARD_PERMIT_JURISDICTIONS.filter(
+        (entry) => entry.primarySource.status === "no_anonymous_search",
+      ),
+    ).toHaveLength(1);
     expect(
       BROWARD_PERMIT_JURISDICTIONS.filter(
         (entry) => entry.primarySource.status === "captcha_required",
       ),
-    ).toHaveLength(2);
+    ).toHaveLength(3);
     expect(
       BROWARD_PERMIT_JURISDICTIONS.filter(
         (entry) => entry.primarySource.status === "custodian_only",
       ),
-    ).toHaveLength(2);
+    ).toHaveLength(1);
   });
 
   it("derives routes from BCPA situs city/address and never guesses BCS", () => {
@@ -610,6 +613,39 @@ describe("Broward 32-jurisdiction permit registry", () => {
         (entry) => entry.key === "north-lauderdale",
       )?.primarySource.status,
     ).toBe("login_required");
+    expect(
+      BROWARD_PERMIT_JURISDICTIONS.find(
+        (entry) => entry.key === "hillsboro-beach",
+      )?.primarySource.status,
+    ).toBe("captcha_required");
+    expect(
+      BROWARD_PERMIT_JURISDICTIONS.find(
+        (entry) => entry.key === "deerfield-beach",
+      )?.primarySource.status,
+    ).toBe("no_anonymous_search");
+  });
+
+  it("keeps Sea Ranch BCS evidence supplemental and Sunrise anonymously implemented", () => {
+    const seaRanch = BROWARD_PERMIT_JURISDICTIONS.find(
+      (entry) => entry.key === "sea-ranch-lakes",
+    );
+    expect(seaRanch?.primarySource).toMatchObject({
+      status: "custodian_only",
+      coverageKind: "current",
+    });
+    expect(seaRanch?.supplementalSources).toEqual([
+      expect.objectContaining({
+        adapterKey: BROWARD_BCS_ADAPTER_KEY,
+        coverageKind: "supplemental",
+      }),
+    ]);
+    expect(
+      BROWARD_PERMIT_JURISDICTIONS.find((entry) => entry.key === "sunrise")
+        ?.primarySource,
+    ).toMatchObject({
+      adapterKey: BROWARD_TYLER_CIVIC_ACCESS_ADAPTER_KEY,
+      status: "implemented",
+    });
   });
 });
 
@@ -744,8 +780,8 @@ describe("checkpointed local Broward permit pilot", () => {
       allRecordsAccountedFor: true,
       queryRowsMatchUniqueRecords: true,
       allJurisdictionsRegistered: true,
-      currentSourceJurisdictionsImplemented: 15,
-      currentSourceJurisdictionsBlocked: 17,
+      currentSourceJurisdictionsImplemented: 16,
+      currentSourceJurisdictionsBlocked: 16,
     });
     expect(first.acceptance).toEqual({
       localPilotPassed: true,

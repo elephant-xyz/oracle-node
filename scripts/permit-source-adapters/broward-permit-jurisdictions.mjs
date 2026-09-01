@@ -20,6 +20,10 @@
  * @property {BrowardPermitVendor} vendor - Shared adapter family.
  * @property {string} officialSourceUrl - First-party municipal source/custodian page.
  * @property {string} portalBaseUrl - Exact official vendor portal base.
+ * @property {string | undefined} [apiBaseUrl] - Optional same-origin Tyler API base when the public tenant route has a trailing tenant slug.
+ * @property {string | undefined} [expectedTenantId] - Optional exact Tyler tenant header ID.
+ * @property {string | undefined} [expectedTenantName] - Optional exact Tyler tenant header name.
+ * @property {boolean | undefined} [strictListReconciliation] - Whether source-reported list gaps fail closed.
  * @property {boolean} anonymousSearchCertified - Whether record search is certified without login.
  * @property {readonly ("folio" | "address")[]} searchKinds - Supported property-first fields.
  * @property {string} coverageNote - Known temporal/custody boundary.
@@ -120,6 +124,28 @@ export const BROWARD_PERMIT_JURISDICTIONS = Object.freeze({
     searchKinds: PROPERTY_SEARCH_KINDS,
     coverageNote:
       "Tyler contains records after 2019-11-01 only. Earlier permits remain in the City's documented legacy searches/public-record route.",
+    skipReason: null,
+    citizenserveInstallationId: null,
+    permitTypeTokens: Object.freeze([]),
+    validatedSample: null,
+  }),
+  sunrise: Object.freeze({
+    key: "sunrise",
+    city: "Sunrise",
+    sourceSystem: "broward_sunrise_tyler_permits",
+    vendor: "tyler-civic-access",
+    officialSourceUrl:
+      "https://energov.sunrisefl.gov/EnerGov_Prod/SelfService/SunriseFL%20Prod#/search?category=permits",
+    portalBaseUrl:
+      "https://energov.sunrisefl.gov/EnerGov_Prod/SelfService/SunriseFL%20Prod",
+    apiBaseUrl: "https://energov.sunrisefl.gov/EnerGov_Prod/SelfService",
+    expectedTenantId: "1",
+    expectedTenantName: "SunriseFL Prod",
+    strictListReconciliation: true,
+    anonymousSearchCertified: true,
+    searchKinds: PROPERTY_SEARCH_KINDS,
+    coverageNote:
+      "Official anonymous public-information permit search; online results are not treated as complete historical holdings, and the City building-records custodian remains a separate route.",
     skipReason: null,
     citizenserveInstallationId: null,
     permitTypeTokens: Object.freeze([]),
