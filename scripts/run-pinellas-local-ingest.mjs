@@ -571,7 +571,7 @@ export function isFatalIngestError(error) {
 /**
  * Shared 403/429 pause so concurrent print GETs do not stampede PCPAO.
  *
- * @param {object} [options] - Thresholds.
+ * @param {RateLimitGateOptions} [options] - Thresholds.
  * @param {number} [options.pauseAfter] - Consecutive 403/429s before pausing.
  * @param {number} [options.pauseMs] - Base pause once the threshold is hit.
  * @param {number} [options.maxPauseMs] - Cap on the pause.
@@ -1815,6 +1815,8 @@ export async function runLocalIngest(options) {
     process.off("SIGTERM", onStopSignal);
     await transformPool?.close();
   }
+
+  await recordProgress(snapshot());
 
   await writeFile(
     path.join(outputDirectory, "summary.json"),
