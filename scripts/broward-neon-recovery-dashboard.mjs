@@ -570,7 +570,7 @@ export async function readPermitEnumerationStatus(
         let sourceMissingRecords = 0;
         for (const receipt of receipts) {
           if (definition.family === "accela_csv") {
-            accessibleRecords += safeAggregate(receipt.exportedRecordCount);
+            accessibleRecords += readAccelaCsvReceiptAccessibleCount(receipt);
             excludedRecords += safeAggregate(receipt.excludedNonPermitCount);
           } else {
             const total = safeAggregate(receipt.totalFound);
@@ -663,6 +663,33 @@ export async function readPermitEnumerationStatus(
       0,
     ),
   };
+}
+
+/**
+ * Read either legacy CSV, canonical v2, or transitional list-only record
+ * counts without silently preferring a conflicting field. This keeps existing
+ * completed receipts immutable while allowing Weston list-only receipts to
+ * report their reconciled records.
+ *
+ * @param {Record<string, unknown>} receipt - One completed Accela receipt.
+ * @returns {number} Reconciled accessible records.
+ */
+export function readAccelaCsvReceiptAccessibleCount(receipt) {
+  const candidates = [
+    receipt.recordCount,
+    receipt.exportedRecordCount,
+    receipt.listRecordCount,
+  ].filter((value) => value !== undefined && value !== null);
+  if (candidates.length === 0) return 0;
+  const counts = candidates.map((value) => safeAggregate(value));
+  if (new Set(counts).size !== 1) {
+    throw new Error("Accela CSV receipt record counts conflict");
+  }
+  const first = counts[0];
+  if (first === undefined) {
+    throw new Error("Accela CSV receipt count disappeared");
+  }
+  return first;
 }
 
 /**

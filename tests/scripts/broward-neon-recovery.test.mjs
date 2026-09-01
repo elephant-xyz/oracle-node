@@ -18,6 +18,7 @@ import {
 import {
   buildRecoveryStatus,
   parseDashboardOptions,
+  readAccelaCsvReceiptAccessibleCount,
   readPermitEnumerationStatus,
 } from "../../scripts/broward-neon-recovery-dashboard.mjs";
 
@@ -564,6 +565,25 @@ describe("durable Broward Neon recovery", () => {
       }),
     );
     expect(JSON.stringify(status)).not.toContain("PRIVATE");
+  });
+
+  it("counts legacy, canonical, and list-only Accela receipts compatibly", () => {
+    expect(
+      readAccelaCsvReceiptAccessibleCount({ exportedRecordCount: 43 }),
+    ).toBe(43);
+    expect(readAccelaCsvReceiptAccessibleCount({ recordCount: 17 })).toBe(17);
+    expect(
+      readAccelaCsvReceiptAccessibleCount({
+        recordCount: 23,
+        listRecordCount: 23,
+      }),
+    ).toBe(23);
+    expect(() =>
+      readAccelaCsvReceiptAccessibleCount({
+        recordCount: 23,
+        exportedRecordCount: 22,
+      }),
+    ).toThrow("record counts conflict");
   });
 
   it("requires branch IDs for the recovery dashboard", () => {

@@ -23,6 +23,7 @@ import {
   parseBrowardAccelaCsvExport,
   parseBrowardAccelaCsvExportSummary,
   parseBrowardAccelaMoreDetails,
+  reconcileBrowardAccelaListPages,
   readBrowardAccelaCheckpoint,
   readBrowardAccelaSource,
   writeBrowardAccelaCheckpoint,
@@ -40,7 +41,9 @@ import {
 import {
   createAccelaCsvDateWindows,
   parseAccelaCsvWindowOptions,
+  retryAccelaCsvBackoffMs,
   runAccelaCsvWindows,
+  splitAccelaCsvDateWindow,
 } from "../../scripts/run-broward-accela-csv-windows.mjs";
 
 const fixtureDirectory = new URL(
@@ -771,6 +774,43 @@ describe("Broward Accela vendor-wide date windows", () => {
 });
 
 describe("Broward official Accela CSV exports", () => {
+  it("accepts list-only mode only after exact page and identity reconciliation", () => {
+    const source = BROWARD_ACCELA_SOURCES.hollywood;
+    const sourceWindowKey = buildBrowardAccelaDateWindowKey(
+      source,
+      "2026-08-30",
+      "2026-08-31",
+    );
+    const reconciled = reconcileBrowardAccelaListPages({
+      htmlPages: [pageOneHtml, pageTwoHtml],
+      source,
+      sourceWindowKey,
+      displayedTotal: 3,
+    });
+    expect(reconciled).toMatchObject({
+      sourceRowCount: 3,
+      excludedNonPermitCount: 0,
+      duplicateRecordCount: 0,
+    });
+    expect(reconciled.records).toHaveLength(3);
+    expect(() =>
+      reconcileBrowardAccelaListPages({
+        htmlPages: [pageOneHtml],
+        source,
+        sourceWindowKey,
+        displayedTotal: 3,
+      }),
+    ).toThrow("accounted for 2 of 3");
+    expect(() =>
+      reconcileBrowardAccelaListPages({
+        htmlPages: [pageOneHtml, pageTwoHtml],
+        source,
+        sourceWindowKey,
+        displayedTotal: 100,
+      }),
+    ).toThrow("capped at 100");
+  });
+
   it("parses full exported record numbers and stable detail-compatible keys", () => {
     const records = parseBrowardAccelaCsvExport(
       [
@@ -817,6 +857,284 @@ describe("Broward official Accela CSV exports", () => {
     });
   });
 
+  it("splits CSV windows deterministically and bounds jittered retry backoff", () => {
+    expect(
+      splitAccelaCsvDateWindow({
+        startDate: "2026-08-29",
+        endDate: "2026-08-31",
+      }),
+    ).toEqual([
+      { startDate: "2026-08-29", endDate: "2026-08-30" },
+      { startDate: "2026-08-31", endDate: "2026-08-31" },
+    ]);
+    expect(retryAccelaCsvBackoffMs(1_000, 1, () => 0.5)).toBe(5_625);
+    expect(retryAccelaCsvBackoffMs(1_000, 2, () => 0.5)).toBe(11_250);
+    expect(() => retryAccelaCsvBackoffMs(1_000, 1, () => 1)).toThrow(
+      "must be in [0,1)",
+    );
+  });
+
+  it("durably splits a capped multi-day Plantation parent without completing it", async () => {
+    const outputDirectory = await mkdtemp(
+      join(tmpdir(), "broward-accela-capped-date-split-"),
+    );
+    temporaryDirectories.push(outputDirectory);
+    const summary = await runAccelaCsvWindows(
+      {
+        sourceKey: "plantation",
+        startDate: "2026-08-30",
+        endDate: "2026-08-31",
+        windowDays: 2,
+        delayMs: 1_000,
+        maxAttempts: 2,
+        maxPages: 200,
+        windowTimeoutMs: 120_000,
+        maxWindows: 1,
+        outputDirectory,
+      },
+      {
+        createBrowser: async () => ({
+          close: async () => undefined,
+        }),
+        captureWindow: async ({
+          source,
+          startDate,
+          endDate,
+          recordTypeShard,
+        }) => ({
+          startDate,
+          endDate,
+          sourceWindowKey: `${source.key}:${startDate}:${endDate}`,
+          displayedTotal: 100,
+          displayedTotalCapped: true,
+          captureMode: "capped_probe",
+          records: [],
+          sourceRowCount: 0,
+          excludedNonPermitCount: 0,
+          duplicateRecordCount: 0,
+          pageCount: 1,
+          availableRecordTypes: [
+            {
+              value: "Building/Building Permit/NA/NA",
+              label: "Building Permit",
+            },
+          ],
+          recordTypeShard,
+          rawCsv: "",
+          rawSearchHtml: "<html>capped</html>",
+          rawListPages: ["<html>capped</html>"],
+        }),
+        wait: async () => undefined,
+        random: () => 0,
+        now: () => "2026-09-01T18:00:00.000Z",
+      },
+    );
+    expect(summary).toMatchObject({
+      status: "paused",
+      completedWindowCount: 0,
+      pendingWindowCount: 2,
+    });
+    const checkpoint = JSON.parse(
+      await readFile(join(outputDirectory, "checkpoint.private.json"), "utf8"),
+    );
+    expect(checkpoint.pendingWindows).toEqual([
+      { startDate: "2026-08-30", endDate: "2026-08-30" },
+      { startDate: "2026-08-31", endDate: "2026-08-31" },
+    ]);
+    expect(checkpoint.completedWindows).toEqual({});
+    expect(checkpoint.splitWindows["20260830_20260831"]).toMatchObject({
+      reason: "plantation_displayed_total_cap",
+    });
+  });
+
+  it("splits an unreconciled Weston list-only window instead of recording zero", async () => {
+    const outputDirectory = await mkdtemp(
+      join(tmpdir(), "broward-accela-weston-list-split-"),
+    );
+    temporaryDirectories.push(outputDirectory);
+    const summary = await runAccelaCsvWindows(
+      {
+        sourceKey: "weston",
+        startDate: "2006-05-14",
+        endDate: "2006-05-15",
+        windowDays: 2,
+        delayMs: 1_000,
+        maxAttempts: 1,
+        maxPages: 200,
+        windowTimeoutMs: 120_000,
+        maxWindows: 1,
+        outputDirectory,
+      },
+      {
+        createBrowser: async () => ({
+          close: async () => undefined,
+        }),
+        captureWindow: async ({ source }) => {
+          throw new BrowardAccelaSourceError(
+            "incomplete_pagination",
+            source,
+            "Displayed total could not be reconciled",
+          );
+        },
+        wait: async () => undefined,
+        random: () => 0,
+        now: () => "2026-09-01T18:00:00.000Z",
+      },
+    );
+    expect(summary).toMatchObject({
+      status: "paused",
+      completedWindowCount: 0,
+      pendingWindowCount: 2,
+      uniquePermitCount: 0,
+    });
+    const checkpoint = JSON.parse(
+      await readFile(join(outputDirectory, "checkpoint.private.json"), "utf8"),
+    );
+    expect(checkpoint.completedWindows).toEqual({});
+    expect(checkpoint.splitWindows["20060514_20060515"]).toMatchObject({
+      reason: "unreconciled_source_result",
+    });
+  });
+
+  it("checkpoints and resumes exhaustive Plantation record-type shards", async () => {
+    const outputDirectory = await mkdtemp(
+      join(tmpdir(), "broward-accela-record-type-shards-"),
+    );
+    temporaryDirectories.push(outputDirectory);
+    const options = {
+      sourceKey: "plantation",
+      startDate: "2026-08-31",
+      endDate: "2026-08-31",
+      windowDays: 1,
+      delayMs: 1_000,
+      maxAttempts: 2,
+      maxPages: 200,
+      windowTimeoutMs: 120_000,
+      maxWindows: 1,
+      outputDirectory,
+    };
+    const publicOptions = [
+      {
+        value: "Building/Building Permit/NA/NA",
+        label: "Building Permit",
+      },
+      {
+        value: "Building/Electrical Permit/NA/NA",
+        label: "Electrical Permit",
+      },
+    ];
+    /** @type {string[]} */
+    const operations = [];
+    const captureWindow = async ({
+      source,
+      startDate,
+      endDate,
+      recordTypeShard,
+    }) => {
+      const operation =
+        recordTypeShard === null ? "parent" : recordTypeShard.label;
+      operations.push(operation);
+      const label = recordTypeShard?.label ?? "Building Permit";
+      const suffix =
+        recordTypeShard === null
+          ? "PARENT"
+          : label.toUpperCase().replaceAll(" ", "-");
+      const record = {
+        schemaVersion: "oracle-node.broward-accela-csv-list.v1",
+        sourceSystem: source.sourceSystem,
+        jurisdiction: source.jurisdiction,
+        recordNumber: `B26-${suffix}`,
+        sourceUrl: `${source.portalUrl}&altId=B26-${suffix}`,
+        recordKey: `${source.sourceSystem}:permit:B26-${suffix}`,
+        recordDate: startDate,
+        recordType: label,
+        projectName: null,
+        address: null,
+        expirationDate: null,
+        status: "Issued",
+        isRoofPermit: false,
+        sourceWindowKey: `${source.key}:date:${startDate}:${endDate}`,
+      };
+      return {
+        startDate,
+        endDate,
+        sourceWindowKey: record.sourceWindowKey,
+        displayedTotal: 100,
+        displayedTotalCapped: true,
+        captureMode: "csv_export",
+        records: [record],
+        sourceRowCount: 1,
+        excludedNonPermitCount: 0,
+        duplicateRecordCount: 0,
+        pageCount: 1,
+        availableRecordTypes: publicOptions,
+        recordTypeShard,
+        rawCsv: `fixture-${operation}`,
+        rawSearchHtml: "<html>fixture</html>",
+        rawListPages: ["<html>fixture</html>"],
+      };
+    };
+    const dependencies = {
+      createBrowser: async () => ({
+        close: async () => undefined,
+      }),
+      captureWindow,
+      wait: async () => undefined,
+      random: () => 0,
+      now: () => "2026-09-01T18:00:00.000Z",
+    };
+    const planned = await runAccelaCsvWindows(options, dependencies);
+    expect(planned).toMatchObject({
+      status: "paused",
+      completedWindowCount: 0,
+      pendingWindowCount: 1,
+    });
+    let checkpoint = JSON.parse(
+      await readFile(join(outputDirectory, "checkpoint.private.json"), "utf8"),
+    );
+    expect(Object.values(checkpoint.shardPlans)[0]).toMatchObject({
+      dimension: "record_type",
+      expectedShards: expect.arrayContaining([
+        expect.objectContaining({ label: "Building Permit" }),
+        expect.objectContaining({ label: "Electrical Permit" }),
+      ]),
+      completedShards: {},
+    });
+
+    await runAccelaCsvWindows(options, dependencies);
+    checkpoint = JSON.parse(
+      await readFile(join(outputDirectory, "checkpoint.private.json"), "utf8"),
+    );
+    expect(
+      Object.keys(Object.values(checkpoint.shardPlans)[0].completedShards),
+    ).toHaveLength(1);
+
+    const completed = await runAccelaCsvWindows(
+      { ...options, maxWindows: null },
+      dependencies,
+    );
+    expect(completed).toMatchObject({
+      status: "complete",
+      completedWindowCount: 1,
+      pendingWindowCount: 0,
+      uniquePermitCount: 2,
+    });
+    expect(operations).toEqual([
+      "parent",
+      "Building Permit",
+      "Electrical Permit",
+    ]);
+    checkpoint = JSON.parse(
+      await readFile(join(outputDirectory, "checkpoint.private.json"), "utf8"),
+    );
+    expect(checkpoint.shardPlans).toEqual({});
+    expect(checkpoint.completedWindows["20260831_20260831"]).toMatchObject({
+      captureMode: "record_type_shards",
+      recordCount: 2,
+      sourceRowCount: 2,
+    });
+  });
+
   it("creates deterministic CSV windows and checkpointed inventory", async () => {
     const outputDirectory = await mkdtemp(
       join(tmpdir(), "broward-accela-csv-window-"),
@@ -841,6 +1159,8 @@ describe("Broward official Accela CSV exports", () => {
       sourceKey: "hollywood",
       windowDays: 30,
       maxAttempts: 3,
+      maxPages: 200,
+      windowTimeoutMs: 120_000,
       maxWindows: 1,
     });
     const options = {
@@ -850,15 +1170,29 @@ describe("Broward official Accela CSV exports", () => {
       windowDays: 2,
       delayMs: 1_000,
       maxAttempts: 3,
+      maxPages: 200,
+      windowTimeoutMs: 120_000,
       maxWindows: null,
       outputDirectory,
     };
     let captureAttempts = 0;
+    let browserCreations = 0;
+    let browserCloses = 0;
     const summary = await runAccelaCsvWindows(options, {
-      createBrowser: async () => ({
-        close: async () => undefined,
-      }),
-      captureWindow: async ({ source, startDate, endDate }) => {
+      createBrowser: async () => {
+        browserCreations += 1;
+        return {
+          close: async () => {
+            browserCloses += 1;
+          },
+        };
+      },
+      captureWindow: async ({
+        source,
+        startDate,
+        endDate,
+        recordTypeShard,
+      }) => {
         captureAttempts += 1;
         if (captureAttempts === 1) {
           throw new Error("transient export failure");
@@ -878,12 +1212,21 @@ describe("Broward official Accela CSV exports", () => {
           sourceWindowKey: record.sourceWindowKey,
           displayedTotal: 100,
           displayedTotalCapped: true,
+          captureMode: "csv_export",
           records: [record],
+          sourceRowCount: 1,
+          excludedNonPermitCount: 0,
+          duplicateRecordCount: 0,
+          pageCount: 1,
+          availableRecordTypes: [],
+          recordTypeShard,
           rawCsv: "fixture",
           rawSearchHtml: "<html>fixture</html>",
+          rawListPages: ["<html>fixture</html>"],
         };
       },
       wait: async () => undefined,
+      random: () => 0,
       now: () => "2026-08-31T19:00:00.000Z",
     });
     expect(summary).toMatchObject({
@@ -893,6 +1236,8 @@ describe("Broward official Accela CSV exports", () => {
       cappedDisplayedTotalWindowCount: 2,
     });
     expect(captureAttempts).toBe(3);
+    expect(browserCreations).toBe(2);
+    expect(browserCloses).toBe(2);
     expect(
       (
         await readFile(
