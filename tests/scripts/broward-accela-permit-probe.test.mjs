@@ -1215,19 +1215,14 @@ describe("Broward official Accela CSV exports", () => {
       completedShards: {},
     });
 
-    await runAccelaCsvWindows(
-      { ...options, maxWindows: 2 },
-      dependencies,
-    );
+    await runAccelaCsvWindows({ ...options, maxWindows: 2 }, dependencies);
     checkpoint = JSON.parse(
       await readFile(join(outputDirectory, "checkpoint.private.json"), "utf8"),
     );
     expect(
       Object.keys(Object.values(checkpoint.shardPlans)[0].completedShards),
     ).toHaveLength(1);
-    expect(
-      Object.values(checkpoint.shardPlans)[0].failedShards,
-    ).toEqual(
+    expect(Object.values(checkpoint.shardPlans)[0].failedShards).toEqual(
       expect.objectContaining({
         "record-type-25d182bab06ba7fa": expect.objectContaining({
           reason: "timeout",
