@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 
-import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -17,6 +16,7 @@ import { parseCsvRecords } from "./run-pinellas-local-ingest.mjs";
 
 const require = createRequire(import.meta.url);
 const ipfsHash = require("ipfs-only-hash");
+const AdmZip = require("adm-zip");
 
 const COUNTY = "pinellas";
 const COUNTY_NAME = "Pinellas";
@@ -527,64 +527,20 @@ export function fillDerivedFilebaseToken(env) {
  * @returns {Promise<Record<string, JsonObject>>} Basename → parsed JSON.
  */
 export async function readTransformedZipJsonFiles(zipPath) {
-  const script = `
-import json, sys, zipfile
-spec = json.load(sys.stdin)
-files = {}
-with zipfile.ZipFile(spec["zipPath"]) as archive:
-    for name in archive.namelist():
-        base = name.rsplit("/", 1)[-1]
-        if not name.startswith("data/") or not name.endswith(".json"):
-            continue
-        if base.startswith("relationship_") or base.startswith("bafk"):
-            continue
-        raw = archive.read(name)
-        parsed = json.loads(raw.decode("utf-8"))
-        if isinstance(parsed, dict):
-            files[base] = parsed
-json.dump(files, sys.stdout)
-`;
-  const stdout = await runPythonJson(script, { zipPath });
-  if (typeof stdout !== "object" || stdout === null || Array.isArray(stdout)) {
-    throw new Error(`transformed zip JSON map is invalid: ${zipPath}`);
+  const zip = new AdmZip(zipPath);
+  /** @type {Record<string, JsonObject>} */
+  const files = {};
+  for (const entry of zip.getEntries()) {
+    const name = entry.entryName.replaceAll("\\", "/");
+    const base = name.split("/").pop() ?? name;
+    if (!name.startsWith("data/") || !name.endsWith(".json")) continue;
+    if (base.startsWith("relationship_") || base.startsWith("bafk")) continue;
+    const parsed = JSON.parse(entry.getData().toString("utf8"));
+    if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
+      files[base] = parsed;
+    }
   }
-  return /** @type {Record<string, JsonObject>} */ (stdout);
-}
-
-/**
- * @param {string} script - Python source.
- * @param {JsonObject} payload - JSON stdin payload.
- * @returns {Promise<unknown>} Parsed stdout JSON.
- */
-function runPythonJson(script, payload) {
-  return new Promise((resolve, reject) => {
-    /** @type {Buffer[]} */
-    const chunks = [];
-    /** @type {Buffer[]} */
-    const errChunks = [];
-    const child = spawn("python3", ["-c", script], { stdio: ["pipe", "pipe", "pipe"] });
-    child.stdout.on("data", (chunk) => chunks.push(chunk));
-    child.stderr.on("data", (chunk) => errChunks.push(chunk));
-    child.on("error", reject);
-    child.on("exit", (code) => {
-      if (code !== 0) {
-        reject(
-          new Error(
-            `python exited ${code}: ${Buffer.concat(errChunks).toString("utf8")}`,
-          ),
-        );
-        return;
-      }
-      const text = Buffer.concat(chunks).toString("utf8");
-      try {
-        resolve(JSON.parse(text));
-      } catch (caught) {
-        reject(caught);
-      }
-    });
-    child.stdin.write(JSON.stringify(payload));
-    child.stdin.end();
-  });
+  return files;
 }
 
 /**
@@ -610,7 +566,11 @@ export async function writePinellasPilotPublishArtifacts(options, repoRoot) {
   /** @type {QueryTableRow[]} */
   const rows = [];
   const missing = [];
-  for (const strap of [...seedByStrap.keys()].sort()) {
+  const straps = [...seedByStrap.keys()].sort();
+  let scanned = 0;
+  const startedAt = Date.now();
+  for (const strap of straps) {
+    scanned += 1;
     const zipPath = path.join(ingestDirectory, strap, "transformed.zip");
     try {
       const files = await readTransformedZipJsonFiles(zipPath);
@@ -627,6 +587,20 @@ export async function writePinellasPilotPublishArtifacts(options, repoRoot) {
       );
     } catch {
       missing.push(strap);
+    }
+    if (scanned === 1 || scanned % 5000 === 0 || scanned === straps.length) {
+      const elapsedMs = Date.now() - startedAt;
+      const rate = scanned / Math.max(elapsedMs / 1000, 0.001);
+      console.log(
+        JSON.stringify({
+          event: "pinellas_publish_scan_progress",
+          scanned,
+          total: straps.length,
+          rows: rows.length,
+          missing: missing.length,
+          ratePerSec: Number(rate.toFixed(1)),
+        }),
+      );
     }
   }
   if (missing.length > 0 && options.allowMissing !== true) {

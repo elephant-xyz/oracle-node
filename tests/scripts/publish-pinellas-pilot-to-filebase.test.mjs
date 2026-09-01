@@ -9,6 +9,7 @@ import {
   parseCliOptions,
   parseUnnormalizedAddress,
   propertyIdForStrap,
+  readTransformedZipJsonFiles,
   toNumber,
   toParquetRecord,
   toText,
@@ -136,5 +137,27 @@ describe("Pinellas local-zip query-table mapping", () => {
     expect(toText("  x  ")).toBe("x");
     expect(toNumber("12.5")).toBe(12.5);
     expect(toNumber("")).toBeNull();
+  });
+
+  it("reads data JSON from a transformed zip and skips relationship files", async () => {
+    const { mkdtemp, rm } = await import("node:fs/promises");
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const { createRequire } = await import("node:module");
+    const require = createRequire(import.meta.url);
+    const AdmZip = require("adm-zip");
+    const dir = await mkdtemp(path.join(os.tmpdir(), "pinellas-zip-"));
+    const zipPath = path.join(dir, "transformed.zip");
+    const zip = new AdmZip();
+    zip.addFile(
+      "data/property.json",
+      Buffer.from(JSON.stringify({ parcel_identifier: "x" })),
+    );
+    zip.addFile("data/relationship_1.json", Buffer.from("{}"));
+    zip.writeZip(zipPath);
+    const files = await readTransformedZipJsonFiles(zipPath);
+    expect(files["property.json"]).toEqual({ parcel_identifier: "x" });
+    expect(files["relationship_1.json"]).toBeUndefined();
+    await rm(dir, { recursive: true, force: true });
   });
 });
