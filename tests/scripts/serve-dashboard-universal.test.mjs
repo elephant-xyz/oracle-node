@@ -202,9 +202,7 @@ describe("universal dashboard server & county registry", () => {
       ).toBe(sourcing.permitRoutes.hardBlockedCurrentRoutes);
       expect(sourcing.operationalWorkers.paused).toHaveLength(2);
       expect(sourcing.operationalWorkers.coolingDown).toHaveLength(1);
-      expect(
-        sourcing.permitRoutes.unattendedUnavailableCurrentRoutes,
-      ).toBe(
+      expect(sourcing.permitRoutes.unattendedUnavailableCurrentRoutes).toBe(
         sourcing.permitRoutes.manualCaptchaCurrentRoutes +
           sourcing.permitRoutes.hardBlockedCurrentRoutes,
       );

@@ -527,11 +527,7 @@ export function buildBrowardPermitRouteStatus() {
  *   Executable-registry route classification.
  * @returns {ManualCaptchaProgress} Reconciled manual route progress.
  */
-function buildManualCaptchaProgress(
-  row,
-  coralSpringsPermit,
-  permitRoutes,
-) {
+function buildManualCaptchaProgress(row, coralSpringsPermit, permitRoutes) {
   const pembrokeLoaded = count(row.pembroke_park_gov_easy_loaded);
   const hillsboroLoaded = count(row.hillsboro_beach_communitycore_loaded);
   const coralCaptured = coralSpringsPermit.unique;
@@ -573,8 +569,7 @@ function buildManualCaptchaProgress(
         hillsboroLoaded > 0
           ? "durable_loaded_aggregate"
           : "no_captured_aggregate",
-      coverageBoundary:
-        hillsboroLoaded > 0 ? "bounded_slice" : "not_captured",
+      coverageBoundary: hillsboroLoaded > 0 ? "bounded_slice" : "not_captured",
       capturedRecords: hillsboroLoaded,
       loadedRecords: hillsboroLoaded,
       manualSessionRequired: true,
@@ -586,15 +581,12 @@ function buildManualCaptchaProgress(
       jurisdiction: "Pembroke Park",
       registryStatus: "captcha_required",
       progressState:
-        pembrokeLoaded > 0
-          ? "bounded_slice_loaded"
-          : "awaiting_manual_captcha",
+        pembrokeLoaded > 0 ? "bounded_slice_loaded" : "awaiting_manual_captcha",
       evidence:
         pembrokeLoaded > 0
           ? "durable_loaded_aggregate"
           : "no_captured_aggregate",
-      coverageBoundary:
-        pembrokeLoaded > 0 ? "bounded_slice" : "not_captured",
+      coverageBoundary: pembrokeLoaded > 0 ? "bounded_slice" : "not_captured",
       capturedRecords: pembrokeLoaded,
       loadedRecords: pembrokeLoaded,
       manualSessionRequired: true,
@@ -609,9 +601,7 @@ function buildManualCaptchaProgress(
   const expectedNames = permitRoutes.manualCaptchaJurisdictions;
   if (
     routes.length !== permitRoutes.manualCaptchaCurrentRoutes ||
-    routes.some(
-      (route, index) => route.jurisdiction !== expectedNames[index],
-    )
+    routes.some((route, index) => route.jurisdiction !== expectedNames[index])
   ) {
     throw new Error("Broward manual CAPTCHA routes do not reconcile");
   }
@@ -633,8 +623,7 @@ function buildManualCaptchaProgress(
 function buildPermitStatus(row, permitRoutes) {
   const registryJurisdictions = permitRoutes.totalCurrentRoutes;
   const currentSourcesImplemented = permitRoutes.implementedCurrentRoutes;
-  const currentSourcesManualCaptcha =
-    permitRoutes.manualCaptchaCurrentRoutes;
+  const currentSourcesManualCaptcha = permitRoutes.manualCaptchaCurrentRoutes;
   const currentSourcesHardBlocked = permitRoutes.hardBlockedCurrentRoutes;
   const currentSourcesUnattendedUnavailable =
     permitRoutes.unattendedUnavailableCurrentRoutes;
@@ -703,8 +692,7 @@ function buildPermitStatus(row, permitRoutes) {
   }
   if (
     row.permit_county_complete &&
-    (!row.permit_pilot_passed ||
-      currentSourcesUnattendedUnavailable !== 0)
+    (!row.permit_pilot_passed || currentSourcesUnattendedUnavailable !== 0)
   ) {
     throw new Error("Permit county completeness does not reconcile");
   }

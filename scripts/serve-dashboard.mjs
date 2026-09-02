@@ -572,10 +572,7 @@ function readBrowardPermitRouteStatus(value) {
  *   Registry-derived jurisdictions that must appear exactly once.
  * @returns {UniversalManualCaptchaProgress} Sanitized aggregate progress.
  */
-function readBrowardManualCaptchaProgress(
-  value,
-  manualCaptchaJurisdictions,
-) {
+function readBrowardManualCaptchaProgress(value, manualCaptchaJurisdictions) {
   const input = requireObject(value, "Broward manual CAPTCHA progress");
   if (
     input.sessionPolicy !== "manual_captcha_sessions_expire" ||
@@ -647,8 +644,7 @@ function readBrowardManualCaptchaProgress(
         (capturedRecords !== 0 || loadedRecords !== 0)) ||
       (progressState === "bounded_capture_in_progress" &&
         capturedRecords === 0) ||
-      (progressState === "bounded_slice_captured" &&
-        capturedRecords === 0) ||
+      (progressState === "bounded_slice_captured" && capturedRecords === 0) ||
       (progressState === "bounded_slice_loaded" && loadedRecords === 0) ||
       (coverageBoundary === "not_captured" &&
         (capturedRecords !== 0 || loadedRecords !== 0))
@@ -659,13 +655,13 @@ function readBrowardManualCaptchaProgress(
     return {
       jurisdiction,
       registryStatus: /** @type {"captcha_required"} */ ("captcha_required"),
-      progressState:
-        /** @type {UniversalManualCaptchaProgressState} */ (progressState),
+      progressState: /** @type {UniversalManualCaptchaProgressState} */ (
+        progressState
+      ),
       evidence: /** @type {UniversalManualCaptchaEvidence} */ (evidence),
-      coverageBoundary:
-        /** @type {UniversalManualCaptchaCoverageBoundary} */ (
-          coverageBoundary
-        ),
+      coverageBoundary: /** @type {UniversalManualCaptchaCoverageBoundary} */ (
+        coverageBoundary
+      ),
       capturedRecords,
       loadedRecords,
       manualSessionRequired: /** @type {true} */ (true),

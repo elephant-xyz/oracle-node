@@ -230,9 +230,7 @@ export async function refreshBrowardDashboardRollup(client) {
     coralEtrakitRecords: readCount(row.coral_etrakit_records),
     coralEtrakitMatched: readCount(row.coral_etrakit_matched),
     coralEtrakitRoofing: readCount(row.coral_etrakit_roofing),
-    pembrokeParkGovEasyRecords: readCount(
-      row.pembroke_park_gov_easy_records,
-    ),
+    pembrokeParkGovEasyRecords: readCount(row.pembroke_park_gov_easy_records),
     hillsboroBeachCommunityCoreRecords: readCount(
       row.hillsboro_beach_communitycore_records,
     ),
