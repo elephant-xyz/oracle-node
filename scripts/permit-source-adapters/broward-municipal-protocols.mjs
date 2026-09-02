@@ -101,7 +101,15 @@ function collectLabeledFields($) {
         const labelCell = cells[index];
         const valueCell = cells[index + 1];
         if (labelCell !== undefined && valueCell !== undefined) {
-          add(readSelectionText($(labelCell)), readSelectionText($(valueCell)));
+          const value = $(valueCell);
+          add(
+            readSelectionText($(labelCell)),
+            value.hasClass("case-header-field-value")
+              ? readSelectionText(
+                  value.children().not(".case-header-status-badge"),
+                )
+              : readSelectionText(value),
+          );
         }
       }
     } else {
@@ -151,13 +159,18 @@ function collectLabeledFields($) {
     ].join(", "),
   ).toArray()) {
     const label = $(labelElement);
+    const structuredValue = label.next(
+      ".case-header-field-value, .project-section-field-value, .field-value, .detail-value",
+    );
+    const caseHeaderValue = label.hasClass("case-header-field-label")
+      ? readSelectionText(
+          structuredValue.children().not(".case-header-status-badge"),
+        )
+      : null;
     add(
       readSelectionText(label),
-      readSelectionText(
-        label.next(
-          ".case-header-field-value, .project-section-field-value, .field-value, .detail-value",
-        ),
-      ) ??
+      caseHeaderValue ??
+        readSelectionText(structuredValue) ??
         readSelectionText(label.next()) ??
         readSelectionText(label.parent().children().not(label)),
     );

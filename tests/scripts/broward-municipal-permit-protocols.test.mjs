@@ -712,8 +712,13 @@ describe("SmartGov and eGovPLUS HTML protocols", () => {
 
     const detail = `<!doctype html><html><head>
       <title>City of Lighthouse Point Public Portal</title></head><body>
-      <div><span class="case-header-field-label">Record Number</span><span class="case-header-field-value">BLD26-0012</span></div>
-      <div class="case-header-status-badge">Issued</div>
+      <table><tr>
+        <td class="case-header-field-label">Record Number</td>
+        <td class="case-header-field-value">
+          <span class="m-r-sm">BLD26-0012</span>
+          <div class="case-header-status-badge issued">Issued</div>
+        </td>
+      </tr></table>
       <div><span class="project-section-field-label">Location</span><span class="project-section-field-value">2200 NE 38TH ST</span></div>
       <div><span class="project-section-field-label">Submitted</span><span class="project-section-field-value">08/01/2026</span></div>
       <div><span class="project-section-field-label">Issued</span><span class="project-section-field-value">08/10/2026</span></div>
