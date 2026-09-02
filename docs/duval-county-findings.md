@@ -241,18 +241,18 @@ Live COJ detail pages echoed canonical RE Numbers for the three smoke parcels pl
 `000016-0100` (vacant) and `000001-0005` (timber) from the rebuilt ordered sample.
 Laptop Brazil still cannot reach COJ; those extra checks used a US fetch path.
 
-| DOR parcel id | DOR_UC | Band | Notes |
-| --- | --- | --- | --- |
-| 0969250000R | 001 | single family | Task 3 smoke |
-| 0901770592R | 004 | condo | Task 3 smoke |
-| 1230290100R | 027 | commercial | Task 3 smoke, multi-building |
-| 0000160100R | 000 | vacant residential | Live COJ spot-check |
-| 0000060040R | 002 | mobile home | |
-| 0000320020R | 008 | multi-family | |
-| 0000900100R | 040 | industrial | |
-| 0000010005R | 055 | agricultural | Live COJ spot-check |
-| 0000510000R | 076 | institutional | |
-| 0000100015R | 080 | government | |
+| DOR parcel id | DOR_UC | Band               | Notes                        |
+| ------------- | ------ | ------------------ | ---------------------------- |
+| 0969250000R   | 001    | single family      | Task 3 smoke                 |
+| 0901770592R   | 004    | condo              | Task 3 smoke                 |
+| 1230290100R   | 027    | commercial         | Task 3 smoke, multi-building |
+| 0000160100R   | 000    | vacant residential | Live COJ spot-check          |
+| 0000060040R   | 002    | mobile home        |                              |
+| 0000320020R   | 008    | multi-family       |                              |
+| 0000900100R   | 040    | industrial         |                              |
+| 0000010005R   | 055    | agricultural       | Live COJ spot-check          |
+| 0000510000R   | 076    | institutional      |                              |
+| 0000100015R   | 080    | government         |                              |
 
 After smoke and one row per band, remaining slots fill in `PARCEL_ID` order, so the 50 is
 heavy on low-folio section land (ZIP 32234) for agricultural and government. Full list:

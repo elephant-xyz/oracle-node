@@ -4,14 +4,7 @@ import { once } from "events";
 import { createHash } from "crypto";
 import { execFile } from "child_process";
 import { createWriteStream } from "fs";
-import {
-  mkdir,
-  readFile,
-  readdir,
-  rm,
-  stat,
-  writeFile,
-} from "fs/promises";
+import { mkdir, readFile, readdir, rm, stat, writeFile } from "fs/promises";
 import path from "path";
 import { createRequire } from "module";
 import { pathToFileURL } from "url";
@@ -217,7 +210,8 @@ async function probeHead(uri) {
   if (!response.ok) throw new Error(`HEAD ${uri} failed: ${response.status}`);
   return {
     etag: response.headers.get("etag"),
-    contentLength: Number(response.headers.get("content-length") ?? "0") || null,
+    contentLength:
+      Number(response.headers.get("content-length") ?? "0") || null,
   };
 }
 
@@ -358,7 +352,6 @@ async function ensureArtifacts(workDir, skipDownload) {
     sidecarRights,
   };
 }
-
 
 /**
  * @param {Record<string, unknown>} record
@@ -660,8 +653,9 @@ async function spotCheckCoj(sample) {
     .filter(Boolean)
     .filter(
       (row, index, all) =>
-        all.findIndex((item) => item.source_identifier === row.source_identifier) ===
-        index,
+        all.findIndex(
+          (item) => item.source_identifier === row.source_identifier,
+        ) === index,
     )
     .slice(0, 5);
 
@@ -676,7 +670,10 @@ async function spotCheckCoj(sample) {
       throw new Error(`COJ spot-check failed ${response.status} for ${url}`);
     }
     const html = await response.text();
-    if (!html.includes(row.parcel_id) && !html.includes(row.source_identifier)) {
+    if (
+      !html.includes(row.parcel_id) &&
+      !html.includes(row.source_identifier)
+    ) {
       throw new Error(`COJ page did not echo identifier for ${url}`);
     }
   }
@@ -689,7 +686,10 @@ async function spotCheckCoj(sample) {
 export async function buildDuvalSeed(options) {
   await mkdir(options.workDir, { recursive: true });
   const snapshotAt = new Date().toISOString();
-  const artifacts = await ensureArtifacts(options.workDir, options.skipDownload);
+  const artifacts = await ensureArtifacts(
+    options.workDir,
+    options.skipDownload,
+  );
   const sourceRevision =
     artifacts.fingerprints.find((item) => item.name === "nal")?.sha256 ??
     snapshotAt;
@@ -709,14 +709,14 @@ export async function buildDuvalSeed(options) {
     duplicateGroups,
     consolidatedRows,
   } = await joinSeedRows(
-      artifacts,
-      { sourceRevision, snapshotAt },
-      {
-        writeRow: (row) => writeChunk(writer, `${renderCsvRow(row)}\n`),
-        writeUnkeyed: (record) =>
-          writeChunk(unkeyedWriter, `${JSON.stringify(record)}\n`),
-      },
-    );
+    artifacts,
+    { sourceRevision, snapshotAt },
+    {
+      writeRow: (row) => writeChunk(writer, `${renderCsvRow(row)}\n`),
+      writeUnkeyed: (record) =>
+        writeChunk(unkeyedWriter, `${JSON.stringify(record)}\n`),
+    },
+  );
 
   await new Promise((resolve, reject) => {
     writer.end((error) => (error ? reject(error) : resolve(undefined)));
@@ -756,11 +756,11 @@ export async function buildDuvalSeed(options) {
 
   const compactPilot = selectPilotSample(compactRows, 50);
   if (compactPilot.length !== 50) {
-    throw new Error(`Expected 50 pilot rows but selected ${compactPilot.length}`);
+    throw new Error(
+      `Expected 50 pilot rows but selected ${compactPilot.length}`,
+    );
   }
-  const wanted = new Set(
-    compactPilot.map((row) => row.source_identifier),
-  );
+  const wanted = new Set(compactPilot.map((row) => row.source_identifier));
   /** @type {Map<string, Record<string, string>>} */
   const fullById = new Map();
   const { parse } = require("csv-parse");
@@ -815,7 +815,9 @@ if (isMain) {
       console.log(JSON.stringify(result, null, 2));
     })
     .catch((error) => {
-      console.error(error instanceof Error ? error.stack || error.message : String(error));
+      console.error(
+        error instanceof Error ? error.stack || error.message : String(error),
+      );
       process.exitCode = 1;
     });
 }

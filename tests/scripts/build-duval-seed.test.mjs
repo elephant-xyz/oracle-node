@@ -148,9 +148,7 @@ describe("Duval seed privacy and columns", () => {
     expect(row.state).toBe("FL");
     expect(row.zip).toBe("32202");
     expect(row.method).toBe("GET");
-    expect(row.url).toBe(
-      "https://paopropertysearch.coj.net/Basic/Detail.aspx",
-    );
+    expect(row.url).toBe("https://paopropertysearch.coj.net/Basic/Detail.aspx");
     expect(JSON.parse(row.multiValueQueryString)).toEqual({
       RE: ["0969250000R"],
     });

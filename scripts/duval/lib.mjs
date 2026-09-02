@@ -203,7 +203,9 @@ function buildSiteAddress(nal) {
     .join(" ");
   const city = toText(nal.PHY_CITY);
   const zip = toText(nal.PHY_ZIPCD);
-  const locality = [city, "FL", zip].filter((part) => part.length > 0).join(" ");
+  const locality = [city, "FL", zip]
+    .filter((part) => part.length > 0)
+    .join(" ");
   return [street, locality].filter((part) => part.length > 0).join(", ");
 }
 
@@ -231,10 +233,7 @@ function polygonComponents(geometry) {
  * @returns {object | ""}
  */
 function mergeGeometries(left, right) {
-  const components = [
-    ...polygonComponents(left),
-    ...polygonComponents(right),
-  ];
+  const components = [...polygonComponents(left), ...polygonComponents(right)];
   if (components.length === 0) return "";
   if (components.length === 1) {
     return { type: "Polygon", coordinates: components[0] };
@@ -311,13 +310,13 @@ export function mergeDuplicateParcels(keyed, meta) {
   const rows = [];
   for (const group of groups.values()) {
     const ordered = [...group].sort(
-      (left, right) =>
-        Number(right.nal.JV ?? 0) - Number(left.nal.JV ?? 0),
+      (left, right) => Number(right.nal.JV ?? 0) - Number(left.nal.JV ?? 0),
     );
     const primary = ordered[0];
     let geometry = primary.pin?.geometry ?? null;
     for (const extra of ordered.slice(1)) {
-      geometry = mergeGeometries(geometry, extra.pin?.geometry ?? null) || geometry;
+      geometry =
+        mergeGeometries(geometry, extra.pin?.geometry ?? null) || geometry;
     }
     rows.push(
       toSeedRow({
@@ -327,11 +326,11 @@ export function mergeDuplicateParcels(keyed, meta) {
         sourceRevision: meta.sourceRevision,
         snapshotAt: meta.snapshotAt,
         sourceRecordCount: ordered.length,
-        sourceObjectIds: ordered
-          .map((_, index) => String(index + 1))
-          .join("|"),
+        sourceObjectIds: ordered.map((_, index) => String(index + 1)).join("|"),
         sourceFeaturesJson:
-          ordered.length > 1 ? JSON.stringify(ordered.map((item) => item.nal)) : "",
+          ordered.length > 1
+            ? JSON.stringify(ordered.map((item) => item.nal))
+            : "",
       }),
     );
   }
