@@ -9,6 +9,7 @@ import {
   parseSitusAddress,
   parseSnapshotOptions,
   snapshotVersion,
+  validateReusablePropertyManifest,
 } from "../../scripts/stage-broward-donphan-snapshot.mjs";
 
 const loadedAt = "2026-09-02T17:45:01.234Z";
@@ -69,15 +70,21 @@ describe("Broward Donphan snapshot staging", () => {
         "downloads/broward/snapshots",
         "--batch-size",
         "5000",
+        "--reuse-property-version",
+        "20260902T205931937Z",
         "--upload",
       ]),
     ).toMatchObject({
       batchSize: 5_000,
       upload: true,
+      reusePropertyVersion: "20260902T205931937Z",
     });
     expect(() => parseSnapshotOptions(["--bucket", "other-county"])).toThrow(
       "Unknown option --bucket",
     );
+    expect(() =>
+      parseSnapshotOptions(["--reuse-property-version", "../lee"]),
+    ).toThrow("Snapshot version must be a basic UTC timestamp");
   });
 
   it("parses situs text without deriving or retaining the state token", () => {
@@ -122,6 +129,65 @@ describe("Broward Donphan snapshot staging", () => {
     expect(permitNames).not.toEqual(
       expect.arrayContaining(["project_description", "description", "fee"]),
     );
+  });
+
+  it("reuses only a manifest with the same frozen appraisal state", () => {
+    const currentCounts = counts();
+    const priorVersion = "20260902T174501234Z";
+    const manifest = {
+      schemaVersion: "oracle-node.broward-donphan-snapshot.v2",
+      snapshotVersion: priorVersion,
+      snapshotTimestamp: loadedAt,
+      counts: currentCounts,
+      artifactSchemas: { property: PROPERTY_FIELDS },
+      physicalExports: {
+        property: {
+          rowCount: currentCounts.propertyRows,
+          nonNullCounts: Object.fromEntries(
+            PROPERTY_FIELDS.map(({ name }) => [
+              name,
+              currentCounts.propertyRows,
+            ]),
+          ),
+        },
+      },
+      artifacts: [
+        {
+          name: "property-query-table",
+          fileName: "query-table.parquet",
+          contentType: "application/vnd.apache.parquet",
+          s3Key: `${browardSnapshotPrefix(priorVersion)}/query-table.parquet`,
+          sizeBytes: 100,
+          sha256: "a".repeat(64),
+          checksumSha256: "YQ==",
+          cid: `Qm${"a".repeat(44)}`,
+        },
+      ],
+    };
+
+    expect(
+      validateReusablePropertyManifest(
+        manifest,
+        currentCounts,
+        priorVersion,
+      ),
+    ).toMatchObject({
+      artifact: {
+        sha256: "a".repeat(64),
+        cid: `Qm${"a".repeat(44)}`,
+      },
+      physicalExport: { rowCount: currentCounts.propertyRows },
+    });
+    expect(() =>
+      validateReusablePropertyManifest(
+        {
+          ...manifest,
+          counts: { ...currentCounts, propertyRows: 526_069 },
+        },
+        currentCounts,
+        priorVersion,
+      ),
+    ).toThrow("Current appraisal state differs");
   });
 
   it("marks reconciled current data as supported partial", () => {
@@ -180,6 +246,14 @@ describe("Broward Donphan snapshot staging", () => {
       reconciliation: {
         allBalanced: true,
       },
+      acceptedTerminalExceptions: [
+        {
+          jurisdiction: "Pembroke Pines",
+          kind: "source_missing_record",
+          count: 2,
+          treatment: "accepted_terminal_exclusion",
+        },
+      ],
     });
   });
 });

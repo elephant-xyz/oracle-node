@@ -60,6 +60,14 @@ const S3_ROOT = "publication-staging/broward/donphan/snapshots";
 const DEFAULT_OUTPUT_ROOT = "downloads/broward/donphan-staging";
 const DEFAULT_BATCH_SIZE = 2_000;
 const SNAPSHOT_SCHEMA_VERSION = "oracle-node.broward-donphan-snapshot.v2";
+const PEMBROKE_PINES_TERMINAL_EXCEPTIONS = Object.freeze({
+  jurisdiction: "Pembroke Pines",
+  sourceSystem: "broward_pembroke_pines_tyler_permits",
+  kind: "source_missing_record",
+  count: 2,
+  treatment: "accepted_terminal_exclusion",
+  affectsPublishedPermitRows: false,
+});
 
 /**
  * @typedef {object} FieldSchema
@@ -71,6 +79,8 @@ const SNAPSHOT_SCHEMA_VERSION = "oracle-node.broward-donphan-snapshot.v2";
  * @property {string} outputRoot - Parent directory for versioned local output.
  * @property {number} batchSize - Rows fetched per server-cursor round trip.
  * @property {boolean} upload - Whether to stage verified bytes in S3.
+ * @property {string | null} reusePropertyVersion - Prior immutable snapshot
+ *   version whose property bytes may be reused after frozen-state validation.
  *
  * @typedef {object} SnapshotCounts
  * @property {number} propertyRows - Broward appraisal property rows.
@@ -301,14 +311,21 @@ export function parseSnapshotOptions(argv) {
       next.startsWith("--")
     ) {
       throw new Error(
-        "Options must be --output-root/--batch-size values or --upload",
+        "Options must be --output-root/--batch-size/--reuse-property-version values or --upload",
       );
     }
     values.set(token.slice(2), next);
     index += 1;
   }
   for (const key of values.keys()) {
-    if (!["output-root", "batch-size", "upload"].includes(key)) {
+    if (
+      ![
+        "output-root",
+        "batch-size",
+        "reuse-property-version",
+        "upload",
+      ].includes(key)
+    ) {
       throw new Error(`Unknown option --${key}`);
     }
   }
@@ -320,10 +337,15 @@ export function parseSnapshotOptions(argv) {
   ) {
     throw new Error("--batch-size must be an integer from 100 through 10000");
   }
+  const reusePropertyVersion = values.get("reuse-property-version") ?? null;
+  if (reusePropertyVersion !== null) {
+    browardSnapshotPrefix(reusePropertyVersion);
+  }
   return {
     outputRoot: path.resolve(values.get("output-root") ?? DEFAULT_OUTPUT_ROOT),
     batchSize,
     upload: values.get("upload") === "true",
+    reusePropertyVersion,
   };
 }
 
@@ -909,6 +931,7 @@ export function buildCoverageSnapshot(input) {
     },
     permitSources: input.permitSources,
     routeCoverage: input.routes,
+    acceptedTerminalExceptions: [PEMBROKE_PINES_TERMINAL_EXCEPTIONS],
   };
 }
 
@@ -971,6 +994,163 @@ async function verifyParquet(filePath, expectedFields, expectedRows) {
 }
 
 /**
+ * Determine whether an untrusted JSON value is a plain record.
+ *
+ * @param {unknown} value - Candidate JSON value.
+ * @returns {value is Record<string,unknown>} Whether the value is a record.
+ */
+function isRecord(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Validate a prior immutable manifest against the current frozen appraisal
+ * source state and return the exact reusable property artifact contract.
+ *
+ * @param {unknown} manifestValue - Parsed prior manifest JSON.
+ * @param {SnapshotCounts} currentCounts - Current frozen reconciliation counts.
+ * @param {string} priorVersion - Requested prior immutable snapshot version.
+ * @returns {{
+ *   artifact:ArtifactIdentity,
+ *   physicalExport:ExportResult,
+ *   snapshotTimestamp:string
+ * }} Validated prior property identity and physical export evidence.
+ */
+export function validateReusablePropertyManifest(
+  manifestValue,
+  currentCounts,
+  priorVersion,
+) {
+  if (!isRecord(manifestValue)) {
+    throw new Error("Prior property manifest must be a JSON object");
+  }
+  const priorPrefix = browardSnapshotPrefix(priorVersion);
+  if (
+    manifestValue.schemaVersion !== SNAPSHOT_SCHEMA_VERSION ||
+    manifestValue.snapshotVersion !== priorVersion ||
+    typeof manifestValue.snapshotTimestamp !== "string" ||
+    !Number.isFinite(Date.parse(manifestValue.snapshotTimestamp))
+  ) {
+    throw new Error("Prior property manifest identity is incompatible");
+  }
+  if (
+    !isRecord(manifestValue.counts) ||
+    !isRecord(manifestValue.artifactSchemas) ||
+    !Array.isArray(manifestValue.artifactSchemas.property) ||
+    JSON.stringify(manifestValue.artifactSchemas.property) !==
+      JSON.stringify(PROPERTY_FIELDS) ||
+    !isRecord(manifestValue.physicalExports) ||
+    !isRecord(manifestValue.physicalExports.property)
+  ) {
+    throw new Error("Prior property manifest schema is incompatible");
+  }
+  const priorCounts = manifestValue.counts;
+  const frozenStateMatches =
+    count(priorCounts.propertyRows, "prior.propertyRows") ===
+      currentCounts.propertyRows &&
+    count(priorCounts.distinctPropertyIds, "prior.distinctPropertyIds") ===
+      currentCounts.distinctPropertyIds &&
+    count(priorCounts.distinctFolios, "prior.distinctFolios") ===
+      currentCounts.distinctFolios &&
+    count(priorCounts.nullFolios, "prior.nullFolios") ===
+      currentCounts.nullFolios &&
+    priorCounts.appraisalFirstLoadedAt ===
+      currentCounts.appraisalFirstLoadedAt &&
+    priorCounts.appraisalLastLoadedAt === currentCounts.appraisalLastLoadedAt;
+  if (!frozenStateMatches) {
+    throw new Error("Current appraisal state differs from reusable snapshot");
+  }
+  const rawArtifact = Array.isArray(manifestValue.artifacts)
+    ? manifestValue.artifacts.find(
+        (entry) => isRecord(entry) && entry.name === "property-query-table",
+      )
+    : undefined;
+  if (
+    !isRecord(rawArtifact) ||
+    rawArtifact.fileName !== "query-table.parquet" ||
+    rawArtifact.contentType !== "application/vnd.apache.parquet" ||
+    rawArtifact.s3Key !== `${priorPrefix}/query-table.parquet` ||
+    typeof rawArtifact.sizeBytes !== "number" ||
+    !Number.isSafeInteger(rawArtifact.sizeBytes) ||
+    rawArtifact.sizeBytes <= 0 ||
+    typeof rawArtifact.sha256 !== "string" ||
+    !/^[a-f0-9]{64}$/u.test(rawArtifact.sha256) ||
+    typeof rawArtifact.checksumSha256 !== "string" ||
+    rawArtifact.checksumSha256.length === 0 ||
+    typeof rawArtifact.cid !== "string" ||
+    !/^Qm[1-9A-HJ-NP-Za-km-z]{44}$/u.test(rawArtifact.cid)
+  ) {
+    throw new Error("Prior property artifact identity is incompatible");
+  }
+  const physical = manifestValue.physicalExports.property;
+  if (
+    count(physical.rowCount, "prior.propertyExport.rowCount") !==
+      currentCounts.propertyRows ||
+    !isRecord(physical.nonNullCounts)
+  ) {
+    throw new Error("Prior property physical export does not reconcile");
+  }
+  /** @type {Record<string,number>} */
+  const nonNullCounts = {};
+  for (const field of PROPERTY_FIELDS) {
+    nonNullCounts[field.name] = count(
+      physical.nonNullCounts[field.name],
+      `prior.propertyExport.nonNullCounts.${field.name}`,
+    );
+  }
+  return {
+    artifact: /** @type {ArtifactIdentity} */ ({
+      name: rawArtifact.name,
+      fileName: rawArtifact.fileName,
+      contentType: rawArtifact.contentType,
+      s3Key: rawArtifact.s3Key,
+      sizeBytes: rawArtifact.sizeBytes,
+      sha256: rawArtifact.sha256,
+      checksumSha256: rawArtifact.checksumSha256,
+      cid: rawArtifact.cid,
+    }),
+    physicalExport: {
+      rowCount: currentCounts.propertyRows,
+      nonNullCounts,
+    },
+    snapshotTimestamp: new Date(
+      manifestValue.snapshotTimestamp,
+    ).toISOString(),
+  };
+}
+
+/**
+ * Read a small S3 JSON response body without exposing its contents to logs.
+ *
+ * @param {unknown} body - AWS SDK GetObject body.
+ * @returns {Promise<string>} UTF-8 response text.
+ */
+async function readTextBody(body) {
+  if (
+    typeof body !== "object" ||
+    body === null ||
+    !(Symbol.asyncIterator in body)
+  ) {
+    throw new Error("S3 GetObject returned no async iterable body");
+  }
+  /** @type {Buffer[]} */
+  const chunks = [];
+  let sizeBytes = 0;
+  for await (const raw of /** @type {AsyncIterable<unknown>} */ (body)) {
+    const chunk =
+      typeof raw === "string"
+        ? Buffer.from(raw)
+        : Buffer.from(/** @type {Uint8Array} */ (raw));
+    sizeBytes += chunk.byteLength;
+    if (sizeBytes > 1_000_000) {
+      throw new Error("Prior property manifest exceeds the safe size limit");
+    }
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
+/**
  * Download one object to a temporary file while computing exact SHA-256 bytes.
  *
  * @param {unknown} body - AWS SDK GetObject body.
@@ -1004,6 +1184,127 @@ async function saveReadback(body, temporaryPath) {
   const sha256 = digest.digest("hex");
   const cid = await ipfsHash.of(createReadStream(temporaryPath));
   return { sizeBytes, sha256, cid };
+}
+
+/**
+ * Reuse a prior immutable property object after proving that the current
+ * appraisal count/load window, prior manifest, S3 checksum, streamed hash, CID,
+ * ACL, encryption, Parquet schema, and physical row count all still agree.
+ *
+ * @param {string} priorVersion - Prior immutable snapshot version.
+ * @param {SnapshotCounts} currentCounts - Current frozen database counts.
+ * @param {string} temporaryDirectory - New snapshot's private work directory.
+ * @param {string} targetPrefix - New immutable snapshot prefix.
+ * @returns {Promise<{
+ *   artifact:ArtifactIdentity,
+ *   physicalExport:ExportResult,
+ *   evidence:Record<string,unknown>
+ * }>} Reused local bytes and manifest-safe proof.
+ */
+async function reusePropertyArtifact(
+  priorVersion,
+  currentCounts,
+  temporaryDirectory,
+  targetPrefix,
+) {
+  const configuredRegion =
+    process.env.AWS_REGION ?? process.env.AWS_DEFAULT_REGION;
+  if (configuredRegion !== AWS_REGION) {
+    throw new Error(`AWS region must be ${AWS_REGION}`);
+  }
+  const priorPrefix = browardSnapshotPrefix(priorVersion);
+  const client = new S3Client({ region: AWS_REGION });
+  try {
+    const manifestResponse = await client.send(
+      new GetObjectCommand({
+        Bucket: S3_BUCKET,
+        Key: `${priorPrefix}/manifest.json`,
+        ChecksumMode: "ENABLED",
+      }),
+    );
+    const manifestText = await readTextBody(manifestResponse.Body);
+    const validated = validateReusablePropertyManifest(
+      /** @type {unknown} */ (JSON.parse(manifestText)),
+      currentCounts,
+      priorVersion,
+    );
+    const sourceArtifact = validated.artifact;
+    const head = await client.send(
+      new HeadObjectCommand({
+        Bucket: S3_BUCKET,
+        Key: sourceArtifact.s3Key,
+        ChecksumMode: "ENABLED",
+      }),
+    );
+    const objectResponse = await client.send(
+      new GetObjectCommand({
+        Bucket: S3_BUCKET,
+        Key: sourceArtifact.s3Key,
+        ChecksumMode: "ENABLED",
+      }),
+    );
+    const propertyPath = path.join(temporaryDirectory, sourceArtifact.fileName);
+    const readback = await saveReadback(objectResponse.Body, propertyPath);
+    const acl = await client.send(
+      new GetObjectAclCommand({
+        Bucket: S3_BUCKET,
+        Key: sourceArtifact.s3Key,
+      }),
+    );
+    const privateAcl = (acl.Grants ?? []).every((grant) => {
+      const uri = grant.Grantee?.URI ?? "";
+      return (
+        uri !== "http://acs.amazonaws.com/groups/global/AllUsers" &&
+        uri !==
+          "http://acs.amazonaws.com/groups/global/AuthenticatedUsers"
+      );
+    });
+    const sourceVerified =
+      head.ContentLength === sourceArtifact.sizeBytes &&
+      head.ChecksumSHA256 === sourceArtifact.checksumSha256 &&
+      objectResponse.ChecksumSHA256 === sourceArtifact.checksumSha256 &&
+      readback.sizeBytes === sourceArtifact.sizeBytes &&
+      readback.sha256 === sourceArtifact.sha256 &&
+      readback.cid === sourceArtifact.cid &&
+      privateAcl &&
+      head.ServerSideEncryption !== undefined;
+    if (!sourceVerified) {
+      throw new Error("Prior immutable property object failed reuse checks");
+    }
+    await verifyParquet(
+      propertyPath,
+      PROPERTY_FIELDS,
+      currentCounts.propertyRows,
+    );
+    return {
+      artifact: {
+        ...sourceArtifact,
+        s3Key: `${targetPrefix}/${sourceArtifact.fileName}`,
+      },
+      physicalExport: validated.physicalExport,
+      evidence: {
+        exactBytesReused: true,
+        sourceSnapshotVersion: priorVersion,
+        sourceSnapshotTimestamp: validated.snapshotTimestamp,
+        sourceS3Key: sourceArtifact.s3Key,
+        sourceSizeBytes: sourceArtifact.sizeBytes,
+        sourceSha256: sourceArtifact.sha256,
+        sourceCid: sourceArtifact.cid,
+        currentPropertyRows: currentCounts.propertyRows,
+        appraisalFirstLoadedAt: currentCounts.appraisalFirstLoadedAt,
+        appraisalLastLoadedAt: currentCounts.appraisalLastLoadedAt,
+        frozenStateMatchesPriorManifest: true,
+        sourceHeadChecksumMatches: true,
+        sourceReadbackSha256Matches: true,
+        sourceReadbackCidMatches: true,
+        sourcePrivateAcl: true,
+        sourceEncryptedAtRest: true,
+        parquetSchemaAndRowsVerified: true,
+      },
+    };
+  } finally {
+    client.destroy();
+  }
 }
 
 /**
@@ -1179,15 +1480,33 @@ export async function stageBrowardDonphanSnapshot(options) {
       temporaryDirectory,
       "permit-query-table.parquet",
     );
-    const propertyExport = await exportCursorToParquet(client, {
-      cursorName: "broward_property_snapshot",
-      sql: PROPERTY_SQL,
-      values: [APPRAISAL_SOURCE],
-      outputPath: propertyPath,
-      fields: PROPERTY_FIELDS,
-      mapRow: propertyRecord,
-      batchSize: options.batchSize,
-    });
+    /** @type {Record<string,unknown> | null} */
+    let propertyReuse = null;
+    /** @type {ArtifactIdentity | null} */
+    let reusedPropertyIdentity = null;
+    /** @type {ExportResult} */
+    let propertyExport;
+    if (options.reusePropertyVersion === null) {
+      propertyExport = await exportCursorToParquet(client, {
+        cursorName: "broward_property_snapshot",
+        sql: PROPERTY_SQL,
+        values: [APPRAISAL_SOURCE],
+        outputPath: propertyPath,
+        fields: PROPERTY_FIELDS,
+        mapRow: propertyRecord,
+        batchSize: options.batchSize,
+      });
+    } else {
+      const reused = await reusePropertyArtifact(
+        options.reusePropertyVersion,
+        normalized.counts,
+        temporaryDirectory,
+        prefix,
+      );
+      propertyExport = reused.physicalExport;
+      propertyReuse = reused.evidence;
+      reusedPropertyIdentity = reused.artifact;
+    }
     const permitExport = await exportCursorToParquet(client, {
       cursorName: "broward_permit_snapshot",
       sql: PERMIT_SQL,
@@ -1261,6 +1580,18 @@ export async function stageBrowardDonphanSnapshot(options) {
         }),
       );
     }
+    if (reusedPropertyIdentity !== null) {
+      const inspectedProperty = dataArtifacts.find(
+        (artifact) => artifact.name === "property-query-table",
+      );
+      if (
+        inspectedProperty === undefined ||
+        JSON.stringify(inspectedProperty) !==
+          JSON.stringify(reusedPropertyIdentity)
+      ) {
+        throw new Error("Reused property identity changed before staging");
+      }
+    }
     const manifest = {
       schemaVersion: SNAPSHOT_SCHEMA_VERSION,
       county: COUNTY,
@@ -1278,6 +1609,10 @@ export async function stageBrowardDonphanSnapshot(options) {
       counts: normalized.counts,
       permitSources,
       routeCoverage: routes,
+      acceptedTerminalExceptions: [
+        PEMBROKE_PINES_TERMINAL_EXCEPTIONS,
+      ],
+      propertyReuse,
       artifactSchemas: {
         property: PROPERTY_FIELDS,
         permit: PERMIT_FIELDS,
@@ -1345,6 +1680,7 @@ export async function stageBrowardDonphanSnapshot(options) {
       counts: normalized.counts,
       coverageStatus: "supported_partial",
       countyComplete: false,
+      propertyReuse,
       artifacts,
       verification: options.upload
         ? {
