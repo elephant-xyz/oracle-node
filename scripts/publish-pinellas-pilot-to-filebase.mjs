@@ -29,6 +29,8 @@ const FILEBASE_NAMES_API = "https://api.filebase.io/v1/names";
 const FILEBASE_GATEWAY = "https://ipfs.filebase.io";
 const QUERY_TABLE_IPNS_LABEL = "oracle-query-table-pinellas";
 const COVERAGE_IPNS_LABEL = "oracle-dataset-coverage-pinellas";
+/** Below this row count, a Filebase publish is treated as a pilot overwrite. */
+export const FULL_COUNTY_MIN_PUBLISH_ROWS = 1000;
 const TRAILING_STATE_ZIP_RE = /\b[A-Za-z]{2}\s+(\d{5})(?:-\d{4})?\s*$/;
 const TRAILING_ZIP_RE = /\b(\d{5})(?:-\d{4})?\s*$/;
 
@@ -105,6 +107,8 @@ const TRAILING_ZIP_RE = /\b(\d{5})(?:-\d{4})?\s*$/;
  * @property {boolean} publish
  * @property {boolean} dryRun
  * @property {boolean} allowMissing - When true, skip seed STRAPs without transformed.zip.
+ * @property {boolean} allowPilotOverwrite - When true, allow publishing fewer than
+ *   {@link FULL_COUNTY_MIN_PUBLISH_ROWS} rows to the production Pinellas IPNS names.
  */
 
 /**
@@ -397,7 +401,12 @@ export function toParquetRecord(row) {
 }
 
 /**
- * Build the MCP coverage snapshot for this 50-parcel appraisal pilot.
+ * Build the MCP coverage snapshot for a Pinellas appraisal publish.
+ *
+ * `ingestedCount` / `expectedCount` are the parquet row count and seed size.
+ * For the full tax roll those are 311,566. Donphan does **not** read
+ * publication scope from this JSON; it classifies Pinellas from the
+ * elephant-mcp publication-scope registry.
  *
  * @param {object} params - Snapshot inputs.
  * @param {number} params.ingestedCount - Distinct STRAPs written to parquet.
@@ -458,7 +467,23 @@ export function parseCliOptions(argv) {
     publish: values.get("no-publish") !== "true",
     dryRun: values.get("dry-run") === "true",
     allowMissing: values.get("allow-missing") === "true",
+    allowPilotOverwrite: values.get("allow-pilot-overwrite") === "true",
   };
+}
+
+/**
+ * Refuse to re-point the production Pinellas IPNS names at a pilot-sized table.
+ *
+ * @param {number} rowCount - Parquet rows about to be published.
+ * @param {boolean} allowPilotOverwrite - Explicit operator override.
+ * @returns {void}
+ */
+export function assertProductionPublishRowCount(rowCount, allowPilotOverwrite) {
+  if (rowCount >= FULL_COUNTY_MIN_PUBLISH_ROWS) return;
+  if (allowPilotOverwrite === true) return;
+  throw new Error(
+    `Refusing to publish ${rowCount} Pinellas rows to ${QUERY_TABLE_IPNS_LABEL} (full county is 311,566). Pass --allow-pilot-overwrite only for a deliberate subset republish.`,
+  );
 }
 
 /**
@@ -941,6 +966,11 @@ async function main() {
     );
     return;
   }
+
+  assertProductionPublishRowCount(
+    artifacts.rowCount,
+    options.allowPilotOverwrite,
+  );
 
   await publishPinellasArtifactsToFilebase({
     options,

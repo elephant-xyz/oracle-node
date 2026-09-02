@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  assertProductionPublishRowCount,
   buildPinellasPilotCoverage,
   fillDerivedFilebaseToken,
   hasFilebaseCredentials,
@@ -105,23 +106,33 @@ describe("Pinellas local-zip query-table mapping", () => {
 
   it("builds coverage with appraisal ingested_count equal to the parquet row count", () => {
     const snapshot = buildPinellasPilotCoverage({
-      ingestedCount: 50,
-      expectedCount: 50,
-      exportedAt: "2026-08-27T21:00:00.000Z",
+      ingestedCount: 311566,
+      expectedCount: 311566,
+      exportedAt: "2026-09-01T21:13:14.191Z",
     });
     expect(snapshot.county).toBe("pinellas");
     expect(snapshot.datasets).toHaveLength(1);
     expect(snapshot.datasets[0]).toMatchObject({
       source: "appraisal",
-      ingested_count: 50,
-      expected_count: 50,
+      ingested_count: 311566,
+      expected_count: 311566,
     });
+    expect(snapshot.datasets[0]).not.toHaveProperty("publicationScope");
   });
 
   it("parses publish flags and reports Filebase credential presence without values", () => {
     expect(parseCliOptions(["--dry-run", "--no-publish"]).dryRun).toBe(true);
     expect(parseCliOptions(["--no-publish"]).publish).toBe(false);
     expect(parseCliOptions(["--allow-missing"]).allowMissing).toBe(true);
+    expect(parseCliOptions([]).allowPilotOverwrite).toBe(false);
+    expect(
+      parseCliOptions(["--allow-pilot-overwrite"]).allowPilotOverwrite,
+    ).toBe(true);
+    expect(() => assertProductionPublishRowCount(50, false)).toThrow(
+      /Refusing to publish 50 Pinellas rows/,
+    );
+    expect(() => assertProductionPublishRowCount(50, true)).not.toThrow();
+    expect(() => assertProductionPublishRowCount(311566, false)).not.toThrow();
     expect(hasFilebaseCredentials({})).toBe(false);
     const env = {
       S3_ACCESS_KEY_ID: "AKIAEXAMPLE",

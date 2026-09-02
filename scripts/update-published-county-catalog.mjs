@@ -20,6 +20,17 @@ const ISO_TIMESTAMP_PATTERN =
  * @property {string} datasetCoverageUrl Public dataset coverage URL.
  * @property {string | null} permitQueryTableUrl Public permit query-table URL.
  * @property {string | null} placesTableUrl Public Overture places-table URL.
+/**
+ * @typedef {Object} PublishedCounty
+ * @property {string} countyKey Stable lower-kebab county identifier.
+ * @property {string} countyName Human-readable county name.
+ * @property {string} stateCode Two-letter uppercase state code.
+ * @property {string} countyFips Stable five-digit US county FIPS code.
+ * @property {"published"} status Publication state.
+ * @property {string} queryTableUrl Public query-table Parquet URL.
+ * @property {string} datasetCoverageUrl Public dataset coverage URL.
+ * @property {string | null} permitQueryTableUrl Public permit query-table URL.
+ * @property {string | null} placesTableUrl Public Overture places-table URL.
  * @property {string} updatedAt ISO-8601 timestamp of the latest published data change.
  */
 
