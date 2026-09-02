@@ -375,6 +375,24 @@ export function buildCoconutCreekSearchBody(query) {
 }
 
 /**
+ * Recognize only Coconut Creek's fixed anonymous no-match redirect. The
+ * source returns to its official search path with `error_num=2` when an exact
+ * folio or address has no permit rows; all other redirects remain failures.
+ *
+ * @param {string | URL} searchUrl - Configured official search endpoint.
+ * @param {URL} finalUrl - Same-session terminal response URL.
+ * @returns {boolean} True only for the source's certified empty-result state.
+ */
+export function isCoconutCreekEmptyResultRedirect(searchUrl, finalUrl) {
+  const expected = new URL(searchUrl);
+  return (
+    finalUrl.origin === expected.origin &&
+    finalUrl.pathname === expected.pathname &&
+    finalUrl.searchParams.get("error_num") === "2"
+  );
+}
+
+/**
  * Build one Lauderhill eGovPLUS exact-search form body.
  *
  * @param {BrowardMunicipalQuery} query - Exact permit, folio, or situs query.
@@ -557,6 +575,11 @@ function createDirectHttpTransport(config, dependencies) {
           },
           body: buildCoconutCreekSearchBody(query),
         });
+        if (
+          isCoconutCreekEmptyResultRedirect(config.searchUrl, result.finalUrl)
+        ) {
+          return { references: [], nextPage: null };
+        }
         if (result.finalUrl.pathname !== resultUrl.pathname) {
           throw new Error(
             "Coconut Creek did not return a reconcilable permit result",

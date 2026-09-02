@@ -37,6 +37,7 @@ import {
   buildCoconutCreekSearchBody,
   buildEgovPlusSearchBody,
   buildSmartGovSearchBody,
+  isCoconutCreekEmptyResultRedirect,
   parseMunicipalStreetAddress,
   probeBoundedBrowardMunicipalPermits,
 } from "../../scripts/permit-source-adapters/broward-municipal-transport.mjs";
@@ -297,6 +298,31 @@ describe("Broward municipal live transport form contracts", () => {
     expect(() => buildMunicipalBrowserUserAgent(" \n ")).toThrow(
       "user agent is invalid",
     );
+  });
+
+  it("accepts only Coconut Creek's fixed same-origin no-match redirect", () => {
+    const searchUrl =
+      "https://www3.coconutcreek.gov/sd/permit/permit_status_01.asp";
+    expect(
+      isCoconutCreekEmptyResultRedirect(
+        searchUrl,
+        new URL(`${searchUrl}?error_num=2&2=PRIVATE-FIXTURE-FOLIO`),
+      ),
+    ).toBe(true);
+    expect(
+      isCoconutCreekEmptyResultRedirect(
+        searchUrl,
+        new URL(`${searchUrl}?error_num=1`),
+      ),
+    ).toBe(false);
+    expect(
+      isCoconutCreekEmptyResultRedirect(
+        searchUrl,
+        new URL(
+          "https://example.test/sd/permit/permit_status_01.asp?error_num=2",
+        ),
+      ),
+    ).toBe(false);
   });
 
   it("parses bounded addresses and populates exactly one legacy search mode", () => {
