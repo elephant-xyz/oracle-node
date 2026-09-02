@@ -1113,9 +1113,7 @@ export function validateReusablePropertyManifest(
       rowCount: currentCounts.propertyRows,
       nonNullCounts,
     },
-    snapshotTimestamp: new Date(
-      manifestValue.snapshotTimestamp,
-    ).toISOString(),
+    snapshotTimestamp: new Date(manifestValue.snapshotTimestamp).toISOString(),
   };
 }
 
@@ -1255,8 +1253,7 @@ async function reusePropertyArtifact(
       const uri = grant.Grantee?.URI ?? "";
       return (
         uri !== "http://acs.amazonaws.com/groups/global/AllUsers" &&
-        uri !==
-          "http://acs.amazonaws.com/groups/global/AuthenticatedUsers"
+        uri !== "http://acs.amazonaws.com/groups/global/AuthenticatedUsers"
       );
     });
     const sourceVerified =
@@ -1609,9 +1606,7 @@ export async function stageBrowardDonphanSnapshot(options) {
       counts: normalized.counts,
       permitSources,
       routeCoverage: routes,
-      acceptedTerminalExceptions: [
-        PEMBROKE_PINES_TERMINAL_EXCEPTIONS,
-      ],
+      acceptedTerminalExceptions: [PEMBROKE_PINES_TERMINAL_EXCEPTIONS],
       propertyReuse,
       artifactSchemas: {
         property: PROPERTY_FIELDS,

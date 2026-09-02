@@ -166,11 +166,7 @@ describe("Broward Donphan snapshot staging", () => {
     };
 
     expect(
-      validateReusablePropertyManifest(
-        manifest,
-        currentCounts,
-        priorVersion,
-      ),
+      validateReusablePropertyManifest(manifest, currentCounts, priorVersion),
     ).toMatchObject({
       artifact: {
         sha256: "a".repeat(64),
