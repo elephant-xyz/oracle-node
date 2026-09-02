@@ -257,5 +257,14 @@ describe("published county catalog", () => {
     expect(JSON.parse(env.DATASET_COVERAGE_MAP).broward).toBe(
       broward.datasetCoverageUrl,
     );
+    expect(
+      JSON.parse(env.PROPERTY_QUERY_TABLE_CID_FALLBACK_MAP_ADDITIONS).broward,
+    ).toBe("QmQhc18TqKTjBymQkfxdsbWNg6SxrDmQ3bfYBJdWWdU7cF");
+    expect(
+      JSON.parse(env.PERMIT_QUERY_TABLE_CID_FALLBACK_MAP_ADDITIONS).broward,
+    ).toBe("QmcDAHJBt5LHiHAHdDwqCKM2BZqPwTJBrxW4Z5DJ6qEJd2");
+    expect(
+      JSON.parse(env.DATASET_COVERAGE_CID_FALLBACK_MAP_ADDITIONS).broward,
+    ).toBe("QmTZndCJfNi29hxGzyLXpt9iYJedtmeM2DKFRa24LLA6dq");
   });
 });
