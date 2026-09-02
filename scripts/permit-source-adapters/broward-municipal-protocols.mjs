@@ -205,11 +205,7 @@ function field(fields, aliases) {
  * @returns {string | null} ISO calendar date.
  */
 function parseSourceDate(value, fieldName) {
-  if (
-    value === null ||
-    value === "" ||
-    /^(?:-\s*)+$/u.test(value)
-  ) {
+  if (value === null || value === "" || /^(?:-\s*)+$/u.test(value)) {
     return null;
   }
   const match = /^(\d{1,2})[/-](\d{1,2})[/-](\d{2}|\d{4})$/u.exec(value);
