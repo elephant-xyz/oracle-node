@@ -4,8 +4,9 @@
 /**
  * Enumerate municipal sources without complete broad lists through a verified
  * BCPA property-first seed. Every source query is exact, sequential, durable,
- * and terminal only when the client-all result page remains below its
- * exclusive row cap and every selected detail reconciles.
+ * and heartbeated through detail traversal. A query becomes terminal only when
+ * the client-all result page remains below its exclusive row cap and every
+ * selected detail reconciles.
  */
 
 import { createHash } from "node:crypto";
@@ -245,6 +246,14 @@ export async function runMunicipalPropertyEnumeration(
           kind: seedQuery.queryKind,
           value: seedQuery.queryValue,
         });
+        checkpoint = {
+          ...checkpoint,
+          status: "running",
+          blocker: null,
+          nextAttemptAt: null,
+          updatedAt: now(),
+        };
+        await writeCheckpoint(checkpointPath, checkpoint);
         if (operationCount > 0) await wait(options.delayMs);
         const page = await transport.fetchSearchPage(query, 1);
         operationCount += 1;
@@ -274,6 +283,14 @@ export async function runMunicipalPropertyEnumeration(
             throw new Error("Municipal property detail identity mismatch");
           }
           records.push(record);
+          checkpoint = {
+            ...checkpoint,
+            status: "running",
+            blocker: null,
+            nextAttemptAt: null,
+            updatedAt: now(),
+          };
+          await writeCheckpoint(checkpointPath, checkpoint);
         }
         const queryPath = path.join(
           queriesDirectory,

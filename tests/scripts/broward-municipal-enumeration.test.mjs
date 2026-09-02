@@ -165,18 +165,31 @@ describe("Broward municipal property enumeration", () => {
         now: () => "2026-09-02T17:00:00.000Z",
         wait: async () => {},
         createTransport: async () => ({
-          fetchSearchPage: async () => ({
-            references: [
-              {
-                sourceRecordId: "fixture-1",
-                permitNumber: "26000001",
-                detailUrl: "https://example.test/detail/fixture-1",
-                sourcePage: 1,
-                listData: {},
-              },
-            ],
-            nextPage: null,
-          }),
+          fetchSearchPage: async () => {
+            const activeCheckpoint = JSON.parse(
+              await readFile(
+                path.join(outputDirectory, "checkpoint.private.json"),
+                "utf8",
+              ),
+            );
+            expect(activeCheckpoint).toMatchObject({
+              nextQueryIndex: 0,
+              status: "running",
+              blocker: null,
+            });
+            return {
+              references: [
+                {
+                  sourceRecordId: "fixture-1",
+                  permitNumber: "26000001",
+                  detailUrl: "https://example.test/detail/fixture-1",
+                  sourcePage: 1,
+                  listData: {},
+                },
+              ],
+              nextPage: null,
+            };
+          },
           fetchDetail: async (reference, query) =>
             normalizedRecord(
               config,
