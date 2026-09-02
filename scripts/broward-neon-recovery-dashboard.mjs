@@ -81,6 +81,10 @@ const DEFAULT_PORT = 47_832;
  * @property {string | number} coral_etrakit_loaded - Loaded Coral slice rows.
  * @property {string | number} coral_etrakit_linked - Exact-folio-linked Coral rows.
  * @property {string | number} coral_etrakit_roofing - Loaded roofing rows.
+ * @property {string | number} pembroke_park_gov_easy_loaded
+ *   Durable loaded-record aggregate for the bounded Pembroke Park slice.
+ * @property {string | number} hillsboro_beach_communitycore_loaded
+ *   Durable loaded-record aggregate for Hillsboro Beach.
  * @property {string | number} sunbiz_match_roles - Exact matched address roles.
  * @property {string | number} sunbiz_match_registrations - Distinct linked registrations.
  * @property {string | number} sunbiz_match_properties - Distinct linked properties.
@@ -132,24 +136,65 @@ const DEFAULT_PORT = 47_832;
  * @property {number} invalidRecords - Malformed source rows.
  * @property {number} sourceMissingRecords - Reported but inaccessible rows.
  *
- * @typedef {"software_or_transport" | "captcha_required" | "login_required" | "no_anonymous_search" | "custodian_only"} PermitRouteBlockerKey
+ * @typedef {"software_or_transport" | "login_required" | "no_anonymous_search" | "custodian_only"} PermitRouteHardBlockKey
  *
- * @typedef {object} PermitRouteBlockerCategory
- * @property {PermitRouteBlockerKey} key - Stable blocker category.
+ * @typedef {object} PermitRouteHardBlockCategory
+ * @property {PermitRouteHardBlockKey} key - Stable hard-block category.
  * @property {"software_transport" | "source_policy"} kind
  *   Whether implementation work can address the route or the source imposes the barrier.
- * @property {string} label - Public dashboard category label.
- * @property {number} count - Number of blocked current routes in this category.
+ * @property {string} label - Public hard-block category label.
+ * @property {number} count - Number of hard-blocked routes in this category.
  * @property {string[]} jurisdictions - Sorted public jurisdiction names.
  *
  * @typedef {object} BrowardPermitRouteStatus
  * @property {string} registryVersion - Executable registry version.
  * @property {number} totalCurrentRoutes - Current primary routes only.
  * @property {number} implementedCurrentRoutes - Implemented current primary routes.
- * @property {number} blockedCurrentRoutes - Fail-closed current primary routes.
+ * @property {number} manualCaptchaCurrentRoutes
+ *   Routes requiring an expiring manually authorized CAPTCHA session.
+ * @property {number} hardBlockedCurrentRoutes
+ *   Routes unavailable because of software, login, anonymous-search, or
+ *   custodian-only barriers.
+ * @property {number} unattendedUnavailableCurrentRoutes
+ *   Explicit aggregate of manual CAPTCHA and hard-blocked routes.
  * @property {string[]} implementedJurisdictions - Sorted implemented jurisdiction names.
- * @property {PermitRouteBlockerCategory[]} blockerCategories
- *   Exhaustive deterministic categories whose counts sum to blockedCurrentRoutes.
+ * @property {string[]} manualCaptchaJurisdictions
+ *   Sorted jurisdictions requiring manually authorized CAPTCHA sessions.
+ * @property {PermitRouteHardBlockCategory[]} hardBlockCategories
+ *   Exhaustive deterministic categories whose counts sum independently to
+ *   hardBlockedCurrentRoutes.
+ *
+ * @typedef {"awaiting_manual_captcha" | "bounded_capture_in_progress" | "bounded_slice_captured" | "bounded_slice_loaded"} ManualCaptchaProgressState
+ *
+ * @typedef {"private_capture_checkpoint" | "durable_loaded_aggregate" | "no_captured_aggregate"} ManualCaptchaEvidence
+ *
+ * @typedef {"bounded_capped_slice" | "bounded_slice" | "not_captured"} ManualCaptchaCoverageBoundary
+ *
+ * @typedef {object} ManualCaptchaRouteProgress
+ * @property {string} jurisdiction - Public jurisdiction label.
+ * @property {"captcha_required"} registryStatus
+ *   Executable route status; manual evidence never promotes the adapter.
+ * @property {ManualCaptchaProgressState} progressState
+ *   Aggregate-only state of bounded manual evidence.
+ * @property {ManualCaptchaEvidence} evidence
+ *   Durable aggregate source without artifact or session details.
+ * @property {ManualCaptchaCoverageBoundary} coverageBoundary
+ *   Explicitly non-countywide evidence boundary.
+ * @property {number} capturedRecords - Reconciled bounded captured count.
+ * @property {number} loadedRecords - Durable source-system record count.
+ * @property {true} manualSessionRequired - CAPTCHA must be completed manually.
+ * @property {true} sessionsExpire - Manual browser authorization is temporary.
+ * @property {true} validSearchCaptchaRequired
+ *   A valid search CAPTCHA is required for another source request.
+ * @property {false} countyComplete - Bounded evidence is never county completeness.
+ *
+ * @typedef {object} ManualCaptchaProgress
+ * @property {"manual_captcha_sessions_expire"} sessionPolicy
+ *   Public-safe session lifecycle statement.
+ * @property {false} countyComplete
+ *   Manual bounded evidence does not establish county completeness.
+ * @property {ManualCaptchaRouteProgress[]} routes
+ *   One aggregate-only row per CAPTCHA-dependent current route.
  *
  * @typedef {object} RecoveryDashboardStatus
  * @property {1} schemaVersion - Response schema version.
@@ -194,10 +239,14 @@ const DEFAULT_PORT = 47_832;
  *   queryRowsMatch: boolean | null,
  *   registryJurisdictions: number,
  *   currentSourcesImplemented: number,
- *   currentSourcesBlocked: number
+ *   currentSourcesManualCaptcha: number,
+ *   currentSourcesHardBlocked: number,
+ *   currentSourcesUnattendedUnavailable: number
  * }} permit - Durable bounded-pilot evidence and honest completeness state.
  * @property {BrowardPermitRouteStatus} permitRoutes
- *   Registry-derived current-route implementation and blocker status.
+ *   Registry-derived implementation, manual-CAPTCHA, and hard-block status.
+ * @property {ManualCaptchaProgress} manualCaptchaProgress
+ *   Aggregate-only progress for manually authorized CAPTCHA routes.
  * @property {{
  *   records:number,
  *   matched:number,
@@ -330,28 +379,22 @@ function nullableCount(value) {
 }
 
 /**
- * Ordered, exhaustive mapping from fail-closed registry statuses to public
- * blocker categories.
+ * Ordered, exhaustive mapping from non-CAPTCHA unavailable registry statuses
+ * to public hard-block categories.
  *
  * @type {readonly {
- *   key: PermitRouteBlockerKey,
+ *   key: PermitRouteHardBlockKey,
  *   kind: "software_transport" | "source_policy",
  *   label: string,
  *   statuses: readonly string[]
  * }[]}
  */
-const PERMIT_ROUTE_BLOCKER_DEFINITIONS = Object.freeze([
+const PERMIT_ROUTE_HARD_BLOCK_DEFINITIONS = Object.freeze([
   Object.freeze({
     key: "software_or_transport",
     kind: "software_transport",
     label: "Software / transport",
     statuses: Object.freeze(["adapter_unavailable", "egress_unavailable"]),
-  }),
-  Object.freeze({
-    key: "captcha_required",
-    kind: "source_policy",
-    label: "CAPTCHA required",
-    statuses: Object.freeze(["captcha_required"]),
   }),
   Object.freeze({
     key: "login_required",
@@ -383,9 +426,14 @@ const PERMIT_ROUTE_BLOCKER_DEFINITIONS = Object.freeze([
 export function buildBrowardPermitRouteStatus() {
   /** @type {string[]} */
   const implementedJurisdictions = [];
-  /** @type {Map<PermitRouteBlockerKey, string[]>} */
-  const blockedJurisdictions = new Map(
-    PERMIT_ROUTE_BLOCKER_DEFINITIONS.map((definition) => [definition.key, []]),
+  /** @type {string[]} */
+  const manualCaptchaJurisdictions = [];
+  /** @type {Map<PermitRouteHardBlockKey, string[]>} */
+  const hardBlockedJurisdictions = new Map(
+    PERMIT_ROUTE_HARD_BLOCK_DEFINITIONS.map((definition) => [
+      definition.key,
+      [],
+    ]),
   );
   const currentSourceKeys = new Set();
   for (const entry of BROWARD_PERMIT_JURISDICTIONS) {
@@ -405,21 +453,28 @@ export function buildBrowardPermitRouteStatus() {
       implementedJurisdictions.push(entry.name);
       continue;
     }
-    const definition = PERMIT_ROUTE_BLOCKER_DEFINITIONS.find((candidate) =>
+    if (route.status === "captcha_required") {
+      manualCaptchaJurisdictions.push(entry.name);
+      continue;
+    }
+    const definition = PERMIT_ROUTE_HARD_BLOCK_DEFINITIONS.find((candidate) =>
       candidate.statuses.includes(route.status),
     );
     if (definition === undefined) {
-      throw new Error(`Unclassified Broward permit blocker: ${route.status}`);
+      throw new Error(
+        `Unclassified Broward permit hard block: ${route.status}`,
+      );
     }
-    blockedJurisdictions.get(definition.key)?.push(entry.name);
+    hardBlockedJurisdictions.get(definition.key)?.push(entry.name);
   }
   implementedJurisdictions.sort((left, right) => left.localeCompare(right));
-  const blockerCategories = PERMIT_ROUTE_BLOCKER_DEFINITIONS.map(
+  manualCaptchaJurisdictions.sort((left, right) => left.localeCompare(right));
+  const hardBlockCategories = PERMIT_ROUTE_HARD_BLOCK_DEFINITIONS.map(
     (definition) => {
-      const names = blockedJurisdictions.get(definition.key) ?? [];
+      const names = hardBlockedJurisdictions.get(definition.key) ?? [];
       names.sort((left, right) => left.localeCompare(right));
       return {
-        key: /** @type {PermitRouteBlockerKey} */ (definition.key),
+        key: /** @type {PermitRouteHardBlockKey} */ (definition.key),
         kind: /** @type {"software_transport" | "source_policy"} */ (
           definition.kind
         ),
@@ -429,14 +484,21 @@ export function buildBrowardPermitRouteStatus() {
       };
     },
   );
-  const blockedCurrentRoutes = blockerCategories.reduce(
+  const hardBlockedCurrentRoutes = hardBlockCategories.reduce(
     (sum, category) => sum + category.count,
     0,
   );
+  const manualCaptchaCurrentRoutes = manualCaptchaJurisdictions.length;
+  const unattendedUnavailableCurrentRoutes =
+    manualCaptchaCurrentRoutes + hardBlockedCurrentRoutes;
   const totalCurrentRoutes = BROWARD_PERMIT_JURISDICTIONS.length;
   if (
-    implementedJurisdictions.length + blockedCurrentRoutes !==
-    totalCurrentRoutes
+    implementedJurisdictions.length +
+      manualCaptchaCurrentRoutes +
+      hardBlockedCurrentRoutes !==
+      totalCurrentRoutes ||
+    unattendedUnavailableCurrentRoutes !==
+      manualCaptchaCurrentRoutes + hardBlockedCurrentRoutes
   ) {
     throw new Error("Broward permit route categories do not reconcile");
   }
@@ -444,9 +506,119 @@ export function buildBrowardPermitRouteStatus() {
     registryVersion: BROWARD_PERMIT_REGISTRY_VERSION,
     totalCurrentRoutes,
     implementedCurrentRoutes: implementedJurisdictions.length,
-    blockedCurrentRoutes,
+    manualCaptchaCurrentRoutes,
+    hardBlockedCurrentRoutes,
+    unattendedUnavailableCurrentRoutes,
     implementedJurisdictions,
-    blockerCategories,
+    manualCaptchaJurisdictions,
+    hardBlockCategories,
+  };
+}
+
+/**
+ * Build privacy-safe progress for the three manually authorized CAPTCHA
+ * routes. Counts come only from the Coral checkpoint and durable
+ * source-system rollups; route configuration contains no transient totals.
+ *
+ * @param {RecoveryAggregateRow} row - Durable source-system aggregates.
+ * @param {RecoveryDashboardStatus["coralSpringsPermit"]} coralSpringsPermit
+ *   Reconciled aggregate checkpoint and loaded counts.
+ * @param {BrowardPermitRouteStatus} permitRoutes
+ *   Executable-registry route classification.
+ * @returns {ManualCaptchaProgress} Reconciled manual route progress.
+ */
+function buildManualCaptchaProgress(
+  row,
+  coralSpringsPermit,
+  permitRoutes,
+) {
+  const pembrokeLoaded = count(row.pembroke_park_gov_easy_loaded);
+  const hillsboroLoaded = count(row.hillsboro_beach_communitycore_loaded);
+  const coralCaptured = coralSpringsPermit.unique;
+  const coralLoaded = coralSpringsPermit.loaded;
+  /** @type {ManualCaptchaRouteProgress[]} */
+  const routes = [
+    {
+      jurisdiction: "Coral Springs",
+      registryStatus: "captcha_required",
+      progressState: coralSpringsPermit.captureComplete
+        ? "bounded_slice_captured"
+        : coralCaptured > 0
+          ? "bounded_capture_in_progress"
+          : coralLoaded > 0
+            ? "bounded_slice_loaded"
+            : "awaiting_manual_captcha",
+      evidence:
+        coralCaptured > 0
+          ? "private_capture_checkpoint"
+          : coralLoaded > 0
+            ? "durable_loaded_aggregate"
+            : "no_captured_aggregate",
+      coverageBoundary: "bounded_capped_slice",
+      capturedRecords: coralCaptured,
+      loadedRecords: coralLoaded,
+      manualSessionRequired: true,
+      sessionsExpire: true,
+      validSearchCaptchaRequired: true,
+      countyComplete: false,
+    },
+    {
+      jurisdiction: "Hillsboro Beach",
+      registryStatus: "captcha_required",
+      progressState:
+        hillsboroLoaded > 0
+          ? "bounded_slice_loaded"
+          : "awaiting_manual_captcha",
+      evidence:
+        hillsboroLoaded > 0
+          ? "durable_loaded_aggregate"
+          : "no_captured_aggregate",
+      coverageBoundary:
+        hillsboroLoaded > 0 ? "bounded_slice" : "not_captured",
+      capturedRecords: hillsboroLoaded,
+      loadedRecords: hillsboroLoaded,
+      manualSessionRequired: true,
+      sessionsExpire: true,
+      validSearchCaptchaRequired: true,
+      countyComplete: false,
+    },
+    {
+      jurisdiction: "Pembroke Park",
+      registryStatus: "captcha_required",
+      progressState:
+        pembrokeLoaded > 0
+          ? "bounded_slice_loaded"
+          : "awaiting_manual_captcha",
+      evidence:
+        pembrokeLoaded > 0
+          ? "durable_loaded_aggregate"
+          : "no_captured_aggregate",
+      coverageBoundary:
+        pembrokeLoaded > 0 ? "bounded_slice" : "not_captured",
+      capturedRecords: pembrokeLoaded,
+      loadedRecords: pembrokeLoaded,
+      manualSessionRequired: true,
+      sessionsExpire: true,
+      validSearchCaptchaRequired: true,
+      countyComplete: false,
+    },
+  ];
+  routes.sort((left, right) =>
+    left.jurisdiction.localeCompare(right.jurisdiction),
+  );
+  const expectedNames = permitRoutes.manualCaptchaJurisdictions;
+  if (
+    routes.length !== permitRoutes.manualCaptchaCurrentRoutes ||
+    routes.some(
+      (route, index) => route.jurisdiction !== expectedNames[index],
+    )
+  ) {
+    throw new Error("Broward manual CAPTCHA routes do not reconcile");
+  }
+  return {
+    sessionPolicy: "manual_captcha_sessions_expire",
+    countyComplete: false,
+    routes,
   };
 }
 
@@ -461,7 +633,11 @@ export function buildBrowardPermitRouteStatus() {
 function buildPermitStatus(row, permitRoutes) {
   const registryJurisdictions = permitRoutes.totalCurrentRoutes;
   const currentSourcesImplemented = permitRoutes.implementedCurrentRoutes;
-  const currentSourcesBlocked = permitRoutes.blockedCurrentRoutes;
+  const currentSourcesManualCaptcha =
+    permitRoutes.manualCaptchaCurrentRoutes;
+  const currentSourcesHardBlocked = permitRoutes.hardBlockedCurrentRoutes;
+  const currentSourcesUnattendedUnavailable =
+    permitRoutes.unattendedUnavailableCurrentRoutes;
   const recordedAt =
     row.permit_recorded_at instanceof Date
       ? row.permit_recorded_at.toISOString()
@@ -500,7 +676,9 @@ function buildPermitStatus(row, permitRoutes) {
       queryRowsMatch: null,
       registryJurisdictions,
       currentSourcesImplemented,
-      currentSourcesBlocked,
+      currentSourcesManualCaptcha,
+      currentSourcesHardBlocked,
+      currentSourcesUnattendedUnavailable,
     };
   }
   if (
@@ -525,7 +703,8 @@ function buildPermitStatus(row, permitRoutes) {
   }
   if (
     row.permit_county_complete &&
-    (!row.permit_pilot_passed || currentSourcesBlocked !== 0)
+    (!row.permit_pilot_passed ||
+      currentSourcesUnattendedUnavailable !== 0)
   ) {
     throw new Error("Permit county completeness does not reconcile");
   }
@@ -546,7 +725,9 @@ function buildPermitStatus(row, permitRoutes) {
     queryRowsMatch: row.permit_query_rows_match,
     registryJurisdictions,
     currentSourcesImplemented,
-    currentSourcesBlocked,
+    currentSourcesManualCaptcha,
+    currentSourcesHardBlocked,
+    currentSourcesUnattendedUnavailable,
   };
 }
 
@@ -593,6 +774,23 @@ export function buildRecoveryStatus(row, nowMs) {
   const remaining = Math.max(0, BROWARD_ROW_DENOMINATOR - durableCompleted);
   const recentProperties = count(row.recent_properties);
   const permitRoutes = buildBrowardPermitRouteStatus();
+  /** @type {RecoveryDashboardStatus["coralSpringsPermit"]} */
+  const coralSpringsPermit = {
+    reported: 59_379,
+    exposed: 1_000,
+    paged: 0,
+    unique: 0,
+    details: 0,
+    loaded: count(row.coral_etrakit_loaded),
+    linked: count(row.coral_etrakit_linked),
+    roofing: count(row.coral_etrakit_roofing),
+    completedPages: 0,
+    totalPages: 50,
+    captureComplete: false,
+    completenessBoundary: "bounded_capped_keyword_slice",
+    captchaPrerequisite: "manual_authorization_required",
+    registryStatus: "captcha_required",
+  };
   return {
     schemaVersion: 1,
     generatedAt: new Date(nowMs).toISOString(),
@@ -644,22 +842,12 @@ export function buildRecoveryStatus(row, nowMs) {
       listLoadedRows: count(row.permit_list_loaded_rows),
       listChunks: count(row.permit_list_chunks),
     },
-    coralSpringsPermit: {
-      reported: 59_379,
-      exposed: 1_000,
-      paged: 0,
-      unique: 0,
-      details: 0,
-      loaded: count(row.coral_etrakit_loaded),
-      linked: count(row.coral_etrakit_linked),
-      roofing: count(row.coral_etrakit_roofing),
-      completedPages: 0,
-      totalPages: 50,
-      captureComplete: false,
-      completenessBoundary: "bounded_capped_keyword_slice",
-      captchaPrerequisite: "manual_authorization_required",
-      registryStatus: "captcha_required",
-    },
+    coralSpringsPermit,
+    manualCaptchaProgress: buildManualCaptchaProgress(
+      row,
+      coralSpringsPermit,
+      permitRoutes,
+    ),
     permitEnumeration: emptyPermitEnumerationStatus(),
     sunbizMatch: {
       matchedAddressRoles: count(row.sunbiz_match_roles),
@@ -1323,7 +1511,11 @@ export function createRecoveryStatusReader(
            coalesce(coral_etrakit_matched,0)::bigint
              AS coral_etrakit_linked,
            coalesce(coral_etrakit_roofing,0)::bigint
-             AS coral_etrakit_roofing
+             AS coral_etrakit_roofing,
+           coalesce(pembroke_park_gov_easy_records,0)::bigint
+             AS pembroke_park_gov_easy_loaded,
+           coalesce(hillsboro_beach_communitycore_records,0)::bigint
+             AS hillsboro_beach_communitycore_loaded
          FROM ${CONTROL_SCHEMA}.broward_dashboard_rollup
          WHERE pipeline_key='broward'
        ),
@@ -1401,6 +1593,11 @@ export function createRecoveryStatusReader(
         ...status.coralSpringsPermit,
         ...coralCapture,
       };
+      status.manualCaptchaProgress = buildManualCaptchaProgress(
+        /** @type {RecoveryAggregateRow} */ (row),
+        status.coralSpringsPermit,
+        status.permitRoutes,
+      );
       return status;
     })().finally(() => {
       inFlight = null;
@@ -1645,7 +1842,7 @@ const DASHBOARD_HTML = `<!doctype html>
     <article><h2>Completed windows</h2><strong id="permit-windows">—</strong></article>
   </section>
   <h2>Coral Springs eTRAKiT capped slice</h2>
-  <p class="route-note">Manual CAPTCHA authorization is still required. The 1,000 exposed rows are a bounded slice of 59,379 reported roofing matches, not complete jurisdiction coverage.</p>
+  <p class="route-note">Manual CAPTCHA authorization is still required and sessions expire. Captured rows are a bounded capped slice of the reported source matches, not complete jurisdiction coverage.</p>
   <section class="grid">
     <article><h2>Reported / exposed</h2><strong id="coral-reported">—</strong></article>
     <article><h2>Paged / unique</h2><strong id="coral-captured">—</strong></article>
@@ -1685,15 +1882,25 @@ const DASHBOARD_HTML = `<!doctype html>
   <p class="route-note">Counts include one current primary route per jurisdiction. Historical and supplemental routes are excluded.</p>
   <section class="grid">
     <article><h2>Total current routes</h2><strong id="permit-route-total">—</strong></article>
-    <article><h2>Implemented</h2><strong id="permit-route-implemented">—</strong></article>
-    <article><h2>Blocked</h2><strong id="permit-route-blocked">—</strong></article>
+    <article><h2>Automated / implemented</h2><strong id="permit-route-implemented">—</strong></article>
+    <article><h2>Manual CAPTCHA</h2><strong id="permit-route-manual">—</strong></article>
+    <article><h2>Hard blocked</h2><strong id="permit-route-hard-blocked">—</strong></article>
+    <article><h2>Unattended unavailable</h2><strong id="permit-route-unattended">—</strong></article>
   </section>
   <div class="route-groups">
     <section class="route-group">
       <h3>Implemented jurisdictions</h3>
       <p id="permit-route-implemented-names">Loading route status…</p>
     </section>
-    <div id="permit-route-blocker-groups"></div>
+    <section class="route-group">
+      <h3>Manual CAPTCHA route progress</h3>
+      <p class="route-note">Manual sessions expire, each route remains <code>captcha_required</code>, and bounded captures do not establish county completeness.</p>
+      <ul id="permit-route-manual-progress"><li>Loading manual route progress…</li></ul>
+    </section>
+    <section class="route-group">
+      <h3>Hard-block categories</h3>
+      <div id="permit-route-blocker-groups"></div>
+    </section>
   </div>
   <p id="error"></p>
   <p>Only aggregate counts and timestamps are exposed. Refreshes every five seconds.</p>
@@ -1810,15 +2017,36 @@ const DASHBOARD_HTML = `<!doctype html>
       set("permit-sample", nullable(permit.sampleParcels));
       set("permit-attempts", nullable(permit.sourceAttempts));
       set("permit-records", nullable(permit.queryRows));
-      set("permit-routes", format.format(permit.currentSourcesImplemented) + " implemented / " + format.format(permit.currentSourcesBlocked) + " blocked");
+      set(
+        "permit-routes",
+        format.format(permit.currentSourcesImplemented) + " automated / " +
+          format.format(permit.currentSourcesManualCaptcha) + " manual CAPTCHA / " +
+          format.format(permit.currentSourcesHardBlocked) + " hard blocked",
+      );
       set("permit-route-total", format.format(routes.totalCurrentRoutes));
       set("permit-route-implemented", format.format(routes.implementedCurrentRoutes));
-      set("permit-route-blocked", format.format(routes.blockedCurrentRoutes));
+      set("permit-route-manual", format.format(routes.manualCaptchaCurrentRoutes));
+      set("permit-route-hard-blocked", format.format(routes.hardBlockedCurrentRoutes));
+      set("permit-route-unattended", format.format(routes.unattendedUnavailableCurrentRoutes));
       set("permit-route-implemented-names", routes.implementedJurisdictions.join(", "));
+      const manualRouteList = document.getElementById("permit-route-manual-progress");
+      if (manualRouteList) {
+        manualRouteList.replaceChildren(
+          ...status.manualCaptchaProgress.routes.map((route) => {
+            const item = document.createElement("li");
+            const state = route.progressState.replaceAll("_", " ");
+            item.textContent =
+              route.jurisdiction + " — " + state + "; " +
+              format.format(route.capturedRecords) + " captured, " +
+              format.format(route.loadedRecords) + " loaded; session expires; county complete: no";
+            return item;
+          }),
+        );
+      }
       const routeGroups = document.getElementById("permit-route-blocker-groups");
       if (routeGroups) {
         routeGroups.replaceChildren(
-          ...routes.blockerCategories.map((category) => {
+          ...routes.hardBlockCategories.map((category) => {
             const group = document.createElement("section");
             group.className = "route-group";
             const heading = document.createElement("h3");

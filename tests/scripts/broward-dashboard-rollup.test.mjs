@@ -40,6 +40,8 @@ describe("Broward dashboard durable rollup", () => {
       coral_etrakit_records: 1_000,
       coral_etrakit_matched: 780,
       coral_etrakit_roofing: 1_000,
+      pembroke_park_gov_easy_records: 166,
+      hillsboro_beach_communitycore_records: 0,
       sunbiz_matched_roles: 21_512,
       sunbiz_registrations: 12_432,
       sunbiz_properties: 9_023,
@@ -62,6 +64,8 @@ describe("Broward dashboard durable rollup", () => {
       coralEtrakitRecords: 1_000,
       coralEtrakitMatched: 780,
       coralEtrakitRoofing: 1_000,
+      pembrokeParkGovEasyRecords: 166,
+      hillsboroBeachCommunityCoreRecords: 0,
       sunbizMatchedRoles: 21_512,
       sunbizRegistrations: 12_432,
       sunbizProperties: 9_023,
@@ -73,6 +77,13 @@ describe("Broward dashboard durable rollup", () => {
     expect(
       calls.some((call) =>
         call.sql.includes("ADD COLUMN IF NOT EXISTS coral_etrakit_records"),
+      ),
+    ).toBe(true);
+    expect(
+      calls.some((call) =>
+        call.sql.includes(
+          "ADD COLUMN IF NOT EXISTS pembroke_park_gov_easy_records",
+        ),
       ),
     ).toBe(true);
     expect(calls.at(-1)?.values).toEqual(["broward"]);
@@ -90,6 +101,8 @@ describe("Broward dashboard durable rollup", () => {
       coral_etrakit_records: 0,
       coral_etrakit_matched: 0,
       coral_etrakit_roofing: 0,
+      pembroke_park_gov_easy_records: 0,
+      hillsboro_beach_communitycore_records: 0,
       sunbiz_matched_roles: 0,
       sunbiz_registrations: 0,
       sunbiz_properties: 0,

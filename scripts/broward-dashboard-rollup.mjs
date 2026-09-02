@@ -31,6 +31,11 @@ const PIPELINE_KEY = "broward";
  * @property {number} coralEtrakitRecords - Loaded Coral Springs slice rows.
  * @property {number} coralEtrakitMatched - Coral rows linked by exact folio.
  * @property {number} coralEtrakitRoofing - Source-query-backed roofing rows.
+ * @property {number} pembrokeParkGovEasyRecords
+ *   Loaded records from the bounded manually authorized Pembroke Park slice.
+ * @property {number} hillsboroBeachCommunityCoreRecords
+ *   Loaded Hillsboro Beach records, expected to remain zero until a valid
+ *   manually authorized search produces durable evidence.
  * @property {number} sunbizMatchedRoles - Exact Sunbiz address-role links.
  * @property {number} sunbizRegistrations - Distinct linked registrations.
  * @property {number} sunbizProperties - Distinct linked properties.
@@ -66,6 +71,12 @@ export async function ensureBrowardDashboardRollup(client) {
        coral_etrakit_roofing integer NOT NULL DEFAULT 0 CHECK (
          coral_etrakit_roofing >= 0
        ),
+       pembroke_park_gov_easy_records integer NOT NULL DEFAULT 0 CHECK (
+         pembroke_park_gov_easy_records >= 0
+       ),
+       hillsboro_beach_communitycore_records integer NOT NULL DEFAULT 0 CHECK (
+         hillsboro_beach_communitycore_records >= 0
+       ),
        sunbiz_matched_roles integer NOT NULL CHECK (
          sunbiz_matched_roles >= 0
        ),
@@ -83,7 +94,13 @@ export async function ensureBrowardDashboardRollup(client) {
        ADD COLUMN IF NOT EXISTS coral_etrakit_matched integer NOT NULL
          DEFAULT 0 CHECK (coral_etrakit_matched >= 0),
        ADD COLUMN IF NOT EXISTS coral_etrakit_roofing integer NOT NULL
-         DEFAULT 0 CHECK (coral_etrakit_roofing >= 0)`,
+         DEFAULT 0 CHECK (coral_etrakit_roofing >= 0),
+       ADD COLUMN IF NOT EXISTS pembroke_park_gov_easy_records integer NOT NULL
+         DEFAULT 0 CHECK (pembroke_park_gov_easy_records >= 0),
+       ADD COLUMN IF NOT EXISTS hillsboro_beach_communitycore_records integer
+         NOT NULL DEFAULT 0 CHECK (
+           hillsboro_beach_communitycore_records >= 0
+         )`,
   );
 }
 
@@ -127,9 +144,16 @@ export async function refreshBrowardDashboardRollup(client) {
                more_details->>'is_roof_permit',
                more_details->>'isRoofPermit'
              )='true'
-         )::integer AS coral_etrakit_roofing
+         )::integer AS coral_etrakit_roofing,
+         count(*) FILTER (
+           WHERE source_system='broward_pembroke_park_gov_easy_permits'
+         )::integer AS pembroke_park_gov_easy_records,
+         count(*) FILTER (
+           WHERE source_system='hillsboro_beach_communitycore_permits'
+         )::integer AS hillsboro_beach_communitycore_records
        FROM public.property_improvements
        WHERE source_system LIKE 'broward%permits'
+          OR source_system='hillsboro_beach_communitycore_permits'
      ),
      sunbiz_stats AS (
        SELECT
@@ -143,8 +167,9 @@ export async function refreshBrowardDashboardRollup(client) {
        pipeline_key,permit_records,permit_matched,permit_unmatched,
        permit_roofing,permit_parcels,permit_source_systems,
        permit_last_loaded_at,coral_etrakit_records,coral_etrakit_matched,
-       coral_etrakit_roofing,sunbiz_matched_roles,sunbiz_registrations,
-       sunbiz_properties,refreshed_at
+       coral_etrakit_roofing,pembroke_park_gov_easy_records,
+       hillsboro_beach_communitycore_records,sunbiz_matched_roles,
+       sunbiz_registrations,sunbiz_properties,refreshed_at
      )
      SELECT
        $1,permit_stats.permit_records,permit_stats.permit_matched,
@@ -152,6 +177,8 @@ export async function refreshBrowardDashboardRollup(client) {
        permit_stats.permit_parcels,permit_stats.permit_source_systems,
        permit_stats.permit_last_loaded_at,permit_stats.coral_etrakit_records,
        permit_stats.coral_etrakit_matched,permit_stats.coral_etrakit_roofing,
+       permit_stats.pembroke_park_gov_easy_records,
+       permit_stats.hillsboro_beach_communitycore_records,
        sunbiz_stats.sunbiz_matched_roles,sunbiz_stats.sunbiz_registrations,
        sunbiz_stats.sunbiz_properties,now()
      FROM permit_stats,sunbiz_stats
@@ -166,6 +193,10 @@ export async function refreshBrowardDashboardRollup(client) {
        coral_etrakit_records=EXCLUDED.coral_etrakit_records,
        coral_etrakit_matched=EXCLUDED.coral_etrakit_matched,
        coral_etrakit_roofing=EXCLUDED.coral_etrakit_roofing,
+       pembroke_park_gov_easy_records=
+         EXCLUDED.pembroke_park_gov_easy_records,
+       hillsboro_beach_communitycore_records=
+         EXCLUDED.hillsboro_beach_communitycore_records,
        sunbiz_matched_roles=EXCLUDED.sunbiz_matched_roles,
        sunbiz_registrations=EXCLUDED.sunbiz_registrations,
        sunbiz_properties=EXCLUDED.sunbiz_properties,
@@ -199,6 +230,12 @@ export async function refreshBrowardDashboardRollup(client) {
     coralEtrakitRecords: readCount(row.coral_etrakit_records),
     coralEtrakitMatched: readCount(row.coral_etrakit_matched),
     coralEtrakitRoofing: readCount(row.coral_etrakit_roofing),
+    pembrokeParkGovEasyRecords: readCount(
+      row.pembroke_park_gov_easy_records,
+    ),
+    hillsboroBeachCommunityCoreRecords: readCount(
+      row.hillsboro_beach_communitycore_records,
+    ),
     sunbizMatchedRoles: readCount(row.sunbiz_matched_roles),
     sunbizRegistrations: readCount(row.sunbiz_registrations),
     sunbizProperties: readCount(row.sunbiz_properties),

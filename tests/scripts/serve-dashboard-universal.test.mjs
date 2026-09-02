@@ -68,6 +68,51 @@ describe("universal dashboard server & county registry", () => {
           matched: 192_813,
         },
         permitRoutes,
+        manualCaptchaProgress: {
+          sessionPolicy: "manual_captcha_sessions_expire",
+          countyComplete: false,
+          routes: [
+            {
+              jurisdiction: "Coral Springs",
+              registryStatus: "captcha_required",
+              progressState: "bounded_capture_in_progress",
+              evidence: "private_capture_checkpoint",
+              coverageBoundary: "bounded_capped_slice",
+              capturedRecords: 640,
+              loadedRecords: 0,
+              manualSessionRequired: true,
+              sessionsExpire: true,
+              validSearchCaptchaRequired: true,
+              countyComplete: false,
+            },
+            {
+              jurisdiction: "Hillsboro Beach",
+              registryStatus: "captcha_required",
+              progressState: "awaiting_manual_captcha",
+              evidence: "no_captured_aggregate",
+              coverageBoundary: "not_captured",
+              capturedRecords: 0,
+              loadedRecords: 0,
+              manualSessionRequired: true,
+              sessionsExpire: true,
+              validSearchCaptchaRequired: true,
+              countyComplete: false,
+            },
+            {
+              jurisdiction: "Pembroke Park",
+              registryStatus: "captcha_required",
+              progressState: "bounded_slice_loaded",
+              evidence: "durable_loaded_aggregate",
+              coverageBoundary: "bounded_slice",
+              capturedRecords: 166,
+              loadedRecords: 166,
+              manualSessionRequired: true,
+              sessionsExpire: true,
+              validSearchCaptchaRequired: true,
+              countyComplete: false,
+            },
+          ],
+        },
         permitEnumeration: {
           accessibleRecords: 430_087,
           pausedWorkers: [
@@ -101,7 +146,13 @@ describe("universal dashboard server & county registry", () => {
             permitRoutes: {
               totalCurrentRoutes: 32,
               implementedCurrentRoutes: 24,
-              blockedCurrentRoutes: 8,
+              manualCaptchaCurrentRoutes: 3,
+              hardBlockedCurrentRoutes: 5,
+              unattendedUnavailableCurrentRoutes: 8,
+            },
+            manualCaptchaProgress: {
+              sessionPolicy: "manual_captcha_sessions_expire",
+              countyComplete: false,
             },
             operationalWorkers: {
               paused: [
@@ -140,17 +191,29 @@ describe("universal dashboard server & county registry", () => {
       const sourcing = lifecycle.stages.sourcing;
       expect(
         sourcing.permitRoutes.implementedCurrentRoutes +
-          sourcing.permitRoutes.blockedCurrentRoutes,
+          sourcing.permitRoutes.manualCaptchaCurrentRoutes +
+          sourcing.permitRoutes.hardBlockedCurrentRoutes,
       ).toBe(sourcing.permitRoutes.totalCurrentRoutes);
       expect(
-        sourcing.permitRoutes.blockerCategories.reduce(
+        sourcing.permitRoutes.hardBlockCategories.reduce(
           (sum, category) => sum + category.count,
           0,
         ),
-      ).toBe(sourcing.permitRoutes.blockedCurrentRoutes);
+      ).toBe(sourcing.permitRoutes.hardBlockedCurrentRoutes);
       expect(sourcing.operationalWorkers.paused).toHaveLength(2);
       expect(sourcing.operationalWorkers.coolingDown).toHaveLength(1);
-      expect(sourcing.permitRoutes.blockedCurrentRoutes).toBe(8);
+      expect(
+        sourcing.permitRoutes.unattendedUnavailableCurrentRoutes,
+      ).toBe(
+        sourcing.permitRoutes.manualCaptchaCurrentRoutes +
+          sourcing.permitRoutes.hardBlockedCurrentRoutes,
+      );
+      expect(sourcing.manualCaptchaProgress.routes).toHaveLength(3);
+      expect(
+        sourcing.permitRoutes.hardBlockCategories.some(
+          (category) => category.key === "captcha_required",
+        ),
+      ).toBe(false);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -163,9 +226,12 @@ describe("universal dashboard server & county registry", () => {
     );
     expect(dashboardHtml).toContain('id="permitRouteStatusCard"');
     expect(dashboardHtml).toContain('id="permitRouteBlockerGroups"');
+    expect(dashboardHtml).toContain('id="permitRouteManualProgress"');
     expect(dashboardHtml).toContain('id="permitPausedWorkerList"');
     expect(dashboardHtml).toContain('id="permitCoolingWorkerList"');
     expect(dashboardHtml).toContain("Operational pauses are shown separately");
+    expect(dashboardHtml).toContain("Manual sessions expire");
+    expect(dashboardHtml).toContain("Hard-Block Categories");
   });
 
   it("resolves county metadata by key with fallback", () => {

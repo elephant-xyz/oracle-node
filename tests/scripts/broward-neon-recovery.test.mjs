@@ -435,6 +435,8 @@ describe("durable Broward Neon recovery", () => {
         coral_etrakit_loaded: "1000",
         coral_etrakit_linked: "780",
         coral_etrakit_roofing: "1000",
+        pembroke_park_gov_easy_loaded: "166",
+        hillsboro_beach_communitycore_loaded: "0",
         sunbiz_match_roles: "21512",
         sunbiz_match_registrations: "12432",
         sunbiz_match_properties: "9023",
@@ -474,7 +476,9 @@ describe("durable Broward Neon recovery", () => {
       queryRowsMatch: true,
       registryJurisdictions: 32,
       currentSourcesImplemented: 24,
-      currentSourcesBlocked: 8,
+      currentSourcesManualCaptcha: 3,
+      currentSourcesHardBlocked: 5,
+      currentSourcesUnattendedUnavailable: 8,
     });
     expect(status.permitRoutes).toEqual(buildBrowardPermitRouteStatus());
     expect(status.permitInventory).toEqual({
@@ -506,6 +510,51 @@ describe("durable Broward Neon recovery", () => {
       completenessBoundary: "bounded_capped_keyword_slice",
       captchaPrerequisite: "manual_authorization_required",
       registryStatus: "captcha_required",
+    });
+    expect(status.manualCaptchaProgress).toEqual({
+      sessionPolicy: "manual_captcha_sessions_expire",
+      countyComplete: false,
+      routes: [
+        {
+          jurisdiction: "Coral Springs",
+          registryStatus: "captcha_required",
+          progressState: "bounded_slice_loaded",
+          evidence: "durable_loaded_aggregate",
+          coverageBoundary: "bounded_capped_slice",
+          capturedRecords: 0,
+          loadedRecords: 1_000,
+          manualSessionRequired: true,
+          sessionsExpire: true,
+          validSearchCaptchaRequired: true,
+          countyComplete: false,
+        },
+        {
+          jurisdiction: "Hillsboro Beach",
+          registryStatus: "captcha_required",
+          progressState: "awaiting_manual_captcha",
+          evidence: "no_captured_aggregate",
+          coverageBoundary: "not_captured",
+          capturedRecords: 0,
+          loadedRecords: 0,
+          manualSessionRequired: true,
+          sessionsExpire: true,
+          validSearchCaptchaRequired: true,
+          countyComplete: false,
+        },
+        {
+          jurisdiction: "Pembroke Park",
+          registryStatus: "captcha_required",
+          progressState: "bounded_slice_loaded",
+          evidence: "durable_loaded_aggregate",
+          coverageBoundary: "bounded_slice",
+          capturedRecords: 166,
+          loadedRecords: 166,
+          manualSessionRequired: true,
+          sessionsExpire: true,
+          validSearchCaptchaRequired: true,
+          countyComplete: false,
+        },
+      ],
     });
     expect(status.sunbizMatch).toEqual({
       matchedAddressRoles: 21_512,
@@ -592,23 +641,23 @@ describe("durable Broward Neon recovery", () => {
       registryVersion: "2026-09-01.2",
       totalCurrentRoutes: 32,
       implementedCurrentRoutes: 24,
-      blockedCurrentRoutes: 8,
+      manualCaptchaCurrentRoutes: 3,
+      hardBlockedCurrentRoutes: 5,
+      unattendedUnavailableCurrentRoutes: 8,
     });
     expect(routes.implementedJurisdictions).toHaveLength(24);
-    expect(routes.blockerCategories).toEqual([
+    expect(routes.manualCaptchaJurisdictions).toEqual([
+      "Coral Springs",
+      "Hillsboro Beach",
+      "Pembroke Park",
+    ]);
+    expect(routes.hardBlockCategories).toEqual([
       {
         key: "software_or_transport",
         kind: "software_transport",
         label: "Software / transport",
         count: 1,
         jurisdictions: ["Lauderdale Lakes"],
-      },
-      {
-        key: "captcha_required",
-        kind: "source_policy",
-        label: "CAPTCHA required",
-        count: 3,
-        jurisdictions: ["Coral Springs", "Hillsboro Beach", "Pembroke Park"],
       },
       {
         key: "login_required",
@@ -632,25 +681,30 @@ describe("durable Broward Neon recovery", () => {
         jurisdictions: ["Sea Ranch Lakes"],
       },
     ]);
-    expect(routes.implementedCurrentRoutes + routes.blockedCurrentRoutes).toBe(
-      routes.totalCurrentRoutes,
-    );
     expect(
-      routes.blockerCategories.reduce(
+      routes.implementedCurrentRoutes +
+        routes.manualCaptchaCurrentRoutes +
+        routes.hardBlockedCurrentRoutes,
+    ).toBe(routes.totalCurrentRoutes);
+    expect(
+      routes.hardBlockCategories.reduce(
         (sum, category) => sum + category.count,
         0,
       ),
-    ).toBe(routes.blockedCurrentRoutes);
+    ).toBe(routes.hardBlockedCurrentRoutes);
     expect(
-      routes.blockerCategories.find(
-        (category) => category.key === "captcha_required",
-      )?.jurisdictions,
-    ).not.toContain("Deerfield Beach");
-    expect(
-      routes.blockerCategories.find(
+      routes.hardBlockCategories.find(
         (category) => category.key === "custodian_only",
       )?.jurisdictions,
     ).not.toContain("Sunrise");
+    expect(routes.unattendedUnavailableCurrentRoutes).toBe(
+      routes.manualCaptchaCurrentRoutes + routes.hardBlockedCurrentRoutes,
+    );
+    expect(
+      routes.hardBlockCategories.some(
+        (category) => category.key === "captcha_required",
+      ),
+    ).toBe(false);
   });
 
   it("reads aggregate permit worker checkpoints without exposing source rows", async () => {
@@ -800,7 +854,9 @@ describe("durable Broward Neon recovery", () => {
       }),
     );
     expect(JSON.stringify(status)).not.toContain("PRIVATE");
-    expect(buildBrowardPermitRouteStatus().blockedCurrentRoutes).toBe(8);
+    expect(
+      buildBrowardPermitRouteStatus().unattendedUnavailableCurrentRoutes,
+    ).toBe(8);
   });
 
   it("counts legacy, canonical, and list-only Accela receipts compatibly", () => {

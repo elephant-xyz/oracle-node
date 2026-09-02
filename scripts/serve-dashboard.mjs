@@ -35,23 +35,58 @@ const DASHBOARD_HTML_PATH = resolve(__dirname, "common/dashboard.html");
  * @property {string} outputRoot
  * @property {boolean} open
  *
- * @typedef {"software_or_transport" | "captcha_required" | "login_required" | "no_anonymous_search" | "custodian_only"} UniversalPermitRouteBlockerKey
+ * @typedef {"software_or_transport" | "login_required" | "no_anonymous_search" | "custodian_only"} UniversalPermitRouteHardBlockKey
  *
- * @typedef {object} UniversalPermitRouteBlockerCategory
- * @property {UniversalPermitRouteBlockerKey} key - Stable blocker category.
+ * @typedef {object} UniversalPermitRouteHardBlockCategory
+ * @property {UniversalPermitRouteHardBlockKey} key - Stable hard-block category.
  * @property {"software_transport" | "source_policy"} kind - Actionability class.
  * @property {string} label - Public category label.
- * @property {number} count - Reconciled blocked-route count.
+ * @property {number} count - Reconciled hard-blocked-route count.
  * @property {string[]} jurisdictions - Public jurisdiction names.
  *
  * @typedef {object} UniversalPermitRouteStatus
  * @property {string} registryVersion - Executable registry version.
  * @property {number} totalCurrentRoutes - Current primary-route denominator.
  * @property {number} implementedCurrentRoutes - Implemented current routes.
- * @property {number} blockedCurrentRoutes - Fail-closed current routes.
+ * @property {number} manualCaptchaCurrentRoutes
+ *   Current routes requiring manually authorized CAPTCHA sessions.
+ * @property {number} hardBlockedCurrentRoutes
+ *   Routes unavailable for non-CAPTCHA barriers.
+ * @property {number} unattendedUnavailableCurrentRoutes
+ *   Manual CAPTCHA plus hard-blocked routes.
  * @property {string[]} implementedJurisdictions - Public implemented names.
- * @property {UniversalPermitRouteBlockerCategory[]} blockerCategories
- *   Exhaustive blocker categories.
+ * @property {string[]} manualCaptchaJurisdictions - Public manual-route names.
+ * @property {UniversalPermitRouteHardBlockCategory[]} hardBlockCategories
+ *   Exhaustive non-CAPTCHA hard-block categories.
+ *
+ * @typedef {"awaiting_manual_captcha" | "bounded_capture_in_progress" | "bounded_slice_captured" | "bounded_slice_loaded"} UniversalManualCaptchaProgressState
+ *
+ * @typedef {"private_capture_checkpoint" | "durable_loaded_aggregate" | "no_captured_aggregate"} UniversalManualCaptchaEvidence
+ *
+ * @typedef {"bounded_capped_slice" | "bounded_slice" | "not_captured"} UniversalManualCaptchaCoverageBoundary
+ *
+ * @typedef {object} UniversalManualCaptchaRouteProgress
+ * @property {string} jurisdiction - Public CAPTCHA-dependent jurisdiction.
+ * @property {"captcha_required"} registryStatus - Executable route status.
+ * @property {UniversalManualCaptchaProgressState} progressState
+ *   Reconciled bounded manual progress.
+ * @property {UniversalManualCaptchaEvidence} evidence
+ *   Aggregate evidence source without source records or local paths.
+ * @property {UniversalManualCaptchaCoverageBoundary} coverageBoundary
+ *   Explicitly non-countywide coverage boundary.
+ * @property {number} capturedRecords - Aggregate bounded captured records.
+ * @property {number} loadedRecords - Durable loaded source-system records.
+ * @property {true} manualSessionRequired - CAPTCHA is manually completed.
+ * @property {true} sessionsExpire - Manual authorization is temporary.
+ * @property {true} validSearchCaptchaRequired - A new search requires CAPTCHA.
+ * @property {false} countyComplete - Manual evidence is not county completeness.
+ *
+ * @typedef {object} UniversalManualCaptchaProgress
+ * @property {"manual_captcha_sessions_expire"} sessionPolicy
+ *   Public session lifecycle statement.
+ * @property {false} countyComplete - County completeness remains false.
+ * @property {UniversalManualCaptchaRouteProgress[]} routes
+ *   One validated route per manual CAPTCHA jurisdiction.
  *
  * @typedef {object} UniversalPausedPermitWorker
  * @property {string} source - Public jurisdiction label.
@@ -137,6 +172,10 @@ export async function getBrowardLifecycleStatus(
     "Broward permit enumeration",
   );
   const permitRoutes = readBrowardPermitRouteStatus(status.permitRoutes);
+  const manualCaptchaProgress = readBrowardManualCaptchaProgress(
+    status.manualCaptchaProgress,
+    permitRoutes.manualCaptchaJurisdictions,
+  );
   const pausedPermitWorkers = readBrowardPausedPermitWorkers(
     enumeration.pausedWorkers,
     permitRoutes.implementedJurisdictions,
@@ -245,6 +284,7 @@ export async function getBrowardLifecycleStatus(
         title: "Permits & Sourcing",
         status: capturedPermits > permits ? "in_progress" : "partially_loaded",
         permitRoutes,
+        manualCaptchaProgress,
         operationalWorkers: {
           paused: pausedPermitWorkers,
           coolingDown: coolingPermitWorkers,
@@ -340,10 +380,6 @@ const BROWARD_ROUTE_CATEGORY_METADATA = Object.freeze({
     kind: "software_transport",
     label: "Software / transport",
   }),
-  captcha_required: Object.freeze({
-    kind: "source_policy",
-    label: "CAPTCHA required",
-  }),
   login_required: Object.freeze({
     kind: "source_policy",
     label: "Login required",
@@ -412,15 +448,30 @@ function readBrowardPermitRouteStatus(value) {
     input.implementedCurrentRoutes,
     "Broward implemented permit routes",
   );
-  const blockedCurrentRoutes = requireNonNegativeNumber(
-    input.blockedCurrentRoutes,
-    "Broward blocked permit routes",
+  const manualCaptchaCurrentRoutes = requireNonNegativeNumber(
+    input.manualCaptchaCurrentRoutes,
+    "Broward manual CAPTCHA permit routes",
+  );
+  const hardBlockedCurrentRoutes = requireNonNegativeNumber(
+    input.hardBlockedCurrentRoutes,
+    "Broward hard-blocked permit routes",
+  );
+  const unattendedUnavailableCurrentRoutes = requireNonNegativeNumber(
+    input.unattendedUnavailableCurrentRoutes,
+    "Broward unattended-unavailable permit routes",
   );
   if (
     !Number.isSafeInteger(totalCurrentRoutes) ||
     !Number.isSafeInteger(implementedCurrentRoutes) ||
-    !Number.isSafeInteger(blockedCurrentRoutes) ||
-    implementedCurrentRoutes + blockedCurrentRoutes !== totalCurrentRoutes
+    !Number.isSafeInteger(manualCaptchaCurrentRoutes) ||
+    !Number.isSafeInteger(hardBlockedCurrentRoutes) ||
+    !Number.isSafeInteger(unattendedUnavailableCurrentRoutes) ||
+    implementedCurrentRoutes +
+      manualCaptchaCurrentRoutes +
+      hardBlockedCurrentRoutes !==
+      totalCurrentRoutes ||
+    manualCaptchaCurrentRoutes + hardBlockedCurrentRoutes !==
+      unattendedUnavailableCurrentRoutes
   ) {
     throw new Error("Broward permit route totals do not reconcile");
   }
@@ -431,36 +482,46 @@ function readBrowardPermitRouteStatus(value) {
   if (implementedJurisdictions.length !== implementedCurrentRoutes) {
     throw new Error("Broward implemented permit routes do not reconcile");
   }
-  if (!Array.isArray(input.blockerCategories)) {
-    throw new Error("Broward permit blocker categories are missing");
+  const manualCaptchaJurisdictions = requirePublicLabels(
+    input.manualCaptchaJurisdictions,
+    "Broward manual CAPTCHA permit jurisdictions",
+  );
+  if (manualCaptchaJurisdictions.length !== manualCaptchaCurrentRoutes) {
+    throw new Error("Broward manual CAPTCHA routes do not reconcile");
   }
-  /** @type {Set<UniversalPermitRouteBlockerKey>} */
+  if (!Array.isArray(input.hardBlockCategories)) {
+    throw new Error("Broward permit hard-block categories are missing");
+  }
+  /** @type {Set<UniversalPermitRouteHardBlockKey>} */
   const seenCategoryKeys = new Set();
-  const blockerCategories = input.blockerCategories.map((candidate) => {
+  const hardBlockCategories = input.hardBlockCategories.map((candidate) => {
     const category = requireObject(
       candidate,
-      "Broward permit blocker category",
+      "Broward permit hard-block category",
     );
-    const key = requirePublicLabel(category.key, "Broward permit blocker key");
+    const key = requirePublicLabel(
+      category.key,
+      "Broward permit hard-block key",
+    );
     if (!(key in BROWARD_ROUTE_CATEGORY_METADATA)) {
-      throw new Error("Broward permit blocker category is unknown");
+      throw new Error("Broward permit hard-block category is unknown");
     }
-    const typedKey = /** @type {UniversalPermitRouteBlockerKey} */ (key);
+    const typedKey = /** @type {UniversalPermitRouteHardBlockKey} */ (key);
     if (seenCategoryKeys.has(typedKey)) {
-      throw new Error("Broward permit blocker category is duplicated");
+      throw new Error("Broward permit hard-block category is duplicated");
     }
     seenCategoryKeys.add(typedKey);
     const metadata = BROWARD_ROUTE_CATEGORY_METADATA[typedKey];
     const count = requireNonNegativeNumber(
       category.count,
-      "Broward permit blocker count",
+      "Broward permit hard-block count",
     );
     const jurisdictions = requirePublicLabels(
       category.jurisdictions,
-      "Broward blocked permit jurisdictions",
+      "Broward hard-blocked permit jurisdictions",
     );
     if (!Number.isSafeInteger(count) || count !== jurisdictions.length) {
-      throw new Error("Broward permit blocker category does not reconcile");
+      throw new Error("Broward permit hard-block category does not reconcile");
     }
     return {
       key: typedKey,
@@ -475,14 +536,15 @@ function readBrowardPermitRouteStatus(value) {
   if (
     seenCategoryKeys.size !==
       Object.keys(BROWARD_ROUTE_CATEGORY_METADATA).length ||
-    blockerCategories.reduce((sum, category) => sum + category.count, 0) !==
-      blockedCurrentRoutes
+    hardBlockCategories.reduce((sum, category) => sum + category.count, 0) !==
+      hardBlockedCurrentRoutes
   ) {
-    throw new Error("Broward permit blocker categories do not reconcile");
+    throw new Error("Broward permit hard-block categories do not reconcile");
   }
   const allJurisdictions = [
     ...implementedJurisdictions,
-    ...blockerCategories.flatMap((category) => category.jurisdictions),
+    ...manualCaptchaJurisdictions,
+    ...hardBlockCategories.flatMap((category) => category.jurisdictions),
   ];
   if (new Set(allJurisdictions).size !== totalCurrentRoutes) {
     throw new Error("Broward current permit jurisdictions do not reconcile");
@@ -491,9 +553,142 @@ function readBrowardPermitRouteStatus(value) {
     registryVersion,
     totalCurrentRoutes,
     implementedCurrentRoutes,
-    blockedCurrentRoutes,
+    manualCaptchaCurrentRoutes,
+    hardBlockedCurrentRoutes,
+    unattendedUnavailableCurrentRoutes,
     implementedJurisdictions,
-    blockerCategories,
+    manualCaptchaJurisdictions,
+    hardBlockCategories,
+  };
+}
+
+/**
+ * Validate aggregate-only manual CAPTCHA progress before exposing it through
+ * the universal dashboard. Session material, search criteria, source records,
+ * paths, and raw errors are not accepted by this contract.
+ *
+ * @param {unknown} value - Private dashboard manual-progress payload.
+ * @param {readonly string[]} manualCaptchaJurisdictions
+ *   Registry-derived jurisdictions that must appear exactly once.
+ * @returns {UniversalManualCaptchaProgress} Sanitized aggregate progress.
+ */
+function readBrowardManualCaptchaProgress(
+  value,
+  manualCaptchaJurisdictions,
+) {
+  const input = requireObject(value, "Broward manual CAPTCHA progress");
+  if (
+    input.sessionPolicy !== "manual_captcha_sessions_expire" ||
+    input.countyComplete !== false ||
+    !Array.isArray(input.routes)
+  ) {
+    throw new Error("Broward manual CAPTCHA progress is invalid");
+  }
+  const allowedStates = new Set([
+    "awaiting_manual_captcha",
+    "bounded_capture_in_progress",
+    "bounded_slice_captured",
+    "bounded_slice_loaded",
+  ]);
+  const allowedEvidence = new Set([
+    "private_capture_checkpoint",
+    "durable_loaded_aggregate",
+    "no_captured_aggregate",
+  ]);
+  const allowedBoundaries = new Set([
+    "bounded_capped_slice",
+    "bounded_slice",
+    "not_captured",
+  ]);
+  const seenJurisdictions = new Set();
+  const routes = input.routes.map((candidate) => {
+    const route = requireObject(
+      candidate,
+      "Broward manual CAPTCHA route progress",
+    );
+    const jurisdiction = requirePublicLabel(
+      route.jurisdiction,
+      "Broward manual CAPTCHA jurisdiction",
+    );
+    const progressState = requirePublicLabel(
+      route.progressState,
+      "Broward manual CAPTCHA progress state",
+    );
+    const evidence = requirePublicLabel(
+      route.evidence,
+      "Broward manual CAPTCHA evidence",
+    );
+    const coverageBoundary = requirePublicLabel(
+      route.coverageBoundary,
+      "Broward manual CAPTCHA coverage boundary",
+    );
+    const capturedRecords = requireNonNegativeNumber(
+      route.capturedRecords,
+      "Broward manual CAPTCHA captured records",
+    );
+    const loadedRecords = requireNonNegativeNumber(
+      route.loadedRecords,
+      "Broward manual CAPTCHA loaded records",
+    );
+    if (
+      seenJurisdictions.has(jurisdiction) ||
+      !manualCaptchaJurisdictions.includes(jurisdiction) ||
+      route.registryStatus !== "captcha_required" ||
+      !allowedStates.has(progressState) ||
+      !allowedEvidence.has(evidence) ||
+      !allowedBoundaries.has(coverageBoundary) ||
+      !Number.isSafeInteger(capturedRecords) ||
+      !Number.isSafeInteger(loadedRecords) ||
+      route.manualSessionRequired !== true ||
+      route.sessionsExpire !== true ||
+      route.validSearchCaptchaRequired !== true ||
+      route.countyComplete !== false ||
+      (progressState === "awaiting_manual_captcha" &&
+        (capturedRecords !== 0 || loadedRecords !== 0)) ||
+      (progressState === "bounded_capture_in_progress" &&
+        capturedRecords === 0) ||
+      (progressState === "bounded_slice_captured" &&
+        capturedRecords === 0) ||
+      (progressState === "bounded_slice_loaded" && loadedRecords === 0) ||
+      (coverageBoundary === "not_captured" &&
+        (capturedRecords !== 0 || loadedRecords !== 0))
+    ) {
+      throw new Error("Broward manual CAPTCHA route does not reconcile");
+    }
+    seenJurisdictions.add(jurisdiction);
+    return {
+      jurisdiction,
+      registryStatus: /** @type {"captcha_required"} */ ("captcha_required"),
+      progressState:
+        /** @type {UniversalManualCaptchaProgressState} */ (progressState),
+      evidence: /** @type {UniversalManualCaptchaEvidence} */ (evidence),
+      coverageBoundary:
+        /** @type {UniversalManualCaptchaCoverageBoundary} */ (
+          coverageBoundary
+        ),
+      capturedRecords,
+      loadedRecords,
+      manualSessionRequired: /** @type {true} */ (true),
+      sessionsExpire: /** @type {true} */ (true),
+      validSearchCaptchaRequired: /** @type {true} */ (true),
+      countyComplete: /** @type {false} */ (false),
+    };
+  });
+  if (
+    routes.length !== manualCaptchaJurisdictions.length ||
+    manualCaptchaJurisdictions.some(
+      (jurisdiction) => !seenJurisdictions.has(jurisdiction),
+    )
+  ) {
+    throw new Error("Broward manual CAPTCHA jurisdictions do not reconcile");
+  }
+  routes.sort((left, right) =>
+    left.jurisdiction.localeCompare(right.jurisdiction),
+  );
+  return {
+    sessionPolicy: "manual_captcha_sessions_expire",
+    countyComplete: false,
+    routes,
   };
 }
 

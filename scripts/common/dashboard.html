@@ -1448,17 +1448,31 @@
               >
                 --
               </div>
-              <div class="sub">Implemented</div>
+              <div class="sub">Automated / implemented</div>
             </div>
             <div>
               <div
                 class="value"
                 style="color: var(--warning)"
-                id="permitRouteBlockedVal"
+                id="permitRouteManualVal"
               >
                 --
               </div>
-              <div class="sub">Blocked</div>
+              <div class="sub">Manual CAPTCHA</div>
+            </div>
+            <div>
+              <div
+                class="value"
+                style="color: var(--danger)"
+                id="permitRouteHardBlockedVal"
+              >
+                --
+              </div>
+              <div class="sub">Hard blocked</div>
+            </div>
+            <div>
+              <div class="value" id="permitRouteUnattendedVal">--</div>
+              <div class="sub">Unattended unavailable</div>
             </div>
           </div>
           <p class="sub">
@@ -1467,17 +1481,25 @@
           </p>
           <h3 style="margin-top: 14px">Implemented Jurisdictions</h3>
           <p class="sub" id="permitRouteImplementedNames">--</p>
+          <h3 style="margin-top: 14px">Manual CAPTCHA Route Progress</h3>
+          <p class="sub">
+            Manual sessions expire, executable routes remain
+            <code>captcha_required</code>, and bounded captures do not
+            establish county completeness.
+          </p>
+          <ul id="permitRouteManualProgress"></ul>
+          <h3 style="margin-top: 14px">Hard-Block Categories</h3>
           <div id="permitRouteBlockerGroups"></div>
           <h3 style="margin-top: 14px">Paused Operational Workers</h3>
           <p class="sub">
-            Operational pauses are shown separately and do not increase the
-            blocked-route count.
+            Operational pauses are shown separately and do not increase route
+            availability counts.
           </p>
           <ul id="permitPausedWorkerList"></ul>
           <h3 style="margin-top: 14px">Cooling-Down Operational Workers</h3>
           <p class="sub">
             Source circuit breakers retry automatically at the displayed safe
-            time and do not increase the blocked-route count.
+            time and do not increase route availability counts.
           </p>
           <ul id="permitCoolingWorkerList"></ul>
         </div>
@@ -2584,16 +2606,42 @@
               permitRoutes.totalCurrentRoutes.toLocaleString();
             document.getElementById("permitRouteImplementedVal").innerText =
               permitRoutes.implementedCurrentRoutes.toLocaleString();
-            document.getElementById("permitRouteBlockedVal").innerText =
-              permitRoutes.blockedCurrentRoutes.toLocaleString();
+            document.getElementById("permitRouteManualVal").innerText =
+              permitRoutes.manualCaptchaCurrentRoutes.toLocaleString();
+            document.getElementById("permitRouteHardBlockedVal").innerText =
+              permitRoutes.hardBlockedCurrentRoutes.toLocaleString();
+            document.getElementById("permitRouteUnattendedVal").innerText =
+              permitRoutes.unattendedUnavailableCurrentRoutes.toLocaleString();
             document.getElementById("permitRouteImplementedNames").innerText =
               permitRoutes.implementedJurisdictions.join(", ");
+            const manualCaptchaRoutes =
+              srcStage.manualCaptchaProgress?.routes || [];
+            const manualProgressList = document.getElementById(
+              "permitRouteManualProgress",
+            );
+            if (manualProgressList) {
+              manualProgressList.replaceChildren(
+                ...manualCaptchaRoutes.map((route) => {
+                  const item = document.createElement("li");
+                  item.textContent =
+                    route.jurisdiction +
+                    " — " +
+                    route.progressState.replaceAll("_", " ") +
+                    "; " +
+                    route.capturedRecords.toLocaleString() +
+                    " captured, " +
+                    route.loadedRecords.toLocaleString() +
+                    " loaded; session expires; county complete: no";
+                  return item;
+                }),
+              );
+            }
             const blockerGroups = document.getElementById(
               "permitRouteBlockerGroups",
             );
             if (blockerGroups) {
               blockerGroups.replaceChildren(
-                ...permitRoutes.blockerCategories.map((category) => {
+                ...permitRoutes.hardBlockCategories.map((category) => {
                   const group = document.createElement("section");
                   group.style.marginTop = "12px";
                   const heading = document.createElement("h3");
