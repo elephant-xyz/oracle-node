@@ -270,6 +270,15 @@ export async function runMunicipalTypeEnumeration(options, dependencies = {}) {
           if (pageNumber > options.maxPagesPerPartition) {
             throw new Error("Municipal partition exceeds maxPages source cap");
           }
+          checkpoint = {
+            ...checkpoint,
+            currentPartition: progress,
+            status: "running",
+            blocker: null,
+            nextAttemptAt: null,
+            updatedAt: now(),
+          };
+          await writeCheckpoint(checkpointPath, checkpoint);
           if (requestCount > 0) await wait(options.delayMs);
           const page = await transport.fetchSearchPage(
             { kind: "record_type", value: partition.value },
@@ -323,6 +332,15 @@ export async function runMunicipalTypeEnumeration(options, dependencies = {}) {
             ) {
               throw new Error("Municipal type detail identity mismatch");
             }
+            checkpoint = {
+              ...checkpoint,
+              currentPartition: progress,
+              status: "running",
+              blocker: null,
+              nextAttemptAt: null,
+              updatedAt: now(),
+            };
+            await writeCheckpoint(checkpointPath, checkpoint);
             const existing = aggregate.byKey.get(record.record_key);
             if (
               existing !== undefined &&

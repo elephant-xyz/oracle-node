@@ -376,6 +376,7 @@ describe("Broward municipal exact-type enumeration", () => {
     const root = await createTemporaryDirectory();
     const config = getBrowardMunicipalPermitConfig("lighthouse_point");
     const close = vi.fn(async () => {});
+    let nowInvocation = 0;
     const summary = await runMunicipalTypeEnumeration(
       {
         jurisdictionKey: "lighthouse_point",
@@ -387,7 +388,13 @@ describe("Broward municipal exact-type enumeration", () => {
         requestTimeoutMs: 30_000,
       },
       {
-        now: () => "2026-09-02T17:00:00.000Z",
+        now: () => {
+          const timestamp = new Date(
+            Date.parse("2026-09-02T17:00:00.000Z") + nowInvocation * 1_000,
+          ).toISOString();
+          nowInvocation += 1;
+          return timestamp;
+        },
         wait: async () => {},
         createTransport: async () => ({
           listRecordTypePartitions: async () => [
@@ -395,6 +402,22 @@ describe("Broward municipal exact-type enumeration", () => {
             { value: "TYPE-2", label: "TYPE TWO" },
           ],
           fetchSearchPage: async (query, page) => {
+            const activeCheckpoint = JSON.parse(
+              await readFile(
+                path.join(root, "checkpoint.private.json"),
+                "utf8",
+              ),
+            );
+            expect(activeCheckpoint).toMatchObject({
+              status: "running",
+              blocker: null,
+              currentPartition: {
+                value: query.value,
+              },
+            });
+            expect(activeCheckpoint.updatedAt).not.toBe(
+              activeCheckpoint.startedAt,
+            );
             const count = query.value === "TYPE-1" ? (page === 1 ? 10 : 1) : 0;
             return {
               references: Array.from({ length: count }, (_value, index) => {
