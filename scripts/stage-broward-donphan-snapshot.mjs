@@ -208,88 +208,76 @@ LEFT JOIN public.parcels par ON par.parcel_id=pi.parcel_id
 WHERE pi.source_system LIKE $1
 ORDER BY pi.property_improvement_id`;
 
-const SNAPSHOT_COUNTS_SQL = `
-WITH props AS MATERIALIZED (
-  SELECT property_id,address_id,request_identifier,loaded_at
-  FROM public.properties
-  WHERE source_system=$1
-),
-permits AS MATERIALIZED (
-  SELECT property_improvement_id,property_id,contractor_company_id,
-         source_system,loaded_at,
-         coalesce(
+const PROPERTY_COUNTS_SQL = `
+SELECT transaction_timestamp() AS snapshot_timestamp,
+       count(*) AS property_rows,
+       count(DISTINCT property_id) AS distinct_property_ids,
+       count(DISTINCT request_identifier) AS distinct_folios,
+       count(*) FILTER (WHERE nullif(request_identifier,'') IS NULL)
+         AS null_folios,
+       min(loaded_at)::text AS appraisal_first_loaded_at,
+       max(loaded_at)::text AS appraisal_last_loaded_at
+FROM public.properties
+WHERE source_system=$1`;
+
+const PERMIT_COUNTS_SQL = `
+SELECT count(*) AS permit_rows,
+       count(DISTINCT property_improvement_id) AS distinct_permit_ids,
+       count(*) FILTER (WHERE property_id IS NULL) AS unlinked_permits,
+       count(*) FILTER (
+         WHERE coalesce(
            more_details->>'is_roof_permit',more_details->>'isRoofPermit'
-         )='true' AS is_roofing
-  FROM public.property_improvements
-  WHERE source_system LIKE $2
-),
-permit_links AS (
-  SELECT
-    count(*) FILTER (WHERE p.property_id IS NOT NULL) AS linked_permits,
-    count(*) FILTER (WHERE pi.property_id IS NULL) AS unlinked_permits,
-    count(*) FILTER (
-      WHERE pi.property_id IS NOT NULL AND p.property_id IS NULL
-    ) AS foreign_linked_permits,
-    count(DISTINCT p.property_id) AS linked_properties
-  FROM permits pi
-  LEFT JOIN props p ON p.property_id=pi.property_id
-),
-sunbiz AS (
-  SELECT
-    count(*) AS address_matches,
-    count(DISTINCT bra.business_registration_id) AS registrations,
-    count(DISTINCT p.property_id) AS properties,
-    min(bra.loaded_at)::text AS first_loaded_at,
-    max(bra.updated_at)::text AS last_loaded_at
-  FROM props p
-  JOIN public.business_registration_addresses bra
-    ON bra.address_id=p.address_id
-   AND bra.source_system='sunbiz'
-   AND bra.address_match_method='normalized_address_hash'
-   AND bra.address_match_confidence='exact'
-),
-bbb AS (
-  SELECT count(*) AS profiles,min(loaded_at)::text AS first_loaded_at,
-         max(loaded_at)::text AS last_loaded_at
-  FROM public.business_reputation_profiles
-  WHERE provider ILIKE '%bbb%'
-),
-bbb_properties AS (
-  SELECT count(DISTINCT pi.property_id) AS properties
-  FROM permits pi
-  JOIN public.business_reputation_profiles profile
-    ON profile.company_id=pi.contractor_company_id
-   AND profile.provider ILIKE '%bbb%'
-  JOIN props p ON p.property_id=pi.property_id
-)
-SELECT
-  transaction_timestamp() AS snapshot_timestamp,
-  (SELECT count(*) FROM props) AS property_rows,
-  (SELECT count(DISTINCT property_id) FROM props) AS distinct_property_ids,
-  (SELECT count(DISTINCT request_identifier) FROM props) AS distinct_folios,
-  (SELECT count(*) FROM props WHERE nullif(request_identifier,'') IS NULL)
-    AS null_folios,
-  (SELECT count(*) FROM permits) AS permit_rows,
-  (SELECT count(DISTINCT property_improvement_id) FROM permits)
-    AS distinct_permit_ids,
-  permit_links.*,
-  (SELECT count(*) FROM permits WHERE is_roofing) AS roofing_permits,
-  (SELECT count(DISTINCT source_system) FROM permits)
-    AS permit_source_system_count,
-  sunbiz.address_matches AS sunbiz_address_matches,
-  sunbiz.registrations AS sunbiz_registrations,
-  sunbiz.properties AS sunbiz_properties,
-  bbb.profiles AS bbb_profiles,
-  bbb_properties.properties AS bbb_matched_properties,
-  (SELECT min(loaded_at)::text FROM props) AS appraisal_first_loaded_at,
-  (SELECT max(loaded_at)::text FROM props) AS appraisal_last_loaded_at,
-  (SELECT min(loaded_at)::text FROM permits) AS permit_first_loaded_at,
-  (SELECT max(loaded_at)::text FROM permits) AS permit_last_loaded_at,
-  sunbiz.first_loaded_at AS sunbiz_first_loaded_at,
-  sunbiz.last_loaded_at AS sunbiz_last_loaded_at,
-  bbb.first_loaded_at AS bbb_first_loaded_at,
-  bbb.last_loaded_at AS bbb_last_loaded_at
-FROM permit_links,sunbiz,bbb,bbb_properties`;
+         )='true'
+       ) AS roofing_permits,
+       count(DISTINCT source_system) AS permit_source_system_count,
+       min(loaded_at)::text AS permit_first_loaded_at,
+       max(loaded_at)::text AS permit_last_loaded_at
+FROM public.property_improvements
+WHERE source_system LIKE $1`;
+
+const PERMIT_LINK_COUNTS_SQL = `
+SELECT count(*) FILTER (WHERE p.property_id IS NOT NULL) AS linked_permits,
+       count(*) FILTER (
+         WHERE pi.property_id IS NOT NULL AND p.property_id IS NULL
+       ) AS foreign_linked_permits,
+       count(DISTINCT p.property_id) AS linked_properties
+FROM public.property_improvements pi
+LEFT JOIN public.properties p
+  ON p.property_id=pi.property_id
+ AND p.source_system=$1
+WHERE pi.source_system LIKE $2`;
+
+const SUNBIZ_COUNTS_SQL = `
+SELECT count(*) AS sunbiz_address_matches,
+       count(DISTINCT bra.business_registration_id) AS sunbiz_registrations,
+       count(DISTINCT p.property_id) AS sunbiz_properties,
+       min(bra.loaded_at)::text AS sunbiz_first_loaded_at,
+       max(bra.updated_at)::text AS sunbiz_last_loaded_at
+FROM public.properties p
+JOIN public.business_registration_addresses bra
+  ON bra.address_id=p.address_id
+ AND bra.source_system='sunbiz'
+ AND bra.address_match_method='normalized_address_hash'
+ AND bra.address_match_confidence='exact'
+WHERE p.source_system=$1`;
+
+const BBB_COUNTS_SQL = `
+SELECT count(*) AS bbb_profiles,
+       min(loaded_at)::text AS bbb_first_loaded_at,
+       max(loaded_at)::text AS bbb_last_loaded_at
+FROM public.business_reputation_profiles
+WHERE provider ILIKE '%bbb%'`;
+
+const BBB_PROPERTY_COUNTS_SQL = `
+SELECT count(DISTINCT pi.property_id) AS bbb_matched_properties
+FROM public.property_improvements pi
+JOIN public.business_reputation_profiles profile
+  ON profile.company_id=pi.contractor_company_id
+ AND profile.provider ILIKE '%bbb%'
+JOIN public.properties p
+  ON p.property_id=pi.property_id
+ AND p.source_system=$1
+WHERE pi.source_system LIKE $2`;
 
 /**
  * Parse the narrow local/S3 staging command.
@@ -632,6 +620,47 @@ async function verifyNeonIdentity(client, target) {
   ) {
     throw new Error("Snapshot target is not isolated broward-ingest Neon");
   }
+}
+
+/**
+ * Read exact reconciliation aggregates as bounded statements in one existing
+ * repeatable-read transaction. Keeping each relation scan independent avoids
+ * a large materialized-CTE spill while preserving one transactional snapshot.
+ *
+ * @param {import("pg").Client} client - Verified read-only Neon transaction.
+ * @returns {Promise<Record<string,unknown>>} One merged aggregate row.
+ */
+async function readSnapshotCounts(client) {
+  const propertyResult = await client.query(PROPERTY_COUNTS_SQL, [
+    APPRAISAL_SOURCE,
+  ]);
+  const permitResult = await client.query(PERMIT_COUNTS_SQL, [
+    PERMIT_SOURCE_PATTERN,
+  ]);
+  const permitLinkResult = await client.query(PERMIT_LINK_COUNTS_SQL, [
+    APPRAISAL_SOURCE,
+    PERMIT_SOURCE_PATTERN,
+  ]);
+  const sunbizResult = await client.query(SUNBIZ_COUNTS_SQL, [
+    APPRAISAL_SOURCE,
+  ]);
+  const bbbResult = await client.query(BBB_COUNTS_SQL);
+  const bbbPropertyResult = await client.query(BBB_PROPERTY_COUNTS_SQL, [
+    APPRAISAL_SOURCE,
+    PERMIT_SOURCE_PATTERN,
+  ]);
+  const rows = [
+    propertyResult.rows[0],
+    permitResult.rows[0],
+    permitLinkResult.rows[0],
+    sunbizResult.rows[0],
+    bbbResult.rows[0],
+    bbbPropertyResult.rows[0],
+  ];
+  if (rows.some((row) => row === undefined)) {
+    throw new Error("Neon returned an incomplete snapshot aggregate");
+  }
+  return Object.assign({}, ...rows);
 }
 
 /**
@@ -1113,12 +1142,9 @@ export async function stageBrowardDonphanSnapshot(options) {
     await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
     transactionOpen = true;
     await verifyNeonIdentity(client, target);
-    const aggregate = await client.query(SNAPSHOT_COUNTS_SQL, [
-      APPRAISAL_SOURCE,
-      PERMIT_SOURCE_PATTERN,
-    ]);
+    const aggregate = await readSnapshotCounts(client);
     const normalized = normalizeSnapshotCounts(
-      /** @type {Record<string,unknown>} */ (aggregate.rows[0] ?? {}),
+      aggregate,
     );
     const version = snapshotVersion(normalized.snapshotTimestamp);
     const prefix = browardSnapshotPrefix(version);
