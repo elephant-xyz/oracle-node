@@ -38,7 +38,8 @@
     "duval-seed": "node scripts/build-duval-seed.mjs",
     "duval-seed-sample": "node scripts/build-duval-validation-sample.mjs",
     "duval-pilot": "node scripts/duval-local-pilot.mjs",
-    "duval-validate": "node scripts/validate-duval-appraisal.mjs"
+    "duval-validate": "node scripts/validate-duval-appraisal.mjs",
+    "duval-query-table": "node scripts/export-duval-query-table.mjs"
   },
   "devDependencies": {
     "@aws-sdk/client-cloudformation": "^3.895.0",
