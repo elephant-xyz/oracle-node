@@ -217,4 +217,22 @@ describe("published county catalog", () => {
       }),
     ).toThrow("must use http or https");
   });
+
+  it("lists Pinellas query-table and coverage URLs in the Cursor Elephant MCP maps", async () => {
+    const tracked = JSON.parse(
+      await readFile(resolve("catalog/published-counties.json"), "utf8"),
+    );
+    const mcp = JSON.parse(await readFile(resolve(".cursor/mcp.json"), "utf8"));
+    const pinellas = tracked.counties.find(
+      (county) => county.countyKey === "pinellas",
+    );
+    expect(pinellas).toBeDefined();
+    const env = mcp.mcpServers.elephant.env;
+    const queryMap = JSON.parse(env.PROPERTY_QUERY_TABLE_MAP);
+    const coverageMap = JSON.parse(env.DATASET_COVERAGE_MAP);
+    expect(queryMap.pinellas).toBe(pinellas.queryTableUrl);
+    expect(coverageMap.pinellas.replace(/\/$/, "")).toBe(
+      pinellas.datasetCoverageUrl.replace(/\/$/, ""),
+    );
+  });
 });

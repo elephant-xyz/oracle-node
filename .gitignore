@@ -386,3 +386,7 @@ tmp/
 # Local ingestion and harvest outputs
 .harvest-runs/
 permit-node.zip
+
+# Full Pinellas seed is generated locally / uploaded to S3; do not commit ~311k rows.
+data/seeds/pinellas.csv
+data/seeds/pinellas-full.csv
