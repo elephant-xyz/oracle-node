@@ -37,8 +37,11 @@ import {
   verifyBrowardPermitStatusTarget,
 } from "../../scripts/run-broward-permit-pilot.mjs";
 import {
+  failureCooldownDelayMs,
+  normalizeMigratedPermitItem,
   parseSupportedPermitOptions,
   processByRouteWithConcurrency,
+  readJurisdictionKeys,
   runNode,
 } from "../../scripts/run-broward-supported-permit-ingest.mjs";
 import {
@@ -353,14 +356,23 @@ describe("Broward supported-route permit ingest", () => {
         "4",
         "--max-attempts",
         "3",
+        "--max-items",
+        "2",
+        "--jurisdictions",
+        "unincorporated-broward,lazy-lake",
+        "--migrate-from-job",
+        "broward-permits-supported-full-20260831",
       ]),
     ).toEqual({
       jobId: "broward-permits-supported-pilot-20260831",
       limit: 30,
       concurrency: 4,
       maxAttempts: 3,
+      maxItems: 2,
       workDirectory: "downloads/broward/supported-permit-ingest",
       scope: "all",
+      jurisdictionKeys: ["lazy-lake", "unincorporated-broward"],
+      migrateFromJobId: "broward-permits-supported-full-20260831",
     });
     expect(() =>
       parseSupportedPermitOptions([
@@ -381,6 +393,55 @@ describe("Broward supported-route permit ingest", () => {
         "roofing",
       ]).scope,
     ).toBe("roofing");
+    expect(() => readJurisdictionKeys("plantation,plantation")).toThrow(
+      /unique implemented/u,
+    );
+    expect(failureCooldownDelayMs(1)).toBe(5 * 60_000);
+    expect(failureCooldownDelayMs(5)).toBe(4 * 60 * 60_000);
+  });
+
+  it("migrates only exact current seed identities and extends finite failures", () => {
+    const candidate = {
+      folio: "PRIVATE",
+      parcelHash: "a".repeat(64),
+      situsAddress: "PRIVATE",
+      jurisdictionKey: "lazy-lake",
+      adapterKey: BROWARD_BCS_ADAPTER_KEY,
+    };
+    expect(
+      normalizeMigratedPermitItem(
+        {
+          parcel_hash: candidate.parcelHash,
+          jurisdiction_key: candidate.jurisdictionKey,
+          adapter_key: candidate.adapterKey,
+          status: "failed_exhausted",
+          record_count: 0,
+          attempt_count: 3,
+          error_class: "source_or_load_error",
+        },
+        new Map([[candidate.parcelHash, candidate]]),
+        5,
+      ),
+    ).toMatchObject({
+      status: "failed",
+      attemptCount: 3,
+      recordCount: 0,
+    });
+    expect(() =>
+      normalizeMigratedPermitItem(
+        {
+          parcel_hash: "b".repeat(64),
+          jurisdiction_key: candidate.jurisdictionKey,
+          adapter_key: candidate.adapterKey,
+          status: "records",
+          record_count: 1,
+          attempt_count: 1,
+          error_class: null,
+        },
+        new Map([[candidate.parcelHash, candidate]]),
+        5,
+      ),
+    ).toThrow(/compatible/u);
   });
 
   it("does not let a waiting same-route item reserve a global worker", async () => {

@@ -22,6 +22,7 @@ import {
   readAccelaCsvReceiptAccessibleCount,
   readCoralSpringsEtrakitStatus,
   readPermitEnumerationStatus,
+  readPropertyFirstPermitStatus,
 } from "../../scripts/broward-neon-recovery-dashboard.mjs";
 
 /** @type {string[]} */
@@ -857,6 +858,61 @@ describe("durable Broward Neon recovery", () => {
     expect(
       buildBrowardPermitRouteStatus().unattendedUnavailableCurrentRoutes,
     ).toBe(8);
+  });
+
+  it("projects six source-scoped property-first aggregates without private identities", async () => {
+    const client = {
+      query: () =>
+        Promise.resolve({
+          rows: [
+            {
+              jurisdiction_key: "southwest-ranches",
+              candidate_count: 100,
+              terminal_count: 40,
+              record_count: 75,
+              terminal_missing_count: 2,
+              phase: "running",
+              next_attempt_at: null,
+              heartbeat_at: "2026-09-02T17:00:00.000Z",
+            },
+            {
+              jurisdiction_key: "wilton-manors",
+              candidate_count: 10,
+              terminal_count: 10,
+              record_count: 4,
+              terminal_missing_count: 1,
+              phase: "complete",
+              next_attempt_at: null,
+              heartbeat_at: "2026-09-02T16:00:00.000Z",
+            },
+          ],
+        }),
+    };
+    const status = await readPropertyFirstPermitStatus(
+      /** @type {import("pg").Client} */ (client),
+      Date.parse("2026-09-02T17:01:00.000Z"),
+    );
+    expect(status.workers).toHaveLength(6);
+    expect(status).toMatchObject({
+      activeWorkers: 1,
+      completedWorkers: 1,
+      completedWindows: 50,
+      totalWindows: 110,
+      accessibleRecords: 79,
+      sourceMissingRecords: 3,
+    });
+    expect(status.workers).toContainEqual(
+      expect.objectContaining({
+        source: "Southwest Ranches",
+        status: "running",
+        completedWindows: 40,
+        pendingWindows: 60,
+        coverageBoundary: expect.stringMatching(/building permits only/iu),
+      }),
+    );
+    expect(JSON.stringify(status)).not.toMatch(
+      /parcel_hash|folio|address|error_class|job_id/iu,
+    );
   });
 
   it("counts legacy, canonical, and list-only Accela receipts compatibly", () => {

@@ -78,6 +78,7 @@ import {
  * @property {Record<string, string>} tenantHeaders - Tenant headers captured from the UI.
  *
  * @typedef {object} TylerDateWindowPage
+ * @property {number} pageSize - Public UI-supported traversal page size.
  * @property {number} pageNumber - One-based source page.
  * @property {number} totalFound - Source-reported matching permits.
  * @property {number} totalPages - Source-reported total pages.
@@ -710,6 +711,56 @@ export async function searchTylerDateWindow(
   delayMs = 1_000,
   wait = waitForPermitDelay,
 ) {
+  /** @type {TylerDateWindowResult[]} */
+  const traversals = [];
+  let currentPageSize = pageSize;
+  while (true) {
+    if (traversals.length > 0) await wait(delayMs);
+    traversals.push(
+      await searchTylerDateWindowPageSize(
+        session,
+        startDate,
+        endDate,
+        currentPageSize,
+        maxPages,
+        delayMs,
+        wait,
+      ),
+    );
+    const reconciled = reconcileTylerPageSizeTraversals(traversals, false);
+    if (reconciled.sourceMissingRecordCount === 0) return reconciled;
+    const smallerPageSize = nextSmallerTylerPageSize(currentPageSize);
+    if (smallerPageSize === null) {
+      return reconcileTylerPageSizeTraversals(
+        traversals,
+        session.config.strictListReconciliation,
+      );
+    }
+    currentPageSize = smallerPageSize;
+  }
+}
+
+/**
+ * Traverse one date window at exactly one public UI page size.
+ *
+ * @param {TylerDateWindowSession} session - Persistent tenant session.
+ * @param {string} startDate - Inclusive ISO application date.
+ * @param {string} endDate - Inclusive ISO application date.
+ * @param {number} pageSize - Public UI-supported page size.
+ * @param {number} maxPages - Hard pages per traversal.
+ * @param {number} delayMs - Delay between API pages.
+ * @param {(milliseconds:number)=>Promise<void>} wait - Injectable delay.
+ * @returns {Promise<TylerDateWindowResult>} One internally reconciled traversal.
+ */
+async function searchTylerDateWindowPageSize(
+  session,
+  startDate,
+  endDate,
+  pageSize,
+  maxPages,
+  delayMs,
+  wait,
+) {
   if (!Number.isInteger(maxPages) || maxPages < 1 || maxPages > 200) {
     throw new Error("Tyler date-window maxPages must be 1 through 200");
   }
@@ -793,6 +844,7 @@ export async function searchTylerDateWindow(
     }
     invalidRecordCount += pageInvalidCount;
     pages.push({
+      pageSize,
       pageNumber,
       totalFound,
       totalPages,
@@ -807,30 +859,16 @@ export async function searchTylerDateWindow(
   const totalPages = expectedPages ?? 0;
   const deduped = dedupeAndSortNormalizedPermits(records);
   const accounted = deduped.length + invalidRecordCount;
-  if (accounted !== totalFound) {
-    const smallerPageSize = nextSmallerTylerPageSize(pageSize);
-    if (smallerPageSize !== null) {
-      return searchTylerDateWindow(
-        session,
-        startDate,
-        endDate,
-        smallerPageSize,
-        maxPages,
-        delayMs,
-        wait,
-      );
-    }
-    if (accounted > totalFound) {
-      throw new Error(
-        `${session.config.city} Tyler returned more unique/invalid rows than TotalFound`,
-      );
-    }
+  if (accounted > totalFound) {
+    throw new Error(
+      `${session.config.city} Tyler returned more unique/invalid rows than TotalFound`,
+    );
   }
   const sourceMissingRecordCount = reconcileTylerDateWindowCounts({
     totalFound,
     uniquePermitCount: deduped.length,
     invalidRecordCount,
-    strict: session.config.strictListReconciliation,
+    strict: false,
   });
   return {
     startDate,
@@ -841,6 +879,59 @@ export async function searchTylerDateWindow(
     invalidRecordCount,
     sourceMissingRecordCount,
     pages,
+  };
+}
+
+/**
+ * Reconcile and union stable source identities exposed by adaptive page sizes.
+ *
+ * Tyler occasionally repeats a boundary row at one supported page size while
+ * exposing the displaced identity at another. Every traversal must report the
+ * same total and invalid-row count. Only byte-compatible CaseId records are
+ * unioned; no missing identity is inferred.
+ *
+ * @param {readonly TylerDateWindowResult[]} traversals - Completed page-size traversals.
+ * @param {boolean} strict - Whether a remaining source gap must fail closed.
+ * @returns {TylerDateWindowResult} Unioned exact source records and raw pages.
+ */
+export function reconcileTylerPageSizeTraversals(traversals, strict) {
+  const first = traversals[0];
+  if (first === undefined) {
+    throw new Error("Tyler adaptive reconciliation requires a traversal");
+  }
+  if (
+    traversals.some(
+      (traversal) =>
+        traversal.startDate !== first.startDate ||
+        traversal.endDate !== first.endDate ||
+        traversal.totalFound !== first.totalFound ||
+        traversal.invalidRecordCount !== first.invalidRecordCount,
+    )
+  ) {
+    throw new Error("Tyler adaptive page-size traversals disagree");
+  }
+  const records = dedupeAndSortNormalizedPermits(
+    traversals.flatMap((traversal) => traversal.records),
+  );
+  const sourceMissingRecordCount = reconcileTylerDateWindowCounts({
+    totalFound: first.totalFound,
+    uniquePermitCount: records.length,
+    invalidRecordCount: first.invalidRecordCount,
+    strict,
+  });
+  const last = traversals.at(-1);
+  if (last === undefined) {
+    throw new Error("Tyler adaptive reconciliation lost its traversal");
+  }
+  return {
+    startDate: first.startDate,
+    endDate: first.endDate,
+    totalFound: first.totalFound,
+    totalPages: last.totalPages,
+    records,
+    invalidRecordCount: first.invalidRecordCount,
+    sourceMissingRecordCount,
+    pages: traversals.flatMap((traversal) => traversal.pages),
   };
 }
 
@@ -1774,6 +1865,83 @@ async function captureTylerPermitDetail({
   } finally {
     await page.close().catch(() => undefined);
   }
+}
+
+/**
+ * Recover one detail for an exact CaseId retained by a completed list inventory.
+ *
+ * The existing bootstrapped date-window browser is reused. Property provenance
+ * comes only from the source list's exact folio or work address; a row lacking
+ * both is rejected rather than assigned an invented query.
+ *
+ * @param {TylerDateWindowSession} session - Active anonymous tenant session.
+ * @param {BoundedTylerCivicAccessConfig} rawConfig - Certified source config.
+ * @param {NormalizedCityPermit} listRecord - Exact recovered list identity.
+ * @param {number} [timeoutMs=DEFAULT_SEARCH_TIMEOUT_MS] - Page/API deadline.
+ * @returns {Promise<NormalizedMunicipalPermit>} Reconciled detail-backed row.
+ */
+export async function captureRecoveredTylerPermitDetail(
+  session,
+  rawConfig,
+  listRecord,
+  timeoutMs = DEFAULT_SEARCH_TIMEOUT_MS,
+) {
+  const config = validateBoundedTylerConfig(rawConfig);
+  const caseId = readSourceText(listRecord.raw.case_id);
+  if (
+    caseId === null ||
+    readSourceText(listRecord.permit_number) === null ||
+    listRecord.source_system !== config.sourceSystem ||
+    !Number.isInteger(timeoutMs) ||
+    timeoutMs < 1_000
+  ) {
+    throw new Error("Recovered Tyler list identity is invalid");
+  }
+  const query =
+    typeof listRecord.parcel_identifier === "string" &&
+    /^[A-Z0-9]{12}$/u.test(listRecord.parcel_identifier.toUpperCase())
+      ? {
+          kind: /** @type {"folio"} */ ("folio"),
+          value: listRecord.parcel_identifier,
+        }
+      : typeof listRecord.work_location === "string" &&
+          /\d/u.test(listRecord.work_location)
+        ? {
+            kind: /** @type {"address"} */ ("address"),
+            value: listRecord.work_location,
+          }
+        : null;
+  if (query === null) {
+    throw new Error("Recovered Tyler identity lacks exact property provenance");
+  }
+  const candidate = {
+    caseId,
+    permitNumber: listRecord.permit_number,
+    entity: {
+      CaseId: caseId,
+      CaseNumber: listRecord.permit_number,
+      MainParcel: listRecord.parcel_identifier,
+      AddressDisplay: listRecord.work_location,
+      IssueDate: listRecord.permit_issue_date,
+      ApplyDate: listRecord.raw.applied_date,
+      FinalDate: listRecord.raw.finalized_date,
+      ExpireDate: listRecord.raw.expiration_date,
+      CaseStatus: listRecord.record_status,
+      CaseType: listRecord.record_type,
+      CaseWorkclass: listRecord.raw.work_class,
+      Description: listRecord.project_description,
+    },
+  };
+  return captureTylerPermitDetail({
+    browser: session.browser,
+    config,
+    query,
+    candidate,
+    searchPage: 1,
+    searchUrl: buildPagedSearchRouteUrl(config.portalBaseUrl, query.value, 1),
+    navigationTimeoutMs: timeoutMs,
+    responseTimeoutMs: timeoutMs,
+  });
 }
 
 /**

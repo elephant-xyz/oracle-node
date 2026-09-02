@@ -22,6 +22,7 @@ import {
   BROWARD_ACCELA_ADAPTER_KEY,
   BROWARD_BCS_ADAPTER_KEY,
   BROWARD_CITIZENSERVE_ADAPTER_KEY,
+  BROWARD_PERMIT_JURISDICTIONS,
   BROWARD_PERMIT_REGISTRY_VERSION,
   BROWARD_TYLER_CIVIC_ACCESS_ADAPTER_KEY,
   resolveBrowardPermitJurisdiction,
@@ -33,10 +34,15 @@ const EXPECTED_PROJECT_ID = "raspy-frost-51580436";
 const PRODUCTION_ENDPOINT_PREFIX = "ep-mute-leaf";
 const CONTROL_SCHEMA = "ingest_control";
 const LOCK_NAMESPACE = 12_011;
-const LOCK_KEY = 4;
 const MAX_CONCURRENCY = 4;
 const DEFAULT_PROBE_TIMEOUT_MS = 15 * 60_000;
 const DEFAULT_WORK_DIR = "downloads/broward/supported-permit-ingest";
+const ADAPTER_LOCK_KEYS = new Map([
+  [BROWARD_BCS_ADAPTER_KEY, 41],
+  [BROWARD_CITIZENSERVE_ADAPTER_KEY, 42],
+  [BROWARD_ACCELA_ADAPTER_KEY, 43],
+  [BROWARD_TYLER_CIVIC_ACCESS_ADAPTER_KEY, 44],
+]);
 const TERMINAL_STATUSES = new Set([
   "records",
   "no_permits",
@@ -53,8 +59,11 @@ const TERMINAL_STATUSES = new Set([
  * @property {number} concurrency - Maximum simultaneous jurisdiction probes.
  * @property {number} maxAttempts - Attempts before one source result is terminal.
  * @property {number | null} limit - Optional deterministic candidate cap.
+ * @property {number | null} maxItems - Optional work cap for this invocation only.
  * @property {string} workDirectory - Private source artifact and checkpoint root.
  * @property {SupportedPermitScope} scope - All bounded permits or roofing-only.
+ * @property {readonly string[]} jurisdictionKeys - Exact current registry routes.
+ * @property {string | null} migrateFromJobId - Compatible prior checkpoint job.
  *
  * @typedef {object} SupportedPermitCandidate
  * @property {string} folio - Exact private-in-process Broward folio.
@@ -72,6 +81,15 @@ const TERMINAL_STATUSES = new Set([
  * @property {number} exitCode - Child exit status.
  * @property {number} stderrBytes - Private child diagnostic byte count.
  * @property {boolean} timedOut - Whether the hard probe deadline terminated it.
+ *
+ * @typedef {object} MigratedPermitItem
+ * @property {string} parcelHash - Compatible one-way property identity.
+ * @property {string} jurisdictionKey - Exact current registry route.
+ * @property {string} adapterKey - Exact current adapter family.
+ * @property {SupportedPermitItemStatus} status - Preserved or retryable state.
+ * @property {number} recordCount - Previously committed records.
+ * @property {number} attemptCount - Preserved finite source attempts.
+ * @property {string | null} errorClass - Aggregate-safe prior failure class.
  */
 
 /**
@@ -119,6 +137,11 @@ export function parseSupportedPermitOptions(argv) {
     limitRaw === undefined
       ? null
       : boundedInteger(limitRaw, "limit", 1, 1_000_000);
+  const maxItemsRaw = values.get("max-items");
+  const maxItems =
+    maxItemsRaw === undefined
+      ? null
+      : boundedInteger(maxItemsRaw, "max-items", 1, 1_000_000);
   const workDirectory = values.get("work-dir") ?? DEFAULT_WORK_DIR;
   if (workDirectory.trim() === "") {
     throw new Error("--work-dir must not be empty");
@@ -127,21 +150,79 @@ export function parseSupportedPermitOptions(argv) {
   if (scope !== "all" && scope !== "roofing") {
     throw new Error("--scope must be all or roofing");
   }
+  const jurisdictionKeys = readJurisdictionKeys(values.get("jurisdictions"));
+  const migrateFromJobId = values.get("migrate-from-job") ?? null;
+  if (
+    migrateFromJobId !== null &&
+    (!/^broward-permits-[a-z0-9-]+$/u.test(migrateFromJobId) ||
+      migrateFromJobId === jobId)
+  ) {
+    throw new Error(
+      "--migrate-from-job must name a different Broward permit job",
+    );
+  }
   return {
     jobId,
     concurrency,
     maxAttempts,
     limit,
+    maxItems,
     workDirectory,
     scope,
+    jurisdictionKeys,
+    migrateFromJobId,
   };
+}
+
+/**
+ * Parse an exact, deduplicated implemented-route allowlist.
+ *
+ * An omitted value preserves the legacy all-implemented-routes behavior.
+ * Operational gap jobs should always provide an explicit allowlist so a
+ * registry expansion cannot silently acquire another worker's source.
+ *
+ * @param {string | undefined} raw - Optional comma-delimited registry keys.
+ * @returns {readonly string[]} Sorted current implemented jurisdiction keys.
+ */
+export function readJurisdictionKeys(raw) {
+  const implemented = new Set(
+    BROWARD_PERMIT_JURISDICTIONS.filter(
+      (entry) =>
+        entry.primarySource.status === "implemented" &&
+        entry.primarySource.adapterKey !== null,
+    ).map((entry) => entry.key),
+  );
+  const keys =
+    raw === undefined
+      ? [...implemented]
+      : raw
+          .split(",")
+          .map((value) => value.trim())
+          .filter((value) => value.length > 0);
+  if (
+    keys.length === 0 ||
+    new Set(keys).size !== keys.length ||
+    keys.some((key) => !implemented.has(key))
+  ) {
+    throw new Error(
+      "--jurisdictions must contain unique implemented Broward registry keys",
+    );
+  }
+  return Object.freeze([...keys].sort());
 }
 
 /**
  * Run or resume supported anonymous permit routes.
  *
  * @param {SupportedPermitOptions} options - Durable run configuration.
- * @returns {Promise<{candidateCount:number,processed:number,terminal:number,failed:number}>}
+ * @returns {Promise<{
+ *   candidateCount:number,
+ *   processed:number,
+ *   terminal:number,
+ *   failed:number,
+ *   cooling:number,
+ *   migrated:number
+ * }>}
  *   Aggregate run result.
  */
 export async function runSupportedPermitIngest(options) {
@@ -156,28 +237,41 @@ export async function runSupportedPermitIngest(options) {
   try {
     await verifyTarget(client, target);
     await ensureControlTables(client);
-    await acquireRunLock(client);
-    const candidates = await readCandidates(client, options.limit);
+    const candidates = await readCandidates(
+      client,
+      options.limit,
+      new Set(options.jurisdictionKeys),
+    );
+    await acquireRunLocks(
+      client,
+      new Set(candidates.map((candidate) => candidate.adapterKey)),
+    );
     const signature = candidateSignature(candidates, options);
-    await registerRun(client, options, signature, candidates.length);
-    const completed = await readCompletedItems(
+    await registerRun(client, options, signature, candidates);
+    const migrated = await migrateCompatibleItems(client, options, candidates);
+    await refreshRouteAggregates(client, options.jobId);
+    const disposition = await readItemDisposition(
       client,
       options.jobId,
       options.maxAttempts,
     );
     const pending = candidates.filter(
-      (candidate) => !completed.has(candidate.parcelHash),
+      (candidate) =>
+        !disposition.completed.has(candidate.parcelHash) &&
+        !disposition.cooling.has(candidate.parcelHash),
     );
+    const selectedPending =
+      options.maxItems === null ? pending : pending.slice(0, options.maxItems);
     await mkdir(path.resolve(options.workDirectory), {
       recursive: true,
       mode: 0o700,
     });
 
     let processed = 0;
-    let terminal = completed.size;
+    let terminal = disposition.completed.size;
     let failed = 0;
     await processByRouteWithConcurrency(
-      pending,
+      selectedPending,
       options.concurrency,
       (candidate) => candidate.jurisdictionKey,
       async (candidate) => {
@@ -200,6 +294,9 @@ export async function runSupportedPermitIngest(options) {
             outcome.recordCount,
             attempt + 1,
             outcome.errorClass,
+            finalStatus === "failed"
+              ? failureCooldownTimestamp(attempt + 1)
+              : null,
           );
           processed += 1;
           if (TERMINAL_STATUSES.has(finalStatus)) terminal += 1;
@@ -217,6 +314,9 @@ export async function runSupportedPermitIngest(options) {
             0,
             attempt + 1,
             "source_or_load_error",
+            finalStatus === "failed"
+              ? failureCooldownTimestamp(attempt + 1)
+              : null,
           );
           processed += 1;
           failed += 1;
@@ -224,13 +324,16 @@ export async function runSupportedPermitIngest(options) {
         }
       },
     );
+    await refreshRouteAggregates(client, options.jobId);
     const aggregate = await readRunAggregate(client, options.jobId);
+    await finalizeRoutePhases(client, options.jobId);
     await client.query(
       `UPDATE ${CONTROL_SCHEMA}.broward_supported_permit_runs
        SET phase = $2,
            terminal_count = $3,
            record_count = $4,
            failure_count = $5,
+           next_attempt_at = $6,
            heartbeat_at = now(),
            completed_at = CASE WHEN $2 = 'source_exhausted' THEN now() ELSE NULL END
        WHERE job_id = $1`,
@@ -242,6 +345,7 @@ export async function runSupportedPermitIngest(options) {
         aggregate.terminalCount,
         aggregate.recordCount,
         aggregate.failureCount,
+        aggregate.nextAttemptAt,
       ],
     );
     return {
@@ -249,6 +353,8 @@ export async function runSupportedPermitIngest(options) {
       processed,
       terminal: aggregate.terminalCount,
       failed: aggregate.failureCount,
+      cooling: aggregate.coolingCount,
+      migrated,
     };
   } finally {
     await client.end();
@@ -260,9 +366,10 @@ export async function runSupportedPermitIngest(options) {
  *
  * @param {import("pg").Client} client - Verified direct client.
  * @param {number | null} limit - Optional candidate limit.
+ * @param {ReadonlySet<string>} jurisdictionKeys - Explicit registry allowlist.
  * @returns {Promise<SupportedPermitCandidate[]>} Supported-route candidates.
  */
-async function readCandidates(client, limit) {
+async function readCandidates(client, limit, jurisdictionKeys) {
   const result = await client.query(
     `SELECT p.request_identifier, a.unnormalized_address
      FROM public.properties p
@@ -286,6 +393,7 @@ async function readCandidates(client, limit) {
     const route = resolution.jurisdiction?.primarySource;
     if (
       resolution.jurisdiction === null ||
+      !jurisdictionKeys.has(resolution.jurisdiction.key) ||
       route?.status !== "implemented" ||
       route.adapterKey === null
     ) {
@@ -595,6 +703,7 @@ export function runNode(args, timeoutMs = DEFAULT_PROBE_TIMEOUT_MS) {
  * @param {number} recordCount - Records committed from this property.
  * @param {number} attemptCount - Durable source attempt count.
  * @param {string | null} errorClass - Fixed aggregate-safe failure class.
+ * @param {string | null} nextAttemptAt - Earliest retry after a failure.
  * @returns {Promise<void>} Resolves after item and heartbeat writes.
  */
 async function checkpointItem(
@@ -605,16 +714,17 @@ async function checkpointItem(
   recordCount,
   attemptCount,
   errorClass,
+  nextAttemptAt,
 ) {
   await client.query(
     `INSERT INTO ${CONTROL_SCHEMA}.broward_supported_permit_items (
        job_id, parcel_hash, jurisdiction_key, adapter_key, status,
-       record_count, attempt_count, error_class
-     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+       record_count, attempt_count, error_class, next_attempt_at
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
      ON CONFLICT (job_id, parcel_hash) DO UPDATE SET
        status=EXCLUDED.status, record_count=EXCLUDED.record_count,
        attempt_count=EXCLUDED.attempt_count, error_class=EXCLUDED.error_class,
-       updated_at=now()`,
+       next_attempt_at=EXCLUDED.next_attempt_at, updated_at=now()`,
     [
       jobId,
       candidate.parcelHash,
@@ -624,12 +734,19 @@ async function checkpointItem(
       recordCount,
       attemptCount,
       errorClass,
+      nextAttemptAt,
     ],
   );
   await client.query(
     `UPDATE ${CONTROL_SCHEMA}.broward_supported_permit_runs
      SET heartbeat_at=now() WHERE job_id=$1`,
     [jobId],
+  );
+  await client.query(
+    `UPDATE ${CONTROL_SCHEMA}.broward_supported_permit_routes
+     SET phase='running', heartbeat_at=now()
+     WHERE job_id=$1 AND jurisdiction_key=$2`,
+    [jobId, candidate.jurisdictionKey],
   );
 }
 
@@ -654,6 +771,7 @@ async function ensureControlTables(client) {
        terminal_count integer NOT NULL DEFAULT 0,
        record_count integer NOT NULL DEFAULT 0,
        failure_count integer NOT NULL DEFAULT 0,
+       next_attempt_at timestamptz,
        started_at timestamptz NOT NULL DEFAULT now(),
        heartbeat_at timestamptz NOT NULL DEFAULT now(),
        completed_at timestamptz
@@ -663,6 +781,10 @@ async function ensureControlTables(client) {
     `ALTER TABLE ${CONTROL_SCHEMA}.broward_supported_permit_runs
      ADD COLUMN IF NOT EXISTS scope text NOT NULL DEFAULT 'all'
      CHECK (scope IN ('all','roofing'))`,
+  );
+  await client.query(
+    `ALTER TABLE ${CONTROL_SCHEMA}.broward_supported_permit_runs
+     ADD COLUMN IF NOT EXISTS next_attempt_at timestamptz`,
   );
   await client.query(
     `CREATE TABLE IF NOT EXISTS ${CONTROL_SCHEMA}.broward_supported_permit_items (
@@ -676,8 +798,28 @@ async function ensureControlTables(client) {
        record_count integer NOT NULL CHECK (record_count >= 0),
        attempt_count integer NOT NULL CHECK (attempt_count > 0),
        error_class text,
+       next_attempt_at timestamptz,
        updated_at timestamptz NOT NULL DEFAULT now(),
        PRIMARY KEY (job_id, parcel_hash)
+     )`,
+  );
+  await client.query(
+    `ALTER TABLE ${CONTROL_SCHEMA}.broward_supported_permit_items
+     ADD COLUMN IF NOT EXISTS next_attempt_at timestamptz`,
+  );
+  await client.query(
+    `CREATE TABLE IF NOT EXISTS ${CONTROL_SCHEMA}.broward_supported_permit_routes (
+       job_id text NOT NULL REFERENCES ${CONTROL_SCHEMA}.broward_supported_permit_runs(job_id),
+       jurisdiction_key text NOT NULL,
+       adapter_key text NOT NULL,
+       candidate_count integer NOT NULL CHECK (candidate_count >= 0),
+       phase text NOT NULL CHECK (phase IN ('running','paused','cooling','complete')),
+       terminal_count integer NOT NULL DEFAULT 0 CHECK (terminal_count >= 0),
+       record_count integer NOT NULL DEFAULT 0 CHECK (record_count >= 0),
+       terminal_missing_count integer NOT NULL DEFAULT 0 CHECK (terminal_missing_count >= 0),
+       next_attempt_at timestamptz,
+       heartbeat_at timestamptz NOT NULL DEFAULT now(),
+       PRIMARY KEY (job_id,jurisdiction_key)
      )`,
   );
 }
@@ -688,10 +830,11 @@ async function ensureControlTables(client) {
  * @param {import("pg").Client} client - Verified direct client.
  * @param {SupportedPermitOptions} options - Run configuration.
  * @param {string} signature - Candidate/config SHA-256.
- * @param {number} candidateCount - Exact supported candidate count.
+ * @param {readonly SupportedPermitCandidate[]} candidates - Exact supported candidates.
  * @returns {Promise<void>} Resolves after registration and heartbeat.
  */
-async function registerRun(client, options, signature, candidateCount) {
+async function registerRun(client, options, signature, candidates) {
+  const candidateCount = candidates.length;
   await client.query(
     `INSERT INTO ${CONTROL_SCHEMA}.broward_supported_permit_runs (
        job_id, config_signature, registry_version, candidate_count,
@@ -728,31 +871,336 @@ async function registerRun(client, options, signature, candidateCount) {
      SET phase='running',heartbeat_at=now() WHERE job_id=$1`,
     [options.jobId],
   );
+  const routeCounts = countCandidateRoutes(candidates);
+  for (const candidate of routeCounts) {
+    await client.query(
+      `INSERT INTO ${CONTROL_SCHEMA}.broward_supported_permit_routes (
+         job_id,jurisdiction_key,adapter_key,candidate_count,phase
+       ) VALUES ($1,$2,$3,$4,'running')
+       ON CONFLICT (job_id,jurisdiction_key) DO NOTHING`,
+      [
+        options.jobId,
+        candidate.jurisdictionKey,
+        candidate.adapterKey,
+        candidate.candidateCount,
+      ],
+    );
+  }
+  const routeRows = await client.query(
+    `SELECT jurisdiction_key,adapter_key,candidate_count
+     FROM ${CONTROL_SCHEMA}.broward_supported_permit_routes
+     WHERE job_id=$1`,
+    [options.jobId],
+  );
+  if (
+    routeRows.rows.length !== routeCounts.length ||
+    routeRows.rows.some((row) => {
+      const expected = routeCounts.find(
+        (candidate) => candidate.jurisdictionKey === row.jurisdiction_key,
+      );
+      return (
+        expected === undefined ||
+        expected.adapterKey !== row.adapter_key ||
+        expected.candidateCount !== Number(row.candidate_count)
+      );
+    })
+  ) {
+    throw new Error("Existing supported permit route contract does not match");
+  }
+  await client.query(
+    `UPDATE ${CONTROL_SCHEMA}.broward_supported_permit_routes
+     SET phase='running',heartbeat_at=now()
+     WHERE job_id=$1`,
+    [options.jobId],
+  );
 }
 
 /**
- * Read terminal or exhausted one-way parcel hashes.
+ * Count deterministic candidates without retaining private query values.
+ *
+ * @param {readonly SupportedPermitCandidate[]} candidates - Signed candidates.
+ * @returns {{
+ *   jurisdictionKey:string,
+ *   adapterKey:string,
+ *   candidateCount:number
+ * }[]} Current deterministic route counts.
+ */
+function countCandidateRoutes(candidates) {
+  const counts = new Map();
+  for (const candidate of candidates) {
+    const existing = counts.get(candidate.jurisdictionKey);
+    if (
+      existing !== undefined &&
+      existing.adapterKey !== candidate.adapterKey
+    ) {
+      throw new Error("Supported permit route changed adapter within one run");
+    }
+    counts.set(candidate.jurisdictionKey, {
+      jurisdictionKey: candidate.jurisdictionKey,
+      adapterKey: candidate.adapterKey,
+      candidateCount: (existing?.candidateCount ?? 0) + 1,
+    });
+  }
+  return [...counts.values()].sort((left, right) =>
+    left.jurisdictionKey.localeCompare(right.jurisdictionKey),
+  );
+}
+
+/**
+ * Validate and preserve a prior job item against the current signed seed.
+ *
+ * A previously exhausted failure becomes retryable only when the new job has a
+ * strictly larger finite attempt budget. Successful, empty, and truncated
+ * evidence retains its exact status and record count.
+ *
+ * @param {Record<string, unknown>} row - Prior aggregate checkpoint row.
+ * @param {ReadonlyMap<string, SupportedPermitCandidate>} candidatesByHash
+ *   Current signed property candidates keyed by compatible one-way identity.
+ * @param {number} maxAttempts - New finite source attempt ceiling.
+ * @returns {MigratedPermitItem} Validated compatible migration item.
+ */
+export function normalizeMigratedPermitItem(
+  row,
+  candidatesByHash,
+  maxAttempts,
+) {
+  const parcelHash = row.parcel_hash;
+  const jurisdictionKey = row.jurisdiction_key;
+  const adapterKey = row.adapter_key;
+  const status = row.status;
+  const recordCount = Number(row.record_count);
+  const attemptCount = Number(row.attempt_count);
+  const errorClass =
+    row.error_class === null || typeof row.error_class === "string"
+      ? row.error_class
+      : undefined;
+  const candidate =
+    typeof parcelHash === "string"
+      ? candidatesByHash.get(parcelHash)
+      : undefined;
+  if (
+    candidate === undefined ||
+    typeof parcelHash !== "string" ||
+    typeof jurisdictionKey !== "string" ||
+    typeof adapterKey !== "string" ||
+    candidate.jurisdictionKey !== jurisdictionKey ||
+    candidate.adapterKey !== adapterKey ||
+    typeof status !== "string" ||
+    ![
+      "records",
+      "no_permits",
+      "truncated",
+      "failed",
+      "failed_exhausted",
+    ].includes(status) ||
+    !Number.isSafeInteger(recordCount) ||
+    recordCount < 0 ||
+    !Number.isSafeInteger(attemptCount) ||
+    attemptCount < 1 ||
+    errorClass === undefined
+  ) {
+    throw new Error(
+      "Prior supported permit item is not compatible with the current signed seed",
+    );
+  }
+  const migratedStatus =
+    status === "failed_exhausted" && attemptCount < maxAttempts
+      ? "failed"
+      : status;
+  return {
+    parcelHash,
+    jurisdictionKey,
+    adapterKey,
+    status: /** @type {SupportedPermitItemStatus} */ (migratedStatus),
+    recordCount,
+    attemptCount,
+    errorClass,
+  };
+}
+
+/**
+ * Copy only identity-compatible prior item evidence into a new immutable job.
+ *
+ * @param {import("pg").Client} client - Verified control client.
+ * @param {SupportedPermitOptions} options - New source-scoped run contract.
+ * @param {readonly SupportedPermitCandidate[]} candidates - Signed candidates.
+ * @returns {Promise<number>} Newly inserted compatible item count.
+ */
+async function migrateCompatibleItems(client, options, candidates) {
+  if (options.migrateFromJobId === null) return 0;
+  const sourceRun = await client.query(
+    `SELECT scope FROM ${CONTROL_SCHEMA}.broward_supported_permit_runs
+     WHERE job_id=$1`,
+    [options.migrateFromJobId],
+  );
+  if (
+    sourceRun.rows.length !== 1 ||
+    sourceRun.rows[0]?.scope !== options.scope
+  ) {
+    throw new Error(
+      "Prior supported permit job is absent or scope-incompatible",
+    );
+  }
+  const prior = await client.query(
+    `SELECT parcel_hash,jurisdiction_key,adapter_key,status,record_count,
+            attempt_count,error_class
+     FROM ${CONTROL_SCHEMA}.broward_supported_permit_items
+     WHERE job_id=$1 AND jurisdiction_key=ANY($2::text[])`,
+    [options.migrateFromJobId, options.jurisdictionKeys],
+  );
+  const candidatesByHash = new Map(
+    candidates.map((candidate) => [candidate.parcelHash, candidate]),
+  );
+  const items = prior.rows.map((row) =>
+    normalizeMigratedPermitItem(
+      /** @type {Record<string, unknown>} */ (row),
+      candidatesByHash,
+      options.maxAttempts,
+    ),
+  );
+  if (items.length === 0) {
+    throw new Error(
+      "Prior supported permit job has no compatible selected items",
+    );
+  }
+  const inserted = await client.query(
+    `INSERT INTO ${CONTROL_SCHEMA}.broward_supported_permit_items (
+       job_id,parcel_hash,jurisdiction_key,adapter_key,status,record_count,
+       attempt_count,error_class,next_attempt_at
+     )
+     SELECT $1,item.parcel_hash,item.jurisdiction_key,item.adapter_key,
+            item.status,item.record_count,item.attempt_count,item.error_class,NULL
+     FROM jsonb_to_recordset($2::jsonb) AS item(
+       parcel_hash text,jurisdiction_key text,adapter_key text,status text,
+       record_count integer,attempt_count integer,error_class text
+     )
+     ON CONFLICT (job_id,parcel_hash) DO NOTHING
+     RETURNING parcel_hash`,
+    [
+      options.jobId,
+      JSON.stringify(
+        items.map((item) => ({
+          parcel_hash: item.parcelHash,
+          jurisdiction_key: item.jurisdictionKey,
+          adapter_key: item.adapterKey,
+          status: item.status,
+          record_count: item.recordCount,
+          attempt_count: item.attemptCount,
+          error_class: item.errorClass,
+        })),
+      ),
+    ],
+  );
+  return inserted.rowCount ?? 0;
+}
+
+/**
+ * Rebuild each route row from item truth after migration or source work.
+ *
+ * @param {import("pg").Client} client - Verified control client.
+ * @param {string} jobId - Stable source-scoped run identity.
+ * @returns {Promise<void>} Resolves after aggregate route checkpointing.
+ */
+async function refreshRouteAggregates(client, jobId) {
+  await client.query(
+    `UPDATE ${CONTROL_SCHEMA}.broward_supported_permit_routes AS route
+     SET terminal_count = (
+           SELECT count(*)::integer
+           FROM ${CONTROL_SCHEMA}.broward_supported_permit_items AS item
+           WHERE item.job_id=route.job_id
+             AND item.jurisdiction_key=route.jurisdiction_key
+             AND item.status IN (
+               'records','no_permits','truncated','failed_exhausted'
+             )
+         ),
+         record_count = (
+           SELECT coalesce(sum(item.record_count),0)::integer
+           FROM ${CONTROL_SCHEMA}.broward_supported_permit_items AS item
+           WHERE item.job_id=route.job_id
+             AND item.jurisdiction_key=route.jurisdiction_key
+         ),
+         terminal_missing_count = (
+           SELECT count(*)::integer
+           FROM ${CONTROL_SCHEMA}.broward_supported_permit_items AS item
+           WHERE item.job_id=route.job_id
+             AND item.jurisdiction_key=route.jurisdiction_key
+             AND item.status IN ('truncated','failed_exhausted')
+         ),
+         next_attempt_at = (
+           SELECT min(item.next_attempt_at)
+           FROM ${CONTROL_SCHEMA}.broward_supported_permit_items AS item
+           WHERE item.job_id=route.job_id
+             AND item.jurisdiction_key=route.jurisdiction_key
+             AND item.status='failed'
+             AND item.next_attempt_at > now()
+         ),
+         heartbeat_at=now()
+     WHERE route.job_id=$1`,
+    [jobId],
+  );
+}
+
+/**
+ * Mark route aggregates complete, cooling, or durably paused after invocation.
+ *
+ * @param {import("pg").Client} client - Verified control client.
+ * @param {string} jobId - Stable source-scoped run identity.
+ * @returns {Promise<void>} Resolves after route phase finalization.
+ */
+async function finalizeRoutePhases(client, jobId) {
+  await client.query(
+    `UPDATE ${CONTROL_SCHEMA}.broward_supported_permit_routes AS route
+     SET phase = CASE
+       WHEN route.terminal_count >= route.candidate_count THEN 'complete'
+       WHEN route.next_attempt_at IS NOT NULL
+         AND (
+           SELECT count(*)::integer
+           FROM ${CONTROL_SCHEMA}.broward_supported_permit_items AS item
+           WHERE item.job_id=route.job_id
+             AND item.jurisdiction_key=route.jurisdiction_key
+         ) >= route.candidate_count
+         THEN 'cooling'
+       ELSE 'paused'
+     END,
+     heartbeat_at=now()
+     WHERE route.job_id=$1`,
+    [jobId],
+  );
+}
+
+/**
+ * Read terminal and currently cooling one-way parcel hashes.
  *
  * @param {import("pg").Client} client - Verified control client.
  * @param {string} jobId - Stable run identifier.
  * @param {number} maxAttempts - Failure exhaustion threshold.
- * @returns {Promise<Set<string>>} Durable completed parcel hashes.
+ * @returns {Promise<{completed:Set<string>,cooling:Set<string>}>}
+ *   Durable item disposition without exposing source identities.
  */
-async function readCompletedItems(client, jobId, maxAttempts) {
+async function readItemDisposition(client, jobId, maxAttempts) {
   const result = await client.query(
-    `SELECT parcel_hash,status,attempt_count
+    `SELECT parcel_hash,status,attempt_count,next_attempt_at
      FROM ${CONTROL_SCHEMA}.broward_supported_permit_items WHERE job_id=$1`,
     [jobId],
   );
-  return new Set(
-    result.rows.flatMap((row) =>
-      typeof row.parcel_hash === "string" &&
-      (TERMINAL_STATUSES.has(row.status) ||
-        Number(row.attempt_count) >= maxAttempts)
-        ? [row.parcel_hash]
-        : [],
-    ),
-  );
+  const completed = new Set();
+  const cooling = new Set();
+  const now = Date.now();
+  for (const row of result.rows) {
+    if (typeof row.parcel_hash !== "string") continue;
+    if (
+      TERMINAL_STATUSES.has(row.status) ||
+      Number(row.attempt_count) >= maxAttempts
+    ) {
+      completed.add(row.parcel_hash);
+    } else if (
+      row.status === "failed" &&
+      timestampMillis(row.next_attempt_at) > now
+    ) {
+      cooling.add(row.parcel_hash);
+    }
+  }
+  return { completed, cooling };
 }
 
 /**
@@ -777,7 +1225,13 @@ async function readAttemptCount(client, jobId, parcelHash) {
  *
  * @param {import("pg").Client} client - Verified control client.
  * @param {string} jobId - Stable run identifier.
- * @returns {Promise<{terminalCount:number,recordCount:number,failureCount:number}>}
+ * @returns {Promise<{
+ *   terminalCount:number,
+ *   recordCount:number,
+ *   failureCount:number,
+ *   coolingCount:number,
+ *   nextAttemptAt:string|null
+ * }>}
  *   Aggregate durable counters.
  */
 async function readRunAggregate(client, jobId) {
@@ -786,6 +1240,12 @@ async function readRunAggregate(client, jobId) {
        count(*) FILTER (WHERE status IN ('records','no_permits','truncated','failed_exhausted'))::integer AS terminal_count,
        coalesce(sum(record_count),0)::integer AS record_count,
        count(*) FILTER (WHERE status IN ('failed','failed_exhausted'))::integer AS failure_count
+       ,count(*) FILTER (
+         WHERE status='failed' AND next_attempt_at > now()
+       )::integer AS cooling_count
+       ,min(next_attempt_at) FILTER (
+         WHERE status='failed' AND next_attempt_at > now()
+       )::text AS next_attempt_at
      FROM ${CONTROL_SCHEMA}.broward_supported_permit_items WHERE job_id=$1`,
     [jobId],
   );
@@ -793,22 +1253,39 @@ async function readRunAggregate(client, jobId) {
     terminalCount: Number(result.rows[0]?.terminal_count ?? 0),
     recordCount: Number(result.rows[0]?.record_count ?? 0),
     failureCount: Number(result.rows[0]?.failure_count ?? 0),
+    coolingCount: Number(result.rows[0]?.cooling_count ?? 0),
+    nextAttemptAt:
+      typeof result.rows[0]?.next_attempt_at === "string"
+        ? result.rows[0].next_attempt_at
+        : null,
   };
 }
 
 /**
- * Acquire the session-scoped supported permit writer lock.
+ * Acquire one session-scoped source lock per selected adapter family.
  *
  * @param {import("pg").Client} client - Verified direct client.
+ * @param {ReadonlySet<string>} adapterKeys - Selected current adapter families.
  * @returns {Promise<void>} Resolves only for the sole runner.
  */
-async function acquireRunLock(client) {
-  const result = await client.query(
-    "SELECT pg_try_advisory_lock($1,$2) AS acquired",
-    [LOCK_NAMESPACE, LOCK_KEY],
-  );
-  if (result.rows[0]?.acquired !== true) {
-    throw new Error("Another supported permit runner owns the writer lock");
+async function acquireRunLocks(client, adapterKeys) {
+  const lockKeys = [...adapterKeys]
+    .map((adapterKey) => ADAPTER_LOCK_KEYS.get(adapterKey))
+    .sort((left, right) => Number(left) - Number(right));
+  if (
+    lockKeys.length === 0 ||
+    lockKeys.some((lockKey) => !Number.isInteger(lockKey))
+  ) {
+    throw new Error("Supported permit adapter lock configuration is invalid");
+  }
+  for (const lockKey of lockKeys) {
+    const result = await client.query(
+      "SELECT pg_try_advisory_lock($1,$2) AS acquired",
+      [LOCK_NAMESPACE, lockKey],
+    );
+    if (result.rows[0]?.acquired !== true) {
+      throw new Error("Another supported permit runner owns this source lock");
+    }
   }
 }
 
@@ -891,6 +1368,49 @@ function numberField(record, key) {
 }
 
 /**
+ * Return the finite attempt-based source cooldown.
+ *
+ * @param {number} attemptCount - One-based failed attempt count.
+ * @returns {number} Cooldown duration in milliseconds.
+ */
+export function failureCooldownDelayMs(attemptCount) {
+  if (!Number.isInteger(attemptCount) || attemptCount < 1) {
+    throw new Error("Failure attempt count must be a positive integer");
+  }
+  const delays = [5 * 60_000, 15 * 60_000, 60 * 60_000, 4 * 60 * 60_000];
+  return (
+    delays[Math.min(attemptCount - 1, delays.length - 1)] ?? 4 * 60 * 60_000
+  );
+}
+
+/**
+ * Produce an ISO retry timestamp without retaining raw source errors.
+ *
+ * @param {number} attemptCount - One-based failed attempt count.
+ * @returns {string} Earliest safe retry time.
+ */
+function failureCooldownTimestamp(attemptCount) {
+  return new Date(
+    Date.now() + failureCooldownDelayMs(attemptCount),
+  ).toISOString();
+}
+
+/**
+ * Parse a PostgreSQL timestamp value for private eligibility decisions.
+ *
+ * @param {unknown} value - Date object, ISO string, or absent timestamp.
+ * @returns {number} Epoch milliseconds, or negative infinity when absent.
+ */
+function timestampMillis(value) {
+  if (value instanceof Date) return value.getTime();
+  if (typeof value === "string") {
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) ? parsed : Number.NEGATIVE_INFINITY;
+  }
+  return Number.NEGATIVE_INFINITY;
+}
+
+/**
  * Hash exact ordered candidates and run configuration.
  *
  * @param {readonly SupportedPermitCandidate[]} candidates - Ordered candidate set.
@@ -901,6 +1421,8 @@ function candidateSignature(candidates, options) {
   const digest = createHash("sha256");
   digest.update(BROWARD_PERMIT_REGISTRY_VERSION);
   digest.update(`\0${String(options.limit)}\0${String(options.concurrency)}\0`);
+  digest.update(`jurisdictions:${options.jurisdictionKeys.join(",")}\0`);
+  digest.update(`migrate:${options.migrateFromJobId ?? "none"}\0`);
   if (options.scope !== "all") {
     digest.update(`scope:${options.scope}\0`);
   }

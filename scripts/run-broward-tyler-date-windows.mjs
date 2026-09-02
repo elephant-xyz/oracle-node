@@ -408,7 +408,7 @@ export async function runTylerDateWindows(options, dependencies = {}) {
         await writePrivateAtomic(
           path.join(
             rawDirectory,
-            `page-${String(page.pageNumber).padStart(4, "0")}.json`,
+            `page-size-${String(page.pageSize ?? options.pageSize)}-${String(page.pageNumber).padStart(4, "0")}.json`,
           ),
           page.rawJson,
         );

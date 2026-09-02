@@ -31,8 +31,10 @@ import {
   nextSmallerTylerPageSize,
   normalizeTylerPermitDetailResponse,
   reconcileTylerDateWindowCounts,
+  reconcileTylerPageSizeTraversals,
   readTylerTotalPages,
 } from "../../scripts/permit-source-adapters/tyler-civic-access.mjs";
+import { parseRecoveryOptions as parseTylerRecoveryOptions } from "../../scripts/retry-broward-tyler-source-missing.mjs";
 import { parseOptions } from "../../scripts/probe-broward-municipal-permits.mjs";
 import {
   createTylerDateWindows,
@@ -61,6 +63,36 @@ const sunrise = getBrowardPermitJurisdiction("sunrise");
 const lauderdaleByTheSea = getBrowardPermitJurisdiction(
   "lauderdale_by_the_sea",
 );
+
+/**
+ * Build one allow-listed Tyler list row for adaptive reconciliation tests.
+ *
+ * @param {string} caseId - Stable public source identity.
+ * @returns {import("../../scripts/permit-source-adapters/tyler-civic-access.mjs").NormalizedCityPermit}
+ *   Complete normalized list row.
+ */
+function tylerListRecord(caseId) {
+  return {
+    source_system: "broward_pembroke_pines_tyler_permits",
+    source_url: `https://example.test/permit/${caseId}`,
+    city: "Pembroke Pines",
+    permit_number: `P-${caseId}`,
+    parcel_identifier: "513914101320",
+    work_location: "100 TEST AVE",
+    permit_issue_date: null,
+    record_status: "Open",
+    record_type: "Building",
+    project_description: "Permit",
+    is_roof_permit: false,
+    raw: {
+      case_id: caseId,
+      work_class: null,
+      applied_date: "2022-12-19",
+      expiration_date: null,
+      finalized_date: null,
+    },
+  };
+}
 
 describe("Broward Tyler and Citizenserve jurisdiction routing", () => {
   it("filters roofing candidates from public result-list fields", () => {
@@ -308,6 +340,73 @@ describe("Tyler vendor-wide application-date windows", () => {
     expect(tylerPageSizeForAttempt(100, 1)).toBe(100);
     expect(tylerPageSizeForAttempt(100, 2)).toBe(50);
     expect(tylerPageSizeForAttempt(100, 3)).toBe(25);
+    expect(
+      parseTylerRecoveryOptions([
+        "--source",
+        "oakland_park",
+        "--max-attempts",
+        "3",
+      ]),
+    ).toMatchObject({
+      sourceKey: "oakland_park",
+      maxAttempts: 3,
+      delayMs: 1_000,
+    });
+  });
+
+  it("unions exact CaseIds across adaptive page-size traversals", () => {
+    const first = tylerListRecord("case-a");
+    const displaced = tylerListRecord("case-b");
+    const base = {
+      startDate: "2022-12-19",
+      endDate: "2023-01-17",
+      totalFound: 2,
+      totalPages: 1,
+      invalidRecordCount: 0,
+      sourceMissingRecordCount: 1,
+    };
+    const reconciled = reconcileTylerPageSizeTraversals(
+      [
+        {
+          ...base,
+          records: [first],
+          pages: [
+            {
+              pageSize: 100,
+              pageNumber: 1,
+              totalFound: 2,
+              totalPages: 1,
+              records: [first],
+              invalidRecordCount: 0,
+              rawJson: "{}",
+            },
+          ],
+        },
+        {
+          ...base,
+          records: [first, displaced],
+          sourceMissingRecordCount: 0,
+          pages: [
+            {
+              pageSize: 50,
+              pageNumber: 1,
+              totalFound: 2,
+              totalPages: 1,
+              records: [first, displaced],
+              invalidRecordCount: 0,
+              rawJson: "{}",
+            },
+          ],
+        },
+      ],
+      true,
+    );
+    expect(reconciled.records.map((record) => record.raw.case_id)).toEqual([
+      "case-a",
+      "case-b",
+    ]);
+    expect(reconciled.sourceMissingRecordCount).toBe(0);
+    expect(reconciled.pages.map((page) => page.pageSize)).toEqual([100, 50]);
   });
 
   it("checkpoints and resumes a persistent tenant window run", async () => {

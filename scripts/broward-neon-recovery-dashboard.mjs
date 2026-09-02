@@ -92,7 +92,7 @@ const DEFAULT_PORT = 47_832;
  *
  * @typedef {object} PermitEnumerationWorkerStatus
  * @property {string} source - Public jurisdiction label.
- * @property {"accela_csv" | "tyler_api"} family - Source mechanism.
+ * @property {"accela_csv" | "tyler_api" | "property_first"} family - Source mechanism.
  * @property {"not_started" | "running" | "cooling_down" | "paused" | "complete"} status
  *   Aggregate checkpoint activity state.
  * @property {number} completedWindows - Durable completed windows.
@@ -109,6 +109,7 @@ const DEFAULT_PORT = 47_832;
  * @property {"timeout" | "source_cap" | "incomplete_pagination" | "source_error" | null} cooldownReason
  *   Allowlisted source circuit-breaker reason while cooling down.
  * @property {string | null} nextAttemptAt - Earliest safe automatic retry.
+ * @property {string | null} coverageBoundary - Public custody/history boundary.
  *
  * @typedef {object} PausedPermitEnumerationWorker
  * @property {string} source - Public jurisdiction label.
@@ -1001,6 +1002,42 @@ const PERMIT_ENUMERATION_CHECKPOINTS = Object.freeze([
   },
 ]);
 
+const PROPERTY_FIRST_PERMIT_ROUTES = Object.freeze([
+  {
+    key: "unincorporated-broward",
+    source: "BMSD / unincorporated",
+    coverageBoundary: "BCS current-custody property-first records",
+  },
+  {
+    key: "lauderdale-by-the-sea",
+    source: "Lauderdale-by-the-Sea",
+    coverageBoundary:
+      "Current Citizenserve only; historical BCS evidence remains supplemental",
+  },
+  {
+    key: "lazy-lake",
+    source: "Lazy Lake",
+    coverageBoundary: "BCS current-custody property-first records",
+  },
+  {
+    key: "southwest-ranches",
+    source: "Southwest Ranches",
+    coverageBoundary:
+      "Citizenserve building permits only; other Town approvals excluded",
+  },
+  {
+    key: "west-park",
+    source: "West Park",
+    coverageBoundary: "Citizenserve public search; no complete-history claim",
+  },
+  {
+    key: "wilton-manors",
+    source: "Wilton Manors",
+    coverageBoundary:
+      "Citizenserve available files; unavailable files remain a custodian gap",
+  },
+]);
+
 /**
  * Read only the public-safe fields from a durable Accela circuit breaker.
  *
@@ -1243,6 +1280,7 @@ export async function readPermitEnumerationStatus(
               : null,
           cooldownReason: cooldown?.reason ?? null,
           nextAttemptAt: cooldown?.nextAttemptAt ?? null,
+          coverageBoundary: null,
         };
       } catch (error) {
         if (isNodeError(error) && error.code === "ENOENT") {
@@ -1264,12 +1302,162 @@ export async function readPermitEnumerationStatus(
             pauseReason: null,
             cooldownReason: null,
             nextAttemptAt: null,
+            coverageBoundary: null,
           };
         }
         throw error;
       }
     }),
   );
+  return summarizePermitWorkers(workers);
+}
+
+/**
+ * Read the latest current-registry property-first aggregate for six gap routes.
+ *
+ * @param {import("pg").Client | import("pg").PoolClient} client
+ *   Identity-verified Broward Neon client.
+ * @param {number} [nowMs=Date.now()] - Snapshot time.
+ * @returns {Promise<PermitEnumerationStatus>} Six privacy-safe route rows.
+ */
+export async function readPropertyFirstPermitStatus(
+  client,
+  nowMs = Date.now(),
+) {
+  /** @type {readonly Record<string, unknown>[]} */
+  let rows;
+  try {
+    const result = await client.query(
+      `WITH ranked AS (
+         SELECT route.jurisdiction_key,route.candidate_count,
+                route.terminal_count,route.record_count,
+                route.terminal_missing_count,route.phase,
+                route.next_attempt_at::text,route.heartbeat_at::text,
+                row_number() OVER (
+                  PARTITION BY route.jurisdiction_key
+                  ORDER BY run.started_at DESC
+                ) AS position
+         FROM ${CONTROL_SCHEMA}.broward_supported_permit_routes AS route
+         JOIN ${CONTROL_SCHEMA}.broward_supported_permit_runs AS run
+           ON run.job_id=route.job_id
+         WHERE run.registry_version=$1
+           AND route.jurisdiction_key=ANY($2::text[])
+       )
+       SELECT * FROM ranked WHERE position=1`,
+      [
+        BROWARD_PERMIT_REGISTRY_VERSION,
+        PROPERTY_FIRST_PERMIT_ROUTES.map((route) => route.key),
+      ],
+    );
+    rows = result.rows;
+  } catch (error) {
+    if (!isNodeError(error) || error.code !== "42P01") throw error;
+    rows = [];
+  }
+  const byKey = new Map(
+    rows.map((row) => [
+      typeof row.jurisdiction_key === "string" ? row.jurisdiction_key : "",
+      row,
+    ]),
+  );
+  const workers = PROPERTY_FIRST_PERMIT_ROUTES.map((definition) => {
+    const row = byKey.get(definition.key);
+    if (row === undefined) {
+      return {
+        source: definition.source,
+        family: /** @type {"property_first"} */ ("property_first"),
+        status: /** @type {"not_started"} */ ("not_started"),
+        completedWindows: 0,
+        pendingWindows: 0,
+        totalWindows: 0,
+        completionPercent: 0,
+        accessibleRecords: 0,
+        excludedRecords: 0,
+        invalidRecords: 0,
+        sourceMissingRecords: 0,
+        updatedAt: null,
+        pauseReason: null,
+        cooldownReason: null,
+        nextAttemptAt: null,
+        coverageBoundary: definition.coverageBoundary,
+      };
+    }
+    const candidateCount = safeAggregate(row.candidate_count);
+    const terminalCount = safeAggregate(row.terminal_count);
+    const heartbeatAt =
+      typeof row.heartbeat_at === "string" ? row.heartbeat_at : null;
+    const heartbeatMs =
+      heartbeatAt === null ? Number.NaN : Date.parse(heartbeatAt);
+    const nextAttemptAt =
+      typeof row.next_attempt_at === "string" ? row.next_attempt_at : null;
+    const nextAttemptMs =
+      nextAttemptAt === null ? Number.NaN : Date.parse(nextAttemptAt);
+    const recentlyActive =
+      row.phase === "running" &&
+      Number.isFinite(heartbeatMs) &&
+      nowMs - heartbeatMs >= 0 &&
+      nowMs - heartbeatMs <= 20 * 60_000;
+    const cooling =
+      row.phase === "cooling" &&
+      Number.isFinite(nextAttemptMs) &&
+      nextAttemptMs > nowMs;
+    const status =
+      row.phase === "complete"
+        ? /** @type {"complete"} */ ("complete")
+        : recentlyActive
+          ? /** @type {"running"} */ ("running")
+          : cooling
+            ? /** @type {"cooling_down"} */ ("cooling_down")
+            : /** @type {"paused"} */ ("paused");
+    return {
+      source: definition.source,
+      family: /** @type {"property_first"} */ ("property_first"),
+      status,
+      completedWindows: terminalCount,
+      pendingWindows: Math.max(0, candidateCount - terminalCount),
+      totalWindows: candidateCount,
+      completionPercent:
+        candidateCount === 0
+          ? 0
+          : Math.round((terminalCount / candidateCount) * 100_000) / 1_000,
+      accessibleRecords: safeAggregate(row.record_count),
+      excludedRecords: 0,
+      invalidRecords: 0,
+      sourceMissingRecords: safeAggregate(row.terminal_missing_count),
+      updatedAt: heartbeatAt,
+      pauseReason:
+        status === "paused"
+          ? /** @type {"checkpoint_stale"} */ ("checkpoint_stale")
+          : null,
+      cooldownReason:
+        status === "cooling_down"
+          ? /** @type {"source_error"} */ ("source_error")
+          : null,
+      nextAttemptAt: status === "cooling_down" ? nextAttemptAt : null,
+      coverageBoundary: definition.coverageBoundary,
+    };
+  });
+  return summarizePermitWorkers(workers);
+}
+
+/**
+ * Merge local date-window workers and Neon property-first route aggregates.
+ *
+ * @param {PermitEnumerationStatus} local - Existing Accela/Tyler workers.
+ * @param {PermitEnumerationStatus} propertyFirst - Six scoped route workers.
+ * @returns {PermitEnumerationStatus} Recomputed aggregate status.
+ */
+export function mergePermitEnumerationStatus(local, propertyFirst) {
+  return summarizePermitWorkers([...local.workers, ...propertyFirst.workers]);
+}
+
+/**
+ * Recompute public aggregate counters and allowlisted operational states.
+ *
+ * @param {PermitEnumerationWorkerStatus[]} workers - Public-safe worker rows.
+ * @returns {PermitEnumerationStatus} Aggregate worker status.
+ */
+function summarizePermitWorkers(workers) {
   /** @type {PausedPermitEnumerationWorker[]} */
   const pausedWorkers = [];
   /** @type {CoolingPermitEnumerationWorker[]} */
@@ -1420,7 +1608,12 @@ export function createRecoveryStatusReader(
   return () => {
     if (inFlight !== null) return inFlight;
     inFlight = (async () => {
-      const [result, permitEnumeration, coralCapture] = await Promise.all([
+      const [
+        result,
+        permitEnumeration,
+        propertyFirstPermitEnumeration,
+        coralCapture,
+      ] = await Promise.all([
         client.query(
           `WITH property_stats AS (
          SELECT
@@ -1566,6 +1759,7 @@ export function createRecoveryStatusReader(
             sunbiz_match_stats`,
         ),
         readPermitEnumerationStatus(repositoryRoot),
+        readPropertyFirstPermitStatus(client),
         readCoralSpringsEtrakitStatus(repositoryRoot),
       ]);
       const row = result.rows[0];
@@ -1576,7 +1770,10 @@ export function createRecoveryStatusReader(
         /** @type {RecoveryAggregateRow} */ (row),
         Date.now(),
       );
-      status.permitEnumeration = permitEnumeration;
+      status.permitEnumeration = mergePermitEnumerationStatus(
+        permitEnumeration,
+        propertyFirstPermitEnumeration,
+      );
       status.coralSpringsPermit = {
         ...status.coralSpringsPermit,
         ...coralCapture,
@@ -1827,7 +2024,7 @@ const DASHBOARD_HTML = `<!doctype html>
     <article><h2>Bulk source rows</h2><strong id="permit-bulk">—</strong></article>
     <article><h2>Local captured records</h2><strong id="permit-captured">—</strong></article>
     <article><h2>Active / complete workers</h2><strong id="permit-workers">—</strong></article>
-    <article><h2>Completed windows</h2><strong id="permit-windows">—</strong></article>
+    <article><h2>Completed work units</h2><strong id="permit-windows">—</strong></article>
   </section>
   <h2>Coral Springs eTRAKiT capped slice</h2>
   <p class="route-note">Manual CAPTCHA authorization is still required and sessions expire. Captured rows are a bounded capped slice of the reported source matches, not complete jurisdiction coverage.</p>
@@ -1840,7 +2037,7 @@ const DASHBOARD_HTML = `<!doctype html>
     <article><h2>Coverage</h2><strong id="coral-coverage">—</strong></article>
   </section>
   <table aria-label="Permit tenant worker status">
-    <thead><tr><th>Jurisdiction</th><th>Source</th><th>Status</th><th>Windows</th><th>Records</th><th>Gaps</th></tr></thead>
+    <thead><tr><th>Jurisdiction</th><th>Source</th><th>Status</th><th>Work units</th><th>Records</th><th>Gaps</th><th>Coverage boundary</th></tr></thead>
     <tbody id="permit-worker-rows"></tbody>
   </table>
   <h2>Paused operational workers</h2>
@@ -1950,6 +2147,7 @@ const DASHBOARD_HTML = `<!doctype html>
             format.format(worker.completedWindows) + " / " + format.format(worker.totalWindows),
             format.format(worker.accessibleRecords),
             format.format(worker.invalidRecords + worker.sourceMissingRecords),
+            worker.coverageBoundary ?? "Date-window inventory; municipal history boundary applies",
           ]) {
             const cell = document.createElement("td");
             cell.textContent = value;
