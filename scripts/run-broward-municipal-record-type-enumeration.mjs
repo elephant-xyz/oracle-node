@@ -17,8 +17,9 @@ import { renderMunicipalPermitJsonl } from "./permit-source-adapters/broward-mun
 import { getBrowardMunicipalPermitConfig } from "./permit-source-adapters/broward-municipal-config.mjs";
 import { createBrowardMunicipalTransport } from "./permit-source-adapters/broward-municipal-transport.mjs";
 
-const CHECKPOINT_SCHEMA_VERSION =
-  "oracle-node.broward-municipal-record-type-enumeration.v1";
+const CHECKPOINT_SCHEMA_VERSION = /** @type {const} */ (
+  "oracle-node.broward-municipal-record-type-enumeration.v1"
+);
 const SUPPORTED_JURISDICTIONS = new Set([
   "dania_beach",
   "davie",
