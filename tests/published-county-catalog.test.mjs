@@ -38,6 +38,7 @@ describe("published county catalog", () => {
 
     expect(result.counties.length).toBeGreaterThan(0);
     expect(result.counties.map((county) => county.countyKey)).toEqual([
+      "broward",
       "chester",
       "hillsborough",
       "lee",
@@ -233,6 +234,28 @@ describe("published county catalog", () => {
     expect(queryMap.pinellas).toBe(pinellas.queryTableUrl);
     expect(coverageMap.pinellas.replace(/\/$/, "")).toBe(
       pinellas.datasetCoverageUrl.replace(/\/$/, ""),
+    );
+  });
+
+  it("lists all Broward table and coverage URLs in the Cursor Elephant MCP maps", async () => {
+    const tracked = JSON.parse(
+      await readFile(resolve("catalog/published-counties.json"), "utf8"),
+    );
+    const mcp = JSON.parse(await readFile(resolve(".cursor/mcp.json"), "utf8"));
+    const broward = tracked.counties.find(
+      (county) => county.countyKey === "broward",
+    );
+    expect(broward).toBeDefined();
+
+    const env = mcp.mcpServers.elephant.env;
+    expect(JSON.parse(env.PROPERTY_QUERY_TABLE_MAP).broward).toBe(
+      broward.queryTableUrl,
+    );
+    expect(JSON.parse(env.PERMIT_QUERY_TABLE_MAP).broward).toBe(
+      broward.permitQueryTableUrl,
+    );
+    expect(JSON.parse(env.DATASET_COVERAGE_MAP).broward).toBe(
+      broward.datasetCoverageUrl,
     );
   });
 });

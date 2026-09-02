@@ -1,7 +1,19 @@
 {
   "schemaVersion": "1.0",
-  "generatedAt": "2026-09-01T21:13:14.191Z",
+  "generatedAt": "2026-09-02T20:04:50.929Z",
   "counties": [
+    {
+      "countyKey": "broward",
+      "countyName": "Broward",
+      "stateCode": "FL",
+      "countyFips": "12011",
+      "status": "published",
+      "queryTableUrl": "https://ipfs.filebase.io/ipns/k51qzi5uqu5dibuhwyztmkjgvz94v3mkpgfreryxwb3d4neta5e7tsxebfi09s",
+      "datasetCoverageUrl": "https://ipfs.filebase.io/ipns/k51qzi5uqu5dhx6yqczp6f9na3xa9g1iiizxtquer62x9wavh8gpbng524vrbp",
+      "permitQueryTableUrl": "https://ipfs.filebase.io/ipns/k51qzi5uqu5dhns9u4o0lot4w4808yi4gdsyo5qx136lgmrplmgqdhah5qj7lg",
+      "placesTableUrl": null,
+      "updatedAt": "2026-09-02T19:54:16.931Z"
+    },
     {
       "countyKey": "chester",
       "countyName": "Chester",
