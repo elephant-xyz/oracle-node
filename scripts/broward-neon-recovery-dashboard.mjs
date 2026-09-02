@@ -1513,7 +1513,8 @@ export async function readPermitEnumerationStatus(
           cooldownReason: cooldown?.reason ?? null,
           nextAttemptAt: cooldown?.nextAttemptAt ?? null,
           coverageBoundary:
-            "coverageBoundary" in definition
+            "coverageBoundary" in definition &&
+            typeof definition.coverageBoundary === "string"
               ? definition.coverageBoundary
               : null,
           startBlocker: null,
@@ -1540,11 +1541,13 @@ export async function readPermitEnumerationStatus(
             cooldownReason: null,
             nextAttemptAt: null,
             coverageBoundary:
-              "coverageBoundary" in definition
+              "coverageBoundary" in definition &&
+              typeof definition.coverageBoundary === "string"
                 ? definition.coverageBoundary
                 : null,
             startBlocker:
-              "noStartReason" in definition
+              "noStartReason" in definition &&
+              typeof definition.noStartReason === "string"
                 ? definition.noStartReason
                 : "worker_not_started",
           };
