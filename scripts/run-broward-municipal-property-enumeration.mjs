@@ -262,6 +262,11 @@ export async function runMunicipalPropertyEnumeration(
             "Municipal property query returned incomplete pagination",
           );
         }
+        if (page.references.length >= options.maxResultsPerQuery) {
+          throw new Error(
+            `Municipal property source cap ${String(options.maxResultsPerQuery)} reached`,
+          );
+        }
         if (
           page.reportedCount !== undefined &&
           page.reportedCount !== null &&

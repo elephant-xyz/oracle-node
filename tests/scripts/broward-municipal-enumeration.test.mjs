@@ -253,6 +253,70 @@ describe("Broward municipal property enumeration", () => {
     });
   });
 
+  it("fails closed when a client-all result reaches the exclusive cap", async () => {
+    const root = await createTemporaryDirectory();
+    const seedPath = path.join(root, "seed.private.csv");
+    const outputDirectory = path.join(root, "capture");
+    await writeFile(
+      seedPath,
+      "jurisdiction_key,query_kind,query_value,property_count\n" +
+        "margate,address,100 PRIVATE ST,1\n",
+      { mode: 0o600 },
+    );
+    const fetchDetail = vi.fn();
+    const close = vi.fn(async () => {});
+
+    const summary = await runMunicipalPropertyEnumeration(
+      {
+        jurisdictionKey: "margate",
+        seedPath,
+        outputDirectory,
+        maxQueries: null,
+        maxResultsPerQuery: 2,
+        delayMs: 1_000,
+        requestTimeoutMs: 30_000,
+      },
+      {
+        now: () => "2026-09-02T17:00:00.000Z",
+        wait: async () => {},
+        createTransport: async () => ({
+          fetchSearchPage: async () => ({
+            references: [
+              {
+                sourceRecordId: "fixture-1",
+                permitNumber: "PERMIT-1",
+                detailUrl: "https://example.test/detail/fixture-1",
+                sourcePage: 1,
+                listData: {},
+              },
+              {
+                sourceRecordId: "fixture-2",
+                permitNumber: "PERMIT-2",
+                detailUrl: "https://example.test/detail/fixture-2",
+                sourcePage: 1,
+                listData: {},
+              },
+            ],
+            nextPage: null,
+          }),
+          fetchDetail,
+          listRecordTypePartitions: async () => {
+            throw new Error("unsupported");
+          },
+          close,
+        }),
+      },
+    );
+
+    expect(summary).toMatchObject({
+      status: "paused",
+      completedQueries: 0,
+      blocker: "source_cap",
+    });
+    expect(fetchDetail).not.toHaveBeenCalled();
+    expect(close).toHaveBeenCalledOnce();
+  });
+
   it("requires conservative production options", () => {
     expect(
       parseMunicipalPropertyEnumerationOptions([
