@@ -19,7 +19,6 @@ bbox, labeled-field completeness, enumerated failures, and reconciled ingest cou
 
 @elephant-xyz/cli 1.58.1 does not export mirrorValidate; completeness is labeled-field coverage after subtracting source-html-static-parts/duval.csv chrome.
 
-
 Durable local evidence:
 
 - `downloads/duval/pilot-run/pilot-manifest.json`
