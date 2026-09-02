@@ -103,6 +103,7 @@ const DEFAULT_PORT = 47_832;
  * @property {number} excludedRecords - Explicit non-permit rows.
  * @property {number} invalidRecords - Malformed source rows.
  * @property {number} sourceMissingRecords - Reported but inaccessible rows.
+ * @property {number} deferredCapCount - Unresolved item-level exclusive-cap queries.
  * @property {string | null} updatedAt - Last durable checkpoint time.
  * @property {"timeout" | "missing_controls" | "missing_export" | "source_cap" | "checkpoint_stale" | null} pauseReason
  *   Allowlisted operational reason when this worker is paused.
@@ -137,6 +138,7 @@ const DEFAULT_PORT = 47_832;
  * @property {number} excludedRecords - Explicit non-permit source rows.
  * @property {number} invalidRecords - Malformed source rows.
  * @property {number} sourceMissingRecords - Reported but inaccessible rows.
+ * @property {number} deferredCapCount - Unresolved item-level exclusive-cap queries.
  *
  * @typedef {"software_or_transport" | "login_required" | "no_anonymous_search" | "custodian_only"} PermitRouteHardBlockKey
  *
@@ -739,6 +741,7 @@ function emptyPermitEnumerationStatus() {
     excludedRecords: 0,
     invalidRecords: 0,
     sourceMissingRecords: 0,
+    deferredCapCount: 0,
   };
 }
 
@@ -1290,6 +1293,7 @@ function buildMunicipalEnumerationWorker(definition, checkpoint, nowMs) {
   }
   let completedWindows;
   let totalWindows;
+  let deferredCapCount = 0;
   if (reader === "municipal_type") {
     if (
       !Array.isArray(checkpoint.pendingPartitionValues) ||
@@ -1306,8 +1310,21 @@ function buildMunicipalEnumerationWorker(definition, checkpoint, nowMs) {
   } else {
     completedWindows = safeAggregate(checkpoint.completedQueries);
     totalWindows = safeAggregate(checkpoint.totalQueries);
+    const deferredCapItems = checkpoint.deferredCapItems;
+    if (deferredCapItems !== undefined && !isPlainRecord(deferredCapItems)) {
+      throw new Error("Municipal property deferrals are malformed");
+    }
+    deferredCapCount =
+      deferredCapItems === undefined ? 0 : Object.keys(deferredCapItems).length;
     if (completedWindows > totalWindows) {
       throw new Error("Municipal property query counts do not reconcile");
+    }
+    const nextQueryIndex = safeAggregate(checkpoint.nextQueryIndex);
+    if (
+      completedWindows + deferredCapCount !== nextQueryIndex ||
+      nextQueryIndex > totalWindows
+    ) {
+      throw new Error("Municipal property processed counts do not reconcile");
     }
   }
   const pendingWindows = totalWindows - completedWindows;
@@ -1363,6 +1380,7 @@ function buildMunicipalEnumerationWorker(definition, checkpoint, nowMs) {
     excludedRecords: 0,
     invalidRecords: 0,
     sourceMissingRecords: 0,
+    deferredCapCount,
     updatedAt: checkpoint.updatedAt,
     pauseReason:
       status === "paused"
@@ -1505,6 +1523,7 @@ export async function readPermitEnumerationStatus(
           excludedRecords,
           invalidRecords,
           sourceMissingRecords,
+          deferredCapCount: 0,
           updatedAt,
           pauseReason:
             status === "paused"
@@ -1538,6 +1557,7 @@ export async function readPermitEnumerationStatus(
             excludedRecords: 0,
             invalidRecords: 0,
             sourceMissingRecords: 0,
+            deferredCapCount: 0,
             updatedAt: null,
             pauseReason: null,
             cooldownReason: null,
@@ -1624,6 +1644,7 @@ export async function readPropertyFirstPermitStatus(
         excludedRecords: 0,
         invalidRecords: 0,
         sourceMissingRecords: 0,
+        deferredCapCount: 0,
         updatedAt: null,
         pauseReason: null,
         cooldownReason: null,
@@ -1673,6 +1694,7 @@ export async function readPropertyFirstPermitStatus(
       excludedRecords: 0,
       invalidRecords: 0,
       sourceMissingRecords: safeAggregate(row.terminal_missing_count),
+      deferredCapCount: 0,
       updatedAt: heartbeatAt,
       pauseReason:
         status === "paused"
@@ -1757,6 +1779,10 @@ function summarizePermitWorkers(workers) {
     ),
     sourceMissingRecords: workers.reduce(
       (sum, worker) => sum + worker.sourceMissingRecords,
+      0,
+    ),
+    deferredCapCount: workers.reduce(
+      (sum, worker) => sum + worker.deferredCapCount,
       0,
     ),
   };
@@ -2286,7 +2312,7 @@ const DASHBOARD_HTML = `<!doctype html>
     <article><h2>Coverage</h2><strong id="coral-coverage">—</strong></article>
   </section>
   <table aria-label="Permit tenant worker status">
-    <thead><tr><th>Jurisdiction</th><th>Source</th><th>Status</th><th>Work units</th><th>Records</th><th>Gaps / blocker</th><th>Coverage boundary</th></tr></thead>
+    <thead><tr><th>Jurisdiction</th><th>Source</th><th>Status</th><th>Work units</th><th>Records</th><th>Deferred caps</th><th>Gaps / blocker</th><th>Coverage boundary</th></tr></thead>
     <tbody id="permit-worker-rows"></tbody>
   </table>
   <h2>Paused operational workers</h2>
@@ -2383,6 +2409,7 @@ const DASHBOARD_HTML = `<!doctype html>
         format.format(inventory.records) + " loaded · " +
           format.format(enumeration.accessibleRecords) + " locally captured · " +
           format.format(enumeration.excludedRecords) + " excluded · " +
+          format.format(enumeration.deferredCapCount) + " deferred caps · " +
           format.format(enumeration.invalidRecords + enumeration.sourceMissingRecords) + " source gaps",
       );
       const workerBody = document.getElementById("permit-worker-rows");
@@ -2395,6 +2422,7 @@ const DASHBOARD_HTML = `<!doctype html>
             worker.status === "not_started" ? "no-start" : worker.status,
             format.format(worker.completedWindows) + " / " + format.format(worker.totalWindows),
             format.format(worker.accessibleRecords),
+            format.format(worker.deferredCapCount),
             worker.startBlocker
               ? worker.startBlocker.replaceAll("_", " ")
               : format.format(worker.invalidRecords + worker.sourceMissingRecords),

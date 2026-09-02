@@ -21,6 +21,13 @@ import { createBrowardMunicipalTransport } from "./permit-source-adapters/browar
 const CHECKPOINT_SCHEMA_VERSION = /** @type {const} */ (
   "oracle-node.broward-municipal-property-enumeration.v1"
 );
+const DEFERRED_CAP_SCHEMA_VERSION = /** @type {const} */ (
+  "oracle-node.broward-municipal-deferred-cap.v1"
+);
+const MAX_RAW_RESULT_ROW_LIMIT = 1_000;
+const MAX_DEFERRED_CAP_ATTEMPTS = 3;
+const MAX_DEFERRED_CAP_RETRIES_PER_INVOCATION = 3;
+const DEFERRED_CAP_RETRY_DELAY_MS = 24 * 60 * 60_000;
 const SUPPORTED_JURISDICTIONS = new Set([
   "coconut_creek",
   "lauderhill",
@@ -48,6 +55,21 @@ const SUPPORTED_JURISDICTIONS = new Set([
  * @property {string} queryValue - Private exact query.
  * @property {number} propertyCount - BCPA properties represented.
  *
+ * @typedef {object} MunicipalDeferredCapItem
+ * @property {typeof DEFERRED_CAP_SCHEMA_VERSION} schemaVersion - Safe ledger row schema.
+ * @property {string} seedSha256 - Immutable private seed content identity.
+ * @property {string} queryPlanSha256 - Immutable jurisdiction query-plan identity.
+ * @property {number} queryIndex - Zero-based stable position in the seed plan.
+ * @property {string} queryDigest - SHA-256 identity derived from plan, index, kind, and private query.
+ * @property {number} representedProperties - Aggregate properties represented by the deferred query.
+ * @property {"client_all_exclusive_cap"} reason - Fail-closed deferral reason.
+ * @property {number} observedResultCount - Source result count, bounded by the parser ceiling.
+ * @property {number} exclusiveCap - Configured threshold that cannot be accepted as terminal.
+ * @property {number} attemptCount - Bounded source-cap observations for this query.
+ * @property {string} firstDeferredAt - First ISO deferral timestamp.
+ * @property {string} lastAttemptAt - Latest ISO cap observation timestamp.
+ * @property {string | null} nextAttemptAt - Earliest future bounded retry, or null after the attempt ceiling.
+ *
  * @typedef {object} MunicipalPropertyCheckpoint
  * @property {typeof CHECKPOINT_SCHEMA_VERSION} schemaVersion - Exact schema.
  * @property {string} jurisdictionKey - Municipal configuration key.
@@ -62,6 +84,7 @@ const SUPPORTED_JURISDICTIONS = new Set([
  * @property {number} emptyQueries - Explicit terminal empty source queries.
  * @property {number} recordObservations - Detail records across terminal queries.
  * @property {number} uniqueRecords - Deduplicated captured records.
+ * @property {Record<string,MunicipalDeferredCapItem>} deferredCapItems - Unresolved cap items keyed only by safe digest.
  * @property {"running" | "paused" | "cooling" | "complete"} status
  * @property {"source_cap" | "timeout" | "incomplete_pagination" | "source_error" | null} blocker
  * @property {string | null} nextAttemptAt - Earliest safe retry when cooling.
@@ -79,6 +102,7 @@ const SUPPORTED_JURISDICTIONS = new Set([
  * @property {number} recordObservations - Detail records across source queries.
  * @property {number} uniqueRecordCount - Deduplicated normalized records.
  * @property {number} duplicateRecordCount - Exact repeated record observations.
+ * @property {number} deferredCapCount - Unresolved exact-address source caps.
  * @property {MunicipalPropertyCheckpoint["blocker"]} blocker - Safe reason.
  * @property {string | null} nextAttemptAt - Safe retry time when cooling.
  */
@@ -213,6 +237,10 @@ export async function runMunicipalPropertyEnumeration(
     options.outputDirectory,
     "normalized-list.private.jsonl",
   );
+  const deferredCapLedgerPath = path.join(
+    options.outputDirectory,
+    "deferred-cap.private.jsonl",
+  );
   let checkpoint = await readOrCreateCheckpoint(
     checkpointPath,
     config,
@@ -222,13 +250,14 @@ export async function runMunicipalPropertyEnumeration(
   );
   const aggregate = await readCompletedQueryArtifacts(
     queriesDirectory,
-    checkpoint.completedQueries,
+    checkpoint,
   );
+  await writeDeferredCapLedger(deferredCapLedgerPath, checkpoint);
   const createTransport =
     dependencies.createTransport ?? createBrowardMunicipalTransport;
   const transport = await createTransport(config, {
     requestTimeoutMs: options.requestTimeoutMs,
-    rawResultRowLimit: options.maxResultsPerQuery,
+    rawResultRowLimit: MAX_RAW_RESULT_ROW_LIMIT,
   });
   try {
     let processed = 0;
@@ -255,17 +284,45 @@ export async function runMunicipalPropertyEnumeration(
         };
         await writeCheckpoint(checkpointPath, checkpoint);
         if (operationCount > 0) await wait(options.delayMs);
-        const page = await transport.fetchSearchPage(query, 1);
-        operationCount += 1;
+        let page;
+        try {
+          page = await transport.fetchSearchPage(query, 1);
+          operationCount += 1;
+        } catch (error) {
+          if (classifyFailure(error) !== "source_cap") throw error;
+          const deferredAt = now();
+          checkpoint = deferCappedPropertyQuery(
+            checkpoint,
+            seedQuery,
+            checkpoint.nextQueryIndex,
+            options.maxResultsPerQuery,
+            options.maxResultsPerQuery,
+            deferredAt,
+          );
+          await writeDeferredCapLedger(deferredCapLedgerPath, checkpoint);
+          await writeCheckpoint(checkpointPath, checkpoint);
+          processed += 1;
+          continue;
+        }
         if (page.nextPage !== null) {
           throw new Error(
             "Municipal property query returned incomplete pagination",
           );
         }
         if (page.references.length >= options.maxResultsPerQuery) {
-          throw new Error(
-            `Municipal property source cap ${String(options.maxResultsPerQuery)} reached`,
+          const deferredAt = now();
+          checkpoint = deferCappedPropertyQuery(
+            checkpoint,
+            seedQuery,
+            checkpoint.nextQueryIndex,
+            page.references.length,
+            options.maxResultsPerQuery,
+            deferredAt,
           );
+          await writeDeferredCapLedger(deferredCapLedgerPath, checkpoint);
+          await writeCheckpoint(checkpointPath, checkpoint);
+          processed += 1;
+          continue;
         }
         if (
           page.reportedCount !== undefined &&
@@ -317,24 +374,182 @@ export async function runMunicipalPropertyEnumeration(
           else aggregate.byKey.set(record.record_key, record);
         }
         const completedAt = now();
+        const nextQueryIndex = checkpoint.nextQueryIndex + 1;
+        const deferredCapCount = Object.keys(
+          checkpoint.deferredCapItems,
+        ).length;
         checkpoint = {
           ...checkpoint,
-          nextQueryIndex: checkpoint.nextQueryIndex + 1,
+          nextQueryIndex,
           completedQueries: checkpoint.completedQueries + 1,
           emptyQueries:
             checkpoint.emptyQueries + (records.length === 0 ? 1 : 0),
           recordObservations: checkpoint.recordObservations + records.length,
           uniqueRecords: aggregate.byKey.size,
           status:
-            checkpoint.nextQueryIndex + 1 === queries.length
-              ? "complete"
+            nextQueryIndex === queries.length
+              ? deferredCapCount === 0
+                ? "complete"
+                : "cooling"
               : "running",
-          blocker: null,
-          nextAttemptAt: null,
+          blocker:
+            nextQueryIndex === queries.length && deferredCapCount > 0
+              ? "source_cap"
+              : null,
+          nextAttemptAt:
+            nextQueryIndex === queries.length && deferredCapCount > 0
+              ? earliestDeferredCapRetry(checkpoint.deferredCapItems)
+              : null,
           updatedAt: completedAt,
         };
         await writeCheckpoint(checkpointPath, checkpoint);
         processed += 1;
+      }
+      if (
+        checkpoint.nextQueryIndex === queries.length &&
+        processed === 0 &&
+        Object.keys(checkpoint.deferredCapItems).length > 0
+      ) {
+        const retryEvaluationAt = now();
+        const retryEvaluationMs = Date.parse(retryEvaluationAt);
+        const eligibleItems = Object.values(checkpoint.deferredCapItems)
+          .filter(
+            (item) =>
+              item.nextAttemptAt !== null &&
+              Date.parse(item.nextAttemptAt) <= retryEvaluationMs,
+          )
+          .sort(
+            (left, right) =>
+              left.queryIndex - right.queryIndex ||
+              left.queryDigest.localeCompare(right.queryDigest),
+          )
+          .slice(0, MAX_DEFERRED_CAP_RETRIES_PER_INVOCATION);
+        for (const item of eligibleItems) {
+          const seedQuery = queries[item.queryIndex];
+          if (seedQuery === undefined) {
+            throw new Error("Deferred municipal query left the seed plan");
+          }
+          const query = /** @type {BrowardMunicipalQuery} */ ({
+            kind: seedQuery.queryKind,
+            value: seedQuery.queryValue,
+          });
+          checkpoint = {
+            ...checkpoint,
+            status: "running",
+            blocker: null,
+            nextAttemptAt: null,
+            updatedAt: now(),
+          };
+          await writeCheckpoint(checkpointPath, checkpoint);
+          if (operationCount > 0) await wait(options.delayMs);
+          let page;
+          try {
+            page = await transport.fetchSearchPage(query, 1);
+            operationCount += 1;
+          } catch (error) {
+            if (classifyFailure(error) !== "source_cap") throw error;
+            checkpoint = refreshDeferredCapItem(
+              checkpoint,
+              item,
+              options.maxResultsPerQuery,
+              now(),
+            );
+            await writeDeferredCapLedger(deferredCapLedgerPath, checkpoint);
+            await writeCheckpoint(checkpointPath, checkpoint);
+            continue;
+          }
+          if (page.nextPage !== null) {
+            throw new Error(
+              "Municipal deferred query returned incomplete pagination",
+            );
+          }
+          if (page.references.length >= options.maxResultsPerQuery) {
+            checkpoint = refreshDeferredCapItem(
+              checkpoint,
+              item,
+              page.references.length,
+              now(),
+            );
+            await writeDeferredCapLedger(deferredCapLedgerPath, checkpoint);
+            await writeCheckpoint(checkpointPath, checkpoint);
+            continue;
+          }
+          if (
+            page.reportedCount !== undefined &&
+            page.reportedCount !== null &&
+            page.reportedCount !== page.references.length
+          ) {
+            throw new Error(
+              "Municipal deferred query total does not reconcile",
+            );
+          }
+          /** @type {NormalizedBrowardMunicipalPermit[]} */
+          const records = [];
+          for (const reference of page.references) {
+            if (operationCount > 0) await wait(options.delayMs);
+            const record = await transport.fetchDetail(reference, query);
+            operationCount += 1;
+            const expectedKey = `${config.sourceSystem}:${reference.sourceRecordId}`;
+            if (
+              record.record_key !== expectedKey ||
+              record.permit_number !== reference.permitNumber
+            ) {
+              throw new Error("Municipal deferred detail identity mismatch");
+            }
+            records.push(record);
+            checkpoint = {
+              ...checkpoint,
+              status: "running",
+              blocker: null,
+              nextAttemptAt: null,
+              updatedAt: now(),
+            };
+            await writeCheckpoint(checkpointPath, checkpoint);
+          }
+          const queryPath = path.join(
+            queriesDirectory,
+            `query-${String(item.queryIndex + 1).padStart(8, "0")}.private.jsonl`,
+          );
+          await writePrivateAtomic(
+            queryPath,
+            renderMunicipalPermitJsonl(records),
+          );
+          for (const record of records) {
+            const existing = aggregate.byKey.get(record.record_key);
+            if (
+              existing !== undefined &&
+              JSON.stringify(existing) !== JSON.stringify(record)
+            ) {
+              throw new Error("Municipal deferred query artifacts conflict");
+            }
+            if (existing !== undefined) aggregate.duplicateRecordCount += 1;
+            else aggregate.byKey.set(record.record_key, record);
+          }
+          const deferredCapItems = { ...checkpoint.deferredCapItems };
+          delete deferredCapItems[item.queryDigest];
+          const completedAt = now();
+          checkpoint = {
+            ...checkpoint,
+            completedQueries: checkpoint.completedQueries + 1,
+            emptyQueries:
+              checkpoint.emptyQueries + (records.length === 0 ? 1 : 0),
+            recordObservations: checkpoint.recordObservations + records.length,
+            uniqueRecords: aggregate.byKey.size,
+            deferredCapItems,
+            status:
+              Object.keys(deferredCapItems).length === 0
+                ? "complete"
+                : earliestDeferredCapRetry(deferredCapItems) === null
+                  ? "paused"
+                  : "cooling",
+            blocker:
+              Object.keys(deferredCapItems).length === 0 ? null : "source_cap",
+            nextAttemptAt: earliestDeferredCapRetry(deferredCapItems),
+            updatedAt: completedAt,
+          };
+          await writeDeferredCapLedger(deferredCapLedgerPath, checkpoint);
+          await writeCheckpoint(checkpointPath, checkpoint);
+        }
       }
     } catch (error) {
       const blocker = classifyFailure(error);
@@ -383,12 +598,58 @@ export async function runMunicipalPropertyEnumeration(
       recordObservations: checkpoint.recordObservations,
       uniqueRecordCount: aggregate.byKey.size,
       duplicateRecordCount: aggregate.duplicateRecordCount,
+      deferredCapCount: Object.keys(checkpoint.deferredCapItems).length,
       blocker: checkpoint.blocker,
       nextAttemptAt: checkpoint.nextAttemptAt,
     };
   } finally {
     await transport.close();
   }
+}
+
+/**
+ * Record another bounded observation of an already deferred cap item.
+ *
+ * @param {MunicipalPropertyCheckpoint} checkpoint - End-of-seed checkpoint.
+ * @param {MunicipalDeferredCapItem} item - Existing unresolved item.
+ * @param {number} observedResultCount - Bounded source rows observed.
+ * @param {string} attemptedAt - ISO retry timestamp.
+ * @returns {MunicipalPropertyCheckpoint} Updated unresolved checkpoint.
+ */
+function refreshDeferredCapItem(
+  checkpoint,
+  item,
+  observedResultCount,
+  attemptedAt,
+) {
+  const attemptCount = item.attemptCount + 1;
+  const nextAttemptAt =
+    attemptCount >= MAX_DEFERRED_CAP_ATTEMPTS
+      ? null
+      : new Date(
+          Date.parse(attemptedAt) + DEFERRED_CAP_RETRY_DELAY_MS,
+        ).toISOString();
+  const deferredCapItems = {
+    ...checkpoint.deferredCapItems,
+    [item.queryDigest]: {
+      ...item,
+      observedResultCount,
+      attemptCount,
+      lastAttemptAt: attemptedAt,
+      nextAttemptAt,
+    },
+  };
+  return {
+    ...checkpoint,
+    deferredCapItems,
+    status:
+      earliestDeferredCapRetry(deferredCapItems) === null
+        ? "paused"
+        : "cooling",
+    blocker: "source_cap",
+    nextAttemptAt: earliestDeferredCapRetry(deferredCapItems),
+    updatedAt: attemptedAt,
+  };
 }
 
 /**
@@ -473,15 +734,19 @@ function parseCsvLine(line) {
  * Read all terminal query artifacts by deterministic query index.
  *
  * @param {string} queriesDirectory - Private artifact directory.
- * @param {number} completedQueries - Durable terminal prefix length.
+ * @param {MunicipalPropertyCheckpoint} checkpoint - Durable processed cursor and unresolved query indexes.
  * @returns {Promise<{byKey:Map<string,NormalizedBrowardMunicipalPermit>,duplicateRecordCount:number}>}
  *   Reconciled unique records and duplicate observations.
  */
-async function readCompletedQueryArtifacts(queriesDirectory, completedQueries) {
+async function readCompletedQueryArtifacts(queriesDirectory, checkpoint) {
   /** @type {Map<string, NormalizedBrowardMunicipalPermit>} */
   const byKey = new Map();
   let duplicateRecordCount = 0;
-  for (let index = 0; index < completedQueries; index += 1) {
+  const deferredIndexes = new Set(
+    Object.values(checkpoint.deferredCapItems).map((item) => item.queryIndex),
+  );
+  for (let index = 0; index < checkpoint.nextQueryIndex; index += 1) {
+    if (deferredIndexes.has(index)) continue;
     const queryPath = path.join(
       queriesDirectory,
       `query-${String(index + 1).padStart(8, "0")}.private.jsonl`,
@@ -563,7 +828,43 @@ async function readOrCreateCheckpoint(
         "Existing municipal property checkpoint does not match seed",
       );
     }
-    return /** @type {MunicipalPropertyCheckpoint} */ (parsed);
+    const deferredCapItems =
+      parsed.deferredCapItems === undefined ? {} : parsed.deferredCapItems;
+    if (
+      !isRecord(deferredCapItems) ||
+      !Number.isInteger(parsed.completedQueries) ||
+      /** @type {number} */ (parsed.completedQueries) < 0
+    ) {
+      throw new Error("Existing municipal property deferrals are malformed");
+    }
+    const deferredIndexes = new Set();
+    for (const [digest, rawItem] of Object.entries(deferredCapItems)) {
+      if (
+        !/^[a-f0-9]{64}$/u.test(digest) ||
+        !isValidDeferredCapItem(
+          rawItem,
+          digest,
+          queries,
+          seedSha256,
+          queryPlanSha256,
+          /** @type {number} */ (parsed.nextQueryIndex),
+        )
+      ) {
+        throw new Error("Existing municipal property deferral is invalid");
+      }
+      deferredIndexes.add(rawItem.queryIndex);
+    }
+    if (
+      deferredIndexes.size !== Object.keys(deferredCapItems).length ||
+      /** @type {number} */ (parsed.completedQueries) + deferredIndexes.size !==
+        /** @type {number} */ (parsed.nextQueryIndex)
+    ) {
+      throw new Error("Municipal property processed queries do not reconcile");
+    }
+    return /** @type {MunicipalPropertyCheckpoint} */ ({
+      ...parsed,
+      deferredCapItems,
+    });
   } catch (error) {
     if (!isNodeError(error) || error.code !== "ENOENT") throw error;
   }
@@ -581,6 +882,7 @@ async function readOrCreateCheckpoint(
     emptyQueries: 0,
     recordObservations: 0,
     uniqueRecords: 0,
+    deferredCapItems: {},
     status: /** @type {const} */ ("running"),
     blocker: null,
     nextAttemptAt: null,
@@ -589,6 +891,193 @@ async function readOrCreateCheckpoint(
   };
   await writeCheckpoint(checkpointPath, checkpoint);
   return checkpoint;
+}
+
+/**
+ * Advance past one capped source item without marking it terminal.
+ *
+ * The checkpoint and companion ledger retain only hashes, aggregate counts,
+ * and bounded retry metadata. Query text never enters either artifact.
+ *
+ * @param {MunicipalPropertyCheckpoint} checkpoint - Current immutable-plan checkpoint.
+ * @param {MunicipalPropertySeedQuery} query - Private query used only to derive its digest.
+ * @param {number} queryIndex - Stable zero-based seed position.
+ * @param {number} observedResultCount - Bounded source rows observed.
+ * @param {number} exclusiveCap - Threshold that cannot establish completeness.
+ * @param {string} deferredAt - ISO source observation time.
+ * @returns {MunicipalPropertyCheckpoint} Advanced partial-coverage checkpoint.
+ */
+function deferCappedPropertyQuery(
+  checkpoint,
+  query,
+  queryIndex,
+  observedResultCount,
+  exclusiveCap,
+  deferredAt,
+) {
+  const queryDigest = municipalPropertyQueryDigest(
+    checkpoint.queryPlanSha256,
+    query,
+    queryIndex,
+  );
+  const previous = checkpoint.deferredCapItems[queryDigest];
+  const attemptCount = (previous?.attemptCount ?? 0) + 1;
+  const nextAttemptAt =
+    attemptCount >= MAX_DEFERRED_CAP_ATTEMPTS
+      ? null
+      : new Date(
+          Date.parse(deferredAt) + DEFERRED_CAP_RETRY_DELAY_MS,
+        ).toISOString();
+  /** @type {MunicipalDeferredCapItem} */
+  const item = {
+    schemaVersion: DEFERRED_CAP_SCHEMA_VERSION,
+    seedSha256: checkpoint.seedSha256,
+    queryPlanSha256: checkpoint.queryPlanSha256,
+    queryIndex,
+    queryDigest,
+    representedProperties: query.propertyCount,
+    reason: "client_all_exclusive_cap",
+    observedResultCount,
+    exclusiveCap,
+    attemptCount,
+    firstDeferredAt: previous?.firstDeferredAt ?? deferredAt,
+    lastAttemptAt: deferredAt,
+    nextAttemptAt,
+  };
+  const deferredCapItems = {
+    ...checkpoint.deferredCapItems,
+    [queryDigest]: item,
+  };
+  const nextQueryIndex = queryIndex + 1;
+  const exhausted = nextQueryIndex === checkpoint.totalQueries;
+  return {
+    ...checkpoint,
+    deferredCapItems,
+    nextQueryIndex,
+    status: exhausted ? "cooling" : "running",
+    blocker: exhausted ? "source_cap" : null,
+    nextAttemptAt: exhausted
+      ? earliestDeferredCapRetry(deferredCapItems)
+      : null,
+    updatedAt: deferredAt,
+  };
+}
+
+/**
+ * Derive a stable opaque identity for one private seed item.
+ *
+ * @param {string} queryPlanSha256 - Immutable plan identity.
+ * @param {MunicipalPropertySeedQuery} query - Private seed query.
+ * @param {number} queryIndex - Stable zero-based plan position.
+ * @returns {string} Lowercase SHA-256 digest.
+ */
+function municipalPropertyQueryDigest(queryPlanSha256, query, queryIndex) {
+  return sha256(
+    JSON.stringify({
+      queryPlanSha256,
+      queryIndex,
+      queryKind: query.queryKind,
+      queryValue: query.queryValue.toUpperCase(),
+    }),
+  );
+}
+
+/**
+ * Validate one persisted safe deferral against the immutable private plan.
+ *
+ * @param {unknown} value - Candidate ledger item.
+ * @param {string} digest - Object key expected to match the item digest.
+ * @param {readonly MunicipalPropertySeedQuery[]} queries - Immutable plan.
+ * @param {string} seedSha256 - Expected seed hash.
+ * @param {string} queryPlanSha256 - Expected plan hash.
+ * @param {number} nextQueryIndex - Exclusive processed cursor.
+ * @returns {value is MunicipalDeferredCapItem} True for a reconciled safe item.
+ */
+function isValidDeferredCapItem(
+  value,
+  digest,
+  queries,
+  seedSha256,
+  queryPlanSha256,
+  nextQueryIndex,
+) {
+  if (!isRecord(value)) return false;
+  const queryIndex = value.queryIndex;
+  if (
+    value.schemaVersion !== DEFERRED_CAP_SCHEMA_VERSION ||
+    value.seedSha256 !== seedSha256 ||
+    value.queryPlanSha256 !== queryPlanSha256 ||
+    value.queryDigest !== digest ||
+    !Number.isInteger(queryIndex) ||
+    /** @type {number} */ (queryIndex) < 0 ||
+    /** @type {number} */ (queryIndex) >= nextQueryIndex ||
+    !Number.isSafeInteger(value.representedProperties) ||
+    /** @type {number} */ (value.representedProperties) < 1 ||
+    value.reason !== "client_all_exclusive_cap" ||
+    !Number.isSafeInteger(value.observedResultCount) ||
+    /** @type {number} */ (value.observedResultCount) < 2 ||
+    !Number.isSafeInteger(value.exclusiveCap) ||
+    /** @type {number} */ (value.exclusiveCap) < 2 ||
+    /** @type {number} */ (value.observedResultCount) <
+      /** @type {number} */ (value.exclusiveCap) ||
+    !Number.isInteger(value.attemptCount) ||
+    /** @type {number} */ (value.attemptCount) < 1 ||
+    /** @type {number} */ (value.attemptCount) > MAX_DEFERRED_CAP_ATTEMPTS ||
+    typeof value.firstDeferredAt !== "string" ||
+    !Number.isFinite(Date.parse(value.firstDeferredAt)) ||
+    typeof value.lastAttemptAt !== "string" ||
+    !Number.isFinite(Date.parse(value.lastAttemptAt)) ||
+    (value.nextAttemptAt !== null &&
+      (typeof value.nextAttemptAt !== "string" ||
+        !Number.isFinite(Date.parse(value.nextAttemptAt))))
+  ) {
+    return false;
+  }
+  const query = queries[/** @type {number} */ (queryIndex)];
+  return (
+    query !== undefined &&
+    value.representedProperties === query.propertyCount &&
+    municipalPropertyQueryDigest(
+      queryPlanSha256,
+      query,
+      /** @type {number} */ (queryIndex),
+    ) === digest
+  );
+}
+
+/**
+ * Return the earliest scheduled retry across unresolved cap items.
+ *
+ * @param {Readonly<Record<string,MunicipalDeferredCapItem>>} items - Safe unresolved items.
+ * @returns {string | null} Earliest ISO retry time, or null when exhausted.
+ */
+function earliestDeferredCapRetry(items) {
+  const scheduled = Object.values(items)
+    .map((item) => item.nextAttemptAt)
+    .filter((value) => value !== null)
+    .sort((left, right) => left.localeCompare(right));
+  return scheduled[0] ?? null;
+}
+
+/**
+ * Persist the safe deferred-cap ledger as deterministic owner-only JSONL.
+ *
+ * @param {string} ledgerPath - Private ledger destination.
+ * @param {MunicipalPropertyCheckpoint} checkpoint - Source checkpoint.
+ * @returns {Promise<void>} Resolves after atomic replacement.
+ */
+async function writeDeferredCapLedger(ledgerPath, checkpoint) {
+  const rows = Object.values(checkpoint.deferredCapItems).sort(
+    (left, right) =>
+      left.queryIndex - right.queryIndex ||
+      left.queryDigest.localeCompare(right.queryDigest),
+  );
+  await writePrivateAtomic(
+    ledgerPath,
+    rows.length === 0
+      ? ""
+      : `${rows.map((row) => JSON.stringify(row)).join("\n")}\n`,
+  );
 }
 
 /**

@@ -733,11 +733,16 @@ describe("durable Broward Neon recovery", () => {
       root,
       "downloads/broward/municipal-type-enumeration/lighthouse-point-full",
     );
+    const pompanoDirectory = path.join(
+      root,
+      "downloads/broward/municipal-property-enumeration/pompano-beach-full",
+    );
     await Promise.all([
       mkdir(hollywoodDirectory, { recursive: true }),
       mkdir(oaklandDirectory, { recursive: true }),
       mkdir(plantationDirectory, { recursive: true }),
       mkdir(lighthouseDirectory, { recursive: true }),
+      mkdir(pompanoDirectory, { recursive: true }),
       mkdir(path.join(cooperDirectory, "property-gap-fill"), {
         recursive: true,
       }),
@@ -826,19 +831,38 @@ describe("durable Broward Neon recovery", () => {
         updatedAt: "2026-08-31T21:59:45.000Z",
       }),
     );
+    await writeFile(
+      path.join(pompanoDirectory, "checkpoint.private.json"),
+      JSON.stringify({
+        nextQueryIndex: 3,
+        completedQueries: 2,
+        totalQueries: 5,
+        uniqueRecords: 4,
+        deferredCapItems: {
+          ["a".repeat(64)]: {
+            reason: "client_all_exclusive_cap",
+          },
+        },
+        status: "running",
+        blocker: null,
+        nextAttemptAt: null,
+        updatedAt: "2026-08-31T21:59:50.000Z",
+      }),
+    );
     const status = await readPermitEnumerationStatus(
       root,
       Date.parse("2026-08-31T22:00:00.000Z"),
     );
     expect(status).toMatchObject({
-      activeWorkers: 3,
+      activeWorkers: 4,
       completedWorkers: 1,
-      completedWindows: 3,
-      totalWindows: 7,
-      accessibleRecords: 57,
+      completedWindows: 5,
+      totalWindows: 12,
+      accessibleRecords: 61,
       excludedRecords: 2,
       invalidRecords: 0,
       sourceMissingRecords: 1,
+      deferredCapCount: 1,
     });
     expect(status.workers).toHaveLength(17);
     expect(status.pausedWorkers).toEqual([]);
@@ -863,6 +887,15 @@ describe("durable Broward Neon recovery", () => {
         status: "running",
         accessibleRecords: 2,
         updatedAt: "2026-08-31T21:59:30.000Z",
+      }),
+    );
+    expect(status.workers).toContainEqual(
+      expect.objectContaining({
+        source: "Pompano Beach",
+        status: "running",
+        completedWindows: 2,
+        pendingWindows: 3,
+        deferredCapCount: 1,
       }),
     );
     expect(status.workers).toContainEqual(

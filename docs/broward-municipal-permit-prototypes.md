@@ -117,7 +117,20 @@ Two production runners now reuse the certified vendor parsers/transports:
 - `run-broward-municipal-property-enumeration.mjs` consumes that immutable
   private seed, requires each client-all page to stay below its exclusive cap,
   captures every detail before advancing the query checkpoint, and preserves
-  source-cap/time-out/pagination blockers without treating them as empty.
+  source-cap/time-out/pagination blockers without treating them as empty. An
+  address at or above the cap advances only into a separate unresolved state:
+  the mode-0600 deferred-cap ledger stores plan/query hashes, aggregate counts,
+  reason, and bounded attempt timing but no address. Terminal progress excludes
+  those items. The runner continues the primary seed, then permits at most
+  three due deferred retries per later invocation, at 24-hour intervals and
+  no more than three observations per item.
+
+The live Pompano Beach and Tamarac address forms expose no permit-type, status,
+application-year, or date-range filter that can partition a capped address.
+They expose segmented parcel controls, but no BCPA-to-vendor segment mapping
+has been certified and the controls cannot be assumed to partition the same
+address result set. Capped items therefore remain deferred; no wildcard,
+permit-number-prefix, or parcel split is attempted.
 
 All three scripts write mode-0600 files below ignored owner-only directories.
 Their console summaries and dashboard projections contain aggregate counts and

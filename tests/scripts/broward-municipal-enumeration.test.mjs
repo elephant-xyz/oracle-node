@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -235,6 +235,7 @@ describe("Broward municipal property enumeration", () => {
       recordObservations: 1,
       uniqueRecordCount: 1,
       duplicateRecordCount: 0,
+      deferredCapCount: 0,
       blocker: null,
     });
     expect(close).toHaveBeenCalledOnce();
@@ -249,21 +250,25 @@ describe("Broward municipal property enumeration", () => {
       coverageBoundary: "bcpa_property_first_folio",
       completedQueries: 1,
       uniqueRecords: 1,
+      deferredCapItems: {},
       status: "complete",
     });
   });
 
-  it("fails closed when a client-all result reaches the exclusive cap", async () => {
+  it("defers a capped item without marking it complete and continues the seed", async () => {
     const root = await createTemporaryDirectory();
     const seedPath = path.join(root, "seed.private.csv");
     const outputDirectory = path.join(root, "capture");
     await writeFile(
       seedPath,
       "jurisdiction_key,query_kind,query_value,property_count\n" +
-        "margate,address,100 PRIVATE ST,1\n",
+        "margate,address,100 PRIVATE ST,1\n" +
+        "margate,address,101 PRIVATE ST,2\n",
       { mode: 0o600 },
     );
     const fetchDetail = vi.fn();
+    /** @type {string[]} */
+    const searchedQueries = [];
     const close = vi.fn(async () => {});
 
     const summary = await runMunicipalPropertyEnumeration(
@@ -280,25 +285,31 @@ describe("Broward municipal property enumeration", () => {
         now: () => "2026-09-02T17:00:00.000Z",
         wait: async () => {},
         createTransport: async () => ({
-          fetchSearchPage: async () => ({
-            references: [
-              {
-                sourceRecordId: "fixture-1",
-                permitNumber: "PERMIT-1",
-                detailUrl: "https://example.test/detail/fixture-1",
-                sourcePage: 1,
-                listData: {},
-              },
-              {
-                sourceRecordId: "fixture-2",
-                permitNumber: "PERMIT-2",
-                detailUrl: "https://example.test/detail/fixture-2",
-                sourcePage: 1,
-                listData: {},
-              },
-            ],
-            nextPage: null,
-          }),
+          fetchSearchPage: async (query) => {
+            searchedQueries.push(query.value);
+            return {
+              references:
+                query.value === "100 PRIVATE ST"
+                  ? [
+                      {
+                        sourceRecordId: "fixture-1",
+                        permitNumber: "PERMIT-1",
+                        detailUrl: "https://example.test/detail/fixture-1",
+                        sourcePage: 1,
+                        listData: {},
+                      },
+                      {
+                        sourceRecordId: "fixture-2",
+                        permitNumber: "PERMIT-2",
+                        detailUrl: "https://example.test/detail/fixture-2",
+                        sourcePage: 1,
+                        listData: {},
+                      },
+                    ]
+                  : [],
+              nextPage: null,
+            };
+          },
           fetchDetail,
           listRecordTypePartitions: async () => {
             throw new Error("unsupported");
@@ -309,12 +320,84 @@ describe("Broward municipal property enumeration", () => {
     );
 
     expect(summary).toMatchObject({
-      status: "paused",
-      completedQueries: 0,
+      status: "cooling",
+      totalQueries: 2,
+      completedQueries: 1,
+      deferredCapCount: 1,
       blocker: "source_cap",
     });
+    expect(searchedQueries).toEqual(["100 PRIVATE ST", "101 PRIVATE ST"]);
     expect(fetchDetail).not.toHaveBeenCalled();
     expect(close).toHaveBeenCalledOnce();
+    const checkpoint = JSON.parse(
+      await readFile(
+        path.join(outputDirectory, "checkpoint.private.json"),
+        "utf8",
+      ),
+    );
+    expect(checkpoint).toMatchObject({
+      nextQueryIndex: 2,
+      completedQueries: 1,
+      status: "cooling",
+      blocker: "source_cap",
+    });
+    const deferredItems = Object.values(checkpoint.deferredCapItems);
+    expect(deferredItems).toHaveLength(1);
+    expect(deferredItems[0]).toMatchObject({
+      queryIndex: 0,
+      representedProperties: 1,
+      reason: "client_all_exclusive_cap",
+      observedResultCount: 2,
+      exclusiveCap: 2,
+      attemptCount: 1,
+    });
+    const ledgerPath = path.join(outputDirectory, "deferred-cap.private.jsonl");
+    const ledger = await readFile(ledgerPath, "utf8");
+    expect(ledger).not.toMatch(/100 PRIVATE ST|101 PRIVATE ST/u);
+    expect(JSON.parse(ledger)).toMatchObject({
+      queryIndex: 0,
+      reason: "client_all_exclusive_cap",
+    });
+    expect((await stat(ledgerPath)).mode & 0o777).toBe(0o600);
+
+    /** @type {string[]} */
+    const retriedQueries = [];
+    const retryFetchDetail = vi.fn();
+    const retrySummary = await runMunicipalPropertyEnumeration(
+      {
+        jurisdictionKey: "margate",
+        seedPath,
+        outputDirectory,
+        maxQueries: null,
+        maxResultsPerQuery: 2,
+        delayMs: 1_000,
+        requestTimeoutMs: 30_000,
+      },
+      {
+        now: () => "2026-09-04T17:00:00.000Z",
+        wait: async () => {},
+        createTransport: async () => ({
+          fetchSearchPage: async (query) => {
+            retriedQueries.push(query.value);
+            return { references: [], nextPage: null };
+          },
+          fetchDetail: retryFetchDetail,
+          listRecordTypePartitions: async () => {
+            throw new Error("unsupported");
+          },
+          close: async () => {},
+        }),
+      },
+    );
+    expect(retriedQueries).toEqual(["100 PRIVATE ST"]);
+    expect(retryFetchDetail).not.toHaveBeenCalled();
+    expect(retrySummary).toMatchObject({
+      status: "complete",
+      completedQueries: 2,
+      deferredCapCount: 0,
+      blocker: null,
+    });
+    expect(await readFile(ledgerPath, "utf8")).toBe("");
   });
 
   it("requires conservative production options", () => {
