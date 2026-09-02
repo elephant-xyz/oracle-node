@@ -567,6 +567,18 @@ describe("Tyler eSuite protocol", () => {
     });
   });
 
+  it("recognizes the source sequential Next postback as the next numbered page", () => {
+    const config = getBrowardMunicipalPermitConfig("davie");
+    const sequential = esuiteSearch.replace(
+      '<a data-page="2" href="#">2</a>',
+      '<a href="javascript:WebForm_DoPostBackWithOptions(new WebForm_PostBackOptions(&quot;pager&quot;, &quot;&quot;, false, &quot;&quot;, &quot;AdvancedSearch.aspx?action=next&quot;, false, true))">Next</a>',
+    );
+    expect(
+      parseTylerEsuiteSearchHtml(sequential, config, { sourcePage: 3 })
+        .nextPage,
+    ).toBe(4);
+  });
+
   it("normalizes same-session details and bounded inspection outcomes", () => {
     const config = getBrowardMunicipalPermitConfig("davie");
     const sourceReference = parseTylerEsuiteSearchHtml(esuiteSearch, config)
@@ -628,6 +640,71 @@ describe("SmartGov and eGovPLUS HTML protocols", () => {
       is_roof_permit: true,
     });
     expect(JSON.stringify(record)).not.toContain("PRIVATE FIXTURE CONTACT");
+  });
+
+  it("parses live-style SmartGov result cards and landing-page detail labels", () => {
+    const config = getBrowardMunicipalPermitConfig("lighthouse_point");
+    const search = `<!doctype html><html><head>
+      <title>City of Lighthouse Point Public Portal</title></head><body>
+      <div id="search-results">21 results
+        <div class="search-result-item">
+          <div class="search-result-title">
+            <a href="javascript:void(0)" onclick="FormSupport.submitAction( 'Detail/APP-7788' );">BLD26-0012</a>
+          </div>
+          <div class="row">
+            <div><div>ROOF</div><div>Issued, 8/10/2026</div></div>
+            <div><div>2200 NE 38TH ST</div><div>LIGHTHOUSE POINT, FL</div></div>
+            <div><div>OMITTED CONTRACTOR</div><div>OMITTED LICENSE</div></div>
+          </div>
+        </div>
+        <a href="#" onclick="ApplicationSearchAdvancedResults.gotoPage(2)">2</a>
+      </div></body></html>`;
+    const page = parseSmartGovSearchHtml(search, config);
+    expect(page).toMatchObject({
+      nextPage: 2,
+      reportedCount: 21,
+      references: [
+        {
+          sourceRecordId: "APP-7788",
+          permitNumber: "BLD26-0012",
+          listData: {
+            address: "2200 NE 38TH ST",
+            record_status: "Issued",
+            record_type: "ROOF",
+          },
+        },
+      ],
+    });
+    expect(page.references[0]?.detailUrl).toBe(
+      "https://ci-lighthousepoint-fl.smartgovcommunity.com/PermittingPublic/PermitLandingPagePublic/Index/APP-7788",
+    );
+
+    const detail = `<!doctype html><html><head>
+      <title>City of Lighthouse Point Public Portal</title></head><body>
+      <div><span class="case-header-field-label">Record Number</span><span class="case-header-field-value">BLD26-0012</span></div>
+      <div class="case-header-status-badge">Issued</div>
+      <div><span class="project-section-field-label">Location</span><span class="project-section-field-value">2200 NE 38TH ST</span></div>
+      <div><span class="project-section-field-label">Submitted</span><span class="project-section-field-value">08/01/2026</span></div>
+      <div><span class="project-section-field-label">Issued</span><span class="project-section-field-value">08/10/2026</span></div>
+      <div><span class="project-section-field-label">Application Expires</span><span class="project-section-field-value">08/10/2027</span></div>
+      <div><span class="project-section-field-label">Describe the purpose of the project</span><span class="project-section-field-value">RE-ROOF</span></div>
+      </body></html>`;
+    const record = parseSmartGovDetailHtml(detail, {
+      config,
+      reference: page.references[0],
+      query: { kind: "record_type", value: "ROOF" },
+    });
+    expect(record).toMatchObject({
+      permit_number: "BLD26-0012",
+      work_location: "2200 NE 38TH ST",
+      application_date: "2026-08-01",
+      permit_issue_date: "2026-08-10",
+      expiration_date: "2027-08-10",
+      record_status: "Issued",
+      record_type: "ROOF",
+      project_description: "RE-ROOF",
+    });
+    expect(JSON.stringify(record)).not.toContain("OMITTED CONTRACTOR");
   });
 
   it("normalizes eGovPLUS details without owner, reviewer, or inspector data", () => {

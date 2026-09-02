@@ -36,7 +36,9 @@ const CLICK2GOV_CAPABILITIES = Object.freeze({
 });
 
 const ESUITE_CAPABILITIES = Object.freeze({
-  searchBy: Object.freeze(/** @type {const} */ (["permit_number", "address"])),
+  searchBy: Object.freeze(
+    /** @type {const} */ (["permit_number", "address", "record_type"]),
+  ),
   pagination: /** @type {const} */ ("numbered"),
   detail: /** @type {const} */ ("same_session"),
   inspections: true,
@@ -212,9 +214,9 @@ export const BROWARD_MUNICIPAL_PERMIT_JURISDICTIONS = Object.freeze([
     accessMode: "anonymous",
     probeStatus: "enabled",
     accessNote:
-      "Anonymous advanced permit/address/parcel search is available. Sign-up/login controls are not needed for public search and are never used.",
+      "Anonymous advanced permit/address/parcel and exact record-type search is available. Sign-up/login controls are not needed for public search and are never used.",
     capabilities: {
-      searchBy: ["permit_number", "address", "folio"],
+      searchBy: ["permit_number", "address", "folio", "record_type"],
       pagination: "numbered",
       detail: "public_url",
       inspections: true,

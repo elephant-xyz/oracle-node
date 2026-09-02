@@ -92,7 +92,7 @@ const DEFAULT_PORT = 47_832;
  *
  * @typedef {object} PermitEnumerationWorkerStatus
  * @property {string} source - Public jurisdiction label.
- * @property {"accela_csv" | "tyler_api" | "property_first"} family - Source mechanism.
+ * @property {"accela_csv" | "tyler_api" | "property_first" | "municipal_type" | "municipal_property"} family - Source mechanism.
  * @property {"not_started" | "running" | "cooling_down" | "paused" | "complete"} status
  *   Aggregate checkpoint activity state.
  * @property {number} completedWindows - Durable completed windows.
@@ -110,6 +110,7 @@ const DEFAULT_PORT = 47_832;
  *   Allowlisted source circuit-breaker reason while cooling down.
  * @property {string | null} nextAttemptAt - Earliest safe automatic retry.
  * @property {string | null} coverageBoundary - Public custody/history boundary.
+ * @property {string | null} [startBlocker] - Allowlisted no-start gate.
  *
  * @typedef {object} PausedPermitEnumerationWorker
  * @property {string} source - Public jurisdiction label.
@@ -1000,6 +1001,107 @@ const PERMIT_ENUMERATION_CHECKPOINTS = Object.freeze([
     relativePath:
       "downloads/broward/tyler-date-windows/oakland-park-full-30d/checkpoint.private.json",
   },
+  {
+    source: "Coconut Creek",
+    family: "municipal_property",
+    reader: "municipal_property",
+    pauseReason: "checkpoint_stale",
+    gapRelativePath: null,
+    coverageBoundary: "BCPA property-first folio seed",
+    noStartReason: "awaiting_reconciled_property_seed",
+    relativePath:
+      "downloads/broward/municipal-property-enumeration/coconut-creek-full/checkpoint.private.json",
+  },
+  {
+    source: "Dania Beach",
+    family: "municipal_type",
+    reader: "municipal_type",
+    pauseReason: "checkpoint_stale",
+    gapRelativePath: null,
+    coverageBoundary: "Complete official eSuite exact-type option universe",
+    noStartReason: "awaiting_exact_type_partition_pilot",
+    relativePath:
+      "downloads/broward/municipal-type-enumeration/dania-beach-full/checkpoint.private.json",
+  },
+  {
+    source: "Davie",
+    family: "municipal_type",
+    reader: "municipal_type",
+    pauseReason: "checkpoint_stale",
+    gapRelativePath: null,
+    coverageBoundary:
+      "Legacy eSuite exact-type universe; login-gated 2026 OAS excluded",
+    noStartReason: "awaiting_exact_type_partition_pilot",
+    relativePath:
+      "downloads/broward/municipal-type-enumeration/davie-full/checkpoint.private.json",
+  },
+  {
+    source: "Lauderhill",
+    family: "municipal_property",
+    reader: "municipal_property",
+    pauseReason: "checkpoint_stale",
+    gapRelativePath: null,
+    coverageBoundary: "BCPA property-first folio seed",
+    noStartReason: "awaiting_reconciled_property_seed",
+    relativePath:
+      "downloads/broward/municipal-property-enumeration/lauderhill-full/checkpoint.private.json",
+  },
+  {
+    source: "Lighthouse Point",
+    family: "municipal_type",
+    reader: "municipal_type",
+    pauseReason: "checkpoint_stale",
+    gapRelativePath: null,
+    coverageBoundary: "Complete official SmartGov exact-type option universe",
+    noStartReason: "positive_detail_reconciliation_required",
+    relativePath:
+      "downloads/broward/municipal-type-enumeration/lighthouse-point-full/checkpoint.private.json",
+  },
+  {
+    source: "Margate",
+    family: "municipal_property",
+    reader: "municipal_property",
+    pauseReason: "checkpoint_stale",
+    gapRelativePath: null,
+    coverageBoundary: "BCPA property-first normalized-address seed",
+    noStartReason: "awaiting_reconciled_property_seed",
+    relativePath:
+      "downloads/broward/municipal-property-enumeration/margate-full/checkpoint.private.json",
+  },
+  {
+    source: "Pompano Beach",
+    family: "municipal_property",
+    reader: "municipal_property",
+    pauseReason: "source_cap",
+    gapRelativePath: null,
+    coverageBoundary:
+      "BCPA property-first address seed with exclusive client-all cap",
+    noStartReason: "awaiting_reconciled_property_seed_and_cap_pilot",
+    relativePath:
+      "downloads/broward/municipal-property-enumeration/pompano-beach-full/checkpoint.private.json",
+  },
+  {
+    source: "Sunrise",
+    family: "tyler_api",
+    pauseReason: "checkpoint_stale",
+    gapRelativePath: null,
+    coverageBoundary:
+      "EnerGov electronic application dates 1900-01-01 through 2026-09-02; legacy custodian separate",
+    noStartReason: "full_date_worker_not_started",
+    relativePath:
+      "downloads/broward/tyler-date-windows/sunrise-full-1900-present/checkpoint.private.json",
+  },
+  {
+    source: "Tamarac",
+    family: "municipal_property",
+    reader: "municipal_property",
+    pauseReason: "checkpoint_stale",
+    gapRelativePath: null,
+    coverageBoundary: "BCPA property-first normalized-address seed",
+    noStartReason: "awaiting_reconciled_property_seed",
+    relativePath:
+      "downloads/broward/municipal-property-enumeration/tamarac-full/checkpoint.private.json",
+  },
 ]);
 
 const PROPERTY_FIRST_PERMIT_ROUTES = Object.freeze([
@@ -1160,6 +1262,125 @@ function isPlainRecord(value) {
 }
 
 /**
+ * Project one local municipal type/property checkpoint to aggregate-only
+ * dashboard state. Private option IDs, property queries, record identities,
+ * artifact paths, and source rows are never returned.
+ *
+ * @param {Record<string, unknown>} definition - Fixed public worker definition.
+ * @param {Record<string, unknown>} checkpoint - Parsed private checkpoint.
+ * @param {number} nowMs - Dashboard snapshot epoch.
+ * @returns {PermitEnumerationWorkerStatus} Public-safe municipal worker row.
+ */
+function buildMunicipalEnumerationWorker(definition, checkpoint, nowMs) {
+  const reader = definition.reader;
+  const family = definition.family;
+  const source = definition.source;
+  const coverageBoundary = definition.coverageBoundary;
+  if (
+    (reader !== "municipal_type" && reader !== "municipal_property") ||
+    (family !== "municipal_type" && family !== "municipal_property") ||
+    typeof source !== "string" ||
+    typeof coverageBoundary !== "string" ||
+    typeof checkpoint.updatedAt !== "string" ||
+    typeof checkpoint.status !== "string"
+  ) {
+    throw new Error("Municipal permit worker definition is malformed");
+  }
+  let completedWindows;
+  let totalWindows;
+  if (reader === "municipal_type") {
+    if (
+      !Array.isArray(checkpoint.pendingPartitionValues) ||
+      !isPlainRecord(checkpoint.completedPartitions)
+    ) {
+      throw new Error("Municipal type checkpoint is malformed");
+    }
+    completedWindows = Object.keys(checkpoint.completedPartitions).length;
+    totalWindows = completedWindows + checkpoint.pendingPartitionValues.length;
+    const sourcePartitionCount = safeAggregate(checkpoint.sourcePartitionCount);
+    if (sourcePartitionCount !== totalWindows) {
+      throw new Error("Municipal type partition counts do not reconcile");
+    }
+  } else {
+    completedWindows = safeAggregate(checkpoint.completedQueries);
+    totalWindows = safeAggregate(checkpoint.totalQueries);
+    if (completedWindows > totalWindows) {
+      throw new Error("Municipal property query counts do not reconcile");
+    }
+  }
+  const pendingWindows = totalWindows - completedWindows;
+  const updatedMs = Date.parse(checkpoint.updatedAt);
+  if (!Number.isFinite(updatedMs)) {
+    throw new Error("Municipal permit worker timestamp is invalid");
+  }
+  const blocker =
+    typeof checkpoint.blocker === "string" ? checkpoint.blocker : null;
+  const allowedBlockers = new Set([
+    "source_cap",
+    "timeout",
+    "incomplete_pagination",
+    "source_error",
+  ]);
+  if (blocker !== null && !allowedBlockers.has(blocker)) {
+    throw new Error("Municipal permit worker blocker is invalid");
+  }
+  const nextAttemptAt =
+    typeof checkpoint.nextAttemptAt === "string"
+      ? checkpoint.nextAttemptAt
+      : null;
+  const nextAttemptMs =
+    nextAttemptAt === null ? Number.NaN : Date.parse(nextAttemptAt);
+  const complete = checkpoint.status === "complete" && pendingWindows === 0;
+  const cooling =
+    checkpoint.status === "cooling" &&
+    Number.isFinite(nextAttemptMs) &&
+    nextAttemptMs > nowMs;
+  const recentlyActive =
+    checkpoint.status === "running" &&
+    nowMs - updatedMs >= 0 &&
+    nowMs - updatedMs <= 5 * 60_000;
+  const status = complete
+    ? /** @type {"complete"} */ ("complete")
+    : cooling
+      ? /** @type {"cooling_down"} */ ("cooling_down")
+      : recentlyActive
+        ? /** @type {"running"} */ ("running")
+        : /** @type {"paused"} */ ("paused");
+  return {
+    source,
+    family,
+    status,
+    completedWindows,
+    pendingWindows,
+    totalWindows,
+    completionPercent:
+      totalWindows === 0
+        ? 0
+        : Math.round((completedWindows / totalWindows) * 100_000) / 1_000,
+    accessibleRecords: safeAggregate(checkpoint.uniqueRecords),
+    excludedRecords: 0,
+    invalidRecords: 0,
+    sourceMissingRecords: 0,
+    updatedAt: checkpoint.updatedAt,
+    pauseReason:
+      status === "paused"
+        ? blocker === "source_cap"
+          ? "source_cap"
+          : "checkpoint_stale"
+        : null,
+    cooldownReason:
+      status === "cooling_down"
+        ? /** @type {"timeout" | "source_cap" | "incomplete_pagination" | "source_error"} */ (
+            blocker
+          )
+        : null,
+    nextAttemptAt: status === "cooling_down" ? nextAttemptAt : null,
+    coverageBoundary,
+    startBlocker: null,
+  };
+}
+
+/**
  * Read aggregate-only local permit enumerator checkpoints.
  *
  * @param {string} repositoryRoot - Repository root containing downloads.
@@ -1189,6 +1410,17 @@ export async function readPermitEnumerationStatus(
           throw new Error("Permit enumeration checkpoint is not an object");
         }
         const checkpoint = /** @type {Record<string, unknown>} */ (parsed);
+        if (
+          "reader" in definition &&
+          (definition.reader === "municipal_type" ||
+            definition.reader === "municipal_property")
+        ) {
+          return buildMunicipalEnumerationWorker(
+            /** @type {Record<string, unknown>} */ (definition),
+            checkpoint,
+            nowMs,
+          );
+        }
         if (
           !Array.isArray(checkpoint.pendingWindows) ||
           checkpoint.completedWindows === null ||
@@ -1280,15 +1512,20 @@ export async function readPermitEnumerationStatus(
               : null,
           cooldownReason: cooldown?.reason ?? null,
           nextAttemptAt: cooldown?.nextAttemptAt ?? null,
-          coverageBoundary: null,
+          coverageBoundary:
+            "coverageBoundary" in definition
+              ? definition.coverageBoundary
+              : null,
+          startBlocker: null,
         };
       } catch (error) {
         if (isNodeError(error) && error.code === "ENOENT") {
           return {
             source: definition.source,
-            family: /** @type {"accela_csv" | "tyler_api"} */ (
-              definition.family
-            ),
+            family:
+              /** @type {"accela_csv" | "tyler_api" | "municipal_type" | "municipal_property"} */ (
+                definition.family
+              ),
             status: /** @type {"not_started"} */ ("not_started"),
             completedWindows: 0,
             pendingWindows: 0,
@@ -1302,7 +1539,14 @@ export async function readPermitEnumerationStatus(
             pauseReason: null,
             cooldownReason: null,
             nextAttemptAt: null,
-            coverageBoundary: null,
+            coverageBoundary:
+              "coverageBoundary" in definition
+                ? definition.coverageBoundary
+                : null,
+            startBlocker:
+              "noStartReason" in definition
+                ? definition.noStartReason
+                : "worker_not_started",
           };
         }
         throw error;
@@ -2037,7 +2281,7 @@ const DASHBOARD_HTML = `<!doctype html>
     <article><h2>Coverage</h2><strong id="coral-coverage">—</strong></article>
   </section>
   <table aria-label="Permit tenant worker status">
-    <thead><tr><th>Jurisdiction</th><th>Source</th><th>Status</th><th>Work units</th><th>Records</th><th>Gaps</th><th>Coverage boundary</th></tr></thead>
+    <thead><tr><th>Jurisdiction</th><th>Source</th><th>Status</th><th>Work units</th><th>Records</th><th>Gaps / blocker</th><th>Coverage boundary</th></tr></thead>
     <tbody id="permit-worker-rows"></tbody>
   </table>
   <h2>Paused operational workers</h2>
@@ -2143,10 +2387,12 @@ const DASHBOARD_HTML = `<!doctype html>
           for (const value of [
             worker.source,
             worker.family.replaceAll("_", " "),
-            worker.status,
+            worker.status === "not_started" ? "no-start" : worker.status,
             format.format(worker.completedWindows) + " / " + format.format(worker.totalWindows),
             format.format(worker.accessibleRecords),
-            format.format(worker.invalidRecords + worker.sourceMissingRecords),
+            worker.startBlocker
+              ? worker.startBlocker.replaceAll("_", " ")
+              : format.format(worker.invalidRecords + worker.sourceMissingRecords),
             worker.coverageBoundary ?? "Date-window inventory; municipal history boundary applies",
           ]) {
             const cell = document.createElement("td");

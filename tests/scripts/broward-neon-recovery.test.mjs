@@ -729,10 +729,15 @@ describe("durable Broward Neon recovery", () => {
       root,
       "downloads/broward/accela-csv-windows/cooper-city-full",
     );
+    const lighthouseDirectory = path.join(
+      root,
+      "downloads/broward/municipal-type-enumeration/lighthouse-point-full",
+    );
     await Promise.all([
       mkdir(hollywoodDirectory, { recursive: true }),
       mkdir(oaklandDirectory, { recursive: true }),
       mkdir(plantationDirectory, { recursive: true }),
+      mkdir(lighthouseDirectory, { recursive: true }),
       mkdir(path.join(cooperDirectory, "property-gap-fill"), {
         recursive: true,
       }),
@@ -806,21 +811,36 @@ describe("durable Broward Neon recovery", () => {
         updatedAt: "2026-08-31T21:59:30.000Z",
       }),
     );
+    await writeFile(
+      path.join(lighthouseDirectory, "checkpoint.private.json"),
+      JSON.stringify({
+        pendingPartitionValues: ["PRIVATE"],
+        completedPartitions: {
+          one: { recordCount: 3 },
+        },
+        sourcePartitionCount: 2,
+        uniqueRecords: 3,
+        status: "running",
+        blocker: null,
+        nextAttemptAt: null,
+        updatedAt: "2026-08-31T21:59:45.000Z",
+      }),
+    );
     const status = await readPermitEnumerationStatus(
       root,
       Date.parse("2026-08-31T22:00:00.000Z"),
     );
     expect(status).toMatchObject({
-      activeWorkers: 2,
+      activeWorkers: 3,
       completedWorkers: 1,
-      completedWindows: 2,
-      totalWindows: 5,
-      accessibleRecords: 54,
+      completedWindows: 3,
+      totalWindows: 7,
+      accessibleRecords: 57,
       excludedRecords: 2,
       invalidRecords: 0,
       sourceMissingRecords: 1,
     });
-    expect(status.workers).toHaveLength(8);
+    expect(status.workers).toHaveLength(17);
     expect(status.pausedWorkers).toEqual([]);
     expect(status.coolingWorkers).toEqual([
       {
@@ -852,6 +872,26 @@ describe("durable Broward Neon recovery", () => {
         completedWindows: 1,
         pendingWindows: 1,
         accessibleRecords: 43,
+      }),
+    );
+    expect(status.workers).toContainEqual(
+      expect.objectContaining({
+        source: "Lighthouse Point",
+        family: "municipal_type",
+        status: "running",
+        completedWindows: 1,
+        pendingWindows: 1,
+        accessibleRecords: 3,
+        coverageBoundary:
+          "Complete official SmartGov exact-type option universe",
+      }),
+    );
+    expect(status.workers).toContainEqual(
+      expect.objectContaining({
+        source: "Sunrise",
+        status: "not_started",
+        startBlocker: "full_date_worker_not_started",
+        coverageBoundary: expect.stringContaining("legacy custodian separate"),
       }),
     );
     expect(JSON.stringify(status)).not.toContain("PRIVATE");

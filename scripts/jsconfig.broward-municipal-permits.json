@@ -28,6 +28,9 @@
     "permit-source-adapters/broward-municipal-config.mjs",
     "permit-source-adapters/broward-municipal-protocols.mjs",
     "permit-source-adapters/broward-municipal-transport.mjs",
-    "run-broward-municipal-permit-pilot.mjs"
+    "run-broward-municipal-permit-pilot.mjs",
+    "build-broward-municipal-property-seed.mjs",
+    "run-broward-municipal-property-enumeration.mjs",
+    "run-broward-municipal-record-type-enumeration.mjs"
   ]
 }

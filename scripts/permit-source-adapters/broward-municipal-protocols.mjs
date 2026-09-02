@@ -141,12 +141,24 @@ function collectLabeledFields($) {
     add(readSelectionText(label), value);
   }
   for (const labelElement of $(
-    ".field-label, .field_label, .detail-label, .control-label",
+    [
+      ".field-label",
+      ".field_label",
+      ".detail-label",
+      ".control-label",
+      ".case-header-field-label",
+      ".project-section-field-label",
+    ].join(", "),
   ).toArray()) {
     const label = $(labelElement);
     add(
       readSelectionText(label),
-      readSelectionText(label.next()) ??
+      readSelectionText(
+        label.next(
+          ".case-header-field-value, .project-section-field-value, .field-value, .detail-value",
+        ),
+      ) ??
+        readSelectionText(label.next()) ??
         readSelectionText(label.parent().children().not(label)),
     );
   }
@@ -235,25 +247,29 @@ function parseSourceNumber(value, fieldName) {
 function canonicalSourceUrl(config, href) {
   const searchUrl = new URL(config.searchUrl);
   const parsed = new URL(href, searchUrl);
-  const protocolPrefix =
+  const protocolPrefixes =
     config.protocol === "coconut_creek"
-      ? "/sd/permit/"
+      ? ["/sd/permit/"]
       : config.protocol === "click2gov"
-        ? "/Click2GovBP/"
+        ? ["/Click2GovBP/"]
         : config.protocol === "tyler_esuite"
-          ? searchUrl.pathname.slice(
-              0,
-              searchUrl.pathname.toLowerCase().indexOf("/esuite.permits/") +
-                "/eSuite.Permits/".length,
-            )
+          ? [
+              searchUrl.pathname.slice(
+                0,
+                searchUrl.pathname.toLowerCase().indexOf("/esuite.permits/") +
+                  "/eSuite.Permits/".length,
+              ),
+            ]
           : config.protocol === "egovplus"
-            ? "/eGovPlus83/"
+            ? ["/eGovPlus83/"]
             : config.protocol === "smartgov"
-              ? "/ApplicationPublic/"
-              : "/";
+              ? ["/ApplicationPublic/", "/PermittingPublic/"]
+              : ["/"];
   if (
     parsed.origin !== searchUrl.origin ||
-    !parsed.pathname.toLowerCase().startsWith(protocolPrefix.toLowerCase()) ||
+    !protocolPrefixes.some((prefix) =>
+      parsed.pathname.toLowerCase().startsWith(prefix.toLowerCase()),
+    ) ||
     parsed.username !== "" ||
     parsed.password !== ""
   ) {
@@ -824,7 +840,11 @@ export function parseTylerEsuiteSearchHtml(
       .map((element) => $(element).attr("href") ?? "")
       .find((href) => href.includes(`Page$${String(sourcePage + 1)}`))
       ?.match(/Page\$(\d+)/u)?.[1] ??
-    null;
+    ($("a[href*='action=next']")
+      .toArray()
+      .some((element) => /^next$/iu.test(readSelectionText($(element)) ?? ""))
+      ? String(sourcePage + 1)
+      : null);
   const nextPage =
     nextPageText === null
       ? null
@@ -942,7 +962,11 @@ export function parseSmartGovSearchHtml(
     );
   }
   const anchors = $(
-    'a[href*="/ApplicationPublic/"][href*="ApplicationDetail"], a[href*="/ApplicationPublic/Application/"]',
+    [
+      'a[href*="/ApplicationPublic/"][href*="ApplicationDetail"]',
+      'a[href*="/ApplicationPublic/Application/"]',
+      '.search-result-title a[onclick*="FormSupport.submitAction"][onclick*="Detail/"]',
+    ].join(", "),
   ).toArray();
   if (anchors.length >= maxRows) {
     throw new Error(
@@ -955,7 +979,22 @@ export function parseSmartGovSearchHtml(
     const anchor = $(anchorElement);
     const permitNumber = readSelectionText(anchor);
     if (permitNumber === null) continue;
-    const detailUrl = canonicalSourceUrl(config, anchor.attr("href") ?? "");
+    const directHref = anchor.attr("href");
+    const detailAction = /Detail\/([A-Z0-9-]+)/iu.exec(
+      anchor.attr("onclick") ?? "",
+    );
+    const detailHref =
+      directHref !== undefined &&
+      directHref !== "#" &&
+      !directHref.toLowerCase().startsWith("javascript:")
+        ? directHref
+        : detailAction?.[1] === undefined
+          ? null
+          : `/PermittingPublic/PermitLandingPagePublic/Index/${detailAction[1]}`;
+    if (detailHref === null) {
+      throw new Error("SmartGov search result lacks a public detail identity");
+    }
+    const detailUrl = canonicalSourceUrl(config, detailHref);
     const pathParts = new URL(detailUrl).pathname.split("/").filter(Boolean);
     const sourceRecordId = pathParts.at(-1);
     if (
@@ -966,7 +1005,20 @@ export function parseSmartGovSearchHtml(
         `SmartGov detail link has invalid identity: ${detailUrl}`,
       );
     }
+    const resultItem = anchor.closest(".search-result-item");
+    const resultColumns = resultItem.children(".row").children("div");
+    const firstColumnValues = resultColumns
+      .eq(0)
+      .children("div")
+      .toArray()
+      .map((element) => readSelectionText($(element)));
+    const secondColumnValues = resultColumns
+      .eq(1)
+      .children("div")
+      .toArray()
+      .map((element) => readSelectionText($(element)));
     const rowValues = mapResultRow($, anchor.closest("tr"));
+    const statusDisplay = firstColumnValues[1] ?? null;
     references.push({
       sourceRecordId,
       permitNumber,
@@ -974,24 +1026,54 @@ export function parseSmartGovSearchHtml(
       sourcePage,
       listData: {
         address:
-          rowValues.get("site address") ?? rowValues.get("address") ?? null,
+          rowValues.get("site address") ??
+          rowValues.get("address") ??
+          secondColumnValues[0] ??
+          null,
         record_status:
-          rowValues.get("process status") ?? rowValues.get("status") ?? null,
+          rowValues.get("process status") ??
+          rowValues.get("status") ??
+          readText(statusDisplay?.replace(/,\s*\d{1,2}\/\d{1,2}\/\d{4}$/u, "")),
         record_type:
-          rowValues.get("application type") ?? rowValues.get("type") ?? null,
+          rowValues.get("application type") ??
+          rowValues.get("type") ??
+          firstColumnValues[0] ??
+          null,
       },
     });
   }
   const nextPageText =
     $(`a[data-page="${String(sourcePage + 1)}"]`).attr("data-page") ??
     $("a[rel='next']").attr("data-page") ??
+    ($("a[onclick*='gotoPage']")
+      .toArray()
+      .some((element) =>
+        new RegExp(`gotoPage\\(\\s*${String(sourcePage + 1)}\\s*\\)`, "u").test(
+          $(element).attr("onclick") ?? "",
+        ),
+      )
+      ? String(sourcePage + 1)
+      : null) ??
     null;
+  const resultText = readSelectionText($("#search-results")) ?? "";
+  const reportedMatch = /([\d,]+)\s+results\b/iu.exec(resultText);
+  const reportedCount =
+    reportedMatch?.[1] === undefined
+      ? null
+      : Number(reportedMatch[1].replaceAll(",", ""));
+  if (
+    reportedCount !== null &&
+    (!Number.isSafeInteger(reportedCount) || reportedCount < references.length)
+  ) {
+    throw new Error("SmartGov source reported an invalid result total");
+  }
   return {
     references: dedupeReferences(references),
     nextPage:
       nextPageText !== null && /^\d+$/u.test(nextPageText)
         ? Number(nextPageText)
         : null,
+    reportedCount,
   };
 }
 
@@ -1016,17 +1098,21 @@ export function parseSmartGovDetailHtml(html, { config, reference, query }) {
   }
   const fields = collectLabeledFields($);
   const permitNumber = requireText(
-    field(fields, ["Application Number", "Permit Number"]),
+    field(fields, ["Application Number", "Permit Number", "Record Number"]),
     "SmartGov application number",
   );
   if (permitNumber !== reference.permitNumber) {
     throw new Error("SmartGov detail application identity mismatch");
   }
-  const recordType = field(fields, ["Application Type", "Type"]);
+  const recordType =
+    field(fields, ["Application Type", "Permit Type", "Type"]) ??
+    listField(reference, "record_type");
   const description = field(fields, [
     "Permit Project Name",
     "Project Name",
     "Description",
+    "Give your project a name",
+    "Describe the purpose of the project",
   ]);
   return {
     source_system: config.sourceSystem,
@@ -1041,20 +1127,23 @@ export function parseSmartGovDetailHtml(html, { config, reference, query }) {
       field(fields, ["Parcel Number", "Parcel"]),
     ),
     query_folio: query.kind === "folio" ? query.value : null,
-    work_location: field(fields, ["Site Address", "Address"]),
+    work_location: field(fields, ["Site Address", "Address", "Location"]),
     application_date: parseSourceDate(
-      field(fields, ["Submitted On", "Application Date"]),
+      field(fields, ["Submitted On", "Submitted", "Application Date"]),
       "SmartGov submitted date",
     ),
     permit_issue_date: parseSourceDate(
-      field(fields, ["Issued On", "Issued Date"]),
+      field(fields, ["Issued On", "Issued", "Issued Date"]),
       "SmartGov issued date",
     ),
     expiration_date: parseSourceDate(
-      field(fields, ["Expiration Date", "Expires"]),
+      field(fields, ["Expiration Date", "Expires", "Application Expires"]),
       "SmartGov expiration date",
     ),
-    record_status: field(fields, ["Process Status", "Status"]),
+    record_status:
+      field(fields, ["Process Status", "Status"]) ??
+      readSelectionText($(".case-header-status-badge").first()) ??
+      listField(reference, "record_status"),
     record_type: recordType,
     project_description: description,
     job_value: parseSourceNumber(

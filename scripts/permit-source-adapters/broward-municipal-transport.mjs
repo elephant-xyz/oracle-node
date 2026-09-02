@@ -49,7 +49,15 @@ import {
  *   Serialized vendor search/page operation.
  * @property {(reference:BrowardMunicipalSearchReference,query:BrowardMunicipalQuery)=>Promise<NormalizedBrowardMunicipalPermit>} fetchDetail
  *   Serialized vendor detail operation.
+ * @property {()=>Promise<readonly BrowardMunicipalRecordTypePartition[]>} listRecordTypePartitions
+ *   Read the complete official exact-type selector universe when supported.
  * @property {()=>Promise<void>} close - Idempotent transport cleanup.
+ */
+
+/**
+ * @typedef {object} BrowardMunicipalRecordTypePartition
+ * @property {string} value - Exact stable source option value submitted by the transport.
+ * @property {string} label - Public source label retained for reconciliation and operator evidence.
  */
 
 /**
@@ -65,6 +73,8 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_RESPONSE_BYTES = 2_000_000;
 const DEFAULT_RAW_RESULT_ROW_LIMIT = 50;
 const MAX_REDIRECTS = 3;
+const MUNICIPAL_STREET_SUFFIX_PATTERN =
+  "ALY|ANX|ARC|AVE|BYU|BCH|BND|BLF|BLFS|BTM|BLVD|BR|BRG|BRK|BRKS|BG|BGS|BYP|CP|CYN|CPE|CSWY|CTR|CTRS|CIR|CIRS|CLF|CLFS|CLB|CMN|CMNS|COR|CORS|CRSE|CT|CTS|CV|CVS|CRK|CRES|CRST|XING|XRD|XRDS|CURV|DL|DM|DV|DR|DRS|EST|ESTS|EXPY|EXT|EXTS|FALL|FLS|FRY|FLD|FLDS|FLT|FLTS|FRD|FRDS|FRST|FRG|FRGS|FRK|FRKS|FT|FWY|GDN|GDNS|GTWY|GLN|GLNS|GRN|GRNS|GRV|GRVS|HBR|HBRS|HVN|HTS|HWY|HL|HLS|HOLW|INLT|IS|ISS|ISLE|JCT|JCTS|KY|KYS|KNL|KNLS|LK|LKS|LAND|LNDG|LN|LGT|LGTS|LF|LCK|LCKS|LDG|LOOP|MALL|MNR|MNRS|MDW|MDWS|MEWS|ML|MLS|MSN|MTWY|MT|MTN|MTNS|NCK|ORCH|OVAL|OPAS|PARK|PARKS|PKWY|PKWYS|PASS|PSGE|PATH|PIKE|PNE|PNES|PL|PLN|PLNS|PLZ|PT|PTS|PRT|PRTS|PR|RADL|RAMP|RNCH|RPD|RPDS|RST|RDG|RDGS|RIV|RD|RDS|RTE|ROW|RUE|RUN|SHL|SHLS|SHR|SHRS|SKWY|SPG|SPGS|SPUR|SPURS|SQ|SQS|STA|STRA|STRM|ST|STS|SMT|TER|TRWY|TRCE|TRAK|TRFY|TRL|TRLS|TUNL|TPKE|UPAS|UN|UNS|VLY|VLYS|VIA|VW|VWS|VLG|VLGS|VL|VIS|WALK|WALKS|WALL|WAY|WAYS|WL|WLS";
 
 /**
  * Return a URL without query, userinfo, or fragment for safe diagnostics.
@@ -207,10 +217,10 @@ function createHttpSession(originUrl, fetchImpl, timeoutMs, maxResponseBytes) {
  */
 export function parseMunicipalStreetAddress(value) {
   const normalized = value.replace(/\s+/gu, " ").trim().toUpperCase();
-  const match =
-    /^(\d+[A-Z]?)\s+(?:(N|S|E|W|NE|NW|SE|SW)\s+)?(.+?)\s+(AVE|BLVD|CIR|CT|CTR|DR|HWY|LN|MNR|PKWY|PL|RD|ST|TER|TRL|WAY)(?:\s+(?:APT|BLDG|LOT|STE|UNIT|#)\s*[A-Z0-9-]+)?$/u.exec(
-      normalized,
-    );
+  const match = new RegExp(
+    `^(\\d+[A-Z]?)\\s+(?:(N|S|E|W|NE|NW|SE|SW)\\s+)?(.+?)\\s+(${MUNICIPAL_STREET_SUFFIX_PATTERN})(?:\\s+(?:APT|BLDG|LOT|STE|UNIT|#)\\s*[A-Z0-9-]+)?$`,
+    "u",
+  ).exec(normalized);
   if (match === null) {
     throw new Error(
       "Municipal address must contain house number, street name, and supported suffix",
@@ -410,6 +420,8 @@ export function buildSmartGovSearchBody(landingHtml, query) {
   if (query.kind === "permit_number") body.set("CaseNumber", query.value);
   else if (query.kind === "folio") {
     body.set("PrimaryParcel.Parcel.ParcelNumber", query.value);
+  } else if (query.kind === "record_type") {
+    body.set("CaseType.Description", query.value);
   } else body.set("SiteAddress.Street1", query.value);
   return body;
 }
@@ -667,6 +679,11 @@ function createDirectHttpTransport(config, dependencies) {
       }
       throw new Error(`No direct detail transport for ${config.protocol}`);
     },
+    listRecordTypePartitions: async () => {
+      throw new Error(
+        `${config.jurisdiction} does not expose a certified direct-HTTP type universe`,
+      );
+    },
     close: async () => {},
   };
 }
@@ -746,7 +763,11 @@ async function advanceEsuitePage(page, targetPage) {
     }));
     if (
       metadata.dataPage === String(targetPage) ||
-      metadata.href.includes(`Page$${String(targetPage)}`)
+      metadata.href.includes(`Page$${String(targetPage)}`) ||
+      (metadata.href.includes("action=next") &&
+        /^next$/iu.test(
+          await link.evaluate((element) => element.textContent?.trim() ?? ""),
+        ))
     ) {
       matches.push(link);
     }
@@ -758,6 +779,47 @@ async function advanceEsuitePage(page, targetPage) {
     page.waitForNavigation({ waitUntil: "networkidle2" }),
     matches[0]?.click(),
   ]);
+}
+
+/**
+ * Read and validate the complete non-placeholder option universe from one
+ * official exact-type selector. Option values, rather than labels, are the
+ * partition identity because eSuite can expose duplicate historical labels
+ * backed by distinct non-overlapping source IDs.
+ *
+ * @param {import("puppeteer").Page} page - Loaded anonymous search page.
+ * @param {string} selector - Exact type-select selector.
+ * @returns {Promise<readonly BrowardMunicipalRecordTypePartition[]>}
+ *   Source-order exact partitions with unique stable values.
+ */
+async function readRecordTypePartitions(page, selector) {
+  const partitions = await page.$$eval(`${selector} option`, (options) =>
+    options
+      .map((option) => ({
+        value: option.getAttribute("value") ?? "",
+        label: (option.textContent ?? "").replace(/\s+/gu, " ").trim(),
+      }))
+      .filter(
+        (option) =>
+          option.label.length > 0 &&
+          option.value.length > 0 &&
+          option.value !== "-1",
+      ),
+  );
+  if (
+    partitions.length === 0 ||
+    partitions.some(
+      (partition) =>
+        partition.value.length > 500 || partition.label.length > 500,
+    ) ||
+    new Set(partitions.map((partition) => partition.value)).size !==
+      partitions.length
+  ) {
+    throw new Error("Municipal record-type partition universe is invalid");
+  }
+  return Object.freeze(
+    partitions.map((partition) => Object.freeze({ ...partition })),
+  );
 }
 
 /**
@@ -814,6 +876,16 @@ async function createEsuiteTransport(config, dependencies) {
           await searchPage.type('input[id$="txtPermitNumber"]', query.value, {
             delay: 10,
           });
+        } else if (query.kind === "record_type") {
+          const selected = await searchPage.select(
+            'select[id$="ddlPermitType"]',
+            query.value,
+          );
+          if (selected.length !== 1 || selected[0] !== query.value) {
+            throw new Error(
+              "eSuite exact record-type partition is no longer available",
+            );
+          }
         } else {
           throw new Error("eSuite does not expose an anonymous folio field");
         }
@@ -854,6 +926,175 @@ async function createEsuiteTransport(config, dependencies) {
         await detailPage.close();
       }
     },
+    listRecordTypePartitions: async () => {
+      await searchPage.goto(config.searchUrl, {
+        waitUntil: "networkidle2",
+      });
+      activeQueryIdentity = null;
+      activePage = 0;
+      return readRecordTypePartitions(
+        searchPage,
+        'select[id$="ddlPermitType"]',
+      );
+    },
+    close: async () => {
+      if (closed) return;
+      closed = true;
+      await browser.close();
+    },
+  };
+}
+
+/**
+ * Advance a SmartGov result set through its first-party page control. The
+ * rendered link uses a JavaScript form postback, so direct HTTP cannot safely
+ * reconstruct the conversation state.
+ *
+ * @param {import("puppeteer").Page} page - Active SmartGov result page.
+ * @param {number} targetPage - Required one-based next page.
+ * @returns {Promise<void>} Resolves after the exact postback completes.
+ */
+async function advanceSmartGovPage(page, targetPage) {
+  const links = await page.$$('a[onclick*="gotoPage"]');
+  /** @type {import("puppeteer").ElementHandle<Element>[]} */
+  const matches = [];
+  for (const link of links) {
+    const onclick = await link.evaluate(
+      (element) => element.getAttribute("onclick") ?? "",
+    );
+    if (
+      new RegExp(`gotoPage\\(\\s*${String(targetPage)}\\s*\\)`, "u").test(
+        onclick,
+      )
+    ) {
+      matches.push(link);
+    }
+  }
+  if (matches.length !== 1) {
+    throw new Error("SmartGov numbered pagination could not be reconciled");
+  }
+  await Promise.all([
+    page.waitForNavigation({ waitUntil: "networkidle2" }),
+    matches[0]?.click(),
+  ]);
+}
+
+/**
+ * Create one persistent isolated-browser SmartGov transport. The source's
+ * official exact-type selector and paging controls are JavaScript postbacks;
+ * the browser executes those controls without authentication, registration,
+ * challenge handling, or hidden API reconstruction.
+ *
+ * @param {BrowardMunicipalJurisdictionConfig} config - SmartGov jurisdiction.
+ * @param {MunicipalTransportDependencies} dependencies - Browser dependencies and deadlines.
+ * @returns {Promise<BrowardMunicipalTransport>} Persistent anonymous transport.
+ */
+async function createSmartGovTransport(config, dependencies) {
+  const timeoutMs = dependencies.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+  if (
+    !Number.isInteger(timeoutMs) ||
+    timeoutMs < 1_000 ||
+    timeoutMs > 120_000
+  ) {
+    throw new Error("SmartGov browser deadline is invalid");
+  }
+  const rawResultRowLimit = validateRawResultRowLimit(
+    dependencies.rawResultRowLimit,
+  );
+  const launchBrowser = dependencies.launchBrowser ?? puppeteer.launch;
+  const browser = await launchBrowser({
+    headless: true,
+    executablePath:
+      dependencies.browserExecutablePath ?? "/usr/local/bin/google-chrome",
+    args: ["--no-sandbox"],
+  });
+  const searchPage = await browser.newPage();
+  await configureBrowserPage(searchPage, timeoutMs);
+  /** @type {string | null} */
+  let activeQueryIdentity = null;
+  let activePage = 0;
+  let closed = false;
+
+  return {
+    fetchSearchPage: async (query, pageNumber) => {
+      if (
+        typeof pageNumber !== "number" ||
+        !Number.isInteger(pageNumber) ||
+        pageNumber <= 0
+      ) {
+        throw new Error("SmartGov requires a positive numbered page");
+      }
+      const queryIdentity = `${query.kind}\u0000${query.value}`;
+      if (pageNumber === 1) {
+        await searchPage.goto(config.searchUrl, {
+          waitUntil: "networkidle2",
+        });
+        if (query.kind === "record_type") {
+          await searchPage.select("#Module", "Permitting");
+          const selected = await searchPage.select(
+            "#CaseType\\.Description",
+            query.value,
+          );
+          if (selected.length !== 1 || selected[0] !== query.value) {
+            throw new Error(
+              "SmartGov exact record-type partition is no longer available",
+            );
+          }
+        } else {
+          const selector =
+            query.kind === "permit_number"
+              ? 'input[name="CaseNumber"]'
+              : query.kind === "folio"
+                ? 'input[name="PrimaryParcel.Parcel.ParcelNumber"]'
+                : 'input[name="SiteAddress.Street1"]';
+          await searchPage.type(selector, query.value, { delay: 10 });
+        }
+        await Promise.all([
+          searchPage.waitForNavigation({ waitUntil: "networkidle2" }),
+          searchPage.click("#Search"),
+        ]);
+        activeQueryIdentity = queryIdentity;
+        activePage = 1;
+      } else {
+        if (
+          activeQueryIdentity !== queryIdentity ||
+          activePage !== pageNumber - 1
+        ) {
+          throw new Error("SmartGov page request does not match active search");
+        }
+        await advanceSmartGovPage(searchPage, pageNumber);
+        activePage = pageNumber;
+      }
+      return parseSmartGovSearchHtml(await searchPage.content(), config, {
+        sourcePage: pageNumber,
+        maxRows: rawResultRowLimit,
+      });
+    },
+    fetchDetail: async (reference, query) => {
+      const detailPage = await browser.newPage();
+      try {
+        await configureBrowserPage(detailPage, timeoutMs);
+        await detailPage.goto(reference.detailUrl, {
+          waitUntil: "networkidle2",
+        });
+        return parseSmartGovDetailHtml(await detailPage.content(), {
+          config,
+          reference,
+          query,
+        });
+      } finally {
+        await detailPage.close();
+      }
+    },
+    listRecordTypePartitions: async () => {
+      await searchPage.goto(config.searchUrl, {
+        waitUntil: "networkidle2",
+      });
+      activeQueryIdentity = null;
+      activePage = 0;
+      await searchPage.select("#Module", "Permitting");
+      return readRecordTypePartitions(searchPage, "#CaseType\\.Description");
+    },
     close: async () => {
       if (closed) return;
       closed = true;
@@ -879,11 +1120,10 @@ export async function createBrowardMunicipalTransport(
   if (config.protocol === "tyler_esuite") {
     return createEsuiteTransport(config, dependencies);
   }
-  if (
-    ["click2gov", "coconut_creek", "egovplus", "smartgov"].includes(
-      config.protocol,
-    )
-  ) {
+  if (config.protocol === "smartgov") {
+    return createSmartGovTransport(config, dependencies);
+  }
+  if (["click2gov", "coconut_creek", "egovplus"].includes(config.protocol)) {
     return createDirectHttpTransport(config, dependencies);
   }
   throw new Error(
