@@ -620,7 +620,11 @@ export function parseClick2GovSearchHtml(
     !/(?:Click2Gov|Building Permits).*Select Permit Results/iu.test(title)
   ) {
     const body = readSelectionText($("body")) ?? "";
-    if (/no matching|no permits found|no records found/iu.test(body)) {
+    if (
+      /no matching|no permits found|no records found|no results returned/iu.test(
+        body,
+      )
+    ) {
       return { references: [], nextPage: null };
     }
     throw new Error(

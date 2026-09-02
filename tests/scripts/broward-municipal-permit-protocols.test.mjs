@@ -433,6 +433,23 @@ describe("Click2Gov protocol", () => {
     ).toThrow("result row limit");
   });
 
+  it("treats the live generic no-results landing as terminal empty", () => {
+    const config = getBrowardMunicipalPermitConfig("pompano_beach");
+    const page = parseClick2GovSearchHtml(
+      `<!doctype html><html>
+        <head><title>Click2Gov Building Permit - Select Permit</title></head>
+        <body>
+          <div class="alert alert-danger">
+            There are errors, please see below. No results returned
+          </div>
+        </body>
+      </html>`,
+      config,
+    );
+
+    expect(page).toEqual({ references: [], nextPage: null });
+  });
+
   it("captures bounded detail provenance while excluding owner/contact fields", () => {
     const config = getBrowardMunicipalPermitConfig("pompano_beach");
     const sourcePage = parseClick2GovSearchHtml(clickSearch, config);
