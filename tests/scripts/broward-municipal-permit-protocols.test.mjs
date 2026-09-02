@@ -865,10 +865,7 @@ describe("SmartGov and eGovPLUS HTML protocols", () => {
       </tr>`,
     ).join("");
     const largeInspectionRecord = parseEgovPlusDetailHtml(
-      egovPlusDetail.replace(
-        "</tbody>",
-        `${additionalInspectionRows}</tbody>`,
-      ),
+      egovPlusDetail.replace("</tbody>", `${additionalInspectionRows}</tbody>`),
       {
         config,
         reference: sourceReference,
