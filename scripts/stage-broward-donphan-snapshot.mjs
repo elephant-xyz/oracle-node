@@ -705,9 +705,12 @@ function propertyRecord(row) {
   if (candidate.property_id === null) {
     throw new Error("Property cursor returned no property_id");
   }
-  return Object.fromEntries(
-    Object.entries(candidate).filter(([, value]) => value !== null),
-  );
+  /** @type {Record<string,string|number|boolean>} */
+  const record = {};
+  for (const [key, value] of Object.entries(candidate)) {
+    if (value !== null) record[key] = value;
+  }
+  return record;
 }
 
 /**
@@ -742,9 +745,12 @@ function permitRecord(row) {
   if (candidate.property_improvement_id === null) {
     throw new Error("Permit cursor returned no property_improvement_id");
   }
-  return Object.fromEntries(
-    Object.entries(candidate).filter(([, value]) => value !== null),
-  );
+  /** @type {Record<string,string|number>} */
+  const record = {};
+  for (const [key, value] of Object.entries(candidate)) {
+    if (value !== null) record[key] = value;
+  }
+  return record;
 }
 
 /**
@@ -1147,6 +1153,11 @@ async function verifyParquet(filePath, expectedFields, expectedRows) {
     if (JSON.stringify(fields) !== JSON.stringify(expected)) {
       throw new Error(`Parquet schema mismatch for ${path.basename(filePath)}`);
     }
+    if (reader.metadata === null) {
+      throw new Error(
+        `Parquet metadata missing for ${path.basename(filePath)}`,
+      );
+    }
     const metadataRows = Number(reader.metadata.num_rows);
     if (metadataRows !== expectedRows) {
       throw new Error(
@@ -1405,8 +1416,10 @@ export async function stageBrowardDonphanSnapshot(options) {
       routes,
     });
     if (
-      !/** @type {{reconciliation?:{allBalanced?:unknown}}} */ (coverage)
-        .reconciliation?.allBalanced
+      !(
+        /** @type {{reconciliation?:{allBalanced?:unknown}}} */ (coverage)
+          .reconciliation?.allBalanced
+      )
     ) {
       throw new Error("Frozen Broward coverage did not reconcile");
     }
