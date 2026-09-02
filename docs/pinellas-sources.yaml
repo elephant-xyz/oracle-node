@@ -1,0 +1,275 @@
+# Pinellas County, FL — public data source registry
+#
+# Consolidated source metadata for the Oracle ingestion categories.
+# Identifies each public data source (property, permits, Sunbiz, BBB) and stores
+# its access metadata: base URLs, access pattern, identifier, and refresh method.
+# Infra identifiers (AWS account, bucket, SQS) are intentionally NOT recorded here —
+# this registry describes external sources only. No secrets / account ids / connection
+# strings appear in this file.
+#
+# Discovery date: 2026-08-27. Scope: discovery only (no ingest/deploy).
+
+county:
+  name: Pinellas County
+  state: FL
+  fips: "12103"
+  netr: https://publicrecords.netronline.com/state/florida/county/pinellas
+  parcel_identifier:
+    name: STRAP
+    length: 18
+    description: >-
+      RANGE-TOWNSHIP-SECTION-SUBDIVISION-BLOCK-LOT, digits only (e.g. 162805389030000430).
+      Canonical seed key and PCPAO download join key. The GIS PARCELID for the same
+      polygon is a different 18-digit permutation (SECTION-TOWNSHIP-RANGE-…) and MUST
+      NOT be sent as property-details/print `s=` — that lookup returns an empty page.
+    display_example: "05-28-16-38903-000-0430"
+    aliases:
+      STRAP: PCPAO downloads + print/detail `s=` parameter
+      PARCELID: GIS / some website search (do not use as seed s=)
+      PARCELNO: DOR mapping (spaced)
+      PARCEL_ID: DOR NAL/SDF tabular
+  seed:
+    recommended_source: PCPA GIS tax parcels REST (STRAP) — not the Accela address layer
+    gis_polygon_count: 311582
+    full_csv: data/seeds/pinellas.csv
+    full_rows: 311566
+    full_builder: scripts/build-pinellas-full-seed.mjs
+    geometry: parcel polygons requested as WGS84 GeoJSON (outSR=4326)
+    mixed_types_via: USE_CODE on PublicWebGIS Parcels
+    pilot_csv: data/seeds/pinellas-pilot.csv
+    pilot_rows: 50
+    builder: scripts/build-pinellas-pilot-seed.mjs
+
+sources:
+  - key: property-appraisal
+    category: property
+    name: Pinellas County Property Appraiser (PCPAO)
+    base_urls:
+      - https://www.pcpao.gov/
+      - https://www.pcpao.gov/property-details # Drupal chrome; ?s=<STRAP>
+      - https://www.pcpao.gov/property/detail/print # preferred HTML artifact; ?is_print=1&s=<STRAP>
+      - https://www.pcpao.gov/dal/databasefile/downloadDatabaseFile # bulk zip
+    access_pattern:
+      mode: plain-http-html + bulk-csv # print URL is curl-complete with Chrome UA
+      tooling: Chrome User-Agent GET of print URL; existing Counties-trasform-scripts/pinellas transform
+      auth: public (no login / CAPTCHA)
+      anti_bot: >-
+        No Cloudflare. Bare curl 403 on some paths; browser User-Agent required.
+        Not geo-blocked from US (probed from Miami, FL).
+      critical: seed parcel_id MUST be STRAP, not PARCELID
+    refresh:
+      method: nightly RP_* bulk files + on-demand per-STRAP print HTML
+      cadence: bulk nightly (PAO stamps ~02:00 local); HTML on-demand / seed-driven
+    implemented_by:
+      transform: Counties-trasform-scripts/pinellas/scripts/
+      skill: county-appraisal-onboarding
+      transform_caveat: reuse existing scripts; validate selectors against print HTML
+
+  - key: property-bulk
+    category: property
+    name: PCPAO raw database files + shapefiles
+    base_urls:
+      - https://www.pcpao.gov/tools-data/data-downloads/raw-database-files
+      - https://www.pcpao.gov/tools-data/maps-gis/shape-files
+    tables:
+      - RP_ALL_SITE_ADDRESSES
+      - RP_ALL_OWNERS
+      - RP_PROPERTY_INFO
+      - RP_BUILDING
+      - RP_MULTI_BUILDING_INFO
+      - RP_STRUCTURAL_ELEMENTS
+      - RP_SUB_AREAS
+      - RP_LAND
+      - RP_LEGAL
+      - RP_EXTRA_FEATURES
+      - RP_SALES
+      - RP_SALES_HISTORY
+      - RP_PERMITS
+      - RP_EXEMPTIONS
+      - RP_MILLAGE_RATES
+      - RP_INACTIVE_PARCEL_LIST
+    access_pattern:
+      mode: bulk-artifact-download
+      tooling: Drupal fname/ftype buttons → /dal/databasefile/downloadDatabaseFile zip
+      auth: public
+    refresh:
+      method: download nightly CSVs; join on STRAP
+      cadence: nightly
+
+  - key: gis-parcels
+    category: geometry
+    name: Pinellas Enterprise GIS tax parcels
+    base_urls:
+      - https://egis.pinellas.gov/pcpagis/rest/services/PcpaBaseMap/BaseMapParcelAerials/MapServer/157
+      - https://egis.pinellas.gov/gis/rest/services/PublicWebGIS/Parcels/MapServer/1
+      - https://egis.pinellas.gov/apps/egis/apps.html
+    access_pattern:
+      mode: plain-http-json-api
+      auth: public
+      counts:
+        tax_parcels_layer_157: 311584
+        publicwebgis_max_record: 1000
+    refresh:
+      method: REST query / shapefile download
+      cadence: on-demand for seed; REST is live
+
+  - key: permits
+    category: permits
+    name: Pinellas municipal permit portals (fragmented)
+    access_pattern:
+      mode: on-demand runtime retrieval (NOT countywide bulk for pilot)
+      tooling: one adapter per vendor via county-permit-adapter; reuse Lee Accela worker for PINELLAS
+    jurisdictions:
+      - jurisdiction: unincorporated
+        vendor: Accela
+        agency: PINELLAS
+        module: Building
+        url: https://aca-prod.accela.com/PINELLAS/Cap/CapHome.aspx?TabName=Home&module=Building
+        search: address (recommended); parcel via General Search
+        probe: playwright-200-no-cloudflare
+        status: discovered
+        priority: build-first
+      - jurisdiction: Clearwater
+        vendor: Accela
+        agency: CLEARWATER
+        url: https://aca-prod.accela.com/CLEARWATER/Default.aspx
+        probe: playwright-200; epermit.myclearwater.com-timeout
+        status: discovered
+      - jurisdiction: Largo
+        vendor: Tyler EnerGov Civic Access
+        url: https://cityoflargofl-energovweb.tylerhost.net/apps/selfservice#/home
+        probe: playwright-200
+        status: discovered
+      - jurisdiction: Pinellas Park
+        vendor: Tyler Portico / EnerGov
+        url: https://pinellasparkfl.tylerportico.com/navigator/public/selections/navigator?parentId=5996
+        probe: playwright-200
+        status: discovered
+      - jurisdiction: Dunedin
+        vendor: Tyler EP&L Citizen Self Service
+        url: https://www.dunedin.gov/City-Services/Business-Development/Building-Codes-Permits-Construction/Permits-Inspections
+        probe: official-page-confirmed
+        status: discovered
+      - jurisdiction: Tarpon Springs
+        vendor: Click2Gov / aspgov
+        url: https://tarp-egov.aspgov.com/Click2GovBP/index.html
+        search: application# / address / parcel / name
+        probe: playwright-200
+        status: discovered
+      - jurisdiction: St. Petersburg
+        vendor: City portal + ProjectDox (Avolve)
+        url: https://www.stpete.org/business/building_permitting/building_permits.php
+        eplan: https://stpetersburg-fl-us.avolvecloud.com/
+        probe: playwright-200-city-page
+        status: needs-review
+      - jurisdiction: Belleair
+        status: needs-review
+      - jurisdiction: Belleair Beach
+        status: needs-review
+      - jurisdiction: Belleair Bluffs
+        status: needs-review
+      - jurisdiction: Belleair Shore
+        status: needs-review
+      - jurisdiction: Gulfport
+        status: needs-review
+      - jurisdiction: Indian Rocks Beach
+        status: needs-review
+      - jurisdiction: Indian Shores
+        status: needs-review
+      - jurisdiction: Kenneth City
+        status: needs-review
+      - jurisdiction: Madeira Beach
+        status: needs-review
+      - jurisdiction: North Redington Beach
+        status: needs-review
+      - jurisdiction: Oldsmar
+        status: needs-review
+      - jurisdiction: Redington Beach
+        status: needs-review
+      - jurisdiction: Redington Shores
+        status: needs-review
+      - jurisdiction: Safety Harbor
+        status: needs-review
+      - jurisdiction: Seminole
+        status: needs-review
+      - jurisdiction: South Pasadena
+        status: needs-review
+      - jurisdiction: St. Pete Beach
+        status: needs-review
+      - jurisdiction: Treasure Island
+        status: needs-review
+
+  - key: sunbiz
+    category: business-registration
+    name: Florida Sunbiz corporate registrations (FL Dept. of State)
+    base_urls:
+      - https://dos.fl.gov/sunbiz/other-services/data-downloads/
+      - https://search.sunbiz.org/Inquiry/CorporationSearch/ByName
+    access_pattern:
+      mode: batch-bulk-download
+      tooling: headless Chromium for Data Access Portal (curl 403 on live search)
+      auth: public access account out-of-band (never commit)
+      anti_bot: Cloudflare on live search
+      pinellas_filter: ZIP prefixes from RP_ALL_SITE_ADDRESSES (337xx and 3466x/3467x/3468x/3469x)
+    refresh:
+      method: quarterly cordata.zip → ZIP-prefix extract → lexicon transform
+      cadence: quarterly
+    implemented_by:
+      skill: sunbiz-corporate-ingest
+    in_scope: true
+
+  - key: bbb
+    category: business-reputation
+    name: Better Business Bureau contractor reputation
+    base_urls:
+      - https://www.bbb.org/us/category/data
+    access_pattern:
+      mode: browser-scrape
+      tooling: Puppeteer / Playwright (curl 403 Cloudflare; Playwright 200)
+      auth: public
+    refresh:
+      method: category harvest
+      cadence: on-demand / periodic
+    implemented_by:
+      skill: bbb-harvest
+    in_scope: true
+
+  - key: tax-collector
+    category: tax
+    name: Pinellas tax collector / county-taxes bill view
+    base_urls:
+      - http://pinellas.county-taxes.com/public/real_estate/alternate_key_redirect
+    access_pattern:
+      mode: per-parcel bill view (linked from PCPAO print page)
+    in_scope: false
+    unavailable_reason: >-
+      Official bill portal exists but is not a bulk public roll; not required for the
+      appraisal/permit/Sunbiz/BBB Oracle baseline or the 50-parcel pilot.
+
+  - key: clerk-official-records
+    category: recorder
+    name: Pinellas Clerk of the Court official records
+    base_urls:
+      - https://officialrecords.mypinellasclerk.gov/
+    access_pattern:
+      mode: browser portal
+      anti_bot: curl 403
+    in_scope: false
+    unavailable_reason: >-
+      Deed/mortgage images sit behind a bot-walled clerk portal. Book/page already
+      appears on the PCPAO print page. Out of pilot unless the operator adds deeds.
+
+  - key: code-enforcement
+    category: code-enforcement
+    name: Pinellas County Accela Code Enforce module
+    base_urls:
+      - https://aca-prod.accela.com/PINELLAS/default.aspx
+    in_scope: false
+    unavailable_reason: Accela module exists; not in Oracle four-source baseline for this pilot.
+
+notes:
+  - Oracle four: appraisal PCPAO, permits (municipal), Sunbiz, BBB. Tax/clerk/code/BTR/FEMA
+    are named out of pilot (in_scope: false), not missing websites.
+  - 18 cities remain needs-review: discovery did not confirm their permit URLs yet.
+  - Local ingest (2026-08-27): PCPAO print HTML only. Permits/Sunbiz/BBB not pulled.
+  - Reuse Counties-trasform-scripts/pinellas; do not regenerate mapping scripts in discovery.
