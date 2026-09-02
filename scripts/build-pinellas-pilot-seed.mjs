@@ -164,7 +164,9 @@ export const USE_CODE_QUOTAS = Object.freeze([
 export function assertSafeSourceFields(fields) {
   for (const field of fields) {
     if (EXCLUDED_PII_FIELDS.includes(field)) {
-      throw new Error(`PII field is prohibited in Pinellas seed source fields: ${field}`);
+      throw new Error(
+        `PII field is prohibited in Pinellas seed source fields: ${field}`,
+      );
     }
   }
 }
@@ -262,8 +264,10 @@ export function toSeedRow(feature, useGroup, snapshotAt) {
   const city = toText(properties.SITE_CITY);
   const zip = toText(properties.SITE_ZIP);
   const street = toText(properties.SITE_ADDRESS);
-  const addressParts = [street, [city, "FL", zip].filter(Boolean).join(" ")]
-    .filter((part) => part.length > 0);
+  const addressParts = [
+    street,
+    [city, "FL", zip].filter(Boolean).join(" "),
+  ].filter((part) => part.length > 0);
   const address = addressParts.join(", ");
   return {
     parcel_id: strap,
@@ -415,9 +419,10 @@ export function parseGisFeatureCollection(payload) {
   const features = [];
   for (const raw of payload.features) {
     if (raw === null || typeof raw !== "object") continue;
-    const record = /** @type {{ properties?: Record<string, unknown>, geometry?: ParcelGeometry | null }} */ (
-      raw
-    );
+    const record =
+      /** @type {{ properties?: Record<string, unknown>, geometry?: ParcelGeometry | null }} */ (
+        raw
+      );
     features.push({
       properties: record.properties ?? {},
       geometry: record.geometry ?? null,
@@ -453,10 +458,15 @@ const defaultGisClient = {
   async queryByUseCode(useCode, recordCount) {
     const url = buildUseCodeQueryUrl(useCode, recordCount);
     const response = await fetch(url, {
-      headers: { Accept: "application/json, application/geo+json", "User-Agent": USER_AGENT },
+      headers: {
+        Accept: "application/json, application/geo+json",
+        "User-Agent": USER_AGENT,
+      },
     });
     if (!response.ok) {
-      throw new Error(`PublicWebGIS ${useCode} failed: HTTP ${response.status}`);
+      throw new Error(
+        `PublicWebGIS ${useCode} failed: HTTP ${response.status}`,
+      );
     }
     const payload = await response.json();
     return parseGisFeatureCollection(payload);
@@ -493,7 +503,9 @@ export async function buildPilotRows(
     const picked = pickMixedGeometry(unique, quota.count);
     selected.push(...picked);
     leftovers.push(
-      ...unique.filter((row) => !picked.some((item) => item.parcel_id === row.parcel_id)),
+      ...unique.filter(
+        (row) => !picked.some((item) => item.parcel_id === row.parcel_id),
+      ),
     );
     if (picked.length < quota.count) {
       console.warn(
@@ -542,9 +554,15 @@ export async function writeSeedCsv(outputPath, rows) {
   return {
     rowsWritten: unique.length,
     uniqueParcelIds: unique.length,
-    simplePolygonCount: unique.filter((row) => row.geometry_type === "simple-polygon").length,
-    complexPolygonCount: unique.filter((row) => row.geometry_type === "complex-polygon").length,
-    multiPolygonCount: unique.filter((row) => row.geometry_type === "multi-polygon").length,
+    simplePolygonCount: unique.filter(
+      (row) => row.geometry_type === "simple-polygon",
+    ).length,
+    complexPolygonCount: unique.filter(
+      (row) => row.geometry_type === "complex-polygon",
+    ).length,
+    multiPolygonCount: unique.filter(
+      (row) => row.geometry_type === "multi-polygon",
+    ).length,
     useGroups: [...new Set(unique.map((row) => row.use_group))],
     outputPath,
   };
@@ -564,7 +582,9 @@ export async function assertPrintLookup(
       headers: { Accept: "text/html", "User-Agent": USER_AGENT },
     });
     if (!response.ok) {
-      throw new Error(`Print lookup HTTP ${response.status} for STRAP ${strap}`);
+      throw new Error(
+        `Print lookup HTTP ${response.status} for STRAP ${strap}`,
+      );
     }
     return response.text();
   },

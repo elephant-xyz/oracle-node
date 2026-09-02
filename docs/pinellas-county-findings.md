@@ -43,11 +43,11 @@ can open a PR.
 >
 > Pinellas has **two different 18-digit identifiers** for the same polygon:
 >
-> | Field | Example | Meaning |
-> |---|---|---|
-> | **STRAP** | `162805389030000430` | RANGE-TOWNSHIP-SECTION-SUB-BLOCK-LOT, no punctuation. Matches PCPAO **download files** and the working `s=` lookup. |
-> | **PARCELID** | `052816389030000430` | SECTION-TOWNSHIP-RANGE-SUB-BLOCK-LOT. GIS metadata says this matches the PAO **website search** / tax viewer. |
-> | Display | `05-28-16-38903-000-0430` | Punctuated PARCELID shown on the print page. |
+> | Field        | Example                   | Meaning                                                                                                             |
+> | ------------ | ------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+> | **STRAP**    | `162805389030000430`      | RANGE-TOWNSHIP-SECTION-SUB-BLOCK-LOT, no punctuation. Matches PCPAO **download files** and the working `s=` lookup. |
+> | **PARCELID** | `052816389030000430`      | SECTION-TOWNSHIP-RANGE-SUB-BLOCK-LOT. GIS metadata says this matches the PAO **website search** / tax viewer.       |
+> | Display      | `05-28-16-38903-000-0430` | Punctuated PARCELID shown on the print page.                                                                        |
 >
 > Live probe (2026-08-27): `GET /property/detail/print?is_print=1&s=<STRAP>` returned a
 > **full** record (owner Frobose, 3400 Rugby Ct, Palm Harbor, use 0110, values, building,
@@ -72,7 +72,7 @@ Egress for this discovery: US (Miami, FL). Not geo-blocked on PCPAO / Accela / G
     addresses, legal, tax district, year built, living/gross SF, living units,
     buildings, homestead status, just/assessed/taxable values + history, millage,
     sales history, land (dimensions, method, value), building structural elements
-    + subareas, extra features, and a **permit table** (county-sourced, incomplete).
+    - subareas, extra features, and a **permit table** (county-sourced, incomplete).
   - Drupal interactive page (`property-details`) is a shell plus
     `jquery.property_detail_new.js`; `#pacel_no` and tables (`tblParcelInformation`,
     `tblSalesHistory`, `tblLandInformation`, `tblExtraFeatures`, `tblPermit`,
@@ -111,16 +111,16 @@ Permits are **municipal and fragmented**. Unincorporated Pinellas uses county
 appraisal print page already lists some permits (“received from the County and
 Cities”) and warns the table is incomplete.
 
-| Jurisdiction | Vendor / portal | URL | Probe (2026-08-27) | Status |
-|---|---|---|---|---|
-| Unincorporated Pinellas County | Accela ACA, agency `PINELLAS`, module `Building` | `https://aca-prod.accela.com/PINELLAS/default.aspx` · CapHome `…/Cap/CapHome.aspx?TabName=Home&module=Building` | Playwright + curl **200**, no Cloudflare. Guest search allowed; results default to last 2 years (change start date). Search-by-address recommended; parcel supported in General Search. | discovered |
-| City of Clearwater | Accela ACA, agency `CLEARWATER` (also advertised as ePermit) | `https://aca-prod.accela.com/CLEARWATER/Default.aspx` | Playwright **200**. `epermit.myclearwater.com` timed out from this egress. | discovered |
-| City of Largo | Tyler EnerGov Civic Access | `https://cityoflargofl-energovweb.tylerhost.net/apps/selfservice#/home` | Playwright **200** | discovered |
-| City of Pinellas Park | Tyler Portico / EnerGov | `https://pinellasparkfl.tylerportico.com/navigator/public/selections/navigator?parentId=5996` | Playwright **200** | discovered |
-| City of Dunedin | Tyler Enterprise Permitting & Licensing (CSS) | Dunedin Citizen Self Service (linked from `dunedin.gov` Permits & Inspections) | Official page confirmed; CSS URL not latency-probed this run | discovered (URL certify next) |
-| City of Tarpon Springs | Click2Gov / aspgov | `https://tarp-egov.aspgov.com/Click2GovBP/index.html` | Playwright **200**; search by application #, address, **parcel number**, or name | discovered |
-| City of St. Petersburg | City site + ProjectDox ePlan (`stpetersburg-fl-us.avolvecloud.com`) | `https://www.stpete.org/business/building_permitting/building_permits.php` | Playwright **200** on city page. Historical lookup vs application portal still needs a public search-by-parcel certification. | needs-review |
-| Remaining municipalities (Belleair, Belleair Beach, Belleair Bluffs, Belleair Shore, Gulfport, Indian Rocks Beach, Indian Shores, Kenneth City, Madeira Beach, North Redington Beach, Oldsmar, Redington Beach, Redington Shores, Safety Harbor, Seminole, South Pasadena, St. Pete Beach, Treasure Island) | mixed / some may use county Accela | — | Catalog rows seeded `needs-review`. Web sources: Seminole reportedly CitizenServe; some beach towns / Safety Harbor / Oldsmar may defer to county Building Services. | needs-review |
+| Jurisdiction                                                                                                                                                                                                                                                                                                | Vendor / portal                                                     | URL                                                                                                             | Probe (2026-08-27)                                                                                                                                                                      | Status                        |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------- |
+| Unincorporated Pinellas County                                                                                                                                                                                                                                                                              | Accela ACA, agency `PINELLAS`, module `Building`                    | `https://aca-prod.accela.com/PINELLAS/default.aspx` · CapHome `…/Cap/CapHome.aspx?TabName=Home&module=Building` | Playwright + curl **200**, no Cloudflare. Guest search allowed; results default to last 2 years (change start date). Search-by-address recommended; parcel supported in General Search. | discovered                    |
+| City of Clearwater                                                                                                                                                                                                                                                                                          | Accela ACA, agency `CLEARWATER` (also advertised as ePermit)        | `https://aca-prod.accela.com/CLEARWATER/Default.aspx`                                                           | Playwright **200**. `epermit.myclearwater.com` timed out from this egress.                                                                                                              | discovered                    |
+| City of Largo                                                                                                                                                                                                                                                                                               | Tyler EnerGov Civic Access                                          | `https://cityoflargofl-energovweb.tylerhost.net/apps/selfservice#/home`                                         | Playwright **200**                                                                                                                                                                      | discovered                    |
+| City of Pinellas Park                                                                                                                                                                                                                                                                                       | Tyler Portico / EnerGov                                             | `https://pinellasparkfl.tylerportico.com/navigator/public/selections/navigator?parentId=5996`                   | Playwright **200**                                                                                                                                                                      | discovered                    |
+| City of Dunedin                                                                                                                                                                                                                                                                                             | Tyler Enterprise Permitting & Licensing (CSS)                       | Dunedin Citizen Self Service (linked from `dunedin.gov` Permits & Inspections)                                  | Official page confirmed; CSS URL not latency-probed this run                                                                                                                            | discovered (URL certify next) |
+| City of Tarpon Springs                                                                                                                                                                                                                                                                                      | Click2Gov / aspgov                                                  | `https://tarp-egov.aspgov.com/Click2GovBP/index.html`                                                           | Playwright **200**; search by application #, address, **parcel number**, or name                                                                                                        | discovered                    |
+| City of St. Petersburg                                                                                                                                                                                                                                                                                      | City site + ProjectDox ePlan (`stpetersburg-fl-us.avolvecloud.com`) | `https://www.stpete.org/business/building_permitting/building_permits.php`                                      | Playwright **200** on city page. Historical lookup vs application portal still needs a public search-by-parcel certification.                                                           | needs-review                  |
+| Remaining municipalities (Belleair, Belleair Beach, Belleair Bluffs, Belleair Shore, Gulfport, Indian Rocks Beach, Indian Shores, Kenneth City, Madeira Beach, North Redington Beach, Oldsmar, Redington Beach, Redington Shores, Safety Harbor, Seminole, South Pasadena, St. Pete Beach, Treasure Island) | mixed / some may use county Accela                                  | —                                                                                                               | Catalog rows seeded `needs-review`. Web sources: Seminole reportedly CitizenServe; some beach towns / Safety Harbor / Oldsmar may defer to county Building Services.                    | needs-review                  |
 
 **Pilot recommendation:** harvest county Accela (`PINELLAS`) + reuse appraisal-page
 permit rows for the ~50-parcel sample. Do **not** bulk-harvest every municipal
@@ -129,15 +129,15 @@ portal before the appraisal pilot is certified. One adapter per vendor via
 
 ## 4. Bulk data sources (seed + geometry)
 
-| Source | URL | What it gives | Access |
-|---|---|---|---|
-| PCPAO raw database files | `https://www.pcpao.gov/tools-data/data-downloads/raw-database-files` | 30 `RP_*` / `RP_OS_*` tables (CSV/JSON/XLSX/XML), refreshed ~nightly. Includes site addresses, owners, building, land, legal, sales, permits, structural elements, extra features, millage. **STRAP** is the join key. | Drupal buttons → `/dal/databasefile/downloadDatabaseFile` → zip. Playwright confirmed. |
-| PCPAO shapefiles | `https://www.pcpao.gov/tools-data/maps-gis/shape-files` | Parcel polygons + label points. NAD 1983 HARN StatePlane Florida West ft (EPSG:2882). Fields: PARCELNO (DOR mapping), PARCEL_ID (DOR NAL/SDF), **STRAP** (PAO downloads), **PARCELID** (PAO website). | Browser download (page 403 to bare curl). |
-| PCPA GIS REST | `https://egis.pinellas.gov/pcpagis/rest/services/PcpaBaseMap/BaseMapParcelAerials/MapServer/157` | Tax Parcels polygons, **count 311,584**, maxRecordCount 15,000. | Plain JSON, no auth. |
-| PublicWebGIS Parcels | `https://egis.pinellas.gov/gis/rest/services/PublicWebGIS/Parcels/MapServer/1` | Owner, USE_CODE, values, site address, acres, polygon. maxRecordCount 1,000. | Plain JSON, no auth. **Best mixed-type seed picker.** |
-| Accela GIS parcels | `https://egis.pinellas.gov/gis/rest/services/Accela/AccelaAddressParcel/MapServer/1` | Parcel layer count **437,499** (units/addresses vs tax polygons). | Plain JSON. |
-| Open Data portal | `https://egis.pinellas.gov/apps/egis/apps.html` | County GIS apps / open data. | 200. |
-| Advanced Search | `https://www.pcpao.gov/content/advanced-search` | Filtered export by use code (pilot seed helper). | Drupal UI. |
+| Source                   | URL                                                                                              | What it gives                                                                                                                                                                                                          | Access                                                                                 |
+| ------------------------ | ------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| PCPAO raw database files | `https://www.pcpao.gov/tools-data/data-downloads/raw-database-files`                             | 30 `RP_*` / `RP_OS_*` tables (CSV/JSON/XLSX/XML), refreshed ~nightly. Includes site addresses, owners, building, land, legal, sales, permits, structural elements, extra features, millage. **STRAP** is the join key. | Drupal buttons → `/dal/databasefile/downloadDatabaseFile` → zip. Playwright confirmed. |
+| PCPAO shapefiles         | `https://www.pcpao.gov/tools-data/maps-gis/shape-files`                                          | Parcel polygons + label points. NAD 1983 HARN StatePlane Florida West ft (EPSG:2882). Fields: PARCELNO (DOR mapping), PARCEL_ID (DOR NAL/SDF), **STRAP** (PAO downloads), **PARCELID** (PAO website).                  | Browser download (page 403 to bare curl).                                              |
+| PCPA GIS REST            | `https://egis.pinellas.gov/pcpagis/rest/services/PcpaBaseMap/BaseMapParcelAerials/MapServer/157` | Tax Parcels polygons, **count 311,584**, maxRecordCount 15,000.                                                                                                                                                        | Plain JSON, no auth.                                                                   |
+| PublicWebGIS Parcels     | `https://egis.pinellas.gov/gis/rest/services/PublicWebGIS/Parcels/MapServer/1`                   | Owner, USE_CODE, values, site address, acres, polygon. maxRecordCount 1,000.                                                                                                                                           | Plain JSON, no auth. **Best mixed-type seed picker.**                                  |
+| Accela GIS parcels       | `https://egis.pinellas.gov/gis/rest/services/Accela/AccelaAddressParcel/MapServer/1`             | Parcel layer count **437,499** (units/addresses vs tax polygons).                                                                                                                                                      | Plain JSON.                                                                            |
+| Open Data portal         | `https://egis.pinellas.gov/apps/egis/apps.html`                                                  | County GIS apps / open data.                                                                                                                                                                                           | 200.                                                                                   |
+| Advanced Search          | `https://www.pcpao.gov/content/advanced-search`                                                  | Filtered export by use code (pilot seed helper).                                                                                                                                                                       | Drupal UI.                                                                             |
 
 **Seed source for the 10–50 parcel pilot:** PublicWebGIS query by `USE_CODE` (and
 geometry ring-count) → emit STRAP + PARCELID + use + city + polygon WGS84, then
@@ -166,13 +166,13 @@ Lee’s Oracle baseline is four feeds: **appraisal, permits, Sunbiz, BBB**. Ever
 else below is a real county site we found, then parked because this pilot does not
 need it. “Unavailable” here means **out of scope**, not “the website is missing.”
 
-| What | Why we skipped it for this pilot |
-|---|---|
-| Tax collector bills | PCPAO already has values. The tax site is one-parcel-at-a-time, not a downloadable roll. |
-| Clerk / official records (deeds) | Deed *images* sit behind a bot wall. Book/page is already on the PCPAO print page. |
-| Code enforcement | Accela has a Code Enforce module. That is complaints/cases, not building permits. |
-| City business tax (BTR) | City license receipts, not property data. |
-| FEMA / flood maps | Linked from the print page; not appraisal or permit records. |
+| What                             | Why we skipped it for this pilot                                                         |
+| -------------------------------- | ---------------------------------------------------------------------------------------- |
+| Tax collector bills              | PCPAO already has values. The tax site is one-parcel-at-a-time, not a downloadable roll. |
+| Clerk / official records (deeds) | Deed _images_ sit behind a bot wall. Book/page is already on the PCPAO print page.       |
+| Code enforcement                 | Accela has a Code Enforce module. That is complaints/cases, not building permits.        |
+| City business tax (BTR)          | City license receipts, not property data.                                                |
+| FEMA / flood maps                | Linked from the print page; not appraisal or permit records.                             |
 
 18 cities still `needs-review` in `pinellas-sources.yaml` because discovery only
 opened the big permit portals (county Accela, Clearwater, Largo, Pinellas Park,
@@ -182,7 +182,7 @@ we have not confirmed their URLs yet.
 ### What this run actually ingested
 
 Local laptop prepare+transform (`scripts/run-pinellas-local-ingest.mjs --all`), not AWS
-Oracle. **No-AWS path:** that command *is* the pilot ingest. Re-run anytime:
+Oracle. **No-AWS path:** that command _is_ the pilot ingest. Re-run anytime:
 
 ```bash
 node scripts/run-pinellas-local-ingest.mjs --all
@@ -201,14 +201,14 @@ folios**, 0 orphan properties). **Neon not loaded** — no `DATABASE_URL` in
 (`oracle-query-table-pinellas`, `oracle-dataset-coverage-pinellas`) and catalog
 entry. Structures/layouts/utilities remain 0 on print HTML (known mapping gap).
 
-| Source | In this local run? | Count / artifact |
-|---|---|---|
-| PCPAO print HTML (appraisal) | **Yes** | **50/50** seed STRAPs → `downloads/pinellas/local-ingest/<STRAP>/transformed.zip` |
-| GIS parcel polygons | **Yes (seed only)** | All 50 rows in `data/seeds/pinellas-pilot.csv` (`parcel_polygon`) |
-| County / city building permits | **No** | Catalogued; no permit adapter run |
-| Sunbiz | **No** | In scope later; statewide zip not downloaded |
-| BBB | **No** | In scope later; not harvested |
-| Tax / clerk / code / BTR / FEMA | **No** | Out of pilot (table above) |
+| Source                          | In this local run?  | Count / artifact                                                                  |
+| ------------------------------- | ------------------- | --------------------------------------------------------------------------------- |
+| PCPAO print HTML (appraisal)    | **Yes**             | **50/50** seed STRAPs → `downloads/pinellas/local-ingest/<STRAP>/transformed.zip` |
+| GIS parcel polygons             | **Yes (seed only)** | All 50 rows in `data/seeds/pinellas-pilot.csv` (`parcel_polygon`)                 |
+| County / city building permits  | **No**              | Catalogued; no permit adapter run                                                 |
+| Sunbiz                          | **No**              | In scope later; statewide zip not downloaded                                      |
+| BBB                             | **No**              | In scope later; not harvested                                                     |
+| Tax / clerk / code / BTR / FEMA | **No**              | Out of pilot (table above)                                                        |
 
 ### Full-county local ingest (2026-08-31)
 
@@ -250,15 +250,15 @@ That rebuilds the query-table parquet + coverage snapshot and re-points the **ex
 
 ## 7. Source feasibility
 
-| Source | Volume | Probe | Safe concurrency | Est. full download | Recommended mode |
-|---|---|---|---|---|---|
-| PCPAO print HTML | ~311k tax parcels | 8 sequential `property-details` ~2.8–3.1s (Playwright, includes wait); print URL ~0.4s curl | Start **2**; PCPAO is UA-sensitive and Drupal sessioned. Do not jump to 8. | Print @ 0.4s × 311k serial ≈ **35 h**; conc 2 + delay ≈ **20–24 h**. Under 48h. | **Pilot:** print HTML for ~50 STRAPs. **Countywide:** prefer **bulk `RP_*` CSVs** for roll attributes + shapefile/REST for geometry; HTML only for fields the transform still needs from the page. |
-| PCPAO bulk CSVs | 30 tables, nightly | Download zip via DAL after UI click | 1–2 (large zips) | Minutes–low hours depending on table | **Bulk artifact download** (seed + completeness). |
-| GIS REST | 311,582 tax polygons | count + mixed USE_CODE queries succeeded | 1–2 (maxRecord 1k–15k; page with `resultOffset`) | Minutes | **Bulk / seed.** |
-| Accela PINELLAS | unknown permit count; search last-2-years default | Portal 200, guest search | Lee Accela used conc ~2–4 | Unknown until a 10–25 record timing pass on CapHome | **Runtime retrieval** for pilot; date-window harvest later if <48h. |
-| Municipal permits | 24 cities + county | 5 portals 200; rest uncertified | Vendor-specific | Do not full-download | **Runtime retrieval** per vendor adapter. |
-| Sunbiz | statewide quarterly zip | Downloads page 200 in browser | 1 | Hours (zip + Deflate64 unzip) | **Bulk** statewide, ZIP-filter Pinellas. |
-| BBB | category crawl | Playwright 200 / curl 403 | 1 with challenge retry | Hours | **Browser harvest** (`bbb-harvest`). |
+| Source            | Volume                                            | Probe                                                                                       | Safe concurrency                                                           | Est. full download                                                              | Recommended mode                                                                                                                                                                                   |
+| ----------------- | ------------------------------------------------- | ------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| PCPAO print HTML  | ~311k tax parcels                                 | 8 sequential `property-details` ~2.8–3.1s (Playwright, includes wait); print URL ~0.4s curl | Start **2**; PCPAO is UA-sensitive and Drupal sessioned. Do not jump to 8. | Print @ 0.4s × 311k serial ≈ **35 h**; conc 2 + delay ≈ **20–24 h**. Under 48h. | **Pilot:** print HTML for ~50 STRAPs. **Countywide:** prefer **bulk `RP_*` CSVs** for roll attributes + shapefile/REST for geometry; HTML only for fields the transform still needs from the page. |
+| PCPAO bulk CSVs   | 30 tables, nightly                                | Download zip via DAL after UI click                                                         | 1–2 (large zips)                                                           | Minutes–low hours depending on table                                            | **Bulk artifact download** (seed + completeness).                                                                                                                                                  |
+| GIS REST          | 311,582 tax polygons                              | count + mixed USE_CODE queries succeeded                                                    | 1–2 (maxRecord 1k–15k; page with `resultOffset`)                           | Minutes                                                                         | **Bulk / seed.**                                                                                                                                                                                   |
+| Accela PINELLAS   | unknown permit count; search last-2-years default | Portal 200, guest search                                                                    | Lee Accela used conc ~2–4                                                  | Unknown until a 10–25 record timing pass on CapHome                             | **Runtime retrieval** for pilot; date-window harvest later if <48h.                                                                                                                                |
+| Municipal permits | 24 cities + county                                | 5 portals 200; rest uncertified                                                             | Vendor-specific                                                            | Do not full-download                                                            | **Runtime retrieval** per vendor adapter.                                                                                                                                                          |
+| Sunbiz            | statewide quarterly zip                           | Downloads page 200 in browser                                                               | 1                                                                          | Hours (zip + Deflate64 unzip)                                                   | **Bulk** statewide, ZIP-filter Pinellas.                                                                                                                                                           |
+| BBB               | category crawl                                    | Playwright 200 / curl 403                                                                   | 1 with challenge retry                                                     | Hours                                                                           | **Browser harvest** (`bbb-harvest`).                                                                                                                                                               |
 
 No source in the Oracle baseline is estimated **above 48 hours** if bulk CSVs + GIS
 are used for appraisal. A naive countywide HTML scrape is close to the 48h line;

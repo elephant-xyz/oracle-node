@@ -84,9 +84,10 @@ function transformParcel(scriptsDirectory, workDir) {
  */
 function handleIpc(message) {
   if (message === null || typeof message !== "object") return;
-  const record = /** @type {{ type?: unknown, id?: unknown, scriptsDirectory?: unknown, workDir?: unknown }} */ (
-    message
-  );
+  const record =
+    /** @type {{ type?: unknown, id?: unknown, scriptsDirectory?: unknown, workDir?: unknown }} */ (
+      message
+    );
   if (record.type !== "run") return;
   const id = record.id;
   const scriptsDirectory = record.scriptsDirectory;
@@ -97,7 +98,11 @@ function handleIpc(message) {
   }
   try {
     const result = transformParcel(scriptsDirectory, workDir);
-    process.send?.({ type: "ok", id, propertyUsageType: result.propertyUsageType });
+    process.send?.({
+      type: "ok",
+      id,
+      propertyUsageType: result.propertyUsageType,
+    });
   } catch (error) {
     process.send?.({
       type: "err",
@@ -120,7 +125,9 @@ if (require.main === module) {
     const scriptsDirectory = process.argv[2];
     const workDir = process.argv[3];
     if (typeof scriptsDirectory !== "string" || typeof workDir !== "string") {
-      throw new Error("Usage: pinellas-transform-worker.cjs <scriptsDir> <workDir>");
+      throw new Error(
+        "Usage: pinellas-transform-worker.cjs <scriptsDir> <workDir>",
+      );
     }
     const result = transformParcel(scriptsDirectory, workDir);
     process.stdout.write(`${JSON.stringify(result)}\n`);

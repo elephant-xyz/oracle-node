@@ -26,9 +26,9 @@ import {
 } from "../../scripts/run-pinellas-local-ingest.mjs";
 
 const require = createRequire(import.meta.url);
-const { rewriteIpfsGatewayUrl } = require(
-  "../../scripts/local-ipfs-fetch-shim.cjs",
-);
+const {
+  rewriteIpfsGatewayUrl,
+} = require("../../scripts/local-ipfs-fetch-shim.cjs");
 
 describe("Pinellas local ingest helpers", () => {
   it("round-trips quoted JSON and geometry through the CSV parser", () => {
@@ -66,14 +66,20 @@ describe("Pinellas local ingest helpers", () => {
       },
     });
     expect(html).toContain("Parcel Number");
-    expect(() => unwrapPropertyPrintHtml({ PropertyPrint: { response: "" } })).toThrow(
-      /not HTML/,
-    );
+    expect(() =>
+      unwrapPropertyPrintHtml({ PropertyPrint: { response: "" } }),
+    ).toThrow(/not HTML/);
   });
 
   it("parses mixed-ingest flags", () => {
     expect(
-      parseCliOptions(["--limit", "8", "--skip-validate", "--output", "tmp/out"]),
+      parseCliOptions([
+        "--limit",
+        "8",
+        "--skip-validate",
+        "--output",
+        "tmp/out",
+      ]),
     ).toMatchObject({
       limit: 8,
       skipValidate: true,
@@ -88,17 +94,24 @@ describe("Pinellas local ingest helpers", () => {
       transformTimeoutMs: 60000,
     });
     expect(parseCliOptions(["--all"]).allRows).toBe(true);
-    expect(parseCliOptions(["--force", "--cli-transform", "--concurrency", "4"]))
-      .toMatchObject({
-        skipExisting: false,
-        transformMode: "elephant-cli",
-        concurrency: 4,
-      });
-    expect(parseCliOptions(["--fetch-concurrency", "8", "--fetch-timeout-ms", "5000"]))
-      .toMatchObject({
-        fetchConcurrency: 8,
-        fetchTimeoutMs: 5000,
-      });
+    expect(
+      parseCliOptions(["--force", "--cli-transform", "--concurrency", "4"]),
+    ).toMatchObject({
+      skipExisting: false,
+      transformMode: "elephant-cli",
+      concurrency: 4,
+    });
+    expect(
+      parseCliOptions([
+        "--fetch-concurrency",
+        "8",
+        "--fetch-timeout-ms",
+        "5000",
+      ]),
+    ).toMatchObject({
+      fetchConcurrency: 8,
+      fetchTimeoutMs: 5000,
+    });
     expect(
       parseCliOptions(["--transform-timeout-ms", "15000"]).transformTimeoutMs,
     ).toBe(15000);
@@ -143,9 +156,11 @@ describe("Pinellas local ingest helpers", () => {
     ).toBe(
       "http://127.0.0.1:8080/ipfs/bafkreidi7qno2v5gecjf6tvgo35kqkv42542fq2juh22nemm7sfvhnzzua",
     );
-    expect(rewriteIpfsGatewayUrl("https://lexicon.elephant.xyz/json-schemas/schema-manifest.json")).toBe(
-      "https://lexicon.elephant.xyz/json-schemas/schema-manifest.json",
-    );
+    expect(
+      rewriteIpfsGatewayUrl(
+        "https://lexicon.elephant.xyz/json-schemas/schema-manifest.json",
+      ),
+    ).toBe("https://lexicon.elephant.xyz/json-schemas/schema-manifest.json");
   });
 
   it("keeps print query params off source_http_request.url and on multiValueQueryString", () => {
@@ -185,7 +200,9 @@ describe("Pinellas local ingest helpers", () => {
       userAgents.push(
         typeof init?.headers === "object" && init.headers !== null
           ? String(
-              /** @type {Record<string, string>} */ (init.headers)["User-Agent"],
+              /** @type {Record<string, string>} */ (init.headers)[
+                "User-Agent"
+              ],
             )
           : "",
       );
@@ -211,9 +228,12 @@ describe("Pinellas local ingest helpers", () => {
     let calls = 0;
     const fakeFetch = async () => {
       calls += 1;
-      return new Response("<!DOCTYPE html><html><body>placeholder</body></html>", {
-        status: 200,
-      });
+      return new Response(
+        "<!DOCTYPE html><html><body>placeholder</body></html>",
+        {
+          status: 200,
+        },
+      );
     };
     await expect(
       fetchPropertyPrintHtml(
@@ -256,7 +276,9 @@ describe("Pinellas local ingest helpers", () => {
       () => stop,
     );
     expect(seen.length).toBeLessThan(6);
-    expect(mapped.filter((value) => value !== undefined).length).toBe(seen.length);
+    expect(mapped.filter((value) => value !== undefined).length).toBe(
+      seen.length,
+    );
   });
 
   it("skips a parcel only when transformed.zip is a real zip of at least 200 bytes", async () => {
@@ -271,22 +293,25 @@ describe("Pinellas local ingest helpers", () => {
     expect(hasCompletedTransform(parcelDir)).toBe(false);
     await writeFile(
       path.join(parcelDir, "transformed.zip"),
-      Buffer.concat([Buffer.from([0x50, 0x4b, 0x03, 0x04]), Buffer.alloc(196, 0x20)]),
+      Buffer.concat([
+        Buffer.from([0x50, 0x4b, 0x03, 0x04]),
+        Buffer.alloc(196, 0x20),
+      ]),
     );
     expect(hasCompletedTransform(parcelDir)).toBe(true);
     await rm(dir, { recursive: true, force: true });
   });
 
   it("retries transient fetch and worker failures with longer backoff on 403/429", () => {
-    expect(isRetryableIngestError(new Error("PCPAO print HTTP 403 for x"))).toBe(
-      true,
-    );
-    expect(isRetryableIngestError(new Error("PCPAO print HTTP 429 for x"))).toBe(
-      true,
-    );
-    expect(isRetryableIngestError(new Error("transform timed out after 60000ms"))).toBe(
-      true,
-    );
+    expect(
+      isRetryableIngestError(new Error("PCPAO print HTTP 403 for x")),
+    ).toBe(true);
+    expect(
+      isRetryableIngestError(new Error("PCPAO print HTTP 429 for x")),
+    ).toBe(true);
+    expect(
+      isRetryableIngestError(new Error("transform timed out after 60000ms")),
+    ).toBe(true);
     expect(
       isRetryableIngestError(new Error("transform worker exited (1/SIGKILL)")),
     ).toBe(true);
@@ -376,7 +401,9 @@ fs.writeFileSync("data/property.json", JSON.stringify({ property_usage_type: "Re
 `,
       "utf8",
     );
-    const { transformParcel } = require("../../scripts/pinellas-transform-worker.cjs");
+    const {
+      transformParcel,
+    } = require("../../scripts/pinellas-transform-worker.cjs");
     expect(transformParcel(scriptsDirectory, workDir).propertyUsageType).toBe(
       "Residential",
     );

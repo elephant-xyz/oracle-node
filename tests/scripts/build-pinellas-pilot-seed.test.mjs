@@ -76,7 +76,9 @@ describe("Pinellas pilot seed builder", () => {
     expect(row.parcel_id).not.toBe(row.parcelid);
     expect(row.url).toBe("https://www.pcpao.gov/property/detail/print");
     expect(row.url).not.toContain("?");
-    expect(buildPrintUrl("162805389030000430")).toContain("s=162805389030000430");
+    expect(buildPrintUrl("162805389030000430")).toContain(
+      "s=162805389030000430",
+    );
     expect(JSON.parse(row.multiValueQueryString)).toEqual({
       is_print: ["1"],
       s: ["162805389030000430"],
@@ -137,9 +139,9 @@ describe("Pinellas pilot seed builder", () => {
     const duplicate = { parcel_id: "162805389030000430" };
     const second = { parcel_id: "163131676080040070" };
     expect(dedupeByStrap([first, duplicate, second])).toHaveLength(2);
-    expect(() => dedupeByStrap([{ parcel_id: "05-28-16-38903-000-0430" }])).toThrow(
-      /non-STRAP/,
-    );
+    expect(() =>
+      dedupeByStrap([{ parcel_id: "05-28-16-38903-000-0430" }]),
+    ).toThrow(/non-STRAP/);
   });
 
   it("prefers at least one complex geometry when picking a mixed subset", () => {
@@ -204,13 +206,16 @@ describe("Pinellas pilot seed builder", () => {
   });
 
   it("quotes commas in CSV cells", () => {
-    expect(encodeCsvCell('3400 RUGBY CT, PALM HARBOR FL 34684')).toBe(
+    expect(encodeCsvCell("3400 RUGBY CT, PALM HARBOR FL 34684")).toBe(
       '"3400 RUGBY CT, PALM HARBOR FL 34684"',
     );
   });
 
   it("keeps use-code quotas at a 10–50 pilot size", () => {
-    const quotaSum = USE_CODE_QUOTAS.reduce((sum, quota) => sum + quota.count, 0);
+    const quotaSum = USE_CODE_QUOTAS.reduce(
+      (sum, quota) => sum + quota.count,
+      0,
+    );
     expect(quotaSum).toBeGreaterThanOrEqual(10);
     expect(quotaSum).toBeLessThanOrEqual(50);
   });

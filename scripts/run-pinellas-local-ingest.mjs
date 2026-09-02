@@ -359,9 +359,9 @@ export function parseCliOptions(argv) {
 export function renderSeedCsv(row) {
   const columns = Object.keys(row);
   const header = columns.map(encodeCsvCell).join(",");
-  const line = columns.map((column) => encodeCsvCell(row[column] ?? "")).join(
-    ",",
-  );
+  const line = columns
+    .map((column) => encodeCsvCell(row[column] ?? ""))
+    .join(",");
   return `${header}\n${line}\n`;
 }
 
@@ -436,13 +436,20 @@ export function parseSeedQueryString(raw, strap) {
   if (typeof raw === "string" && raw.trim().length > 0) {
     try {
       const parsed = JSON.parse(raw);
-      if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
+      if (
+        parsed !== null &&
+        typeof parsed === "object" &&
+        !Array.isArray(parsed)
+      ) {
         /** @type {Record<string, string[]>} */
         const out = {};
         for (const [key, value] of Object.entries(
           /** @type {Record<string, unknown>} */ (parsed),
         )) {
-          if (Array.isArray(value) && value.every((item) => typeof item === "string")) {
+          if (
+            Array.isArray(value) &&
+            value.every((item) => typeof item === "string")
+          ) {
             out[key] = value;
           }
         }
@@ -470,7 +477,10 @@ export function buildSourceHttpRequest(row) {
       "User-Agent": PRINT_USER_AGENT,
       Accept: "text/html",
     },
-    multiValueQueryString: parseSeedQueryString(row.multiValueQueryString, strap),
+    multiValueQueryString: parseSeedQueryString(
+      row.multiValueQueryString,
+      strap,
+    ),
   };
 }
 
@@ -844,9 +854,7 @@ export async function createTransformPool({
         return await new Promise((resolve, reject) => {
           let settled = false;
           const timer = setTimeout(() => {
-            finish(
-              new Error(`transform timed out after ${timeoutMs}ms`),
-            );
+            finish(new Error(`transform timed out after ${timeoutMs}ms`));
             worker.kill("SIGKILL");
           }, timeoutMs);
           /**
@@ -869,9 +877,10 @@ export async function createTransformPool({
            */
           const onMessage = (message) => {
             if (message === null || typeof message !== "object") return;
-            const record = /** @type {{ type?: unknown, id?: unknown, propertyUsageType?: unknown, error?: unknown }} */ (
-              message
-            );
+            const record =
+              /** @type {{ type?: unknown, id?: unknown, propertyUsageType?: unknown, error?: unknown }} */ (
+                message
+              );
             if (record.id !== id) return;
             if (record.type === "ok") {
               finish(
@@ -897,7 +906,9 @@ export async function createTransformPool({
            */
           const onExit = (code, signal) => {
             finish(
-              new Error(`transform worker exited (${code}/${signal ?? "none"})`),
+              new Error(
+                `transform worker exited (${code}/${signal ?? "none"})`,
+              ),
             );
           };
           worker.on("message", onMessage);
@@ -913,9 +924,7 @@ export async function createTransformPool({
               workDir,
             });
           } catch (error) {
-            finish(
-              error instanceof Error ? error : new Error(String(error)),
-            );
+            finish(error instanceof Error ? error : new Error(String(error)));
           }
         });
       } finally {
@@ -1004,7 +1013,9 @@ export async function fetchPropertyPrintHtml(
         throw new Error(`PropertyPrint response is not HTML for ${strap}`);
       }
       if (!/Parcel Summary/i.test(html)) {
-        throw new Error(`PCPAO print HTML is missing Parcel Summary for ${strap}`);
+        throw new Error(
+          `PCPAO print HTML is missing Parcel Summary for ${strap}`,
+        );
       }
       rateLimitGate?.noteSuccess();
       return html;
@@ -1060,7 +1071,9 @@ function runCommand(command, args, cwd, extraEnv, inheritStdio = false) {
       const detail = inheritStdio
         ? ""
         : ` ${Buffer.concat(stderr).toString("utf8") || Buffer.concat(stdout).toString("utf8")}`;
-      reject(new Error(`${command} ${args.join(" ")} exited ${code}.${detail}`));
+      reject(
+        new Error(`${command} ${args.join(" ")} exited ${code}.${detail}`),
+      );
     });
   });
 }
@@ -1130,7 +1143,11 @@ export async function stripQueryFromTransformedZip(zipPath) {
  * @param {string} requestIdentifier - STRAP.
  * @returns {Promise<void>} Resolves when files are rewritten.
  */
-async function injectSourceHttpRequest(dataDir, sourceHttpRequest, requestIdentifier) {
+async function injectSourceHttpRequest(
+  dataDir,
+  sourceHttpRequest,
+  requestIdentifier,
+) {
   const names = await readdir(dataDir);
   await Promise.all(
     names
@@ -1138,7 +1155,11 @@ async function injectSourceHttpRequest(dataDir, sourceHttpRequest, requestIdenti
       .map(async (name) => {
         const filePath = path.join(dataDir, name);
         const parsed = JSON.parse(await readFile(filePath, "utf8"));
-        if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+        if (
+          parsed === null ||
+          typeof parsed !== "object" ||
+          Array.isArray(parsed)
+        ) {
           return;
         }
         const record = /** @type {Record<string, unknown>} */ (parsed);
@@ -1283,7 +1304,9 @@ async function ingestParcel({
     };
   }
   await mkdir(parcelDir, { recursive: true });
-  const workDir = await mkdtemp(path.join(os.tmpdir(), `pinellas-${parcelId}-`));
+  const workDir = await mkdtemp(
+    path.join(os.tmpdir(), `pinellas-${parcelId}-`),
+  );
   try {
     const seedFiles = buildSeedJsonFiles(row);
     const transformedZip = path.join(parcelDir, "transformed.zip");
@@ -1597,7 +1620,11 @@ export async function runLocalIngest(options) {
   const failures = [];
   const failuresPath = path.join(outputDirectory, "failures.jsonl");
   const resolvedOptions = { ...options, outputDirectory };
-  const workerPath = path.join(repoRoot, "scripts", "pinellas-transform-worker.cjs");
+  const workerPath = path.join(
+    repoRoot,
+    "scripts",
+    "pinellas-transform-worker.cjs",
+  );
   const transformPool =
     options.transformMode === "scripts"
       ? await createTransformPool({
@@ -1683,7 +1710,9 @@ export async function runLocalIngest(options) {
    */
   async function recordProgress(status) {
     await writeStatusSnapshot(outputDirectory, status);
-    console.log(JSON.stringify({ event: "pinellas_ingest_progress", ...status }));
+    console.log(
+      JSON.stringify({ event: "pinellas_ingest_progress", ...status }),
+    );
   }
 
   await recordProgress(snapshot());

@@ -6,10 +6,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createRequire } from "node:module";
 
-import {
-  PutObjectCommand,
-  S3Client,
-} from "@aws-sdk/client-s3";
+import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { ParquetSchema, ParquetWriter } from "@dsnp/parquetjs";
 
 import { parseCsvRecords } from "./run-pinellas-local-ingest.mjs";
@@ -183,7 +180,9 @@ export function toText(value) {
  * @returns {string} Deterministic UUID-shaped id.
  */
 export function propertyIdForStrap(strap) {
-  const digest = createHash("sha1").update(`pinellas_appraiser:${strap}`).digest();
+  const digest = createHash("sha1")
+    .update(`pinellas_appraiser:${strap}`)
+    .digest();
   const bytes = Buffer.from(digest.subarray(0, 16));
   bytes[6] = (bytes[6] & 0x0f) | 0x50;
   bytes[8] = (bytes[8] & 0x3f) | 0x80;
@@ -199,7 +198,9 @@ export function propertyIdForStrap(strap) {
  */
 export function ownerNameFromRecord(record) {
   const direct =
-    toText(record.name) ?? toText(record.full_name) ?? toText(record.company_name);
+    toText(record.name) ??
+    toText(record.full_name) ??
+    toText(record.company_name);
   if (direct !== null) return direct;
   const parts = [record.first_name, record.middle_name, record.last_name]
     .map((part) => toText(part))
@@ -238,7 +239,10 @@ export function mapTransformedFilesToQueryTableRow({ strap, files, seedRow }) {
   const taxRows = Object.entries(files)
     .filter(([name]) => /^tax_\d+\.json$/.test(name))
     .map(([, record]) => record)
-    .sort((left, right) => (toNumber(right.tax_year) ?? 0) - (toNumber(left.tax_year) ?? 0));
+    .sort(
+      (left, right) =>
+        (toNumber(right.tax_year) ?? 0) - (toNumber(left.tax_year) ?? 0),
+    );
   const latestTax = taxRows[0] ?? {};
 
   const salesRows = Object.entries(files)
@@ -401,7 +405,11 @@ export function toParquetRecord(row) {
  * @param {string} params.exportedAt - ISO timestamp.
  * @returns {CoverageSnapshot} Coverage JSON.
  */
-export function buildPinellasPilotCoverage({ ingestedCount, expectedCount, exportedAt }) {
+export function buildPinellasPilotCoverage({
+  ingestedCount,
+  expectedCount,
+  exportedAt,
+}) {
   return {
     county: COUNTY,
     exportedAt,
@@ -479,7 +487,8 @@ export async function loadEnvFile(envFile) {
       if (process.env[key] === undefined) process.env[key] = value;
     }
   } catch (caught) {
-    if (caught instanceof Error && "code" in caught && caught.code === "ENOENT") return;
+    if (caught instanceof Error && "code" in caught && caught.code === "ENOENT")
+      return;
     throw caught;
   }
 }
@@ -509,15 +518,25 @@ export function hasFilebaseCredentials(env) {
  * @returns {void}
  */
 export function fillDerivedFilebaseToken(env) {
-  if (typeof env.FILEBASE_API_TOKEN === "string" && env.FILEBASE_API_TOKEN.trim().length > 0) {
+  if (
+    typeof env.FILEBASE_API_TOKEN === "string" &&
+    env.FILEBASE_API_TOKEN.trim().length > 0
+  ) {
     return;
   }
   const access = env.S3_ACCESS_KEY_ID?.trim();
   const secret = env.S3_SECRET_ACCESS_KEY?.trim();
-  if (access === undefined || access.length === 0 || secret === undefined || secret.length === 0) {
+  if (
+    access === undefined ||
+    access.length === 0 ||
+    secret === undefined ||
+    secret.length === 0
+  ) {
     return;
   }
-  env.FILEBASE_API_TOKEN = Buffer.from(`${access}:${secret}`, "utf8").toString("base64");
+  env.FILEBASE_API_TOKEN = Buffer.from(`${access}:${secret}`, "utf8").toString(
+    "base64",
+  );
 }
 
 /**
@@ -536,7 +555,11 @@ export async function readTransformedZipJsonFiles(zipPath) {
     if (!name.startsWith("data/") || !name.endsWith(".json")) continue;
     if (base.startsWith("relationship_") || base.startsWith("bafk")) continue;
     const parsed = JSON.parse(entry.getData().toString("utf8"));
-    if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
+    if (
+      parsed !== null &&
+      typeof parsed === "object" &&
+      !Array.isArray(parsed)
+    ) {
       files[base] = parsed;
     }
   }
@@ -618,13 +641,18 @@ export async function writePinellasPilotPublishArtifacts(options, repoRoot) {
 
   const identifiers = rows.map((row) => row.request_identifier);
   if (new Set(identifiers).size !== identifiers.length) {
-    throw new Error("Query table would contain duplicate request_identifier values");
+    throw new Error(
+      "Query table would contain duplicate request_identifier values",
+    );
   }
 
   await mkdir(outDirectory, { recursive: true });
   const parquetPath = path.join(outDirectory, "query-table.parquet");
   const coveragePath = path.join(outDirectory, "dataset-coverage.json");
-  const writer = await ParquetWriter.openFile(buildQueryTableParquetSchema(), parquetPath);
+  const writer = await ParquetWriter.openFile(
+    buildQueryTableParquetSchema(),
+    parquetPath,
+  );
   try {
     for (const row of rows) {
       await writer.appendRow(toParquetRecord(row));
@@ -639,7 +667,11 @@ export async function writePinellasPilotPublishArtifacts(options, repoRoot) {
     expectedCount,
     exportedAt,
   });
-  await writeFile(coveragePath, `${JSON.stringify(coverage, null, 2)}\n`, "utf8");
+  await writeFile(
+    coveragePath,
+    `${JSON.stringify(coverage, null, 2)}\n`,
+    "utf8",
+  );
   await writeFile(
     path.join(outDirectory, "manifest.json"),
     `${JSON.stringify(
@@ -681,9 +713,7 @@ export async function publishPinellasArtifactsToFilebase({
 }) {
   const envFile = path.resolve(repoRoot, options.envFile);
   await loadEnvFile(envFile);
-  await loadEnvFile(
-    path.resolve(repoRoot, options.queryDbDir, ".env.local"),
-  );
+  await loadEnvFile(path.resolve(repoRoot, options.queryDbDir, ".env.local"));
   fillDerivedFilebaseToken(process.env);
   if (process.env.S3_ENDPOINT === "https://s3.filebase.io") {
     process.env.S3_ENDPOINT = FILEBASE_S3_ENDPOINT;
@@ -751,14 +781,20 @@ export async function publishPinellasArtifactsToFilebase({
     contentType: "application/json",
   });
   const queryName = await upsertFilebaseName(token, queryLabel, queryTableCid);
-  const coverageName = await upsertFilebaseName(token, coverageLabel, coverageCid);
+  const coverageName = await upsertFilebaseName(
+    token,
+    coverageLabel,
+    coverageCid,
+  );
   const result = {
     queryTableCid,
     coverageCid,
     queryTableIpns: `${FILEBASE_GATEWAY}/ipns/${queryName.network_key}`,
     coverageIpns: `${FILEBASE_GATEWAY}/ipns/${coverageName.network_key}`,
   };
-  console.log(JSON.stringify({ event: "pinellas_filebase_published", ...result }));
+  console.log(
+    JSON.stringify({ event: "pinellas_filebase_published", ...result }),
+  );
   return result;
 }
 
@@ -780,7 +816,13 @@ export async function publishPinellasArtifactsToFilebase({
  * @param {string} params.contentType - HTTP content type.
  * @returns {Promise<string>} Filebase CID.
  */
-async function uploadFilebaseObject({ client, bucket, key, body, contentType }) {
+async function uploadFilebaseObject({
+  client,
+  bucket,
+  key,
+  body,
+  contentType,
+}) {
   const localCid = await ipfsHash.of(body);
   const command = new PutObjectCommand({
     Bucket: bucket,
@@ -801,7 +843,9 @@ async function uploadFilebaseObject({ client, bucket, key, body, contentType }) 
         typeof response.headers === "object" &&
         response.headers !== null
       ) {
-        const headers = /** @type {Record<string, string>} */ (response.headers);
+        const headers = /** @type {Record<string, string>} */ (
+          response.headers
+        );
         headerCid = headers["x-amz-meta-cid"];
       }
       return result;
@@ -835,7 +879,8 @@ async function upsertFilebaseName(token, label, cid) {
     throw new Error(`Filebase name list failed: ${listResponse.status}`);
   }
   const parsed = await listResponse.json();
-  if (!Array.isArray(parsed)) throw new Error("Filebase name list is not an array");
+  if (!Array.isArray(parsed))
+    throw new Error("Filebase name list is not an array");
   const existing = parsed.find(
     (entry) =>
       typeof entry === "object" &&
@@ -862,7 +907,9 @@ async function upsertFilebaseName(token, label, cid) {
           body: JSON.stringify({ cid }),
         });
   if (!response.ok) {
-    throw new Error(`Filebase IPNS upsert failed for ${label}: ${response.status}`);
+    throw new Error(
+      `Filebase IPNS upsert failed for ${label}: ${response.status}`,
+    );
   }
   return /** @type {FilebaseName} */ (await response.json());
 }
@@ -916,7 +963,12 @@ function isInvokedDirectly() {
 if (isInvokedDirectly()) {
   main().catch((error) => {
     const message = error instanceof Error ? error.message : String(error);
-    console.error(JSON.stringify({ event: "pinellas_filebase_publish_failed", error: message }));
+    console.error(
+      JSON.stringify({
+        event: "pinellas_filebase_publish_failed",
+        error: message,
+      }),
+    );
     process.exit(1);
   });
 }

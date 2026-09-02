@@ -104,7 +104,11 @@ export function buildTaxParcelPageUrl(resultOffset, resultRecordCount) {
  * @returns {{ features: TaxParcelFeature[], exceededTransferLimit: boolean }} Features plus paging flag.
  */
 export function parseTaxParcelPage(payload) {
-  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+  if (
+    typeof payload !== "object" ||
+    payload === null ||
+    Array.isArray(payload)
+  ) {
     throw new Error("Tax parcel GIS response is not a JSON object");
   }
   const record = /** @type {Record<string, unknown>} */ (payload);
@@ -197,8 +201,14 @@ export async function fetchTaxParcelCount() {
     returnCountOnly: "true",
     f: "json",
   });
-  const payload = await fetchJson(`${TAX_PARCELS_QUERY_URL}?${params.toString()}`);
-  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+  const payload = await fetchJson(
+    `${TAX_PARCELS_QUERY_URL}?${params.toString()}`,
+  );
+  if (
+    typeof payload !== "object" ||
+    payload === null ||
+    Array.isArray(payload)
+  ) {
     throw new Error("Tax parcel count response is not a JSON object");
   }
   const count = /** @type {Record<string, unknown>} */ (payload).count;
@@ -273,7 +283,9 @@ export async function assertPrintLookup(strap) {
     headers: { "User-Agent": USER_AGENT, Accept: "text/html" },
   });
   if (!response.ok) {
-    throw new Error(`Print lookup HTTP ${String(response.status)} for ${strap}`);
+    throw new Error(
+      `Print lookup HTTP ${String(response.status)} for ${strap}`,
+    );
   }
   const html = await response.text();
   if (html.length < 1000 || !/parcel/i.test(html)) {
@@ -367,11 +379,15 @@ if (isDirectRun) {
   const cli = parseFullSeedCli(process.argv.slice(2));
   buildPinellasFullSeed(cli)
     .then((summary) => {
-      process.stdout.write(`${JSON.stringify({ event: "pinellas_full_seed_built", ...summary })}\n`);
+      process.stdout.write(
+        `${JSON.stringify({ event: "pinellas_full_seed_built", ...summary })}\n`,
+      );
     })
     .catch((error) => {
       const message = error instanceof Error ? error.message : String(error);
-      process.stderr.write(`${JSON.stringify({ event: "pinellas_full_seed_failed", error: message })}\n`);
+      process.stderr.write(
+        `${JSON.stringify({ event: "pinellas_full_seed_failed", error: message })}\n`,
+      );
       process.exit(1);
     });
 }

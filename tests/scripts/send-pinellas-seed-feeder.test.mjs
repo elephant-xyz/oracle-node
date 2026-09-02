@@ -21,12 +21,13 @@ describe("Pinellas seed feeder sender", () => {
 
   it("requires a fixed --job-id", () => {
     expect(() => parseArgs([])).toThrow(/--job-id is REQUIRED/);
-    expect(parseArgs(["--job-id", "pinellas-property-first-seed-all-20260831"]))
-      .toMatchObject({
-        jobId: "pinellas-property-first-seed-all-20260831",
-        dryRun: false,
-        sourceCsvS3Uri: "s3://counties-seeds/pinellas.csv",
-      });
+    expect(
+      parseArgs(["--job-id", "pinellas-property-first-seed-all-20260831"]),
+    ).toMatchObject({
+      jobId: "pinellas-property-first-seed-all-20260831",
+      dryRun: false,
+      sourceCsvS3Uri: "s3://counties-seeds/pinellas.csv",
+    });
   });
 
   it("builds a backpressured feeder message under the pinellas job prefix", () => {
@@ -57,6 +58,8 @@ describe("Pinellas seed feeder sender", () => {
         maxMessages: 400,
       },
     ]);
-    expect(suggestedJobId()).toMatch(/^pinellas-property-first-seed-all-\d{8}$/);
+    expect(suggestedJobId()).toMatch(
+      /^pinellas-property-first-seed-all-\d{8}$/,
+    );
   });
 });

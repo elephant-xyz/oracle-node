@@ -17,7 +17,9 @@ import {
 
 describe("Pinellas local-zip query-table mapping", () => {
   it("splits a Pinellas situs line into street, city, and ZIP", () => {
-    expect(parseUnnormalizedAddress("1403 CIRCLE DR, TARPON SPRINGS FL 34689")).toEqual({
+    expect(
+      parseUnnormalizedAddress("1403 CIRCLE DR, TARPON SPRINGS FL 34689"),
+    ).toEqual({
       street: "1403 CIRCLE DR",
       city: "TARPON SPRINGS",
       postalCode: "34689",
@@ -133,7 +135,9 @@ describe("Pinellas local-zip query-table mapping", () => {
 
   it("reads owner names from name or first/last fields", () => {
     expect(ownerNameFromRecord({ name: "ACME LLC" })).toBe("ACME LLC");
-    expect(ownerNameFromRecord({ first_name: "A", last_name: "B" })).toBe("A B");
+    expect(ownerNameFromRecord({ first_name: "A", last_name: "B" })).toBe(
+      "A B",
+    );
     expect(toText("  x  ")).toBe("x");
     expect(toNumber("12.5")).toBe(12.5);
     expect(toNumber("")).toBeNull();
