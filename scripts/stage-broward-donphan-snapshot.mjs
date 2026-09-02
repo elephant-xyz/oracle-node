@@ -394,10 +394,18 @@ ORDER BY pi.property_improvement_id`;
 
 const SNAPSHOT_COUNTS_SQL = `
 WITH props AS MATERIALIZED (
-  SELECT * FROM public.properties WHERE source_system=$1
+  SELECT property_id,address_id,request_identifier,loaded_at
+  FROM public.properties
+  WHERE source_system=$1
 ),
 permits AS MATERIALIZED (
-  SELECT * FROM public.property_improvements WHERE source_system LIKE $2
+  SELECT property_improvement_id,property_id,contractor_company_id,
+         source_system,loaded_at,
+         coalesce(
+           more_details->>'is_roof_permit',more_details->>'isRoofPermit'
+         )='true' AS is_roofing
+  FROM public.property_improvements
+  WHERE source_system LIKE $2
 ),
 permit_links AS (
   SELECT
@@ -449,10 +457,7 @@ SELECT
   (SELECT count(DISTINCT property_improvement_id) FROM permits)
     AS distinct_permit_ids,
   permit_links.*,
-  (SELECT count(*) FROM permits
-    WHERE coalesce(
-      more_details->>'is_roof_permit',more_details->>'isRoofPermit'
-    )='true') AS roofing_permits,
+  (SELECT count(*) FROM permits WHERE is_roofing) AS roofing_permits,
   (SELECT count(DISTINCT source_system) FROM permits)
     AS permit_source_system_count,
   sunbiz.address_matches AS sunbiz_address_matches,
