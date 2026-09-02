@@ -105,7 +105,7 @@ const DEFAULT_PORT = 47_832;
  * @property {number} sourceMissingRecords - Reported but inaccessible rows.
  * @property {number} deferredCapCount - Unresolved item-level exclusive-cap queries.
  * @property {string | null} updatedAt - Last durable checkpoint time.
- * @property {"timeout" | "missing_controls" | "missing_export" | "source_cap" | "checkpoint_stale" | null} pauseReason
+ * @property {"timeout" | "missing_controls" | "missing_export" | "source_cap" | "incomplete_pagination" | "checkpoint_stale" | null} pauseReason
  *   Allowlisted operational reason when this worker is paused.
  * @property {"timeout" | "source_cap" | "incomplete_pagination" | "source_error" | null} cooldownReason
  *   Allowlisted source circuit-breaker reason while cooling down.
@@ -115,7 +115,7 @@ const DEFAULT_PORT = 47_832;
  *
  * @typedef {object} PausedPermitEnumerationWorker
  * @property {string} source - Public jurisdiction label.
- * @property {"timeout" | "missing_controls" | "missing_export" | "source_cap" | "checkpoint_stale"} reason
+ * @property {"timeout" | "missing_controls" | "missing_export" | "source_cap" | "incomplete_pagination" | "checkpoint_stale"} reason
  *   Allowlisted operational reason containing no source record or raw error.
  *
  * @typedef {object} CoolingPermitEnumerationWorker
@@ -1386,7 +1386,9 @@ function buildMunicipalEnumerationWorker(definition, checkpoint, nowMs) {
       status === "paused"
         ? blocker === "source_cap"
           ? "source_cap"
-          : "checkpoint_stale"
+          : blocker === "incomplete_pagination"
+            ? "incomplete_pagination"
+            : "checkpoint_stale"
         : null,
     cooldownReason:
       status === "cooling_down"

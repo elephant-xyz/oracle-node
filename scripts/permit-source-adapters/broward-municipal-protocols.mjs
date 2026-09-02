@@ -797,7 +797,8 @@ export function parseClick2GovDetailHtml(html, { config, reference, query }) {
  * Parse one Tyler/New World eSuite search page.
  *
  * Responsive markup can repeat the same detail anchor. Stable numeric permit
- * ids are deduplicated, while a bounded numbered next-page marker is retained.
+ * ids are deduplicated, while printable public permit/application identifiers
+ * retain legacy punctuation and spaces for strict detail reconciliation.
  *
  * @param {string} html - Official eSuite search response.
  * @param {BrowardMunicipalJurisdictionConfig} config - eSuite jurisdiction.
@@ -830,7 +831,16 @@ export function parseTylerEsuiteSearchHtml(
   for (const anchorElement of anchors) {
     const anchor = $(anchorElement);
     const permitNumber = readSelectionText(anchor);
-    if (permitNumber === null || !/^[A-Z0-9-]+$/iu.test(permitNumber)) continue;
+    if (
+      permitNumber === null ||
+      permitNumber.length > 100 ||
+      !/[A-Z0-9]/iu.test(permitNumber) ||
+      /[^\x20-\x7e]/u.test(permitNumber)
+    ) {
+      throw new Error(
+        "eSuite linked result lacks a bounded printable public identifier",
+      );
+    }
     const detailUrl = canonicalSourceUrl(config, anchor.attr("href") ?? "");
     const sourceRecordId = new URL(detailUrl).searchParams.get("id");
     if (sourceRecordId === null || !/^\d+$/u.test(sourceRecordId)) {

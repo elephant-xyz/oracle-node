@@ -933,6 +933,48 @@ describe("durable Broward Neon recovery", () => {
     ).toBe(8);
   });
 
+  it("projects a municipal pagination blocker instead of generic staleness", async () => {
+    const root = await mkdtemp(
+      path.join(tmpdir(), "broward-recovery-dashboard-pagination-"),
+    );
+    temporaryDirectories.push(root);
+    const daniaDirectory = path.join(
+      root,
+      "downloads/broward/municipal-type-enumeration/dania-beach-full",
+    );
+    await mkdir(daniaDirectory, { recursive: true });
+    await writeFile(
+      path.join(daniaDirectory, "checkpoint.private.json"),
+      JSON.stringify({
+        pendingPartitionValues: ["PRIVATE"],
+        completedPartitions: {},
+        sourcePartitionCount: 1,
+        uniqueRecords: 0,
+        status: "paused",
+        blocker: "incomplete_pagination",
+        nextAttemptAt: null,
+        updatedAt: "2026-09-02T20:00:00.000Z",
+      }),
+    );
+
+    const status = await readPermitEnumerationStatus(
+      root,
+      Date.parse("2026-09-02T20:01:00.000Z"),
+    );
+
+    expect(status.workers).toContainEqual(
+      expect.objectContaining({
+        source: "Dania Beach",
+        status: "paused",
+        pauseReason: "incomplete_pagination",
+      }),
+    );
+    expect(status.pausedWorkers).toContainEqual({
+      source: "Dania Beach",
+      reason: "incomplete_pagination",
+    });
+  });
+
   it("projects six source-scoped property-first aggregates without private identities", async () => {
     const client = {
       query: () =>

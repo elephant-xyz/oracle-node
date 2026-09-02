@@ -153,6 +153,26 @@ checkpoints render as no-start with the exact gate above; recent checkpoints
 render running, future retry deadlines render cooling down, and only exhausted
 query/partition/window denominators render complete.
 
+### eSuite legacy identifier pagination
+
+Dania Beach and Davie initially paused as `incomplete_pagination` even though
+the live eSuite grids displayed ten rows and a next-page control. Structural
+inspection found no reported total, missing detail links, blank permit cells,
+or overlap with preceding pages. The parser had discarded printable linked
+identifiers outside its former alphanumeric-and-hyphen pattern: three of ten
+Dania page-six rows used punctuation/spacing and two of ten Davie page-one rows
+used spaces. Each rejected row had a distinct numeric detail URL ID, a matching
+hidden detail ID, and a detail permit/application identifier equal to the list
+anchor.
+
+The parser now accepts only bounded printable identifiers containing at least
+one alphanumeric character and still requires exact detail identity. Blank,
+control-character, conflicting, or inaccessible identities fail closed. A
+selected-type replay reconciled Dania's blocked type to 100 unique records over
+ten terminal pages and Davie's blocked type to 16 over two terminal pages, with
+zero page overlap or missing rows. No page-size change or synthetic subdivision
+was needed. Davie's login-gated 2026 OAS boundary remains excluded.
+
 ## Remaining software blocker
 
 Lauderdale Lakes OpenGov remains the only actionable route not promoted. The

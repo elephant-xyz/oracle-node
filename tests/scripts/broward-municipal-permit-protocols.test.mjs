@@ -675,6 +675,41 @@ describe("Tyler eSuite protocol", () => {
     ).toBe(4);
   });
 
+  it("retains linked legacy identifiers containing punctuation and spaces", () => {
+    const config = getBrowardMunicipalPermitConfig("dania_beach");
+    const legacyIdentifiers = esuiteSearch.replace(
+      "</tbody>",
+      `<tr>
+        <td>Revision</td>
+        <td><a href="../ContractorPermitDetailsPage/ContractorPermitDetails.aspx?id=400069">APP. 2026/0042</a></td>
+        <td>PRIVATE APPLICATION COLUMN</td><td>Pending</td><td>PRIVATE ADDRESS</td>
+      </tr>
+      <tr>
+        <td>Cancellation</td>
+        <td><a href="../ContractorPermitDetailsPage/ContractorPermitDetails.aspx?id=400070">LEGACY PERMIT 7</a></td>
+        <td>PRIVATE APPLICATION COLUMN</td><td>Pending</td><td>PRIVATE ADDRESS</td>
+      </tr></tbody>`,
+    );
+
+    const page = parseTylerEsuiteSearchHtml(legacyIdentifiers, config);
+
+    expect(page.references).toHaveLength(3);
+    expect(page.references.map((reference) => reference.permitNumber)).toEqual([
+      "2026-00004503",
+      "APP. 2026/0042",
+      "LEGACY PERMIT 7",
+    ]);
+  });
+
+  it("fails closed when a linked eSuite row has no public identifier", () => {
+    const config = getBrowardMunicipalPermitConfig("davie");
+    const blankIdentifier = esuiteSearch.replace(">2026-00004503</a", "></a");
+
+    expect(() => parseTylerEsuiteSearchHtml(blankIdentifier, config)).toThrow(
+      "bounded printable public identifier",
+    );
+  });
+
   it("normalizes same-session details and bounded inspection outcomes", () => {
     const config = getBrowardMunicipalPermitConfig("davie");
     const sourceReference = parseTylerEsuiteSearchHtml(esuiteSearch, config)
