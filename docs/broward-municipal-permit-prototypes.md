@@ -104,12 +104,16 @@ Two production runners now reuse the certified vendor parsers/transports:
   requires ten records on every non-terminal page, reconciles SmartGov's
   reported total, verifies replayed pages on resume, and rejects overlap across
   partitions. Duplicate eSuite labels remain separate because their source
-  option IDs are distinct.
+  option IDs are distinct. Historical eSuite rows with no issued permit number
+  retain the matching public application number and an explicit
+  `permit_application` provenance kind; the stable numeric detail ID remains
+  the record key and mismatched application/list identities fail closed.
 - `build-broward-municipal-property-seed.mjs` derives jurisdiction only from
   the executable BCPA situs registry. It produces exact folio queries for
   Coconut Creek/Lauderhill and deduplicated normalized base-address queries for
   Margate/Pompano Beach/Tamarac. Any target property whose address cannot be
-  represented is counted as an explicit blocker rather than silently dropped.
+  represented is written to a separate mode-0600 gap ledger by canonical
+  property identifier and reason, without retaining the rejected address.
 - `run-broward-municipal-property-enumeration.mjs` consumes that immutable
   private seed, requires each client-all page to stay below its exclusive cap,
   captures every detail before advancing the query checkpoint, and preserves
@@ -119,17 +123,17 @@ All three scripts write mode-0600 files below ignored owner-only directories.
 Their console summaries and dashboard projections contain aggregate counts and
 allowlisted blocker states only.
 
-| Jurisdiction     | Deterministic boundary                                                               | Full-worker gate                                                                       |
-| ---------------- | ------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------- |
-| Coconut Creek    | Every exact folio in the reconciled current BCPA Coconut Creek property seed         | Seed has zero target-query omissions and a small terminal folio pilot                  |
-| Dania Beach      | Every non-placeholder exact option ID in the official eSuite permit-type selector    | Rare-type pilot terminates and sequential `action=next` paging reconciles              |
-| Davie            | Every legacy eSuite exact type; login-gated 2026 OAS submissions remain excluded     | Same as Dania; output must retain the explicit OAS boundary                            |
-| Lauderhill       | Every exact folio in the reconciled current BCPA Lauderhill property seed            | Seed has zero target-query omissions and a small terminal folio pilot                  |
-| Lighthouse Point | Every exact value in the official SmartGov type selector                             | Positive live list/detail identity plus reported-total/page reconciliation             |
-| Margate          | Every deduplicated normalized address in the current BCPA Margate property seed      | Zero unqueryable target properties and a below-cap address pilot                       |
-| Pompano Beach    | Every deduplicated normalized address, with the client-all cap remaining fail-closed | Zero unqueryable target properties and positive evidence that sampled pages do not cap |
-| Sunrise          | EnerGov application-date windows from 1900-01-01 through the run end date            | One-day window reconciles; microfilm/records absent from EnerGov remain custodian-only |
-| Tamarac          | Every deduplicated normalized address in the current BCPA Tamarac property seed      | Zero unqueryable target properties and a below-cap address pilot                       |
+| Jurisdiction     | Deterministic boundary                                                                                            | Full-worker gate                                                                                           |
+| ---------------- | ----------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| Coconut Creek    | Every exact folio in the reconciled current BCPA Coconut Creek property seed                                      | Seed has zero target-query omissions and a small terminal folio pilot                                      |
+| Dania Beach      | Every non-placeholder exact option ID in the official eSuite permit-type selector                                 | Sequential paging reconciles; application-only rows preserve their vendor ID and explicit application kind |
+| Davie            | Every legacy eSuite exact type; login-gated 2026 OAS submissions remain excluded                                  | Same as Dania; output retains the explicit OAS boundary                                                    |
+| Lauderhill       | Every exact folio in the reconciled current BCPA Lauderhill property seed                                         | Seed has zero target-query omissions and a small terminal folio pilot                                      |
+| Lighthouse Point | Every exact value in the official SmartGov type selector                                                          | Positive live list/detail identity plus reported-total/page reconciliation                                 |
+| Margate          | 13,535 shared-address queries representing 15,059 properties; 1,450 properties remain in the private gap ledger   | Representable capture may run; full coverage remains partial until the ledger/custodian gap is resolved    |
+| Pompano Beach    | 23,900 shared-address queries; 2,961 properties remain in the private gap ledger; exclusive cap stays fail-closed | A positive 5-row address query and all details reconciled below the exclusive 100-row cap                  |
+| Sunrise          | EnerGov application-date windows from 1900-01-01 through the run end date                                         | One-day window reconciles; microfilm/records absent from EnerGov remain custodian-only                     |
+| Tamarac          | 18,362 shared-address queries representing 19,800 properties; 1,378 properties remain in the private gap ledger   | Representable capture may run; full coverage remains partial until the ledger/custodian gap is resolved    |
 
 The recovery dashboard includes fixed rows for all nine routes. Missing
 checkpoints render as no-start with the exact gate above; recent checkpoints

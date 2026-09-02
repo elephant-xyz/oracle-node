@@ -1063,8 +1063,9 @@ const PERMIT_ENUMERATION_CHECKPOINTS = Object.freeze([
     reader: "municipal_property",
     pauseReason: "checkpoint_stale",
     gapRelativePath: null,
-    coverageBoundary: "BCPA property-first normalized-address seed",
-    noStartReason: "awaiting_reconciled_property_seed",
+    coverageBoundary:
+      "Partial BCPA property-first seed: 15,059 represented properties; 1,450 private seed gaps",
+    noStartReason: "representable_property_worker_not_started",
     relativePath:
       "downloads/broward/municipal-property-enumeration/margate-full/checkpoint.private.json",
   },
@@ -1075,8 +1076,8 @@ const PERMIT_ENUMERATION_CHECKPOINTS = Object.freeze([
     pauseReason: "source_cap",
     gapRelativePath: null,
     coverageBoundary:
-      "BCPA property-first address seed with exclusive client-all cap",
-    noStartReason: "awaiting_reconciled_property_seed_and_cap_pilot",
+      "Partial BCPA property-first seed: 23,900 address queries; 2,961 private seed gaps; exclusive client-all cap",
+    noStartReason: "representable_property_worker_not_started",
     relativePath:
       "downloads/broward/municipal-property-enumeration/pompano-beach-full/checkpoint.private.json",
   },
@@ -1097,8 +1098,9 @@ const PERMIT_ENUMERATION_CHECKPOINTS = Object.freeze([
     reader: "municipal_property",
     pauseReason: "checkpoint_stale",
     gapRelativePath: null,
-    coverageBoundary: "BCPA property-first normalized-address seed",
-    noStartReason: "awaiting_reconciled_property_seed",
+    coverageBoundary:
+      "Partial BCPA property-first seed: 19,800 represented properties; 1,378 private seed gaps",
+    noStartReason: "representable_property_worker_not_started",
     relativePath:
       "downloads/broward/municipal-property-enumeration/tamarac-full/checkpoint.private.json",
   },
