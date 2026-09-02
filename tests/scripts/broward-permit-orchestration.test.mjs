@@ -41,8 +41,10 @@ import {
   normalizeMigratedPermitItem,
   parseSupportedPermitOptions,
   processByRouteWithConcurrency,
+  readBcsSummaryRecordCount,
   readJurisdictionKeys,
   runNode,
+  supportedPermitClientConfig,
 } from "../../scripts/run-broward-supported-permit-ingest.mjs";
 import {
   parseDonphanToolResult,
@@ -345,6 +347,61 @@ describe("Broward permit Neon pilot loader", () => {
 });
 
 describe("Broward supported-route permit ingest", () => {
+  it("keeps the control session alive and bounds network-silent queries", () => {
+    expect(supportedPermitClientConfig("postgresql://example.test/db")).toEqual(
+      expect.objectContaining({
+        connectionString: "postgresql://example.test/db",
+        keepAlive: true,
+        keepAliveInitialDelayMillis: 10_000,
+        query_timeout: 120_000,
+        statement_timeout: 120_000,
+      }),
+    );
+  });
+
+  it("reconciles the exact BCS child summary field and property identity", () => {
+    const summary = {
+      event: "broward_bcs_permit_probe_completed",
+      sourceSystem: "broward_county_bcs_posse_permits",
+      parcelCount: 1,
+      roofOnly: false,
+      normalizedRecordCount: 7,
+      observations: [
+        {
+          parcelIdentifier: "PRIVATE",
+          normalizedRecordCount: 7,
+          status: "records",
+        },
+      ],
+    };
+    expect(readBcsSummaryRecordCount(summary, "PRIVATE", false)).toBe(7);
+    expect(() =>
+      readBcsSummaryRecordCount(
+        {
+          ...summary,
+          observations: [
+            {
+              parcelIdentifier: "DIFFERENT",
+              normalizedRecordCount: 7,
+            },
+          ],
+        },
+        "PRIVATE",
+        false,
+      ),
+    ).toThrow(/identity changed/u);
+    expect(() =>
+      readBcsSummaryRecordCount(
+        {
+          ...summary,
+          normalizedRecordCount: 6,
+        },
+        "PRIVATE",
+        false,
+      ),
+    ).toThrow(/do not reconcile/u);
+  });
+
   it("caps total concurrency and requires a stable job ID", () => {
     expect(
       parseSupportedPermitOptions([

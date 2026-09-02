@@ -43,6 +43,7 @@ const ADAPTER_LOCK_KEYS = new Map([
   [BROWARD_ACCELA_ADAPTER_KEY, 43],
   [BROWARD_TYLER_CIVIC_ACCESS_ADAPTER_KEY, 44],
 ]);
+const BROWARD_BCS_SOURCE_SYSTEM = "broward_county_bcs_posse_permits";
 const TERMINAL_STATUSES = new Set([
   "records",
   "no_permits",
@@ -212,6 +213,30 @@ export function readJurisdictionKeys(raw) {
 }
 
 /**
+ * Build a long-running Neon client configuration that remains bounded while a
+ * source child performs browser/detail work between control queries.
+ *
+ * TCP keepalive prevents an otherwise idle advisory-lock connection from being
+ * silently dropped during a bounded source probe. The client-side query timeout
+ * complements PostgreSQL's statement timeout when the network stops delivering
+ * a response.
+ *
+ * @param {string} connectionString - Verified Neon connection URL.
+ * @returns {import("pg").ClientConfig} Bounded control-session configuration.
+ */
+export function supportedPermitClientConfig(connectionString) {
+  return {
+    connectionString,
+    application_name: "broward-supported-permit-ingest",
+    connectionTimeoutMillis: 10_000,
+    statement_timeout: 120_000,
+    query_timeout: 120_000,
+    keepAlive: true,
+    keepAliveInitialDelayMillis: 10_000,
+  };
+}
+
+/**
  * Run or resume supported anonymous permit routes.
  *
  * @param {SupportedPermitOptions} options - Durable run configuration.
@@ -227,11 +252,12 @@ export function readJurisdictionKeys(raw) {
  */
 export async function runSupportedPermitIngest(options) {
   const target = requireTarget(process.env);
-  const client = new Client({
-    connectionString: target.connectionString,
-    application_name: "broward-supported-permit-ingest",
-    connectionTimeoutMillis: 10_000,
-    statement_timeout: 120_000,
+  const client = new Client(
+    supportedPermitClientConfig(target.connectionString),
+  );
+  let controlConnectionFailed = false;
+  client.on("error", () => {
+    controlConnectionFailed = true;
   });
   await client.connect();
   try {
@@ -249,6 +275,7 @@ export async function runSupportedPermitIngest(options) {
     const signature = candidateSignature(candidates, options);
     await registerRun(client, options, signature, candidates);
     const migrated = await migrateCompatibleItems(client, options, candidates);
+    await reconcileReusableBcsArtifacts(client, options, candidates);
     await refreshRouteAggregates(client, options.jobId);
     const disposition = await readItemDisposition(
       client,
@@ -282,6 +309,9 @@ export async function runSupportedPermitIngest(options) {
         );
         try {
           const outcome = await probeAndLoadCandidate(candidate, options);
+          if (controlConnectionFailed) {
+            throw new Error("Permit control connection failed");
+          }
           const finalStatus =
             outcome.status === "failed" && attempt + 1 >= options.maxAttempts
               ? "failed_exhausted"
@@ -304,6 +334,9 @@ export async function runSupportedPermitIngest(options) {
             failed += 1;
           }
         } catch {
+          if (controlConnectionFailed) {
+            throw new Error("Permit control connection failed");
+          }
           const finalStatus =
             attempt + 1 >= options.maxAttempts ? "failed_exhausted" : "failed";
           await checkpointItem(
@@ -465,6 +498,116 @@ async function probeAndLoadCandidate(candidate, options) {
 }
 
 /**
+ * Reconcile completed BCS child artifacts that were durably written before a
+ * prior parent attempt failed to checkpoint or load them.
+ *
+ * Only failed item rows are considered. Successful terminal source outcomes
+ * are never reopened, and an exhausted row is changed only when its existing
+ * private artifact proves the exact folio and record count without another
+ * source request.
+ *
+ * @param {import("pg").Client} client - Verified locked control client.
+ * @param {SupportedPermitOptions} options - Stable run and artifact identity.
+ * @param {readonly SupportedPermitCandidate[]} candidates - Signed seed rows.
+ * @returns {Promise<number>} Count of saved BCS outcomes reconciled.
+ */
+async function reconcileReusableBcsArtifacts(client, options, candidates) {
+  const candidatesByHash = new Map(
+    candidates
+      .filter((candidate) => candidate.adapterKey === BROWARD_BCS_ADAPTER_KEY)
+      .map((candidate) => [candidate.parcelHash, candidate]),
+  );
+  if (candidatesByHash.size === 0) return 0;
+  const result = await client.query(
+    `SELECT parcel_hash,attempt_count
+     FROM ${CONTROL_SCHEMA}.broward_supported_permit_items
+     WHERE job_id=$1
+       AND adapter_key=$2
+       AND status IN ('failed','failed_exhausted')
+     ORDER BY parcel_hash`,
+    [options.jobId, BROWARD_BCS_ADAPTER_KEY],
+  );
+  let recovered = 0;
+  for (const row of result.rows) {
+    const candidate =
+      typeof row.parcel_hash === "string"
+        ? candidatesByHash.get(row.parcel_hash)
+        : undefined;
+    const attemptCount = Number(row.attempt_count);
+    if (
+      candidate === undefined ||
+      !Number.isInteger(attemptCount) ||
+      attemptCount < 1
+    ) {
+      throw new Error("Existing BCS checkpoint item is invalid");
+    }
+    const outcome = await readReusableBcsOutcome(candidate, options);
+    if (outcome === null) continue;
+    await checkpointItem(
+      client,
+      options.jobId,
+      candidate,
+      outcome.status,
+      outcome.recordCount,
+      attemptCount,
+      null,
+      null,
+    );
+    recovered += 1;
+  }
+  return recovered;
+}
+
+/**
+ * Validate and load one already completed private BCS child artifact.
+ *
+ * Artifact absence or an incompatible summary returns `null` so a nonterminal
+ * property can use the normal bounded source probe. A loader failure propagates
+ * because repeating the source query cannot repair a database failure.
+ *
+ * @param {SupportedPermitCandidate} candidate - Exact signed BCS property.
+ * @param {SupportedPermitOptions} options - Stable artifact and scope options.
+ * @returns {Promise<ProbeOutcome | null>} Reusable outcome or no valid artifact.
+ */
+async function readReusableBcsOutcome(candidate, options) {
+  const itemDirectory = path.join(
+    path.resolve(options.workDirectory),
+    candidate.jurisdictionKey,
+    candidate.parcelHash,
+  );
+  const recordsPath = path.join(itemDirectory, "records.private.jsonl");
+  const summaryPath = path.join(itemDirectory, "summary.private.json");
+  /** @type {number} */
+  let recordCount;
+  try {
+    const summary = await readJson(summaryPath);
+    recordCount = readBcsSummaryRecordCount(
+      summary,
+      candidate.folio,
+      options.scope === "roofing",
+    );
+  } catch {
+    return null;
+  }
+  if (recordCount > 0) {
+    await loadBrowardPermitPilotToNeon({
+      inputPath: recordsPath,
+      expectedRecords: recordCount,
+      includeBcs: true,
+      accelaInputPath: null,
+      expectedAccelaRecords: null,
+      municipalInputPaths: [],
+      expectedMunicipalRecords: null,
+    });
+  }
+  return {
+    status: recordCount > 0 ? "records" : "no_permits",
+    recordCount,
+    errorClass: null,
+  };
+}
+
+/**
  * Run one bounded BCS lookup and load complete normalized records.
  *
  * @param {SupportedPermitCandidate} candidate - Routed BCS property.
@@ -475,6 +618,8 @@ async function probeAndLoadCandidate(candidate, options) {
 async function probeBcs(candidate, itemDirectory, options) {
   const recordsPath = path.join(itemDirectory, "records.private.jsonl");
   const summaryPath = path.join(itemDirectory, "summary.private.json");
+  const reusable = await readReusableBcsOutcome(candidate, options);
+  if (reusable !== null) return reusable;
   const command = await runNode([
     "scripts/probe-broward-bcs-permits.mjs",
     "--parcel-id",
@@ -497,7 +642,11 @@ async function probeBcs(candidate, itemDirectory, options) {
     };
   }
   const summary = await readJson(summaryPath);
-  const recordCount = numberField(summary, "recordCount");
+  const recordCount = readBcsSummaryRecordCount(
+    summary,
+    candidate.folio,
+    options.scope === "roofing",
+  );
   if (recordCount > 0) {
     await loadBrowardPermitPilotToNeon({
       inputPath: recordsPath,
@@ -742,12 +891,7 @@ async function checkpointItem(
      SET heartbeat_at=now() WHERE job_id=$1`,
     [jobId],
   );
-  await client.query(
-    `UPDATE ${CONTROL_SCHEMA}.broward_supported_permit_routes
-     SET phase='running', heartbeat_at=now()
-     WHERE job_id=$1 AND jurisdiction_key=$2`,
-    [jobId, candidate.jurisdictionKey],
-  );
+  await refreshRouteAggregates(client, jobId, candidate.jurisdictionKey);
 }
 
 /**
@@ -1099,12 +1243,14 @@ async function migrateCompatibleItems(client, options, candidates) {
  *
  * @param {import("pg").Client} client - Verified control client.
  * @param {string} jobId - Stable source-scoped run identity.
+ * @param {string | null} [jurisdictionKey=null] - Optional single-route bound.
  * @returns {Promise<void>} Resolves after aggregate route checkpointing.
  */
-async function refreshRouteAggregates(client, jobId) {
+async function refreshRouteAggregates(client, jobId, jurisdictionKey = null) {
   await client.query(
     `UPDATE ${CONTROL_SCHEMA}.broward_supported_permit_routes AS route
-     SET terminal_count = (
+     SET phase='running',
+         terminal_count = (
            SELECT count(*)::integer
            FROM ${CONTROL_SCHEMA}.broward_supported_permit_items AS item
            WHERE item.job_id=route.job_id
@@ -1135,8 +1281,9 @@ async function refreshRouteAggregates(client, jobId) {
              AND item.next_attempt_at > now()
          ),
          heartbeat_at=now()
-     WHERE route.job_id=$1`,
-    [jobId],
+     WHERE route.job_id=$1
+       AND ($2::text IS NULL OR route.jurisdiction_key=$2)`,
+    [jobId, jurisdictionKey],
   );
 }
 
@@ -1350,6 +1497,54 @@ async function readJson(filePath) {
     throw new Error("Permit probe summary is not a JSON object");
   }
   return /** @type {Record<string, unknown>} */ (value);
+}
+
+/**
+ * Validate a completed one-property BCS child summary against the exact source
+ * query before its private JSONL can be reused or loaded.
+ *
+ * @param {Record<string, unknown>} summary - Parsed private BCS summary.
+ * @param {string} expectedParcelIdentifier - Exact signed property folio.
+ * @param {boolean} expectedRoofOnly - Active run scope.
+ * @returns {number} Reconciled normalized record count.
+ */
+export function readBcsSummaryRecordCount(
+  summary,
+  expectedParcelIdentifier,
+  expectedRoofOnly,
+) {
+  const observations = summary.observations;
+  if (
+    summary.event !== "broward_bcs_permit_probe_completed" ||
+    summary.sourceSystem !== BROWARD_BCS_SOURCE_SYSTEM ||
+    summary.parcelCount !== 1 ||
+    summary.roofOnly !== expectedRoofOnly ||
+    !Array.isArray(observations) ||
+    observations.length !== 1
+  ) {
+    throw new Error("BCS permit summary does not match the active probe");
+  }
+  const observation = observations[0];
+  if (
+    typeof observation !== "object" ||
+    observation === null ||
+    Array.isArray(observation)
+  ) {
+    throw new Error("BCS permit summary observation is invalid");
+  }
+  const observationRecord =
+    /** @type {Record<string, unknown>} */ (observation);
+  if (observationRecord.parcelIdentifier !== expectedParcelIdentifier) {
+    throw new Error("BCS permit summary property identity changed");
+  }
+  const recordCount = numberField(summary, "normalizedRecordCount");
+  if (
+    !Number.isInteger(observationRecord.normalizedRecordCount) ||
+    Number(observationRecord.normalizedRecordCount) !== recordCount
+  ) {
+    throw new Error("BCS permit summary record counts do not reconcile");
+  }
+  return recordCount;
 }
 
 /**
