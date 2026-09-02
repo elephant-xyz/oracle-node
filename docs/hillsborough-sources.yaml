@@ -1,0 +1,170 @@
+# Hillsborough County, FL — public data source registry
+#
+# Consolidated source metadata for Oracle ingestion categories.
+# Infra identifiers (AWS account, bucket, SQS) are intentionally NOT recorded here.
+
+county:
+  name: Hillsborough County
+  state: FL
+  fips: "12057"
+  parcel_identifier:
+    name: Folio
+    description: >-
+      10-digit numeric folio (e.g. 1125270100). Display form uses a dash
+      (112527-0100). Alternate strap/PIN display form is
+      A-SS-TT-RR-SUB-BLOCK-LOT.X (e.g. A-19-29-18-ZZZ-000005-49460.0).
+      HCPA CommonServices search and ParcelData use the unformatted strap
+      (e.g. 182919ZZZ000005494600A) as `pin`. GIS HC_ParcelsPublic uses
+      FOLIO without dashes and STRAP = ParcelData pin.
+    seed_normalization: >-
+      Seed `parcel_id` is the 10-digit folio (no dashes). `source_identifier`
+      is the ParcelData/GIS STRAP pin used for capture URLs.
+
+seed:
+  location: downloads/hillsborough/pilot-seed-50.csv
+  parcels_pilot: 50
+  geometry_in_seed:
+    - parcel_polygon
+    - longitude
+    - latitude
+  bulk_sources:
+    - name: HCPA Maps & Data downloads
+      url: https://hcpafl.org/Downloads/Maps-Data
+    - name: County GIS parcel layer (HC_ParcelsPublic)
+      url: https://maps.hillsboroughcounty.org/arcgis/rest/services/InfoLayers/HC_ParcelsPublic/FeatureServer/0
+    - name: Florida DOR NAL roll (fallback)
+      note: Statewide annual Name-Address-Legal file per county
+
+sources:
+  - key: property-appraisal
+    category: property
+    name: Hillsborough County Property Appraiser (HCPA)
+    base_urls:
+      - https://hcpafl.org/
+      - https://gis.hcpafl.org/PropertySearch/
+      - https://gis.hcpafl.org/CommonServices/property/search/
+    access_pattern:
+      mode: plain-http-json
+      tooling: CommonServices BasicSearch + ParcelData JSON; local HTML shim for existing cheerio transform
+      auth: public (no login / CAPTCHA observed)
+      anti_bot: none observed on CommonServices JSON endpoints (US egress verified)
+    endpoints:
+      basic_search: https://gis.hcpafl.org/CommonServices/property/search/BasicSearch
+      parcel_data: https://gis.hcpafl.org/CommonServices/property/search/ParcelData
+      autocomplete: https://gis.hcpafl.org/CommonServices/property/search/Autocomplete
+      map_image: https://gis.hcpafl.org/CommonServices/property/map-image/
+      parcel_pdf: https://gis.hcpafl.org/CommonServices/property/parcelpdf/
+    refresh:
+      method: on-demand per-parcel ParcelData fetch (seed-driven); local pilot writes Structured Archive artifacts under downloads/
+      cadence: on-demand / re-run per refresh
+    implemented_by:
+      transform: Counties-trasform-scripts/hillsborough/scripts/
+      local_pilot: scripts/hillsborough-local-pilot.mjs
+      skill: county-appraisal-onboarding
+    benchmark:
+      probe: BasicSearch address=Kennedy pagesize=5 → ~0.5–1.5s; ParcelData → ~0.5–1.5s; 43KB commercial sample
+      safe_local_concurrency: 2
+      estimated_full_download: deferred (AWS / full-county out of scope for this pilot)
+
+  - key: permits
+    category: permits
+    name: HillsGovHub / Accela Citizen Access (HCFL) + City of Tampa Accela
+    base_urls:
+      - https://hcfl.gov/businesses/hillsgovhub
+      - https://aca-prod.accela.com/hcfl/Cap/CapHome.aspx?module=Building&TabName=Home
+      - https://aca-prod.accela.com/TAMPA/
+    access_pattern:
+      mode: browser-scrape (Accela ACA)
+      tooling: county-permit-adapter Accela template (not built this pilot)
+      auth: public search available; many actions require HillsGovHub login
+      anti_bot: Accela session/bootstrap typical; guest search varies by agency
+    notes: >-
+      ParcelData.permitInfo embeds permit numbers and deep links into Tampa Accela
+      GlobalSearch for many Tampa parcels. Unincorporated / other municipalities
+      use HCFL Accela agency code. Full countywide permit harvest deferred until
+      Accela adapter is wired; pilot documents embedded permitInfo from appraisal.
+    refresh:
+      method: deferred for local pilot (embedded permitInfo captured with appraisal)
+    implemented_by:
+      skill: county-permit-adapter
+      status: discovered — adapter not implemented this pilot
+
+  - key: sunbiz
+    category: business-registration
+    name: Florida Sunbiz corporate registrations (FL Dept. of State)
+    base_urls:
+      - https://dos.fl.gov/sunbiz/
+      - https://search.sunbiz.org/
+    access_pattern:
+      mode: statewide bulk ZIP download (existing sunbiz-corporate-ingest skill)
+      auth: public; Cloudflare on some paths
+    refresh:
+      method: statewide; only Hillsborough ZIP-prefix list is county-specific
+      cadence: periodic bulk refresh
+    implemented_by:
+      skill: sunbiz-corporate-ingest
+    status: available (FL statewide) — not re-run in this local appraisal pilot
+
+  - key: bbb
+    category: contractor-reputation
+    name: Better Business Bureau contractor listings
+    base_urls:
+      - https://www.bbb.org/
+    access_pattern:
+      mode: category harvest (existing bbb-harvest skill)
+      auth: public
+    refresh:
+      method: national harvest; not county-gated
+    implemented_by:
+      skill: bbb-harvest
+    status: available (national) — not re-run in this local appraisal pilot
+
+  - key: gis-geometry
+    category: geometry
+    name: Hillsborough County GIS HC_ParcelsPublic
+    base_urls:
+      - https://maps.hillsboroughcounty.org/arcgis/rest/services/InfoLayers/HC_ParcelsPublic/FeatureServer/0
+      - https://data.hillspafl.gov/
+    access_pattern:
+      mode: ArcGIS REST query by FOLIO
+      auth: public
+    refresh:
+      method: join into seed CSV as parcel_polygon / lon / lat for transform geometry
+    status: available — used for pilot seed geometry
+
+  - key: tax-collector
+    category: tax-payments
+    name: Hillsborough Tax Collector
+    base_urls:
+      - https://hillsborough.county-taxes.com/public/
+    status: out_of_scope_this_pilot
+    reason: Payment/tax-collector rolls are not part of the Oracle property/permit/Sunbiz/BBB milestone; TRIM/tax values already come from HCPA ParcelData valueSummary.
+
+  - key: recorder
+    category: official-records
+    name: Hillsborough Clerk of Court / Official Records
+    base_urls:
+      - https://publicaccess.hillsclerk.com/
+    status: out_of_scope_this_pilot
+    reason: Deed/mortgage/lien images are linked from HCPA sales history (book/page) but full recorder harvest is separate scope.
+
+  - key: code-enforcement
+    category: code-enforcement
+    name: Municipal / county code enforcement
+    status: unavailable_as_unified_source
+    reason: Fragmented across Tampa and Hillsborough jurisdictions; no single countywide bulk feed identified for this pilot.
+
+permits:
+  - jurisdiction: Hillsborough County (unincorporated) / HillsGovHub
+    vendor: Accela
+    agency_code: HCFL
+    url: https://aca-prod.accela.com/hcfl/Cap/CapHome.aspx?module=Building&TabName=Home
+    search_by_parcel: needs-certify
+    status: discovered
+  - jurisdiction: City of Tampa
+    vendor: Accela
+    agency_code: TAMPA
+    url: https://aca-prod.accela.com/TAMPA/
+    search_by_parcel: needs-certify
+    status: discovered
+    note: Linked from HCPA ParcelData.permitInfo.permitUrl for many Tampa properties

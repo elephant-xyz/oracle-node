@@ -105,7 +105,9 @@ export async function runExtract(argv) {
   try {
     const duckdbTempDir = path.resolve(options.cacheDir, "duckdb-tmp");
     await mkdir(duckdbTempDir, { recursive: true });
-    await db.exec("INSTALL spatial; INSTALL httpfs;");
+    await db.exec(
+      "INSTALL spatial; LOAD spatial; INSTALL httpfs; LOAD httpfs; SET s3_region = 'us-west-2';",
+    );
     await db.exec(
       `SET temp_directory = ${duckdbStringLiteral(duckdbTempDir)};`,
     );

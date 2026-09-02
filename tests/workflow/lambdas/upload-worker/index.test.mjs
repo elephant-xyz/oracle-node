@@ -66,7 +66,11 @@ describe("upload-worker handler", () => {
 
     // Default mock implementations
     mockCreateLogger.mockReturnValue(vi.fn());
-    mockExecuteWithTaskToken.mockResolvedValue(undefined);
+    mockExecuteWithTaskToken.mockImplementation(async ({ workerFn }) => {
+      try {
+        if (workerFn) await workerFn();
+      } catch {}
+    });
     mockEmitWorkflowEvent.mockResolvedValue(undefined);
     mockDownloadS3Object.mockResolvedValue(undefined);
     mockRequireEnv.mockImplementation((name) => {
