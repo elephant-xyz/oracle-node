@@ -1143,9 +1143,7 @@ export async function stageBrowardDonphanSnapshot(options) {
     transactionOpen = true;
     await verifyNeonIdentity(client, target);
     const aggregate = await readSnapshotCounts(client);
-    const normalized = normalizeSnapshotCounts(
-      aggregate,
-    );
+    const normalized = normalizeSnapshotCounts(aggregate);
     const version = snapshotVersion(normalized.snapshotTimestamp);
     const prefix = browardSnapshotPrefix(version);
     const outputDirectory = path.join(options.outputRoot, version);
