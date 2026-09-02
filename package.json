@@ -36,7 +36,8 @@
     "hillsborough-status": "node scripts/hillsborough/status.mjs",
     "hillsborough-dashboard": "node scripts/hillsborough/serve-dashboard.mjs",
     "duval-seed": "node scripts/build-duval-seed.mjs",
-    "duval-seed-sample": "node scripts/build-duval-validation-sample.mjs"
+    "duval-seed-sample": "node scripts/build-duval-validation-sample.mjs",
+    "duval-pilot": "node scripts/duval-local-pilot.mjs"
   },
   "devDependencies": {
     "@aws-sdk/client-cloudformation": "^3.895.0",
