@@ -766,6 +766,18 @@ describe("SmartGov and eGovPLUS HTML protocols", () => {
       record_type: "ROOF",
       project_description: "RE-ROOF",
     });
+    const unissuedRecord = parseSmartGovDetailHtml(
+      detail.replace(
+        '<span class="project-section-field-value">08/10/2026</span>',
+        '<span class="project-section-field-value">- -</span>',
+      ),
+      {
+        config,
+        reference: page.references[0],
+        query: { kind: "record_type", value: "ROOF" },
+      },
+    );
+    expect(unissuedRecord.permit_issue_date).toBeNull();
     expect(JSON.stringify(record)).not.toContain("OMITTED CONTRACTOR");
   });
 
