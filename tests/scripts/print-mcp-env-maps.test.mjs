@@ -86,6 +86,8 @@ describe("print-mcp-env-maps", () => {
     expect(Object.keys(maps.PROPERTY_QUERY_TABLE_MAP)).toEqual(countyKeys);
     expect(Object.keys(maps.DATASET_COVERAGE_MAP)).toEqual(countyKeys);
     expect(maps.PERMIT_QUERY_TABLE_MAP).toEqual({
+      broward: catalog.counties.find((c) => c.countyKey === "broward")
+        .permitQueryTableUrl,
       montgomery: catalog.counties.find((c) => c.countyKey === "montgomery")
         .permitQueryTableUrl,
       "rock-island": catalog.counties.find((c) => c.countyKey === "rock-island")
