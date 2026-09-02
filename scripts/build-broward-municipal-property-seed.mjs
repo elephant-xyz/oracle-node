@@ -25,6 +25,8 @@ const EXPECTED_PROJECT_ID = "raspy-frost-51580436";
 const PRODUCTION_ENDPOINT_PREFIX = "ep-mute-leaf";
 const DEFAULT_OUTPUT_PATH =
   "downloads/broward/broward-municipal-property-seed.private.csv";
+const DEFAULT_GAP_OUTPUT_PATH =
+  "downloads/broward/broward-municipal-property-seed-gaps.private.csv";
 const TARGET_QUERY_KIND = Object.freeze({
   "coconut-creek": /** @type {const} */ ("folio"),
   lauderhill: /** @type {const} */ ("folio"),
@@ -37,6 +39,11 @@ const SEED_COLUMNS = /** @type {const} */ ([
   "query_kind",
   "query_value",
   "property_count",
+]);
+const GAP_COLUMNS = /** @type {const} */ ([
+  "jurisdiction_key",
+  "property_identifier",
+  "reason",
 ]);
 const FULL_SUFFIX_TO_ABBREVIATION = Object.freeze({
   ALLEY: "ALY",
@@ -181,6 +188,7 @@ const FULL_SUFFIX_TO_ABBREVIATION = Object.freeze({
  *
  * @typedef {object} MunicipalPropertySeedOptions
  * @property {string} outputPath - Owner-only CSV destination.
+ * @property {string} gapOutputPath - Owner-only unqueryable-property ledger.
  *
  * @typedef {object} BrowardPropertyCandidate
  * @property {unknown} request_identifier - Candidate BCPA folio.
@@ -192,8 +200,14 @@ const FULL_SUFFIX_TO_ABBREVIATION = Object.freeze({
  * @property {string} query_value - Private normalized folio or base situs.
  * @property {number} property_count - BCPA properties represented by this query.
  *
+ * @typedef {object} MunicipalPropertySeedGapRow
+ * @property {MunicipalSeedJurisdictionKey} jurisdiction_key - Registry jurisdiction whose source query cannot represent the property.
+ * @property {string} property_identifier - Canonical BCPA folio retained only in the private ledger.
+ * @property {"unrepresentable_normalized_address"} reason - Stable fail-closed exclusion class.
+ *
  * @typedef {object} MunicipalPropertySeedResult
  * @property {MunicipalPropertySeedRow[]} rows - Deterministic unique source queries.
+ * @property {MunicipalPropertySeedGapRow[]} gapRows - Deterministic private property exclusions.
  * @property {number} inputCount - Database candidates considered.
  * @property {number} invalidCount - Missing/invalid folio or situs rows.
  * @property {number} unresolvedCount - Rows without exact registry routing.
@@ -210,17 +224,41 @@ const FULL_SUFFIX_TO_ABBREVIATION = Object.freeze({
  * @returns {MunicipalPropertySeedOptions} Validated builder options.
  */
 export function parseMunicipalPropertySeedOptions(argv) {
-  if (argv.length === 0)
-    return { outputPath: path.resolve(DEFAULT_OUTPUT_PATH) };
-  if (
-    argv.length !== 2 ||
-    argv[0] !== "--output" ||
-    argv[1] === undefined ||
-    argv[1].trim() === ""
-  ) {
-    throw new Error("Usage: --output <private-csv-path>");
+  if (argv.length === 0) {
+    return {
+      outputPath: path.resolve(DEFAULT_OUTPUT_PATH),
+      gapOutputPath: path.resolve(DEFAULT_GAP_OUTPUT_PATH),
+    };
   }
-  return { outputPath: path.resolve(argv[1]) };
+  const allowed = new Set(["--output", "--gap-output"]);
+  const values = new Map();
+  for (let index = 0; index < argv.length; index += 2) {
+    const flag = argv[index];
+    const value = argv[index + 1];
+    if (
+      typeof flag !== "string" ||
+      !allowed.has(flag) ||
+      typeof value !== "string" ||
+      value.trim() === "" ||
+      value.startsWith("--") ||
+      values.has(flag)
+    ) {
+      throw new Error(
+        "Municipal seed options must be unique --output/--gap-output pairs",
+      );
+    }
+    values.set(flag, value);
+  }
+  const outputPath = path.resolve(
+    values.get("--output") ?? DEFAULT_OUTPUT_PATH,
+  );
+  const gapOutputPath = path.resolve(
+    values.get("--gap-output") ?? deriveGapOutputPath(outputPath),
+  );
+  if (gapOutputPath === outputPath) {
+    throw new Error("Municipal seed and gap ledger paths must differ");
+  }
+  return { outputPath, gapOutputPath };
 }
 
 /**
@@ -302,6 +340,8 @@ export function normalizeMunicipalPropertyAddress(
 export function createBrowardMunicipalPropertySeedRows(candidates) {
   /** @type {Map<string, MunicipalPropertySeedRow>} */
   const rowsByQuery = new Map();
+  /** @type {MunicipalPropertySeedGapRow[]} */
+  const gapRows = [];
   /** @type {Record<MunicipalSeedJurisdictionKey, number>} */
   const propertyCounts = emptyJurisdictionCounts();
   /** @type {Record<MunicipalSeedJurisdictionKey, number>} */
@@ -344,6 +384,11 @@ export function createBrowardMunicipalPropertySeedRows(candidates) {
             );
     } catch {
       unqueryableCounts[jurisdictionKey] += 1;
+      gapRows.push({
+        jurisdiction_key: jurisdictionKey,
+        property_identifier: folio,
+        reason: "unrepresentable_normalized_address",
+      });
       continue;
     }
     const identity = `${jurisdictionKey}\u0000${queryKind}\u0000${queryValue.toUpperCase()}`;
@@ -365,11 +410,17 @@ export function createBrowardMunicipalPropertySeedRows(candidates) {
       left.query_kind.localeCompare(right.query_kind) ||
       left.query_value.localeCompare(right.query_value),
   );
+  gapRows.sort(
+    (left, right) =>
+      left.jurisdiction_key.localeCompare(right.jurisdiction_key) ||
+      left.property_identifier.localeCompare(right.property_identifier),
+  );
   /** @type {Record<MunicipalSeedJurisdictionKey, number>} */
   const queryCounts = emptyJurisdictionCounts();
   for (const row of rows) queryCounts[row.jurisdiction_key] += 1;
   return {
     rows,
+    gapRows,
     inputCount: candidates.length,
     invalidCount,
     unresolvedCount,
@@ -393,6 +444,18 @@ export function renderMunicipalPropertySeedRow(row) {
 }
 
 /**
+ * Render one private unqueryable-property receipt without retaining an address.
+ *
+ * @param {MunicipalPropertySeedGapRow} row - Explicit fail-closed exclusion.
+ * @returns {string} CSV line without trailing newline.
+ */
+export function renderMunicipalPropertySeedGapRow(row) {
+  return GAP_COLUMNS.map((column) => encodeCsvCell(String(row[column]))).join(
+    ",",
+  );
+}
+
+/**
  * Build the complete seed after independently verifying the isolated Neon
  * project, branch, and endpoint.
  *
@@ -404,7 +467,9 @@ export function renderMunicipalPropertySeedRow(row) {
  *   queryCounts:Record<MunicipalSeedJurisdictionKey,number>,
  *   unqueryableCounts:Record<MunicipalSeedJurisdictionKey,number>,
  *   unresolvedCount:number,
- *   sha256:string
+ *   sha256:string,
+ *   gapRowCount:number,
+ *   gapSha256:string
  * }>} Aggregate-only seed receipt.
  */
 export async function buildBrowardMunicipalPropertySeed(
@@ -443,7 +508,11 @@ export async function buildBrowardMunicipalPropertySeed(
     const content = `${SEED_COLUMNS.join(",")}\n${built.rows
       .map((row) => renderMunicipalPropertySeedRow(row))
       .join("\n")}\n`;
+    const gapContent = `${GAP_COLUMNS.join(",")}\n${built.gapRows
+      .map((row) => renderMunicipalPropertySeedGapRow(row))
+      .join("\n")}\n`;
     await writePrivateAtomic(options.outputPath, content);
+    await writePrivateAtomic(options.gapOutputPath, gapContent);
     return {
       rowCount: built.rows.length,
       propertyCounts: built.propertyCounts,
@@ -451,10 +520,24 @@ export async function buildBrowardMunicipalPropertySeed(
       unqueryableCounts: built.unqueryableCounts,
       unresolvedCount: built.unresolvedCount,
       sha256: createHash("sha256").update(content).digest("hex"),
+      gapRowCount: built.gapRows.length,
+      gapSha256: createHash("sha256").update(gapContent).digest("hex"),
     };
   } finally {
     await client.end();
   }
+}
+
+/**
+ * Derive the default sibling ledger path for a caller-selected private seed.
+ *
+ * @param {string} outputPath - Absolute or relative private seed path.
+ * @returns {string} Sibling private gap-ledger path.
+ */
+function deriveGapOutputPath(outputPath) {
+  return outputPath.endsWith(".private.csv")
+    ? `${outputPath.slice(0, -".private.csv".length)}-gaps.private.csv`
+    : `${outputPath}-gaps.private.csv`;
 }
 
 /**

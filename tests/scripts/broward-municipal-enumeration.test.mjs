@@ -8,6 +8,7 @@ import {
   createBrowardMunicipalPropertySeedRows,
   normalizeMunicipalPropertyAddress,
   parseMunicipalPropertySeedOptions,
+  renderMunicipalPropertySeedGapRow,
 } from "../../scripts/build-broward-municipal-property-seed.mjs";
 import { getBrowardMunicipalPermitConfig } from "../../scripts/permit-source-adapters/broward-municipal-config.mjs";
 import {
@@ -82,9 +83,18 @@ function normalizedRecord(config, sourceRecordId, permitNumber, query) {
 
 describe("Broward municipal property seed", () => {
   it("routes exact BCPA city tails and deduplicates normalized address queries", () => {
-    expect(parseMunicipalPropertySeedOptions([]).outputPath).toMatch(
-      /broward-municipal-property-seed\.private\.csv$/u,
-    );
+    expect(parseMunicipalPropertySeedOptions([])).toMatchObject({
+      outputPath: expect.stringMatching(
+        /broward-municipal-property-seed\.private\.csv$/u,
+      ),
+      gapOutputPath: expect.stringMatching(
+        /broward-municipal-property-seed-gaps\.private\.csv$/u,
+      ),
+    });
+    expect(
+      parseMunicipalPropertySeedOptions(["--output", "custom.private.csv"])
+        .gapOutputPath,
+    ).toMatch(/custom-gaps\.private\.csv$/u);
     expect(
       normalizeMunicipalPropertyAddress(
         "100 PRIVATE STREET, MARGATE, FL 33063",
@@ -129,6 +139,19 @@ describe("Broward municipal property seed", () => {
       "pompano-beach": 1,
     });
     expect(result.unqueryableCounts["pompano-beach"]).toBe(1);
+    expect(result.gapRows).toEqual([
+      {
+        jurisdiction_key: "pompano-beach",
+        property_identifier: "484200000004",
+        reason: "unrepresentable_normalized_address",
+      },
+    ]);
+    const gapRow = result.gapRows[0];
+    expect(gapRow).toBeDefined();
+    if (gapRow === undefined) throw new Error("Expected one fixture gap row");
+    expect(renderMunicipalPropertySeedGapRow(gapRow)).toBe(
+      "pompano-beach,484200000004,unrepresentable_normalized_address",
+    );
   });
 });
 
