@@ -873,6 +873,25 @@ describe("SmartGov and eGovPLUS HTML protocols", () => {
       },
     );
     expect(largeInspectionRecord.inspections).toHaveLength(101);
+    const blankDateRecord = parseEgovPlusDetailHtml(
+      egovPlusDetail.replace(
+        `<th>Application Date</th>
+        <td>02-02-2026</td>`,
+        `<td class="field_label">Application Date</td>
+        <td class="field_data"></td>
+        <td class="field_label">Operator</td>
+        <td class="field_data">PRIVATE FIXTURE OPERATOR</td>`,
+      ),
+      {
+        config,
+        reference: sourceReference,
+        query: { kind: "folio", value: "494123AB0020" },
+      },
+    );
+    expect(blankDateRecord.application_date).toBeNull();
+    expect(JSON.stringify(blankDateRecord)).not.toContain(
+      "PRIVATE FIXTURE OPERATOR",
+    );
     expect(JSON.stringify(record)).not.toMatch(
       /PRIVATE FIXTURE OWNER|PRIVATE FIXTURE INSPECTOR|555-0123/,
     );

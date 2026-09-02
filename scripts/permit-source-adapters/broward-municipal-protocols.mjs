@@ -167,12 +167,17 @@ function collectLabeledFields($) {
           structuredValue.children().not(".case-header-status-badge"),
         )
       : null;
+    const adjacentValue = readSelectionText(label.next());
+    const parentFallback =
+      label.hasClass("field-label") || label.hasClass("field_label")
+        ? null
+        : readSelectionText(label.parent().children().not(label));
     add(
       readSelectionText(label),
       caseHeaderValue ??
         readSelectionText(structuredValue) ??
-        readSelectionText(label.next()) ??
-        readSelectionText(label.parent().children().not(label)),
+        adjacentValue ??
+        parentFallback,
     );
   }
   return fields;
