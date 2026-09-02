@@ -1067,7 +1067,7 @@ export function parseSmartGovSearchHtml(
     ($("a[onclick*='gotoPage']")
       .toArray()
       .some((element) =>
-        new RegExp(`gotoPage\\(\\s*${String(sourcePage + 1)}\\s*\\)`, "u").test(
+        new RegExp(`gotoPage\\(\\s*${String(sourcePage)}\\s*\\)`, "u").test(
           $(element).attr("onclick") ?? "",
         ),
       )

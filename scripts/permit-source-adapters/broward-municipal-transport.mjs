@@ -1005,24 +1005,34 @@ async function advanceSmartGovPage(page, targetPage) {
   const links = await page.$$('a[onclick*="gotoPage"]');
   /** @type {import("puppeteer").ElementHandle<Element>[]} */
   const matches = [];
+  /** @type {import("puppeteer").ElementHandle<Element>[]} */
+  const exactTextMatches = [];
   for (const link of links) {
-    const onclick = await link.evaluate(
-      (element) => element.getAttribute("onclick") ?? "",
-    );
+    const metadata = await link.evaluate((element) => ({
+      onclick: element.getAttribute("onclick") ?? "",
+      text: (element.textContent ?? "").replace(/\s+/gu, " ").trim(),
+    }));
     if (
-      new RegExp(`gotoPage\\(\\s*${String(targetPage)}\\s*\\)`, "u").test(
-        onclick,
+      new RegExp(`gotoPage\\(\\s*${String(targetPage - 1)}\\s*\\)`, "u").test(
+        metadata.onclick,
       )
     ) {
       matches.push(link);
+      if (metadata.text === String(targetPage)) exactTextMatches.push(link);
     }
   }
-  if (matches.length !== 1) {
+  const selected =
+    exactTextMatches.length === 1
+      ? exactTextMatches[0]
+      : matches.length === 1
+        ? matches[0]
+        : undefined;
+  if (selected === undefined) {
     throw new Error("SmartGov numbered pagination could not be reconciled");
   }
   await Promise.all([
     page.waitForNavigation({ waitUntil: "networkidle2" }),
-    matches[0]?.click(),
+    selected.click(),
   ]);
 }
 

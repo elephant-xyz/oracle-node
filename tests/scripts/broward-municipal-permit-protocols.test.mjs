@@ -714,7 +714,7 @@ describe("SmartGov and eGovPLUS HTML protocols", () => {
             <div><div>OMITTED CONTRACTOR</div><div>OMITTED LICENSE</div></div>
           </div>
         </div>
-        <a href="#" onclick="ApplicationSearchAdvancedResults.gotoPage(2)">2</a>
+        <a href="#" onclick="ApplicationSearchAdvancedResults.gotoPage(1)">2</a>
       </div></body></html>`;
     const page = parseSmartGovSearchHtml(search, config);
     expect(page).toMatchObject({
