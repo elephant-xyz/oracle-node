@@ -34,7 +34,12 @@
     "hillsborough-pilot": "node scripts/hillsborough-local-pilot.mjs",
     "hillsborough-seed": "node scripts/hillsborough/build-full-seed.mjs",
     "hillsborough-status": "node scripts/hillsborough/status.mjs",
-    "hillsborough-dashboard": "node scripts/hillsborough/serve-dashboard.mjs"
+    "hillsborough-dashboard": "node scripts/hillsborough/serve-dashboard.mjs",
+    "duval-seed": "node scripts/build-duval-seed.mjs",
+    "duval-seed-sample": "node scripts/build-duval-validation-sample.mjs",
+    "duval-pilot": "node scripts/duval-local-pilot.mjs",
+    "duval-validate": "node scripts/validate-duval-appraisal.mjs",
+    "duval-query-table": "node scripts/export-duval-query-table.mjs"
   },
   "devDependencies": {
     "@aws-sdk/client-cloudformation": "^3.895.0",
@@ -59,6 +64,7 @@
   "dependencies": {
     "@dsnp/parquetjs": "^1.8.7",
     "commander": "^14.0.1",
+    "csv-parse": "^5.6.0",
     "duckdb": "^1.3.4",
     "events": "file:scripts/events-shim",
     "ipfs-only-hash": "^4.0.0",

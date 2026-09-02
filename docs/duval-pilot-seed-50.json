@@ -1,0 +1,326 @@
+{
+  "county": "duval",
+  "generatedAt": "2026-09-02T02:26:57.897Z",
+  "source": "downloads/duval/pilot-seed-50.csv",
+  "rowCount": 50,
+  "spotCheckedAt": "2026-09-02",
+  "spotChecked": [
+    {
+      "dorParcelId": "0969250000R",
+      "canonicalRe": "096925-0000",
+      "result": "task_3_smoke"
+    },
+    {
+      "dorParcelId": "0901770592R",
+      "canonicalRe": "090177-0592",
+      "result": "task_3_smoke"
+    },
+    {
+      "dorParcelId": "1230290100R",
+      "canonicalRe": "123029-0100",
+      "result": "task_3_smoke"
+    }
+  ],
+  "parcels": [
+    {
+      "dorParcelId": "0969250000R",
+      "dorUc": "001",
+      "paUc": "00",
+      "zip": "32244"
+    },
+    {
+      "dorParcelId": "0901770592R",
+      "dorUc": "004",
+      "paUc": "00",
+      "zip": "32204"
+    },
+    {
+      "dorParcelId": "1230290100R",
+      "dorUc": "027",
+      "paUc": "91",
+      "zip": "32225"
+    },
+    {
+      "dorParcelId": "0000160100R",
+      "dorUc": "000",
+      "paUc": "00",
+      "zip": "32234"
+    },
+    {
+      "dorParcelId": "0000060040R",
+      "dorUc": "002",
+      "paUc": "00",
+      "zip": "32234"
+    },
+    {
+      "dorParcelId": "0000320020R",
+      "dorUc": "008",
+      "paUc": "10",
+      "zip": "32234"
+    },
+    {
+      "dorParcelId": "0000900100R",
+      "dorUc": "040",
+      "paUc": "00",
+      "zip": "32234"
+    },
+    {
+      "dorParcelId": "0000010005R",
+      "dorUc": "055",
+      "paUc": "00",
+      "zip": "32234"
+    },
+    {
+      "dorParcelId": "0000510000R",
+      "dorUc": "076",
+      "paUc": "92",
+      "zip": "32234"
+    },
+    {
+      "dorParcelId": "0000100015R",
+      "dorUc": "080",
+      "paUc": "00",
+      "zip": "32234"
+    },
+    {
+      "dorParcelId": "0000100005R",
+      "dorUc": "061",
+      "paUc": "00",
+      "zip": "32234"
+    },
+    {
+      "dorParcelId": "0000090000R",
+      "dorUc": "055",
+      "paUc": "00",
+      "zip": "32234"
+    },
+    {
+      "dorParcelId": "0000010010R",
+      "dorUc": "056",
+      "paUc": "00",
+      "zip": "32234"
+    },
+    {
+      "dorParcelId": "0000150000R",
+      "dorUc": "001",
+      "paUc": "00",
+      "zip": "32234"
+    },
+    {
+      "dorParcelId": "0000020010R",
+      "dorUc": "055",
+      "paUc": "00",
+      "zip": "32234"
+    },
+    {
+      "dorParcelId": "0000030000R",
+      "dorUc": "056",
+      "paUc": "00",
+      "zip": "32234"
+    },
+    {
+      "dorParcelId": "0000040000R",
+      "dorUc": "055",
+      "paUc": "00",
+      "zip": "32234"
+    },
+    {
+      "dorParcelId": "0000060030R",
+      "dorUc": "001",
+      "paUc": "00",
+      "zip": "32234"
+    },
+    {
+      "dorParcelId": "0000060100R",
+      "dorUc": "002",
+      "paUc": "00",
+      "zip": "32234"
+    },
+    {
+      "dorParcelId": "0000070000R",
+      "dorUc": "056",
+      "paUc": "00",
+      "zip": "32234"
+    },
+    {
+      "dorParcelId": "0000070010R",
+      "dorUc": "001",
+      "paUc": "00",
+      "zip": "32234"
+    },
+    {
+      "dorParcelId": "0000090050R",
+      "dorUc": "056",
+      "paUc": "00",
+      "zip": "32234"
+    },
+    {
+      "dorParcelId": "0000090100R",
+      "dorUc": "001",
+      "paUc": "00",
+      "zip": "32234"
+    },
+    {
+      "dorParcelId": "0000090400R",
+      "dorUc": "056",
+      "paUc": "00",
+      "zip": "32234"
+    },
+    {
+      "dorParcelId": "0000090500R",
+      "dorUc": "061",
+      "paUc": "00",
+      "zip": "32234"
+    },
+    {
+      "dorParcelId": "0000100010R",
+      "dorUc": "096",
+      "paUc": "00",
+      "zip": "32234"
+    },
+    {
+      "dorParcelId": "0000110000R",
+      "dorUc": "001",
+      "paUc": "00",
+      "zip": "32234"
+    },
+    {
+      "dorParcelId": "0000120005R",
+      "dorUc": "061",
+      "paUc": "00",
+      "zip": "32234"
+    },
+    {
+      "dorParcelId": "0000120010R",
+      "dorUc": "001",
+      "paUc": "00",
+      "zip": "32234"
+    },
+    {
+      "dorParcelId": "0000120015R",
+      "dorUc": "001",
+      "paUc": "00",
+      "zip": "32234"
+    },
+    {
+      "dorParcelId": "0000120100R",
+      "dorUc": "002",
+      "paUc": "00",
+      "zip": "32234"
+    },
+    {
+      "dorParcelId": "0000130000R",
+      "dorUc": "001",
+      "paUc": "00",
+      "zip": "32234"
+    },
+    {
+      "dorParcelId": "0000140000R",
+      "dorUc": "056",
+      "paUc": "00",
+      "zip": "32234"
+    },
+    {
+      "dorParcelId": "0000140050R",
+      "dorUc": "056",
+      "paUc": "00",
+      "zip": "32234"
+    },
+    {
+      "dorParcelId": "0000140060R",
+      "dorUc": "001",
+      "paUc": "00",
+      "zip": "32234"
+    },
+    {
+      "dorParcelId": "0000140100R",
+      "dorUc": "069",
+      "paUc": "00",
+      "zip": "32234"
+    },
+    {
+      "dorParcelId": "0000150010R",
+      "dorUc": "001",
+      "paUc": "00",
+      "zip": "32234"
+    },
+    {
+      "dorParcelId": "0000160000R",
+      "dorUc": "001",
+      "paUc": "00",
+      "zip": "32234"
+    },
+    {
+      "dorParcelId": "0000160200R",
+      "dorUc": "001",
+      "paUc": "00",
+      "zip": "32234"
+    },
+    {
+      "dorParcelId": "0000160300R",
+      "dorUc": "080",
+      "paUc": "00",
+      "zip": "32234"
+    },
+    {
+      "dorParcelId": "0000170000R",
+      "dorUc": "056",
+      "paUc": "00",
+      "zip": "32234"
+    },
+    {
+      "dorParcelId": "0000190030R",
+      "dorUc": "080",
+      "paUc": "00",
+      "zip": "32234"
+    },
+    {
+      "dorParcelId": "0000190031R",
+      "dorUc": "091",
+      "paUc": "00",
+      "zip": "32234"
+    },
+    {
+      "dorParcelId": "0000200000R",
+      "dorUc": "080",
+      "paUc": "00",
+      "zip": "32234"
+    },
+    {
+      "dorParcelId": "0000200010R",
+      "dorUc": "080",
+      "paUc": "00",
+      "zip": "32234"
+    },
+    {
+      "dorParcelId": "0000200020R",
+      "dorUc": "080",
+      "paUc": "00",
+      "zip": "32234"
+    },
+    {
+      "dorParcelId": "0000200100R",
+      "dorUc": "080",
+      "paUc": "00",
+      "zip": "32234"
+    },
+    {
+      "dorParcelId": "0000210010R",
+      "dorUc": "080",
+      "paUc": "00",
+      "zip": "32234"
+    },
+    {
+      "dorParcelId": "0000210020R",
+      "dorUc": "080",
+      "paUc": "00",
+      "zip": "32234"
+    },
+    {
+      "dorParcelId": "0000210030R",
+      "dorUc": "080",
+      "paUc": "00",
+      "zip": "32234"
+    }
+  ]
+}

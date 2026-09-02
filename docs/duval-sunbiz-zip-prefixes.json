@@ -1,0 +1,11 @@
+{
+  "county": "duval",
+  "derivedFrom": "Florida DOR 2026P NAL PHY_ZIPCD (NAL26P202601.csv, 404023 rows) plus USPS Duval inventory",
+  "prefixes": ["322"],
+  "additionalExactZips": ["32099"],
+  "nalPrefixCounts": {
+    "322": 402873,
+    "320": 1150
+  },
+  "notes": "Use 3-digit prefix 322 for the county-scoped Sunbiz extract. Do not use prefix 320: NAL has 1,148 situs rows in 32081 (Ponte Vedra / St. Johns) and only 2 in 32099 (Jacksonville / NAS). Include exact ZIP 32099; do not expand to the rest of 320xx."
+}

@@ -1,0 +1,351 @@
+# Duval County, FL — public data source registry
+#
+# Infra identifiers, credentials, and private data are intentionally excluded.
+
+county:
+  name: Duval County
+  state: FL
+  fips: "12031"
+  dor_county_number: "26"
+  parcel_identifier:
+    name: RE Number
+    description: >-
+      Canonical display form is ten digits with a hyphen after digit six
+      (096925-0000). The COJ detail endpoint accepts an undashed ten-digit
+      identifier. Indexed source URLs may append aliases such as /1000 or R,
+      but the returned page supplies the canonical RE Number.
+    seed_normalization: >-
+      Preserve identifiers as text. Keep the raw DOR/source identifier for
+      provenance, including the terminal R present on real-estate NAL records.
+      For verified real-estate identifiers, remove only the terminal R to form
+      the ten-digit detail identifier; add the display dash only after digit
+      six. Derive parcel_id from a non-empty resolved page and quarantine
+      mismatches. Never coerce to a number.
+
+seed:
+  planned_location: downloads/duval/pilot-seed-50.csv
+  parcels_pilot: 50
+  geometry_in_seed:
+    - parcel_polygon
+    - longitude
+    - latitude
+  primary_route: florida-dor-nal-sdf-pin
+  use_code_policy: >-
+    DOR_UC and the COJ property-use code are distinct vocabularies. Use DOR_UC
+    for seed stratification, preserve PA_UC, and retain the resolved COJ value
+    separately. For the three smoke records, COJ use equals the last two
+    DOR_UC digits plus PA_UC; verify this rule across the final sample rather
+    than deriving a code from DOR_UC alone.
+  identifier_smoke_test:
+    verified_at: 2026-09-01
+    result: 3_of_3_exact_dor_ids_resolved_to_matching_canonical_re
+    samples:
+      - dor_parcel_id: 0969250000R
+        dor_uc: "001"
+        pa_uc: "00"
+        pin_parcelno: 0969250000R
+        canonical_re: 096925-0000
+        coj_use: "0100"
+      - dor_parcel_id: 0901770592R
+        dor_uc: "004"
+        pa_uc: "00"
+        pin_parcelno: 0901770592R
+        canonical_re: 090177-0592
+        coj_use: "0400"
+      - dor_parcel_id: 1230290100R
+        dor_uc: "027"
+        pa_uc: "91"
+        pin_parcelno: 1230290100R
+        canonical_re: 123029-0100
+        coj_use: "2791"
+  bulk_sources:
+    - name: Florida DOR 2026 preliminary NAL
+      url: >-
+        https://floridarevenue.com/property/dataportal/Documents/PTO%20Data%20Portal/Tax%20Roll%20Data%20Files/NAL/2026P/Duval%2026%20Preliminary%20NAL%202026.zip
+      expected_rows: 404023
+      verified_file: NAL26P202601.csv
+      verified_zip_bytes: 29080532
+      verified_sha256: 4ae67aa7550d9d9051c44f01a52ab335897af4959e9625e9ae1e007d77521691
+      verified_at: 2026-09-02
+      note: >-
+        The 2026P URL served NAL26F20260827.txt (42,254,989 bytes) during Task 3
+        and NAL26P202601.csv (29,080,532 bytes) during Task 5. Row count remained
+        404,023. Fingerprint the zip on every seed rebuild.
+      publication_rights: chapter 119 F.S. statewide assessment-roll republication
+    - name: Florida DOR 2026 preliminary SDF
+      url: >-
+        https://floridarevenue.com/property/dataportal/Documents/PTO%20Data%20Portal/Tax%20Roll%20Data%20Files/SDF/2026P/Duval%2026%20Preliminary%20SDF%202026.zip
+      expected_rows: 64532
+      publication_rights: chapter 119 F.S. statewide sale-data-file republication
+    - name: Florida DOR 2026 final PIN
+      url: >-
+        https://floridarevenue.com/property/dataportal/Documents/PTO%20Data%20Portal/Map%20Data/2026F/2026F%20PIN/duval_2026pin.zip
+      expected_features: 405716
+      source_crs: EPSG:2881
+      target_crs: EPSG:4326
+      verified_at: 2026-09-02
+      verified_zip_bytes: 131228733
+      verified_sha256: 35ace21bcc57c34e391fa6d08b10da3031f102a5dcec9ad41b57871e5370ab5b
+      publication_rights: chapter 119 F.S. public GIS; sidecar accconst/useconst None
+    - name: DCPAO monthly data offerings
+      url: https://www.jacksonville.gov/departments/property-appraiser/data-offerings
+      status: catalog_available_assets_unreliable
+      note: >-
+        Page listed August 2026 real-estate, GIS, and sales ZIPs. Exact asset
+        links returned HTTP 503 from Brazil and HTTP 404 from Railway US during
+        discovery; do not make them the pilot dependency.
+      publication_rights: >-
+        County-native tax-roll extracts are public records under chapter 119,
+        Florida Statutes. They remain a fallback, not the pilot dependency,
+        because asset delivery was unreliable during discovery.
+
+sources:
+  - key: property-appraisal
+    category: property
+    name: Duval County Property Appraiser real-estate search
+    base_urls:
+      - https://www.jacksonville.gov/departments/property-appraiser
+      - https://paopropertysearch.coj.net/
+    access_pattern:
+      mode: plain-http-html-by-known-identifier
+      tooling: direct GET of Basic/Detail.aspx after seed identifier resolution
+      auth: public
+      reachability: Brazil timed out; Railway us-west2 succeeded
+    endpoints:
+      search: https://paopropertysearch.coj.net/Basic/Search.aspx
+      detail_template: https://paopropertysearch.coj.net/Basic/Detail.aspx?RE={source_identifier}
+      codes: https://paopropertysearch.coj.net/Codes.aspx
+    fields:
+      - owners and addresses
+      - certified and in-progress values
+      - sales and deeds
+      - land and legal
+      - building year and areas
+      - exterior wall
+      - roof structure and covering
+      - utilities and traversing data
+    refresh:
+      method: seed-driven detail HTML capture
+      cadence: on-demand; portal says parcel data updates daily
+    implemented_by:
+      transform: Counties-trasform-scripts/duval/scripts/
+      skill: county-appraisal-onboarding
+    benchmark:
+      host: Railway us-west2
+      observed_at: 2026-09-01
+      method: curl redirects, 30-second timeout, browser-style user agent
+      success_criteria: HTTP 200 and non-empty body
+      representative_pages: 4
+      requests_per_concurrency: 12
+      concurrency_1: { failures: 0, p50_seconds: 0.490, p95_seconds: 0.696 }
+      concurrency_2: { failures: 0, p50_seconds: 0.499, p95_seconds: 0.796 }
+      concurrency_4: { failures: 0, p50_seconds: 0.470, p95_seconds: 0.770 }
+      safe_pilot_concurrency: 2
+      estimated_http_hours_at_p95_concurrency_4: 21.6
+    publication_rights: >-
+      The Property Appraiser search is a public record surface. Values and
+      building facts on the detail page are the same class of records DOR
+      republishes under chapter 119, Florida Statutes.
+    status: available
+
+  - key: county-native-bulk
+    category: property
+    name: DCPAO Data Offerings
+    base_urls:
+      - https://www.jacksonville.gov/departments/property-appraiser/data-offerings
+    available_artifact_types:
+      - real-estate roll (Access and pipe-delimited text)
+      - tangible roll
+      - GIS shapefiles
+      - sales file
+    status: catalog_available_assets_unreliable
+    reason: >-
+      The catalog is official and current, but exact asset URLs failed from both
+      tested hosts. The visible real-estate layout filename is dated 2005–2019,
+      so current roof/wall bulk coverage is unproven.
+
+  - key: gis-geometry
+    category: geometry
+    name: Florida DOR Duval PIN
+    base_urls:
+      - https://floridarevenue.com/property/Pages/DataPortal_RequestAssessmentRollGISData.aspx
+    access_pattern:
+      mode: bulk ZIP shapefile
+      auth: public
+    refresh:
+      method: annual DOR PIN download; join geometry into seed
+    publication_rights: >-
+      DOR publishes PIN shapefiles with NAL and SDF on the Data Portal in
+      compliance with chapter 119, Florida Statutes. Posted rolls exclude
+      confidential records such as social security numbers and owners exempt
+      under s. 119.071. Duval PIN sidecar duval_2026pin.shp.xml records
+      accconst/useconst as None; see docs/duval-pin-publication-rights.json.
+    status: available
+
+  - key: property-sales
+    category: sales-deeds
+    name: Florida DOR SDF plus Duval Clerk official-record links
+    base_urls:
+      - https://floridarevenue.com/property/Pages/DataPortal_RequestAssessmentRollGISData.aspx
+      - https://oncore.duvalclerk.com/
+    access_pattern:
+      mode: bulk SDF for sales; per-record book/page links for deed documents
+      auth: public
+    publication_rights: >-
+      SDF is the statewide public sale-data file under chapter 119, Florida
+      Statutes. OnCore book/page links are public official records; a full
+      recorder harvest is out of scope for this appraisal pilot.
+    status: available
+
+  - key: permits
+    category: permits
+    name: Five Duval permitting jurisdictions
+    base_urls:
+      - https://jaxepics.coj.net/Search/AdvancedSearch
+      - https://jakb-egov.aspgov.com/Click2GovBP/index.html
+      - https://bsaonline.com/?uid=3261
+      - https://atlb-trk.aspgov.com/eTRAKiT/Search/permit.aspx
+      - https://www.nbfl.gov/planning-community-development
+      - https://baldwinfl.govoffice2.com/?SEC=989BD37A-6DA4-49F8-A566-4D52BFF1E945
+    access_pattern:
+      mode: mixed public SPA, Click2Gov, BS&A, and records-request/form intake
+      auth: public search for Jacksonville, Jacksonville Beach, and Atlantic Beach
+    implemented_by:
+      skill: county-permit-adapter
+    status: partially_available_adapter_not_implemented
+    reason: >-
+      Three public portal families need separate adapters. Neptune Beach and
+      Baldwin have no confirmed public historical-search endpoint.
+
+  - key: sunbiz
+    category: business-registration
+    name: Florida Sunbiz corporate registrations
+    base_urls:
+      - https://dos.fl.gov/sunbiz/
+      - https://search.sunbiz.org/
+    access_pattern:
+      mode: statewide bulk ZIP download
+      auth: public; some web paths use Cloudflare
+    implemented_by:
+      skill: sunbiz-corporate-ingest
+    zip_prefixes:
+      - "322"
+    additional_exact_zips:
+      - "32099"
+    zip_prefix_file: docs/duval-sunbiz-zip-prefixes.json
+    refresh:
+      method: statewide bulk; only the Duval ZIP-prefix list is county-specific
+    status: available_not_rerun_in_appraisal_pilot
+
+  - key: bbb
+    category: contractor-reputation
+    name: Better Business Bureau contractor listings
+    base_urls:
+      - https://www.bbb.org/
+    access_pattern:
+      mode: category and profile harvest
+      auth: public
+    implemented_by:
+      skill: bbb-harvest
+    refresh:
+      method: national harvest; not county-gated
+    status: available_deferred_until_permit_contractors_exist
+    reason: >-
+      BBB is available nationally through the existing harvest skill. This
+      appraisal pilot does not re-run it until permit contractor names exist.
+
+  - key: overture-places
+    category: business-places
+    name: Overture Maps places
+    base_urls:
+      - https://docs.overturemaps.org/guides/places/
+    access_pattern:
+      mode: release extract clipped to county boundary
+      auth: public
+    implemented_by:
+      skill: overture-places-ingest
+    status: available_not_rerun_in_appraisal_pilot
+
+  - key: code-enforcement
+    category: code-enforcement
+    name: Municipal / county code enforcement
+    status: unavailable_as_unified_source
+    reason: >-
+      Records are fragmented across Jacksonville, the three beach cities, and
+      Baldwin; no single countywide bulk feed was identified for this pilot.
+
+  - key: tax-collector
+    category: tax-payments
+    name: Duval County Tax Collector
+    base_urls:
+      - https://taxcollector.coj.net/
+      - https://duval.county-taxes.com/public
+    status: out_of_scope_this_pilot
+    reason: >-
+      Payment and installment portals are not part of the appraisal, permit,
+      Sunbiz, or BBB milestone. Certified and in-progress values already come
+      from the COJ detail page and DOR NAL.
+
+  - key: recorder
+    category: official-records
+    name: Duval Clerk of Court OnCore
+    base_urls:
+      - https://oncore.duvalclerk.com/
+    status: out_of_scope_this_pilot
+    reason: >-
+      Deed images are reachable from COJ sales-history book/page links. A full
+      official-records harvest is separate scope from this appraisal pilot.
+
+permits:
+  - jurisdiction: Jacksonville consolidated city/county
+    portal: https://jaxepics.coj.net/Search/AdvancedSearch
+    vendor: custom JaxEPICS Angular
+    search_by_address: true
+    search_by_parcel: needs-adapter-verification
+    roof_permit_detection: needs-record-verification
+    status: discovered
+    note: Public search and permit-view routes exist; submission requires a profile.
+
+  - jurisdiction: Jacksonville Beach
+    portal: https://jakb-egov.aspgov.com/Click2GovBP/index.html
+    vendor: Click2Gov
+    search_by_parcel: true
+    roof_permit_detection: explicit roofing application type
+    status: discovered
+    note: >-
+      Public COAST historical search; no login required. New roof applications
+      use the city's CivicPlus Form Center.
+
+  - jurisdiction: Atlantic Beach
+    portal: https://bsaonline.com/?uid=3261
+    historical_search: https://atlb-trk.aspgov.com/eTRAKiT/Search/permit.aspx
+    vendor: BS&A Online intake plus CentralSquare eTRAKiT history
+    search_by_parcel: true
+    roof_permit_detection: likely from eTRAKiT type/subtype/description/inspections; needs live verification
+    status: discovered
+    note: >-
+      Current intake is BS&A. Historical eTRAKiT exposes parcel/address, permit
+      type, contractor, status, and inspection fields but was WAF-blocked from
+      the research host. The certify result covered BS&A only.
+
+  - jurisdiction: Neptune Beach
+    records_url: https://www.nbfl.gov/planning-community-development
+    vendor: unknown
+    search_by_parcel: false
+    roof_permit_detection: roofing intake form exists; issued records require records request
+    status: needs-review
+    note: >-
+      City reported online permitting/electronic records as a 2026 initiative;
+      no live public historical-search endpoint was confirmed. `portal` is
+      intentionally empty so certify.mjs reports SKIPPED instead of probing
+      the department homepage.
+
+  - jurisdiction: Baldwin
+    records_url: https://baldwinfl.govoffice2.com/?SEC=989BD37A-6DA4-49F8-A566-4D52BFF1E945
+    vendor: staff/form intake
+    search_by_parcel: false
+    roof_permit_detection: roof-inspection affidavit only
+    status: needs-review
+    note: >-
+      Town publishes permit forms but no public historical-search endpoint.
+      `portal` is intentionally empty so certify.mjs reports SKIPPED.
