@@ -232,6 +232,30 @@ describe("Broward municipal property enumeration", () => {
       maxResultsPerQuery: 100,
       delayMs: 1_500,
     });
+    expect(
+      parseMunicipalPropertyEnumerationOptions([
+        "--jurisdiction",
+        "lauderhill",
+        "--seed",
+        "seed.csv",
+        "--output-dir",
+        "capture",
+        "--max-results-per-query",
+        "1000",
+      ]).maxResultsPerQuery,
+    ).toBe(1_000);
+    expect(() =>
+      parseMunicipalPropertyEnumerationOptions([
+        "--jurisdiction",
+        "lauderhill",
+        "--seed",
+        "seed.csv",
+        "--output-dir",
+        "capture",
+        "--max-results-per-query",
+        "1001",
+      ]),
+    ).toThrow("1000");
     expect(() =>
       parseMunicipalPropertyEnumerationOptions([
         "--jurisdiction",

@@ -243,9 +243,9 @@ export function parseMunicipalStreetAddress(value) {
  */
 function validateRawResultRowLimit(value) {
   const limit = value ?? DEFAULT_RAW_RESULT_ROW_LIMIT;
-  if (!Number.isInteger(limit) || limit < 2 || limit > 100) {
+  if (!Number.isInteger(limit) || limit < 2 || limit > 1_000) {
     throw new Error(
-      "Municipal raw result row limit must be from 2 through 100",
+      "Municipal raw result row limit must be from 2 through 1000",
     );
   }
   return limit;

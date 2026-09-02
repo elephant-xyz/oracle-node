@@ -145,7 +145,7 @@ export function parseMunicipalPropertyEnumerationOptions(argv) {
       values.get("--max-results-per-query") ?? "100",
       "--max-results-per-query",
       2,
-      100,
+      1_000,
     ),
     delayMs: boundedInteger(
       values.get("--delay-ms") ?? "1500",
