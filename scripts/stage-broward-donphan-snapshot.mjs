@@ -139,24 +139,11 @@ export const PROPERTY_FIELDS = Object.freeze([
   { name: "county_name", type: "UTF8", nullable: true },
   { name: "county_fips", type: "UTF8", nullable: false },
   { name: "state_code", type: "UTF8", nullable: true },
-  { name: "latitude", type: "DOUBLE", nullable: true },
-  { name: "longitude", type: "DOUBLE", nullable: true },
-  { name: "lot_size_acre", type: "DOUBLE", nullable: true },
-  { name: "lot_area_sqft", type: "DOUBLE", nullable: true },
-  { name: "exterior_wall_material", type: "UTF8", nullable: true },
-  { name: "roof_covering_material", type: "UTF8", nullable: true },
   { name: "property_type", type: "UTF8", nullable: true },
   { name: "property_usage_type", type: "UTF8", nullable: true },
   { name: "built_year", type: "INT64", nullable: true },
   { name: "livable_floor_area", type: "DOUBLE", nullable: true },
-  { name: "area_under_air", type: "DOUBLE", nullable: true },
   { name: "total_area", type: "DOUBLE", nullable: true },
-  { name: "assessed_value", type: "DOUBLE", nullable: true },
-  { name: "market_value", type: "DOUBLE", nullable: true },
-  { name: "land_value", type: "DOUBLE", nullable: true },
-  { name: "avm_value", type: "DOUBLE", nullable: true },
-  { name: "last_sale_date", type: "UTF8", nullable: true },
-  { name: "last_sale_price", type: "DOUBLE", nullable: true },
 ]);
 
 /** @type {readonly FieldSchema[]} */
@@ -181,98 +168,20 @@ export const PERMIT_FIELDS = Object.freeze([
 ]);
 
 const PROPERTY_SQL = `
-WITH county_properties AS MATERIALIZED (
-  SELECT property_id,parcel_id,parcel_identifier,
-         property_type,property_usage_type,property_structure_built_year,
-         livable_floor_area,total_area,source_system
-  FROM public.properties
-  WHERE source_system=$1
-),
-tax_latest AS (
-  SELECT DISTINCT ON (t.property_id)
-    t.property_id,t.property_assessed_value_amount AS assessed_value,
-    t.property_market_value_amount AS market_value,
-    t.property_land_amount AS land_value
-  FROM public.taxes t
-  JOIN county_properties cp ON cp.property_id=t.property_id
-  ORDER BY t.property_id,t.tax_year DESC NULLS LAST,t.tax_id
-),
-avm AS (
-  SELECT pv.property_id,max(pv.current_avm_value) AS avm_value
-  FROM public.property_valuations pv
-  JOIN county_properties cp ON cp.property_id=pv.property_id
-  GROUP BY pv.property_id
-),
-structure_pick AS (
-  SELECT DISTINCT ON (s.property_id)
-    s.property_id,s.exterior_wall_material_primary,s.roof_covering_material
-  FROM public.structures s
-  JOIN county_properties cp ON cp.property_id=s.property_id
-  ORDER BY s.property_id,s.structure_id
-),
-lot_pick AS (
-  SELECT DISTINCT ON (l.property_id)
-    l.property_id,l.lot_size_acre,l.lot_area_sqft
-  FROM public.lots l
-  JOIN county_properties cp ON cp.property_id=l.property_id
-  ORDER BY l.property_id,l.lot_id
-),
-layout_area AS (
-  SELECT l.property_id,sum(l.livable_area_sq_ft) AS livable_area_sq_ft,
-         sum(l.area_under_air_sq_ft) AS area_under_air_sq_ft
-  FROM public.layouts l
-  JOIN county_properties cp ON cp.property_id=l.property_id
-  GROUP BY l.property_id
-),
-geom_pick AS (
-  SELECT DISTINCT ON (g.property_id) g.property_id,g.latitude,g.longitude
-  FROM public.geometries g
-  JOIN county_properties cp ON cp.property_id=g.property_id
-  ORDER BY g.property_id,
-    (g.latitude IS NOT NULL AND g.longitude IS NOT NULL) DESC,g.geometry_id
-),
-sale_latest AS (
-  SELECT DISTINCT ON (sh.property_id)
-    sh.property_id,sh.ownership_transfer_date,sh.purchase_price_amount
-  FROM public.sales_histories sh
-  JOIN county_properties cp ON cp.property_id=sh.property_id
-  ORDER BY sh.property_id,sh.ownership_transfer_date DESC NULLS LAST,
-           sh.sales_history_id
-)
 SELECT
   p.property_id::text AS property_id,
   p.parcel_identifier,
   p.source_system,
   par.county_name,
   par.state_code,
-  geom.latitude::text,
-  geom.longitude::text,
-  lot.lot_size_acre::text,
-  lot.lot_area_sqft::text,
-  structure.exterior_wall_material_primary AS exterior_wall_material,
-  structure.roof_covering_material,
   p.property_type,
   p.property_usage_type,
   p.property_structure_built_year AS built_year,
   p.livable_floor_area,
-  p.total_area,
-  layout.livable_area_sq_ft::text AS layout_livable_area_sq_ft,
-  layout.area_under_air_sq_ft::text AS layout_area_under_air_sq_ft,
-  tax.assessed_value::text,
-  tax.market_value::text,
-  tax.land_value::text,
-  avm.avm_value::text,
-  sale.ownership_transfer_date::text AS last_sale_date,
-  sale.purchase_price_amount::text AS last_sale_price
-FROM county_properties p
+  p.total_area
+FROM public.properties p
 LEFT JOIN public.parcels par ON par.parcel_id=p.parcel_id
-LEFT JOIN geom_pick geom ON geom.property_id=p.property_id
-LEFT JOIN lot_pick lot ON lot.property_id=p.property_id
-LEFT JOIN layout_area layout ON layout.property_id=p.property_id
-LEFT JOIN structure_pick structure ON structure.property_id=p.property_id
-LEFT JOIN tax_latest tax ON tax.property_id=p.property_id
-LEFT JOIN avm ON avm.property_id=p.property_id
-LEFT JOIN sale_latest sale ON sale.property_id=p.property_id
+WHERE p.source_system=$1
 ORDER BY p.parcel_identifier,p.property_id`;
 
 const PERMIT_SQL = `
@@ -555,7 +464,6 @@ export function parseSitusAddress(value) {
  * @returns {Record<string,string|number|boolean>} Null-free Parquet record.
  */
 function propertyRecord(row) {
-  const lotArea = number(row.lot_area_sqft);
   const candidate = {
     property_id: text(row.property_id),
     parcel_identifier: text(row.parcel_identifier),
@@ -563,28 +471,11 @@ function propertyRecord(row) {
     county_name: text(row.county_name) ?? "Broward",
     county_fips: "12011",
     state_code: text(row.state_code) ?? "FL",
-    latitude: number(row.latitude),
-    longitude: number(row.longitude),
-    lot_size_acre:
-      number(row.lot_size_acre) ?? (lotArea === null ? null : lotArea / 43_560),
-    lot_area_sqft: lotArea,
-    exterior_wall_material: text(row.exterior_wall_material),
-    roof_covering_material: text(row.roof_covering_material),
     property_type: text(row.property_type),
     property_usage_type: text(row.property_usage_type),
     built_year: number(row.built_year),
-    livable_floor_area:
-      number(row.livable_floor_area) ??
-      number(row.layout_livable_area_sq_ft) ??
-      number(row.layout_area_under_air_sq_ft),
-    area_under_air: number(row.layout_area_under_air_sq_ft),
+    livable_floor_area: number(row.livable_floor_area),
     total_area: number(row.total_area),
-    assessed_value: number(row.assessed_value),
-    market_value: number(row.market_value),
-    land_value: number(row.land_value),
-    avm_value: number(row.avm_value),
-    last_sale_date: text(row.last_sale_date),
-    last_sale_price: number(row.last_sale_price),
   };
   if (candidate.property_id === null) {
     throw new Error("Property cursor returned no property_id");

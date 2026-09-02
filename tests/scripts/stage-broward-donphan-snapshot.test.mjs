@@ -97,7 +97,7 @@ describe("Broward Donphan snapshot staging", () => {
     const propertyNames = PROPERTY_FIELDS.map(({ name }) => name);
     const permitNames = PERMIT_FIELDS.map(({ name }) => name);
 
-    expect(PROPERTY_FIELDS).toHaveLength(24);
+    expect(PROPERTY_FIELDS).toHaveLength(11);
     expect(PERMIT_FIELDS).toHaveLength(17);
     expect(
       propertyNames.every((name) => APPROVED_PUBLIC_FIELDS.includes(name)),
@@ -107,8 +107,8 @@ describe("Broward Donphan snapshot staging", () => {
         "property_id",
         "parcel_identifier",
         "county_fips",
-        "assessed_value",
-        "last_sale_date",
+        "property_usage_type",
+        "livable_floor_area",
       ]),
     );
     expect(propertyNames).not.toEqual(
