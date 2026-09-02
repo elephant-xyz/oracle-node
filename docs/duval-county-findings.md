@@ -306,14 +306,14 @@ portals and is not a catalog defect.
 - A 36-request benchmark is sufficient for the pilot decision, not for full-county load
   approval.
 
-## 12. Next stages
+## 12. Completed pilot stages
 
-1. Build the DOR seed and select approximately 50 diverse, deduplicated parcels.
-2. Derive Sunbiz ZIP prefixes from NAL `PHY_ZIPCD` and replace the USPS inventory if they differ.
-3. Spot-check five seed identifiers against the live COJ detail endpoint.
-4. Run the portable local pilot on Railway US egress at concurrency 2.
-5. Perform Task 7 schema/completeness/geometry/count reconciliation.
-6. Export the pilot query table and verify it through Donphan.
+1. Built the DOR seed and selected 50 diverse, deduplicated parcels.
+2. Derived Sunbiz ZIP prefixes from NAL `PHY_ZIPCD`.
+3. Spot-checked five seed identifiers against the live COJ detail endpoint.
+4. Ran the portable pilot on Railway US egress at concurrency 2.
+5. Completed schema, completeness, geometry, and count reconciliation.
+6. Exported the pilot query table and verified it through Donphan.
 
 ## 13. Pilot certification and full-ingest readiness (2026-09-02)
 
@@ -364,10 +364,13 @@ only after a larger bounded soak confirms the portal tolerates it.
 3. Stage the reconciled seed at `s3://counties-seeds/duval.csv`.
 4. Implement and smoke-test a county-scoped `duval` permit adapter across the fragmented permit
    jurisdictions documented in this report.
-5. Explicitly set
+5. Implement the county-scoped lookup described by the onboarding contract, then explicitly set
    `PROPERTY_FIRST_PERMIT_ELIGIBLE_USAGE_TYPES_DUVAL=AutoSalesRepair,Industrial` from the
-   permit-priority usage types actually observed in the transform output. Do not inherit the
-   Lee-vocabulary default; revisit this list when broader Duval usage types are observed.
+   permit-priority usage types observed in the pilot transform output. The current transform and
+   permit-harvest workers read only the unsuffixed `PROPERTY_FIRST_PERMIT_ELIGIBLE_USAGE_TYPES`,
+   so setting `_DUVAL` has no effect yet; using the bare variable on the shared process would leak
+   Duval policy into concurrent counties. Do not inherit the Lee-vocabulary default, and revisit
+   the pilot-derived list when broader Duval usage types are observed.
 6. Run a bounded concurrency-4 soak from production-equivalent US egress and retain its
    throughput, failure, throttling, and retry evidence.
 7. Complete the human-approved catalog/query-table publication and IPNS map update. The pilot
