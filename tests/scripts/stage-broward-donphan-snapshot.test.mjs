@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { APPROVED_PUBLIC_FIELDS } from "../../scripts/audit-broward-appraisal-publication.mjs";
 import {
   PERMIT_FIELDS,
   PROPERTY_FIELDS,
@@ -92,17 +93,34 @@ describe("Broward Donphan snapshot staging", () => {
     });
   });
 
-  it("locks the current Donphan scalar schemas", () => {
-    expect(PROPERTY_FIELDS).toHaveLength(38);
-    expect(PERMIT_FIELDS).toHaveLength(20);
-    expect(PROPERTY_FIELDS.map(({ name }) => name)).toEqual(
+  it("locks public-safe Donphan scalar schemas", () => {
+    const propertyNames = PROPERTY_FIELDS.map(({ name }) => name);
+    const permitNames = PERMIT_FIELDS.map(({ name }) => name);
+
+    expect(PROPERTY_FIELDS).toHaveLength(24);
+    expect(PERMIT_FIELDS).toHaveLength(17);
+    expect(
+      propertyNames.every((name) => APPROVED_PUBLIC_FIELDS.includes(name)),
+    ).toBe(true);
+    expect(propertyNames).toEqual(
       expect.arrayContaining([
         "property_id",
         "parcel_identifier",
-        "has_permits",
-        "has_sunbiz_tenant",
-        "has_bbb_contractor",
+        "county_fips",
+        "assessed_value",
+        "last_sale_date",
       ]),
+    );
+    expect(propertyNames).not.toEqual(
+      expect.arrayContaining([
+        "owner_name",
+        "request_identifier",
+        "address_street",
+        "has_sunbiz_tenant",
+      ]),
+    );
+    expect(permitNames).not.toEqual(
+      expect.arrayContaining(["project_description", "description", "fee"]),
     );
   });
 

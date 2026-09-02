@@ -59,7 +59,7 @@ const S3_BUCKET = "elephant-oracle-node-environmentbucket-mmsoo3xbdi80";
 const S3_ROOT = "publication-staging/broward/donphan/snapshots";
 const DEFAULT_OUTPUT_ROOT = "downloads/broward/donphan-staging";
 const DEFAULT_BATCH_SIZE = 2_000;
-const SNAPSHOT_SCHEMA_VERSION = "oracle-node.broward-donphan-snapshot.v1";
+const SNAPSHOT_SCHEMA_VERSION = "oracle-node.broward-donphan-snapshot.v2";
 
 /**
  * @typedef {object} FieldSchema
@@ -134,15 +134,11 @@ const SNAPSHOT_SCHEMA_VERSION = "oracle-node.broward-donphan-snapshot.v1";
 /** @type {readonly FieldSchema[]} */
 export const PROPERTY_FIELDS = Object.freeze([
   { name: "property_id", type: "UTF8", nullable: false },
-  { name: "property_cid", type: "UTF8", nullable: true },
-  { name: "request_identifier", type: "UTF8", nullable: true },
   { name: "parcel_identifier", type: "UTF8", nullable: true },
   { name: "source_system", type: "UTF8", nullable: true },
   { name: "county_name", type: "UTF8", nullable: true },
+  { name: "county_fips", type: "UTF8", nullable: false },
   { name: "state_code", type: "UTF8", nullable: true },
-  { name: "address_street", type: "UTF8", nullable: true },
-  { name: "address_city", type: "UTF8", nullable: true },
-  { name: "address_zip", type: "UTF8", nullable: true },
   { name: "latitude", type: "DOUBLE", nullable: true },
   { name: "longitude", type: "DOUBLE", nullable: true },
   { name: "lot_size_acre", type: "DOUBLE", nullable: true },
@@ -153,24 +149,14 @@ export const PROPERTY_FIELDS = Object.freeze([
   { name: "property_usage_type", type: "UTF8", nullable: true },
   { name: "built_year", type: "INT64", nullable: true },
   { name: "livable_floor_area", type: "DOUBLE", nullable: true },
+  { name: "area_under_air", type: "DOUBLE", nullable: true },
   { name: "total_area", type: "DOUBLE", nullable: true },
   { name: "assessed_value", type: "DOUBLE", nullable: true },
   { name: "market_value", type: "DOUBLE", nullable: true },
   { name: "land_value", type: "DOUBLE", nullable: true },
   { name: "avm_value", type: "DOUBLE", nullable: true },
-  { name: "owner_name", type: "UTF8", nullable: true },
-  { name: "owners_text", type: "UTF8", nullable: true },
-  { name: "owner_count", type: "INT64", nullable: true },
-  { name: "owner_occupied", type: "BOOLEAN", nullable: true },
   { name: "last_sale_date", type: "UTF8", nullable: true },
   { name: "last_sale_price", type: "DOUBLE", nullable: true },
-  { name: "subdivision", type: "UTF8", nullable: true },
-  { name: "has_permits", type: "BOOLEAN", nullable: true },
-  { name: "permit_count", type: "INT64", nullable: true },
-  { name: "has_sunbiz_tenant", type: "BOOLEAN", nullable: true },
-  { name: "has_bbb_contractor", type: "BOOLEAN", nullable: true },
-  { name: "has_pa_corp_tenant", type: "BOOLEAN", nullable: true },
-  { name: "hoa_flag", type: "BOOLEAN", nullable: true },
 ]);
 
 /** @type {readonly FieldSchema[]} */
@@ -191,17 +177,14 @@ export const PERMIT_FIELDS = Object.freeze([
   { name: "opened_date", type: "UTF8", nullable: true },
   { name: "source_system", type: "UTF8", nullable: true },
   { name: "county_name", type: "UTF8", nullable: true },
-  { name: "project_description", type: "UTF8", nullable: true },
-  { name: "description", type: "UTF8", nullable: true },
   { name: "estimated_job_value", type: "DOUBLE", nullable: true },
-  { name: "fee", type: "DOUBLE", nullable: true },
 ]);
 
 const PROPERTY_SQL = `
 WITH county_properties AS MATERIALIZED (
-  SELECT property_id,parcel_id,address_id,request_identifier,parcel_identifier,
+  SELECT property_id,parcel_id,parcel_identifier,
          property_type,property_usage_type,property_structure_built_year,
-         livable_floor_area,total_area,subdivision,source_system
+         livable_floor_area,total_area,source_system
   FROM public.properties
   WHERE source_system=$1
 ),
@@ -248,23 +231,6 @@ geom_pick AS (
   ORDER BY g.property_id,
     (g.latitude IS NOT NULL AND g.longitude IS NOT NULL) DESC,g.geometry_id
 ),
-owners_agg AS (
-  SELECT o.property_id,
-    string_agg(DISTINCT o.owned_by,' | ' ORDER BY o.owned_by) AS owners_text,
-    count(DISTINCT o.owned_by) AS owner_count,
-    bool_or(o.owner_occupied_indicator) AS owner_occupied
-  FROM public.ownerships o
-  JOIN county_properties cp ON cp.property_id=o.property_id
-  WHERE nullif(o.owned_by,'') IS NOT NULL
-  GROUP BY o.property_id
-),
-owner_primary AS (
-  SELECT DISTINCT ON (o.property_id) o.property_id,o.owned_by AS owner_name
-  FROM public.ownerships o
-  JOIN county_properties cp ON cp.property_id=o.property_id
-  WHERE nullif(o.owned_by,'') IS NOT NULL
-  ORDER BY o.property_id,o.ownership_percentage DESC NULLS LAST,o.ownership_id
-),
 sale_latest AS (
   SELECT DISTINCT ON (sh.property_id)
     sh.property_id,sh.ownership_transfer_date,sh.purchase_price_amount
@@ -272,53 +238,13 @@ sale_latest AS (
   JOIN county_properties cp ON cp.property_id=sh.property_id
   ORDER BY sh.property_id,sh.ownership_transfer_date DESC NULLS LAST,
            sh.sales_history_id
-),
-permit_counts AS (
-  SELECT pi.property_id,count(*) AS permit_count
-  FROM public.property_improvements pi
-  JOIN county_properties cp ON cp.property_id=pi.property_id
-  WHERE pi.source_system LIKE $2
-  GROUP BY pi.property_id
-),
-sunbiz_properties AS (
-  SELECT DISTINCT cp.property_id
-  FROM county_properties cp
-  JOIN public.business_registration_addresses bra
-    ON bra.address_id=cp.address_id
-   AND bra.source_system='sunbiz'
-   AND bra.address_match_method='normalized_address_hash'
-   AND bra.address_match_confidence='exact'
-),
-bbb_properties AS (
-  SELECT DISTINCT pi.property_id
-  FROM public.property_improvements pi
-  JOIN public.business_reputation_profiles profile
-    ON profile.company_id=pi.contractor_company_id
-   AND profile.provider ILIKE '%bbb%'
-  JOIN county_properties cp ON cp.property_id=pi.property_id
-  WHERE pi.source_system LIKE $2
-),
-situs AS (
-  SELECT DISTINCT ON (request_identifier) request_identifier,full_address
-  FROM public.unnormalized_addresses
-  WHERE source_system=$1 AND nullif(request_identifier,'') IS NOT NULL
-  ORDER BY request_identifier,unnormalized_address_id
 )
 SELECT
   p.property_id::text AS property_id,
-  NULL::text AS property_cid,
-  p.request_identifier,
   p.parcel_identifier,
   p.source_system,
   par.county_name,
   par.state_code,
-  a.street_number,
-  a.street_name,
-  a.street_suffix_type,
-  a.city_name,
-  a.postal_code,
-  a.unnormalized_address,
-  situs.full_address AS situs_full_address,
   geom.latitude::text,
   geom.longitude::text,
   lot.lot_size_acre::text,
@@ -336,34 +262,18 @@ SELECT
   tax.market_value::text,
   tax.land_value::text,
   avm.avm_value::text,
-  owner_primary.owner_name,
-  owners.owners_text,
-  owners.owner_count::text,
-  owners.owner_occupied,
   sale.ownership_transfer_date::text AS last_sale_date,
-  sale.purchase_price_amount::text AS last_sale_price,
-  p.subdivision,
-  (permit_counts.permit_count IS NOT NULL) AS has_permits,
-  coalesce(permit_counts.permit_count,0)::text AS permit_count,
-  (sunbiz_properties.property_id IS NOT NULL) AS has_sunbiz_tenant,
-  (bbb_properties.property_id IS NOT NULL) AS has_bbb_contractor
+  sale.purchase_price_amount::text AS last_sale_price
 FROM county_properties p
 LEFT JOIN public.parcels par ON par.parcel_id=p.parcel_id
-LEFT JOIN public.addresses a ON a.address_id=p.address_id
 LEFT JOIN geom_pick geom ON geom.property_id=p.property_id
 LEFT JOIN lot_pick lot ON lot.property_id=p.property_id
 LEFT JOIN layout_area layout ON layout.property_id=p.property_id
 LEFT JOIN structure_pick structure ON structure.property_id=p.property_id
 LEFT JOIN tax_latest tax ON tax.property_id=p.property_id
 LEFT JOIN avm ON avm.property_id=p.property_id
-LEFT JOIN owner_primary ON owner_primary.property_id=p.property_id
-LEFT JOIN owners_agg owners ON owners.property_id=p.property_id
 LEFT JOIN sale_latest sale ON sale.property_id=p.property_id
-LEFT JOIN permit_counts ON permit_counts.property_id=p.property_id
-LEFT JOIN sunbiz_properties ON sunbiz_properties.property_id=p.property_id
-LEFT JOIN bbb_properties ON bbb_properties.property_id=p.property_id
-LEFT JOIN situs ON situs.request_identifier=p.request_identifier
-ORDER BY p.request_identifier,p.property_id`;
+ORDER BY p.parcel_identifier,p.property_id`;
 
 const PERMIT_SQL = `
 SELECT
@@ -383,10 +293,7 @@ SELECT
   pi.opened_date::text AS opened_date,
   pi.source_system,
   par.county_name,
-  pi.project_description,
-  pi.description,
-  pi.estimated_job_value::text AS estimated_job_value,
-  pi.fee::text AS fee
+  pi.estimated_job_value::text AS estimated_job_value
 FROM public.property_improvements pi
 LEFT JOIN public.parcels par ON par.parcel_id=pi.parcel_id
 WHERE pi.source_system LIKE $1
@@ -642,37 +549,20 @@ export function parseSitusAddress(value) {
 }
 
 /**
- * Map one flat database row into Donphan's 38-field property contract.
+ * Map one flat database row into the closed public Broward property contract.
  *
  * @param {Record<string,unknown>} row - Cursor row from {@link PROPERTY_SQL}.
  * @returns {Record<string,string|number|boolean>} Null-free Parquet record.
  */
 function propertyRecord(row) {
-  const situs = parseSitusAddress(row.situs_full_address);
-  const fallback = parseSitusAddress(row.unnormalized_address);
-  const structuredStreet = [
-    text(row.street_number),
-    text(row.street_name),
-    text(row.street_suffix_type),
-  ]
-    .filter((part) => part !== null)
-    .join(" ");
   const lotArea = number(row.lot_area_sqft);
   const candidate = {
     property_id: text(row.property_id),
-    property_cid: null,
-    request_identifier: text(row.request_identifier),
     parcel_identifier: text(row.parcel_identifier),
     source_system: text(row.source_system),
     county_name: text(row.county_name) ?? "Broward",
+    county_fips: "12011",
     state_code: text(row.state_code) ?? "FL",
-    address_street:
-      situs.street ??
-      (structuredStreet.length > 0 ? structuredStreet : null) ??
-      fallback.street,
-    address_city: situs.city ?? text(row.city_name) ?? fallback.city,
-    address_zip:
-      situs.postalCode ?? text(row.postal_code) ?? fallback.postalCode,
     latitude: number(row.latitude),
     longitude: number(row.longitude),
     lot_size_acre:
@@ -687,25 +577,14 @@ function propertyRecord(row) {
       number(row.livable_floor_area) ??
       number(row.layout_livable_area_sq_ft) ??
       number(row.layout_area_under_air_sq_ft),
+    area_under_air: number(row.layout_area_under_air_sq_ft),
     total_area: number(row.total_area),
     assessed_value: number(row.assessed_value),
     market_value: number(row.market_value),
     land_value: number(row.land_value),
     avm_value: number(row.avm_value),
-    owner_name: text(row.owner_name),
-    owners_text: text(row.owners_text),
-    owner_count: number(row.owner_count),
-    owner_occupied:
-      typeof row.owner_occupied === "boolean" ? row.owner_occupied : null,
     last_sale_date: text(row.last_sale_date),
     last_sale_price: number(row.last_sale_price),
-    subdivision: text(row.subdivision),
-    has_permits: row.has_permits === true,
-    permit_count: number(row.permit_count) ?? 0,
-    has_sunbiz_tenant: row.has_sunbiz_tenant === true,
-    has_bbb_contractor: row.has_bbb_contractor === true,
-    has_pa_corp_tenant: false,
-    hoa_flag: null,
   };
   if (candidate.property_id === null) {
     throw new Error("Property cursor returned no property_id");
@@ -719,7 +598,7 @@ function propertyRecord(row) {
 }
 
 /**
- * Map one database permit into Donphan's 20-field scalar contract.
+ * Map one database permit into the public-safe scalar contract.
  *
  * @param {Record<string,unknown>} row - Cursor row from {@link PERMIT_SQL}.
  * @returns {Record<string,string|number>} Null-free Parquet record.
@@ -742,10 +621,7 @@ function permitRecord(row) {
     opened_date: text(row.opened_date),
     source_system: text(row.source_system),
     county_name: text(row.county_name) ?? "Broward",
-    project_description: text(row.project_description),
-    description: text(row.description),
     estimated_job_value: number(row.estimated_job_value),
-    fee: number(row.fee),
   };
   if (candidate.property_improvement_id === null) {
     throw new Error("Permit cursor returned no property_improvement_id");
@@ -1391,7 +1267,7 @@ export async function stageBrowardDonphanSnapshot(options) {
     const propertyExport = await exportCursorToParquet(client, {
       cursorName: "broward_property_snapshot",
       sql: PROPERTY_SQL,
-      values: [APPRAISAL_SOURCE, PERMIT_SOURCE_PATTERN],
+      values: [APPRAISAL_SOURCE],
       outputPath: propertyPath,
       fields: PROPERTY_FIELDS,
       mapRow: propertyRecord,
@@ -1512,6 +1388,14 @@ export async function stageBrowardDonphanSnapshot(options) {
           permits: "oracle-permit-table-broward",
           coverage: "oracle-dataset-coverage-broward",
         },
+      },
+      publicationPolicy: {
+        propertyPolicyVersion: "broward-appraisal-publication-v1",
+        closedPropertyFieldAllowlist: true,
+        ownerAndAddressFieldsExcluded: true,
+        permitLocationDescriptionAndFeeFieldsExcluded: true,
+        humanApprovalRequired: true,
+        publicationAuthorized: false,
       },
       artifacts: dataArtifacts,
     };
