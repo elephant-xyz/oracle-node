@@ -362,10 +362,10 @@ function dedupeReferences(references) {
  * contacts, and scheduling controls.
  *
  * @param {import("cheerio").CheerioAPI} $ - Parsed detail document.
- * @param {number} [maxInspections=100] - Hard row ceiling.
+ * @param {number} [maxInspections=1000] - Hard row ceiling.
  * @returns {readonly BrowardMunicipalInspection[]} Allow-listed inspection summaries.
  */
-function parseInspectionTables($, maxInspections = 100) {
+function parseInspectionTables($, maxInspections = 1_000) {
   /** @type {BrowardMunicipalInspection[]} */
   const inspections = [];
   for (const tableElement of $("table").toArray()) {

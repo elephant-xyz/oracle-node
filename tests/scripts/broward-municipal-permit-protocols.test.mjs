@@ -852,6 +852,30 @@ describe("SmartGov and eGovPLUS HTML protocols", () => {
         },
       ],
     });
+    const additionalInspectionRows = Array.from(
+      { length: 100 },
+      (_value, index) => `<tr>
+        <td>${String(index + 2)}</td>
+        <td>BUILDING FOLLOW-UP</td>
+        <td>02-20-2026</td>
+        <td>02-20-2026</td>
+        <td>Completed</td>
+        <td>Passed</td>
+        <td>PRIVATE FIXTURE INSPECTOR</td>
+      </tr>`,
+    ).join("");
+    const largeInspectionRecord = parseEgovPlusDetailHtml(
+      egovPlusDetail.replace(
+        "</tbody>",
+        `${additionalInspectionRows}</tbody>`,
+      ),
+      {
+        config,
+        reference: sourceReference,
+        query: { kind: "folio", value: "494123AB0020" },
+      },
+    );
+    expect(largeInspectionRecord.inspections).toHaveLength(101);
     expect(JSON.stringify(record)).not.toMatch(
       /PRIVATE FIXTURE OWNER|PRIVATE FIXTURE INSPECTOR|555-0123/,
     );
