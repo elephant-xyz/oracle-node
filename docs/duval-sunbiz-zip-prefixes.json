@@ -1,0 +1,7 @@
+{
+  "county": "duval",
+  "derivedFrom": "USPS Duval County ZIP inventory reviewed 2026-09-01 (33 standard, 15 PO Box, 1 unique)",
+  "prefixes": ["322"],
+  "additionalExactZips": ["32099"],
+  "notes": "Use 3-digit prefix 322 for the county-scoped Sunbiz extract (principal/mailing/agent/officer addresses). Do not use prefix 320: it would pull Clay, Nassau, and St. Johns. Include exact ZIP 32099 (Jacksonville / NAS area listed in the Duval inventory). Task 5 should replace this list with PHY_ZIPCD prefixes from the DOR NAL seed."
+}

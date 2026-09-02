@@ -16,7 +16,7 @@
 | Data downloads     | [Data Offerings](https://www.jacksonville.gov/departments/property-appraiser/data-offerings)   |
 | Access mode        | Direct public HTML GET for a known RE number; search itself is ASP.NET WebForms                |
 | Authentication     | None observed for search or detail pages                                                       |
-| Local reachability | Timeout from Brazil                                                                            |
+| Local reachability | Timeout from non-US locations                                                                  |
 | US reachability    | Railway US egress returns the search redirect and complete detail HTML                         |
 
 The detail page is the authoritative structure source. It exposes owners, situs and mailing
@@ -238,16 +238,43 @@ selected by hand here; Task 5 will choose it deterministically from the DOR seed
 
 ## 9. Additional sources
 
-| Category         | Source and decision                                                                                 |
-| ---------------- | --------------------------------------------------------------------------------------------------- |
-| Sales/deeds      | DOR SDF for bulk sales; COJ sales history links to `oncore.duvalclerk.com` for book/page documents. |
-| Parcel geometry  | DOR PIN joined into the seed; county monthly GIS remains a fallback.                                |
-| Sunbiz           | Available statewide; use Duval ZIP prefixes, not re-run during appraisal capture.                   |
-| BBB              | Available nationally; defer harvesting until permit contractor names are available.                 |
-| Overture places  | Available through the existing county-boundary extraction workflow.                                 |
-| Code enforcement | No unified countywide source identified across all five permit jurisdictions.                       |
+| Category         | Source and decision                                                                                         |
+| ---------------- | ----------------------------------------------------------------------------------------------------------- |
+| Sales/deeds      | DOR SDF for bulk sales; COJ sales history links to `oncore.duvalclerk.com` for book/page documents.         |
+| Parcel geometry  | DOR PIN joined into the seed; county monthly GIS remains a fallback.                                        |
+| Sunbiz           | Available statewide; county extract uses ZIP prefix `322` plus exact ZIP `32099`. Not re-run in this pilot. |
+| BBB              | Available nationally; defer harvesting until permit contractor names are available.                         |
+| Overture places  | Available through the existing county-boundary extraction workflow.                                         |
+| Tax collector    | Out of scope. Payments live at `taxcollector.coj.net` / `duval.county-taxes.com`; values come from COJ/DOR. |
+| Recorder         | Out of scope as a harvest. OnCore remains the per-sale deed-image link.                                     |
+| Code enforcement | No unified countywide source identified across all five permit jurisdictions.                               |
 
-## 10. Risks
+Publication rights: DOR republishes NAL, SDF, and PIN on the Data Portal in compliance with
+chapter 119, Florida Statutes. Posted rolls exclude confidential records such as social security
+numbers and owners exempt under s. 119.071. Do not copy another county's FGDC `accconst` /
+`useconst` example onto Duval; confirm the sidecar in the Duval PIN zip during Task 5.
+
+## 10. Source gaps
+
+Every in-scope catalog category now ends at an official URL or a written unavailability reason
+in [duval-sources.yaml](./duval-sources.yaml). The remaining gaps are real and scoped:
+
+| Gap                               | Decision                                                                      |
+| --------------------------------- | ----------------------------------------------------------------------------- |
+| County-native bulk assets 503/404 | Fallback only. Pilot seed uses DOR NAL/SDF/PIN.                               |
+| Roof/wall fields not in DOR NAL   | Per-parcel COJ HTML capture remains mandatory.                                |
+| JaxEPICS parcel search / SPA API  | Adapter discovery in a later permit task; guest address search is documented. |
+| Atlantic Beach eTRAKiT WAF        | Catalogued as historical search; certify covered BS&A only.                   |
+| Neptune Beach and Baldwin         | No public historical-search endpoint. `certify.mjs` SKIPPED by design.        |
+| Sunbiz / BBB / Overture           | Available; not re-run during this appraisal capture.                          |
+| Code enforcement                  | Unavailable as a unified countywide source.                                   |
+| Tax collector / full recorder     | Out of scope for this pilot.                                                  |
+
+`certify.mjs` from Railway US-West remains the reachability evidence (2 PASS, 1 REVIEW,
+0 unreachable, 2 SKIPPED). A Brazil laptop re-run can report UNREACHABLE for geo-restricted
+portals and is not a catalog defect.
+
+## 11. Risks
 
 - COJ timed out from the tested Brazil connection while Railway US succeeded; pilot capture must
   run from proven US egress.
@@ -257,10 +284,10 @@ selected by hand here; Task 5 will choose it deterministically from the DOR seed
 - A 36-request benchmark is sufficient for the pilot decision, not for full-county load
   approval.
 
-## 11. Next stages
+## 12. Next stages
 
-1. Certify the permit registry and preserve REVIEW/SKIPPED outcomes honestly.
-2. Build the DOR seed and select approximately 50 diverse, deduplicated parcels.
+1. Build the DOR seed and select approximately 50 diverse, deduplicated parcels.
+2. Derive Sunbiz ZIP prefixes from NAL `PHY_ZIPCD` and replace the USPS inventory if they differ.
 3. Spot-check five seed identifiers against the live COJ detail endpoint.
 4. Run the portable local pilot on Railway US egress at concurrency 2.
 5. Perform Task 7 schema/completeness/geometry/count reconciliation.
