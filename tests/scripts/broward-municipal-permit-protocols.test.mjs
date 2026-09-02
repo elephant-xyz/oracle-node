@@ -32,6 +32,7 @@ import {
   parseTylerEsuiteSearchHtml,
 } from "../../scripts/permit-source-adapters/broward-municipal-protocols.mjs";
 import {
+  advanceSmartGovPage,
   buildMunicipalBrowserUserAgent,
   buildClick2GovSearchBody,
   buildCoconutCreekSearchBody,
@@ -287,6 +288,44 @@ describe("Broward municipal folio and query safety", () => {
 });
 
 describe("Broward municipal live transport form contracts", () => {
+  it("waits for SmartGov's zero-based AJAX page result replacement", async () => {
+    const numberedClick = vi.fn(async () => {});
+    const nextClick = vi.fn(async () => {});
+    const links = [
+      {
+        evaluate: async () => ({
+          onclick: "ApplicationSearchAdvancedResults.gotoPage(1)",
+          text: "2",
+        }),
+        click: numberedClick,
+      },
+      {
+        evaluate: async () => ({
+          onclick: "ApplicationSearchAdvancedResults.gotoPage(1)",
+          text: "",
+        }),
+        click: nextClick,
+      },
+    ];
+    const waitForFunction = vi.fn(async () => {});
+    const page = /** @type {import("puppeteer").Page} */ ({
+      $$: async () => links,
+      $eval: async () => "FormSupport.submitAction('Detail/FIXTURE-1')",
+      waitForFunction,
+    });
+
+    await advanceSmartGovPage(page, 2);
+
+    expect(numberedClick).toHaveBeenCalledOnce();
+    expect(nextClick).not.toHaveBeenCalled();
+    expect(waitForFunction).toHaveBeenCalledWith(
+      expect.any(Function),
+      {},
+      1,
+      "FormSupport.submitAction('Detail/FIXTURE-1')",
+    );
+  });
+
   it("retains Chromium capabilities in the stable browser identity", () => {
     expect(
       buildMunicipalBrowserUserAgent(

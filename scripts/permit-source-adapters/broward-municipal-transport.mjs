@@ -993,15 +993,16 @@ async function createEsuiteTransport(config, dependencies) {
 }
 
 /**
- * Advance a SmartGov result set through its first-party page control. The
- * rendered link uses a JavaScript form postback, so direct HTTP cannot safely
- * reconstruct the conversation state.
+ * Advance a SmartGov result set through its first-party AJAX page control.
+ * The source uses a zero-based hidden page index while displaying one-based
+ * links. Completion requires both the expected hidden index and a changed
+ * first result identity so stale DOM content can never be parsed as a page.
  *
  * @param {import("puppeteer").Page} page - Active SmartGov result page.
  * @param {number} targetPage - Required one-based next page.
  * @returns {Promise<void>} Resolves after the exact postback completes.
  */
-async function advanceSmartGovPage(page, targetPage) {
+export async function advanceSmartGovPage(page, targetPage) {
   const links = await page.$$('a[onclick*="gotoPage"]');
   /** @type {import("puppeteer").ElementHandle<Element>[]} */
   const matches = [];
@@ -1030,15 +1031,38 @@ async function advanceSmartGovPage(page, targetPage) {
   if (selected === undefined) {
     throw new Error("SmartGov numbered pagination could not be reconciled");
   }
-  await Promise.all([
-    page.waitForNavigation({ waitUntil: "networkidle2" }),
-    selected.click(),
-  ]);
+  const previousFirstAction = await page.$eval(
+    '.search-result-title a[onclick*="Detail/"]',
+    (element) =>
+      element.getAttribute("onclick") ?? element.getAttribute("href") ?? "",
+  );
+  await selected.click();
+  await page.waitForFunction(
+    (expectedPageIndex, previousAction) => {
+      const pageInput = document.querySelector("#_applicationSearchPage");
+      const firstResult = document.querySelector(
+        '.search-result-title a[onclick*="Detail/"]',
+      );
+      const currentAction =
+        firstResult?.getAttribute("onclick") ??
+        firstResult?.getAttribute("href") ??
+        "";
+      return (
+        pageInput instanceof HTMLInputElement &&
+        pageInput.value === String(expectedPageIndex) &&
+        currentAction.length > 0 &&
+        currentAction !== previousAction
+      );
+    },
+    {},
+    targetPage - 1,
+    previousFirstAction,
+  );
 }
 
 /**
  * Create one persistent isolated-browser SmartGov transport. The source's
- * official exact-type selector and paging controls are JavaScript postbacks;
+ * official exact-type selector and paging controls are JavaScript actions;
  * the browser executes those controls without authentication, registration,
  * challenge handling, or hidden API reconstruction.
  *
