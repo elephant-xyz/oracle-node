@@ -32,6 +32,7 @@ import {
   parseTylerEsuiteSearchHtml,
 } from "../../scripts/permit-source-adapters/broward-municipal-protocols.mjs";
 import {
+  buildMunicipalBrowserUserAgent,
   buildClick2GovSearchBody,
   buildCoconutCreekSearchBody,
   buildEgovPlusSearchBody,
@@ -285,6 +286,19 @@ describe("Broward municipal folio and query safety", () => {
 });
 
 describe("Broward municipal live transport form contracts", () => {
+  it("retains Chromium capabilities in the stable browser identity", () => {
+    expect(
+      buildMunicipalBrowserUserAgent(
+        "Mozilla/5.0 HeadlessChrome/140.0 Safari/537.36",
+      ),
+    ).toBe(
+      "Mozilla/5.0 HeadlessChrome/140.0 Safari/537.36 oracle-node-broward-permit/1.0",
+    );
+    expect(() => buildMunicipalBrowserUserAgent(" \n ")).toThrow(
+      "user agent is invalid",
+    );
+  });
+
   it("parses bounded addresses and populates exactly one legacy search mode", () => {
     expect(parseMunicipalStreetAddress("100 NE SAMPLE BLVD")).toEqual({
       houseNumber: "100",

@@ -69,6 +69,7 @@ import {
 
 const USER_AGENT =
   "oracle-node-broward-permit-pilot/1.0 (+https://github.com/elephant-xyz/oracle-node)";
+const BROWSER_IDENTITY_PRODUCT = "oracle-node-broward-permit/1.0";
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_RESPONSE_BYTES = 2_000_000;
 const DEFAULT_RAW_RESULT_ROW_LIMIT = 50;
@@ -248,6 +249,27 @@ function validateRawResultRowLimit(value) {
     );
   }
   return limit;
+}
+
+/**
+ * Preserve Chromium's truthful browser capability tokens while appending a
+ * stable crawler product identity. Legacy ASP.NET changes form behavior for
+ * an unrecognized bare product user agent, so browser transports must retain
+ * the actual browser prefix rather than masquerading as a non-browser client.
+ *
+ * @param {string} browserUserAgent - User agent reported by the launched Chromium instance.
+ * @returns {string} Browser-compatible user agent with stable oracle-node identity.
+ */
+export function buildMunicipalBrowserUserAgent(browserUserAgent) {
+  const normalized = browserUserAgent.replace(/\s+/gu, " ").trim();
+  if (
+    normalized.length === 0 ||
+    normalized.length > 1_000 ||
+    /[\u0000-\u001f\u007f]/u.test(normalized)
+  ) {
+    throw new Error("Municipal browser user agent is invalid");
+  }
+  return `${normalized} ${BROWSER_IDENTITY_PRODUCT}`;
 }
 
 /**
@@ -697,7 +719,9 @@ function createDirectHttpTransport(config, dependencies) {
  * @returns {Promise<void>} Resolves after page controls are installed.
  */
 async function configureBrowserPage(page, timeoutMs) {
-  await page.setUserAgent(USER_AGENT);
+  await page.setUserAgent(
+    buildMunicipalBrowserUserAgent(await page.browser().userAgent()),
+  );
   page.setDefaultNavigationTimeout(timeoutMs);
   page.setDefaultTimeout(timeoutMs);
 }
