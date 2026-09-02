@@ -895,10 +895,19 @@ export function parseTylerEsuiteDetailHtml(html, { config, reference, query }) {
     throw new Error(`Unexpected eSuite detail title: ${title}`);
   }
   const fields = collectLabeledFields($);
-  const permitNumber = requireText(
-    field(fields, ["Permit #", "Permit Number"]),
-    "eSuite detail permit number",
-  );
+  const detailPermitNumber = field(fields, ["Permit #", "Permit Number"]);
+  const detailApplicationNumber = field(fields, [
+    "Application #",
+    "Application Number",
+  ]);
+  const permitNumber =
+    detailPermitNumber ??
+    requireText(
+      detailApplicationNumber,
+      "eSuite detail permit or application number",
+    );
+  const publicRecordKind =
+    detailPermitNumber === null ? "permit_application" : "permit";
   if (permitNumber !== reference.permitNumber) {
     throw new Error("eSuite detail permit identity mismatch");
   }
@@ -955,6 +964,7 @@ export function parseTylerEsuiteDetailHtml(html, { config, reference, query }) {
       source_page: reference.sourcePage,
       query_kind: query.kind,
       detail_contract: "same_anonymous_session",
+      public_record_kind: publicRecordKind,
     },
   };
 }

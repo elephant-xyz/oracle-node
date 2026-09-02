@@ -705,10 +705,73 @@ describe("Tyler eSuite protocol", () => {
           result: "Pass",
         },
       ],
+      raw: {
+        public_record_kind: "permit",
+      },
     });
     expect(JSON.stringify(record)).not.toMatch(
       /PRIVATE FIXTURE OWNER|private-fixture|555-0111|PRIVATE FIXTURE COMMENT/,
     );
+  });
+
+  it("preserves an unissued eSuite application under its stable vendor identity", () => {
+    const config = getBrowardMunicipalPermitConfig("dania_beach");
+    const sourceReference = parseTylerEsuiteSearchHtml(esuiteSearch, config)
+      .references[0];
+    expect(sourceReference).toBeDefined();
+    const applicationOnlyDetail = esuiteDetail
+      .replace(
+        `<dt>Permit #</dt>
+        <dd>2026-00004503</dd>`,
+        `<dt>Permit #</dt>
+        <dd></dd>`,
+      )
+      .replace("Permit Issued on 06/23/2026", "Application Submitted");
+
+    const record = parseTylerEsuiteDetailHtml(applicationOnlyDetail, {
+      config,
+      reference: sourceReference,
+      query: { kind: "record_type", value: "1" },
+    });
+
+    expect(record).toMatchObject({
+      source_record_id: "400068",
+      record_key: `${config.sourceSystem}:400068`,
+      permit_number: "2026-00004503",
+      permit_issue_date: null,
+      record_status: "Application Submitted",
+      raw: {
+        public_record_kind: "permit_application",
+      },
+    });
+  });
+
+  it("rejects an eSuite application fallback that differs from its list identity", () => {
+    const config = getBrowardMunicipalPermitConfig("davie");
+    const sourceReference = parseTylerEsuiteSearchHtml(esuiteSearch, config)
+      .references[0];
+    expect(sourceReference).toBeDefined();
+    const conflictingApplicationDetail = esuiteDetail
+      .replace(
+        `<dt>Permit #</dt>
+        <dd>2026-00004503</dd>`,
+        `<dt>Permit #</dt>
+        <dd></dd>`,
+      )
+      .replace(
+        `<dt>Application #</dt>
+        <dd>2026-00004503</dd>`,
+        `<dt>Application #</dt>
+        <dd>DIFFERENT-APPLICATION</dd>`,
+      );
+
+    expect(() =>
+      parseTylerEsuiteDetailHtml(conflictingApplicationDetail, {
+        config,
+        reference: sourceReference,
+        query: { kind: "record_type", value: "1" },
+      }),
+    ).toThrow("identity mismatch");
   });
 });
 
