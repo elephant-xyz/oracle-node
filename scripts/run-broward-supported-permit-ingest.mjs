@@ -1532,8 +1532,9 @@ export function readBcsSummaryRecordCount(
   ) {
     throw new Error("BCS permit summary observation is invalid");
   }
-  const observationRecord =
-    /** @type {Record<string, unknown>} */ (observation);
+  const observationRecord = /** @type {Record<string, unknown>} */ (
+    observation
+  );
   if (observationRecord.parcelIdentifier !== expectedParcelIdentifier) {
     throw new Error("BCS permit summary property identity changed");
   }
