@@ -224,17 +224,39 @@ Task 7; schema-cache prefetch is not part of discovery. The transformed address 
 
 ## 8. Pilot parcel set
 
-Task 3 certifies the three smoke parcels above as reusable fixtures: one single-family parcel,
-one condominium, and one multi-building commercial parcel. They all returned a non-empty
-canonical RE Number and transformed successfully. The final approximately 50-row set is not
-selected by hand here; Task 5 will choose it deterministically from the DOR seed with:
+Task 5 wrote `downloads/duval/duval.csv` (404,023 keyed rows, 0 unkeyed, 0 duplicate
+groups) and `downloads/duval/pilot-seed-50.csv` (gitignored). The 50 identifiers are also
+recorded in [duval-pilot-seed-50.json](./duval-pilot-seed-50.json). Selection is deterministic:
+the three Task 3 smoke parcels first, then one in-range-geometry row per DOR_UC band, then
+edge cases, then fill. Rebuild with `npm run duval-seed -- --skip-spot-check`.
 
-- residential, condominium, commercial, industrial, agricultural, institutional, government,
-  and vacant coverage;
-- all five municipal/tax-district areas where the source data permits;
-- unique canonical RE Numbers;
-- non-null, in-range PIN geometry;
-- at least five identifiers manually reconciled against COJ detail pages.
+The 2026P portal zip currently unpacks `NAL26P202601.csv` (SHA-256
+`4ae67aa7550d9d9051c44f01a52ab335897af4959e9625e9ae1e007d77521691`, 29,080,532 bytes) rather
+than the August `NAL26F20260827.txt` observed during Task 3. Row count still matches the
+published 404,023. PIN centroids reproject inside lat 30.104–30.580, lon -82.047–-81.381.
+The PIN sidecar `duval_2026pin.shp.xml` has `<accconst>None</accconst><useconst>None</useconst>`;
+see [duval-pin-publication-rights.json](./duval-pin-publication-rights.json).
+
+Live COJ detail pages echoed canonical RE Numbers for the three smoke parcels plus
+`000016-0100` (vacant) and `000001-0005` (timber) from the rebuilt ordered sample.
+Laptop Brazil still cannot reach COJ; those extra checks used a US fetch path.
+
+| DOR parcel id | DOR_UC | Band | Notes |
+| --- | --- | --- | --- |
+| 0969250000R | 001 | single family | Task 3 smoke |
+| 0901770592R | 004 | condo | Task 3 smoke |
+| 1230290100R | 027 | commercial | Task 3 smoke, multi-building |
+| 0000160100R | 000 | vacant residential | Live COJ spot-check |
+| 0000060040R | 002 | mobile home | |
+| 0000320020R | 008 | multi-family | |
+| 0000900100R | 040 | industrial | |
+| 0000010005R | 055 | agricultural | Live COJ spot-check |
+| 0000510000R | 076 | institutional | |
+| 0000100015R | 080 | government | |
+
+After smoke and one row per band, remaining slots fill in `PARCEL_ID` order, so the 50 is
+heavy on low-folio section land (ZIP 32234) for agricultural and government. Full list:
+[duval-pilot-seed-50.json](./duval-pilot-seed-50.json).
 
 ## 9. Additional sources
 
@@ -251,8 +273,8 @@ selected by hand here; Task 5 will choose it deterministically from the DOR seed
 
 Publication rights: DOR republishes NAL, SDF, and PIN on the Data Portal in compliance with
 chapter 119, Florida Statutes. Posted rolls exclude confidential records such as social security
-numbers and owners exempt under s. 119.071. Do not copy another county's FGDC `accconst` /
-`useconst` example onto Duval; confirm the sidecar in the Duval PIN zip during Task 5.
+numbers and owners exempt under s. 119.071. The Duval PIN sidecar
+`duval_2026pin.shp.xml` records FGDC `accconst`/`useconst` as `None`.
 
 ## 10. Source gaps
 

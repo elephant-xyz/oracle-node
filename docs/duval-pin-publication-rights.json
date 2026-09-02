@@ -1,0 +1,8 @@
+{
+  "county": "duval",
+  "sourcePath": "duval_2026pin.shp.xml",
+  "confirmedAt": "2026-09-02",
+  "accconst": "None",
+  "useconst": "None",
+  "notes": "FGDC sidecar inside the Florida DOR 2026F PIN zip. County GIS metadata still mentions a $15 dataset fee for native SDE extracts; the DOR republication used for this seed is public under chapter 119, Florida Statutes."
+}
