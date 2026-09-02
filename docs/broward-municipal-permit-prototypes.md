@@ -168,10 +168,20 @@ anchor.
 The parser now accepts only bounded printable identifiers containing at least
 one alphanumeric character and still requires exact detail identity. Blank,
 control-character, conflicting, or inaccessible identities fail closed. A
-selected-type replay reconciled Dania's blocked type to 100 unique records over
-ten terminal pages and Davie's blocked type to 16 over two terminal pages, with
-zero page overlap or missing rows. No page-size change or synthetic subdivision
-was needed. Davie's login-gated 2026 OAS boundary remains excluded.
+selected-type replay recovered Dania's blocked listing to 100 unique records
+over ten pages and reconciled Davie's blocked type to 16 over two pages, with
+zero page overlap or missing rows.
+
+The Dania listing stopped on a full tenth page without a reported total. The
+same 100-row shape existed in multiple prior Dania and Davie type receipts.
+Neither public search form exposes a date, status, page-size, or other
+subdivision control: only exact permit type and exact permit number are
+available. The runner therefore treats a no-total, ten-full-page eSuite result
+as an anonymous source cap rather than accepting it as complete. Historical
+100-row receipts are retained but projected as capped, unresolved partitions.
+Both eSuite routes require an official bulk export or a newly exposed exhaustive
+public filter before source-wide completion. Davie's login-gated 2026 OAS
+boundary remains excluded.
 
 ## Remaining software blocker
 

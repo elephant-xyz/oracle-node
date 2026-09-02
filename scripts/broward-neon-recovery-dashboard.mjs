@@ -1301,10 +1301,32 @@ function buildMunicipalEnumerationWorker(definition, checkpoint, nowMs) {
     ) {
       throw new Error("Municipal type checkpoint is malformed");
     }
-    completedWindows = Object.keys(checkpoint.completedPartitions).length;
-    totalWindows = completedWindows + checkpoint.pendingPartitionValues.length;
+    const cappedPartitionValues = checkpoint.cappedPartitionValues;
+    if (
+      cappedPartitionValues !== undefined &&
+      (!Array.isArray(cappedPartitionValues) ||
+        !cappedPartitionValues.every((value) => typeof value === "string") ||
+        new Set(cappedPartitionValues).size !== cappedPartitionValues.length)
+    ) {
+      throw new Error("Municipal type source caps are malformed");
+    }
+    const cappedValues = new Set(
+      cappedPartitionValues === undefined ? [] : cappedPartitionValues,
+    );
+    const completedValues = Object.keys(checkpoint.completedPartitions);
+    const cappedCompletedCount = completedValues.filter((value) =>
+      cappedValues.has(value),
+    ).length;
+    completedWindows = completedValues.length - cappedCompletedCount;
     const sourcePartitionCount = safeAggregate(checkpoint.sourcePartitionCount);
-    if (sourcePartitionCount !== totalWindows) {
+    totalWindows = sourcePartitionCount;
+    deferredCapCount = cappedValues.size;
+    if (
+      sourcePartitionCount !==
+      completedWindows +
+        checkpoint.pendingPartitionValues.length +
+        cappedCompletedCount
+    ) {
       throw new Error("Municipal type partition counts do not reconcile");
     }
   } else {

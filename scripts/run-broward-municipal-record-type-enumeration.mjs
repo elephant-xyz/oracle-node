@@ -26,6 +26,7 @@ const SUPPORTED_JURISDICTIONS = new Set([
   "lighthouse_point",
 ]);
 const EXPECTED_PAGE_SIZE = 10;
+const ESUITE_ANONYMOUS_RESULT_CEILING = 100;
 
 /**
  * @typedef {import("./permit-source-adapters/broward-municipal-core.mjs").NormalizedBrowardMunicipalPermit} NormalizedBrowardMunicipalPermit
@@ -73,6 +74,7 @@ const EXPECTED_PAGE_SIZE = 10;
  * @property {number} sourcePartitionCount - Full source selector cardinality.
  * @property {string[]} pendingPartitionValues - Exact planned partition identities.
  * @property {Record<string, CompletedMunicipalTypePartition>} completedPartitions
+ * @property {string[]} cappedPartitionValues - Exact partitions blocked at a proven source ceiling.
  * @property {MunicipalTypePartitionProgress | null} currentPartition
  * @property {number} recordObservations - Detail records durably captured.
  * @property {number} uniqueRecords - Deduplicated captured records.
@@ -91,6 +93,7 @@ const EXPECTED_PAGE_SIZE = 10;
  * @property {number} plannedPartitionCount - Full or selected run count.
  * @property {number} completedPartitionCount - Durable terminal partitions.
  * @property {number} pendingPartitionCount - Remaining partitions.
+ * @property {number} cappedPartitionCount - Partitions blocked by a source ceiling.
  * @property {number} capturedRecordCount - Unique normalized records.
  * @property {number} duplicateRecordCount - Exact duplicate observations.
  * @property {MunicipalTypeCheckpoint["blocker"]} blocker - Safe pause reason.
@@ -239,11 +242,33 @@ export async function runMunicipalTypeEnumeration(options, dependencies = {}) {
       now(),
     );
     const aggregate = await readCapturedRecords(checkpoint);
+    if (config.protocol === "tyler_esuite") {
+      const historicalCapValues = Object.values(checkpoint.completedPartitions)
+        .filter(isCompletedEsuiteSourceCap)
+        .map((partition) => partition.value);
+      if (historicalCapValues.length > 0) {
+        checkpoint = {
+          ...checkpoint,
+          cappedPartitionValues: [
+            ...new Set([
+              ...checkpoint.cappedPartitionValues,
+              ...historicalCapValues,
+            ]),
+          ].sort((left, right) => left.localeCompare(right)),
+          status: "paused",
+          blocker: "source_cap",
+          nextAttemptAt: null,
+          updatedAt: now(),
+        };
+        await writeCheckpoint(checkpointPath, checkpoint);
+      }
+    }
     let processedPartitions = 0;
     let requestCount = 0;
 
     try {
       while (
+        checkpoint.cappedPartitionValues.length === 0 &&
         checkpoint.pendingPartitionValues.length > 0 &&
         (options.maxPartitions === null ||
           processedPartitions < options.maxPartitions)
@@ -311,7 +336,7 @@ export async function runMunicipalTypeEnumeration(options, dependencies = {}) {
           if (replayReceipt !== undefined) {
             throw new Error("Municipal next page already has a receipt");
           }
-          validatePageContract(page, pageNumber, progress);
+          validatePageContract(page, pageNumber, progress, config.protocol);
           const previouslySeen = new Set(progress.seenRecordKeys);
           if (referenceKeys.some((key) => previouslySeen.has(key))) {
             throw new Error("Municipal partition pages overlap");
@@ -449,8 +474,18 @@ export async function runMunicipalTypeEnumeration(options, dependencies = {}) {
     } catch (error) {
       const blocker = classifyFailure(error);
       const cooling = blocker === "timeout" || blocker === "source_error";
+      const cappedPartitionValues =
+        blocker === "source_cap" && checkpoint.currentPartition !== null
+          ? [
+              ...new Set([
+                ...checkpoint.cappedPartitionValues,
+                checkpoint.currentPartition.value,
+              ]),
+            ].sort((left, right) => left.localeCompare(right))
+          : checkpoint.cappedPartitionValues;
       checkpoint = {
         ...checkpoint,
+        cappedPartitionValues,
         status: cooling ? "cooling" : "paused",
         blocker,
         nextAttemptAt: cooling
@@ -478,6 +513,17 @@ export async function runMunicipalTypeEnumeration(options, dependencies = {}) {
       normalizedListPath,
       renderMunicipalPermitJsonl([...aggregate.byKey.values()]),
     );
+    const cappedValues = new Set(checkpoint.cappedPartitionValues);
+    const completedPartitionValues = Object.keys(
+      checkpoint.completedPartitions,
+    );
+    const cappedCompletedPartitionCount = completedPartitionValues.filter(
+      (value) => cappedValues.has(value),
+    ).length;
+    const completedPartitionCount =
+      completedPartitionValues.length - cappedCompletedPartitionCount;
+    const pendingPartitionCount =
+      checkpoint.pendingPartitionValues.length + cappedCompletedPartitionCount;
     return {
       status:
         checkpoint.status === "complete"
@@ -489,12 +535,10 @@ export async function runMunicipalTypeEnumeration(options, dependencies = {}) {
       sourceSystem: config.sourceSystem,
       coverageBoundary: checkpoint.coverageBoundary,
       sourcePartitionCount: checkpoint.sourcePartitionCount,
-      plannedPartitionCount:
-        Object.keys(checkpoint.completedPartitions).length +
-        checkpoint.pendingPartitionValues.length,
-      completedPartitionCount: Object.keys(checkpoint.completedPartitions)
-        .length,
-      pendingPartitionCount: checkpoint.pendingPartitionValues.length,
+      plannedPartitionCount: completedPartitionCount + pendingPartitionCount,
+      completedPartitionCount,
+      pendingPartitionCount,
+      cappedPartitionCount: cappedValues.size,
       capturedRecordCount: aggregate.byKey.size,
       duplicateRecordCount: aggregate.duplicateRecordCount,
       blocker: checkpoint.blocker,
@@ -541,14 +585,45 @@ function createPartitionProgress(partition) {
 }
 
 /**
+ * Recognize a historical eSuite partition that stopped exactly at the repeated
+ * anonymous ten-page/100-row boundary without exposing a source total.
+ *
+ * @param {CompletedMunicipalTypePartition} partition - Previously terminal partition.
+ * @returns {boolean} True only for the exact observed anonymous source ceiling.
+ */
+function isCompletedEsuiteSourceCap(partition) {
+  if (
+    partition.pageCount !==
+      ESUITE_ANONYMOUS_RESULT_CEILING / EXPECTED_PAGE_SIZE ||
+    partition.recordCount !== ESUITE_ANONYMOUS_RESULT_CEILING ||
+    partition.reportedCount !== null
+  ) {
+    return false;
+  }
+  return Array.from(
+    {
+      length: ESUITE_ANONYMOUS_RESULT_CEILING / EXPECTED_PAGE_SIZE,
+    },
+    (_value, index) => index + 1,
+  ).every((pageNumber) => {
+    const receipt = partition.completedPages[String(pageNumber)];
+    return (
+      receipt?.page === pageNumber &&
+      receipt.referenceCount === EXPECTED_PAGE_SIZE
+    );
+  });
+}
+
+/**
  * Validate strict sequential paging and stable optional source totals.
  *
  * @param {import("./permit-source-adapters/broward-municipal-core.mjs").BrowardMunicipalSearchPage} page - Parsed source page.
  * @param {number} pageNumber - Current one-based page.
  * @param {MunicipalTypePartitionProgress} progress - Durable partition progress.
+ * @param {import("./permit-source-adapters/broward-municipal-core.mjs").BrowardMunicipalProtocol} protocol - Exact source protocol.
  * @returns {void}
  */
-function validatePageContract(page, pageNumber, progress) {
+function validatePageContract(page, pageNumber, progress, protocol) {
   if (
     page.nextPage !== null &&
     (page.nextPage !== pageNumber + 1 ||
@@ -558,6 +633,16 @@ function validatePageContract(page, pageNumber, progress) {
   }
   if (page.nextPage === null && page.references.length > EXPECTED_PAGE_SIZE) {
     throw new Error("Municipal partition terminal page exceeds page size");
+  }
+  if (
+    protocol === "tyler_esuite" &&
+    page.nextPage === null &&
+    pageNumber * EXPECTED_PAGE_SIZE === ESUITE_ANONYMOUS_RESULT_CEILING &&
+    page.references.length === EXPECTED_PAGE_SIZE &&
+    (page.reportedCount === undefined || page.reportedCount === null) &&
+    progress.reportedCount === null
+  ) {
+    throw new Error("Municipal partition reached anonymous eSuite source cap");
   }
   if (
     page.reportedCount !== undefined &&
@@ -663,13 +748,23 @@ async function readOrCreateCheckpoint(
       !parsed.pendingPartitionValues.every(
         (value) => typeof value === "string",
       ) ||
-      !isRecord(parsed.completedPartitions)
+      !isRecord(parsed.completedPartitions) ||
+      (parsed.cappedPartitionValues !== undefined &&
+        (!Array.isArray(parsed.cappedPartitionValues) ||
+          !parsed.cappedPartitionValues.every(
+            (value) => typeof value === "string",
+          ) ||
+          new Set(parsed.cappedPartitionValues).size !==
+            parsed.cappedPartitionValues.length))
     ) {
       throw new Error(
         "Existing municipal type checkpoint does not match source universe",
       );
     }
-    return /** @type {MunicipalTypeCheckpoint} */ (parsed);
+    return /** @type {MunicipalTypeCheckpoint} */ ({
+      ...parsed,
+      cappedPartitionValues: parsed.cappedPartitionValues ?? [],
+    });
   } catch (error) {
     if (!isNodeError(error) || error.code !== "ENOENT") throw error;
   }
@@ -683,6 +778,7 @@ async function readOrCreateCheckpoint(
     sourcePartitionCount: sourcePartitions.length,
     pendingPartitionValues: plan.map((partition) => partition.value),
     completedPartitions: {},
+    cappedPartitionValues: [],
     currentPartition: null,
     recordObservations: 0,
     uniqueRecords: 0,

@@ -975,6 +975,54 @@ describe("durable Broward Neon recovery", () => {
     });
   });
 
+  it("keeps historical eSuite ceiling partitions unresolved", async () => {
+    const root = await mkdtemp(
+      path.join(tmpdir(), "broward-recovery-dashboard-esuite-cap-"),
+    );
+    temporaryDirectories.push(root);
+    const davieDirectory = path.join(
+      root,
+      "downloads/broward/municipal-type-enumeration/davie-full",
+    );
+    await mkdir(davieDirectory, { recursive: true });
+    await writeFile(
+      path.join(davieDirectory, "checkpoint.private.json"),
+      JSON.stringify({
+        pendingPartitionValues: [],
+        completedPartitions: {
+          capped: {
+            pageCount: 10,
+            recordCount: 100,
+            reportedCount: null,
+          },
+        },
+        cappedPartitionValues: ["capped"],
+        sourcePartitionCount: 1,
+        uniqueRecords: 100,
+        status: "paused",
+        blocker: "source_cap",
+        nextAttemptAt: null,
+        updatedAt: "2026-09-02T20:00:00.000Z",
+      }),
+    );
+
+    const status = await readPermitEnumerationStatus(
+      root,
+      Date.parse("2026-09-02T20:01:00.000Z"),
+    );
+
+    expect(status.workers).toContainEqual(
+      expect.objectContaining({
+        source: "Davie",
+        status: "paused",
+        completedWindows: 0,
+        pendingWindows: 1,
+        deferredCapCount: 1,
+        pauseReason: "source_cap",
+      }),
+    );
+  });
+
   it("projects six source-scoped property-first aggregates without private identities", async () => {
     const client = {
       query: () =>

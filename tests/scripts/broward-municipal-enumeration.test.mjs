@@ -623,6 +623,76 @@ describe("Broward municipal exact-type enumeration", () => {
     expect(close).toHaveBeenCalledOnce();
   });
 
+  it("fails closed at the anonymous eSuite 100-row terminal ceiling", async () => {
+    const root = await createTemporaryDirectory();
+    const config = getBrowardMunicipalPermitConfig("dania_beach");
+    const summary = await runMunicipalTypeEnumeration(
+      {
+        jurisdictionKey: "dania_beach",
+        outputDirectory: root,
+        partitionValue: null,
+        maxPartitions: null,
+        maxPagesPerPartition: 20,
+        delayMs: 1_000,
+        requestTimeoutMs: 30_000,
+      },
+      {
+        wait: async () => {},
+        createTransport: async () => ({
+          listRecordTypePartitions: async () => [
+            { value: "TYPE-CAPPED", label: "CAPPED TYPE" },
+          ],
+          fetchSearchPage: async (query, page) => ({
+            references: Array.from({ length: 10 }, (_value, index) => {
+              const ordinal = (Number(page) - 1) * 10 + index + 1;
+              return {
+                sourceRecordId: `${query.value}-${String(ordinal)}`,
+                permitNumber: `P-${String(ordinal)}`,
+                detailUrl: `https://example.test/${String(ordinal)}`,
+                sourcePage: Number(page),
+                listData: { record_type: query.value },
+              };
+            }),
+            nextPage: Number(page) < 10 ? Number(page) + 1 : null,
+          }),
+          fetchDetail: async (reference, query) =>
+            normalizedRecord(
+              config,
+              reference.sourceRecordId,
+              reference.permitNumber,
+              query,
+            ),
+          close: async () => {},
+        }),
+      },
+    );
+
+    expect(summary).toMatchObject({
+      status: "paused",
+      completedPartitionCount: 0,
+      pendingPartitionCount: 1,
+      cappedPartitionCount: 1,
+      capturedRecordCount: 90,
+      blocker: "source_cap",
+    });
+    const checkpoint = JSON.parse(
+      await readFile(path.join(root, "checkpoint.private.json"), "utf8"),
+    );
+    expect(checkpoint).toMatchObject({
+      completedPartitions: {},
+      cappedPartitionValues: ["TYPE-CAPPED"],
+      currentPartition: {
+        value: "TYPE-CAPPED",
+        nextPage: 10,
+      },
+      status: "paused",
+      blocker: "source_cap",
+    });
+    expect(
+      Object.keys(checkpoint.currentPartition.completedPages),
+    ).toHaveLength(9);
+  });
+
   it("supports one exact pilot partition without changing the source universe count", () => {
     expect(
       parseMunicipalTypeEnumerationOptions([
