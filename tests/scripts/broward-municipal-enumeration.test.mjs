@@ -400,6 +400,87 @@ describe("Broward municipal property enumeration", () => {
     expect(await readFile(ledgerPath, "utf8")).toBe("");
   });
 
+  it("migrates a legacy source-cap cursor before issuing another query", async () => {
+    const root = await createTemporaryDirectory();
+    const seedPath = path.join(root, "seed.private.csv");
+    const outputDirectory = path.join(root, "capture");
+    await writeFile(
+      seedPath,
+      "jurisdiction_key,query_kind,query_value,property_count\n" +
+        "tamarac,address,100 PRIVATE ST,1\n" +
+        "tamarac,address,101 PRIVATE ST,1\n",
+      { mode: 0o600 },
+    );
+    const options = {
+      jurisdictionKey: "tamarac",
+      seedPath,
+      outputDirectory,
+      maxQueries: 1,
+      maxResultsPerQuery: 100,
+      delayMs: 1_000,
+      requestTimeoutMs: 30_000,
+    };
+    await runMunicipalPropertyEnumeration(options, {
+      now: () => "2026-09-02T17:00:00.000Z",
+      wait: async () => {},
+      createTransport: async () => ({
+        fetchSearchPage: async () => ({ references: [], nextPage: null }),
+        fetchDetail: vi.fn(),
+        listRecordTypePartitions: async () => {
+          throw new Error("unsupported");
+        },
+        close: async () => {},
+      }),
+    });
+    const checkpointPath = path.join(
+      outputDirectory,
+      "checkpoint.private.json",
+    );
+    const legacyCheckpoint = JSON.parse(await readFile(checkpointPath, "utf8"));
+    await writeFile(
+      checkpointPath,
+      `${JSON.stringify(
+        {
+          ...legacyCheckpoint,
+          status: "paused",
+          blocker: "source_cap",
+        },
+        null,
+        2,
+      )}\n`,
+      { mode: 0o600 },
+    );
+    const fetchSearchPage = vi.fn();
+    const summary = await runMunicipalPropertyEnumeration(options, {
+      now: () => "2026-09-02T18:00:00.000Z",
+      wait: async () => {},
+      createTransport: async () => ({
+        fetchSearchPage,
+        fetchDetail: vi.fn(),
+        listRecordTypePartitions: async () => {
+          throw new Error("unsupported");
+        },
+        close: async () => {},
+      }),
+    });
+
+    expect(fetchSearchPage).not.toHaveBeenCalled();
+    expect(summary).toMatchObject({
+      status: "cooling",
+      completedQueries: 1,
+      deferredCapCount: 1,
+      blocker: "source_cap",
+    });
+    const migratedCheckpoint = JSON.parse(
+      await readFile(checkpointPath, "utf8"),
+    );
+    expect(migratedCheckpoint).toMatchObject({
+      nextQueryIndex: 2,
+      completedQueries: 1,
+    });
+    expect(Object.values(migratedCheckpoint.deferredCapItems)).toHaveLength(1);
+  });
+
   it("requires conservative production options", () => {
     expect(
       parseMunicipalPropertyEnumerationOptions([

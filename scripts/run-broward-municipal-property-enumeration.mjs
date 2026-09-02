@@ -248,6 +248,27 @@ export async function runMunicipalPropertyEnumeration(
     seedSha256,
     now(),
   );
+  if (
+    checkpoint.status === "paused" &&
+    checkpoint.blocker === "source_cap" &&
+    checkpoint.nextQueryIndex < queries.length &&
+    Object.keys(checkpoint.deferredCapItems).length === 0
+  ) {
+    const legacyCappedQuery = queries[checkpoint.nextQueryIndex];
+    if (legacyCappedQuery === undefined) {
+      throw new Error("Legacy capped query left the immutable seed plan");
+    }
+    checkpoint = deferCappedPropertyQuery(
+      checkpoint,
+      legacyCappedQuery,
+      checkpoint.nextQueryIndex,
+      options.maxResultsPerQuery,
+      options.maxResultsPerQuery,
+      now(),
+    );
+    await writeDeferredCapLedger(deferredCapLedgerPath, checkpoint);
+    await writeCheckpoint(checkpointPath, checkpoint);
+  }
   const aggregate = await readCompletedQueryArtifacts(
     queriesDirectory,
     checkpoint,
