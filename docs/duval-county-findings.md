@@ -314,3 +314,61 @@ portals and is not a catalog defect.
 4. Run the portable local pilot on Railway US egress at concurrency 2.
 5. Perform Task 7 schema/completeness/geometry/count reconciliation.
 6. Export the pilot query table and verify it through Donphan.
+
+## 13. Pilot certification and full-ingest readiness (2026-09-02)
+
+The appraisal pilot is certified. Starting the full-county ingest is a **NO-GO until the
+operational prerequisites below are complete and concurrency 4 passes a larger bounded soak**.
+This is an infrastructure/readiness hold, not a source, identifier, capture, transform, schema,
+geometry, or Donphan defect.
+
+| Check               | Result                                                                                                     |
+| ------------------- | ---------------------------------------------------------------------------------------------------------- |
+| Seed rows           | 50 unique parcel identifiers from a reconciled 404,023-row DOR seed                                        |
+| Diversity           | All ten planned `DOR_UC` bands; ten observed transform usage types                                         |
+| Geometry            | **50/50** centroids inside the Duval bbox                                                                  |
+| Capture + transform | **50/50 success**                                                                                          |
+| Lexicon schema      | **50/50 pass**                                                                                             |
+| Completeness        | **10.8% mean labeled-field coverage** after subtracting known page chrome; see methodology note below      |
+| Required artifacts  | `property.json`, `address.json`, `property_seed.json`, and `input.html` present for all successful parcels |
+| Tax / owner         | **50/50** tax and **50/50** owner coverage                                                                 |
+| Failures            | **0**                                                                                                      |
+| Reconciled counts   | `seedRows == attempted == success + failures` (`50 == 50 == 50 + 0`)                                       |
+| Manifest            | `downloads/duval/pilot-run/pilot-manifest.json`                                                            |
+| Donphan             | 50 rows; use-code distribution and named parcel values agree with the manifest and COJ evidence            |
+
+The completeness number is the conservative labeled-field heuristic documented in
+[duval-appraisal-transform-validation.md](./duval-appraisal-transform-validation.md), not the
+Hillsborough artifact-completeness gate. `@elephant-xyz/cli` 1.58.1 does not export
+`mirrorValidate`; all 50 transforms nevertheless passed lexicon validation.
+
+### Full-county runtime estimate
+
+The Railway `us-west2` probe measured p50 **0.470 seconds** and p95 **0.770 seconds** at
+concurrency 4 with no failures. For 404,023 parcels:
+
+- p50 estimate: `404,023 × 0.470 ÷ 4 = 47,473 seconds` = **13.2 hours**
+- p95 estimate: `404,023 × 0.770 ÷ 4 = 77,775 seconds` = **21.6 hours**
+
+Both estimates clear the 48-hour gate, leaving 26.4 hours of p95 headroom for transformation,
+retries, and orchestration. They are planning estimates from a 36-request benchmark, not a
+full-county load test. Concurrency 2 is not acceptable for the full run because its measured-p95
+estimate is 44.7 hours before transformation or retries. Concurrency 4 becomes the safe setting
+only after a larger bounded soak confirms the portal tolerates it.
+
+### Prerequisites before changing the decision to GO
+
+1. Confirm production access with `AWS_PROFILE=elephant-oracle-node`.
+2. Create the per-county prepare queue with
+   `./scripts/create-county-prepare-queue.sh duval`.
+3. Stage the reconciled seed at `s3://counties-seeds/duval.csv`.
+4. Implement and smoke-test a county-scoped `duval` permit adapter across the fragmented permit
+   jurisdictions documented in this report.
+5. Explicitly set
+   `PROPERTY_FIRST_PERMIT_ELIGIBLE_USAGE_TYPES_DUVAL=AutoSalesRepair,Industrial` from the
+   permit-priority usage types actually observed in the transform output. Do not inherit the
+   Lee-vocabulary default; revisit this list when broader Duval usage types are observed.
+6. Run a bounded concurrency-4 soak from production-equivalent US egress and retain its
+   throughput, failure, throttling, and retry evidence.
+7. Complete the human-approved catalog/query-table publication and IPNS map update. The pilot
+   intentionally did not publish owner-bearing artifacts to public IPFS.
