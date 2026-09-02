@@ -42,6 +42,7 @@
     "broward:permits:run-municipal-types": "node scripts/run-broward-municipal-record-type-enumeration.mjs",
     "broward:permits:retry-tyler-source-missing": "node scripts/retry-broward-tyler-source-missing.mjs",
     "broward:bbb:roofing-worklist": "node scripts/build-broward-roofing-bbb-worklist.mjs",
+    "broward:donphan:stage": "node scripts/stage-broward-donphan-snapshot.mjs",
     "query-post-logs": "node scripts/query_post_logs.js",
     "update-elephant-cli": "npm install @elephant-xyz/cli@latest --workspace=prepare/lambdas/downloader --workspace=workflow/lambdas/submit --workspace=workflow/lambdas/pre --workspace=workflow/lambdas/mvl",
     "hillsborough-pilot": "node scripts/hillsborough-local-pilot.mjs",
