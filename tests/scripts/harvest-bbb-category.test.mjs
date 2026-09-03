@@ -1,7 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import * as path from "node:path";
+
+import { afterEach, describe, expect, it } from "vitest";
 
 import {
   buildBbbBusinessProfileRecord,
+  harvestBbbCategoryInExistingPage,
   parseBbbProfileUrlIdentity,
   parseCategoryCounts,
 } from "../../scripts/harvest-bbb-category.mjs";
@@ -9,6 +14,17 @@ import {
 /**
  * @typedef {import("../../scripts/harvest-bbb-category.mjs").PageSnapshot} PageSnapshotForDocumentation
  */
+
+/** @type {string[]} */
+const temporaryDirectories = [];
+
+afterEach(async () => {
+  await Promise.all(
+    temporaryDirectories
+      .splice(0)
+      .map((directory) => rm(directory, { recursive: true, force: true })),
+  );
+});
 
 describe("BBB category harvester", () => {
   it("parses stable BBB profile URL identity parts", () => {
@@ -44,6 +60,109 @@ describe("BBB category harvester", () => {
     expect(parseCategoryCounts(snapshot)).toEqual({
       totalResults: 556,
       pageCount: 15,
+    });
+  });
+
+  it("retries a transient profile failure before recording a failed profile", async () => {
+    const outputDirectory = await mkdtemp(
+      path.join(tmpdir(), "bbb-profile-retry-"),
+    );
+    temporaryDirectories.push(outputDirectory);
+    const categoryUrl = "https://www.bbb.org/us/fl/example/category/data";
+    const profileUrl =
+      "https://www.bbb.org/us/fl/example/profile/data/example-data-0633-12345678";
+    let currentUrl = categoryUrl;
+    let firstProfileAttempt = true;
+    let profileNavigationCount = 0;
+    let replacementPageCount = 0;
+    /** @type {import("puppeteer").Page} */
+    let page;
+    const browser = /** @type {import("puppeteer").Browser} */ ({
+      newPage: async () => {
+        replacementPageCount += 1;
+        return page;
+      },
+    });
+    page = /** @type {import("puppeteer").Page} */ ({
+      browser: () => browser,
+      close: async () => undefined,
+      setDefaultNavigationTimeout: () => undefined,
+      setDefaultTimeout: () => undefined,
+      setCacheEnabled: async () => undefined,
+      setViewport: async () => undefined,
+      setUserAgent: async () => undefined,
+      evaluateOnNewDocument: async () => undefined,
+      goto: async (url) => {
+        currentUrl = url;
+        if (url === profileUrl) profileNavigationCount += 1;
+        return { status: () => 200 };
+      },
+      title: async () => "Accessible BBB page",
+      evaluate: async (_callback, ...args) => {
+        if (args.length === 0) {
+          if (currentUrl === profileUrl && firstProfileAttempt) {
+            firstProfileAttempt = false;
+            throw new Error("transient protocol timeout");
+          }
+          return "";
+        }
+        if (currentUrl === categoryUrl) {
+          return {
+            url: categoryUrl,
+            title: "Data near Example",
+            text: "Showing: 1 result for Data near Example",
+            headings: [],
+            links: [{ text: "Example Data", href: profileUrl }],
+            jsonLd: [],
+            html: null,
+          };
+        }
+        return {
+          url: profileUrl,
+          title: "Example Data | BBB Business Profile",
+          text: "Example Data LLC",
+          headings: ["Example Data LLC"],
+          links: [],
+          jsonLd: [
+            JSON.stringify({
+              "@context": "https://schema.org",
+              "@type": "LocalBusiness",
+              name: "Example Data LLC",
+            }),
+          ],
+          html: null,
+        };
+      },
+    });
+
+    const summary = await harvestBbbCategoryInExistingPage(
+      {
+        categoryUrl,
+        outputLocation: { kind: "local", dir: outputDirectory },
+        chromiumExecutablePath: null,
+        headless: true,
+        startPage: 1,
+        maxPages: 1,
+        maxProfiles: 1,
+        partRecordLimit: 100,
+        pageDelayMs: 0,
+        profileDelayMs: 0,
+        profileAttempts: 2,
+        challengeAttempts: 1,
+        challengeCheckIntervalMs: 0,
+        challengeChecksPerAttempt: 1,
+        navigationTimeoutMs: 1_000,
+        includeHtml: false,
+        profileSubpages: [],
+      },
+      page,
+    );
+
+    expect(profileNavigationCount).toBe(2);
+    expect(replacementPageCount).toBe(1);
+    expect(summary).toMatchObject({
+      profilesHarvested: 1,
+      profilesFailed: 0,
     });
   });
 
