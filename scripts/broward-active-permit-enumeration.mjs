@@ -252,7 +252,8 @@ export function detectActiveEnumerationProcessDetails(definitions, entries) {
         (entry) =>
           descendantPids.has(entry.pid) &&
           entry.elapsedSeconds <= MAXIMUM_DETAIL_PROCESS_AGE_SECONDS &&
-          isBoundedDetailCommand(entry.command),
+          isBoundedDetailCommand(entry.command) &&
+          detailCommandMatchesDefinition(definition, entry.command),
       )
     ) {
       detailRouteKeys.add(definition.key);
@@ -324,6 +325,30 @@ function isBoundedDetailCommand(command) {
   return (
     command.includes("probe-broward-") ||
     /(?:^|[/\s-])(?:chrome|chromium|playwright)(?:[/\s-]|$)/iu.test(command)
+  );
+}
+
+/**
+ * Attribute a shared property-first parent's current probe only to the route
+ * named by its public jurisdiction flag or output-directory segment. Full
+ * municipal supervisors are already route-specific by ancestry.
+ *
+ * @param {ActiveEnumerationRouteDefinition} definition - Route definition.
+ * @param {string} command - Private bounded detail command.
+ * @returns {boolean} Whether the detail child belongs to this route.
+ */
+function detailCommandMatchesDefinition(definition, command) {
+  if (definition.method === "full") return true;
+  const key = escapeRegExp(definition.processJurisdictionKey);
+  const underscoredKey = escapeRegExp(
+    definition.processJurisdictionKey.replaceAll("-", "_"),
+  );
+  return (
+    new RegExp(`(?:^|[/\\\\])${key}(?:[/\\\\]|$)`, "u").test(command) ||
+    new RegExp(
+      `(?:^|\\s)--jurisdiction(?:=|\\s+)(?:${key}|${underscoredKey})(?:\\s|$)`,
+      "u",
+    ).test(command)
   );
 }
 

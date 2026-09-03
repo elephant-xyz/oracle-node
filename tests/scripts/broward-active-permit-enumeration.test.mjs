@@ -132,18 +132,23 @@ describe("Broward active permit enumeration telemetry", () => {
         parentPid: 1,
         elapsedSeconds: 3_600,
         command:
-          "node scripts/run-broward-supported-permit-ingest.mjs --jurisdictions property-0",
+          "node scripts/run-broward-supported-permit-ingest.mjs --jurisdictions property-0,property-3",
       },
       {
         pid: 21,
         parentPid: 20,
-        elapsedSeconds: 901,
-        command: "node scripts/probe-broward-bcs-permits.mjs",
+        elapsedSeconds: 600,
+        command:
+          "node scripts/probe-broward-bcs-permits.mjs --output /private/property-0/result.json",
       },
     ]);
 
-    expect(details.routeKeys).toEqual(new Set(["full-property", "property-0"]));
-    expect(details.detailRouteKeys).toEqual(new Set(["full-property"]));
+    expect(details.routeKeys).toEqual(
+      new Set(["full-property", "property-0", "property-3"]),
+    );
+    expect(details.detailRouteKeys).toEqual(
+      new Set(["full-property", "property-0"]),
+    );
     expect(details.supervisorNotBeforeByKey.get("full-property")).toBe(
       "2026-09-04T10:06:00.000Z",
     );
