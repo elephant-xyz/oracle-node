@@ -683,10 +683,11 @@ function parseCitizenserveDetailLink(value, config) {
     typeof value === "string"
       ? /^javascript:openURLLink\('([^']+)'\);?$/u.exec(value)
       : null;
-  if (match === null) {
+  const detailPath = match?.[1];
+  if (typeof detailPath !== "string") {
     throw new Error("Citizenserve permit row has an invalid detail link");
   }
-  const detailUrl = new URL(match[1], `${config.portalBaseUrl}/`);
+  const detailUrl = new URL(detailPath, `${config.portalBaseUrl}/`);
   if (
     detailUrl.protocol !== "https:" ||
     detailUrl.hostname !== "www6.citizenserve.com" ||

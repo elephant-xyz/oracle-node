@@ -250,11 +250,13 @@ export function createWarmCitizenserveBrowserPool(dependencies = {}) {
   const maxOperationWallMs =
     dependencies.maxOperationWallMs ??
     DEFAULT_WARM_BROWSER_MAX_OPERATION_WALL_MS;
-  for (const [name, value] of [
+  /** @type {readonly (readonly [string,number])[]} */
+  const durationLimits = [
     ["maxIdleMs", maxIdleMs],
     ["maxClockSkewMs", maxClockSkewMs],
     ["maxOperationWallMs", maxOperationWallMs],
-  ]) {
+  ];
+  for (const [name, value] of durationLimits) {
     if (!Number.isInteger(value) || value < 1_000) {
       throw new Error(`${name} must be an integer of at least 1000`);
     }
