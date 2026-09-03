@@ -433,6 +433,7 @@ export function parseCitizenservePermitDetailHtml(html, context) {
  * @param {(checkpoint: PermitAdapterCheckpoint) => Promise<void>} [params.onCheckpoint] - Durable state callback.
  * @param {number} [params.timeoutMs=60000] - Browser navigation/source timeout.
  * @param {boolean} [params.roofOnly=false] - Detail only search rows explicitly marked roofing.
+ * @param {import("puppeteer").Browser} [params.browser] - Optional caller-owned warm browser. Each lookup still creates a fresh page, submits the rendered public form, validates challenge state, and closes only that page.
  * @returns {Promise<CitizenserveProbeResult>} Captures, evidence, and resume state.
  */
 export async function probeBoundedCitizenserve({
@@ -446,6 +447,7 @@ export async function probeBoundedCitizenserve({
   onCheckpoint,
   timeoutMs = DEFAULT_TIMEOUT_MS,
   roofOnly = false,
+  browser: suppliedBrowser,
 }) {
   const config = validateCitizenserveConfig(rawConfig);
   const query = normalizePermitSearchQuery(rawQuery);
@@ -466,11 +468,8 @@ export async function probeBoundedCitizenserve({
     );
   }
 
-  const executablePath = resolveChromeExecutablePath();
-  const browser = await puppeteer.launch({
-    headless: true,
-    ...(executablePath === null ? {} : { executablePath }),
-  });
+  const ownsBrowser = suppliedBrowser === undefined;
+  const browser = suppliedBrowser ?? (await createCitizenserveBrowser());
   const searchUrl = buildCitizenserveSearchUrl(config);
   const page = await browser.newPage();
   /** @type {CitizenservePageObservation[]} */
@@ -558,7 +557,7 @@ export async function probeBoundedCitizenserve({
     }
   } finally {
     await page.close().catch(() => undefined);
-    await browser.close().catch(() => undefined);
+    if (ownsBrowser) await closeCitizenserveBrowser(browser);
   }
 
   return {
@@ -570,6 +569,37 @@ export async function probeBoundedCitizenserve({
     paginationTruncated,
     detailsTruncated,
   };
+}
+
+/**
+ * Launch one anonymous Chromium process suitable for sequential Citizenserve
+ * property lookups.
+ *
+ * Callers that retain this browser must still execute every lookup through
+ * `probeBoundedCitizenserve`; that function opens a fresh page, submits the
+ * rendered public form, verifies the exact query, and refuses visible
+ * challenges. Reuse saves only process/bootstrap overhead and the ordinary
+ * first-party cookie context. It does not skip or replay source controls.
+ *
+ * @returns {Promise<import("puppeteer").Browser>} Connected caller-owned browser.
+ */
+export async function createCitizenserveBrowser() {
+  const executablePath = resolveChromeExecutablePath();
+  return puppeteer.launch({
+    headless: true,
+    ...(executablePath === null ? {} : { executablePath }),
+  });
+}
+
+/**
+ * Close one caller-owned Citizenserve browser without masking the source or
+ * checkpoint result that caused cleanup.
+ *
+ * @param {import("puppeteer").Browser} browser - Browser returned by `createCitizenserveBrowser`.
+ * @returns {Promise<void>} Resolves after best-effort browser shutdown.
+ */
+export async function closeCitizenserveBrowser(browser) {
+  await browser.close().catch(() => undefined);
 }
 
 /**

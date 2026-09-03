@@ -232,9 +232,14 @@ export function parseOptions(args) {
  * Execute one bounded local probe with atomic per-detail checkpointing.
  *
  * @param {BrowardMunicipalPermitProbeOptions} options - Validated CLI options.
+ * @param {{citizenserveBrowser?:import("puppeteer").Browser}} [dependencies={}]
+ *   Optional caller-owned warm resources. Supplying a browser changes only
+ *   Chromium process ownership; every query still follows the complete
+ *   rendered search, challenge check, detail reconciliation, and checkpoint
+ *   path.
  * @returns {Promise<Readonly<Record<string, unknown>>>} Local run summary.
  */
-export async function runProbe(options) {
+export async function runProbe(options, dependencies = {}) {
   const config = getBrowardPermitJurisdiction(options.jurisdictionKey);
   if (config.anonymousSearchCertified !== true) {
     throw new Error(config.skipReason ?? "Anonymous search is not certified");
@@ -277,6 +282,7 @@ export async function runProbe(options) {
             citizenserveInstallationId:
               requireCitizenserveInstallationId(config),
           },
+          browser: dependencies.citizenserveBrowser,
         });
 
   await writePrivateFile(

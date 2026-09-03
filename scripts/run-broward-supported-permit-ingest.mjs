@@ -14,6 +14,7 @@ import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
 import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
+import { performance } from "node:perf_hooks";
 import { pathToFileURL } from "node:url";
 
 import pg from "pg";
@@ -28,6 +29,11 @@ import {
   resolveBrowardPermitJurisdiction,
 } from "./broward-permit-jurisdictions.mjs";
 import { loadBrowardPermitPilotToNeon } from "./load-broward-permit-pilot-to-neon.mjs";
+import {
+  closeCitizenserveBrowser,
+  createCitizenserveBrowser,
+} from "./permit-source-adapters/citizenserve.mjs";
+import { runProbe as runMunicipalPermitProbe } from "./probe-broward-municipal-permits.mjs";
 
 const { Client } = pg;
 const EXPECTED_PROJECT_ID = "raspy-frost-51580436";
@@ -37,6 +43,10 @@ const LOCK_NAMESPACE = 12_011;
 const MAX_CONCURRENCY = 4;
 const DEFAULT_PROBE_TIMEOUT_MS = 15 * 60_000;
 const DEFAULT_WORK_DIR = "downloads/broward/supported-permit-ingest";
+const DEFAULT_WARM_BROWSER_MAX_IDLE_MS = 5 * 60_000;
+const DEFAULT_WARM_BROWSER_MAX_CLOCK_SKEW_MS = 30_000;
+const DEFAULT_WARM_BROWSER_MAX_OPERATION_WALL_MS = 10 * 60_000;
+const CITIZENSERVE_HOST_CONCURRENCY_KEY = "host:www6.citizenserve.com";
 const ADAPTER_LOCK_KEYS = new Map([
   [BROWARD_BCS_ADAPTER_KEY, 41],
   [BROWARD_CITIZENSERVE_ADAPTER_KEY, 42],
@@ -50,10 +60,15 @@ const TERMINAL_STATUSES = new Set([
   "truncated",
   "failed_exhausted",
 ]);
+const WARM_CITIZENSERVE_BROWSER_KEYS = new Map([
+  ["lauderdale-by-the-sea", "www6.citizenserve.com:117"],
+  ["southwest-ranches", "www6.citizenserve.com:117"],
+]);
 
 /**
  * @typedef {"records" | "no_permits" | "truncated" | "failed" | "failed_exhausted"} SupportedPermitItemStatus
  * @typedef {"all" | "roofing"} SupportedPermitScope
+ * @typedef {"enabled" | "disabled"} SupportedPermitBrowserReuse
  *
  * @typedef {object} SupportedPermitOptions
  * @property {string} jobId - Stable operator-selected job identifier.
@@ -65,6 +80,10 @@ const TERMINAL_STATUSES = new Set([
  * @property {SupportedPermitScope} scope - All bounded permits or roofing-only.
  * @property {readonly string[]} jurisdictionKeys - Exact current registry routes.
  * @property {string | null} migrateFromJobId - Compatible prior checkpoint job.
+ * @property {SupportedPermitBrowserReuse} browserReuse
+ *   Whether the measured-safe Citizenserve route allowlist may retain a browser
+ *   process between sequential properties. `disabled` is an immediate
+ *   checkpoint-compatible fallback.
  *
  * @typedef {object} SupportedPermitCandidate
  * @property {string} folio - Exact private-in-process Broward folio.
@@ -82,6 +101,23 @@ const TERMINAL_STATUSES = new Set([
  * @property {number} exitCode - Child exit status.
  * @property {number} stderrBytes - Private child diagnostic byte count.
  * @property {boolean} timedOut - Whether the hard probe deadline terminated it.
+ *
+ * @typedef {object} WarmCitizenserveBrowserMetrics
+ * @property {number} launches - New Chromium processes opened by this pool.
+ * @property {number} reuses - Sequential operations that reused a connected process.
+ * @property {number} invalidations - Browsers discarded after source errors, excessive idle time, or unsafe clock movement.
+ *
+ * @typedef {object} WarmCitizenserveBrowserPool
+ * @property {<Result>(key:string,operation:(browser:import("puppeteer").Browser)=>Promise<Result>)=>Promise<Result>} run
+ *   Run one sequential, caller-supplied property operation with a revalidated
+ *   browser identified by public host and tenant.
+ * @property {()=>WarmCitizenserveBrowserMetrics} snapshot - Return aggregate-only process metrics.
+ * @property {()=>Promise<void>} close - Close every retained process.
+ *
+ * @typedef {object} WarmCitizenserveBrowserEntry
+ * @property {import("puppeteer").Browser} browser - Connected browser retained only for its public host/tenant key.
+ * @property {number} wallAt - Last safe wall-clock observation in milliseconds.
+ * @property {number} monotonicAt - Matching monotonic observation in milliseconds.
  *
  * @typedef {object} MigratedPermitItem
  * @property {string} parcelHash - Compatible one-way property identity.
@@ -162,6 +198,10 @@ export function parseSupportedPermitOptions(argv) {
       "--migrate-from-job must name a different Broward permit job",
     );
   }
+  const browserReuse = values.get("browser-reuse") ?? "enabled";
+  if (browserReuse !== "enabled" && browserReuse !== "disabled") {
+    throw new Error("--browser-reuse must be enabled or disabled");
+  }
   return {
     jobId,
     concurrency,
@@ -172,6 +212,196 @@ export function parseSupportedPermitOptions(argv) {
     scope,
     jurisdictionKeys,
     migrateFromJobId,
+    browserReuse,
+  };
+}
+
+/**
+ * Create a sequential warm-browser pool with explicit suspension and stale
+ * session invalidation.
+ *
+ * Wall and monotonic clocks are sampled together before and after every source
+ * operation. A VM sleep/wake jump, clock regression, excessive idle period,
+ * disconnected process, or source exception discards the process before the
+ * next property. The source operation itself remains responsible for opening a
+ * fresh page and re-running the rendered form/challenge/identity checks.
+ *
+ * @param {object} [dependencies={}] - Injectable browser lifecycle and clocks.
+ * @param {()=>Promise<import("puppeteer").Browser>} [dependencies.launchBrowser] - Browser launcher.
+ * @param {(browser:import("puppeteer").Browser)=>Promise<void>} [dependencies.closeBrowser] - Best-effort closer.
+ * @param {(browser:import("puppeteer").Browser)=>boolean} [dependencies.isConnected] - Synchronous liveness test.
+ * @param {()=>number} [dependencies.wallNow] - Wall-clock milliseconds.
+ * @param {()=>number} [dependencies.monotonicNow] - Monotonic milliseconds.
+ * @param {number} [dependencies.maxIdleMs] - Maximum wall-clock idle interval.
+ * @param {number} [dependencies.maxClockSkewMs] - Maximum wall/monotonic disagreement.
+ * @param {number} [dependencies.maxOperationWallMs] - Maximum successful operation wall duration retained for reuse.
+ * @returns {WarmCitizenserveBrowserPool} Empty sequential browser pool.
+ */
+export function createWarmCitizenserveBrowserPool(dependencies = {}) {
+  const launchBrowser =
+    dependencies.launchBrowser ?? createCitizenserveBrowser;
+  const closeBrowser = dependencies.closeBrowser ?? closeCitizenserveBrowser;
+  const isConnected =
+    dependencies.isConnected ?? ((browser) => browser.connected);
+  const wallNow = dependencies.wallNow ?? Date.now;
+  const monotonicNow = dependencies.monotonicNow ?? (() => performance.now());
+  const maxIdleMs =
+    dependencies.maxIdleMs ?? DEFAULT_WARM_BROWSER_MAX_IDLE_MS;
+  const maxClockSkewMs =
+    dependencies.maxClockSkewMs ?? DEFAULT_WARM_BROWSER_MAX_CLOCK_SKEW_MS;
+  const maxOperationWallMs =
+    dependencies.maxOperationWallMs ??
+    DEFAULT_WARM_BROWSER_MAX_OPERATION_WALL_MS;
+  for (const [name, value] of [
+    ["maxIdleMs", maxIdleMs],
+    ["maxClockSkewMs", maxClockSkewMs],
+    ["maxOperationWallMs", maxOperationWallMs],
+  ]) {
+    if (!Number.isInteger(value) || value < 1_000) {
+      throw new Error(`${name} must be an integer of at least 1000`);
+    }
+  }
+
+  /** @type {Map<string,WarmCitizenserveBrowserEntry>} */
+  const entries = new Map();
+  /** @type {Map<string,Promise<void>>} */
+  const operationTails = new Map();
+  /** @type {WarmCitizenserveBrowserMetrics} */
+  const metrics = { launches: 0, reuses: 0, invalidations: 0 };
+
+  /**
+   * Close and remove one unsafe retained browser.
+   *
+   * @param {string} key - Public host/tenant pool key.
+   * @returns {Promise<void>} Resolves after best-effort cleanup.
+   */
+  const invalidate = async (key) => {
+    const entry = entries.get(key);
+    if (entry === undefined) return;
+    entries.delete(key);
+    metrics.invalidations += 1;
+    await closeBrowser(entry.browser);
+  };
+
+  /**
+   * Test paired clock observations for safe browser reuse.
+   *
+   * @param {WarmCitizenserveBrowserEntry} entry - Retained browser state.
+   * @param {number} wallAt - Current wall-clock observation.
+   * @param {number} monotonicAt - Current monotonic observation.
+   * @returns {boolean} True only when time and process state remain safe.
+   */
+  const reusable = (entry, wallAt, monotonicAt) => {
+    const wallElapsed = wallAt - entry.wallAt;
+    const monotonicElapsed = monotonicAt - entry.monotonicAt;
+    return (
+      isConnected(entry.browser) &&
+      wallElapsed >= 0 &&
+      monotonicElapsed >= 0 &&
+      wallElapsed <= maxIdleMs &&
+      Math.abs(wallElapsed - monotonicElapsed) <= maxClockSkewMs
+    );
+  };
+
+  /**
+   * Execute one operation after its public host/tenant queue is acquired.
+   *
+   * @template Result
+   * @param {string} key - Public host/tenant pool key.
+   * @param {(browser:import("puppeteer").Browser)=>Promise<Result>} operation
+   *   Complete bounded property probe.
+   * @returns {Promise<Result>} Exact operation result.
+   */
+  const execute = async (key, operation) => {
+      const acquisitionWall = wallNow();
+      const acquisitionMonotonic = monotonicNow();
+      let entry = entries.get(key);
+      if (
+        entry !== undefined &&
+        !reusable(entry, acquisitionWall, acquisitionMonotonic)
+      ) {
+        await invalidate(key);
+        entry = undefined;
+      }
+      if (entry === undefined) {
+        entry = {
+          browser: await launchBrowser(),
+          wallAt: acquisitionWall,
+          monotonicAt: acquisitionMonotonic,
+        };
+        entries.set(key, entry);
+        metrics.launches += 1;
+      } else {
+        metrics.reuses += 1;
+      }
+
+      const operationWall = wallNow();
+      const operationMonotonic = monotonicNow();
+      try {
+        const result = await operation(entry.browser);
+        const completedWall = wallNow();
+        const completedMonotonic = monotonicNow();
+        const wallElapsed = completedWall - operationWall;
+        const monotonicElapsed = completedMonotonic - operationMonotonic;
+        const unsafeElapsed =
+          wallElapsed < 0 ||
+          monotonicElapsed < 0 ||
+          wallElapsed > maxOperationWallMs ||
+          Math.abs(wallElapsed - monotonicElapsed) > maxClockSkewMs;
+        if (unsafeElapsed) {
+          await invalidate(key);
+          throw new Error(
+            "Warm Citizenserve browser invalidated after unsafe clock movement",
+          );
+        }
+        if (!isConnected(entry.browser)) {
+          await invalidate(key);
+        } else {
+          entry.wallAt = completedWall;
+          entry.monotonicAt = completedMonotonic;
+        }
+        return result;
+      } catch (error) {
+        await invalidate(key);
+        throw error;
+      }
+  };
+
+  return {
+    run: (key, operation) => {
+      if (typeof key !== "string" || key.length === 0) {
+        return Promise.reject(
+          new Error("Warm Citizenserve browser key is required"),
+        );
+      }
+      if (typeof operation !== "function") {
+        return Promise.reject(
+          new Error("Warm Citizenserve browser operation is required"),
+        );
+      }
+      const prior = operationTails.get(key) ?? Promise.resolve();
+      const result = prior.then(() => execute(key, operation));
+      const settled = result.then(
+        () => undefined,
+        () => undefined,
+      );
+      operationTails.set(key, settled);
+      void settled.finally(() => {
+        if (operationTails.get(key) === settled) {
+          operationTails.delete(key);
+        }
+      });
+      return result;
+    },
+    snapshot: () => ({ ...metrics }),
+    close: async () => {
+      await Promise.all([...operationTails.values()]);
+      const retained = [...entries.values()];
+      entries.clear();
+      await Promise.all(
+        retained.map((entry) => closeBrowser(entry.browser)),
+      );
+    },
   };
 }
 
@@ -246,7 +476,10 @@ export function supportedPermitClientConfig(connectionString) {
  *   terminal:number,
  *   failed:number,
  *   cooling:number,
- *   migrated:number
+ *   migrated:number,
+ *   browserLaunches:number,
+ *   browserReuses:number,
+ *   browserInvalidations:number
  * }>}
  *   Aggregate run result.
  */
@@ -259,6 +492,10 @@ export async function runSupportedPermitIngest(options) {
   client.on("error", () => {
     controlConnectionFailed = true;
   });
+  const browserPool =
+    options.browserReuse === "enabled"
+      ? createWarmCitizenserveBrowserPool()
+      : null;
   await client.connect();
   try {
     await verifyTarget(client, target);
@@ -300,7 +537,7 @@ export async function runSupportedPermitIngest(options) {
     await processByRouteWithConcurrency(
       selectedPending,
       options.concurrency,
-      (candidate) => candidate.jurisdictionKey,
+      supportedPermitConcurrencyKey,
       async (candidate) => {
         const attempt = await readAttemptCount(
           client,
@@ -308,7 +545,11 @@ export async function runSupportedPermitIngest(options) {
           candidate.parcelHash,
         );
         try {
-          const outcome = await probeAndLoadCandidate(candidate, options);
+          const outcome = await probeAndLoadCandidate(
+            candidate,
+            options,
+            browserPool,
+          );
           if (controlConnectionFailed) {
             throw new Error("Permit control connection failed");
           }
@@ -359,6 +600,11 @@ export async function runSupportedPermitIngest(options) {
     );
     await refreshRouteAggregates(client, options.jobId);
     const aggregate = await readRunAggregate(client, options.jobId);
+    const browserMetrics = browserPool?.snapshot() ?? {
+      launches: 0,
+      reuses: 0,
+      invalidations: 0,
+    };
     await finalizeRoutePhases(client, options.jobId);
     await client.query(
       `UPDATE ${CONTROL_SCHEMA}.broward_supported_permit_runs
@@ -388,8 +634,12 @@ export async function runSupportedPermitIngest(options) {
       failed: aggregate.failureCount,
       cooling: aggregate.coolingCount,
       migrated,
+      browserLaunches: browserMetrics.launches,
+      browserReuses: browserMetrics.reuses,
+      browserInvalidations: browserMetrics.invalidations,
     };
   } finally {
+    if (browserPool !== null) await browserPool.close();
     await client.end();
   }
 }
@@ -469,9 +719,11 @@ async function readCandidates(client, limit, jurisdictionKeys) {
  *
  * @param {SupportedPermitCandidate} candidate - Routed property.
  * @param {SupportedPermitOptions} options - Run paths and bounds.
+ * @param {WarmCitizenserveBrowserPool | null} browserPool
+ *   Optional measured-safe warm browser owner.
  * @returns {Promise<ProbeOutcome>} Source and load outcome.
  */
-async function probeAndLoadCandidate(candidate, options) {
+async function probeAndLoadCandidate(candidate, options, browserPool) {
   const itemDirectory = path.join(
     path.resolve(options.workDirectory),
     candidate.jurisdictionKey,
@@ -488,7 +740,7 @@ async function probeAndLoadCandidate(candidate, options) {
     candidate.adapterKey === BROWARD_TYLER_CIVIC_ACCESS_ADAPTER_KEY ||
     candidate.adapterKey === BROWARD_CITIZENSERVE_ADAPTER_KEY
   ) {
-    return probeMunicipal(candidate, itemDirectory, options);
+    return probeMunicipal(candidate, itemDirectory, options, browserPool);
   }
   return {
     status: "failed_exhausted",
@@ -732,37 +984,83 @@ async function probeAccela(candidate, itemDirectory, options) {
  * @param {SupportedPermitCandidate} candidate - Routed municipal property.
  * @param {string} itemDirectory - Private hash-keyed working directory.
  * @param {SupportedPermitOptions} options - Parent scope and run bounds.
+ * @param {WarmCitizenserveBrowserPool | null} browserPool
+ *   Optional pool used only by the measured-safe route allowlist.
  * @returns {Promise<ProbeOutcome>} Explicit municipal outcome.
  */
-async function probeMunicipal(candidate, itemDirectory, options) {
+async function probeMunicipal(
+  candidate,
+  itemDirectory,
+  options,
+  browserPool,
+) {
   const recordsPath = path.join(itemDirectory, "records.private.jsonl");
   const summaryPath = path.join(itemDirectory, "summary.json");
-  const command = await runNode([
-    "scripts/probe-broward-municipal-permits.mjs",
-    "--jurisdiction",
-    registryKeyToMunicipalKey(candidate.jurisdictionKey),
-    "--folio",
-    candidate.folio,
-    "--output-dir",
-    itemDirectory,
-    "--max-pages",
-    "3",
-    "--max-details",
-    "10",
-    "--search-delay-ms",
-    "1500",
-    "--detail-delay-ms",
-    "500",
-    ...roofScopeArgs(options),
-  ]);
-  if (command.exitCode !== 0) {
-    return {
-      status: "failed",
-      recordCount: 0,
-      errorClass: command.timedOut ? "probe_timeout" : "municipal_probe_failed",
+  const warmBrowserKey =
+    candidate.adapterKey === BROWARD_CITIZENSERVE_ADAPTER_KEY
+      ? WARM_CITIZENSERVE_BROWSER_KEYS.get(candidate.jurisdictionKey)
+      : undefined;
+  /** @type {Readonly<Record<string, unknown>>} */
+  let summary;
+  if (
+    browserPool !== null &&
+    options.browserReuse === "enabled" &&
+    warmBrowserKey !== undefined
+  ) {
+    /** @type {Parameters<typeof runMunicipalPermitProbe>[0]} */
+    const probeOptions = {
+      jurisdictionKey: registryKeyToMunicipalKey(candidate.jurisdictionKey),
+      query: { kind: "folio", value: candidate.folio },
+      outputDirectory: itemDirectory,
+      maxPages: 3,
+      maxDetails: 10,
+      searchDelayMs: 1_500,
+      detailDelayMs: 500,
+      roofOnly: options.scope === "roofing",
     };
+    try {
+      summary = await browserPool.run(warmBrowserKey, (browser) =>
+        runMunicipalPermitProbe(probeOptions, {
+          citizenserveBrowser: browser,
+        }),
+      );
+    } catch {
+      return {
+        status: "failed",
+        recordCount: 0,
+        errorClass: "municipal_probe_failed",
+      };
+    }
+  } else {
+    const command = await runNode([
+      "scripts/probe-broward-municipal-permits.mjs",
+      "--jurisdiction",
+      registryKeyToMunicipalKey(candidate.jurisdictionKey),
+      "--folio",
+      candidate.folio,
+      "--output-dir",
+      itemDirectory,
+      "--max-pages",
+      "3",
+      "--max-details",
+      "10",
+      "--search-delay-ms",
+      "1500",
+      "--detail-delay-ms",
+      "500",
+      ...roofScopeArgs(options),
+    ]);
+    if (command.exitCode !== 0) {
+      return {
+        status: "failed",
+        recordCount: 0,
+        errorClass: command.timedOut
+          ? "probe_timeout"
+          : "municipal_probe_failed",
+      };
+    }
+    summary = await readJson(summaryPath);
   }
-  const summary = await readJson(summaryPath);
   const recordCount = numberField(summary, "capturedPermitCount");
   if (recordCount > 0) {
     await loadBrowardPermitPilotToNeon({
@@ -1551,7 +1849,7 @@ export function readBcsSummaryRecordCount(
 /**
  * Read a non-negative integer source summary field.
  *
- * @param {Record<string, unknown>} record - Source summary.
+ * @param {Readonly<Record<string, unknown>>} record - Source summary.
  * @param {string} key - Required numeric field.
  * @returns {number} Validated non-negative integer.
  */
@@ -1658,6 +1956,23 @@ function registryKeyToMunicipalKey(key) {
  */
 function roofScopeArgs(options) {
   return options.scope === "roofing" ? ["--roof-only"] : [];
+}
+
+/**
+ * Return the public source-serialization key for one supported property.
+ *
+ * Every Citizenserve installation currently shares one public host, so all
+ * four routes remain serial even when the parent permits inter-host
+ * concurrency. Other adapters retain one-at-a-time jurisdiction ordering.
+ * The warm-browser allowlist is narrower than this scheduling boundary.
+ *
+ * @param {SupportedPermitCandidate} candidate - Routed property.
+ * @returns {string} Public host or jurisdiction serialization key.
+ */
+export function supportedPermitConcurrencyKey(candidate) {
+  return candidate.adapterKey === BROWARD_CITIZENSERVE_ADAPTER_KEY
+    ? CITIZENSERVE_HOST_CONCURRENCY_KEY
+    : `jurisdiction:${candidate.jurisdictionKey}`;
 }
 
 /**

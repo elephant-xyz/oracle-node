@@ -37,6 +37,7 @@ import {
   verifyBrowardPermitStatusTarget,
 } from "../../scripts/run-broward-permit-pilot.mjs";
 import {
+  createWarmCitizenserveBrowserPool,
   failureCooldownDelayMs,
   normalizeMigratedPermitItem,
   parseSupportedPermitOptions,
@@ -44,6 +45,7 @@ import {
   readBcsSummaryRecordCount,
   readJurisdictionKeys,
   runNode,
+  supportedPermitConcurrencyKey,
   supportedPermitClientConfig,
 } from "../../scripts/run-broward-supported-permit-ingest.mjs";
 import {
@@ -430,6 +432,7 @@ describe("Broward supported-route permit ingest", () => {
       scope: "all",
       jurisdictionKeys: ["lazy-lake", "unincorporated-broward"],
       migrateFromJobId: "broward-permits-supported-full-20260831",
+      browserReuse: "enabled",
     });
     expect(() =>
       parseSupportedPermitOptions([
@@ -450,6 +453,22 @@ describe("Broward supported-route permit ingest", () => {
         "roofing",
       ]).scope,
     ).toBe("roofing");
+    expect(
+      parseSupportedPermitOptions([
+        "--job-id",
+        "broward-permits-supported-pilot-20260831",
+        "--browser-reuse",
+        "disabled",
+      ]).browserReuse,
+    ).toBe("disabled");
+    expect(() =>
+      parseSupportedPermitOptions([
+        "--job-id",
+        "broward-permits-supported-pilot-20260831",
+        "--browser-reuse",
+        "unbounded",
+      ]),
+    ).toThrow(/enabled or disabled/u);
     expect(() => readJurisdictionKeys("plantation,plantation")).toThrow(
       /unique implemented/u,
     );
@@ -535,6 +554,173 @@ describe("Broward supported-route permit ingest", () => {
     expect(events.indexOf("start:a:2")).toBeGreaterThan(
       events.indexOf("end:a:1"),
     );
+  });
+
+  it("serializes every Citizenserve tenant on its shared public host", () => {
+    const citizenserveCandidate = {
+      folio: "PRIVATE",
+      parcelHash: "a".repeat(64),
+      situsAddress: "PRIVATE",
+      jurisdictionKey: "lauderdale-by-the-sea",
+      adapterKey: BROWARD_CITIZENSERVE_ADAPTER_KEY,
+    };
+    expect(supportedPermitConcurrencyKey(citizenserveCandidate)).toBe(
+      supportedPermitConcurrencyKey({
+        ...citizenserveCandidate,
+        parcelHash: "b".repeat(64),
+        jurisdictionKey: "southwest-ranches",
+      }),
+    );
+    expect(
+      supportedPermitConcurrencyKey({
+        ...citizenserveCandidate,
+        adapterKey: BROWARD_BCS_ADAPTER_KEY,
+      }),
+    ).not.toBe(supportedPermitConcurrencyKey(citizenserveCandidate));
+  });
+
+  it("reuses one healthy browser and serializes operations by tenant", async () => {
+    /** @type {import("puppeteer").Browser[]} */
+    const launched = [];
+    /** @type {import("puppeteer").Browser[]} */
+    const closed = [];
+    let active = 0;
+    let maximumActive = 0;
+    /** @type {(() => void) | null} */
+    let releaseFirst = null;
+    const pool = createWarmCitizenserveBrowserPool({
+      launchBrowser: async () => {
+        const browser = /** @type {import("puppeteer").Browser} */ (
+          /** @type {unknown} */ ({ identity: launched.length + 1 })
+        );
+        launched.push(browser);
+        return browser;
+      },
+      closeBrowser: async (browser) => {
+        closed.push(browser);
+      },
+      isConnected: () => true,
+      wallNow: () => 10_000,
+      monotonicNow: () => 5_000,
+    });
+    const first = pool.run("www6.citizenserve.com:117", async (browser) => {
+      active += 1;
+      maximumActive = Math.max(maximumActive, active);
+      await new Promise((resolvePromise) => {
+        releaseFirst = resolvePromise;
+      });
+      active -= 1;
+      return browser;
+    });
+    const second = pool.run(
+      "www6.citizenserve.com:117",
+      async (browser) => {
+        active += 1;
+        maximumActive = Math.max(maximumActive, active);
+        active -= 1;
+        return browser;
+      },
+    );
+    await Promise.resolve();
+    expect(launched).toHaveLength(1);
+    expect(releaseFirst).not.toBeNull();
+    /** @type {() => void} */ (releaseFirst)();
+    const [firstBrowser, secondBrowser] = await Promise.all([first, second]);
+    expect(firstBrowser).toBe(secondBrowser);
+    expect(maximumActive).toBe(1);
+    expect(pool.snapshot()).toEqual({
+      launches: 1,
+      reuses: 1,
+      invalidations: 0,
+    });
+    await pool.close();
+    expect(closed).toEqual([firstBrowser]);
+  });
+
+  it("invalidates warm state across suspension and source failure", async () => {
+    /** @type {import("puppeteer").Browser[]} */
+    const launched = [];
+    /** @type {import("puppeteer").Browser[]} */
+    const closed = [];
+    let wall = 10_000;
+    let monotonic = 5_000;
+    const pool = createWarmCitizenserveBrowserPool({
+      launchBrowser: async () => {
+        const browser = /** @type {import("puppeteer").Browser} */ (
+          /** @type {unknown} */ ({ identity: launched.length + 1 })
+        );
+        launched.push(browser);
+        return browser;
+      },
+      closeBrowser: async (browser) => {
+        closed.push(browser);
+      },
+      isConnected: () => true,
+      wallNow: () => wall,
+      monotonicNow: () => monotonic,
+      maxIdleMs: 300_000,
+      maxClockSkewMs: 30_000,
+      maxOperationWallMs: 600_000,
+    });
+    const first = await pool.run(
+      "www6.citizenserve.com:117",
+      async (browser) => browser,
+    );
+    wall += 120_000;
+    monotonic += 1_000;
+    const second = await pool.run(
+      "www6.citizenserve.com:117",
+      async (browser) => browser,
+    );
+    expect(second).not.toBe(first);
+    await expect(
+      pool.run("www6.citizenserve.com:117", async () => {
+        throw new Error("source failed");
+      }),
+    ).rejects.toThrow("source failed");
+    const third = await pool.run(
+      "www6.citizenserve.com:117",
+      async (browser) => browser,
+    );
+    expect(third).not.toBe(second);
+    expect(pool.snapshot()).toEqual({
+      launches: 3,
+      reuses: 1,
+      invalidations: 2,
+    });
+    await pool.close();
+    expect(closed).toHaveLength(3);
+  });
+
+  it("rejects a result completed across unsafe wall-clock movement", async () => {
+    let wall = 10_000;
+    let monotonic = 5_000;
+    const pool = createWarmCitizenserveBrowserPool({
+      launchBrowser: async () =>
+        /** @type {import("puppeteer").Browser} */ (
+          /** @type {unknown} */ ({ identity: 1 })
+        ),
+      closeBrowser: async () => undefined,
+      isConnected: () => true,
+      wallNow: () => wall,
+      monotonicNow: () => monotonic,
+      maxIdleMs: 300_000,
+      maxClockSkewMs: 30_000,
+      maxOperationWallMs: 600_000,
+    });
+    await expect(
+      pool.run("www6.citizenserve.com:117", async () => {
+        wall += 120_000;
+        monotonic += 1_000;
+        return "unsafe";
+      }),
+    ).rejects.toThrow(/unsafe clock movement/u);
+    expect(pool.snapshot()).toEqual({
+      launches: 1,
+      reuses: 0,
+      invalidations: 1,
+    });
+    await pool.close();
   });
 
   it("terminates a probe process group at its hard deadline", async () => {
