@@ -35,6 +35,10 @@ const LEGACY_GAP_CHECKPOINT_SCHEMA =
   "oracle-node.broward-accela-property-gap-fill.v1";
 const DEFAULT_VERIFIED_SEED_PATH =
   "downloads/broward/broward-accela-property-seed.private.csv";
+const DEFAULT_PROPERTY_ATTEMPT_TIMEOUT_MS = 180_000;
+const MAX_COOLDOWN_WAIT_SLICE_MS = 60_000;
+const BROWSER_OPEN_TIMEOUT_MS = 45_000;
+const BROWSER_CLOSE_TIMEOUT_MS = 15_000;
 const SOURCE_CITIES = Object.freeze({
   plantation: Object.freeze(["PLANTATION"]),
   "cooper-city": Object.freeze(["COOPER CITY"]),
@@ -51,6 +55,7 @@ const SOURCE_CITIES = Object.freeze({
  * @property {number} maxProperties - Bounded matching properties; zero means scan to exhaustion.
  * @property {number} maxPages - Exact parcel-search page ceiling.
  * @property {number} delayMs - Delay between successful property searches.
+ * @property {number} [propertyTimeoutMs] - Hard wall deadline for one exact-folio source search; defaults to three minutes for backward-compatible callers.
  *
  * @typedef {object} GapFillPlan
  * @property {string} startDate - Inclusive unresolved window start.
@@ -154,6 +159,13 @@ export function parsePropertyGapFillOptions(argv) {
       1_000,
       3_600_000,
     ),
+    propertyTimeoutMs: readInteger(
+      values.get("property-timeout-ms") ??
+        String(DEFAULT_PROPERTY_ATTEMPT_TIMEOUT_MS),
+      "--property-timeout-ms",
+      30_000,
+      300_000,
+    ),
   };
 }
 
@@ -233,6 +245,8 @@ export function reconcilePropertyGapFillRecords({
 export async function runPropertyGapFill(options, dependencies = {}) {
   const now = dependencies.now ?? (() => new Date().toISOString());
   const random = dependencies.random ?? Math.random;
+  const propertyTimeoutMs =
+    options.propertyTimeoutMs ?? DEFAULT_PROPERTY_ATTEMPT_TIMEOUT_MS;
   const wait =
     dependencies.wait ??
     ((milliseconds) =>
@@ -291,7 +305,6 @@ export async function runPropertyGapFill(options, dependencies = {}) {
   ) {
     throw new Error("Property gap-fill plan conflicts with parent window");
   }
-  const currentMs = Date.parse(now());
   const parentNextAttemptMs =
     mainCheckpoint.nextAttemptAt === null
       ? Number.NEGATIVE_INFINITY
@@ -301,9 +314,7 @@ export async function runPropertyGapFill(options, dependencies = {}) {
       ? Number.NEGATIVE_INFINITY
       : Date.parse(checkpoint.cooldown.nextAttemptAt);
   const safeAttemptMs = Math.max(parentNextAttemptMs, nextAttemptMs);
-  if (Number.isFinite(safeAttemptMs) && safeAttemptMs > currentMs) {
-    await wait(safeAttemptMs - currentMs);
-  }
+  await waitForPropertyGapFillCooldown(safeAttemptMs, now, wait);
   if (plan.seedExhausted) {
     return buildSummary(options.sourceKey, windowKey, plan, 0, checkpoint);
   }
@@ -337,19 +348,29 @@ export async function runPropertyGapFill(options, dependencies = {}) {
         break;
       }
       const folio = normalizeBrowardPermitFolio(row.request_identifier);
-      if (browser === null) browser = await createBrowser();
       try {
-        const result = await searchParcel({
-          browser,
-          source,
-          parcelIdentifier: folio,
-          maxPages: options.maxPages,
-          logger: {
-            info: () => undefined,
-            warn: () => undefined,
-            error: () => undefined,
-          },
-        });
+        if (browser === null) {
+          browser = await promiseWithTimeout(
+            createBrowser(),
+            BROWSER_OPEN_TIMEOUT_MS,
+            `${source.jurisdiction} Accela browser acquisition exceeded its finite deadline`,
+          );
+        }
+        const result = await promiseWithTimeout(
+          searchParcel({
+            browser,
+            source,
+            parcelIdentifier: folio,
+            maxPages: options.maxPages,
+            logger: {
+              info: () => undefined,
+              warn: () => undefined,
+              error: () => undefined,
+            },
+          }),
+          propertyTimeoutMs,
+          `${source.jurisdiction} Accela property search exceeded its finite deadline`,
+        );
         const records = csvRecordsFromPermitLinks(
           result.permits,
           source,
@@ -438,7 +459,7 @@ export async function runPropertyGapFill(options, dependencies = {}) {
       }
     }
   } finally {
-    await browser?.close().catch(() => undefined);
+    if (browser !== null) await closeAccelaBrowserWithinDeadline(browser);
   }
   if (reachedEof && checkpoint.cooldown === null) {
     if (matchingSeedRowCount === 0) {
@@ -500,6 +521,88 @@ function buildSummary(
     completenessEstablished: false,
     nextAttemptAt: checkpoint.cooldown?.nextAttemptAt ?? null,
   };
+}
+
+/**
+ * Wait for a durable source cooldown in short monotonic-timer slices while
+ * rechecking the wall clock after every slice. Linux monotonic timers do not
+ * include VM suspension, so one timer spanning the full cooldown can remain
+ * pending for hours after a restored VM is already past `nextAttemptAt`.
+ *
+ * @param {number} nextAttemptMs - Parsed wall-clock retry threshold, or negative infinity.
+ * @param {() => string} now - Current ISO wall-clock provider.
+ * @param {(milliseconds:number) => Promise<void>} wait - Injectable finite timer.
+ * @returns {Promise<void>} Resolves once wall time reaches the retry threshold.
+ */
+export async function waitForPropertyGapFillCooldown(
+  nextAttemptMs,
+  now,
+  wait,
+) {
+  if (!Number.isFinite(nextAttemptMs)) return;
+  while (true) {
+    const currentMs = Date.parse(now());
+    if (!Number.isFinite(currentMs)) {
+      throw new Error("Property gap-fill clock returned an invalid timestamp");
+    }
+    const remainingMs = nextAttemptMs - currentMs;
+    if (remainingMs <= 0) return;
+    await wait(Math.min(remainingMs, MAX_COOLDOWN_WAIT_SLICE_MS));
+  }
+}
+
+/**
+ * Bound one browser-backed operation independently of Puppeteer's individual
+ * navigation timers. The caller closes the owned browser after a timeout,
+ * which terminates any still-pending page operation without accepting partial
+ * source evidence.
+ *
+ * @template Result
+ * @param {Promise<Result>} promise - Browser operation to await.
+ * @param {number} timeoutMs - Positive hard wall deadline.
+ * @param {string} message - Aggregate-safe timeout classification.
+ * @returns {Promise<Result>} Operation result completed before the deadline.
+ */
+export async function promiseWithTimeout(promise, timeoutMs, message) {
+  /** @type {NodeJS.Timeout | undefined} */
+  let timeout;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, rejectPromise) => {
+        timeout = setTimeout(
+          () => rejectPromise(new Error(message)),
+          timeoutMs,
+        );
+      }),
+    ]);
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout);
+  }
+}
+
+/**
+ * Close only the browser owned by this gap-fill invocation. If Puppeteer's
+ * protocol shutdown stalls, terminate that browser process after a finite
+ * deadline so the tmux supervisor can emit its cooling receipt and restart.
+ *
+ * @param {import("puppeteer").Browser} browser - Gap-fill-owned browser.
+ * @returns {Promise<void>} Resolves after graceful or forced bounded cleanup.
+ */
+async function closeAccelaBrowserWithinDeadline(browser) {
+  const browserProcess =
+    typeof browser.process === "function" ? browser.process() : null;
+  try {
+    await promiseWithTimeout(
+      browser.close(),
+      BROWSER_CLOSE_TIMEOUT_MS,
+      "Accela property-gap browser close exceeded its finite deadline",
+    );
+  } catch {
+    if (browserProcess !== null && browserProcess.exitCode === null) {
+      browserProcess.kill("SIGKILL");
+    }
+  }
 }
 
 /**

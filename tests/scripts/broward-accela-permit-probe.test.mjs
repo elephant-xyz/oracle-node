@@ -62,7 +62,9 @@ import {
 import {
   isPropertyGapFillSeedRow,
   parsePropertyGapFillOptions,
+  promiseWithTimeout,
   runPropertyGapFill,
+  waitForPropertyGapFillCooldown,
 } from "../../scripts/run-broward-accela-property-gap-fill.mjs";
 
 const fixtureDirectory = new URL(
@@ -1016,6 +1018,7 @@ describe("Broward official Accela CSV exports", () => {
       maxProperties: 2,
       maxPages: 10,
       delayMs: 30_000,
+      propertyTimeoutMs: 180_000,
     });
     expect(
       isPropertyGapFillSeedRow("cooper-city", { city: " Cooper   City " }),
@@ -1035,6 +1038,33 @@ describe("Broward official Accela CSV exports", () => {
         city: "Cooper City",
       }),
     ).toBe(false);
+  });
+
+  it("rechecks expired gap-fill cooldowns in suspension-safe timer slices", async () => {
+    let currentTime = "2026-09-02T20:00:00.000Z";
+    /** @type {number[]} */
+    const waits = [];
+
+    await waitForPropertyGapFillCooldown(
+      Date.parse("2026-09-03T08:00:00.000Z"),
+      () => currentTime,
+      async (milliseconds) => {
+        waits.push(milliseconds);
+        currentTime = "2026-09-03T09:00:00.000Z";
+      },
+    );
+
+    expect(waits).toEqual([60_000]);
+  });
+
+  it("rejects an unresponsive property operation at its outer deadline", async () => {
+    await expect(
+      promiseWithTimeout(
+        new Promise(() => undefined),
+        10,
+        "bounded property timeout",
+      ),
+    ).rejects.toThrow("bounded property timeout");
   });
 
   it("builds a deterministic Accela seed only from exact BCPA jurisdiction evidence", () => {
