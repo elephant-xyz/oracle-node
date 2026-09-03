@@ -133,9 +133,10 @@ sources:
       - jurisdiction: Clearwater
         vendor: Accela
         agency: CLEARWATER
-        url: https://aca-prod.accela.com/CLEARWATER/Default.aspx
-        probe: playwright-200; epermit.myclearwater.com-timeout
-        status: discovered
+        url: https://aca-prod.accela.com/CLEARWATER/Cap/CapHome.aspx?TabName=Home&module=Building
+        probe: http-200-2026-09-03
+        status: adapter-ready
+        harvest: scripts/run-pinellas-permit-harvest.mjs --agency clearwater
       - jurisdiction: Largo
         vendor: Tyler EnerGov Civic Access
         url: https://cityoflargofl-energovweb.tylerhost.net/apps/selfservice#/home

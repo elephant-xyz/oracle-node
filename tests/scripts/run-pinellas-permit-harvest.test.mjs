@@ -136,9 +136,16 @@ describe("Pinellas permit harvest CLI", () => {
     expect(full.probe).toBe(false);
     expect(full.maxDetails).toBe(0);
     expect(full.jobId).toBe("pinellas-accela-full-20260903");
+    expect(full.agencyKey).toBe("pinellas");
+    expect(full.agencyCode).toBe("PINELLAS");
     expect(full.windowDays).toBe(1);
     expect(full.concurrency).toBe(3);
     expect(full.settleMs).toBe(250);
+    const clearwater = parseCliOptions(["--agency", "clearwater", "--probe"]);
+    expect(clearwater.agencyCode).toBe("CLEARWATER");
+    expect(clearwater.portalUrl).toContain("/CLEARWATER/");
+    expect(clearwater.sourceStamp).toBe("clearwater-city-accela");
+    expect(clearwater.jobId).toMatch(/^clearwater-accela-probe-/);
   });
 
   it("runs a bounded worker pool in input order", async () => {

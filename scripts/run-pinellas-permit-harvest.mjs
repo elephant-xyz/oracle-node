@@ -24,16 +24,13 @@ import {
   safeKeyPart,
 } from "../workflow/lambdas/permit-harvest-worker/lee-accela.mjs";
 import {
-  PINELLAS_DEFAULT_START_DATE,
-  PINELLAS_PORTAL_URL,
-  PINELLAS_RECORD_NUMBER_PATTERN,
-  PINELLAS_SPLIT_THRESHOLD,
   createAccelaDateWindows,
   inclusiveDaySpan,
   shouldSplitAccelaWindow,
   splitAccelaWindow,
   todayIsoDate,
 } from "./pinellas/accela-pinellas.mjs";
+import { resolveAccelaAgency } from "./pinellas/accela-agencies.mjs";
 
 /**
  * @typedef {import("../workflow/lambdas/permit-harvest-worker/lee-accela.mjs").PermitLink} PermitLink
@@ -43,6 +40,11 @@ import {
 
 /**
  * @typedef {object} HarvestCliOptions
+ * @property {string} agencyKey CLI agency (`pinellas` or `clearwater`).
+ * @property {string} agencyCode Accela agency path segment.
+ * @property {string} portalUrl CapHome URL for this agency.
+ * @property {RegExp} recordNumberPattern List HTML matcher.
+ * @property {string} sourceStamp Extracted JSON `source` value.
  * @property {string} jobId Stable job id used in the output directory.
  * @property {string} startDate Inclusive ISO start.
  * @property {string} endDate Inclusive ISO end.
@@ -79,10 +81,11 @@ export function parseCliOptions(argv) {
       values.set(key, "true");
     }
   }
+  const agency = resolveAccelaAgency(values.get("agency"));
   const probe = values.get("probe") === "true";
   const pilot = values.get("pilot") === "true";
   const today = todayIsoDate();
-  let startDate = values.get("start-date") ?? PINELLAS_DEFAULT_START_DATE;
+  let startDate = values.get("start-date") ?? agency.defaultStartDate;
   let endDate = values.get("end-date") ?? today;
   let maxDetails = parsePositiveInteger(
     "max-details",
@@ -98,13 +101,18 @@ export function parseCliOptions(argv) {
     endDate = today;
   }
   return {
+    agencyKey: agency.key,
+    agencyCode: agency.agencyCode,
+    portalUrl: agency.portalUrl,
+    recordNumberPattern: agency.recordNumberPattern,
+    sourceStamp: agency.sourceStamp,
     jobId:
       values.get("job-id") ??
       (probe
-        ? `pinellas-accela-probe-${today.replaceAll("-", "")}`
+        ? `${agency.jobIdPrefix}-probe-${today.replaceAll("-", "")}`
         : pilot
-          ? `pinellas-accela-pilot-${today.replaceAll("-", "")}`
-          : `pinellas-accela-full-${today.replaceAll("-", "")}`),
+          ? `${agency.jobIdPrefix}-pilot-${today.replaceAll("-", "")}`
+          : `${agency.jobIdPrefix}-full-${today.replaceAll("-", "")}`),
     startDate,
     endDate,
     windowDays: parsePositiveInteger(
@@ -125,7 +133,7 @@ export function parseCliOptions(argv) {
     splitThreshold: parsePositiveInteger(
       "split-threshold",
       values.get("split-threshold"),
-      PINELLAS_SPLIT_THRESHOLD,
+      agency.splitThreshold,
     ),
     maxPages: parsePositiveInteger("max-pages", values.get("max-pages"), 200),
     maxDetails,
@@ -287,7 +295,7 @@ async function writeHarvestStatus({
         : "pinellas_accela_harvest_status",
     phase,
     county: "pinellas",
-    agency: "PINELLAS",
+    agency: options.agencyCode,
     jobId: options.jobId,
     startDate: options.startDate,
     endDate: options.endDate,
@@ -344,9 +352,9 @@ export async function runPinellasPermitHarvest(options, repoRoot) {
       const parcelResult = await searchLeePermitParcel({
         browser,
         parcelIdentifier: options.parcel,
-        portalUrl: PINELLAS_PORTAL_URL,
+        portalUrl: options.portalUrl,
         maxPages: options.maxPages,
-        recordNumberPattern: PINELLAS_RECORD_NUMBER_PATTERN,
+        recordNumberPattern: options.recordNumberPattern,
         logger: consoleLogger,
       });
       await writeFile(
@@ -416,13 +424,13 @@ export async function runPinellasPermitHarvest(options, repoRoot) {
             browser,
             startDate: window.startDate,
             endDate: window.endDate,
-            portalUrl: PINELLAS_PORTAL_URL,
+            portalUrl: options.portalUrl,
             maxPages: options.maxPages,
             stopAfterFirstPageWhenTotalAtLeast:
               inclusiveDaySpan(window.startDate, window.endDate) > 1
                 ? options.splitThreshold
                 : undefined,
-            recordNumberPattern: PINELLAS_RECORD_NUMBER_PATTERN,
+            recordNumberPattern: options.recordNumberPattern,
             logger: consoleLogger,
           });
         } catch (error) {
@@ -546,7 +554,7 @@ export async function runPinellasPermitHarvest(options, repoRoot) {
     event: "pinellas_accela_harvest_complete",
     phase: "complete",
     county: "pinellas",
-    agency: "PINELLAS",
+    agency: options.agencyCode,
     jobId: options.jobId,
     startDate: options.startDate,
     endDate: options.endDate,
@@ -615,7 +623,7 @@ async function captureDetails({
       await writeFile(
         paths.jsonPath,
         `${JSON.stringify(
-          { ...extraction, source: "pinellas-county-accela" },
+          { ...extraction, source: options.sourceStamp },
           null,
           2,
         )}\n`,
