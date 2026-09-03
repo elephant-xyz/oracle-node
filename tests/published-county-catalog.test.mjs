@@ -237,6 +237,27 @@ describe("published county catalog", () => {
     );
   });
 
+  it("leaves Pinellas publicationScope unset so Donphan keeps using its registry", async () => {
+    const tracked = JSON.parse(
+      await readFile(resolve("catalog/published-counties.json"), "utf8"),
+    );
+    /** @type {{ countyKey: string, queryTableUrl: string, datasetCoverageUrl: string } | undefined} */
+    const pinellas = tracked.counties.find(
+      (/** @type {{ countyKey: string }} */ county) =>
+        county.countyKey === "pinellas",
+    );
+    if (pinellas === undefined) {
+      throw new Error("expected pinellas in catalog/published-counties.json");
+    }
+    expect(pinellas).not.toHaveProperty("publicationScope");
+    expect(pinellas.queryTableUrl).toContain(
+      "k51qzi5uqu5dhmo3zv6xvidksgvsqkfer3nw1s4v7bcbafpl66btpyab3zv9ir",
+    );
+    expect(pinellas.datasetCoverageUrl).toContain(
+      "k51qzi5uqu5djrzm8n599i98ey7rpmwpbphgk8tvo5d6zjkfeqcmbrg7lh03xl",
+    );
+  });
+
   it("lists all Broward table and coverage URLs in the Cursor Elephant MCP maps", async () => {
     const tracked = JSON.parse(
       await readFile(resolve("catalog/published-counties.json"), "utf8"),

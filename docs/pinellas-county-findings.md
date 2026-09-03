@@ -244,9 +244,34 @@ node scripts/publish-pinellas-pilot-to-filebase.mjs \
   --ingest-dir downloads/pinellas/local-ingest
 ```
 
-That rebuilds the query-table parquet + coverage snapshot and re-points the **existing** Pinellas IPNS names (`oracle-query-table-pinellas`, `oracle-dataset-coverage-pinellas`). Filebase `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY` / `FILEBASE_API_TOKEN` are required at publish time.
+That rebuilds the query-table parquet + coverage snapshot and re-points the **existing** Pinellas IPNS names (`oracle-query-table-pinellas`, `oracle-dataset-coverage-pinellas`). Filebase `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY` / `FILEBASE_API_TOKEN` are required at publish time. The publisher refuses to upload fewer than 1,000 rows to those production names unless you pass `--allow-pilot-overwrite`.
 
 48-hour gate: print HTML @ 0.28s + local transform. Start at concurrency 2. Do not jump to 8; PCPAO is UA-sensitive.
+
+## Donphan still saying "pilot / 50 rows"
+
+The published artifacts are full-county. Donphan's two numbers come from **two different stores**, and neither is "the coverage JSON said pilot."
+
+| What Donphan printed                                            | Where it actually comes from                                                                | Live value (2026-09-02)                                                                                                                                                                                                                   |
+| --------------------------------------------------------------- | ------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Catalog-bound appraisal coverage **311,566** (100% of expected) | Coverage IPNS `oracle-dataset-coverage-pinellas` (`ingested_count` / `expected_count`)      | **311,566 / 311,566**. Snapshot has **no** `publicationScope` field.                                                                                                                                                                      |
+| Publication scope **pilot / published_subset**                  | elephant-mcp `src/data/publication-scope-registry-v1.json`, owned by `elephant-mcp/donphan` | Pinellas is still classified `level: "pilot"`, `denominatorBasis: "published_subset"`, reviewed **2026-09-01** against [oracle-node PR #195](https://github.com/elephant-xyz/oracle-node/pull/195). Chester is the other remaining pilot. |
+| `queryProperties` `count(*)` **50**                             | DuckDB over `PROPERTY_QUERY_TABLE_MAP.pinellas`, **not** the coverage JSON                  | Public gateway for the same IPNS now serves CID `QmcTcJb4RFrz9Qk5wtEhY4bPj385axfDyapbToU6HQ6X4P` (**111,151,090** bytes). The old 50-row CID was `QmWjCHq5TxqiH6u9VmiJBr78CoPZgFjeWmajxwXB2Vn5hY` (~31 KB).                               |
+
+Donphan resolves scope with `resolvePublicationScope()` in elephant-mcp. The Oracle catalog is only an identity check. If we stamped `publicationScope: { level: "full", denominatorBasis: "county_total" }` on `catalog/published-counties.json` **before** the MCP registry is updated, Donphan would return `explicit_source_scope_conflict` and report **unknown**, not full. Do not add that catalog field until elephant-mcp reclassifies Pinellas.
+
+`queryProperties` does not read the catalog coverage snapshot. It opens the parquet at the env-map URL (same IPNS name as the 50-row publish). DuckDB caches the in-process connection by county + URL, so a long-lived MCP still holds the 50-row body after IPNS flipped. Filebase gateway `Cache-Control: max-age=300` can also keep the old CID briefly.
+
+**What makes Donphan report full / 311,566**
+
+1. In **elephant-mcp**, reclassify the `pinellas` registry entry to `level: "full"` / `denominatorBasis: "county_total"`, bump `registryVersion`, point `classificationEvidence` at [oracle-node PR #202](https://github.com/elephant-xyz/oracle-node/pull/202), and update `publicationScopeRegistry.test.ts` (it currently asserts Pinellas and Chester are the two pilots).
+2. Restart the live Elephant MCP / Donphan process so DuckDB drops the cached 50-row connection. Confirm env has:
+   - `PROPERTY_QUERY_TABLE_MAP.pinellas` → `https://ipfs.filebase.io/ipns/k51qzi5uqu5dhmo3zv6xvidksgvsqkfer3nw1s4v7bcbafpl66btpyab3zv9ir`
+   - `DATASET_COVERAGE_MAP.pinellas` → `https://ipfs.filebase.io/ipns/k51qzi5uqu5djrzm8n599i98ey7rpmwpbphgk8tvo5d6zjkfeqcmbrg7lh03xl`
+3. If `count(*)` is still 50 after restart, compare `x-ipfs-roots` / `Content-Length` to `QmcTcJb4RFrz9Qk5wtEhY4bPj385axfDyapbToU6HQ6X4P` / `111151090`. Merging oracle-node `.cursor/mcp.json` does not inject env into a hosted Donphan.
+4. After (1), optionally stamp catalog `publicationScope` so it matches the registry. Until then leave it absent.
+
+Expected SQL after restart against the live table: `SELECT count(*) FROM properties` with `county=pinellas` → **311,566**.
 
 ## 7. Source feasibility
 
