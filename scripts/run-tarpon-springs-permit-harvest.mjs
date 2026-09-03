@@ -120,15 +120,15 @@ export async function runTarponClick2GovHarvest(options, repoRoot) {
   const extractedDir = path.join(jobDir, "extracted");
   await mkdir(extractedDir, { recursive: true });
   const startedAt = Date.now();
-  const session = await createClick2GovHttpSession(
-    TARPON_CLICK2GOV_CONFIG.origin,
-  );
   /** @type {Click2GovSearchRow[]} */
   const rows = [];
   /** @type {Set<string>} */
   const seen = new Set();
   for (const [index, query] of options.queries.entries()) {
     if (index > 0) await delay(options.delayMs);
+    const session = await createClick2GovHttpSession(
+      TARPON_CLICK2GOV_CONFIG.origin,
+    );
     const searched = await searchClick2GovByAddress({
       origin: TARPON_CLICK2GOV_CONFIG.origin,
       session,

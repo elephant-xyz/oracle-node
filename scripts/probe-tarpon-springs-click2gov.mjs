@@ -95,11 +95,13 @@ export async function main() {
     `tarpon-click2gov-probe-${today}`,
   );
   await mkdir(outDir, { recursive: true });
-  const session = await createClick2GovHttpSession(TARPON_CLICK2GOV_CONFIG.origin);
-  /** @type {object[]} */
+  /** @type {{ streetNumber: string, streetName: string, classification: string, rowCount: number, applicationNumbers: string[], elapsedMs: number }[]} */
   const lookups = [];
   for (const [index, query] of options.queries.entries()) {
     if (index > 0) await delay(options.delayMs);
+    const session = await createClick2GovHttpSession(
+      TARPON_CLICK2GOV_CONFIG.origin,
+    );
     const started = Date.now();
     const searched = await searchClick2GovByAddress({
       origin: TARPON_CLICK2GOV_CONFIG.origin,
