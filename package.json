@@ -40,6 +40,7 @@
     "broward:permits:build-municipal-property-seed": "node scripts/build-broward-municipal-property-seed.mjs",
     "broward:permits:run-municipal-property": "node scripts/run-broward-municipal-property-enumeration.mjs",
     "broward:permits:run-municipal-types": "node scripts/run-broward-municipal-record-type-enumeration.mjs",
+    "broward:permits:supervise-municipal": "node scripts/run-broward-municipal-enumeration-supervisor.mjs",
     "broward:permits:retry-tyler-source-missing": "node scripts/retry-broward-tyler-source-missing.mjs",
     "broward:bbb:roofing-worklist": "node scripts/build-broward-roofing-bbb-worklist.mjs",
     "broward:donphan:stage": "node scripts/stage-broward-donphan-snapshot.mjs",
