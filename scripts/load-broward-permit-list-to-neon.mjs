@@ -252,7 +252,9 @@ export function parsePermitListLoadOptions(argv) {
     }
     const name = flag.slice(2);
     if (!allowed.has(name) || values.has(name)) {
-      throw new Error("Permit list load options must be unique supported flags");
+      throw new Error(
+        "Permit list load options must be unique supported flags",
+      );
     }
     values.set(name, value);
   }
@@ -596,9 +598,7 @@ export function normalizePermitListRecord(value) {
       permitNumber: value.permit_number,
       sourceUrl: value.source_url,
       jurisdiction: value.jurisdiction,
-      parcelIdentifier: normalizeArcgisBrowardFolio(
-        value.parcel_identifier,
-      ),
+      parcelIdentifier: normalizeArcgisBrowardFolio(value.parcel_identifier),
       workLocation: value.work_location,
       applicationDate: value.application_date,
       permitIssueDate: value.permit_issue_date,
@@ -694,10 +694,7 @@ export async function loadPermitListToNeon(options) {
   const incremental =
     incrementalManifestPath === null
       ? null
-      : await readIncrementalPermitManifest(
-          incrementalManifestPath,
-          input,
-        );
+      : await readIncrementalPermitManifest(incrementalManifestPath, input);
   const target = requireTarget(process.env);
   const client = new Client({
     connectionString: target.connectionString,
@@ -1056,8 +1053,7 @@ async function registerRun(client, options, input, incremental) {
           stableJson(incremental.manifest.priorHighWatermark);
     const resumedCompletedManifest =
       currentWatermark !== undefined &&
-      watermarkResult.rows[0]?.manifest_sha256 ===
-        incremental.manifestSha256 &&
+      watermarkResult.rows[0]?.manifest_sha256 === incremental.manifestSha256 &&
       stableJson(currentWatermark) ===
         stableJson(incremental.manifest.highWatermark);
     if (!priorMatches && !resumedCompletedManifest) {
@@ -1114,8 +1110,7 @@ async function registerRun(client, options, input, incremental) {
       (incremental?.manifest.sourceSystem ?? null) ||
     (row.checkpoint_sha256 ?? null) !==
       (incremental?.manifest.checkpointSha256 ?? null) ||
-    (row.list_sha256 ?? null) !==
-      (incremental?.manifest.listSha256 ?? null) ||
+    (row.list_sha256 ?? null) !== (incremental?.manifest.listSha256 ?? null) ||
     (row.artifact_manifest_sha256 ?? null) !==
       (incremental?.manifest.artifactManifestSha256 ?? null) ||
     stableJson(row.prior_high_watermark ?? null) !==
@@ -1411,8 +1406,7 @@ function isMunicipalPartialRecord(value) {
     typeof value.source_url !== "string" ||
     typeof value.source_record_id !== "string" ||
     value.source_record_id.length === 0 ||
-    value.record_key !==
-      `${value.source_system}:${value.source_record_id}` ||
+    value.record_key !== `${value.source_system}:${value.source_record_id}` ||
     typeof value.jurisdiction !== "string" ||
     value.jurisdiction.length === 0 ||
     typeof value.permit_number !== "string" ||

@@ -328,19 +328,13 @@ describe("Broward permit list Neon loading", () => {
     );
     try {
       const inputPath = join(directory, "input.private.jsonl");
-      const manifestPath = join(
-        directory,
-        "incremental-manifest.private.json",
-      );
+      const manifestPath = join(directory, "incremental-manifest.private.json");
       const inputText = `${JSON.stringify(municipalPartialRecord())}\n`;
-      const listSha256 = createHash("sha256")
-        .update(inputText)
-        .digest("hex");
+      const listSha256 = createHash("sha256").update(inputText).digest("hex");
       await writeFile(inputPath, inputText);
       const input = await readPermitListRecords(inputPath);
       const manifest = {
-        schemaVersion:
-          "oracle-node.broward-permit-incremental-manifest.v1",
+        schemaVersion: "oracle-node.broward-permit-incremental-manifest.v1",
         sourceSystem: "broward_margate_click2gov_permits",
         frozenAt: "2026-09-03T15:34:00.000Z",
         coverageBoundary: "partial_terminal_artifacts",
