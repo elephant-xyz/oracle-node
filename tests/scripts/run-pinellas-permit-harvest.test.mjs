@@ -11,6 +11,7 @@ import {
 } from "../../scripts/pinellas/accela-pinellas.mjs";
 import {
   isBrowserDisconnectedError,
+  mapWithConcurrency,
   parseCliOptions,
   windowArtifactPaths,
 } from "../../scripts/run-pinellas-permit-harvest.mjs";
@@ -128,6 +129,19 @@ describe("Pinellas permit harvest CLI", () => {
     expect(full.probe).toBe(false);
     expect(full.maxDetails).toBe(0);
     expect(full.jobId).toBe("pinellas-accela-full-20260903");
+    expect(full.windowDays).toBe(1);
+    expect(full.concurrency).toBe(3);
+    expect(full.settleMs).toBe(250);
+  });
+
+  it("runs a bounded worker pool in input order", async () => {
+    const seen = [];
+    const results = await mapWithConcurrency([1, 2, 3, 4], 2, async (value) => {
+      seen.push(value);
+      return value * 10;
+    });
+    expect(results).toEqual([10, 20, 30, 40]);
+    expect(seen.sort((a, b) => a - b)).toEqual([1, 2, 3, 4]);
   });
 
   it("stops harvest on browser disconnect instead of skipping remaining windows", () => {

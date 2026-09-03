@@ -1423,9 +1423,15 @@ export function extractPermitDetail({ html, sourceUrl, fallbackRecordNumber }) {
  * @param {import("puppeteer").Browser} params.browser - Browser instance.
  * @param {PermitLink} params.permit - Permit link to capture.
  * @param {Logger} params.logger - Structured logger.
+ * @param {number} [params.settleMs=2500] Extra wait after the record number is visible.
  * @returns {Promise<{ html: string, extraction: PermitDetailExtraction }>} Raw HTML and extracted data.
  */
-export async function captureLeePermitDetail({ browser, permit, logger }) {
+export async function captureLeePermitDetail({
+  browser,
+  permit,
+  logger,
+  settleMs = 2500,
+}) {
   const page = await createConfiguredPage(browser);
   try {
     logger.info("lee_detail_open", {
@@ -1450,7 +1456,11 @@ export async function captureLeePermitDetail({ browser, permit, logger }) {
       { timeout: 90000 },
       permit.recordNumber,
     );
-    await sleep(2500);
+    const settleWaitMs =
+      Number.isFinite(settleMs) && settleMs > 0 ? settleMs : 0;
+    if (settleWaitMs > 0) {
+      await sleep(settleWaitMs);
+    }
     const html = await page.content();
     const text = htmlToText(html);
     if (isUnavailableAccelaDetailText(text)) {

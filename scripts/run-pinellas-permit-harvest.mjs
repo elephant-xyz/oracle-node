@@ -46,6 +46,8 @@ import {
  * @property {string} startDate Inclusive ISO start.
  * @property {string} endDate Inclusive ISO end.
  * @property {number} windowDays Initial list-window size.
+ * @property {number} concurrency Parallel CapDetail captures per window.
+ * @property {number} settleMs Extra wait after a detail page shows the record number.
  * @property {number} splitThreshold Accela list cap that forces a split.
  * @property {number} maxPages Max result pages on a terminal window.
  * @property {number} maxDetails 0 means unlimited detail captures this process.
@@ -107,7 +109,17 @@ export function parseCliOptions(argv) {
     windowDays: parsePositiveInteger(
       "window-days",
       values.get("window-days"),
-      probe || pilot ? 14 : 30,
+      probe || pilot ? 14 : 1,
+    ),
+    concurrency: parsePositiveInteger(
+      "concurrency",
+      values.get("concurrency"),
+      3,
+    ),
+    settleMs: parseNonNegativeInteger(
+      "settle-ms",
+      values.get("settle-ms"),
+      250,
     ),
     splitThreshold: parsePositiveInteger(
       "split-threshold",
@@ -136,6 +148,54 @@ function parsePositiveInteger(name, value, fallback) {
     throw new Error(`--${name} must be a positive integer`);
   }
   return parsed;
+}
+
+/**
+ * @param {string} name Flag name.
+ * @param {string | undefined} value Raw value.
+ * @param {number} fallback Default, including 0.
+ * @returns {number} Non-negative integer.
+ */
+function parseNonNegativeInteger(name, value, fallback) {
+  if (value === undefined) return fallback;
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    throw new Error(`--${name} must be a non-negative integer`);
+  }
+  return parsed;
+}
+
+/**
+ * Run async work over items with a bounded worker pool.
+ *
+ * @template T
+ * @template R
+ * @param {readonly T[]} items Inputs.
+ * @param {number} concurrency Worker count.
+ * @param {(item: T) => Promise<R>} mapper Worker function.
+ * @returns {Promise<R[]>} Results in input order.
+ */
+export async function mapWithConcurrency(items, concurrency, mapper) {
+  if (items.length === 0) return [];
+  const workerCount = Math.min(Math.max(1, concurrency), items.length);
+  /** @type {R[]} */
+  const results = new Array(items.length);
+  let nextIndex = 0;
+  /**
+   * @returns {Promise<void>}
+   */
+  async function worker() {
+    while (true) {
+      const index = nextIndex;
+      nextIndex += 1;
+      if (index >= items.length) return;
+      const item = items[index];
+      if (item === undefined) return;
+      results[index] = await mapper(item);
+    }
+  }
+  await Promise.all(Array.from({ length: workerCount }, () => worker()));
+  return results;
 }
 
 /**
@@ -402,13 +462,15 @@ export async function runPinellasPermitHarvest(options, repoRoot) {
             reportedTotal: searchResult.reportedTotal,
             splitThreshold: options.splitThreshold,
           });
-        detailCount += await captureDetails({
-          browser,
-          jobDir,
-          permits: searchResult.permits,
-          options,
-          alreadyCaptured: detailCount,
-        });
+        if (mustSplit === false) {
+          detailCount += await captureDetails({
+            browser,
+            jobDir,
+            permits: searchResult.permits,
+            options,
+            alreadyCaptured: detailCount,
+          });
+        }
         if (mustSplit) {
           splitCount += 1;
           const [left, right] = splitAccelaWindow(
@@ -519,11 +581,12 @@ async function captureDetails({
   options,
   alreadyCaptured,
 }) {
-  let captured = 0;
+  /** @type {PermitLink[]} */
+  const pending = [];
   for (const permit of permits) {
     if (
       options.maxDetails > 0 &&
-      alreadyCaptured + captured >= options.maxDetails
+      alreadyCaptured + pending.length >= options.maxDetails
     ) {
       break;
     }
@@ -531,11 +594,20 @@ async function captureDetails({
     if (options.skipExisting && existsSync(paths.jsonPath)) {
       continue;
     }
+    pending.push(permit);
+  }
+  if (pending.length === 0) return 0;
+
+  /** @type {number} */
+  let captured = 0;
+  await mapWithConcurrency(pending, options.concurrency, async (permit) => {
+    const paths = detailPaths({ jobDir, permit });
     try {
       const { html, extraction } = await captureLeePermitDetail({
         browser,
         permit,
         logger: consoleLogger,
+        settleMs: options.settleMs,
       });
       await writeFile(paths.htmlPath, html);
       await writeFile(
@@ -547,6 +619,9 @@ async function captureDetails({
         )}\n`,
       );
     } catch (error) {
+      if (isBrowserDisconnectedError(error)) {
+        throw error instanceof Error ? error : new Error(String(error));
+      }
       console.log(
         JSON.stringify({
           event: "pinellas_accela_detail_failed",
@@ -555,7 +630,7 @@ async function captureDetails({
           message: error instanceof Error ? error.message : String(error),
         }),
       );
-      continue;
+      return;
     }
     captured += 1;
     console.log(
@@ -565,7 +640,7 @@ async function captureDetails({
         jsonPath: paths.jsonPath,
       }),
     );
-  }
+  });
   return captured;
 }
 
