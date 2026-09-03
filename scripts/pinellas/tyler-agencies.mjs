@@ -33,14 +33,16 @@ export const PINELLAS_TYLER_AGENCIES = {
     },
     sourceStamp: "largo-city-civic-access",
     jobIdPrefix: "largo-civic-access",
-    defaultProbeQueries: Object.freeze(["West Bay Drive", "Seminole Boulevard"]),
+    defaultProbeQueries: Object.freeze([
+      "West Bay Drive",
+      "Seminole Boulevard",
+    ]),
   },
   park: {
     key: "park",
     jurisdiction: "City of Pinellas Park",
     config: {
-      portalBaseUrl:
-        "https://egcss.pinellas-park.com/energov_prod/selfservice",
+      portalBaseUrl: "https://egcss.pinellas-park.com/energov_prod/selfservice",
       city: "Pinellas Park",
       sourceSystem: "pinellas_park_city_tyler_permits",
     },

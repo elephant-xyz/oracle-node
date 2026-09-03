@@ -607,7 +607,11 @@ export async function harvestTylerCivicAccessPages({
     try {
       let firstNavigation = true;
       for (const [queryIndex, query] of queries.entries()) {
-        for (let pageNumber = 1; pageNumber <= maxPagesPerQuery; pageNumber += 1) {
+        for (
+          let pageNumber = 1;
+          pageNumber <= maxPagesPerQuery;
+          pageNumber += 1
+        ) {
           if (firstNavigation === false) {
             await delay(delayMs);
           }

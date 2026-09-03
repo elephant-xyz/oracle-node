@@ -81,14 +81,11 @@ describe("Pinellas Tyler Civic Access agencies", () => {
   it("defaults the Largo probe to two street keywords and delay ≥ 1s", () => {
     const defaults = parsePinellasTylerProbeOptions([]);
     expect(defaults?.agencyKey).toBe("largo");
-    expect(defaults?.queries).toEqual([
-      "West Bay Drive",
-      "Seminole Boulevard",
-    ]);
+    expect(defaults?.queries).toEqual(["West Bay Drive", "Seminole Boulevard"]);
     expect(defaults?.delayMs).toBe(1500);
-    expect(() =>
-      parsePinellasTylerProbeOptions(["--delay-ms", "999"]),
-    ).toThrow(/at least 1000/);
+    expect(() => parsePinellasTylerProbeOptions(["--delay-ms", "999"])).toThrow(
+      /at least 1000/,
+    );
     const harvest = parseTylerHarvestCli([
       "--agency",
       "park",
@@ -117,7 +114,9 @@ describe("Tarpon Springs Click2Gov HTTP adapter", () => {
       applicationType: "ROOFING",
       recordStatus: "FINALED",
     });
-    expect(rows[0]?.detailPath).toContain("permit.appYearAndNumber=13-00000647");
+    expect(rows[0]?.detailPath).toContain(
+      "permit.appYearAndNumber=13-00000647",
+    );
   });
 
   it("classifies Status Detail, misses, and unexpected errors", () => {
@@ -182,7 +181,8 @@ describe("Pinellas Park Portico HTTP certification", () => {
       }),
     ).toEqual({
       isCivicAccess: false,
-      energovCssUrl: "https://egcss.pinellas-park.com/energov_prod/selfservice#",
+      energovCssUrl:
+        "https://egcss.pinellas-park.com/energov_prod/selfservice#",
       integrationTypeName: "EPL Civic Access",
     });
     expect(

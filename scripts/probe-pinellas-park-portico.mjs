@@ -43,7 +43,10 @@ export async function probeJsonOrHtml(url) {
   const started = Date.now();
   try {
     const response = await fetch(url, {
-      headers: { "User-Agent": USER_AGENT, Accept: "application/json,text/html,*/*" },
+      headers: {
+        "User-Agent": USER_AGENT,
+        Accept: "application/json,text/html,*/*",
+      },
       redirect: "follow",
       signal: AbortSignal.timeout(25_000),
     });
@@ -81,8 +84,16 @@ export async function probeJsonOrHtml(url) {
  *   Parsed integration.
  */
 export function parseParkCivicAccessIntegration(payload) {
-  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
-    return { isCivicAccess: false, energovCssUrl: null, integrationTypeName: null };
+  if (
+    payload === null ||
+    typeof payload !== "object" ||
+    Array.isArray(payload)
+  ) {
+    return {
+      isCivicAccess: false,
+      energovCssUrl: null,
+      integrationTypeName: null,
+    };
   }
   const record = /** @type {Record<string, unknown>} */ (payload);
   const url = typeof record.url === "string" ? record.url : null;
@@ -110,7 +121,8 @@ export function parseParkSelections(payload) {
   /** @type {string | null} */
   let dashboardUrl = null;
   for (const item of payload) {
-    if (item === null || typeof item !== "object" || Array.isArray(item)) continue;
+    if (item === null || typeof item !== "object" || Array.isArray(item))
+      continue;
     const row = /** @type {Record<string, unknown>} */ (item);
     if (row.id === 5996 && typeof row.title === "string") {
       applyPermitTitle = row.title;

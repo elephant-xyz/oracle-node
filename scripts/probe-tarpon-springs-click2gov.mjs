@@ -44,8 +44,14 @@ export function parseTarponProbeOptions(args) {
       const number = args[index + 1];
       const nameFlag = args[index + 2];
       const name = args[index + 3];
-      if (number === undefined || nameFlag !== "--street-name" || name === undefined) {
-        throw new Error("--street-number must be followed by --street-name <name>");
+      if (
+        number === undefined ||
+        nameFlag !== "--street-name" ||
+        name === undefined
+      ) {
+        throw new Error(
+          "--street-number must be followed by --street-name <name>",
+        );
       }
       queries.push({ streetNumber: number, streetName: name });
       index += 3;
@@ -122,8 +128,7 @@ export async function main() {
     origin: TARPON_CLICK2GOV_CONFIG.origin,
     sourceStamp: TARPON_CLICK2GOV_CONFIG.sourceStamp,
     certified: lookups.some(
-      (lookup) =>
-        lookup.classification === "ok" && Number(lookup.rowCount) > 0,
+      (lookup) => lookup.classification === "ok" && Number(lookup.rowCount) > 0,
     ),
     lookups,
     probedAt: new Date().toISOString(),

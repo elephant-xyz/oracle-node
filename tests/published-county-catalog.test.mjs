@@ -37,6 +37,8 @@ describe("published county catalog", () => {
     const result = validateCatalog(tracked);
 
     expect(result.counties.length).toBeGreaterThan(0);
+    // Snapshot must match main: PR CI merges this branch into main, and
+    // #211 reverted the Pasco catalog entry that this branch had merged.
     expect(result.counties.map((county) => county.countyKey)).toEqual([
       "broward",
       "chester",
@@ -46,7 +48,6 @@ describe("published county catalog", () => {
       "montgomery",
       "orange",
       "palm-beach",
-      "pasco",
       "pinellas",
       "polk",
       "rock-island",

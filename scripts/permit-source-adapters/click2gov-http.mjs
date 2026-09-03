@@ -215,7 +215,9 @@ export async function searchClick2GovByAddress({ origin, session, query }) {
   const streetNumber = query.streetNumber.trim();
   const streetName = query.streetName.trim();
   if (streetNumber.length === 0 || streetName.length === 0) {
-    throw new Error("Click2Gov address search requires streetNumber and streetName");
+    throw new Error(
+      "Click2Gov address search requires streetNumber and streetName",
+    );
   }
   const body = new URLSearchParams();
   body.set("searchResultsView", "true");

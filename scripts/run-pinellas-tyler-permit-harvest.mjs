@@ -43,7 +43,11 @@ export function parseTylerHarvestCli(args) {
     if (token === undefined || token.startsWith("--") === false) continue;
     const key = token.slice(2);
     const next = args[index + 1];
-    if (key === "query" && next !== undefined && next.startsWith("--") === false) {
+    if (
+      key === "query" &&
+      next !== undefined &&
+      next.startsWith("--") === false
+    ) {
       queries.push(next);
       index += 1;
       continue;
@@ -65,8 +69,7 @@ export function parseTylerHarvestCli(args) {
   }
   return {
     agencyKey: agency.key,
-    jobId:
-      values.get("job-id") ?? `${agency.jobIdPrefix}-full-${today}`,
+    jobId: values.get("job-id") ?? `${agency.jobIdPrefix}-full-${today}`,
     queries: resolvedQueries,
     delayMs,
     skipExisting: values.get("skip-existing") !== "false",

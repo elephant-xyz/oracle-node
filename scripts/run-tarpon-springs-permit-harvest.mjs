@@ -60,8 +60,14 @@ export function parseTarponHarvestCli(args) {
       const number = args[index + 1];
       const nameFlag = args[index + 2];
       const name = args[index + 3];
-      if (number === undefined || nameFlag !== "--street-name" || name === undefined) {
-        throw new Error("--street-number must be followed by --street-name <name>");
+      if (
+        number === undefined ||
+        nameFlag !== "--street-name" ||
+        name === undefined
+      ) {
+        throw new Error(
+          "--street-number must be followed by --street-name <name>",
+        );
       }
       queries.push({ streetNumber: number, streetName: name });
       index += 3;
