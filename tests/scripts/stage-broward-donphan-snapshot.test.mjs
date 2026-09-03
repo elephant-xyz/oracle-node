@@ -256,9 +256,61 @@ describe("Broward Donphan snapshot staging", () => {
           non_permit: 0,
           source_cap: 0,
           unreconciled: 0,
+          already_committed: 0,
         },
       },
     ]);
+  });
+
+  it("retains terminal-partition progress without private hashes", () => {
+    const [boundary] = normalizeIncrementalPartialBoundaries(
+      [
+        {
+          source_system: "broward_lighthouse_point_smartgov_permits",
+          incremental_load_count: "2",
+          incremental_accepted_record_count: "4004",
+          completed_at: loadedAt,
+          high_watermark: {
+            family: "municipal_record_type_terminal_partitions",
+            cappedPartitionCount: 0,
+            checkpointNextPendingCount: 426,
+            safeCompletedPartitionCount: 71,
+            excludedCurrentPartitionPageCount: 61,
+            universeSha256: "private-hash",
+          },
+          excluded_counts: {
+            invalid: 0,
+            undated: 0,
+            deferred: 0,
+            duplicate: 0,
+            in_flight: 610,
+            incomplete: 0,
+            non_permit: 0,
+            source_cap: 0,
+            unreconciled: 0,
+            already_committed: 1875,
+          },
+        },
+      ],
+      [
+        {
+          sourceSystem: "broward_lighthouse_point_smartgov_permits",
+          rowCount: 4004,
+          linkedCount: 0,
+          unlinkedCount: 4004,
+          roofingCount: 0,
+        },
+      ],
+    );
+
+    expect(boundary?.highWatermark).toEqual({
+      family: "municipal_record_type_terminal_partitions",
+      cappedPartitionCount: 0,
+      checkpointNextPendingCount: 426,
+      safeCompletedPartitionCount: 71,
+      excludedCurrentPartitionPageCount: 61,
+    });
+    expect(boundary?.excludedCounts.already_committed).toBe(1875);
   });
 
   it("marks reconciled current data as supported partial", () => {
@@ -285,6 +337,7 @@ describe("Broward Donphan snapshot staging", () => {
           non_permit: 0,
           source_cap: 0,
           unreconciled: 0,
+          already_committed: 0,
         },
       },
     ];

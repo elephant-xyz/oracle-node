@@ -875,6 +875,15 @@ function summarizeIncrementalHighWatermark(value) {
     ]);
     return summary;
   }
+  if (value.family === "municipal_record_type_terminal_partitions") {
+    copyCounts([
+      "cappedPartitionCount",
+      "checkpointNextPendingCount",
+      "safeCompletedPartitionCount",
+      "excludedCurrentPartitionPageCount",
+    ]);
+    return summary;
+  }
   if (value.family === "accela_csv_windows") {
     copyCounts([
       "pendingWindowCount",
@@ -930,6 +939,7 @@ export function normalizeIncrementalPartialBoundaries(rows, permitSources) {
     "non_permit",
     "source_cap",
     "unreconciled",
+    "already_committed",
   ];
   return rows.map((row) => {
     const sourceSystem = String(row.source_system ?? "");
@@ -949,7 +959,7 @@ export function normalizeIncrementalPartialBoundaries(rows, permitSources) {
     const excludedCounts = {};
     for (const key of exclusionKeys) {
       excludedCounts[key] = count(
-        row.excluded_counts[key],
+        row.excluded_counts[key] ?? 0,
         `excluded_counts.${key}`,
       );
     }
