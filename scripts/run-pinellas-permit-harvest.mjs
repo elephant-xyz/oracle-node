@@ -183,6 +183,19 @@ export function windowArtifactPaths(jobDir, windowKey) {
 }
 
 /**
+ * True when Puppeteer/Chrome is gone and remaining Accela windows cannot run.
+ *
+ * @param {unknown} error Thrown value.
+ * @returns {boolean} Whether harvest should stop instead of skipping windows.
+ */
+export function isBrowserDisconnectedError(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  return /connection closed|target closed|session closed|browser has disconnected|protocol error/i.test(
+    message,
+  );
+}
+
+/**
  * @param {object} params Heartbeat fields.
  * @param {string} params.jobDir Job directory.
  * @param {HarvestCliOptions} params.options CLI options.
@@ -349,6 +362,8 @@ export async function runPinellasPermitHarvest(options, repoRoot) {
             logger: consoleLogger,
           });
         } catch (error) {
+          const message =
+            error instanceof Error ? error.message : String(error);
           const failCount = (windowFailures.get(windowKey) ?? 0) + 1;
           windowFailures.set(windowKey, failCount);
           console.log(
@@ -356,16 +371,13 @@ export async function runPinellasPermitHarvest(options, repoRoot) {
               event: "pinellas_accela_window_failed",
               windowKey,
               failCount,
-              message: error instanceof Error ? error.message : String(error),
+              message,
             }),
           );
-          if (failCount < 3) {
-            queue.push(window);
-          }
           await writeHarvestStatus({
             jobDir,
             options,
-            phase: "running",
+            phase: isBrowserDisconnectedError(error) ? "failed" : "running",
             windowCount,
             splitCount,
             detailCount,
@@ -373,6 +385,12 @@ export async function runPinellasPermitHarvest(options, repoRoot) {
             queueRemaining: queue.length,
             lastWindowKey,
           });
+          if (isBrowserDisconnectedError(error)) {
+            throw error instanceof Error ? error : new Error(message);
+          }
+          if (failCount < 3) {
+            queue.push(window);
+          }
           continue;
         }
         windowCount += 1;

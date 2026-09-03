@@ -10,6 +10,7 @@ import {
   splitAccelaWindow,
 } from "../../scripts/pinellas/accela-pinellas.mjs";
 import {
+  isBrowserDisconnectedError,
   parseCliOptions,
   windowArtifactPaths,
 } from "../../scripts/run-pinellas-permit-harvest.mjs";
@@ -127,5 +128,14 @@ describe("Pinellas permit harvest CLI", () => {
     expect(full.probe).toBe(false);
     expect(full.maxDetails).toBe(0);
     expect(full.jobId).toBe("pinellas-accela-full-20260903");
+  });
+
+  it("stops harvest on browser disconnect instead of skipping remaining windows", () => {
+    expect(isBrowserDisconnectedError(new Error("Connection closed."))).toBe(
+      true,
+    );
+    expect(isBrowserDisconnectedError(new Error("Navigation timeout"))).toBe(
+      false,
+    );
   });
 });
