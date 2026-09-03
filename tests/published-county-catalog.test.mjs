@@ -46,6 +46,7 @@ describe("published county catalog", () => {
       "montgomery",
       "orange",
       "palm-beach",
+      "pasco",
       "pinellas",
       "polk",
       "rock-island",
