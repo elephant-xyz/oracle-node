@@ -142,9 +142,7 @@ describe("Broward active permit enumeration telemetry", () => {
       },
     ]);
 
-    expect(details.routeKeys).toEqual(
-      new Set(["full-property", "property-0"]),
-    );
+    expect(details.routeKeys).toEqual(new Set(["full-property", "property-0"]));
     expect(details.detailRouteKeys).toEqual(new Set(["full-property"]));
     expect(details.supervisorNotBeforeByKey.get("full-property")).toBe(
       "2026-09-04T10:06:00.000Z",

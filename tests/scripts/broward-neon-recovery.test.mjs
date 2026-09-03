@@ -854,16 +854,10 @@ describe("durable Broward Neon recovery", () => {
       Date.parse("2026-08-31T22:00:00.000Z"),
       {
         available: true,
-        routeKeys: new Set([
-          "lighthouse-point",
-          "municipal-pompano_beach",
-        ]),
+        routeKeys: new Set(["lighthouse-point", "municipal-pompano_beach"]),
         detailRouteKeys: new Set(),
         supervisorNotBeforeByKey: new Map([
-          [
-            "municipal-pompano_beach",
-            "2026-08-31T23:00:00.000Z",
-          ],
+          ["municipal-pompano_beach", "2026-08-31T23:00:00.000Z"],
         ]),
       },
     );

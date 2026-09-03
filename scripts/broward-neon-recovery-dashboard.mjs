@@ -1290,13 +1290,13 @@ function buildMunicipalProcessDefinition(definition) {
   if (executable === undefined) {
     throw new Error("Municipal process configuration is missing");
   }
-  const active =
-    isPlainRecord(definition.activeEnumeration) &&
-    typeof definition.activeEnumeration.key === "string"
-      ? definition.activeEnumeration
-      : null;
+  const active = definition.activeEnumeration;
+  const key =
+    isPlainRecord(active) && typeof active.key === "string"
+      ? active.key
+      : `municipal-${executable.key}`;
   return {
-    key: active?.key ?? `municipal-${executable.key}`,
+    key,
     jurisdiction: source,
     method: "full",
     family,
@@ -1338,8 +1338,7 @@ function buildPermitProcessRouteDefinitions() {
   return Object.freeze(routes);
 }
 
-const PERMIT_PROCESS_ROUTE_DEFINITIONS =
-  buildPermitProcessRouteDefinitions();
+const PERMIT_PROCESS_ROUTE_DEFINITIONS = buildPermitProcessRouteDefinitions();
 
 /** @type {ActiveEnumerationProcessSnapshot} */
 const UNAVAILABLE_PROCESS_SNAPSHOT = Object.freeze({
@@ -1595,13 +1594,8 @@ function buildMunicipalEnumerationWorker(
   const operatorNotBeforeAt =
     processes.supervisorNotBeforeByKey.get(processDefinition.key) ?? null;
   const operatorNotBeforeMs =
-    operatorNotBeforeAt === null
-      ? Number.NaN
-      : Date.parse(operatorNotBeforeAt);
-  if (
-    operatorNotBeforeAt !== null &&
-    !Number.isFinite(operatorNotBeforeMs)
-  ) {
+    operatorNotBeforeAt === null ? Number.NaN : Date.parse(operatorNotBeforeAt);
+  if (operatorNotBeforeAt !== null && !Number.isFinite(operatorNotBeforeMs)) {
     throw new Error("Municipal operator boundary is invalid");
   }
   const complete = checkpoint.status === "complete" && pendingWindows === 0;
@@ -1963,14 +1957,13 @@ export async function readPropertyFirstPermitStatus(
     const complete =
       row.phase === "complete" ||
       (candidateCount > 0 && terminalCount === candidateCount);
-    const status =
-      complete
-        ? /** @type {"complete"} */ ("complete")
-        : recentlyActive
-          ? /** @type {"running"} */ ("running")
-          : cooling
-            ? /** @type {"cooling_down"} */ ("cooling_down")
-            : /** @type {"paused"} */ ("paused");
+    const status = complete
+      ? /** @type {"complete"} */ ("complete")
+      : recentlyActive
+        ? /** @type {"running"} */ ("running")
+        : cooling
+          ? /** @type {"cooling_down"} */ ("cooling_down")
+          : /** @type {"paused"} */ ("paused");
     return {
       source: definition.source,
       family: /** @type {"property_first"} */ ("property_first"),
@@ -2422,11 +2415,7 @@ export function createResilientRecoveryStatusReader(
           ),
         ]);
         const status = await withDashboardTimeout(
-          createRecoveryStatusReader(
-            client,
-            repositoryRoot,
-            processSnapshot,
-          )(),
+          createRecoveryStatusReader(client, repositoryRoot, processSnapshot)(),
           timeoutMs,
         );
         const completedAtMs = Date.now();

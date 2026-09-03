@@ -334,9 +334,7 @@ function isBoundedDetailCommand(command) {
  * @returns {string | null} Valid ISO boundary or null.
  */
 function readNotBeforeBoundary(command) {
-  if (
-    !command.includes("run-broward-municipal-enumeration-supervisor.mjs")
-  ) {
+  if (!command.includes("run-broward-municipal-enumeration-supervisor.mjs")) {
     return null;
   }
   const value = /(?:^|\s)--not-before(?:=|\s+)(\S+)/u.exec(command)?.[1];

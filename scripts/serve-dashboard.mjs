@@ -788,10 +788,7 @@ function readBrowardPausedPermitWorkers(value, implementedJurisdictions) {
   return value.map((candidate) => {
     const worker = requireObject(candidate, "Broward paused permit worker");
     const source = canonicalizeBrowardJurisdiction(
-      requirePublicLabel(
-        worker.source,
-        "Broward paused permit worker source",
-      ),
+      requirePublicLabel(worker.source, "Broward paused permit worker source"),
     );
     const reason = requirePublicLabel(
       worker.reason,
@@ -842,10 +839,7 @@ function readBrowardCoolingPermitWorkers(value, implementedJurisdictions) {
   return value.map((candidate) => {
     const worker = requireObject(candidate, "Broward cooling permit worker");
     const source = canonicalizeBrowardJurisdiction(
-      requirePublicLabel(
-        worker.source,
-        "Broward cooling permit worker source",
-      ),
+      requirePublicLabel(worker.source, "Broward cooling permit worker source"),
     );
     const reason = requirePublicLabel(
       worker.reason,
