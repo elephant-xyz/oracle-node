@@ -310,6 +310,8 @@ export async function runPinellasPermitHarvest(options, repoRoot) {
         options.endDate,
         options.windowDays,
       );
+      /** @type {Map<string, number>} */
+      const windowFailures = new Map();
       while (queue.length > 0) {
         const window = queue.shift();
         if (window === undefined) break;
@@ -333,16 +335,46 @@ export async function runPinellasPermitHarvest(options, repoRoot) {
             continue;
           }
         }
-        const searchResult = await searchLeePermitWindow({
-          browser,
-          startDate: window.startDate,
-          endDate: window.endDate,
-          portalUrl: PINELLAS_PORTAL_URL,
-          maxPages: options.maxPages,
-          stopAfterFirstPageWhenTotalAtLeast: options.splitThreshold,
-          recordNumberPattern: PINELLAS_RECORD_NUMBER_PATTERN,
-          logger: consoleLogger,
-        });
+        /** @type {import("../workflow/lambdas/permit-harvest-worker/lee-accela.mjs").PermitSearchResult | null} */
+        let searchResult = null;
+        try {
+          searchResult = await searchLeePermitWindow({
+            browser,
+            startDate: window.startDate,
+            endDate: window.endDate,
+            portalUrl: PINELLAS_PORTAL_URL,
+            maxPages: options.maxPages,
+            stopAfterFirstPageWhenTotalAtLeast: options.splitThreshold,
+            recordNumberPattern: PINELLAS_RECORD_NUMBER_PATTERN,
+            logger: consoleLogger,
+          });
+        } catch (error) {
+          const failCount = (windowFailures.get(windowKey) ?? 0) + 1;
+          windowFailures.set(windowKey, failCount);
+          console.log(
+            JSON.stringify({
+              event: "pinellas_accela_window_failed",
+              windowKey,
+              failCount,
+              message: error instanceof Error ? error.message : String(error),
+            }),
+          );
+          if (failCount < 3) {
+            queue.push(window);
+          }
+          await writeHarvestStatus({
+            jobDir,
+            options,
+            phase: "running",
+            windowCount,
+            splitCount,
+            detailCount,
+            startedAt,
+            queueRemaining: queue.length,
+            lastWindowKey,
+          });
+          continue;
+        }
         windowCount += 1;
         const mustSplit =
           searchResult.truncatedForSplit === true ||
@@ -481,20 +513,32 @@ async function captureDetails({
     if (options.skipExisting && existsSync(paths.jsonPath)) {
       continue;
     }
-    const { html, extraction } = await captureLeePermitDetail({
-      browser,
-      permit,
-      logger: consoleLogger,
-    });
-    await writeFile(paths.htmlPath, html);
-    await writeFile(
-      paths.jsonPath,
-      `${JSON.stringify(
-        { ...extraction, source: "pinellas-county-accela" },
-        null,
-        2,
-      )}\n`,
-    );
+    try {
+      const { html, extraction } = await captureLeePermitDetail({
+        browser,
+        permit,
+        logger: consoleLogger,
+      });
+      await writeFile(paths.htmlPath, html);
+      await writeFile(
+        paths.jsonPath,
+        `${JSON.stringify(
+          { ...extraction, source: "pinellas-county-accela" },
+          null,
+          2,
+        )}\n`,
+      );
+    } catch (error) {
+      console.log(
+        JSON.stringify({
+          event: "pinellas_accela_detail_failed",
+          recordNumber: permit.recordNumber,
+          url: permit.url,
+          message: error instanceof Error ? error.message : String(error),
+        }),
+      );
+      continue;
+    }
     captured += 1;
     console.log(
       JSON.stringify({
