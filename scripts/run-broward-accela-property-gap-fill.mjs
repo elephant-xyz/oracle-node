@@ -534,11 +534,7 @@ function buildSummary(
  * @param {(milliseconds:number) => Promise<void>} wait - Injectable finite timer.
  * @returns {Promise<void>} Resolves once wall time reaches the retry threshold.
  */
-export async function waitForPropertyGapFillCooldown(
-  nextAttemptMs,
-  now,
-  wait,
-) {
+export async function waitForPropertyGapFillCooldown(nextAttemptMs, now, wait) {
   if (!Number.isFinite(nextAttemptMs)) return;
   while (true) {
     const currentMs = Date.parse(now());
