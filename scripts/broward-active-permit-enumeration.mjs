@@ -13,6 +13,7 @@ const MINIMUM_ACTIVITY_WINDOW_MS = 60_000;
 const MINIMUM_ETA_WINDOW_MS = 5 * 60_000;
 const MAXIMUM_HISTORY_WINDOW_MS = 60 * 60_000;
 const CHECKPOINT_STALE_AFTER_MS = 5 * 60_000;
+const MAXIMUM_DETAIL_PROCESS_AGE_SECONDS = 15 * 60;
 const RATE_SEGMENT_COUNT = 3;
 const MAXIMUM_RATE_VARIABILITY_RATIO = 3;
 
@@ -22,7 +23,7 @@ const MAXIMUM_RATE_VARIABILITY_RATIO = 3;
  * @typedef {"local_checkpoint" | "durable_route_checkpoint"} ActiveEnumerationCountSource
  * @typedef {"running" | "cooling" | "paused" | "complete" | "stalled"} ActiveEnumerationState
  * @typedef {"warming_up" | "work_units_advanced" | "checkpoint_updated" | "stationary"} ActiveEnumerationCheckpointActivity
- * @typedef {"complete" | "rate_stable" | "dashboard_snapshot_stale" | "worker_not_running" | "checkpoint_stale" | "variable_detail_loop" | "observation_window_short" | "no_checkpoint_movement" | "rate_variability_high" | "work_unit_total_changed"} ActiveEnumerationEtaReason
+ * @typedef {"complete" | "rate_stable" | "dashboard_snapshot_stale" | "worker_not_running" | "checkpoint_stale" | "detail_activity" | "variable_detail_loop" | "observation_window_short" | "no_checkpoint_movement" | "rate_variability_high" | "work_unit_total_changed"} ActiveEnumerationEtaReason
  *
  * @typedef {object} ActiveEnumerationRouteDefinition
  * @property {string} key - Stable public route key.
@@ -50,6 +51,17 @@ const MAXIMUM_RATE_VARIABILITY_RATIO = 3;
  * @typedef {object} ActiveEnumerationProcessSnapshot
  * @property {boolean} available - Whether the bounded process read succeeded.
  * @property {ReadonlySet<string>} routeKeys - Definitions with a live runner.
+ * @property {ReadonlySet<string>} detailRouteKeys
+ *   Definitions with a live bounded probe or browser descendant no older than
+ *   fifteen minutes.
+ * @property {ReadonlyMap<string,string>} supervisorNotBeforeByKey
+ *   Valid operator retry boundaries parsed from live municipal supervisors.
+ *
+ * @typedef {object} ActiveEnumerationProcessEntry
+ * @property {number} pid - Operating-system process identifier used in-memory only.
+ * @property {number} parentPid - Parent identifier used only for bounded ancestry.
+ * @property {number} elapsedSeconds - Current process age from the OS snapshot.
+ * @property {string} command - Private command line retained only in-memory.
  *
  * @typedef {object} ActiveEnumerationObservation
  * @property {number} observedUnits - Completed-unit delta in this window.
@@ -72,6 +84,8 @@ const MAXIMUM_RATE_VARIABILITY_RATIO = 3;
  * @property {ActiveEnumerationState} state - Reconciled operational state.
  * @property {boolean | null} processAlive
  *   Live runner evidence, or null when process inspection failed.
+ * @property {boolean | null} detailActive
+ *   Live bounded child/probe/browser evidence, or null when inspection failed.
  * @property {ActiveEnumerationCheckpointActivity} checkpointActivity
  *   Whether completed units or only the checkpoint timestamp moved.
  * @property {number} completedUnits - Durable completed work units.
@@ -118,7 +132,7 @@ export function readActiveEnumerationProcessSnapshot(definitions) {
   return new Promise((resolvePromise) => {
     execFile(
       "ps",
-      ["-eo", "args="],
+      ["-eo", "pid=,ppid=,etimes=,args="],
       {
         encoding: "utf8",
         timeout: 3_000,
@@ -126,25 +140,54 @@ export function readActiveEnumerationProcessSnapshot(definitions) {
       },
       (error, stdout) => {
         if (error !== null) {
-          resolvePromise({ available: false, routeKeys: new Set() });
+          resolvePromise({
+            available: false,
+            routeKeys: new Set(),
+            detailRouteKeys: new Set(),
+            supervisorNotBeforeByKey: new Map(),
+          });
           return;
         }
-        const commands = stdout
+        const entries = stdout
           .split("\n")
-          .filter(
-            (command) =>
-              command.includes("run-broward-supported-permit-ingest.mjs") ||
-              command.includes(
-                "run-broward-municipal-enumeration-supervisor.mjs",
-              ),
-          );
+          .map(parseProcessEntry)
+          .filter((entry) => entry !== null);
+        const detected = detectActiveEnumerationProcessDetails(
+          definitions,
+          entries,
+        );
         resolvePromise({
           available: true,
-          routeKeys: detectActiveEnumerationProcesses(definitions, commands),
+          ...detected,
         });
       },
     );
   });
+}
+
+/**
+ * Parse one fixed-column `ps` row without returning it outside process
+ * inspection. Invalid or truncated rows are ignored.
+ *
+ * @param {string} line - One `ps -eo pid,ppid,etimes,args` output row.
+ * @returns {ActiveEnumerationProcessEntry | null} Parsed bounded entry.
+ */
+function parseProcessEntry(line) {
+  const match = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(.+)$/u.exec(line);
+  if (match === null) return null;
+  const pid = Number(match[1]);
+  const parentPid = Number(match[2]);
+  const elapsedSeconds = Number(match[3]);
+  const command = match[4];
+  if (
+    !Number.isSafeInteger(pid) ||
+    !Number.isSafeInteger(parentPid) ||
+    !Number.isSafeInteger(elapsedSeconds) ||
+    typeof command !== "string"
+  ) {
+    return null;
+  }
+  return { pid, parentPid, elapsedSeconds, command };
 }
 
 /**
@@ -176,6 +219,132 @@ export function detectActiveEnumerationProcesses(definitions, commands) {
     }
   }
   return liveKeys;
+}
+
+/**
+ * Reduce a bounded process tree to aggregate route liveness, recent detail
+ * activity, and operator retry boundaries. Raw commands and PIDs never leave
+ * this result.
+ *
+ * @param {readonly ActiveEnumerationRouteDefinition[]} definitions
+ *   Exact executable route definitions.
+ * @param {readonly ActiveEnumerationProcessEntry[]} entries
+ *   Parsed private process rows.
+ * @returns {Omit<ActiveEnumerationProcessSnapshot,"available">}
+ *   Aggregate-only process evidence.
+ */
+export function detectActiveEnumerationProcessDetails(definitions, entries) {
+  const commands = entries.map((entry) => entry.command);
+  const routeKeys = detectActiveEnumerationProcesses(definitions, commands);
+  const detailRouteKeys = new Set();
+  /** @type {Map<string,string>} */
+  const supervisorNotBeforeByKey = new Map();
+
+  for (const definition of definitions) {
+    const rootEntries = entries.filter((entry) =>
+      commandMatchesDefinition(definition, entry.command),
+    );
+    if (rootEntries.length === 0) continue;
+    const rootPids = new Set(rootEntries.map((entry) => entry.pid));
+    const descendantPids = collectDescendantPids(entries, rootPids);
+    if (
+      entries.some(
+        (entry) =>
+          descendantPids.has(entry.pid) &&
+          entry.elapsedSeconds <= MAXIMUM_DETAIL_PROCESS_AGE_SECONDS &&
+          isBoundedDetailCommand(entry.command),
+      )
+    ) {
+      detailRouteKeys.add(definition.key);
+    }
+    if (definition.method !== "full") continue;
+    for (const entry of rootEntries) {
+      const boundary = readNotBeforeBoundary(entry.command);
+      if (boundary === null) continue;
+      const prior = supervisorNotBeforeByKey.get(definition.key);
+      if (prior === undefined || Date.parse(boundary) > Date.parse(prior)) {
+        supervisorNotBeforeByKey.set(definition.key, boundary);
+      }
+    }
+  }
+  return { routeKeys, detailRouteKeys, supervisorNotBeforeByKey };
+}
+
+/**
+ * Test whether one process command is the configured route runner.
+ *
+ * @param {ActiveEnumerationRouteDefinition} definition - Exact route definition.
+ * @param {string} command - Private process command.
+ * @returns {boolean} True when script and jurisdiction arguments both match.
+ */
+function commandMatchesDefinition(definition, command) {
+  const escapedKey = escapeRegExp(definition.processJurisdictionKey);
+  const flag =
+    definition.method === "full" ? "--jurisdiction" : "--jurisdictions";
+  const matcher = new RegExp(
+    `(?:^|\\s)${flag}(?:=|\\s+)[^\\s]*${escapedKey}(?:,|\\s|$)`,
+    "u",
+  );
+  return command.includes(definition.processScript) && matcher.test(command);
+}
+
+/**
+ * Traverse one bounded process snapshot without retaining external state.
+ *
+ * @param {readonly ActiveEnumerationProcessEntry[]} entries - Process rows.
+ * @param {ReadonlySet<number>} rootPids - Route runner process identifiers.
+ * @returns {ReadonlySet<number>} All transitive child identifiers.
+ */
+function collectDescendantPids(entries, rootPids) {
+  const descendants = new Set();
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const entry of entries) {
+      if (
+        !descendants.has(entry.pid) &&
+        (rootPids.has(entry.parentPid) || descendants.has(entry.parentPid))
+      ) {
+        descendants.add(entry.pid);
+        changed = true;
+      }
+    }
+  }
+  return descendants;
+}
+
+/**
+ * Identify only known bounded detail processes. Supervisor shells and worker
+ * parents do not count as detail activity.
+ *
+ * @param {string} command - Private process command.
+ * @returns {boolean} Whether the command is a probe/browser detail child.
+ */
+function isBoundedDetailCommand(command) {
+  return (
+    command.includes("probe-broward-") ||
+    /(?:^|[/\s-])(?:chrome|chromium|playwright)(?:[/\s-]|$)/iu.test(command)
+  );
+}
+
+/**
+ * Extract a valid UTC operator boundary from a live supervisor command.
+ *
+ * @param {string} command - Private supervisor command.
+ * @returns {string | null} Valid ISO boundary or null.
+ */
+function readNotBeforeBoundary(command) {
+  if (
+    !command.includes("run-broward-municipal-enumeration-supervisor.mjs")
+  ) {
+    return null;
+  }
+  const value = /(?:^|\s)--not-before(?:=|\s+)(\S+)/u.exec(command)?.[1];
+  return typeof value === "string" &&
+    value.endsWith("Z") &&
+    Number.isFinite(Date.parse(value))
+    ? value
+    : null;
 }
 
 /**
@@ -244,11 +413,15 @@ export function createActivePermitEnumerationTracker(definitions) {
       const processAlive = processes.available
         ? processes.routeKeys.has(definition.key)
         : null;
+      const detailActive = processes.available
+        ? processes.detailRouteKeys.has(definition.key)
+        : null;
       const projected = projectActiveWorker(
         definition,
         worker,
         samples,
         processAlive,
+        detailActive,
         nowMs,
       );
       observationWindowSeconds = Math.max(
@@ -290,6 +463,7 @@ export function markActivePermitEnumerationSnapshotStale(
       return {
         ...structuredClone(worker),
         processAlive: null,
+        detailActive: null,
         checkpointAgeSeconds: Number.isFinite(checkpointMs)
           ? Math.max(0, Math.round((nowMs - checkpointMs) / 1_000))
           : null,
@@ -312,10 +486,18 @@ export function markActivePermitEnumerationSnapshotStale(
  * @param {EnumerationWorkerAggregate} worker - Current aggregate checkpoint.
  * @param {readonly WorkerSample[]} samples - Bounded chronological samples.
  * @param {boolean | null} processAlive - Current process evidence.
+ * @param {boolean | null} detailActive - Current bounded detail evidence.
  * @param {number} nowMs - Observation epoch.
  * @returns {ActiveEnumerationWorker} Public active-worker projection.
  */
-function projectActiveWorker(definition, worker, samples, processAlive, nowMs) {
+function projectActiveWorker(
+  definition,
+  worker,
+  samples,
+  processAlive,
+  detailActive,
+  nowMs,
+) {
   const completedUnits = worker.completedWindows;
   const totalUnits = worker.totalWindows;
   const remainingUnits = Math.max(0, totalUnits - completedUnits);
@@ -334,13 +516,19 @@ function projectActiveWorker(definition, worker, samples, processAlive, nowMs) {
   const checkpointStale =
     checkpointAtMs === null ||
     nowMs - checkpointAtMs > CHECKPOINT_STALE_AFTER_MS;
-  const state = classifyState(worker, processAlive, checkpointStale);
+  const state = classifyState(
+    worker,
+    processAlive,
+    detailActive,
+    checkpointStale,
+  );
   const metrics = calculateObservation(samples);
   const checkpointActivity = classifyCheckpointActivity(samples, metrics);
   const eta = calculateEta(
     definition,
     state,
     checkpointStale,
+    detailActive,
     remainingUnits,
     samples,
     metrics,
@@ -351,6 +539,7 @@ function projectActiveWorker(definition, worker, samples, processAlive, nowMs) {
     family: definition.family,
     state,
     processAlive,
+    detailActive,
     checkpointActivity,
     completedUnits,
     totalUnits,
@@ -381,17 +570,21 @@ function projectActiveWorker(definition, worker, samples, processAlive, nowMs) {
  *
  * @param {EnumerationWorkerAggregate} worker - Current worker aggregate.
  * @param {boolean | null} processAlive - Process evidence.
+ * @param {boolean | null} detailActive - Bounded detail-process evidence.
  * @param {boolean} checkpointStale - Checkpoint staleness.
  * @returns {ActiveEnumerationState} Reconciled public state.
  */
-function classifyState(worker, processAlive, checkpointStale) {
+function classifyState(worker, processAlive, detailActive, checkpointStale) {
   if (
     worker.status === "complete" &&
     worker.completedWindows === worker.totalWindows
   ) {
     return "complete";
   }
-  if (worker.status === "cooling_down") return "cooling";
+  if (worker.status === "cooling_down" && processAlive === true) {
+    return "cooling";
+  }
+  if (processAlive === true && detailActive === true) return "running";
   if (processAlive === true && checkpointStale) return "stalled";
   if (processAlive === true) return "running";
   if (
@@ -477,6 +670,7 @@ function classifyCheckpointActivity(samples, observation) {
  * @param {ActiveEnumerationRouteDefinition} definition - Route metadata.
  * @param {ActiveEnumerationState} state - Current state.
  * @param {boolean} checkpointStale - Checkpoint staleness.
+ * @param {boolean | null} detailActive - Bounded detail-process evidence.
  * @param {number} remainingUnits - Unfinished units.
  * @param {readonly WorkerSample[]} samples - Chronological observations.
  * @param {ActiveEnumerationObservation} observation - Overall observed rate.
@@ -486,6 +680,7 @@ function calculateEta(
   definition,
   state,
   checkpointStale,
+  detailActive,
   remainingUnits,
   samples,
   observation,
@@ -493,6 +688,9 @@ function calculateEta(
   if (remainingUnits === 0) return completeEta();
   if (state === "stalled") return unknownEta("checkpoint_stale");
   if (state !== "running") return unknownEta("worker_not_running");
+  if (detailActive === true && checkpointStale) {
+    return unknownEta("detail_activity");
+  }
   if (checkpointStale) return unknownEta("checkpoint_stale");
   if (definition.family === "municipal_type") {
     return unknownEta("variable_detail_loop");

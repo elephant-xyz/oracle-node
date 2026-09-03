@@ -27,7 +27,11 @@ import { buildBrowardPermitRouteStatus } from "../../scripts/broward-neon-recove
  */
 function buildActiveEnumerationFixture() {
   const routes = [
-    ["BMSD / unincorporated", "property_first", "bcs_posse"],
+    [
+      "Broward Municipal Services District / unincorporated",
+      "property_first",
+      "bcs_posse",
+    ],
     ["Coconut Creek", "full", "municipal_property"],
     ["Lauderdale-by-the-Sea", "property_first", "citizenserve"],
     ["Lauderhill", "full", "municipal_property"],
@@ -48,6 +52,7 @@ function buildActiveEnumerationFixture() {
       family,
       state: "running",
       processAlive: true,
+      detailActive: false,
       checkpointActivity: "work_units_advanced",
       completedUnits: 5,
       totalUnits: 10,
@@ -178,14 +183,20 @@ describe("universal dashboard server & county registry", () => {
         permitEnumeration: {
           accessibleRecords: 430_087,
           pausedWorkers: [
-            { source: "Plantation", reason: "timeout" },
+            {
+              source: "BMSD / unincorporated",
+              reason: "checkpoint_stale",
+            },
             { source: "Weston", reason: "source_cap" },
           ],
           coolingWorkers: [
             {
-              source: "Cooper City",
-              reason: "source_cap",
+              source: "Pompano Beach",
+              reason: "operator_hold",
               nextAttemptAt: "2026-09-02T01:00:00.000Z",
+              processAlive: true,
+              detailActive: false,
+              operatorNotBeforeAt: "2026-09-02T01:00:00.000Z",
             },
           ],
         },
@@ -219,14 +230,20 @@ describe("universal dashboard server & county registry", () => {
             },
             operationalWorkers: {
               paused: [
-                { source: "Plantation", reason: "timeout" },
+                {
+                  source: "BMSD / unincorporated",
+                  reason: "checkpoint_stale",
+                },
                 { source: "Weston", reason: "source_cap" },
               ],
               coolingDown: [
                 {
-                  source: "Cooper City",
-                  reason: "source_cap",
+                  source: "Pompano Beach",
+                  reason: "operator_hold",
                   nextAttemptAt: "2026-09-02T01:00:00.000Z",
+                  processAlive: true,
+                  detailActive: false,
+                  operatorNotBeforeAt: "2026-09-02T01:00:00.000Z",
                 },
               ],
             },

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   createActivePermitEnumerationTracker,
+  detectActiveEnumerationProcessDetails,
   detectActiveEnumerationProcesses,
   markActivePermitEnumerationSnapshotStale,
 } from "../../scripts/broward-active-permit-enumeration.mjs";
@@ -85,12 +86,15 @@ function workersAt(completedUnits, nowMs, overrides = {}) {
 /**
  * Build a successful process snapshot for every configured route.
  *
- * @returns {{available:true,routeKeys:ReadonlySet<string>}} Live process map.
+ * @param {readonly string[]} [detailRouteKeys=[]] - Routes with a live detail child.
+ * @returns {import("../../scripts/broward-active-permit-enumeration.mjs").ActiveEnumerationProcessSnapshot} Live process map.
  */
-function allProcessesAlive() {
+function allProcessesAlive(detailRouteKeys = []) {
   return {
     available: true,
     routeKeys: new Set(DEFINITIONS.map((definition) => definition.key)),
+    detailRouteKeys: new Set(detailRouteKeys),
+    supervisorNotBeforeByKey: new Map(),
   };
 }
 
@@ -106,6 +110,45 @@ describe("Broward active permit enumeration telemetry", () => {
       "property-0",
       "property-3",
     ]);
+  });
+
+  it("reports recent bounded detail descendants and operator boundaries", () => {
+    const details = detectActiveEnumerationProcessDetails(DEFINITIONS, [
+      {
+        pid: 10,
+        parentPid: 1,
+        elapsedSeconds: 3_600,
+        command:
+          "node scripts/run-broward-municipal-enumeration-supervisor.mjs --runner property --not-before 2026-09-04T10:06:00.000Z -- --jurisdiction full_property",
+      },
+      {
+        pid: 11,
+        parentPid: 10,
+        elapsedSeconds: 600,
+        command: "node scripts/probe-broward-municipal-permits.mjs",
+      },
+      {
+        pid: 20,
+        parentPid: 1,
+        elapsedSeconds: 3_600,
+        command:
+          "node scripts/run-broward-supported-permit-ingest.mjs --jurisdictions property-0",
+      },
+      {
+        pid: 21,
+        parentPid: 20,
+        elapsedSeconds: 901,
+        command: "node scripts/probe-broward-bcs-permits.mjs",
+      },
+    ]);
+
+    expect(details.routeKeys).toEqual(
+      new Set(["full-property", "property-0"]),
+    );
+    expect(details.detailRouteKeys).toEqual(new Set(["full-property"]));
+    expect(details.supervisorNotBeforeByKey.get("full-property")).toBe(
+      "2026-09-04T10:06:00.000Z",
+    );
   });
 
   it("classifies process state separately from checkpoint movement", () => {
@@ -148,10 +191,66 @@ describe("Broward active permit enumeration telemetry", () => {
     const absentTracker = createActivePermitEnumerationTracker(DEFINITIONS);
     const paused = absentTracker(
       workersAt(12, start),
-      { available: true, routeKeys: new Set() },
+      {
+        available: true,
+        routeKeys: new Set(),
+        detailRouteKeys: new Set(),
+        supervisorNotBeforeByKey: new Map(),
+      },
       start,
     ).workers[0];
     expect(paused).toMatchObject({ state: "paused", processAlive: false });
+  });
+
+  it("keeps a recent live detail child running past checkpoint staleness", () => {
+    const tracker = createActivePermitEnumerationTracker(DEFINITIONS);
+    const now = Date.parse("2026-09-03T12:10:00.000Z");
+    const worker = tracker(
+      workersAt(12, now, {
+        fullPropertyUpdatedAt: new Date(now - 10 * 60_000).toISOString(),
+      }),
+      allProcessesAlive(["full-property"]),
+      now,
+    ).workers[0];
+
+    expect(worker).toMatchObject({
+      state: "running",
+      processAlive: true,
+      detailActive: true,
+      checkpointStale: true,
+      eta: {
+        kind: "unknown",
+        reason: "detail_activity",
+      },
+    });
+  });
+
+  it("does not claim automatic cooling without a live supervisor", () => {
+    const tracker = createActivePermitEnumerationTracker(DEFINITIONS);
+    const now = Date.parse("2026-09-03T12:10:00.000Z");
+    const worker = tracker(
+      workersAt(12, now, {
+        fullPropertyStatus: "cooling_down",
+        fullPropertyUpdatedAt: new Date(now - 60_000).toISOString(),
+      }),
+      {
+        available: true,
+        routeKeys: new Set(),
+        detailRouteKeys: new Set(),
+        supervisorNotBeforeByKey: new Map(),
+      },
+      now,
+    ).workers[0];
+
+    expect(worker).toMatchObject({
+      state: "paused",
+      processAlive: false,
+      detailActive: false,
+      eta: {
+        kind: "unknown",
+        reason: "worker_not_running",
+      },
+    });
   });
 
   it("emits an ETA range only for stable observed work-unit rates", () => {
@@ -264,6 +363,7 @@ describe("Broward active permit enumeration telemetry", () => {
     expect(stale.snapshotStale).toBe(true);
     expect(stale.workers[0]).toMatchObject({
       processAlive: null,
+      detailActive: null,
       checkpointStale: true,
       eta: {
         kind: "unknown",

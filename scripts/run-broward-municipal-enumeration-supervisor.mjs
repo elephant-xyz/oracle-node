@@ -24,6 +24,7 @@ import {
 } from "./run-broward-municipal-record-type-enumeration.mjs";
 
 const MINIMUM_RESTART_DELAY_MS = 1_000;
+const MAXIMUM_WALL_CLOCK_WAIT_SLICE_MS = 30_000;
 
 /**
  * @typedef {ReturnType<typeof parseMunicipalPropertyEnumerationOptions>} MunicipalPropertyEnumerationOptions
@@ -181,7 +182,7 @@ export async function runMunicipalEnumerationSupervisor(
     );
     const waitMs = Math.max(0, deadlineMs - now());
     if (waitMs > 0) {
-      await wait(waitMs);
+      await wait(Math.min(waitMs, MAXIMUM_WALL_CLOCK_WAIT_SLICE_MS));
       continue;
     }
     if (

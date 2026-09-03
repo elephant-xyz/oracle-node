@@ -214,6 +214,55 @@ describe("Broward municipal enumeration supervisor", () => {
     expect(summary.status).toBe("complete");
   });
 
+  it("rechecks wall time and checkpoints in short slices before long holds", async () => {
+    const outputDirectory = await createOutputDirectory();
+    let nowMs = Date.parse("2026-09-03T15:00:00.000Z");
+    const notBeforeAt = "2026-09-03T15:01:05.000Z";
+    await writePropertyCheckpoint(outputDirectory, {
+      status: "running",
+      blocker: null,
+      nextAttemptAt: null,
+    });
+    const waits = [];
+    const runProperty = vi.fn(async () => {
+      await writePropertyCheckpoint(outputDirectory, {
+        status: "complete",
+        blocker: null,
+        nextAttemptAt: null,
+        nextQueryIndex: 2,
+        totalQueries: 2,
+      });
+      return /** @type {never} */ ({});
+    });
+
+    await runMunicipalEnumerationSupervisor(
+      parseMunicipalSupervisorOptions([
+        "--runner",
+        "property",
+        "--not-before",
+        notBeforeAt,
+        "--",
+        "--jurisdiction",
+        "margate",
+        "--seed",
+        "fixture.csv",
+        "--output-dir",
+        outputDirectory,
+      ]),
+      {
+        now: () => nowMs,
+        wait: async (milliseconds) => {
+          waits.push(milliseconds);
+          nowMs += milliseconds;
+        },
+        runProperty,
+      },
+    );
+
+    expect(waits).toEqual([30_000, 30_000, 5_000]);
+    expect(runProperty).toHaveBeenCalledOnce();
+  });
+
   it("does not restart a terminal source-cap checkpoint", async () => {
     const outputDirectory = await createOutputDirectory();
     await writeFile(

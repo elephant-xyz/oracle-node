@@ -843,8 +843,8 @@ describe("durable Broward Neon recovery", () => {
             reason: "client_all_exclusive_cap",
           },
         },
-        status: "running",
-        blocker: null,
+        status: "paused",
+        blocker: "source_cap",
         nextAttemptAt: null,
         updatedAt: "2026-08-31T21:59:50.000Z",
       }),
@@ -852,9 +852,23 @@ describe("durable Broward Neon recovery", () => {
     const status = await readPermitEnumerationStatus(
       root,
       Date.parse("2026-08-31T22:00:00.000Z"),
+      {
+        available: true,
+        routeKeys: new Set([
+          "lighthouse-point",
+          "municipal-pompano_beach",
+        ]),
+        detailRouteKeys: new Set(),
+        supervisorNotBeforeByKey: new Map([
+          [
+            "municipal-pompano_beach",
+            "2026-08-31T23:00:00.000Z",
+          ],
+        ]),
+      },
     );
     expect(status).toMatchObject({
-      activeWorkers: 4,
+      activeWorkers: 3,
       completedWorkers: 1,
       completedWindows: 5,
       totalWindows: 12,
@@ -871,6 +885,14 @@ describe("durable Broward Neon recovery", () => {
         source: "Plantation",
         reason: "timeout",
         nextAttemptAt: "2026-08-31T23:00:00.000Z",
+      },
+      {
+        source: "Pompano Beach",
+        reason: "operator_hold",
+        nextAttemptAt: "2026-08-31T23:00:00.000Z",
+        processAlive: true,
+        detailActive: false,
+        operatorNotBeforeAt: "2026-08-31T23:00:00.000Z",
       },
     ]);
     expect(status.workers).toContainEqual(
@@ -892,10 +914,13 @@ describe("durable Broward Neon recovery", () => {
     expect(status.workers).toContainEqual(
       expect.objectContaining({
         source: "Pompano Beach",
-        status: "running",
+        status: "cooling_down",
         completedWindows: 2,
         pendingWindows: 3,
         deferredCapCount: 1,
+        cooldownReason: "operator_hold",
+        processAlive: true,
+        operatorNotBeforeAt: "2026-08-31T23:00:00.000Z",
       }),
     );
     expect(status.workers).toContainEqual(
@@ -975,6 +1000,55 @@ describe("durable Broward Neon recovery", () => {
     });
   });
 
+  it("requires live supervisor evidence before claiming automatic cooling", async () => {
+    const root = await mkdtemp(
+      path.join(tmpdir(), "broward-recovery-dashboard-supervisor-"),
+    );
+    temporaryDirectories.push(root);
+    const margateDirectory = path.join(
+      root,
+      "downloads/broward/municipal-property-enumeration/margate-full",
+    );
+    await mkdir(margateDirectory, { recursive: true });
+    await writeFile(
+      path.join(margateDirectory, "checkpoint.private.json"),
+      JSON.stringify({
+        nextQueryIndex: 2,
+        completedQueries: 2,
+        totalQueries: 5,
+        uniqueRecords: 4,
+        deferredCapItems: {},
+        status: "cooling",
+        blocker: "source_error",
+        nextAttemptAt: "2026-09-03T19:03:00.000Z",
+        updatedAt: "2026-09-03T18:48:00.000Z",
+      }),
+    );
+
+    const status = await readPermitEnumerationStatus(
+      root,
+      Date.parse("2026-09-03T18:53:00.000Z"),
+      {
+        available: true,
+        routeKeys: new Set(),
+        detailRouteKeys: new Set(),
+        supervisorNotBeforeByKey: new Map(),
+      },
+    );
+
+    expect(status.workers).toContainEqual(
+      expect.objectContaining({
+        source: "Margate",
+        status: "paused",
+        pauseReason: "supervisor_not_running",
+        processAlive: false,
+      }),
+    );
+    expect(status.coolingWorkers).not.toContainEqual(
+      expect.objectContaining({ source: "Margate" }),
+    );
+  });
+
   it("keeps historical eSuite ceiling partitions unresolved", async () => {
     const root = await mkdtemp(
       path.join(tmpdir(), "broward-recovery-dashboard-esuite-cap-"),
@@ -1048,6 +1122,16 @@ describe("durable Broward Neon recovery", () => {
               next_attempt_at: null,
               heartbeat_at: "2026-09-02T16:00:00.000Z",
             },
+            {
+              jurisdiction_key: "lazy-lake",
+              candidate_count: 18,
+              terminal_count: 18,
+              record_count: 148,
+              terminal_missing_count: 8,
+              phase: "running",
+              next_attempt_at: null,
+              heartbeat_at: "2026-09-02T16:30:00.000Z",
+            },
           ],
         }),
     };
@@ -1058,11 +1142,11 @@ describe("durable Broward Neon recovery", () => {
     expect(status.workers).toHaveLength(6);
     expect(status).toMatchObject({
       activeWorkers: 1,
-      completedWorkers: 1,
-      completedWindows: 50,
-      totalWindows: 110,
-      accessibleRecords: 79,
-      sourceMissingRecords: 3,
+      completedWorkers: 2,
+      completedWindows: 68,
+      totalWindows: 128,
+      accessibleRecords: 227,
+      sourceMissingRecords: 11,
     });
     expect(status.workers).toContainEqual(
       expect.objectContaining({
@@ -1071,6 +1155,15 @@ describe("durable Broward Neon recovery", () => {
         completedWindows: 40,
         pendingWindows: 60,
         coverageBoundary: expect.stringMatching(/building permits only/iu),
+      }),
+    );
+    expect(status.workers).toContainEqual(
+      expect.objectContaining({
+        source: "Lazy Lake",
+        status: "complete",
+        completedWindows: 18,
+        totalWindows: 18,
+        completionPercent: 100,
       }),
     );
     expect(JSON.stringify(status)).not.toMatch(

@@ -90,14 +90,17 @@ const DASHBOARD_HTML_PATH = resolve(__dirname, "common/dashboard.html");
  *
  * @typedef {object} UniversalPausedPermitWorker
  * @property {string} source - Public jurisdiction label.
- * @property {"timeout" | "missing_controls" | "missing_export" | "source_cap" | "checkpoint_stale"} reason
+ * @property {"timeout" | "missing_controls" | "missing_export" | "source_cap" | "checkpoint_stale" | "supervisor_not_running" | "process_unknown"} reason
  *   Allowlisted operational pause reason.
  *
  * @typedef {object} UniversalCoolingPermitWorker
  * @property {string} source - Public jurisdiction label.
- * @property {"timeout" | "source_cap" | "incomplete_pagination" | "source_error"} reason
+ * @property {"timeout" | "source_cap" | "incomplete_pagination" | "source_error" | "operator_hold"} reason
  *   Allowlisted source circuit-breaker reason.
  * @property {string} nextAttemptAt - Earliest safe automatic retry.
+ * @property {boolean | null} processAlive - Live supervisor evidence.
+ * @property {boolean | null} detailActive - Recent bounded detail evidence.
+ * @property {string | null} operatorNotBeforeAt - Effective operator boundary.
  *
  * @typedef {object} UniversalActiveEnumerationWorker
  * @property {string} jurisdiction - Allowlisted public jurisdiction.
@@ -107,6 +110,7 @@ const DASHBOARD_HTML_PATH = resolve(__dirname, "common/dashboard.html");
  * @property {"running" | "cooling" | "paused" | "complete" | "stalled"} state
  *   Reconciled operational state.
  * @property {boolean | null} processAlive - Independent live-process evidence.
+ * @property {boolean | null} detailActive - Recent bounded detail evidence.
  * @property {"warming_up" | "work_units_advanced" | "checkpoint_updated" | "stationary"} checkpointActivity
  *   Observed aggregate checkpoint movement.
  * @property {number} completedUnits - Durable completed work units.
@@ -131,7 +135,7 @@ const DASHBOARD_HTML_PATH = resolve(__dirname, "common/dashboard.html");
  *   estimatedHours:number|null,
  *   lowHours:number|null,
  *   highHours:number|null,
- *   reason:"complete"|"rate_stable"|"dashboard_snapshot_stale"|"worker_not_running"|"checkpoint_stale"|"variable_detail_loop"|"observation_window_short"|"no_checkpoint_movement"|"rate_variability_high"|"work_unit_total_changed"
+ *   reason:"complete"|"rate_stable"|"dashboard_snapshot_stale"|"worker_not_running"|"checkpoint_stale"|"detail_activity"|"variable_detail_loop"|"observation_window_short"|"no_checkpoint_movement"|"rate_variability_high"|"work_unit_total_changed"
  * }} eta - Conditional estimate or allowlisted refusal reason.
  *
  * @typedef {object} UniversalActiveEnumerationStatus
@@ -733,6 +737,28 @@ function readBrowardManualCaptchaProgress(value, manualCaptchaJurisdictions) {
   };
 }
 
+const BROWARD_BMSD_CANONICAL_LABEL = "BMSD / unincorporated";
+const BROWARD_BMSD_PUBLIC_ALIASES = new Set([
+  BROWARD_BMSD_CANONICAL_LABEL,
+  "BMSD/unincorporated",
+  "Broward Municipal Services District / unincorporated",
+  "Unincorporated Broward",
+]);
+
+/**
+ * Canonicalize the fixed public BMSD aliases used by the executable registry,
+ * property-first checkpoint rows, and dashboard display. No fuzzy matching is
+ * used, so arbitrary labels still fail closed.
+ *
+ * @param {string} value - Validated public jurisdiction label.
+ * @returns {string} Canonical dashboard jurisdiction label.
+ */
+function canonicalizeBrowardJurisdiction(value) {
+  return BROWARD_BMSD_PUBLIC_ALIASES.has(value)
+    ? BROWARD_BMSD_CANONICAL_LABEL
+    : value;
+}
+
 /**
  * Validate allowlisted operational pauses independently of source blockers.
  * A paused enumerator must belong to an implemented route; this prevents a
@@ -752,13 +778,20 @@ function readBrowardPausedPermitWorkers(value, implementedJurisdictions) {
     "missing_export",
     "source_cap",
     "checkpoint_stale",
+    "supervisor_not_running",
+    "process_unknown",
   ]);
+  const implemented = new Set(
+    implementedJurisdictions.map(canonicalizeBrowardJurisdiction),
+  );
   const workerSources = new Set();
   return value.map((candidate) => {
     const worker = requireObject(candidate, "Broward paused permit worker");
-    const source = requirePublicLabel(
-      worker.source,
-      "Broward paused permit worker source",
+    const source = canonicalizeBrowardJurisdiction(
+      requirePublicLabel(
+        worker.source,
+        "Broward paused permit worker source",
+      ),
     );
     const reason = requirePublicLabel(
       worker.reason,
@@ -766,7 +799,7 @@ function readBrowardPausedPermitWorkers(value, implementedJurisdictions) {
     );
     if (
       workerSources.has(source) ||
-      !implementedJurisdictions.includes(source) ||
+      !implemented.has(source) ||
       !allowedReasons.has(reason)
     ) {
       throw new Error("Broward paused permit worker does not reconcile");
@@ -775,7 +808,7 @@ function readBrowardPausedPermitWorkers(value, implementedJurisdictions) {
     return {
       source,
       reason:
-        /** @type {"timeout" | "missing_controls" | "missing_export" | "source_cap" | "checkpoint_stale"} */ (
+        /** @type {"timeout" | "missing_controls" | "missing_export" | "source_cap" | "checkpoint_stale" | "supervisor_not_running" | "process_unknown"} */ (
           reason
         ),
     };
@@ -800,13 +833,19 @@ function readBrowardCoolingPermitWorkers(value, implementedJurisdictions) {
     "source_cap",
     "incomplete_pagination",
     "source_error",
+    "operator_hold",
   ]);
+  const implemented = new Set(
+    implementedJurisdictions.map(canonicalizeBrowardJurisdiction),
+  );
   const workerSources = new Set();
   return value.map((candidate) => {
     const worker = requireObject(candidate, "Broward cooling permit worker");
-    const source = requirePublicLabel(
-      worker.source,
-      "Broward cooling permit worker source",
+    const source = canonicalizeBrowardJurisdiction(
+      requirePublicLabel(
+        worker.source,
+        "Broward cooling permit worker source",
+      ),
     );
     const reason = requirePublicLabel(
       worker.reason,
@@ -816,11 +855,39 @@ function readBrowardCoolingPermitWorkers(value, implementedJurisdictions) {
       worker.nextAttemptAt,
       "Broward cooling permit worker next attempt",
     );
+    const processAlive =
+      worker.processAlive === undefined || worker.processAlive === null
+        ? null
+        : typeof worker.processAlive === "boolean"
+          ? worker.processAlive
+          : undefined;
+    const detailActive =
+      worker.detailActive === undefined || worker.detailActive === null
+        ? null
+        : typeof worker.detailActive === "boolean"
+          ? worker.detailActive
+          : undefined;
+    const operatorNotBeforeAt =
+      worker.operatorNotBeforeAt === undefined ||
+      worker.operatorNotBeforeAt === null
+        ? null
+        : requirePublicLabel(
+            worker.operatorNotBeforeAt,
+            "Broward cooling operator boundary",
+          );
     if (
       workerSources.has(source) ||
-      !implementedJurisdictions.includes(source) ||
+      !implemented.has(source) ||
       !allowedReasons.has(reason) ||
-      !Number.isFinite(Date.parse(nextAttemptAt))
+      !Number.isFinite(Date.parse(nextAttemptAt)) ||
+      processAlive === undefined ||
+      detailActive === undefined ||
+      (operatorNotBeforeAt !== null &&
+        !Number.isFinite(Date.parse(operatorNotBeforeAt))) ||
+      (reason === "operator_hold" &&
+        (processAlive !== true ||
+          operatorNotBeforeAt === null ||
+          operatorNotBeforeAt !== nextAttemptAt))
     ) {
       throw new Error("Broward cooling permit worker does not reconcile");
     }
@@ -828,10 +895,13 @@ function readBrowardCoolingPermitWorkers(value, implementedJurisdictions) {
     return {
       source,
       reason:
-        /** @type {"timeout" | "source_cap" | "incomplete_pagination" | "source_error"} */ (
+        /** @type {"timeout" | "source_cap" | "incomplete_pagination" | "source_error" | "operator_hold"} */ (
           reason
         ),
       nextAttemptAt,
+      processAlive,
+      detailActive,
+      operatorNotBeforeAt,
     };
   });
 }
@@ -883,9 +953,11 @@ function readBrowardActiveEnumeration(value) {
       candidate,
       "Broward active enumeration worker",
     );
-    const jurisdiction = requirePublicLabel(
-      worker.jurisdiction,
-      "Broward active enumeration jurisdiction",
+    const jurisdiction = canonicalizeBrowardJurisdiction(
+      requirePublicLabel(
+        worker.jurisdiction,
+        "Broward active enumeration jurisdiction",
+      ),
     );
     const method = requirePublicLabel(
       worker.method,
@@ -924,6 +996,8 @@ function readBrowardActiveEnumeration(value) {
       ].includes(checkpointActivity) ||
       (worker.processAlive !== null &&
         typeof worker.processAlive !== "boolean") ||
+      (worker.detailActive !== null &&
+        typeof worker.detailActive !== "boolean") ||
       typeof worker.checkpointStale !== "boolean"
     ) {
       throw new Error("Broward active enumeration worker is invalid");
@@ -986,7 +1060,8 @@ function readBrowardActiveEnumeration(value) {
         (locallyCapturedRecords === null || durableLoadedRecords !== null)) ||
       (method === "property_first" &&
         (locallyCapturedRecords !== null || durableLoadedRecords === null)) ||
-      (input.snapshotStale === true && worker.processAlive !== null)
+      (input.snapshotStale === true &&
+        (worker.processAlive !== null || worker.detailActive !== null))
     ) {
       throw new Error("Broward active enumeration counts do not reconcile");
     }
@@ -1004,6 +1079,7 @@ function readBrowardActiveEnumeration(value) {
           state
         ),
       processAlive: /** @type {boolean | null} */ (worker.processAlive),
+      detailActive: /** @type {boolean | null} */ (worker.detailActive),
       checkpointActivity:
         /** @type {"warming_up" | "work_units_advanced" | "checkpoint_updated" | "stationary"} */ (
           checkpointActivity
@@ -1099,6 +1175,7 @@ function readBrowardActiveEta(value, remainingUnits) {
     "dashboard_snapshot_stale",
     "worker_not_running",
     "checkpoint_stale",
+    "detail_activity",
     "variable_detail_loop",
     "observation_window_short",
     "no_checkpoint_movement",

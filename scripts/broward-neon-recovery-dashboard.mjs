@@ -27,6 +27,7 @@ import {
   markActivePermitEnumerationSnapshotStale,
   readActiveEnumerationProcessSnapshot,
 } from "./broward-active-permit-enumeration.mjs";
+import { BROWARD_MUNICIPAL_PERMIT_JURISDICTIONS } from "./permit-source-adapters/broward-municipal-config.mjs";
 
 const { Pool } = pg;
 const EXPECTED_PROJECT_ID = "raspy-frost-51580436";
@@ -43,6 +44,7 @@ const DEFAULT_PORT = 47_832;
  * @property {string} expectedEndpointId - Exact isolated Neon endpoint ID.
  *
  * @typedef {import("./broward-active-permit-enumeration.mjs").ActiveEnumerationRouteDefinition} ActiveEnumerationRouteDefinition
+ * @typedef {import("./broward-active-permit-enumeration.mjs").ActiveEnumerationProcessSnapshot} ActiveEnumerationProcessSnapshot
  * @typedef {import("./broward-active-permit-enumeration.mjs").ActivePermitEnumerationStatus} ActivePermitEnumerationStatus
  *
  * @typedef {object} RecoveryAggregateRow
@@ -115,24 +117,30 @@ const DEFAULT_PORT = 47_832;
  * @property {number} sourceMissingRecords - Reported but inaccessible rows.
  * @property {number} deferredCapCount - Unresolved item-level exclusive-cap queries.
  * @property {string | null} updatedAt - Last durable checkpoint time.
- * @property {"timeout" | "missing_controls" | "missing_export" | "source_cap" | "incomplete_pagination" | "checkpoint_stale" | null} pauseReason
+ * @property {"timeout" | "missing_controls" | "missing_export" | "source_cap" | "incomplete_pagination" | "checkpoint_stale" | "supervisor_not_running" | "process_unknown" | null} pauseReason
  *   Allowlisted operational reason when this worker is paused.
- * @property {"timeout" | "source_cap" | "incomplete_pagination" | "source_error" | null} cooldownReason
+ * @property {"timeout" | "source_cap" | "incomplete_pagination" | "source_error" | "operator_hold" | null} cooldownReason
  *   Allowlisted source circuit-breaker reason while cooling down.
  * @property {string | null} nextAttemptAt - Earliest safe automatic retry.
  * @property {string | null} coverageBoundary - Public custody/history boundary.
  * @property {string | null} [startBlocker] - Allowlisted no-start gate.
+ * @property {boolean | null} [processAlive] - Live supervisor evidence.
+ * @property {boolean | null} [detailActive] - Recent bounded child evidence.
+ * @property {string | null} [operatorNotBeforeAt] - Live operator hold boundary.
  *
  * @typedef {object} PausedPermitEnumerationWorker
  * @property {string} source - Public jurisdiction label.
- * @property {"timeout" | "missing_controls" | "missing_export" | "source_cap" | "incomplete_pagination" | "checkpoint_stale"} reason
+ * @property {"timeout" | "missing_controls" | "missing_export" | "source_cap" | "incomplete_pagination" | "checkpoint_stale" | "supervisor_not_running" | "process_unknown"} reason
  *   Allowlisted operational reason containing no source record or raw error.
  *
  * @typedef {object} CoolingPermitEnumerationWorker
  * @property {string} source - Public jurisdiction label.
- * @property {"timeout" | "source_cap" | "incomplete_pagination" | "source_error"} reason
+ * @property {"timeout" | "source_cap" | "incomplete_pagination" | "source_error" | "operator_hold"} reason
  *   Allowlisted circuit-breaker reason.
  * @property {string} nextAttemptAt - Earliest safe automatic retry.
+ * @property {boolean | null} [processAlive] - Live supervisor evidence.
+ * @property {boolean | null} [detailActive] - Recent bounded detail evidence.
+ * @property {string | null} [operatorNotBeforeAt] - Effective operator hold.
  *
  * @typedef {object} PermitEnumerationStatus
  * @property {PermitEnumerationWorkerStatus[]} workers - Fixed aggregate source list.
@@ -1260,6 +1268,88 @@ const ACTIVE_ENUMERATION_ROUTE_DEFINITIONS =
   buildActiveEnumerationRouteDefinitions();
 
 /**
+ * Resolve one municipal dashboard definition to the executable jurisdiction
+ * configuration used by the runner. This avoids duplicating process argument
+ * keys in dashboard-only state.
+ *
+ * @param {Record<string, unknown>} definition - Municipal dashboard definition.
+ * @returns {ActiveEnumerationRouteDefinition} Aggregate process definition.
+ */
+function buildMunicipalProcessDefinition(definition) {
+  const source = definition.source;
+  const family = definition.family;
+  if (
+    typeof source !== "string" ||
+    (family !== "municipal_property" && family !== "municipal_type")
+  ) {
+    throw new Error("Municipal process definition is malformed");
+  }
+  const executable = BROWARD_MUNICIPAL_PERMIT_JURISDICTIONS.find(
+    (candidate) => candidate.jurisdiction === source,
+  );
+  if (executable === undefined) {
+    throw new Error("Municipal process configuration is missing");
+  }
+  const active =
+    isPlainRecord(definition.activeEnumeration) &&
+    typeof definition.activeEnumeration.key === "string"
+      ? definition.activeEnumeration
+      : null;
+  return {
+    key: active?.key ?? `municipal-${executable.key}`,
+    jurisdiction: source,
+    method: "full",
+    family,
+    countSource: "local_checkpoint",
+    processScript: "run-broward-municipal-enumeration-supervisor.mjs",
+    processJurisdictionKey: executable.key,
+  };
+}
+
+/**
+ * Build process definitions for every local municipal checkpoint plus the
+ * active property-first parents. The active tracker still projects only its
+ * fixed ten routes; the broader snapshot lets the inventory report scheduled
+ * operator holds such as Pompano Beach.
+ *
+ * @returns {readonly ActiveEnumerationRouteDefinition[]} Process routes.
+ */
+function buildPermitProcessRouteDefinitions() {
+  const municipal = PERMIT_ENUMERATION_CHECKPOINTS.filter(
+    (definition) =>
+      "reader" in definition &&
+      (definition.reader === "municipal_property" ||
+        definition.reader === "municipal_type"),
+  ).map((definition) =>
+    buildMunicipalProcessDefinition(
+      /** @type {Record<string, unknown>} */ (definition),
+    ),
+  );
+  const propertyFirst = ACTIVE_ENUMERATION_ROUTE_DEFINITIONS.filter(
+    (definition) => definition.method === "property_first",
+  );
+  const routes = [...municipal, ...propertyFirst];
+  if (
+    new Set(routes.map((route) => route.key)).size !== routes.length ||
+    routes.length !== municipal.length + 5
+  ) {
+    throw new Error("Permit process route definitions do not reconcile");
+  }
+  return Object.freeze(routes);
+}
+
+const PERMIT_PROCESS_ROUTE_DEFINITIONS =
+  buildPermitProcessRouteDefinitions();
+
+/** @type {ActiveEnumerationProcessSnapshot} */
+const UNAVAILABLE_PROCESS_SNAPSHOT = Object.freeze({
+  available: false,
+  routeKeys: new Set(),
+  detailRouteKeys: new Set(),
+  supervisorNotBeforeByKey: new Map(),
+});
+
+/**
  * Read only the public-safe fields from a durable Accela circuit breaker.
  *
  * @param {unknown} value - Optional checkpoint cooldown.
@@ -1388,9 +1478,16 @@ function isPlainRecord(value) {
  * @param {Record<string, unknown>} definition - Fixed public worker definition.
  * @param {Record<string, unknown>} checkpoint - Parsed private checkpoint.
  * @param {number} nowMs - Dashboard snapshot epoch.
+ * @param {ActiveEnumerationProcessSnapshot} processes
+ *   Bounded aggregate process evidence.
  * @returns {PermitEnumerationWorkerStatus} Public-safe municipal worker row.
  */
-function buildMunicipalEnumerationWorker(definition, checkpoint, nowMs) {
+function buildMunicipalEnumerationWorker(
+  definition,
+  checkpoint,
+  nowMs,
+  processes,
+) {
   const reader = definition.reader;
   const family = definition.family;
   const source = definition.source;
@@ -1485,22 +1582,60 @@ function buildMunicipalEnumerationWorker(definition, checkpoint, nowMs) {
       : null;
   const nextAttemptMs =
     nextAttemptAt === null ? Number.NaN : Date.parse(nextAttemptAt);
+  if (nextAttemptAt !== null && !Number.isFinite(nextAttemptMs)) {
+    throw new Error("Municipal permit retry timestamp is invalid");
+  }
+  const processDefinition = buildMunicipalProcessDefinition(definition);
+  const processAlive = processes.available
+    ? processes.routeKeys.has(processDefinition.key)
+    : null;
+  const detailActive = processes.available
+    ? processes.detailRouteKeys.has(processDefinition.key)
+    : null;
+  const operatorNotBeforeAt =
+    processes.supervisorNotBeforeByKey.get(processDefinition.key) ?? null;
+  const operatorNotBeforeMs =
+    operatorNotBeforeAt === null
+      ? Number.NaN
+      : Date.parse(operatorNotBeforeAt);
+  if (
+    operatorNotBeforeAt !== null &&
+    !Number.isFinite(operatorNotBeforeMs)
+  ) {
+    throw new Error("Municipal operator boundary is invalid");
+  }
   const complete = checkpoint.status === "complete" && pendingWindows === 0;
-  const cooling =
+  const checkpointCooling =
     checkpoint.status === "cooling" &&
     Number.isFinite(nextAttemptMs) &&
     nextAttemptMs > nowMs;
+  const operatorCooling =
+    Number.isFinite(operatorNotBeforeMs) && operatorNotBeforeMs > nowMs;
+  const operatorControlsCooldown =
+    operatorCooling &&
+    (!checkpointCooling || operatorNotBeforeMs >= nextAttemptMs);
+  const cooling =
+    processAlive === true && (checkpointCooling || operatorCooling);
   const recentlyActive =
     checkpoint.status === "running" &&
     nowMs - updatedMs >= 0 &&
     nowMs - updatedMs <= 5 * 60_000;
+  const running =
+    (processAlive === true && (recentlyActive || detailActive === true)) ||
+    (processAlive === null && recentlyActive);
   const status = complete
     ? /** @type {"complete"} */ ("complete")
     : cooling
       ? /** @type {"cooling_down"} */ ("cooling_down")
-      : recentlyActive
+      : running
         ? /** @type {"running"} */ ("running")
         : /** @type {"paused"} */ ("paused");
+  const effectiveNextAttemptAt =
+    cooling && operatorControlsCooldown
+      ? operatorNotBeforeAt
+      : cooling && checkpointCooling
+        ? nextAttemptAt
+        : null;
   return {
     source,
     family,
@@ -1520,21 +1655,30 @@ function buildMunicipalEnumerationWorker(definition, checkpoint, nowMs) {
     updatedAt: checkpoint.updatedAt,
     pauseReason:
       status === "paused"
-        ? blocker === "source_cap"
-          ? "source_cap"
-          : blocker === "incomplete_pagination"
-            ? "incomplete_pagination"
-            : "checkpoint_stale"
+        ? (checkpointCooling || operatorCooling) && processAlive === false
+          ? "supervisor_not_running"
+          : (checkpointCooling || operatorCooling) && processAlive === null
+            ? "process_unknown"
+            : blocker === "source_cap"
+              ? "source_cap"
+              : blocker === "incomplete_pagination"
+                ? "incomplete_pagination"
+                : "checkpoint_stale"
         : null,
     cooldownReason:
       status === "cooling_down"
-        ? /** @type {"timeout" | "source_cap" | "incomplete_pagination" | "source_error"} */ (
-            blocker
-          )
+        ? operatorControlsCooldown
+          ? "operator_hold"
+          : /** @type {"timeout" | "source_cap" | "incomplete_pagination" | "source_error"} */ (
+              blocker
+            )
         : null,
-    nextAttemptAt: status === "cooling_down" ? nextAttemptAt : null,
+    nextAttemptAt: effectiveNextAttemptAt,
     coverageBoundary,
     startBlocker: null,
+    processAlive,
+    detailActive,
+    operatorNotBeforeAt,
   };
 }
 
@@ -1543,11 +1687,14 @@ function buildMunicipalEnumerationWorker(definition, checkpoint, nowMs) {
  *
  * @param {string} repositoryRoot - Repository root containing downloads.
  * @param {number} [nowMs=Date.now()] - Snapshot time.
+ * @param {ActiveEnumerationProcessSnapshot} [processes=UNAVAILABLE_PROCESS_SNAPSHOT]
+ *   Bounded process evidence.
  * @returns {Promise<PermitEnumerationStatus>} PII-free worker status.
  */
 export async function readPermitEnumerationStatus(
   repositoryRoot,
   nowMs = Date.now(),
+  processes = UNAVAILABLE_PROCESS_SNAPSHOT,
 ) {
   const workers = await Promise.all(
     PERMIT_ENUMERATION_CHECKPOINTS.map(async (definition) => {
@@ -1577,6 +1724,7 @@ export async function readPermitEnumerationStatus(
             /** @type {Record<string, unknown>} */ (definition),
             checkpoint,
             nowMs,
+            processes,
           );
         }
         if (
@@ -1792,6 +1940,9 @@ export async function readPropertyFirstPermitStatus(
     }
     const candidateCount = safeAggregate(row.candidate_count);
     const terminalCount = safeAggregate(row.terminal_count);
+    if (terminalCount > candidateCount) {
+      throw new Error("Property-first permit counts do not reconcile");
+    }
     const heartbeatAt =
       typeof row.heartbeat_at === "string" ? row.heartbeat_at : null;
     const heartbeatMs =
@@ -1809,8 +1960,11 @@ export async function readPropertyFirstPermitStatus(
       row.phase === "cooling" &&
       Number.isFinite(nextAttemptMs) &&
       nextAttemptMs > nowMs;
+    const complete =
+      row.phase === "complete" ||
+      (candidateCount > 0 && terminalCount === candidateCount);
     const status =
-      row.phase === "complete"
+      complete
         ? /** @type {"complete"} */ ("complete")
         : recentlyActive
           ? /** @type {"running"} */ ("running")
@@ -1887,6 +2041,15 @@ function summarizePermitWorkers(workers) {
         source: worker.source,
         reason: worker.cooldownReason,
         nextAttemptAt: worker.nextAttemptAt,
+        ...(worker.processAlive === undefined
+          ? {}
+          : { processAlive: worker.processAlive }),
+        ...(worker.detailActive === undefined
+          ? {}
+          : { detailActive: worker.detailActive }),
+        ...(worker.operatorNotBeforeAt === undefined
+          ? {}
+          : { operatorNotBeforeAt: worker.operatorNotBeforeAt }),
       });
     }
   }
@@ -2010,11 +2173,14 @@ async function verifyIdentity(client, options) {
  *
  * @param {import("pg").Client | import("pg").PoolClient} client - Identity-verified Neon client.
  * @param {string} [repositoryRoot=process.cwd()] - Local checkpoint root.
+ * @param {ActiveEnumerationProcessSnapshot} [processes=UNAVAILABLE_PROCESS_SNAPSHOT]
+ *   One bounded process snapshot shared by inventory and active projections.
  * @returns {() => Promise<RecoveryDashboardStatus>} Async snapshot function.
  */
 export function createRecoveryStatusReader(
   client,
   repositoryRoot = process.cwd(),
+  processes = UNAVAILABLE_PROCESS_SNAPSHOT,
 ) {
   /** @type {Promise<RecoveryDashboardStatus> | null} */
   let inFlight = null;
@@ -2171,7 +2337,7 @@ export function createRecoveryStatusReader(
             permit_list_load_stats,
             sunbiz_match_stats`,
         ),
-        readPermitEnumerationStatus(repositoryRoot),
+        readPermitEnumerationStatus(repositoryRoot, Date.now(), processes),
         readPropertyFirstPermitStatus(client),
         readCoralSpringsEtrakitStatus(repositoryRoot),
       ]);
@@ -2249,16 +2415,20 @@ export function createResilientRecoveryStatusReader(
       const client = await pool.connect();
       let destroyClient = false;
       try {
-        await verifyIdentity(client, options);
-        const [status, processSnapshot] = await Promise.all([
-          withDashboardTimeout(
-            createRecoveryStatusReader(client, repositoryRoot)(),
-            timeoutMs,
-          ),
+        const [, processSnapshot] = await Promise.all([
+          verifyIdentity(client, options),
           readActiveEnumerationProcessSnapshot(
-            ACTIVE_ENUMERATION_ROUTE_DEFINITIONS,
+            PERMIT_PROCESS_ROUTE_DEFINITIONS,
           ),
         ]);
+        const status = await withDashboardTimeout(
+          createRecoveryStatusReader(
+            client,
+            repositoryRoot,
+            processSnapshot,
+          )(),
+          timeoutMs,
+        );
         const completedAtMs = Date.now();
         status.activePermitEnumeration = observeActiveEnumeration(
           status.permitEnumeration.workers,
@@ -2489,7 +2659,7 @@ const DASHBOARD_HTML = `<!doctype html>
   <p class="route-note">Checkpoint pauses are operational states and are not source-route blockers.</p>
   <ul id="permit-paused-workers"><li>Loading worker state…</li></ul>
   <h2>Cooling-down operational workers</h2>
-  <p class="route-note">Source circuit breakers retry automatically at the displayed safe time and are not source-route blockers.</p>
+  <p class="route-note">Only workers with a live supervisor are scheduled to retry at the displayed safe time. Operator holds and source cooldowns are not source-route blockers.</p>
   <ul id="permit-cooling-workers"><li>Loading cooldown state…</li></ul>
   <h2>Sunbiz property matching</h2>
   <section class="grid">
@@ -2604,6 +2774,11 @@ const DASHBOARD_HTML = `<!doctype html>
             : worker.processAlive
               ? "process alive"
               : "process absent";
+          const detailState = worker.detailActive === null
+            ? "detail unknown"
+            : worker.detailActive
+              ? "detail active"
+              : "no detail child";
           const rate = worker.throughput.unitsPerHour === null
             ? "unknown"
             : worker.throughput.unitsPerHour.toFixed(1) + " units/h";
@@ -2611,7 +2786,7 @@ const DASHBOARD_HTML = `<!doctype html>
             worker.jurisdiction,
             worker.method.replaceAll("_", " ") + " / " + worker.family.replaceAll("_", " "),
             worker.state + (activeEnumeration.snapshotStale ? " (stale snapshot)" : ""),
-            processState + " / " + worker.checkpointActivity.replaceAll("_", " "),
+            processState + " / " + detailState + " / " + worker.checkpointActivity.replaceAll("_", " "),
             format.format(worker.completedUnits) + " / " + format.format(worker.totalUnits) +
               " · " + format.format(worker.remainingUnits) + " left · " + worker.completionPercent.toFixed(3) + "%",
             optionalCount(worker.locallyCapturedRecords) + " / " + optionalCount(worker.durableLoadedRecords),
@@ -2695,7 +2870,12 @@ const DASHBOARD_HTML = `<!doctype html>
           coolingWorkerList.replaceChildren(
             ...coolingWorkers.map((worker) => {
               const item = document.createElement("li");
-              item.textContent = worker.source + " — " + worker.reason.replaceAll("_", " ") + "; next safe retry " + worker.nextAttemptAt;
+              const processState = worker.processAlive === true
+                ? "supervisor alive"
+                : worker.processAlive === false
+                  ? "supervisor absent"
+                  : "supervisor unknown";
+              item.textContent = worker.source + " — " + worker.reason.replaceAll("_", " ") + "; " + processState + "; next safe retry " + worker.nextAttemptAt;
               return item;
             }),
           );

@@ -1498,8 +1498,9 @@
           <ul id="permitPausedWorkerList"></ul>
           <h3 style="margin-top: 14px">Cooling-Down Operational Workers</h3>
           <p class="sub">
-            Source circuit breakers retry automatically at the displayed safe
-            time and do not increase route availability counts.
+            Only workers with a live supervisor are scheduled to retry at the
+            displayed safe time. Operator holds and source cooldowns do not
+            increase route availability counts.
           </p>
           <ul id="permitCoolingWorkerList"></ul>
         </div>
@@ -2777,6 +2778,12 @@
                     ? worker.source +
                       " — " +
                       worker.reason.replaceAll("_", " ") +
+                      "; " +
+                      (worker.processAlive === true
+                        ? "supervisor alive"
+                        : worker.processAlive === false
+                          ? "supervisor absent"
+                          : "supervisor unknown") +
                       "; next safe retry " +
                       worker.nextAttemptAt
                     : worker.source;
@@ -2807,6 +2814,12 @@
                       : worker.processAlive
                         ? "process alive"
                         : "process absent";
+                  const detailState =
+                    worker.detailActive === null
+                      ? "detail unknown"
+                      : worker.detailActive
+                        ? "detail active"
+                        : "no detail child";
                   const throughput =
                     worker.throughput.unitsPerHour === null
                       ? "unknown"
@@ -2815,7 +2828,7 @@
                     worker.jurisdiction,
                     `${worker.method.replaceAll("_", " ")} / ${worker.family.replaceAll("_", " ")}`,
                     `${worker.state}${activeEnumeration.snapshotStale ? " (stale snapshot)" : ""}`,
-                    `${processState} / ${worker.checkpointActivity.replaceAll("_", " ")}`,
+                    `${processState} / ${detailState} / ${worker.checkpointActivity.replaceAll("_", " ")}`,
                     `${worker.completedUnits.toLocaleString()} / ${worker.totalUnits.toLocaleString()} · ${worker.remainingUnits.toLocaleString()} left · ${worker.completionPercent.toFixed(3)}%`,
                     `${formatActiveEnumerationCount(worker.locallyCapturedRecords)} / ${formatActiveEnumerationCount(worker.durableLoadedRecords)}`,
                     `${worker.deferredCapCount.toLocaleString()} / ${worker.sourceMissingCount.toLocaleString()}`,
