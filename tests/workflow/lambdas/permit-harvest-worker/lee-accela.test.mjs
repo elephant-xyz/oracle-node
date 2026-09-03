@@ -32,6 +32,12 @@ describe("lee-accela permit harvest helpers", () => {
       summary: null,
       total: null,
     });
+    expect(parseResultSummary("Showing records without a numeric range")).toEqual(
+      {
+        summary: null,
+        total: null,
+      },
+    );
   });
 
   it("extracts permit links using result-table headers", () => {
@@ -377,6 +383,25 @@ describe("lee-accela permit harvest helpers", () => {
         html,
         pageUrl:
           "https://aca-prod.accela.com/LEECO/Cap/CapHome.aspx?module=Permitting",
+        sourceWindowKey: "parcel-test001",
+        sourcePage: 1,
+      }),
+    ).toBeNull();
+  });
+
+  it("returns null when a detail marker has no valid permit record header", () => {
+    const html = `
+      <html><body>
+        <div id="ctl00_PlaceHolderMain_divRecordStatus">
+          Record details are temporarily unavailable.
+        </div>
+      </body></html>`;
+
+    expect(
+      extractCurrentDetailPermitLinkFromHtml({
+        html,
+        pageUrl:
+          "https://aca-prod.accela.com/LEECO/Cap/CapDetail.aspx?Module=Permitting",
         sourceWindowKey: "parcel-test001",
         sourcePage: 1,
       }),

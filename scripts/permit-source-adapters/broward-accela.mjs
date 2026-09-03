@@ -1483,9 +1483,10 @@ export async function searchBrowardAccelaDateWindow({
           }
           const match =
             /Showing\s+([0-9,]+\s*-\s*[0-9,]+\s+of\s+[0-9,]+)/i.exec(bodyText);
-          const current =
-            match === null ? null : match[1].replace(/\s+/g, " ").trim();
-          return current !== null && current !== previousSummary;
+          const currentRange = match?.[1];
+          if (currentRange === undefined) return false;
+          const current = currentRange.replace(/\s+/g, " ").trim();
+          return current !== previousSummary;
         },
         { timeout: 60_000 },
         priorSummary,
@@ -2284,9 +2285,10 @@ async function captureAccelaListOnlyPages({
           }
           const match =
             /Showing\s+([0-9,]+\s*-\s*[0-9,]+\s+of\s+[0-9,]+)/i.exec(text);
-          const current =
-            match === null ? null : match[1].replace(/\s+/g, " ").trim();
-          return current !== null && current !== priorSummary;
+          const currentRange = match?.[1];
+          if (currentRange === undefined) return false;
+          const current = currentRange.replace(/\s+/g, " ").trim();
+          return current !== priorSummary;
         },
         { timeout: 60_000 },
         previousSummary,
@@ -2711,9 +2713,10 @@ export async function searchBrowardAccelaParcel({
           }
           const match =
             /Showing\s+([0-9,]+\s*-\s*[0-9,]+\s+of\s+[0-9,]+)/i.exec(bodyText);
-          const current =
-            match === null ? null : match[1].replace(/\s+/g, " ").trim();
-          return current !== null && current !== previousSummary;
+          const currentRange = match?.[1];
+          if (currentRange === undefined) return false;
+          const current = currentRange.replace(/\s+/g, " ").trim();
+          return current !== previousSummary;
         },
         { timeout: 60_000 },
         priorSummary,
