@@ -418,11 +418,8 @@ export function parseResultSummary(text) {
  * @param {string} url - Raw href from the page.
  * @returns {string} Absolute URL.
  */
-function normalizeAccelaUrl(url) {
-  return new URL(
-    url,
-    "https://aca-prod.accela.com/LEECO/Cap/CapHome.aspx",
-  ).toString();
+function normalizeAccelaUrl(url, baseUrl = LEE_PORTAL_URL) {
+  return new URL(url, baseUrl).toString();
 }
 
 /**
@@ -431,8 +428,8 @@ function normalizeAccelaUrl(url) {
  * @param {string} value - Raw text from a search-result cell, detail header, or link.
  * @returns {string | null} Uppercase permit record number when one is present.
  */
-function readPermitRecordNumber(value) {
-  const match = PERMIT_RECORD_NUMBER_PATTERN.exec(collapseText(value));
+function readPermitRecordNumber(value, pattern = PERMIT_RECORD_NUMBER_PATTERN) {
+  const match = pattern.exec(collapseText(value));
   return match ? match[0].toUpperCase() : null;
 }
 
@@ -548,6 +545,9 @@ export function extractCurrentDetailPermitLinkFromHtml({
  * @param {string} windowKey - Date-window key that produced this page.
  * @param {number} pageNumber - One-based page number.
  * @param {Logger} [logger] - Structured logger used to surface zero-link diagnostics.
+ * @param {object} [options] - Optional Accela agency overrides.
+ * @param {string} [options.baseUrl] - Accela portal URL used to resolve relative CapDetail hrefs.
+ * @param {RegExp} [options.recordNumberPattern] - Permit-number matcher for this agency.
  * @returns {PermitLink[]} Extracted permit links.
  */
 export function extractPermitLinksFromSearchHtml(
@@ -555,7 +555,16 @@ export function extractPermitLinksFromSearchHtml(
   windowKey,
   pageNumber,
   logger = consoleLogger,
+  options = {},
 ) {
+  const baseUrl =
+    typeof options.baseUrl === "string" && options.baseUrl.length > 0
+      ? options.baseUrl
+      : LEE_PORTAL_URL;
+  const recordNumberPattern =
+    options.recordNumberPattern instanceof RegExp
+      ? options.recordNumberPattern
+      : PERMIT_RECORD_NUMBER_PATTERN;
   const $ = cheerio.load(html);
   /** @type {PermitLink[]} */
   const links = [];
@@ -600,12 +609,13 @@ export function extractPermitLinksFromSearchHtml(
 
     const recordNumber = readPermitRecordNumber(
       cellByHeader("record number", 1) ?? collapseText(anchor.text()),
+      recordNumberPattern,
     );
     if (recordNumber === null) return;
 
     links.push({
       recordNumber,
-      url: normalizeAccelaUrl(href),
+      url: normalizeAccelaUrl(href, baseUrl),
       address: cellByHeader("address", 2),
       description:
         cellByHeader("description", 3) ?? cellByHeader("project name", 3),
@@ -666,6 +676,7 @@ async function clickNextResultPage(page) {
  * @param {string | undefined} params.portalUrl - Optional portal URL.
  * @param {number} params.maxPages - Maximum pages to capture.
  * @param {number | undefined} [params.stopAfterFirstPageWhenTotalAtLeast] - Stop after page one when reported total meets this threshold.
+ * @param {RegExp | undefined} [params.recordNumberPattern] - Optional Accela record-number matcher for this agency.
  * @param {Logger} params.logger - Structured logger.
  * @returns {Promise<PermitSearchResult>} Search result with captures and links.
  */
@@ -676,8 +687,14 @@ export async function searchLeePermitWindow({
   portalUrl = LEE_PORTAL_URL,
   maxPages,
   stopAfterFirstPageWhenTotalAtLeast,
+  recordNumberPattern,
   logger,
 }) {
+  /** @type {{ baseUrl: string, recordNumberPattern?: RegExp }} */
+  const extractOptions = { baseUrl: portalUrl };
+  if (recordNumberPattern instanceof RegExp) {
+    extractOptions.recordNumberPattern = recordNumberPattern;
+  }
   const windowKey = buildWindowKey(startDate, endDate);
   const page = await createConfiguredPage(browser);
   /** @type {SearchPageCapture[]} */
@@ -765,6 +782,7 @@ export async function searchLeePermitWindow({
         windowKey,
         pageNumber,
         logger,
+        extractOptions,
       );
       logger.info("lee_window_page_captured", {
         windowKey,
@@ -840,6 +858,7 @@ export async function searchLeePermitWindow({
  * @param {string} params.parcelIdentifier - Raw parcel/STRAP value to search.
  * @param {string | undefined} params.portalUrl - Optional portal URL.
  * @param {number} params.maxPages - Maximum result pages to capture.
+ * @param {RegExp | undefined} [params.recordNumberPattern] - Optional Accela record-number matcher for this agency.
  * @param {Logger} params.logger - Structured logger.
  * @returns {Promise<PermitParcelSearchResult>} Search result with captures and links.
  */
@@ -848,8 +867,14 @@ export async function searchLeePermitParcel({
   parcelIdentifier,
   portalUrl = LEE_PORTAL_URL,
   maxPages,
+  recordNumberPattern,
   logger,
 }) {
+  /** @type {{ baseUrl: string, recordNumberPattern?: RegExp }} */
+  const extractOptions = { baseUrl: portalUrl };
+  if (recordNumberPattern instanceof RegExp) {
+    extractOptions.recordNumberPattern = recordNumberPattern;
+  }
   const normalizedParcelIdentifier =
     normalizeParcelSearchValue(parcelIdentifier);
   if (normalizedParcelIdentifier === null) {
@@ -948,6 +973,7 @@ export async function searchLeePermitParcel({
         searchKey,
         pageNumber,
         logger,
+        extractOptions,
       );
       logger.info("lee_parcel_search_page_captured", {
         searchKey,
