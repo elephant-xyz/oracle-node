@@ -37,6 +37,28 @@ const CORAL_SPRINGS_ETRAKIT_SOURCE_SYSTEM =
  * @property {string} jobId - Stable immutable load identity.
  * @property {string} inputPath - Completed normalized-list private JSONL.
  * @property {number} chunkSize - Rows per durable Neon transaction.
+ * @property {string | null} [incrementalManifestPath] - Strict partial-inventory provenance, when used.
+ * @property {number} [lockWaitSeconds] - Finite shared-writer lock wait.
+ *
+ * @typedef {object} IncrementalPermitManifest
+ * @property {"oracle-node.broward-permit-incremental-manifest.v1"} schemaVersion
+ *   Strict partial-inventory manifest schema.
+ * @property {string} sourceSystem - Single stable source represented by the input.
+ * @property {string} frozenAt - ISO instant at which the source checkpoint was read.
+ * @property {"partial_terminal_artifacts"} coverageBoundary - Explicit non-complete coverage.
+ * @property {string} checkpointSha256 - Exact frozen checkpoint digest.
+ * @property {string} listSha256 - Exact private load-list digest.
+ * @property {string} artifactManifestSha256 - Digest of ordered terminal artifact receipts.
+ * @property {number} artifactCount - Terminal artifacts represented.
+ * @property {number} artifactRecordCount - Artifact observations before source-key dedupe.
+ * @property {number} eligibleRecordCount - Unique rows in the private load list.
+ * @property {Readonly<Record<string, number>>} excludedCounts - Aggregate-only exclusions by reason.
+ * @property {Record<string, unknown> | null} priorHighWatermark - Previously committed source watermark.
+ * @property {Record<string, unknown>} highWatermark - Exact frozen source cursor.
+ *
+ * @typedef {object} ValidatedIncrementalPermitManifest
+ * @property {IncrementalPermitManifest} manifest - Validated manifest.
+ * @property {string} manifestSha256 - Exact manifest bytes digest.
  *
  * @typedef {object} AccelaListRecord
  * @property {"oracle-node.broward-accela-list.v1"} schemaVersion - List schema.
@@ -70,6 +92,25 @@ const CORAL_SPRINGS_ETRAKIT_SOURCE_SYSTEM =
  *   expiration_date:string|null,
  *   finalized_date:string|null
  * }>} raw - Allow-listed Tyler list fields.
+ *
+ * @typedef {object} MunicipalPartialRecord
+ * @property {string} source_system - Jurisdiction source system.
+ * @property {string} source_protocol - Source protocol family.
+ * @property {string} source_url - Official detail URL.
+ * @property {string} source_record_id - Stable vendor identity.
+ * @property {string} record_key - Source-system-qualified stable identity.
+ * @property {string} jurisdiction - Issuing municipality.
+ * @property {string} permit_number - Public permit/application number.
+ * @property {string | null} parcel_identifier - Source parcel display.
+ * @property {string | null} work_location - Public project location.
+ * @property {string | null} application_date - ISO application date.
+ * @property {string | null} permit_issue_date - ISO issue date.
+ * @property {string | null} expiration_date - ISO expiration date.
+ * @property {string | null} record_status - Public record status.
+ * @property {string | null} record_type - Public record type.
+ * @property {string | null} project_description - Public project description.
+ * @property {boolean} is_roof_permit - Conservative source-text classification.
+ * @property {Readonly<Record<string, unknown>>} raw - Allow-listed source fields.
  *
  * @typedef {object} AccelaCsvListRecord
  * @property {"oracle-node.broward-accela-csv-list.v1"} schemaVersion - CSV list schema.
@@ -190,6 +231,13 @@ const CORAL_SPRINGS_ETRAKIT_SOURCE_SYSTEM =
  * @returns {PermitListLoadOptions} Validated options.
  */
 export function parsePermitListLoadOptions(argv) {
+  const allowed = new Set([
+    "job-id",
+    "input",
+    "chunk-size",
+    "incremental-manifest",
+    "lock-wait-seconds",
+  ]);
   const values = new Map();
   for (let index = 0; index < argv.length; index += 2) {
     const flag = argv[index];
@@ -202,7 +250,11 @@ export function parsePermitListLoadOptions(argv) {
     ) {
       throw new Error("Permit list load options must be --flag value pairs");
     }
-    values.set(flag.slice(2), value);
+    const name = flag.slice(2);
+    if (!allowed.has(name) || values.has(name)) {
+      throw new Error("Permit list load options must be unique supported flags");
+    }
+    values.set(name, value);
   }
   const jobId = values.get("job-id");
   const inputPath = values.get("input");
@@ -219,7 +271,27 @@ export function parsePermitListLoadOptions(argv) {
   if (!Number.isInteger(chunkSize) || chunkSize < 1 || chunkSize > 5_000) {
     throw new Error("--chunk-size must be an integer from 1 through 5000");
   }
-  return { jobId, inputPath, chunkSize };
+  const incrementalManifestPath = values.get("incremental-manifest") ?? null;
+  if (incrementalManifestPath !== null && chunkSize > 1_000) {
+    throw new Error("Incremental permit chunks cannot exceed 1000 rows");
+  }
+  const lockWaitSeconds = Number(values.get("lock-wait-seconds") ?? "0");
+  if (
+    !Number.isInteger(lockWaitSeconds) ||
+    lockWaitSeconds < 0 ||
+    lockWaitSeconds > 3_600
+  ) {
+    throw new Error(
+      "--lock-wait-seconds must be an integer from 0 through 3600",
+    );
+  }
+  return {
+    jobId,
+    inputPath,
+    chunkSize,
+    incrementalManifestPath,
+    lockWaitSeconds,
+  };
 }
 
 /**
@@ -264,6 +336,76 @@ export async function readPermitListRecords(inputPath) {
     records,
     inputSha256: createHash("sha256").update(text).digest("hex"),
     duplicateCount: sourceCount - byKey.size,
+  };
+}
+
+/**
+ * Read and prove a strict incremental manifest against its private load list.
+ *
+ * The manifest is intentionally coverage-neutral: it proves that all accepted
+ * rows belong to immutable terminal artifacts at one checkpoint watermark,
+ * but it cannot mark a jurisdiction or county complete.
+ *
+ * @param {string} manifestPath - Private aggregate-only manifest path.
+ * @param {{records:NormalizedPermitListRecord[],inputSha256:string,duplicateCount:number}} input
+ *   Validated immutable list input.
+ * @returns {Promise<ValidatedIncrementalPermitManifest>} Proven manifest.
+ */
+export async function readIncrementalPermitManifest(manifestPath, input) {
+  const text = await readFile(manifestPath, "utf8");
+  const value = /** @type {unknown} */ (JSON.parse(text));
+  if (!isRecord(value)) {
+    throw new Error("Incremental permit manifest must be an object");
+  }
+  const excludedCounts = value.excludedCounts;
+  const priorHighWatermark = value.priorHighWatermark;
+  const highWatermark = value.highWatermark;
+  const validExcludedCounts =
+    isRecord(excludedCounts) &&
+    Object.keys(excludedCounts).length > 0 &&
+    Object.values(excludedCounts).every(
+      (count) => Number.isSafeInteger(count) && Number(count) >= 0,
+    );
+  if (
+    value.schemaVersion !==
+      "oracle-node.broward-permit-incremental-manifest.v1" ||
+    typeof value.sourceSystem !== "string" ||
+    !/^broward_[a-z0-9_]+$/u.test(value.sourceSystem) ||
+    typeof value.frozenAt !== "string" ||
+    !Number.isFinite(Date.parse(value.frozenAt)) ||
+    value.coverageBoundary !== "partial_terminal_artifacts" ||
+    !isSha256(value.checkpointSha256) ||
+    !isSha256(value.listSha256) ||
+    !isSha256(value.artifactManifestSha256) ||
+    !Number.isSafeInteger(value.artifactCount) ||
+    Number(value.artifactCount) < 1 ||
+    !Number.isSafeInteger(value.artifactRecordCount) ||
+    Number(value.artifactRecordCount) < 1 ||
+    !Number.isSafeInteger(value.eligibleRecordCount) ||
+    Number(value.eligibleRecordCount) < 1 ||
+    !validExcludedCounts ||
+    (priorHighWatermark !== null && !isRecord(priorHighWatermark)) ||
+    !isRecord(highWatermark) ||
+    Object.keys(highWatermark).length === 0
+  ) {
+    throw new Error("Incremental permit manifest is malformed");
+  }
+  if (
+    value.listSha256 !== input.inputSha256 ||
+    Number(value.eligibleRecordCount) !== input.records.length ||
+    input.duplicateCount !== 0 ||
+    input.records.some(
+      (record) => record.sourceSystem !== value.sourceSystem,
+    ) ||
+    Number(value.artifactRecordCount) < input.records.length
+  ) {
+    throw new Error(
+      "Incremental permit manifest does not reconcile with its list",
+    );
+  }
+  return {
+    manifest: /** @type {IncrementalPermitManifest} */ (value),
+    manifestSha256: createHash("sha256").update(text).digest("hex"),
   };
 }
 
@@ -447,6 +589,31 @@ export function normalizePermitListRecord(value) {
       },
     };
   }
+  if (isMunicipalPartialRecord(value)) {
+    return {
+      sourceSystem: value.source_system,
+      sourceRecordKey: value.record_key,
+      permitNumber: value.permit_number,
+      sourceUrl: value.source_url,
+      jurisdiction: value.jurisdiction,
+      parcelIdentifier: normalizeArcgisBrowardFolio(
+        value.parcel_identifier,
+      ),
+      workLocation: value.work_location,
+      applicationDate: value.application_date,
+      permitIssueDate: value.permit_issue_date,
+      expirationDate: value.expiration_date,
+      finalizedDate: null,
+      recordStatus: value.record_status,
+      recordType: value.record_type,
+      description: value.project_description,
+      isRoofPermit: value.is_roof_permit,
+      sourcePayload: {
+        schema_version: "oracle-node.broward-municipal-partial-list.v1",
+        ...value,
+      },
+    };
+  }
   throw new Error("Unsupported Broward permit list row");
 }
 
@@ -513,12 +680,24 @@ export function mapPermitListLoadRow(record, parent) {
  *   duplicateRecordCount:number,
  *   matchedRecordCount:number,
  *   unmatchedRecordCount:number,
+ *   insertedRecordCount:number,
+ *   updatedRecordCount:number,
+ *   roofingRecordCount:number,
  *   committedChunkCount:number,
- *   inputSha256:string
+ *   inputSha256:string,
+ *   incrementalManifestSha256:string|null
  * }>} Reconciled load result.
  */
 export async function loadPermitListToNeon(options) {
   const input = await readPermitListRecords(options.inputPath);
+  const incrementalManifestPath = options.incrementalManifestPath ?? null;
+  const incremental =
+    incrementalManifestPath === null
+      ? null
+      : await readIncrementalPermitManifest(
+          incrementalManifestPath,
+          input,
+        );
   const target = requireTarget(process.env);
   const client = new Client({
     connectionString: target.connectionString,
@@ -529,9 +708,9 @@ export async function loadPermitListToNeon(options) {
   await client.connect();
   try {
     await verifyTarget(client, target);
-    await acquireLoadLock(client);
+    await acquireLoadLock(client, options.lockWaitSeconds ?? 0);
     await ensureControlTables(client);
-    await registerRun(client, options, input);
+    await registerRun(client, options, input, incremental);
     const committedResult = await client.query(
       `SELECT chunk_index FROM ${CONTROL_SCHEMA}.broward_permit_list_load_chunks
        WHERE job_id=$1`,
@@ -553,7 +732,10 @@ export async function loadPermitListToNeon(options) {
       `SELECT count(*)::integer AS chunks,
               coalesce(sum(record_count),0)::integer AS records,
               coalesce(sum(matched_count),0)::integer AS matched,
-              coalesce(sum(unmatched_count),0)::integer AS unmatched
+              coalesce(sum(unmatched_count),0)::integer AS unmatched,
+              coalesce(sum(inserted_count),0)::integer AS inserted,
+              coalesce(sum(updated_count),0)::integer AS updated,
+              coalesce(sum(roofing_count),0)::integer AS roofing
        FROM ${CONTROL_SCHEMA}.broward_permit_list_load_chunks
        WHERE job_id=$1`,
       [options.jobId],
@@ -562,12 +744,7 @@ export async function loadPermitListToNeon(options) {
     if (Number(row?.records) !== input.records.length) {
       throw new Error("Broward permit list chunk receipts do not reconcile");
     }
-    await client.query(
-      `UPDATE ${CONTROL_SCHEMA}.broward_permit_list_load_runs
-       SET status='complete',completed_at=now(),heartbeat_at=now()
-       WHERE job_id=$1`,
-      [options.jobId],
-    );
+    await finalizeRun(client, options.jobId, incremental);
     await refreshBrowardDashboardRollup(client);
     return {
       sourceRecordCount: input.records.length + input.duplicateCount,
@@ -575,8 +752,12 @@ export async function loadPermitListToNeon(options) {
       duplicateRecordCount: input.duplicateCount,
       matchedRecordCount: Number(row.matched),
       unmatchedRecordCount: Number(row.unmatched),
+      insertedRecordCount: Number(row.inserted),
+      updatedRecordCount: Number(row.updated),
+      roofingRecordCount: Number(row.roofing),
       committedChunkCount: Number(row.chunks),
       inputSha256: input.inputSha256,
+      incrementalManifestSha256: incremental?.manifestSha256 ?? null,
     };
   } finally {
     await client.end();
@@ -633,14 +814,44 @@ async function loadChunk(client, jobId, chunkIndex, records) {
     if (parent !== undefined) matched += 1;
     return mapPermitListLoadRow(record, parent);
   });
+  const existingResult = await client.query(
+    `SELECT existing.source_system,existing.source_record_key
+     FROM public.property_improvements AS existing
+     INNER JOIN jsonb_to_recordset($1::jsonb) AS input(
+       source_system text,source_record_key text
+     )
+       ON input.source_system=existing.source_system
+      AND input.source_record_key=existing.source_record_key`,
+    [
+      JSON.stringify(
+        loadRows.map((row) => ({
+          source_system: row.source_system,
+          source_record_key: row.source_record_key,
+        })),
+      ),
+    ],
+  );
+  const updated = existingResult.rows.length;
+  const inserted = records.length - updated;
+  const roofing = records.filter((record) => record.isRoofPermit).length;
   await client.query("BEGIN");
   try {
     await client.query(PERMIT_LIST_UPSERT_SQL, [JSON.stringify(loadRows)]);
     await client.query(
       `INSERT INTO ${CONTROL_SCHEMA}.broward_permit_list_load_chunks (
-         job_id,chunk_index,record_count,matched_count,unmatched_count
-       ) VALUES ($1,$2,$3,$4,$5)`,
-      [jobId, chunkIndex, records.length, matched, records.length - matched],
+         job_id,chunk_index,record_count,matched_count,unmatched_count,
+         inserted_count,updated_count,roofing_count
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+      [
+        jobId,
+        chunkIndex,
+        records.length,
+        matched,
+        records.length - matched,
+        inserted,
+        updated,
+        roofing,
+      ],
     );
     await client.query(
       `UPDATE ${CONTROL_SCHEMA}.broward_permit_list_load_runs
@@ -769,6 +980,17 @@ async function ensureControlTables(client) {
      )`,
   );
   await client.query(
+    `ALTER TABLE ${CONTROL_SCHEMA}.broward_permit_list_load_runs
+       ADD COLUMN IF NOT EXISTS incremental_manifest_sha256 text,
+       ADD COLUMN IF NOT EXISTS source_system text,
+       ADD COLUMN IF NOT EXISTS checkpoint_sha256 text,
+       ADD COLUMN IF NOT EXISTS list_sha256 text,
+       ADD COLUMN IF NOT EXISTS artifact_manifest_sha256 text,
+       ADD COLUMN IF NOT EXISTS prior_high_watermark jsonb,
+       ADD COLUMN IF NOT EXISTS high_watermark jsonb,
+       ADD COLUMN IF NOT EXISTS excluded_counts jsonb`,
+  );
+  await client.query(
     `CREATE TABLE IF NOT EXISTS ${CONTROL_SCHEMA}.broward_permit_list_load_chunks (
        job_id text NOT NULL REFERENCES
          ${CONTROL_SCHEMA}.broward_permit_list_load_runs(job_id),
@@ -780,6 +1002,31 @@ async function ensureControlTables(client) {
        PRIMARY KEY (job_id,chunk_index)
      )`,
   );
+  await client.query(
+    `ALTER TABLE ${CONTROL_SCHEMA}.broward_permit_list_load_chunks
+       ADD COLUMN IF NOT EXISTS inserted_count integer NOT NULL DEFAULT 0,
+       ADD COLUMN IF NOT EXISTS updated_count integer NOT NULL DEFAULT 0,
+       ADD COLUMN IF NOT EXISTS roofing_count integer NOT NULL DEFAULT 0`,
+  );
+  await client.query(
+    `CREATE TABLE IF NOT EXISTS ${CONTROL_SCHEMA}.broward_permit_incremental_watermarks (
+       source_system text PRIMARY KEY,
+       manifest_sha256 text NOT NULL CHECK (
+         manifest_sha256 ~ '^[a-f0-9]{64}$'
+       ),
+       checkpoint_sha256 text NOT NULL CHECK (
+         checkpoint_sha256 ~ '^[a-f0-9]{64}$'
+       ),
+       list_sha256 text NOT NULL CHECK (list_sha256 ~ '^[a-f0-9]{64}$'),
+       artifact_manifest_sha256 text NOT NULL CHECK (
+         artifact_manifest_sha256 ~ '^[a-f0-9]{64}$'
+       ),
+       high_watermark jsonb NOT NULL,
+       job_id text NOT NULL REFERENCES
+         ${CONTROL_SCHEMA}.broward_permit_list_load_runs(job_id),
+       committed_at timestamptz NOT NULL DEFAULT now()
+     )`,
+  );
 }
 
 /**
@@ -789,14 +1036,44 @@ async function ensureControlTables(client) {
  * @param {PermitListLoadOptions} options - Load options.
  * @param {{records:NormalizedPermitListRecord[],inputSha256:string,duplicateCount:number}} input
  *   Validated input.
+ * @param {ValidatedIncrementalPermitManifest | null} incremental
+ *   Optional strict partial-inventory provenance.
  * @returns {Promise<void>} Resolves only for matching run identity.
  */
-async function registerRun(client, options, input) {
+async function registerRun(client, options, input, incremental) {
+  if (incremental !== null) {
+    const watermarkResult = await client.query(
+      `SELECT high_watermark,manifest_sha256
+       FROM ${CONTROL_SCHEMA}.broward_permit_incremental_watermarks
+       WHERE source_system=$1`,
+      [incremental.manifest.sourceSystem],
+    );
+    const currentWatermark = watermarkResult.rows[0]?.high_watermark;
+    const priorMatches =
+      currentWatermark === undefined
+        ? incremental.manifest.priorHighWatermark === null
+        : stableJson(currentWatermark) ===
+          stableJson(incremental.manifest.priorHighWatermark);
+    const resumedCompletedManifest =
+      currentWatermark !== undefined &&
+      watermarkResult.rows[0]?.manifest_sha256 ===
+        incremental.manifestSha256 &&
+      stableJson(currentWatermark) ===
+        stableJson(incremental.manifest.highWatermark);
+    if (!priorMatches && !resumedCompletedManifest) {
+      throw new Error(
+        "Incremental permit manifest does not continue the committed watermark",
+      );
+    }
+  }
   await client.query(
     `INSERT INTO ${CONTROL_SCHEMA}.broward_permit_list_load_runs (
        job_id,input_path,input_sha256,unique_record_count,
-       duplicate_record_count,chunk_size,status
-     ) VALUES ($1,$2,$3,$4,$5,$6,'running')
+       duplicate_record_count,chunk_size,status,
+       incremental_manifest_sha256,source_system,checkpoint_sha256,
+       list_sha256,artifact_manifest_sha256,prior_high_watermark,
+       high_watermark,excluded_counts
+     ) VALUES ($1,$2,$3,$4,$5,$6,'running',$7,$8,$9,$10,$11,$12,$13,$14)
      ON CONFLICT (job_id) DO NOTHING`,
     [
       options.jobId,
@@ -805,11 +1082,22 @@ async function registerRun(client, options, input) {
       input.records.length,
       input.duplicateCount,
       options.chunkSize,
+      incremental?.manifestSha256 ?? null,
+      incremental?.manifest.sourceSystem ?? null,
+      incremental?.manifest.checkpointSha256 ?? null,
+      incremental?.manifest.listSha256 ?? null,
+      incremental?.manifest.artifactManifestSha256 ?? null,
+      incremental?.manifest.priorHighWatermark ?? null,
+      incremental?.manifest.highWatermark ?? null,
+      incremental?.manifest.excludedCounts ?? null,
     ],
   );
   const result = await client.query(
     `SELECT input_path,input_sha256,unique_record_count,
-            duplicate_record_count,chunk_size
+            duplicate_record_count,chunk_size,incremental_manifest_sha256,
+            source_system,checkpoint_sha256,list_sha256,
+            artifact_manifest_sha256,prior_high_watermark,
+            high_watermark,excluded_counts
      FROM ${CONTROL_SCHEMA}.broward_permit_list_load_runs WHERE job_id=$1`,
     [options.jobId],
   );
@@ -819,9 +1107,76 @@ async function registerRun(client, options, input) {
     row.input_sha256 !== input.inputSha256 ||
     Number(row.unique_record_count) !== input.records.length ||
     Number(row.duplicate_record_count) !== input.duplicateCount ||
-    Number(row.chunk_size) !== options.chunkSize
+    Number(row.chunk_size) !== options.chunkSize ||
+    (row.incremental_manifest_sha256 ?? null) !==
+      (incremental?.manifestSha256 ?? null) ||
+    (row.source_system ?? null) !==
+      (incremental?.manifest.sourceSystem ?? null) ||
+    (row.checkpoint_sha256 ?? null) !==
+      (incremental?.manifest.checkpointSha256 ?? null) ||
+    (row.list_sha256 ?? null) !==
+      (incremental?.manifest.listSha256 ?? null) ||
+    (row.artifact_manifest_sha256 ?? null) !==
+      (incremental?.manifest.artifactManifestSha256 ?? null) ||
+    stableJson(row.prior_high_watermark ?? null) !==
+      stableJson(incremental?.manifest.priorHighWatermark ?? null) ||
+    stableJson(row.high_watermark ?? null) !==
+      stableJson(incremental?.manifest.highWatermark ?? null) ||
+    stableJson(row.excluded_counts ?? null) !==
+      stableJson(incremental?.manifest.excludedCounts ?? null)
   ) {
     throw new Error("Existing permit list load does not match input");
+  }
+}
+
+/**
+ * Complete one reconciled run and advance its strict source watermark.
+ *
+ * @param {import("pg").Client} client - Verified direct client.
+ * @param {string} jobId - Stable immutable run identity.
+ * @param {ValidatedIncrementalPermitManifest | null} incremental
+ *   Optional strict partial-inventory provenance.
+ * @returns {Promise<void>} Resolves after atomic completion metadata.
+ */
+async function finalizeRun(client, jobId, incremental) {
+  await client.query("BEGIN");
+  try {
+    await client.query(
+      `UPDATE ${CONTROL_SCHEMA}.broward_permit_list_load_runs
+       SET status='complete',completed_at=coalesce(completed_at,now()),
+           heartbeat_at=now()
+       WHERE job_id=$1`,
+      [jobId],
+    );
+    if (incremental !== null) {
+      await client.query(
+        `INSERT INTO ${CONTROL_SCHEMA}.broward_permit_incremental_watermarks (
+           source_system,manifest_sha256,checkpoint_sha256,list_sha256,
+           artifact_manifest_sha256,high_watermark,job_id
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7)
+         ON CONFLICT (source_system) DO UPDATE SET
+           manifest_sha256=EXCLUDED.manifest_sha256,
+           checkpoint_sha256=EXCLUDED.checkpoint_sha256,
+           list_sha256=EXCLUDED.list_sha256,
+           artifact_manifest_sha256=EXCLUDED.artifact_manifest_sha256,
+           high_watermark=EXCLUDED.high_watermark,
+           job_id=EXCLUDED.job_id,
+           committed_at=now()`,
+        [
+          incremental.manifest.sourceSystem,
+          incremental.manifestSha256,
+          incremental.manifest.checkpointSha256,
+          incremental.manifest.listSha256,
+          incremental.manifest.artifactManifestSha256,
+          incremental.manifest.highWatermark,
+          jobId,
+        ],
+      );
+    }
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
   }
 }
 
@@ -829,15 +1184,23 @@ async function registerRun(client, options, input) {
  * Acquire the shared permit table writer lock.
  *
  * @param {import("pg").Client} client - Verified direct client.
+ * @param {number} waitSeconds - Maximum finite lock wait.
  * @returns {Promise<void>} Resolves only for the single writer.
  */
-async function acquireLoadLock(client) {
-  const result = await client.query(
-    "SELECT pg_try_advisory_lock($1,$2) AS acquired",
-    [LOAD_LOCK_NAMESPACE, LOAD_LOCK_KEY],
-  );
-  if (result.rows[0]?.acquired !== true) {
-    throw new Error("Another Broward permit loader owns the writer lock");
+async function acquireLoadLock(client, waitSeconds) {
+  const deadline = Date.now() + waitSeconds * 1_000;
+  for (;;) {
+    const result = await client.query(
+      "SELECT pg_try_advisory_lock($1,$2) AS acquired",
+      [LOAD_LOCK_NAMESPACE, LOAD_LOCK_KEY],
+    );
+    if (result.rows[0]?.acquired === true) return;
+    if (Date.now() >= deadline) {
+      throw new Error("Another Broward permit loader owns the writer lock");
+    }
+    await new Promise((resolvePromise) => {
+      setTimeout(resolvePromise, Math.min(2_000, deadline - Date.now()));
+    });
   }
 }
 
@@ -1031,6 +1394,63 @@ function isTylerListRecord(value) {
     typeof value.is_roof_permit === "boolean" &&
     typeof value.raw.case_id === "string"
   );
+}
+
+/**
+ * Validate a municipal detail row frozen from a terminal query/page receipt.
+ *
+ * @param {unknown} value - Candidate row.
+ * @returns {value is MunicipalPartialRecord} Whether the strict shared fields exist.
+ */
+function isMunicipalPartialRecord(value) {
+  if (!isRecord(value) || !isRecord(value.raw)) return false;
+  if (
+    typeof value.source_system !== "string" ||
+    !/^broward_[a-z0-9_]+$/u.test(value.source_system) ||
+    typeof value.source_protocol !== "string" ||
+    typeof value.source_url !== "string" ||
+    typeof value.source_record_id !== "string" ||
+    value.source_record_id.length === 0 ||
+    value.record_key !==
+      `${value.source_system}:${value.source_record_id}` ||
+    typeof value.jurisdiction !== "string" ||
+    value.jurisdiction.length === 0 ||
+    typeof value.permit_number !== "string" ||
+    value.permit_number.length === 0 ||
+    typeof value.is_roof_permit !== "boolean"
+  ) {
+    return false;
+  }
+  return [
+    value.parcel_identifier,
+    value.work_location,
+    value.application_date,
+    value.permit_issue_date,
+    value.expiration_date,
+    value.record_status,
+    value.record_type,
+    value.project_description,
+  ].every(isNullableString);
+}
+
+/**
+ * Test one optional source field without coercion.
+ *
+ * @param {unknown} value - Candidate optional text.
+ * @returns {value is string | null} Whether the value is nullable text.
+ */
+function isNullableString(value) {
+  return value === null || typeof value === "string";
+}
+
+/**
+ * Validate a lowercase SHA-256 digest.
+ *
+ * @param {unknown} value - Candidate digest.
+ * @returns {value is string} Whether the digest is canonical.
+ */
+function isSha256(value) {
+  return typeof value === "string" && /^[a-f0-9]{64}$/u.test(value);
 }
 
 /**

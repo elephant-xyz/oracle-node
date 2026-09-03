@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,6 +9,7 @@ import {
   mapPermitListLoadRow,
   normalizePermitListRecord,
   parsePermitListLoadOptions,
+  readIncrementalPermitManifest,
   readPermitListRecords,
 } from "../../scripts/load-broward-permit-list-to-neon.mjs";
 
@@ -62,6 +64,39 @@ function tylerListRecord(overrides = {}) {
       expiration_date: "2020-07-15",
       finalized_date: "2020-02-01",
     },
+    ...overrides,
+  };
+}
+
+/**
+ * Build one synthetic municipal terminal-query detail row.
+ *
+ * @param {Record<string, unknown>} [overrides] - Field overrides.
+ * @returns {Record<string, unknown>} Municipal detail record.
+ */
+function municipalPartialRecord(overrides = {}) {
+  return {
+    source_system: "broward_margate_click2gov_permits",
+    source_protocol: "click2gov",
+    source_url: "https://example.invalid/permit/record-1",
+    source_search_url: "https://example.invalid/search",
+    source_record_id: "record-1",
+    record_key: "broward_margate_click2gov_permits:record-1",
+    jurisdiction: "Margate",
+    permit_number: "SYNTHETIC-1",
+    parcel_identifier: "484125010010",
+    query_folio: "484125010010",
+    work_location: "SYNTHETIC LOCATION",
+    application_date: "2025-01-01",
+    permit_issue_date: "2025-01-02",
+    expiration_date: null,
+    record_status: "Issued",
+    record_type: "Roofing",
+    project_description: "Synthetic roof",
+    job_value: null,
+    inspections: [],
+    is_roof_permit: true,
+    raw: { terminal_query_index: 7 },
     ...overrides,
   };
 }
@@ -153,7 +188,49 @@ describe("Broward permit list Neon loading", () => {
       jobId: "broward-permits-hollywood-list-20260831",
       inputPath: "normalized-list.private.jsonl",
       chunkSize: 1000,
+      incrementalManifestPath: null,
+      lockWaitSeconds: 0,
     });
+  });
+
+  it("parses strict incremental provenance and a bounded writer wait", () => {
+    expect(
+      parsePermitListLoadOptions([
+        "--job-id",
+        "broward-permits-margate-incremental-20260903",
+        "--input",
+        "incremental.private.jsonl",
+        "--incremental-manifest",
+        "incremental-manifest.private.json",
+        "--lock-wait-seconds",
+        "300",
+      ]),
+    ).toMatchObject({
+      incrementalManifestPath: "incremental-manifest.private.json",
+      lockWaitSeconds: 300,
+    });
+    expect(() =>
+      parsePermitListLoadOptions([
+        "--job-id",
+        "broward-permits-margate-incremental-20260903",
+        "--input",
+        "incremental.private.jsonl",
+        "--unknown",
+        "unsafe",
+      ]),
+    ).toThrow(/supported flags/u);
+    expect(() =>
+      parsePermitListLoadOptions([
+        "--job-id",
+        "broward-permits-margate-incremental-20260903",
+        "--input",
+        "incremental.private.jsonl",
+        "--incremental-manifest",
+        "incremental-manifest.private.json",
+        "--chunk-size",
+        "1001",
+      ]),
+    ).toThrow(/cannot exceed 1000/u);
   });
 
   it("maps Accela list inventory without inventing a parcel", () => {
@@ -224,6 +301,88 @@ describe("Broward permit list Neon loading", () => {
       property_match_confidence: "exact",
       source_record_key: "broward_pembroke_pines_tyler_permits:case-1",
     });
+  });
+
+  it("maps terminal municipal detail rows while preserving unmatched support", () => {
+    const normalized = normalizePermitListRecord(municipalPartialRecord());
+    expect(normalized).toMatchObject({
+      sourceSystem: "broward_margate_click2gov_permits",
+      sourceRecordKey: "broward_margate_click2gov_permits:record-1",
+      parcelIdentifier: "484125010010",
+      applicationDate: "2025-01-01",
+      isRoofPermit: true,
+      sourcePayload: {
+        schema_version: "oracle-node.broward-municipal-partial-list.v1",
+      },
+    });
+    expect(mapPermitListLoadRow(normalized, undefined)).toMatchObject({
+      property_id: null,
+      property_match_method: "unmatched",
+      source_system: "broward_margate_click2gov_permits",
+    });
+  });
+
+  it("binds a strict incremental manifest to one immutable source list", async () => {
+    const directory = await mkdtemp(
+      join(tmpdir(), "broward-permit-incremental-"),
+    );
+    try {
+      const inputPath = join(directory, "input.private.jsonl");
+      const manifestPath = join(
+        directory,
+        "incremental-manifest.private.json",
+      );
+      const inputText = `${JSON.stringify(municipalPartialRecord())}\n`;
+      const listSha256 = createHash("sha256")
+        .update(inputText)
+        .digest("hex");
+      await writeFile(inputPath, inputText);
+      const input = await readPermitListRecords(inputPath);
+      const manifest = {
+        schemaVersion:
+          "oracle-node.broward-permit-incremental-manifest.v1",
+        sourceSystem: "broward_margate_click2gov_permits",
+        frozenAt: "2026-09-03T15:34:00.000Z",
+        coverageBoundary: "partial_terminal_artifacts",
+        checkpointSha256: "a".repeat(64),
+        listSha256,
+        artifactManifestSha256: "b".repeat(64),
+        artifactCount: 1,
+        artifactRecordCount: 1,
+        eligibleRecordCount: 1,
+        excludedCounts: {
+          source_cap: 0,
+          incomplete: 0,
+          deferred: 0,
+          undated: 0,
+          invalid: 0,
+          duplicate: 0,
+          unreconciled: 0,
+          in_flight: 0,
+        },
+        priorHighWatermark: null,
+        highWatermark: { nextQueryIndex: 8 },
+      };
+      await writeFile(manifestPath, `${JSON.stringify(manifest)}\n`);
+      await expect(
+        readIncrementalPermitManifest(manifestPath, input),
+      ).resolves.toMatchObject({
+        manifest: {
+          sourceSystem: "broward_margate_click2gov_permits",
+          eligibleRecordCount: 1,
+        },
+        manifestSha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+      });
+      await writeFile(
+        manifestPath,
+        `${JSON.stringify({ ...manifest, eligibleRecordCount: 2 })}\n`,
+      );
+      await expect(
+        readIncrementalPermitManifest(manifestPath, input),
+      ).rejects.toThrow(/does not reconcile/u);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 
   it("maps a manually authorized Gov-Easy list row without inferring a parcel", () => {
