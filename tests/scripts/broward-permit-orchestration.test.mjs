@@ -621,10 +621,11 @@ describe("Broward supported-route permit ingest", () => {
         return browser;
       },
     );
-    await Promise.resolve();
+    while (releaseFirst === null) {
+      await new Promise((resolvePromise) => setImmediate(resolvePromise));
+    }
     expect(launched).toHaveLength(1);
-    expect(releaseFirst).not.toBeNull();
-    /** @type {() => void} */ (releaseFirst)();
+    releaseFirst();
     const [firstBrowser, secondBrowser] = await Promise.all([first, second]);
     expect(firstBrowser).toBe(secondBrowser);
     expect(maximumActive).toBe(1);
