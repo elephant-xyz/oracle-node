@@ -86,6 +86,11 @@ describe("Broward dashboard durable rollup", () => {
         ),
       ),
     ).toBe(true);
+    expect(
+      calls.some((call) =>
+        call.sql.includes("broward_coconut_creek_permit_status"),
+      ),
+    ).toBe(true);
     expect(calls.at(-1)?.values).toEqual(["broward"]);
   });
 

@@ -153,6 +153,7 @@ export async function refreshBrowardDashboardRollup(client) {
          )::integer AS hillsboro_beach_communitycore_records
        FROM public.property_improvements
        WHERE source_system LIKE 'broward%permits'
+          OR source_system='broward_coconut_creek_permit_status'
           OR source_system='hillsboro_beach_communitycore_permits'
      ),
      sunbiz_stats AS (
