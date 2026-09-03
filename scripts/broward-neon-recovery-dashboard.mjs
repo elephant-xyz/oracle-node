@@ -17,9 +17,16 @@ import pg from "pg";
 
 import { BROWARD_ROW_DENOMINATOR } from "./broward-ingestion-dashboard.mjs";
 import {
+  BROWARD_BCS_ADAPTER_KEY,
+  BROWARD_CITIZENSERVE_ADAPTER_KEY,
   BROWARD_PERMIT_JURISDICTIONS,
   BROWARD_PERMIT_REGISTRY_VERSION,
 } from "./broward-permit-jurisdictions.mjs";
+import {
+  createActivePermitEnumerationTracker,
+  markActivePermitEnumerationSnapshotStale,
+  readActiveEnumerationProcessSnapshot,
+} from "./broward-active-permit-enumeration.mjs";
 
 const { Pool } = pg;
 const EXPECTED_PROJECT_ID = "raspy-frost-51580436";
@@ -34,6 +41,9 @@ const DEFAULT_PORT = 47_832;
  * @property {number} port - HTTP listen port.
  * @property {string} expectedBranchId - Exact isolated Neon branch ID.
  * @property {string} expectedEndpointId - Exact isolated Neon endpoint ID.
+ *
+ * @typedef {import("./broward-active-permit-enumeration.mjs").ActiveEnumerationRouteDefinition} ActiveEnumerationRouteDefinition
+ * @typedef {import("./broward-active-permit-enumeration.mjs").ActivePermitEnumerationStatus} ActivePermitEnumerationStatus
  *
  * @typedef {object} RecoveryAggregateRow
  * @property {string | number} property_count - Loaded Broward properties.
@@ -282,6 +292,8 @@ const DEFAULT_PORT = 47_832;
  *   registryStatus:"captcha_required"
  * }} coralSpringsPermit - Separate capped Coral Springs evidence.
  * @property {PermitEnumerationStatus} permitEnumeration - Local tenant workers.
+ * @property {ActivePermitEnumerationStatus} activePermitEnumeration
+ *   Dedicated live status for the ten current full/property-first enumerators.
  * @property {{
  *   matchedAddressRoles:number,
  *   registrations:number,
@@ -842,6 +854,12 @@ export function buildRecoveryStatus(row, nowMs) {
       permitRoutes,
     ),
     permitEnumeration: emptyPermitEnumerationStatus(),
+    activePermitEnumeration: {
+      generatedAt: new Date(nowMs).toISOString(),
+      snapshotStale: false,
+      observationWindowSeconds: 0,
+      workers: [],
+    },
     sunbizMatch: {
       matchedAddressRoles: count(row.sunbiz_match_roles),
       registrations: count(row.sunbiz_match_registrations),
@@ -1008,6 +1026,11 @@ const PERMIT_ENUMERATION_CHECKPOINTS = Object.freeze([
     source: "Coconut Creek",
     family: "municipal_property",
     reader: "municipal_property",
+    activeEnumeration: {
+      key: "coconut-creek",
+      method: "full",
+      processJurisdictionKey: "coconut_creek",
+    },
     pauseReason: "checkpoint_stale",
     gapRelativePath: null,
     coverageBoundary: "BCPA property-first folio seed",
@@ -1042,6 +1065,11 @@ const PERMIT_ENUMERATION_CHECKPOINTS = Object.freeze([
     source: "Lauderhill",
     family: "municipal_property",
     reader: "municipal_property",
+    activeEnumeration: {
+      key: "lauderhill",
+      method: "full",
+      processJurisdictionKey: "lauderhill",
+    },
     pauseReason: "checkpoint_stale",
     gapRelativePath: null,
     coverageBoundary: "BCPA property-first folio seed",
@@ -1053,6 +1081,11 @@ const PERMIT_ENUMERATION_CHECKPOINTS = Object.freeze([
     source: "Lighthouse Point",
     family: "municipal_type",
     reader: "municipal_type",
+    activeEnumeration: {
+      key: "lighthouse-point",
+      method: "full",
+      processJurisdictionKey: "lighthouse_point",
+    },
     pauseReason: "checkpoint_stale",
     gapRelativePath: null,
     coverageBoundary: "Complete official SmartGov exact-type option universe",
@@ -1064,6 +1097,11 @@ const PERMIT_ENUMERATION_CHECKPOINTS = Object.freeze([
     source: "Margate",
     family: "municipal_property",
     reader: "municipal_property",
+    activeEnumeration: {
+      key: "margate",
+      method: "full",
+      processJurisdictionKey: "margate",
+    },
     pauseReason: "checkpoint_stale",
     gapRelativePath: null,
     coverageBoundary:
@@ -1099,6 +1137,11 @@ const PERMIT_ENUMERATION_CHECKPOINTS = Object.freeze([
     source: "Tamarac",
     family: "municipal_property",
     reader: "municipal_property",
+    activeEnumeration: {
+      key: "tamarac",
+      method: "full",
+      processJurisdictionKey: "tamarac",
+    },
     pauseReason: "checkpoint_stale",
     gapRelativePath: null,
     coverageBoundary:
@@ -1113,11 +1156,13 @@ const PROPERTY_FIRST_PERMIT_ROUTES = Object.freeze([
   {
     key: "unincorporated-broward",
     source: "BMSD / unincorporated",
+    activeEnumeration: true,
     coverageBoundary: "BCS current-custody property-first records",
   },
   {
     key: "lauderdale-by-the-sea",
     source: "Lauderdale-by-the-Sea",
+    activeEnumeration: true,
     coverageBoundary:
       "Current Citizenserve only; historical BCS evidence remains supplemental",
   },
@@ -1129,21 +1174,90 @@ const PROPERTY_FIRST_PERMIT_ROUTES = Object.freeze([
   {
     key: "southwest-ranches",
     source: "Southwest Ranches",
+    activeEnumeration: true,
     coverageBoundary:
       "Citizenserve building permits only; other Town approvals excluded",
   },
   {
     key: "west-park",
     source: "West Park",
+    activeEnumeration: true,
     coverageBoundary: "Citizenserve public search; no complete-history claim",
   },
   {
     key: "wilton-manors",
     source: "Wilton Manors",
+    activeEnumeration: true,
     coverageBoundary:
       "Citizenserve available files; unavailable files remain a custodian gap",
   },
 ]);
+
+/**
+ * Build the ten active-enumeration definitions from the same executable
+ * checkpoint/query configurations used by the dashboard readers. Adapter
+ * families come from the current permit registry; no transient counts or
+ * process IDs are embedded here.
+ *
+ * @returns {readonly ActiveEnumerationRouteDefinition[]} Fixed active routes.
+ */
+function buildActiveEnumerationRouteDefinitions() {
+  /** @type {ActiveEnumerationRouteDefinition[]} */
+  const definitions = [];
+  for (const candidate of PERMIT_ENUMERATION_CHECKPOINTS) {
+    if (!("activeEnumeration" in candidate)) continue;
+    const active = candidate.activeEnumeration;
+    if (
+      active === undefined ||
+      active.method !== "full" ||
+      (candidate.family !== "municipal_property" &&
+        candidate.family !== "municipal_type")
+    ) {
+      throw new Error("Active municipal enumeration definition is invalid");
+    }
+    definitions.push({
+      key: active.key,
+      jurisdiction: candidate.source,
+      method: "full",
+      family: candidate.family,
+      countSource: "local_checkpoint",
+      processScript: "run-broward-municipal-enumeration-supervisor.mjs",
+      processJurisdictionKey: active.processJurisdictionKey,
+    });
+  }
+  for (const candidate of PROPERTY_FIRST_PERMIT_ROUTES) {
+    if (!("activeEnumeration" in candidate)) continue;
+    const registryRoute = BROWARD_PERMIT_JURISDICTIONS.find(
+      (route) => route.key === candidate.key,
+    );
+    const adapterKey = registryRoute?.primarySource.adapterKey;
+    const family =
+      adapterKey === BROWARD_BCS_ADAPTER_KEY
+        ? "bcs_posse"
+        : adapterKey === BROWARD_CITIZENSERVE_ADAPTER_KEY
+          ? "citizenserve"
+          : null;
+    if (family === null) {
+      throw new Error("Active property-first adapter family is invalid");
+    }
+    definitions.push({
+      key: candidate.key,
+      jurisdiction: candidate.source,
+      method: "property_first",
+      family,
+      countSource: "durable_route_checkpoint",
+      processScript: "run-broward-supported-permit-ingest.mjs",
+      processJurisdictionKey: candidate.key,
+    });
+  }
+  if (definitions.length !== 10) {
+    throw new Error("Active permit enumeration definitions are incomplete");
+  }
+  return Object.freeze(definitions);
+}
+
+const ACTIVE_ENUMERATION_ROUTE_DEFINITIONS =
+  buildActiveEnumerationRouteDefinitions();
 
 /**
  * Read only the public-safe fields from a durable Accela circuit breaker.
@@ -2117,6 +2231,9 @@ export function createResilientRecoveryStatusReader(
   /** @type {RecoveryDashboardStatus | null} */
   let lastSuccessful = null;
   let lastSuccessfulAtMs = 0;
+  const observeActiveEnumeration = createActivePermitEnumerationTracker(
+    ACTIVE_ENUMERATION_ROUTE_DEFINITIONS,
+  );
 
   return () => {
     const nowMs = Date.now();
@@ -2133,11 +2250,21 @@ export function createResilientRecoveryStatusReader(
       let destroyClient = false;
       try {
         await verifyIdentity(client, options);
-        const status = await withDashboardTimeout(
-          createRecoveryStatusReader(client, repositoryRoot)(),
-          timeoutMs,
-        );
+        const [status, processSnapshot] = await Promise.all([
+          withDashboardTimeout(
+            createRecoveryStatusReader(client, repositoryRoot)(),
+            timeoutMs,
+          ),
+          readActiveEnumerationProcessSnapshot(
+            ACTIVE_ENUMERATION_ROUTE_DEFINITIONS,
+          ),
+        ]);
         const completedAtMs = Date.now();
+        status.activePermitEnumeration = observeActiveEnumeration(
+          status.permitEnumeration.workers,
+          processSnapshot,
+          completedAtMs,
+        );
         status.dashboardHealth = {
           stale: false,
           lastSuccessfulAt: new Date(completedAtMs).toISOString(),
@@ -2150,13 +2277,19 @@ export function createResilientRecoveryStatusReader(
         destroyClient = true;
         if (lastSuccessful !== null) {
           const fallback = structuredClone(lastSuccessful);
-          fallback.generatedAt = new Date().toISOString();
+          const fallbackAtMs = Date.now();
+          fallback.generatedAt = new Date(fallbackAtMs).toISOString();
+          fallback.activePermitEnumeration =
+            markActivePermitEnumerationSnapshotStale(
+              fallback.activePermitEnumeration,
+              fallbackAtMs,
+            );
           fallback.dashboardHealth = {
             stale: true,
             lastSuccessfulAt: new Date(lastSuccessfulAtMs).toISOString(),
             snapshotAgeSeconds: Math.max(
               0,
-              Math.round((Date.now() - lastSuccessfulAtMs) / 1_000),
+              Math.round((fallbackAtMs - lastSuccessfulAtMs) / 1_000),
             ),
           };
           return fallback;
@@ -2289,6 +2422,9 @@ const DASHBOARD_HTML = `<!doctype html>
     table { width: 100%; margin: 1rem 0; border-collapse: collapse; }
     th, td { padding: .55rem; border-bottom: 1px solid #29415a; text-align: left; }
     td:nth-child(n+3) { font-variant-numeric: tabular-nums; text-align: right; }
+    .table-scroll { overflow-x: auto; }
+    .active-enumeration td { white-space: nowrap; }
+    .active-enumeration td:first-child, .active-enumeration td:nth-child(8), .active-enumeration td:nth-child(10) { white-space: normal; }
     .route-groups { display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); gap: .75rem; }
     .route-group { padding: .8rem; border: 1px solid #29415a; border-radius: .6rem; background: #0b1929; }
     .route-group h3 { margin: 0 0 .4rem; font-size: .95rem; }
@@ -2325,6 +2461,14 @@ const DASHBOARD_HTML = `<!doctype html>
     <article><h2>Active / complete workers</h2><strong id="permit-workers">—</strong></article>
     <article><h2>Completed work units</h2><strong id="permit-windows">—</strong></article>
   </section>
+  <h2>Active permit enumeration</h2>
+  <p class="route-note">Dedicated current view for five full municipal enumerators and five property-first routes. Process presence and checkpoint movement are independent; this section excludes route implementation/access blockers and the original eight Accela/Tyler date-window workers.</p>
+  <div class="table-scroll">
+    <table class="active-enumeration" aria-label="Active permit enumeration status">
+      <thead><tr><th>Jurisdiction</th><th>Method / family</th><th>State</th><th>Process / movement</th><th>Work units</th><th>Local / Neon records</th><th>Deferred / missing</th><th>Checkpoint</th><th>Recent throughput</th><th>ETA</th></tr></thead>
+      <tbody id="active-permit-worker-rows"><tr><td colspan="10">Loading active enumeration…</td></tr></tbody>
+    </table>
+  </div>
   <h2>Coral Springs eTRAKiT capped slice</h2>
   <p class="route-note">Manual CAPTCHA authorization is still required and sessions expire. Captured rows are a bounded capped slice of the reported source matches, not complete jurisdiction coverage.</p>
   <section class="grid">
@@ -2335,6 +2479,8 @@ const DASHBOARD_HTML = `<!doctype html>
     <article><h2>Capture pages</h2><strong id="coral-pages">—</strong></article>
     <article><h2>Coverage</h2><strong id="coral-coverage">—</strong></article>
   </section>
+  <h2>All permit enumeration inventory</h2>
+  <p class="route-note">Preserved combined inventory, including the original eight Accela/Tyler date-window workers and other implemented municipal routes.</p>
   <table aria-label="Permit tenant worker status">
     <thead><tr><th>Jurisdiction</th><th>Source</th><th>Status</th><th>Work units</th><th>Records</th><th>Deferred caps</th><th>Gaps / blocker</th><th>Coverage boundary</th></tr></thead>
     <tbody id="permit-worker-rows"></tbody>
@@ -2393,6 +2539,33 @@ const DASHBOARD_HTML = `<!doctype html>
   const format = new Intl.NumberFormat();
   const set = (id, value) => { const node = document.getElementById(id); if (node) node.textContent = value; };
   const nullable = (value) => value === null ? "Not recorded" : format.format(value);
+  /**
+   * Format an optional aggregate count without inventing a zero.
+   * @param {number | null} value Aggregate count or unavailable marker.
+   * @returns {string} Localized count or "unknown".
+   */
+  const optionalCount = (value) => value === null ? "unknown" : format.format(value);
+  /**
+   * Format a checkpoint age from a bounded number of seconds.
+   * @param {number | null} seconds Snapshot-relative checkpoint age.
+   * @returns {string} Compact human-readable age.
+   */
+  const formatAge = (seconds) => {
+    if (seconds === null) return "unknown age";
+    if (seconds < 60) return format.format(seconds) + "s ago";
+    if (seconds < 3600) return format.format(Math.round(seconds / 60)) + "m ago";
+    return (seconds / 3600).toFixed(1) + "h ago";
+  };
+  /**
+   * Format an ETA only when the server-side validity checks accepted it.
+   * @param {{kind:string,estimatedHours:number|null,lowHours:number|null,highHours:number|null,reason:string}} eta Conditional ETA.
+   * @returns {string} Complete, range, or explicit unknown reason.
+   */
+  const formatEta = (eta) => {
+    if (eta.kind === "complete") return "complete";
+    if (eta.kind !== "estimate") return "unknown — " + eta.reason.replaceAll("_", " ");
+    return eta.estimatedHours.toFixed(1) + "h (" + eta.lowHours.toFixed(1) + "–" + eta.highHours.toFixed(1) + "h)";
+  };
   async function refresh() {
     try {
       const response = await fetch("/api/status", { cache: "no-store" });
@@ -2421,6 +2594,40 @@ const DASHBOARD_HTML = `<!doctype html>
       set("permit-captured", format.format(enumeration.accessibleRecords));
       set("permit-workers", format.format(enumeration.activeWorkers) + " / " + format.format(enumeration.completedWorkers));
       set("permit-windows", format.format(enumeration.completedWindows) + " / " + format.format(enumeration.totalWindows));
+      const activeEnumeration = status.activePermitEnumeration;
+      const activeWorkerBody = document.getElementById("active-permit-worker-rows");
+      if (activeWorkerBody && activeEnumeration) {
+        const rows = activeEnumeration.workers.map((worker) => {
+          const row = document.createElement("tr");
+          const processState = worker.processAlive === null
+            ? "process unknown"
+            : worker.processAlive
+              ? "process alive"
+              : "process absent";
+          const rate = worker.throughput.unitsPerHour === null
+            ? "unknown"
+            : worker.throughput.unitsPerHour.toFixed(1) + " units/h";
+          for (const value of [
+            worker.jurisdiction,
+            worker.method.replaceAll("_", " ") + " / " + worker.family.replaceAll("_", " "),
+            worker.state + (activeEnumeration.snapshotStale ? " (stale snapshot)" : ""),
+            processState + " / " + worker.checkpointActivity.replaceAll("_", " "),
+            format.format(worker.completedUnits) + " / " + format.format(worker.totalUnits) +
+              " · " + format.format(worker.remainingUnits) + " left · " + worker.completionPercent.toFixed(3) + "%",
+            optionalCount(worker.locallyCapturedRecords) + " / " + optionalCount(worker.durableLoadedRecords),
+            format.format(worker.deferredCapCount) + " / " + format.format(worker.sourceMissingCount),
+            (worker.lastCheckpointAt ?? "unknown") + " · " + formatAge(worker.checkpointAgeSeconds),
+            rate + " over " + format.format(worker.throughput.windowSeconds) + "s",
+            formatEta(worker.eta),
+          ]) {
+            const cell = document.createElement("td");
+            cell.textContent = value;
+            row.appendChild(cell);
+          }
+          return row;
+        });
+        activeWorkerBody.replaceChildren(...rows);
+      }
       const coral = status.coralSpringsPermit;
       set("coral-reported", format.format(coral.reported) + " / " + format.format(coral.exposed));
       set("coral-captured", format.format(coral.paged) + " / " + format.format(coral.unique));

@@ -98,6 +98,47 @@ const DASHBOARD_HTML_PATH = resolve(__dirname, "common/dashboard.html");
  * @property {"timeout" | "source_cap" | "incomplete_pagination" | "source_error"} reason
  *   Allowlisted source circuit-breaker reason.
  * @property {string} nextAttemptAt - Earliest safe automatic retry.
+ *
+ * @typedef {object} UniversalActiveEnumerationWorker
+ * @property {string} jurisdiction - Allowlisted public jurisdiction.
+ * @property {"full" | "property_first"} method - Enumeration scope.
+ * @property {"municipal_property" | "municipal_type" | "bcs_posse" | "citizenserve"} family
+ *   Executable source family.
+ * @property {"running" | "cooling" | "paused" | "complete" | "stalled"} state
+ *   Reconciled operational state.
+ * @property {boolean | null} processAlive - Independent live-process evidence.
+ * @property {"warming_up" | "work_units_advanced" | "checkpoint_updated" | "stationary"} checkpointActivity
+ *   Observed aggregate checkpoint movement.
+ * @property {number} completedUnits - Durable completed work units.
+ * @property {number} totalUnits - Immutable work-unit denominator.
+ * @property {number} remainingUnits - Reconciled unfinished work units.
+ * @property {number} completionPercent - Recomputed completion percentage.
+ * @property {number | null} locallyCapturedRecords - Local capture count when derivable.
+ * @property {number | null} durableLoadedRecords - Neon-loaded count when derivable.
+ * @property {number} deferredCapCount - Unresolved cap count.
+ * @property {number} sourceMissingCount - Explicit inaccessible source count.
+ * @property {string | null} lastCheckpointAt - Last durable checkpoint time.
+ * @property {number | null} checkpointAgeSeconds - Snapshot-relative age.
+ * @property {boolean} checkpointStale - Checkpoint staleness.
+ * @property {{
+ *   observedUnits:number,
+ *   windowSeconds:number,
+ *   unitsPerHour:number|null,
+ *   variabilityRatio:number|null
+ * }} throughput - Recent completed-unit observation.
+ * @property {{
+ *   kind:"estimate"|"unknown"|"complete",
+ *   estimatedHours:number|null,
+ *   lowHours:number|null,
+ *   highHours:number|null,
+ *   reason:"complete"|"rate_stable"|"dashboard_snapshot_stale"|"worker_not_running"|"checkpoint_stale"|"variable_detail_loop"|"observation_window_short"|"no_checkpoint_movement"|"rate_variability_high"|"work_unit_total_changed"
+ * }} eta - Conditional estimate or allowlisted refusal reason.
+ *
+ * @typedef {object} UniversalActiveEnumerationStatus
+ * @property {string} generatedAt - Aggregate snapshot time.
+ * @property {boolean} snapshotStale - Whole-snapshot staleness.
+ * @property {number} observationWindowSeconds - Longest observation window.
+ * @property {UniversalActiveEnumerationWorker[]} workers - Exactly ten active routes.
  */
 
 /**
@@ -183,6 +224,9 @@ export async function getBrowardLifecycleStatus(
   const coolingPermitWorkers = readBrowardCoolingPermitWorkers(
     enumeration.coolingWorkers,
     permitRoutes.implementedJurisdictions,
+  );
+  const activeEnumeration = readBrowardActiveEnumeration(
+    status.activePermitEnumeration,
   );
   if (
     coolingPermitWorkers.some((coolingWorker) =>
@@ -289,6 +333,7 @@ export async function getBrowardLifecycleStatus(
           paused: pausedPermitWorkers,
           coolingDown: coolingPermitWorkers,
         },
+        activeEnumeration,
         permits: {
           count: permits,
           capturedCount: capturedPermits,
@@ -789,6 +834,363 @@ function readBrowardCoolingPermitWorkers(value, implementedJurisdictions) {
       nextAttemptAt,
     };
   });
+}
+
+const BROWARD_ACTIVE_ENUMERATION_JURISDICTIONS = Object.freeze([
+  "BMSD / unincorporated",
+  "Coconut Creek",
+  "Lauderdale-by-the-Sea",
+  "Lauderhill",
+  "Lighthouse Point",
+  "Margate",
+  "Southwest Ranches",
+  "Tamarac",
+  "West Park",
+  "Wilton Manors",
+]);
+
+/**
+ * Validate the dedicated active-enumeration payload before exposing it from
+ * the universal server. Only allowlisted public labels, counters, timestamps,
+ * process booleans, and ETA reasons cross this boundary.
+ *
+ * @param {unknown} value - Private dashboard active-enumeration payload.
+ * @returns {UniversalActiveEnumerationStatus} Sanitized active routes.
+ */
+function readBrowardActiveEnumeration(value) {
+  const input = requireObject(value, "Broward active enumeration");
+  const generatedAt = requirePublicLabel(
+    input.generatedAt,
+    "Broward active enumeration timestamp",
+  );
+  if (
+    !Number.isFinite(Date.parse(generatedAt)) ||
+    typeof input.snapshotStale !== "boolean" ||
+    !Array.isArray(input.workers)
+  ) {
+    throw new Error("Broward active enumeration is invalid");
+  }
+  const observationWindowSeconds = requireSafeAggregateCount(
+    input.observationWindowSeconds,
+    "Broward active enumeration window",
+  );
+  const expectedJurisdictions = new Set(
+    BROWARD_ACTIVE_ENUMERATION_JURISDICTIONS,
+  );
+  const seenJurisdictions = new Set();
+  const workers = input.workers.map((candidate) => {
+    const worker = requireObject(
+      candidate,
+      "Broward active enumeration worker",
+    );
+    const jurisdiction = requirePublicLabel(
+      worker.jurisdiction,
+      "Broward active enumeration jurisdiction",
+    );
+    const method = requirePublicLabel(
+      worker.method,
+      "Broward active enumeration method",
+    );
+    const family = requirePublicLabel(
+      worker.family,
+      "Broward active enumeration family",
+    );
+    const state = requirePublicLabel(
+      worker.state,
+      "Broward active enumeration state",
+    );
+    const checkpointActivity = requirePublicLabel(
+      worker.checkpointActivity,
+      "Broward active enumeration checkpoint activity",
+    );
+    if (
+      !expectedJurisdictions.has(jurisdiction) ||
+      seenJurisdictions.has(jurisdiction) ||
+      !["full", "property_first"].includes(method) ||
+      ![
+        "municipal_property",
+        "municipal_type",
+        "bcs_posse",
+        "citizenserve",
+      ].includes(family) ||
+      !["running", "cooling", "paused", "complete", "stalled"].includes(
+        state,
+      ) ||
+      ![
+        "warming_up",
+        "work_units_advanced",
+        "checkpoint_updated",
+        "stationary",
+      ].includes(checkpointActivity) ||
+      (worker.processAlive !== null &&
+        typeof worker.processAlive !== "boolean") ||
+      typeof worker.checkpointStale !== "boolean"
+    ) {
+      throw new Error("Broward active enumeration worker is invalid");
+    }
+    seenJurisdictions.add(jurisdiction);
+    const completedUnits = requireSafeAggregateCount(
+      worker.completedUnits,
+      "Broward active completed units",
+    );
+    const totalUnits = requireSafeAggregateCount(
+      worker.totalUnits,
+      "Broward active total units",
+    );
+    const remainingUnits = requireSafeAggregateCount(
+      worker.remainingUnits,
+      "Broward active remaining units",
+    );
+    const completionPercent = requireFiniteAggregateNumber(
+      worker.completionPercent,
+      "Broward active completion percent",
+    );
+    const locallyCapturedRecords = requireOptionalSafeAggregateCount(
+      worker.locallyCapturedRecords,
+      "Broward active local records",
+    );
+    const durableLoadedRecords = requireOptionalSafeAggregateCount(
+      worker.durableLoadedRecords,
+      "Broward active loaded records",
+    );
+    const deferredCapCount = requireSafeAggregateCount(
+      worker.deferredCapCount,
+      "Broward active deferred caps",
+    );
+    const sourceMissingCount = requireSafeAggregateCount(
+      worker.sourceMissingCount,
+      "Broward active source missing",
+    );
+    const lastCheckpointAt =
+      worker.lastCheckpointAt === null
+        ? null
+        : requirePublicLabel(
+            worker.lastCheckpointAt,
+            "Broward active checkpoint timestamp",
+          );
+    const checkpointAgeSeconds = requireOptionalSafeAggregateCount(
+      worker.checkpointAgeSeconds,
+      "Broward active checkpoint age",
+    );
+    const expectedPercent =
+      totalUnits === 0
+        ? 0
+        : Math.round((completedUnits / totalUnits) * 100_000) / 1_000;
+    if (
+      completedUnits + remainingUnits !== totalUnits ||
+      completionPercent !== expectedPercent ||
+      completionPercent > 100 ||
+      (lastCheckpointAt !== null &&
+        !Number.isFinite(Date.parse(lastCheckpointAt))) ||
+      (method === "full" &&
+        (locallyCapturedRecords === null || durableLoadedRecords !== null)) ||
+      (method === "property_first" &&
+        (locallyCapturedRecords !== null || durableLoadedRecords === null)) ||
+      (input.snapshotStale === true && worker.processAlive !== null)
+    ) {
+      throw new Error("Broward active enumeration counts do not reconcile");
+    }
+    const throughput = readBrowardActiveThroughput(worker.throughput);
+    const eta = readBrowardActiveEta(worker.eta, remainingUnits);
+    return {
+      jurisdiction,
+      method: /** @type {"full" | "property_first"} */ (method),
+      family:
+        /** @type {"municipal_property" | "municipal_type" | "bcs_posse" | "citizenserve"} */ (
+          family
+        ),
+      state:
+        /** @type {"running" | "cooling" | "paused" | "complete" | "stalled"} */ (
+          state
+        ),
+      processAlive: /** @type {boolean | null} */ (worker.processAlive),
+      checkpointActivity:
+        /** @type {"warming_up" | "work_units_advanced" | "checkpoint_updated" | "stationary"} */ (
+          checkpointActivity
+        ),
+      completedUnits,
+      totalUnits,
+      remainingUnits,
+      completionPercent,
+      locallyCapturedRecords,
+      durableLoadedRecords,
+      deferredCapCount,
+      sourceMissingCount,
+      lastCheckpointAt,
+      checkpointAgeSeconds,
+      checkpointStale: worker.checkpointStale,
+      throughput,
+      eta,
+    };
+  });
+  if (
+    workers.length !== expectedJurisdictions.size ||
+    [...expectedJurisdictions].some(
+      (jurisdiction) => !seenJurisdictions.has(jurisdiction),
+    )
+  ) {
+    throw new Error("Broward active enumeration routes do not reconcile");
+  }
+  workers.sort((left, right) =>
+    left.jurisdiction.localeCompare(right.jurisdiction),
+  );
+  return {
+    generatedAt,
+    snapshotStale: input.snapshotStale,
+    observationWindowSeconds,
+    workers,
+  };
+}
+
+/**
+ * Validate one active-enumeration throughput object.
+ *
+ * @param {unknown} value - Candidate throughput.
+ * @returns {UniversalActiveEnumerationWorker["throughput"]} Clean throughput.
+ */
+function readBrowardActiveThroughput(value) {
+  const throughput = requireObject(value, "Broward active throughput");
+  return {
+    observedUnits: requireSafeAggregateCount(
+      throughput.observedUnits,
+      "Broward active observed units",
+    ),
+    windowSeconds: requireSafeAggregateCount(
+      throughput.windowSeconds,
+      "Broward active throughput window",
+    ),
+    unitsPerHour: requireOptionalFiniteAggregateNumber(
+      throughput.unitsPerHour,
+      "Broward active throughput rate",
+    ),
+    variabilityRatio: requireOptionalFiniteAggregateNumber(
+      throughput.variabilityRatio,
+      "Broward active throughput variability",
+    ),
+  };
+}
+
+/**
+ * Validate an ETA result and its nullability/reconciliation contract.
+ *
+ * @param {unknown} value - Candidate ETA.
+ * @param {number} remainingUnits - Reconciled route remainder.
+ * @returns {UniversalActiveEnumerationWorker["eta"]} Clean conditional ETA.
+ */
+function readBrowardActiveEta(value, remainingUnits) {
+  const eta = requireObject(value, "Broward active ETA");
+  const kind = requirePublicLabel(eta.kind, "Broward active ETA kind");
+  const reason = requirePublicLabel(eta.reason, "Broward active ETA reason");
+  const estimatedHours = requireOptionalFiniteAggregateNumber(
+    eta.estimatedHours,
+    "Broward active estimated hours",
+  );
+  const lowHours = requireOptionalFiniteAggregateNumber(
+    eta.lowHours,
+    "Broward active low ETA",
+  );
+  const highHours = requireOptionalFiniteAggregateNumber(
+    eta.highHours,
+    "Broward active high ETA",
+  );
+  const reasons = new Set([
+    "complete",
+    "rate_stable",
+    "dashboard_snapshot_stale",
+    "worker_not_running",
+    "checkpoint_stale",
+    "variable_detail_loop",
+    "observation_window_short",
+    "no_checkpoint_movement",
+    "rate_variability_high",
+    "work_unit_total_changed",
+  ]);
+  if (
+    !["estimate", "unknown", "complete"].includes(kind) ||
+    !reasons.has(reason) ||
+    (kind === "complete" &&
+      (remainingUnits !== 0 ||
+        reason !== "complete" ||
+        estimatedHours !== 0 ||
+        lowHours !== 0 ||
+        highHours !== 0)) ||
+    (kind === "estimate" &&
+      (remainingUnits === 0 ||
+        reason !== "rate_stable" ||
+        estimatedHours === null ||
+        lowHours === null ||
+        highHours === null ||
+        lowHours <= 0 ||
+        lowHours > estimatedHours ||
+        estimatedHours > highHours)) ||
+    (kind === "unknown" &&
+      (reason === "complete" ||
+        reason === "rate_stable" ||
+        estimatedHours !== null ||
+        lowHours !== null ||
+        highHours !== null))
+  ) {
+    throw new Error("Broward active ETA does not reconcile");
+  }
+  return {
+    kind: /** @type {"estimate" | "unknown" | "complete"} */ (kind),
+    estimatedHours,
+    lowHours,
+    highHours,
+    reason:
+      /** @type {UniversalActiveEnumerationWorker["eta"]["reason"]} */ (reason),
+  };
+}
+
+/**
+ * Require a strict finite non-negative number without coercing null.
+ *
+ * @param {unknown} value - Candidate aggregate number.
+ * @param {string} label - Fixed safe error label.
+ * @returns {number} Finite non-negative number.
+ */
+function requireFiniteAggregateNumber(value, label) {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    throw new Error(`${label} is invalid`);
+  }
+  return value;
+}
+
+/**
+ * Require a strict non-negative safe integer.
+ *
+ * @param {unknown} value - Candidate count.
+ * @param {string} label - Fixed safe error label.
+ * @returns {number} Safe aggregate count.
+ */
+function requireSafeAggregateCount(value, label) {
+  const number = requireFiniteAggregateNumber(value, label);
+  if (!Number.isSafeInteger(number)) {
+    throw new Error(`${label} is invalid`);
+  }
+  return number;
+}
+
+/**
+ * Require a nullable strict aggregate count.
+ *
+ * @param {unknown} value - Candidate nullable count.
+ * @param {string} label - Fixed safe error label.
+ * @returns {number | null} Safe count or null.
+ */
+function requireOptionalSafeAggregateCount(value, label) {
+  return value === null ? null : requireSafeAggregateCount(value, label);
+}
+
+/**
+ * Require a nullable strict finite non-negative number.
+ *
+ * @param {unknown} value - Candidate nullable number.
+ * @param {string} label - Fixed safe error label.
+ * @returns {number | null} Finite number or null.
+ */
+function requireOptionalFiniteAggregateNumber(value, label) {
+  return value === null ? null : requireFiniteAggregateNumber(value, label);
 }
 
 /**

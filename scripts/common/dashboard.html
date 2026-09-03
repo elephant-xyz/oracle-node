@@ -1504,6 +1504,37 @@
           <ul id="permitCoolingWorkerList"></ul>
         </div>
 
+        <div class="card table-card" id="permitActiveEnumerationCard" hidden>
+          <h3>Active Permit Enumeration</h3>
+          <p class="sub">
+            Dedicated current view for five full municipal enumerators and five
+            property-first routes. Process presence and checkpoint movement are
+            independent. Route implementation/access blockers and the original
+            eight Accela/Tyler date-window workers remain separate.
+          </p>
+          <table style="margin-top: 12px">
+            <thead>
+              <tr>
+                <th>Jurisdiction</th>
+                <th>Method / family</th>
+                <th>State</th>
+                <th>Process / movement</th>
+                <th>Work units</th>
+                <th>Local / Neon records</th>
+                <th>Deferred / missing</th>
+                <th>Checkpoint</th>
+                <th>Throughput</th>
+                <th>ETA</th>
+              </tr>
+            </thead>
+            <tbody id="permitActiveEnumerationRows">
+              <tr>
+                <td colspan="10">Loading active enumeration…</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
         <!-- Trade Breakdown Cards -->
         <div class="card">
           <h3>Permit Trade Distribution</h3>
@@ -2489,6 +2520,51 @@
         updateDashboard();
       }
 
+      /**
+       * Format an optional aggregate record count without treating absence as zero.
+       *
+       * @param {number | null} value - Derivable aggregate count or null.
+       * @returns {string} Localized count or an explicit unknown marker.
+       */
+      function formatActiveEnumerationCount(value) {
+        return value === null ? "unknown" : value.toLocaleString();
+      }
+
+      /**
+       * Format snapshot-relative checkpoint age.
+       *
+       * @param {number | null} seconds - Non-negative checkpoint age in seconds.
+       * @returns {string} Compact public age label.
+       */
+      function formatActiveEnumerationAge(seconds) {
+        if (seconds === null) return "unknown age";
+        if (seconds < 60) return `${seconds.toLocaleString()}s ago`;
+        if (seconds < 3_600) {
+          return `${Math.round(seconds / 60).toLocaleString()}m ago`;
+        }
+        return `${(seconds / 3_600).toFixed(1)}h ago`;
+      }
+
+      /**
+       * Format a server-validated ETA, range, or refusal reason.
+       *
+       * @param {{
+       *   kind:"estimate"|"unknown"|"complete",
+       *   estimatedHours:number|null,
+       *   lowHours:number|null,
+       *   highHours:number|null,
+       *   reason:string
+       * }} eta - Conditional aggregate ETA.
+       * @returns {string} Complete, estimated range, or explicit unknown reason.
+       */
+      function formatActiveEnumerationEta(eta) {
+        if (eta.kind === "complete") return "complete";
+        if (eta.kind !== "estimate") {
+          return `unknown — ${eta.reason.replaceAll("_", " ")}`;
+        }
+        return `${eta.estimatedHours.toFixed(1)}h (${eta.lowHours.toFixed(1)}–${eta.highHours.toFixed(1)}h)`;
+      }
+
       async function fetchLifecycle() {
         try {
           const params = new URLSearchParams(window.location.search);
@@ -2710,6 +2786,54 @@
             }
           } else if (permitRouteCard) {
             permitRouteCard.hidden = true;
+          }
+
+          const activeEnumerationCard = document.getElementById(
+            "permitActiveEnumerationCard",
+          );
+          const activeEnumeration = srcStage?.activeEnumeration;
+          if (activeEnumerationCard && activeEnumeration) {
+            activeEnumerationCard.hidden = false;
+            const activeRows = document.getElementById(
+              "permitActiveEnumerationRows",
+            );
+            if (activeRows) {
+              activeRows.replaceChildren(
+                ...activeEnumeration.workers.map((worker) => {
+                  const row = document.createElement("tr");
+                  const processState =
+                    worker.processAlive === null
+                      ? "process unknown"
+                      : worker.processAlive
+                        ? "process alive"
+                        : "process absent";
+                  const throughput =
+                    worker.throughput.unitsPerHour === null
+                      ? "unknown"
+                      : `${worker.throughput.unitsPerHour.toFixed(1)} units/h`;
+                  const values = [
+                    worker.jurisdiction,
+                    `${worker.method.replaceAll("_", " ")} / ${worker.family.replaceAll("_", " ")}`,
+                    `${worker.state}${activeEnumeration.snapshotStale ? " (stale snapshot)" : ""}`,
+                    `${processState} / ${worker.checkpointActivity.replaceAll("_", " ")}`,
+                    `${worker.completedUnits.toLocaleString()} / ${worker.totalUnits.toLocaleString()} · ${worker.remainingUnits.toLocaleString()} left · ${worker.completionPercent.toFixed(3)}%`,
+                    `${formatActiveEnumerationCount(worker.locallyCapturedRecords)} / ${formatActiveEnumerationCount(worker.durableLoadedRecords)}`,
+                    `${worker.deferredCapCount.toLocaleString()} / ${worker.sourceMissingCount.toLocaleString()}`,
+                    `${worker.lastCheckpointAt ?? "unknown"} · ${formatActiveEnumerationAge(worker.checkpointAgeSeconds)}`,
+                    `${throughput} over ${worker.throughput.windowSeconds.toLocaleString()}s`,
+                    formatActiveEnumerationEta(worker.eta),
+                  ];
+                  for (const value of values) {
+                    const cell = document.createElement("td");
+                    cell.textContent = value;
+                    row.appendChild(cell);
+                  }
+                  return row;
+                }),
+              );
+            }
+          } else if (activeEnumerationCard) {
+            activeEnumerationCard.hidden = true;
           }
 
           const pubStage = data.stages?.publish;

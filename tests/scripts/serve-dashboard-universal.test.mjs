@@ -15,6 +15,68 @@ import {
 } from "../../scripts/serve-dashboard.mjs";
 import { buildBrowardPermitRouteStatus } from "../../scripts/broward-neon-recovery-dashboard.mjs";
 
+/**
+ * Build a complete aggregate-safe active-enumeration fixture.
+ *
+ * @returns {{
+ *   generatedAt:string,
+ *   snapshotStale:false,
+ *   observationWindowSeconds:number,
+ *   workers:Record<string, unknown>[]
+ * }} Ten reconciled active route rows.
+ */
+function buildActiveEnumerationFixture() {
+  const routes = [
+    ["BMSD / unincorporated", "property_first", "bcs_posse"],
+    ["Coconut Creek", "full", "municipal_property"],
+    ["Lauderdale-by-the-Sea", "property_first", "citizenserve"],
+    ["Lauderhill", "full", "municipal_property"],
+    ["Lighthouse Point", "full", "municipal_type"],
+    ["Margate", "full", "municipal_property"],
+    ["Southwest Ranches", "property_first", "citizenserve"],
+    ["Tamarac", "full", "municipal_property"],
+    ["West Park", "property_first", "citizenserve"],
+    ["Wilton Manors", "property_first", "citizenserve"],
+  ];
+  return {
+    generatedAt: "2026-09-03T12:00:00.000Z",
+    snapshotStale: false,
+    observationWindowSeconds: 300,
+    workers: routes.map(([jurisdiction, method, family]) => ({
+      jurisdiction,
+      method,
+      family,
+      state: "running",
+      processAlive: true,
+      checkpointActivity: "work_units_advanced",
+      completedUnits: 5,
+      totalUnits: 10,
+      remainingUnits: 5,
+      completionPercent: 50,
+      locallyCapturedRecords: method === "full" ? 8 : null,
+      durableLoadedRecords: method === "property_first" ? 8 : null,
+      deferredCapCount: 0,
+      sourceMissingCount: 1,
+      lastCheckpointAt: "2026-09-03T11:59:59.000Z",
+      checkpointAgeSeconds: 1,
+      checkpointStale: false,
+      throughput: {
+        observedUnits: 3,
+        windowSeconds: 300,
+        unitsPerHour: 36,
+        variabilityRatio: 1.2,
+      },
+      eta: {
+        kind: "estimate",
+        estimatedHours: 0.139,
+        lowHours: 0.12,
+        highHours: 0.16,
+        reason: "rate_stable",
+      },
+    })),
+  };
+}
+
 describe("universal dashboard server & county registry", () => {
   it("parses CLI arguments with defaults", () => {
     const options = parseServerArgs([]);
@@ -127,6 +189,7 @@ describe("universal dashboard server & county registry", () => {
             },
           ],
         },
+        activePermitEnumeration: buildActiveEnumerationFixture(),
         sunbizMatch: { registrations: 12_432, properties: 9_023 },
       }));
       expect(lifecycle).toMatchObject({
@@ -167,6 +230,28 @@ describe("universal dashboard server & county registry", () => {
                 },
               ],
             },
+            activeEnumeration: {
+              snapshotStale: false,
+              observationWindowSeconds: 300,
+              workers: expect.arrayContaining([
+                expect.objectContaining({
+                  jurisdiction: "Coconut Creek",
+                  method: "full",
+                  family: "municipal_property",
+                  processAlive: true,
+                  completedUnits: 5,
+                  totalUnits: 10,
+                  remainingUnits: 5,
+                  completionPercent: 50,
+                }),
+                expect.objectContaining({
+                  jurisdiction: "BMSD / unincorporated",
+                  method: "property_first",
+                  family: "bcs_posse",
+                  durableLoadedRecords: 8,
+                }),
+              ]),
+            },
             permits: {
               count: 243_939,
               capturedCount: 430_087,
@@ -202,6 +287,7 @@ describe("universal dashboard server & county registry", () => {
       ).toBe(sourcing.permitRoutes.hardBlockedCurrentRoutes);
       expect(sourcing.operationalWorkers.paused).toHaveLength(2);
       expect(sourcing.operationalWorkers.coolingDown).toHaveLength(1);
+      expect(sourcing.activeEnumeration.workers).toHaveLength(10);
       expect(sourcing.permitRoutes.unattendedUnavailableCurrentRoutes).toBe(
         sourcing.permitRoutes.manualCaptchaCurrentRoutes +
           sourcing.permitRoutes.hardBlockedCurrentRoutes,
@@ -227,7 +313,12 @@ describe("universal dashboard server & county registry", () => {
     expect(dashboardHtml).toContain('id="permitRouteManualProgress"');
     expect(dashboardHtml).toContain('id="permitPausedWorkerList"');
     expect(dashboardHtml).toContain('id="permitCoolingWorkerList"');
+    expect(dashboardHtml).toContain('id="permitActiveEnumerationCard"');
+    expect(dashboardHtml).toContain('id="permitActiveEnumerationRows"');
     expect(dashboardHtml).toContain("Operational pauses are shown separately");
+    expect(dashboardHtml).toContain(
+      "Process presence and checkpoint movement are",
+    );
     expect(dashboardHtml).toContain("Manual sessions expire");
     expect(dashboardHtml).toContain("Hard-Block Categories");
   });
