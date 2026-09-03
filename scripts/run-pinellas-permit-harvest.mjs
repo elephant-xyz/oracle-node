@@ -259,7 +259,7 @@ export function windowArtifactPaths(jobDir, windowKey) {
  */
 export function isBrowserDisconnectedError(error) {
   const message = error instanceof Error ? error.message : String(error);
-  return /connection closed|target closed|session closed|browser has disconnected|protocol error|detached frame/i.test(
+  return /connection closed|target closed|session closed|browser has disconnected|protocol error|detached frame|frame was detached/i.test(
     message,
   );
 }

@@ -167,6 +167,9 @@ describe("Pinellas permit harvest CLI", () => {
         new Error("Attempted to use detached Frame 'ABC'."),
       ),
     ).toBe(true);
+    expect(
+      isBrowserDisconnectedError(new Error("Navigating frame was detached")),
+    ).toBe(true);
     expect(isBrowserDisconnectedError(new Error("Navigation timeout"))).toBe(
       false,
     );
