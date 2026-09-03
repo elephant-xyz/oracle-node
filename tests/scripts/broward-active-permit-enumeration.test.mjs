@@ -194,8 +194,7 @@ describe("Broward active permit enumeration telemetry", () => {
   });
 
   it("keeps no-movement and high-variability ETAs unknown", () => {
-    const noMovementTracker =
-      createActivePermitEnumerationTracker(DEFINITIONS);
+    const noMovementTracker = createActivePermitEnumerationTracker(DEFINITIONS);
     const start = Date.parse("2026-09-03T12:00:00.000Z");
     for (const offset of [0, 100_000, 200_000, 300_000]) {
       noMovementTracker(

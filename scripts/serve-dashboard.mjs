@@ -1137,8 +1137,9 @@ function readBrowardActiveEta(value, remainingUnits) {
     estimatedHours,
     lowHours,
     highHours,
-    reason:
-      /** @type {UniversalActiveEnumerationWorker["eta"]["reason"]} */ (reason),
+    reason: /** @type {UniversalActiveEnumerationWorker["eta"]["reason"]} */ (
+      reason
+    ),
   };
 }
 

@@ -315,13 +315,7 @@ export function markActivePermitEnumerationSnapshotStale(
  * @param {number} nowMs - Observation epoch.
  * @returns {ActiveEnumerationWorker} Public active-worker projection.
  */
-function projectActiveWorker(
-  definition,
-  worker,
-  samples,
-  processAlive,
-  nowMs,
-) {
+function projectActiveWorker(definition, worker, samples, processAlive, nowMs) {
   const completedUnits = worker.completedWindows;
   const totalUnits = worker.totalWindows;
   const remainingUnits = Math.max(0, totalUnits - completedUnits);
@@ -362,9 +356,7 @@ function projectActiveWorker(
     totalUnits,
     remainingUnits,
     completionPercent:
-      totalUnits === 0
-        ? 0
-        : round((completedUnits / totalUnits) * 100, 3),
+      totalUnits === 0 ? 0 : round((completedUnits / totalUnits) * 100, 3),
     locallyCapturedRecords:
       definition.countSource === "local_checkpoint"
         ? worker.accessibleRecords
@@ -560,8 +552,7 @@ function calculateSegmentRates(samples) {
   for (let segment = 1; segment < RATE_SEGMENT_COUNT; segment += 1) {
     const target =
       first.observedAtMs +
-      ((last.observedAtMs - first.observedAtMs) * segment) /
-        RATE_SEGMENT_COUNT;
+      ((last.observedAtMs - first.observedAtMs) * segment) / RATE_SEGMENT_COUNT;
     const nearest = samples.reduce((selected, sample) =>
       Math.abs(sample.observedAtMs - target) <
       Math.abs(selected.observedAtMs - target)
@@ -594,8 +585,7 @@ function calculateSegmentRates(samples) {
 function trimHistory(samples, nowMs) {
   while (
     samples.length > 1 &&
-    (samples[1]?.observedAtMs ?? nowMs) <
-      nowMs - MAXIMUM_HISTORY_WINDOW_MS
+    (samples[1]?.observedAtMs ?? nowMs) < nowMs - MAXIMUM_HISTORY_WINDOW_MS
   ) {
     samples.shift();
   }
