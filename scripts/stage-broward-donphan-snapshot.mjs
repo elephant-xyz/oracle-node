@@ -60,14 +60,24 @@ const S3_ROOT = "publication-staging/broward/donphan/snapshots";
 const DEFAULT_OUTPUT_ROOT = "downloads/broward/donphan-staging";
 const DEFAULT_BATCH_SIZE = 2_000;
 const SNAPSHOT_SCHEMA_VERSION = "oracle-node.broward-donphan-snapshot.v2";
-const PEMBROKE_PINES_TERMINAL_EXCEPTIONS = Object.freeze({
-  jurisdiction: "Pembroke Pines",
-  sourceSystem: "broward_pembroke_pines_tyler_permits",
-  kind: "source_missing_record",
-  count: 2,
-  treatment: "accepted_terminal_exclusion",
-  affectsPublishedPermitRows: false,
-});
+const ACCEPTED_SOURCE_MISSING_EXCEPTIONS = Object.freeze([
+  Object.freeze({
+    jurisdiction: "Oakland Park",
+    sourceSystem: "broward_oakland_park_tyler_permits",
+    kind: "source_missing_record",
+    count: 1,
+    treatment: "accepted_terminal_exclusion",
+    affectsPublishedPermitRows: false,
+  }),
+  Object.freeze({
+    jurisdiction: "Pembroke Pines",
+    sourceSystem: "broward_pembroke_pines_tyler_permits",
+    kind: "source_missing_record",
+    count: 2,
+    treatment: "accepted_terminal_exclusion",
+    affectsPublishedPermitRows: false,
+  }),
+]);
 
 /**
  * @typedef {object} FieldSchema
@@ -91,7 +101,8 @@ const PEMBROKE_PINES_TERMINAL_EXCEPTIONS = Object.freeze({
  * @property {number} distinctPermitIds - Distinct permit primary keys.
  * @property {number} linkedPermits - Permits linked to a Broward property.
  * @property {number} unlinkedPermits - Permits with no property foreign key.
- * @property {number} foreignLinkedPermits - Non-null links outside Broward.
+ * @property {number} foreignLinkedPermits - Existing property links outside Broward.
+ * @property {number} brokenPermitLinks - Non-null links to no property row.
  * @property {number} linkedProperties - Broward properties with permits.
  * @property {number} roofingPermits - Explicitly classified roofing permits.
  * @property {number} permitSourceSystemCount - Loaded permit source systems.
@@ -115,6 +126,16 @@ const PEMBROKE_PINES_TERMINAL_EXCEPTIONS = Object.freeze({
  * @property {number} linkedCount - Source rows linked to Broward properties.
  * @property {number} unlinkedCount - Source rows without a property link.
  * @property {number} roofingCount - Explicit roofing rows from the source.
+ *
+ * @typedef {object} IncrementalPartialBoundary
+ * @property {string} sourceSystem - Stable public permit source-system key.
+ * @property {"partial_terminal_artifacts"} coverageBoundary - Explicitly partial source scope.
+ * @property {number} incrementalLoadCount - Completed strict incremental receipts.
+ * @property {number} incrementalAcceptedRecordCount - Rows accepted across those receipts.
+ * @property {number} currentLoadedSourceRows - Frozen rows currently loaded for the source.
+ * @property {string} latestCompletedAt - Latest completed incremental load timestamp.
+ * @property {Record<string,unknown>} highWatermark - Aggregate-only source cursor summary.
+ * @property {Record<string,number>} excludedCounts - Aggregate exclusions by safe reason.
  *
  * @typedef {object} ExportResult
  * @property {number} rowCount - Rows physically appended to Parquet.
@@ -246,16 +267,51 @@ FROM public.property_improvements
 WHERE source_system LIKE $1`;
 
 const PERMIT_LINK_COUNTS_SQL = `
-SELECT count(*) FILTER (WHERE p.property_id IS NOT NULL) AS linked_permits,
+SELECT count(*) FILTER (
+         WHERE p.property_id IS NOT NULL AND p.source_system=$1
+       ) AS linked_permits,
+       count(*) FILTER (
+         WHERE pi.property_id IS NOT NULL
+           AND p.property_id IS NOT NULL
+           AND p.source_system IS DISTINCT FROM $1
+       ) AS foreign_linked_permits,
        count(*) FILTER (
          WHERE pi.property_id IS NOT NULL AND p.property_id IS NULL
-       ) AS foreign_linked_permits,
-       count(DISTINCT p.property_id) AS linked_properties
+       ) AS broken_permit_links,
+       count(DISTINCT p.property_id) FILTER (
+         WHERE p.source_system=$1
+       ) AS linked_properties
 FROM public.property_improvements pi
-LEFT JOIN public.properties p
-  ON p.property_id=pi.property_id
- AND p.source_system=$1
+LEFT JOIN public.properties p ON p.property_id=pi.property_id
 WHERE pi.source_system LIKE $2`;
+
+const INCREMENTAL_PARTIAL_BOUNDARIES_SQL = `
+WITH completed AS (
+  SELECT source_system,unique_record_count,completed_at,
+         high_watermark,excluded_counts
+  FROM ingest_control.broward_permit_list_load_runs
+  WHERE incremental_manifest_sha256 IS NOT NULL
+    AND status='complete'
+    AND source_system IS NOT NULL
+    AND completed_at IS NOT NULL
+), rollup AS (
+  SELECT source_system,
+         count(*) AS incremental_load_count,
+         sum(unique_record_count) AS incremental_accepted_record_count
+  FROM completed
+  GROUP BY source_system
+), latest AS (
+  SELECT DISTINCT ON (source_system)
+         source_system,completed_at,high_watermark,excluded_counts
+  FROM completed
+  ORDER BY source_system,completed_at DESC
+)
+SELECT latest.source_system,rollup.incremental_load_count,
+       rollup.incremental_accepted_record_count,latest.completed_at,
+       latest.high_watermark,latest.excluded_counts
+FROM latest
+JOIN rollup USING (source_system)
+ORDER BY latest.source_system`;
 
 const SUNBIZ_COUNTS_SQL = `
 SELECT count(*) AS sunbiz_address_matches,
@@ -725,6 +781,7 @@ function normalizeSnapshotCounts(row) {
         row.foreign_linked_permits,
         "foreign_linked_permits",
       ),
+      brokenPermitLinks: count(row.broken_permit_links, "broken_permit_links"),
       linkedProperties: count(row.linked_properties, "linked_properties"),
       roofingPermits: count(row.roofing_permits, "roofing_permits"),
       permitSourceSystemCount: count(
@@ -782,12 +839,158 @@ function normalizeSnapshotCounts(row) {
 }
 
 /**
+ * Retain only aggregate cursor fields that define the currently published
+ * partial source boundary. Private paths, record identities, and payloads are
+ * never accepted into publication metadata.
+ *
+ * @param {unknown} value - Incremental manifest high-watermark JSON.
+ * @returns {Record<string,unknown>} Public-safe aggregate cursor summary.
+ */
+function summarizeIncrementalHighWatermark(value) {
+  if (!isRecord(value) || typeof value.family !== "string") {
+    throw new Error("Incremental high watermark is missing its family");
+  }
+  /** @type {Record<string,unknown>} */
+  const summary = { family: value.family };
+  const copyCounts = (/** @type {readonly string[]} */ keys) => {
+    for (const key of keys) {
+      summary[key] = count(value[key], `high_watermark.${key}`);
+    }
+  };
+  if (value.family === "municipal_property_queries") {
+    copyCounts(["nextQueryIndex", "completedQueries"]);
+    return summary;
+  }
+  if (value.family === "municipal_record_type_pages") {
+    copyCounts([
+      "cappedPartitionCount",
+      "currentPartitionPageCount",
+      "checkpointNextPendingCount",
+      "safeCompletedPartitionCount",
+    ]);
+    return summary;
+  }
+  if (value.family === "accela_csv_windows") {
+    copyCounts([
+      "pendingWindowCount",
+      "completedWindowCount",
+      "unresolvedShardPlanCount",
+    ]);
+    if (!isRecord(value.gap) || !Array.isArray(value.gap.plans)) {
+      throw new Error("Accela incremental watermark is missing gap plans");
+    }
+    summary.gapPlans = value.gap.plans.map((planValue) => {
+      if (
+        !isRecord(planValue) ||
+        typeof planValue.seedExhausted !== "boolean"
+      ) {
+        throw new Error("Accela incremental gap plan is malformed");
+      }
+      return {
+        seedExhausted: planValue.seedExhausted,
+        nextSeedRowIndex: count(
+          planValue.nextSeedRowIndex,
+          "gap.nextSeedRowIndex",
+        ),
+        retainedRecordCount: count(
+          planValue.retainedRecordCount,
+          "gap.retainedRecordCount",
+        ),
+      };
+    });
+    return summary;
+  }
+  throw new Error(`Unsupported incremental watermark family ${value.family}`);
+}
+
+/**
+ * Normalize strict incremental load receipts into aggregate-only partial-source
+ * boundaries tied to current frozen permit source totals.
+ *
+ * @param {readonly Record<string,unknown>[]} rows - Frozen control-table rows.
+ * @param {readonly PermitSourceCount[]} permitSources - Frozen source totals.
+ * @returns {IncrementalPartialBoundary[]} Public-safe partial boundaries.
+ */
+export function normalizeIncrementalPartialBoundaries(rows, permitSources) {
+  const currentRowsBySource = new Map(
+    permitSources.map((source) => [source.sourceSystem, source.rowCount]),
+  );
+  const exclusionKeys = [
+    "invalid",
+    "undated",
+    "deferred",
+    "duplicate",
+    "in_flight",
+    "incomplete",
+    "non_permit",
+    "source_cap",
+    "unreconciled",
+  ];
+  return rows.map((row) => {
+    const sourceSystem = String(row.source_system ?? "");
+    const currentLoadedSourceRows = currentRowsBySource.get(sourceSystem);
+    const completedAt = new Date(
+      /** @type {string | number | Date} */ (row.completed_at),
+    );
+    if (
+      !/^broward_[a-z0-9_]+$/u.test(sourceSystem) ||
+      currentLoadedSourceRows === undefined ||
+      !Number.isFinite(completedAt.getTime()) ||
+      !isRecord(row.excluded_counts)
+    ) {
+      throw new Error("Incremental partial boundary does not reconcile");
+    }
+    /** @type {Record<string,number>} */
+    const excludedCounts = {};
+    for (const key of exclusionKeys) {
+      excludedCounts[key] = count(
+        row.excluded_counts[key],
+        `excluded_counts.${key}`,
+      );
+    }
+    return {
+      sourceSystem,
+      coverageBoundary: /** @type {"partial_terminal_artifacts"} */ (
+        "partial_terminal_artifacts"
+      ),
+      incrementalLoadCount: count(
+        row.incremental_load_count,
+        "incremental_load_count",
+      ),
+      incrementalAcceptedRecordCount: count(
+        row.incremental_accepted_record_count,
+        "incremental_accepted_record_count",
+      ),
+      currentLoadedSourceRows,
+      latestCompletedAt: completedAt.toISOString(),
+      highWatermark: summarizeIncrementalHighWatermark(row.high_watermark),
+      excludedCounts,
+    };
+  });
+}
+
+/**
+ * Read aggregate-only incremental source boundaries in the existing frozen
+ * transaction and reconcile every source to its physical permit row total.
+ *
+ * @param {import("pg").Client} client - Verified read-only Neon transaction.
+ * @param {readonly PermitSourceCount[]} permitSources - Frozen source totals.
+ * @returns {Promise<IncrementalPartialBoundary[]>} Reconciled source boundaries.
+ */
+async function readIncrementalPartialBoundaries(client, permitSources) {
+  const result = await client.query(INCREMENTAL_PARTIAL_BOUNDARIES_SQL);
+  return normalizeIncrementalPartialBoundaries(result.rows, permitSources);
+}
+
+/**
  * Construct coverage with explicit partial and denominator semantics.
  *
  * @param {object} input - Transactionally frozen coverage inputs.
  * @param {string} input.snapshotTimestamp - Exact transaction timestamp.
  * @param {SnapshotCounts} input.counts - Reconciled database aggregates.
  * @param {readonly PermitSourceCount[]} input.permitSources - Source-system counts.
+ * @param {readonly IncrementalPartialBoundary[]} input.incrementalPartialSourceBoundaries
+ *   Strict partial-inventory provenance frozen in the same transaction.
  * @param {ReturnType<typeof buildBrowardPermitRouteStatus>} input.routes - Executable routes.
  * @returns {Record<string,unknown>} MCP-compatible coverage plus explicit partial metadata.
  */
@@ -803,7 +1006,8 @@ export function buildCoverageSnapshot(input) {
   const permitRowsAccountedFor =
     input.counts.linkedPermits +
       input.counts.unlinkedPermits +
-      input.counts.foreignLinkedPermits ===
+      input.counts.foreignLinkedPermits +
+      input.counts.brokenPermitLinks ===
     input.counts.permitRows;
   return {
     schemaVersion: SNAPSHOT_SCHEMA_VERSION,
@@ -838,6 +1042,9 @@ export function buildCoverageSnapshot(input) {
         unattendedUnavailableRouteCount:
           input.routes.unattendedUnavailableCurrentRoutes,
         loadedSourceSystemCount: input.counts.permitSourceSystemCount,
+        incrementalPartialSourceCount:
+          input.incrementalPartialSourceBoundaries.length,
+        incrementalBoundaryBasis: "partial_terminal_artifacts",
       },
     },
     datasets: [
@@ -891,6 +1098,8 @@ export function buildCoverageSnapshot(input) {
       permitRowsMatchDistinctIds:
         input.counts.permitRows === input.counts.distinctPermitIds,
       permitRowsAccountedFor,
+      noForeignPermitLinks: input.counts.foreignLinkedPermits === 0,
+      noBrokenPermitLinks: input.counts.brokenPermitLinks === 0,
       permitSourceRowsAccountedFor:
         sourcePermitRows === input.counts.permitRows,
       roofingRowsAccountedFor:
@@ -907,6 +1116,8 @@ export function buildCoverageSnapshot(input) {
         input.counts.nullFolios === 0 &&
         input.counts.permitRows === input.counts.distinctPermitIds &&
         permitRowsAccountedFor &&
+        input.counts.foreignLinkedPermits === 0 &&
+        input.counts.brokenPermitLinks === 0 &&
         sourcePermitRows === input.counts.permitRows &&
         sourceRoofingRows === input.counts.roofingPermits &&
         input.permitSources.length === input.counts.permitSourceSystemCount &&
@@ -918,6 +1129,7 @@ export function buildCoverageSnapshot(input) {
       linked: input.counts.linkedPermits,
       unlinked: input.counts.unlinkedPermits,
       foreignLinked: input.counts.foreignLinkedPermits,
+      brokenLinks: input.counts.brokenPermitLinks,
       linkedProperties: input.counts.linkedProperties,
       roofing: input.counts.roofingPermits,
       bbbMatchedProperties: input.counts.bbbMatchedProperties,
@@ -931,7 +1143,9 @@ export function buildCoverageSnapshot(input) {
     },
     permitSources: input.permitSources,
     routeCoverage: input.routes,
-    acceptedTerminalExceptions: [PEMBROKE_PINES_TERMINAL_EXCEPTIONS],
+    acceptedTerminalExceptions: ACCEPTED_SOURCE_MISSING_EXCEPTIONS,
+    incrementalPartialSourceBoundaries:
+      input.incrementalPartialSourceBoundaries,
   };
 }
 
@@ -1472,6 +1686,8 @@ export async function stageBrowardDonphanSnapshot(options) {
       unlinkedCount: count(row.unlinked_count, "source.unlinked_count"),
       roofingCount: count(row.roofing_count, "source.roofing_count"),
     }));
+    const incrementalPartialSourceBoundaries =
+      await readIncrementalPartialBoundaries(client, permitSources);
     const propertyPath = path.join(temporaryDirectory, "query-table.parquet");
     const permitPath = path.join(
       temporaryDirectory,
@@ -1525,6 +1741,7 @@ export async function stageBrowardDonphanSnapshot(options) {
       snapshotTimestamp: normalized.snapshotTimestamp,
       counts: normalized.counts,
       permitSources,
+      incrementalPartialSourceBoundaries,
       routes,
     });
     if (
@@ -1606,7 +1823,8 @@ export async function stageBrowardDonphanSnapshot(options) {
       counts: normalized.counts,
       permitSources,
       routeCoverage: routes,
-      acceptedTerminalExceptions: [PEMBROKE_PINES_TERMINAL_EXCEPTIONS],
+      acceptedTerminalExceptions: ACCEPTED_SOURCE_MISSING_EXCEPTIONS,
+      incrementalPartialSourceBoundaries,
       propertyReuse,
       artifactSchemas: {
         property: PROPERTY_FIELDS,

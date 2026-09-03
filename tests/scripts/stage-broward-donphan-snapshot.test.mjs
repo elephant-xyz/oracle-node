@@ -6,6 +6,7 @@ import {
   PROPERTY_FIELDS,
   browardSnapshotPrefix,
   buildCoverageSnapshot,
+  normalizeIncrementalPartialBoundaries,
   parseSitusAddress,
   parseSnapshotOptions,
   snapshotVersion,
@@ -31,6 +32,7 @@ function counts() {
     linkedPermits: 359_079,
     unlinkedPermits: 135_672,
     foreignLinkedPermits: 0,
+    brokenPermitLinks: 0,
     linkedProperties: 67_180,
     roofingPermits: 48_719,
     permitSourceSystemCount: 2,
@@ -186,7 +188,99 @@ describe("Broward Donphan snapshot staging", () => {
     ).toThrow("Current appraisal state differs");
   });
 
+  it("publishes only aggregate-safe incremental partial-source boundaries", () => {
+    expect(
+      normalizeIncrementalPartialBoundaries(
+        [
+          {
+            source_system: "broward_margate_click2gov_permits",
+            incremental_load_count: "1",
+            incremental_accepted_record_count: "980",
+            completed_at: loadedAt,
+            high_watermark: {
+              family: "municipal_property_queries",
+              nextQueryIndex: 168,
+              completedQueries: 168,
+              seedSha256: "private-hash",
+            },
+            excluded_counts: {
+              invalid: 0,
+              undated: 0,
+              deferred: 0,
+              duplicate: 0,
+              in_flight: 0,
+              incomplete: 0,
+              non_permit: 0,
+              source_cap: 0,
+              unreconciled: 0,
+            },
+          },
+        ],
+        [
+          {
+            sourceSystem: "broward_margate_click2gov_permits",
+            rowCount: 980,
+            linkedCount: 900,
+            unlinkedCount: 80,
+            roofingCount: 20,
+          },
+        ],
+      ),
+    ).toEqual([
+      {
+        sourceSystem: "broward_margate_click2gov_permits",
+        coverageBoundary: "partial_terminal_artifacts",
+        incrementalLoadCount: 1,
+        incrementalAcceptedRecordCount: 980,
+        currentLoadedSourceRows: 980,
+        latestCompletedAt: loadedAt,
+        highWatermark: {
+          family: "municipal_property_queries",
+          nextQueryIndex: 168,
+          completedQueries: 168,
+        },
+        excludedCounts: {
+          invalid: 0,
+          undated: 0,
+          deferred: 0,
+          duplicate: 0,
+          in_flight: 0,
+          incomplete: 0,
+          non_permit: 0,
+          source_cap: 0,
+          unreconciled: 0,
+        },
+      },
+    ]);
+  });
+
   it("marks reconciled current data as supported partial", () => {
+    const incrementalPartialSourceBoundaries = [
+      {
+        sourceSystem: "broward_margate_click2gov_permits",
+        coverageBoundary: /** @type {const} */ ("partial_terminal_artifacts"),
+        incrementalLoadCount: 1,
+        incrementalAcceptedRecordCount: 980,
+        currentLoadedSourceRows: 980,
+        latestCompletedAt: loadedAt,
+        highWatermark: {
+          family: "municipal_property_queries",
+          nextQueryIndex: 168,
+          completedQueries: 168,
+        },
+        excludedCounts: {
+          invalid: 0,
+          undated: 0,
+          deferred: 0,
+          duplicate: 0,
+          in_flight: 0,
+          incomplete: 0,
+          non_permit: 0,
+          source_cap: 0,
+          unreconciled: 0,
+        },
+      },
+    ];
     const coverage = buildCoverageSnapshot({
       snapshotTimestamp: loadedAt,
       counts: counts(),
@@ -206,6 +300,7 @@ describe("Broward Donphan snapshot staging", () => {
           roofingCount: 23_719,
         },
       ],
+      incrementalPartialSourceBoundaries,
       routes: {
         registryVersion: "2026-09-01.2",
         totalCurrentRoutes: 32,
@@ -237,12 +332,22 @@ describe("Broward Donphan snapshot staging", () => {
           routeCount: 32,
           supportedRouteCount: 24,
           unattendedUnavailableRouteCount: 8,
+          incrementalPartialSourceCount: 1,
+          incrementalBoundaryBasis: "partial_terminal_artifacts",
         },
       },
       reconciliation: {
         allBalanced: true,
+        noForeignPermitLinks: true,
+        noBrokenPermitLinks: true,
       },
       acceptedTerminalExceptions: [
+        {
+          jurisdiction: "Oakland Park",
+          kind: "source_missing_record",
+          count: 1,
+          treatment: "accepted_terminal_exclusion",
+        },
         {
           jurisdiction: "Pembroke Pines",
           kind: "source_missing_record",
@@ -250,6 +355,7 @@ describe("Broward Donphan snapshot staging", () => {
           treatment: "accepted_terminal_exclusion",
         },
       ],
+      incrementalPartialSourceBoundaries,
     });
   });
 });
