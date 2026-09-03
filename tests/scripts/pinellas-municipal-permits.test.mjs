@@ -27,5 +27,14 @@ describe("Pinellas municipal permit catalog", () => {
     expect(
       PINELLAS_MUNICIPAL_PERMIT_SOURCES.map((source) => source.key),
     ).toContain("clearwater-accela");
+    const byKey = Object.fromEntries(
+      PINELLAS_MUNICIPAL_PERMIT_SOURCES.map((source) => [source.key, source]),
+    );
+    expect(byKey["largo-energov"]?.status).toBe("adapter-ready");
+    expect(byKey["tarpon-springs-click2gov"]?.status).toBe("adapter-ready");
+    expect(byKey["pinellas-park-tyler"]?.status).toBe("adapter-ready");
+    expect(byKey["pinellas-park-tyler"]?.vendor).toBe("tyler-energov-css");
+    expect(byKey["st-petersburg"]?.status).toBe("needs-review");
+    expect(byKey["dunedin-css"]?.status).toBe("needs-review");
   });
 });

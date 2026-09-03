@@ -2,8 +2,9 @@
  * Pinellas municipal permit portals that are not county Accela PINELLAS.
  *
  * HTTP probes confirm the public homepage. Harvest adapters are per vendor:
- * Clearwater Accela reuses the county date-window runner; Largo/Park are Tyler;
- * Tarpon Springs is Click2Gov; St. Pete still needs a public search-by-parcel
+ * Clearwater Accela reuses the county date-window runner; Largo is Tyler Civic
+ * Access; Pinellas Park Portico is an apply launcher over EnerGov CSS; Tarpon
+ * Springs is Click2Gov HTTP; St. Pete still needs a public search-by-parcel
  * certification.
  */
 
@@ -14,7 +15,7 @@
  * @property {string} vendor Adapter family.
  * @property {string} probeUrl Public URL to HTTP-probe.
  * @property {string} harvestMode How this source is collected.
- * @property {"ready" | "probe-next" | "needs-review"} status Adapter readiness.
+ * @property {"ready" | "adapter-ready" | "probe-next" | "needs-review"} status Adapter readiness.
  */
 
 /** @type {readonly MunicipalPermitSource[]} */
@@ -35,17 +36,18 @@ export const PINELLAS_MUNICIPAL_PERMIT_SOURCES = [
     vendor: "tyler-civic-access",
     probeUrl: "https://cityoflargofl-energovweb.tylerhost.net/apps/selfservice",
     harvestMode:
-      "Tyler Civic Access keyword search (scripts/permit-source-adapters/tyler-civic-access.mjs)",
-    status: "probe-next",
+      "Tyler Civic Access keyword search (scripts/probe-pinellas-tyler-civic-access.mjs --agency largo; harvest: scripts/run-pinellas-tyler-permit-harvest.mjs)",
+    status: "adapter-ready",
   },
   {
     key: "pinellas-park-tyler",
     jurisdiction: "City of Pinellas Park",
-    vendor: "tyler-portico",
+    vendor: "tyler-energov-css",
     probeUrl:
       "https://pinellasparkfl.tylerportico.com/navigator/public/selections/navigator?parentId=5996",
-    harvestMode: "Tyler Portico navigator; Civic Access API not confirmed",
-    status: "probe-next",
+    harvestMode:
+      "Portico is an apply launcher; search is EnerGov CSS https://egcss.pinellas-park.com/energov_prod/selfservice (scripts/probe-pinellas-park-portico.mjs; Chrome probe --agency park)",
+    status: "adapter-ready",
   },
   {
     key: "tarpon-springs-click2gov",
@@ -53,8 +55,8 @@ export const PINELLAS_MUNICIPAL_PERMIT_SOURCES = [
     vendor: "click2gov",
     probeUrl: "https://tarp-egov.aspgov.com/Click2GovBP/index.html",
     harvestMode:
-      "Click2Gov (aspgov) search by application # / address / parcel",
-    status: "probe-next",
+      "Click2Gov HTTP address search + Status Detail (scripts/probe-tarpon-springs-click2gov.mjs; harvest: scripts/run-tarpon-springs-permit-harvest.mjs)",
+    status: "adapter-ready",
   },
   {
     key: "dunedin-css",

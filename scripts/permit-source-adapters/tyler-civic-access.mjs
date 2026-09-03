@@ -234,14 +234,27 @@ function buildPermitDetailUrl(portalBaseUrl, caseId) {
  *
  * @param {string} portalBaseUrl - Normalized Civic Access base URL.
  * @param {string} query - Exact public permit number or address keyword.
+ * @param {number} [pageNumber=1] - 1-based result page (`pn`).
+ * @param {number} [pageSize=10] - Page size (`ps`).
  * @returns {string} Rendered public search route.
  */
-function buildSearchRouteUrl(portalBaseUrl, query) {
+export function buildSearchRouteUrl(
+  portalBaseUrl,
+  query,
+  pageNumber = 1,
+  pageSize = 10,
+) {
+  if (!Number.isInteger(pageNumber) || pageNumber < 1) {
+    throw new Error("pageNumber must be an integer >= 1");
+  }
+  if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100) {
+    throw new Error("pageSize must be an integer from 1 through 100");
+  }
   const params = new URLSearchParams({
     m: "1",
     fm: "1",
-    ps: "10",
-    pn: "1",
+    ps: String(pageSize),
+    pn: String(pageNumber),
     em: "true",
     st: query,
   });
@@ -374,6 +387,25 @@ function resolveChromeExecutablePath() {
 }
 
 /**
+ * Launch options for headless Chrome on this VM (no-sandbox) and local laptops.
+ *
+ * @returns {import("puppeteer").LaunchOptions} Puppeteer launch options.
+ */
+export function createTylerChromeLaunchOptions() {
+  const executablePath = resolveChromeExecutablePath();
+  return {
+    headless: true,
+    args: [
+      "--no-sandbox",
+      "--disable-dev-shm-usage",
+      "--disable-gpu",
+      "--disable-setuid-sandbox",
+    ],
+    ...(executablePath === null ? {} : { executablePath }),
+  };
+}
+
+/**
  * Pause between public lookups to keep the pilot single-threaded and low-rate.
  *
  * @param {number} milliseconds - Delay duration.
@@ -433,11 +465,7 @@ export async function probeTylerCivicAccess({
     throw new Error(`delayMs must be at least ${String(MIN_DELAY_MS)}`);
   }
 
-  const executablePath = resolveChromeExecutablePath();
-  const browser = await puppeteer.launch({
-    headless: true,
-    ...(executablePath === null ? {} : { executablePath }),
-  });
+  const browser = await puppeteer.launch(createTylerChromeLaunchOptions());
   /** @type {NormalizedCityPermit[]} */
   const records = [];
   /** @type {TylerProbeObservation[]} */
@@ -495,5 +523,144 @@ export async function probeTylerCivicAccess({
   return {
     records: dedupeAndSortNormalizedPermits(records),
     observations,
+  };
+}
+
+/**
+ * @typedef {object} TylerHarvestPageObservation
+ * @property {string} query Keyword submitted on this page.
+ * @property {number} pageNumber 1-based Civic Access page.
+ * @property {number} resultCount TotalFound (or entity count) reported for the page.
+ * @property {number} permitCount Permit entities normalized from this page.
+ * @property {number} httpStatus Search API HTTP status.
+ * @property {number} searchMs Wall time for this page fetch.
+ */
+
+/**
+ * @typedef {object} TylerHarvestResult
+ * @property {readonly NormalizedCityPermit[]} records Deduplicated permits across all pages.
+ * @property {readonly TylerHarvestPageObservation[]} pages Per-page timing and counts.
+ */
+
+const MAX_HARVEST_QUERIES = 200;
+const MAX_PAGES_PER_QUERY = 50;
+
+/**
+ * Paginate Civic Access keyword search for a harvest (not the 10-lookup probe helper).
+ *
+ * Reuses one browser so tenant bootstrap happens once. Delay between pages is at
+ * least {@link MIN_DELAY_MS}. Does not raise portal concurrency — one tab only.
+ *
+ * @param {object} params Harvest parameters.
+ * @param {TylerCivicAccessConfig} params.config Jurisdiction source configuration.
+ * @param {readonly string[]} params.queries Address or permit-number keywords.
+ * @param {number} [params.delayMs=1500] Delay between page fetches; minimum 1000 ms.
+ * @param {number} [params.pageSize=10] Civic Access `ps` page size.
+ * @param {number} [params.maxPagesPerQuery=50] Hard page ceiling per keyword.
+ * @param {number} [params.navigationTimeoutMs=45000] First-page bootstrap timeout.
+ * @param {number} [params.searchTimeoutMs=45000] Public search API timeout.
+ * @returns {Promise<TylerHarvestResult>} Normalized records plus per-page observations.
+ */
+export async function harvestTylerCivicAccessPages({
+  config: rawConfig,
+  queries: rawQueries,
+  delayMs = 1_500,
+  pageSize = 10,
+  maxPagesPerQuery = MAX_PAGES_PER_QUERY,
+  navigationTimeoutMs = DEFAULT_NAVIGATION_TIMEOUT_MS,
+  searchTimeoutMs = DEFAULT_SEARCH_TIMEOUT_MS,
+}) {
+  const config = validateConfig(rawConfig);
+  if (!Number.isInteger(delayMs) || delayMs < MIN_DELAY_MS) {
+    throw new Error(`delayMs must be at least ${String(MIN_DELAY_MS)}`);
+  }
+  if (
+    !Number.isInteger(maxPagesPerQuery) ||
+    maxPagesPerQuery < 1 ||
+    maxPagesPerQuery > MAX_PAGES_PER_QUERY
+  ) {
+    throw new Error(
+      `maxPagesPerQuery must be an integer from 1 through ${String(MAX_PAGES_PER_QUERY)}`,
+    );
+  }
+  const queries = rawQueries
+    .map((query) => (typeof query === "string" ? query.trim() : ""))
+    .filter((query) => query.length > 0);
+  if (queries.length === 0) {
+    throw new Error("At least one Tyler harvest query is required");
+  }
+  if (queries.length > MAX_HARVEST_QUERIES) {
+    throw new Error(
+      `Refusing ${String(queries.length)} Tyler harvest queries; maximum is ${String(MAX_HARVEST_QUERIES)}`,
+    );
+  }
+
+  const browser = await puppeteer.launch(createTylerChromeLaunchOptions());
+  /** @type {NormalizedCityPermit[]} */
+  const records = [];
+  /** @type {TylerHarvestPageObservation[]} */
+  const pages = [];
+  const searchApiUrl = `${config.portalBaseUrl}/api/energov/search/search`;
+
+  try {
+    const page = await browser.newPage();
+    try {
+      let firstNavigation = true;
+      for (const [queryIndex, query] of queries.entries()) {
+        for (let pageNumber = 1; pageNumber <= maxPagesPerQuery; pageNumber += 1) {
+          if (firstNavigation === false) {
+            await delay(delayMs);
+          }
+          const searchUrl = buildSearchRouteUrl(
+            config.portalBaseUrl,
+            query,
+            pageNumber,
+            pageSize,
+          );
+          const started = Date.now();
+          const responsePromise = page.waitForResponse(
+            (response) =>
+              response.url() === searchApiUrl &&
+              response.request().method() === "POST",
+            { timeout: searchTimeoutMs },
+          );
+          await page.goto(searchUrl, {
+            waitUntil: "domcontentloaded",
+            timeout: navigationTimeoutMs,
+          });
+          firstNavigation = false;
+          const response = await responsePromise;
+          const payload = /** @type {unknown} */ (await response.json());
+          const result = readApiResult(payload);
+          const normalized = normalizeTylerSearchResponse(payload, config);
+          records.push(...normalized);
+          const totalFound = result.TotalFound ?? result.EntityResults.length;
+          pages.push({
+            query,
+            pageNumber,
+            resultCount: totalFound,
+            permitCount: normalized.length,
+            httpStatus: response.status(),
+            searchMs: Date.now() - started,
+          });
+          const fetchedThrough = pageNumber * pageSize;
+          if (normalized.length === 0 || fetchedThrough >= totalFound) {
+            break;
+          }
+        }
+        if (queryIndex < queries.length - 1) {
+          await delay(delayMs);
+        }
+      }
+    } finally {
+      await page.close().catch(() => undefined);
+    }
+  } finally {
+    await browser.close().catch(() => undefined);
+  }
+
+  return {
+    records: dedupeAndSortNormalizedPermits(records),
+    pages,
   };
 }
