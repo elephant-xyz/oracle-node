@@ -32,12 +32,12 @@ describe("lee-accela permit harvest helpers", () => {
       summary: null,
       total: null,
     });
-    expect(parseResultSummary("Showing records without a numeric range")).toEqual(
-      {
-        summary: null,
-        total: null,
-      },
-    );
+    expect(
+      parseResultSummary("Showing records without a numeric range"),
+    ).toEqual({
+      summary: null,
+      total: null,
+    });
   });
 
   it("extracts permit links using result-table headers", () => {
