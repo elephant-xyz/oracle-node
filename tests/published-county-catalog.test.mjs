@@ -49,6 +49,7 @@ describe("published county catalog", () => {
       "pinellas",
       "polk",
       "rock-island",
+      "seminole",
     ]);
   });
 

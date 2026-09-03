@@ -1,6 +1,6 @@
 {
   "schemaVersion": "1.0",
-  "generatedAt": "2026-09-02T21:30:38.532Z",
+  "generatedAt": "2026-09-03T21:04:26.085Z",
   "counties": [
     {
       "countyKey": "broward",
@@ -133,6 +133,18 @@
       "permitQueryTableUrl": "https://ipfs.filebase.io/ipns/k51qzi5uqu5di42nblo5nuk94aj7af393d9y5vhqxp5dtxikzso0wt14v3p0wa",
       "placesTableUrl": null,
       "updatedAt": "2026-08-14T22:34:30.000Z"
+    },
+    {
+      "countyKey": "seminole",
+      "countyName": "Seminole",
+      "stateCode": "FL",
+      "countyFips": "12117",
+      "status": "published",
+      "queryTableUrl": "https://ipfs.filebase.io/ipns/k51qzi5uqu5di6kqptmkfaoq7yxc7z04spm1n0gbrc26toi2eah1b66cfrqfwp",
+      "datasetCoverageUrl": "https://ipfs.filebase.io/ipns/k51qzi5uqu5dmawnn59hx0z87i36xk60os0vur3m05p8u2ial89cn2oay7o9oz",
+      "permitQueryTableUrl": null,
+      "placesTableUrl": null,
+      "updatedAt": "2026-09-01T14:16:20.247Z"
     }
   ]
 }
