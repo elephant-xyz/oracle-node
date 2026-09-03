@@ -238,15 +238,13 @@ export function parseSupportedPermitOptions(argv) {
  * @returns {WarmCitizenserveBrowserPool} Empty sequential browser pool.
  */
 export function createWarmCitizenserveBrowserPool(dependencies = {}) {
-  const launchBrowser =
-    dependencies.launchBrowser ?? createCitizenserveBrowser;
+  const launchBrowser = dependencies.launchBrowser ?? createCitizenserveBrowser;
   const closeBrowser = dependencies.closeBrowser ?? closeCitizenserveBrowser;
   const isConnected =
     dependencies.isConnected ?? ((browser) => browser.connected);
   const wallNow = dependencies.wallNow ?? Date.now;
   const monotonicNow = dependencies.monotonicNow ?? (() => performance.now());
-  const maxIdleMs =
-    dependencies.maxIdleMs ?? DEFAULT_WARM_BROWSER_MAX_IDLE_MS;
+  const maxIdleMs = dependencies.maxIdleMs ?? DEFAULT_WARM_BROWSER_MAX_IDLE_MS;
   const maxClockSkewMs =
     dependencies.maxClockSkewMs ?? DEFAULT_WARM_BROWSER_MAX_CLOCK_SKEW_MS;
   const maxOperationWallMs =
@@ -313,58 +311,58 @@ export function createWarmCitizenserveBrowserPool(dependencies = {}) {
    * @returns {Promise<Result>} Exact operation result.
    */
   const execute = async (key, operation) => {
-      const acquisitionWall = wallNow();
-      const acquisitionMonotonic = monotonicNow();
-      let entry = entries.get(key);
-      if (
-        entry !== undefined &&
-        !reusable(entry, acquisitionWall, acquisitionMonotonic)
-      ) {
-        await invalidate(key);
-        entry = undefined;
-      }
-      if (entry === undefined) {
-        entry = {
-          browser: await launchBrowser(),
-          wallAt: acquisitionWall,
-          monotonicAt: acquisitionMonotonic,
-        };
-        entries.set(key, entry);
-        metrics.launches += 1;
-      } else {
-        metrics.reuses += 1;
-      }
+    const acquisitionWall = wallNow();
+    const acquisitionMonotonic = monotonicNow();
+    let entry = entries.get(key);
+    if (
+      entry !== undefined &&
+      !reusable(entry, acquisitionWall, acquisitionMonotonic)
+    ) {
+      await invalidate(key);
+      entry = undefined;
+    }
+    if (entry === undefined) {
+      entry = {
+        browser: await launchBrowser(),
+        wallAt: acquisitionWall,
+        monotonicAt: acquisitionMonotonic,
+      };
+      entries.set(key, entry);
+      metrics.launches += 1;
+    } else {
+      metrics.reuses += 1;
+    }
 
-      const operationWall = wallNow();
-      const operationMonotonic = monotonicNow();
-      try {
-        const result = await operation(entry.browser);
-        const completedWall = wallNow();
-        const completedMonotonic = monotonicNow();
-        const wallElapsed = completedWall - operationWall;
-        const monotonicElapsed = completedMonotonic - operationMonotonic;
-        const unsafeElapsed =
-          wallElapsed < 0 ||
-          monotonicElapsed < 0 ||
-          wallElapsed > maxOperationWallMs ||
-          Math.abs(wallElapsed - monotonicElapsed) > maxClockSkewMs;
-        if (unsafeElapsed) {
-          await invalidate(key);
-          throw new Error(
-            "Warm Citizenserve browser invalidated after unsafe clock movement",
-          );
-        }
-        if (!isConnected(entry.browser)) {
-          await invalidate(key);
-        } else {
-          entry.wallAt = completedWall;
-          entry.monotonicAt = completedMonotonic;
-        }
-        return result;
-      } catch (error) {
+    const operationWall = wallNow();
+    const operationMonotonic = monotonicNow();
+    try {
+      const result = await operation(entry.browser);
+      const completedWall = wallNow();
+      const completedMonotonic = monotonicNow();
+      const wallElapsed = completedWall - operationWall;
+      const monotonicElapsed = completedMonotonic - operationMonotonic;
+      const unsafeElapsed =
+        wallElapsed < 0 ||
+        monotonicElapsed < 0 ||
+        wallElapsed > maxOperationWallMs ||
+        Math.abs(wallElapsed - monotonicElapsed) > maxClockSkewMs;
+      if (unsafeElapsed) {
         await invalidate(key);
-        throw error;
+        throw new Error(
+          "Warm Citizenserve browser invalidated after unsafe clock movement",
+        );
       }
+      if (!isConnected(entry.browser)) {
+        await invalidate(key);
+      } else {
+        entry.wallAt = completedWall;
+        entry.monotonicAt = completedMonotonic;
+      }
+      return result;
+    } catch (error) {
+      await invalidate(key);
+      throw error;
+    }
   };
 
   return {
@@ -398,9 +396,7 @@ export function createWarmCitizenserveBrowserPool(dependencies = {}) {
       await Promise.all([...operationTails.values()]);
       const retained = [...entries.values()];
       entries.clear();
-      await Promise.all(
-        retained.map((entry) => closeBrowser(entry.browser)),
-      );
+      await Promise.all(retained.map((entry) => closeBrowser(entry.browser)));
     },
   };
 }
@@ -988,12 +984,7 @@ async function probeAccela(candidate, itemDirectory, options) {
  *   Optional pool used only by the measured-safe route allowlist.
  * @returns {Promise<ProbeOutcome>} Explicit municipal outcome.
  */
-async function probeMunicipal(
-  candidate,
-  itemDirectory,
-  options,
-  browserPool,
-) {
+async function probeMunicipal(candidate, itemDirectory, options, browserPool) {
   const recordsPath = path.join(itemDirectory, "records.private.jsonl");
   const summaryPath = path.join(itemDirectory, "summary.json");
   const warmBrowserKey =

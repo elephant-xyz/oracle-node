@@ -612,15 +612,12 @@ describe("Broward supported-route permit ingest", () => {
       active -= 1;
       return browser;
     });
-    const second = pool.run(
-      "www6.citizenserve.com:117",
-      async (browser) => {
-        active += 1;
-        maximumActive = Math.max(maximumActive, active);
-        active -= 1;
-        return browser;
-      },
-    );
+    const second = pool.run("www6.citizenserve.com:117", async (browser) => {
+      active += 1;
+      maximumActive = Math.max(maximumActive, active);
+      active -= 1;
+      return browser;
+    });
     while (releaseFirst === null) {
       await new Promise((resolvePromise) => setImmediate(resolvePromise));
     }
