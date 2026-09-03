@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { APPROVED_PUBLIC_FIELDS } from "../../scripts/audit-broward-appraisal-publication.mjs";
 import {
+  COCONUT_CREEK_PERMIT_SOURCE,
   PERMIT_FIELDS,
   PROPERTY_FIELDS,
   browardSnapshotPrefix,
@@ -53,6 +54,12 @@ function counts() {
 }
 
 describe("Broward Donphan snapshot staging", () => {
+  it("includes the incremental Coconut Creek permit-status source", () => {
+    expect(COCONUT_CREEK_PERMIT_SOURCE).toBe(
+      "broward_coconut_creek_permit_status",
+    );
+  });
+
   it("builds a path-safe immutable Broward-only version prefix", () => {
     const version = snapshotVersion(loadedAt);
 

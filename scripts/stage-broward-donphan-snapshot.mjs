@@ -53,6 +53,8 @@ const PRODUCTION_ENDPOINT_PREFIX = "ep-mute-leaf";
 const COUNTY = "broward";
 const APPRAISAL_SOURCE = "broward_appraiser";
 const PERMIT_SOURCE_PATTERN = "broward%permits";
+export const COCONUT_CREEK_PERMIT_SOURCE =
+  "broward_coconut_creek_permit_status";
 const APPRAISAL_DENOMINATOR = 534_309;
 const AWS_REGION = "us-east-1"; // pragma: allowlist secret
 const S3_BUCKET = "elephant-oracle-node-environmentbucket-mmsoo3xbdi80";
@@ -236,7 +238,7 @@ SELECT
   pi.estimated_job_value::text AS estimated_job_value
 FROM public.property_improvements pi
 LEFT JOIN public.parcels par ON par.parcel_id=pi.parcel_id
-WHERE pi.source_system LIKE $1
+WHERE pi.source_system LIKE $1 OR pi.source_system=$2
 ORDER BY pi.property_improvement_id`;
 
 const PROPERTY_COUNTS_SQL = `
@@ -264,7 +266,7 @@ SELECT count(*) AS permit_rows,
        min(loaded_at)::text AS permit_first_loaded_at,
        max(loaded_at)::text AS permit_last_loaded_at
 FROM public.property_improvements
-WHERE source_system LIKE $1`;
+WHERE source_system LIKE $1 OR source_system=$2`;
 
 const PERMIT_LINK_COUNTS_SQL = `
 SELECT count(*) FILTER (
@@ -283,7 +285,7 @@ SELECT count(*) FILTER (
        ) AS linked_properties
 FROM public.property_improvements pi
 LEFT JOIN public.properties p ON p.property_id=pi.property_id
-WHERE pi.source_system LIKE $2`;
+WHERE pi.source_system LIKE $2 OR pi.source_system=$3`;
 
 const INCREMENTAL_PARTIAL_BOUNDARIES_SQL = `
 WITH completed AS (
@@ -343,7 +345,7 @@ JOIN public.business_reputation_profiles profile
 JOIN public.properties p
   ON p.property_id=pi.property_id
  AND p.source_system=$1
-WHERE pi.source_system LIKE $2`;
+WHERE pi.source_system LIKE $2 OR pi.source_system=$3`;
 
 /**
  * Parse the narrow local/S3 staging command.
@@ -714,10 +716,12 @@ async function readSnapshotCounts(client) {
   ]);
   const permitResult = await client.query(PERMIT_COUNTS_SQL, [
     PERMIT_SOURCE_PATTERN,
+    COCONUT_CREEK_PERMIT_SOURCE,
   ]);
   const permitLinkResult = await client.query(PERMIT_LINK_COUNTS_SQL, [
     APPRAISAL_SOURCE,
     PERMIT_SOURCE_PATTERN,
+    COCONUT_CREEK_PERMIT_SOURCE,
   ]);
   const sunbizResult = await client.query(SUNBIZ_COUNTS_SQL, [
     APPRAISAL_SOURCE,
@@ -726,6 +730,7 @@ async function readSnapshotCounts(client) {
   const bbbPropertyResult = await client.query(BBB_PROPERTY_COUNTS_SQL, [
     APPRAISAL_SOURCE,
     PERMIT_SOURCE_PATTERN,
+    COCONUT_CREEK_PERMIT_SOURCE,
   ]);
   const rows = [
     propertyResult.rows[0],
@@ -1674,10 +1679,10 @@ export async function stageBrowardDonphanSnapshot(options) {
                 )='true'
               ) AS roofing_count
        FROM public.property_improvements
-       WHERE source_system LIKE $1
+       WHERE source_system LIKE $1 OR source_system=$2
        GROUP BY source_system
        ORDER BY source_system`,
-      [PERMIT_SOURCE_PATTERN],
+      [PERMIT_SOURCE_PATTERN, COCONUT_CREEK_PERMIT_SOURCE],
     );
     const permitSources = sourceResult.rows.map((row) => ({
       sourceSystem: String(row.source_system),
@@ -1723,7 +1728,7 @@ export async function stageBrowardDonphanSnapshot(options) {
     const permitExport = await exportCursorToParquet(client, {
       cursorName: "broward_permit_snapshot",
       sql: PERMIT_SQL,
-      values: [PERMIT_SOURCE_PATTERN],
+      values: [PERMIT_SOURCE_PATTERN, COCONUT_CREEK_PERMIT_SOURCE],
       outputPath: permitPath,
       fields: PERMIT_FIELDS,
       mapRow: permitRecord,
