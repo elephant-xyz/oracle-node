@@ -46,7 +46,6 @@ const DEFAULT_WORK_DIR = "downloads/broward/supported-permit-ingest";
 const DEFAULT_WARM_BROWSER_MAX_IDLE_MS = 5 * 60_000;
 const DEFAULT_WARM_BROWSER_MAX_CLOCK_SKEW_MS = 30_000;
 const DEFAULT_WARM_BROWSER_MAX_OPERATION_WALL_MS = 10 * 60_000;
-const CITIZENSERVE_HOST_CONCURRENCY_KEY = "host:www6.citizenserve.com";
 const ADAPTER_LOCK_KEYS = new Map([
   [BROWARD_BCS_ADAPTER_KEY, 41],
   [BROWARD_CITIZENSERVE_ADAPTER_KEY, 42],
@@ -535,7 +534,7 @@ export async function runSupportedPermitIngest(options) {
     await processByRouteWithConcurrency(
       selectedPending,
       options.concurrency,
-      supportedPermitConcurrencyKey,
+      (candidate) => candidate.jurisdictionKey,
       async (candidate) => {
         const attempt = await readAttemptCount(
           client,
@@ -1949,23 +1948,6 @@ function registryKeyToMunicipalKey(key) {
  */
 function roofScopeArgs(options) {
   return options.scope === "roofing" ? ["--roof-only"] : [];
-}
-
-/**
- * Return the public source-serialization key for one supported property.
- *
- * Every Citizenserve installation currently shares one public host, so all
- * four routes remain serial even when the parent permits inter-host
- * concurrency. Other adapters retain one-at-a-time jurisdiction ordering.
- * The warm-browser allowlist is narrower than this scheduling boundary.
- *
- * @param {SupportedPermitCandidate} candidate - Routed property.
- * @returns {string} Public host or jurisdiction serialization key.
- */
-export function supportedPermitConcurrencyKey(candidate) {
-  return candidate.adapterKey === BROWARD_CITIZENSERVE_ADAPTER_KEY
-    ? CITIZENSERVE_HOST_CONCURRENCY_KEY
-    : `jurisdiction:${candidate.jurisdictionKey}`;
 }
 
 /**

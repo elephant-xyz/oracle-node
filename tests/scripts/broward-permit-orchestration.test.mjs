@@ -45,7 +45,6 @@ import {
   readBcsSummaryRecordCount,
   readJurisdictionKeys,
   runNode,
-  supportedPermitConcurrencyKey,
   supportedPermitClientConfig,
 } from "../../scripts/run-broward-supported-permit-ingest.mjs";
 import {
@@ -554,29 +553,6 @@ describe("Broward supported-route permit ingest", () => {
     expect(events.indexOf("start:a:2")).toBeGreaterThan(
       events.indexOf("end:a:1"),
     );
-  });
-
-  it("serializes every Citizenserve tenant on its shared public host", () => {
-    const citizenserveCandidate = {
-      folio: "PRIVATE",
-      parcelHash: "a".repeat(64),
-      situsAddress: "PRIVATE",
-      jurisdictionKey: "lauderdale-by-the-sea",
-      adapterKey: BROWARD_CITIZENSERVE_ADAPTER_KEY,
-    };
-    expect(supportedPermitConcurrencyKey(citizenserveCandidate)).toBe(
-      supportedPermitConcurrencyKey({
-        ...citizenserveCandidate,
-        parcelHash: "b".repeat(64),
-        jurisdictionKey: "southwest-ranches",
-      }),
-    );
-    expect(
-      supportedPermitConcurrencyKey({
-        ...citizenserveCandidate,
-        adapterKey: BROWARD_BCS_ADAPTER_KEY,
-      }),
-    ).not.toBe(supportedPermitConcurrencyKey(citizenserveCandidate));
   });
 
   it("reuses one healthy browser and serializes operations by tenant", async () => {
