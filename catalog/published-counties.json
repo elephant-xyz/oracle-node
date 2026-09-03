@@ -1,6 +1,6 @@
 {
   "schemaVersion": "1.0",
-  "generatedAt": "2026-09-03T14:20:00.000Z",
+  "generatedAt": "2026-09-02T21:30:38.532Z",
   "counties": [
     {
       "countyKey": "broward",
@@ -97,18 +97,6 @@
       "permitQueryTableUrl": null,
       "placesTableUrl": null,
       "updatedAt": "2026-07-02T14:21:44.544Z"
-    },
-    {
-      "countyKey": "pasco",
-      "countyName": "Pasco",
-      "stateCode": "FL",
-      "countyFips": "12101",
-      "status": "published",
-      "queryTableUrl": "https://ipfs.filebase.io/ipns/k51qzi5uqu5dlm72r495ei7507h3yl4tw4olszh2ppas8roxrbg2ccko84s8kv",
-      "datasetCoverageUrl": "https://ipfs.filebase.io/ipns/k51qzi5uqu5dl7i1pgx4n755nbj57j2stfob0gvnymfwto13icqbwre3z41y8k",
-      "permitQueryTableUrl": null,
-      "placesTableUrl": null,
-      "updatedAt": "2026-09-03T13:19:45.000Z"
     },
     {
       "countyKey": "pinellas",
