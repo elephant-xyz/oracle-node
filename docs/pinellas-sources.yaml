@@ -273,7 +273,5 @@ notes:
     are named out of pilot (in_scope: false), not missing websites.
   - 18 cities remain needs-review: discovery did not confirm their permit URLs yet.
   - Local ingest (2026-08-27): PCPAO print HTML only. Permits/Sunbiz/BBB not pulled.
-  - Local Accela PINELLAS harvest (2026-09-03): full date-window job
-    `pinellas-accela-full-20260903` via `scripts/run-pinellas-permit-harvest.mjs`
-    (1990-01-01 through today, skip-existing). City portals not in this pass.
+  - Local Accela PINELLAS harvest (2026-09-03): full date-window job pinellas-accela-full-20260903 via scripts/run-pinellas-permit-harvest.mjs (1990-01-01 through today, skip-existing). City portals not in this pass.
   - Reuse Counties-trasform-scripts/pinellas; do not regenerate mapping scripts in discovery.
