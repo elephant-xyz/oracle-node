@@ -158,10 +158,15 @@ describe("Pinellas permit harvest CLI", () => {
     expect(seen.sort((a, b) => a - b)).toEqual([1, 2, 3, 4]);
   });
 
-  it("stops harvest on browser disconnect instead of skipping remaining windows", () => {
+  it("treats Chrome disconnect and detached frames as browser-loss errors", () => {
     expect(isBrowserDisconnectedError(new Error("Connection closed."))).toBe(
       true,
     );
+    expect(
+      isBrowserDisconnectedError(
+        new Error("Attempted to use detached Frame 'ABC'."),
+      ),
+    ).toBe(true);
     expect(isBrowserDisconnectedError(new Error("Navigation timeout"))).toBe(
       false,
     );

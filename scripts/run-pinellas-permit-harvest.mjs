@@ -259,7 +259,7 @@ export function windowArtifactPaths(jobDir, windowKey) {
  */
 export function isBrowserDisconnectedError(error) {
   const message = error instanceof Error ? error.message : String(error);
-  return /connection closed|target closed|session closed|browser has disconnected|protocol error/i.test(
+  return /connection closed|target closed|session closed|browser has disconnected|protocol error|detached frame/i.test(
     message,
   );
 }
@@ -340,10 +340,12 @@ export async function runPinellasPermitHarvest(options, repoRoot) {
     lastWindowKey: null,
   });
 
-  const browser = await createBrowser(consoleLogger);
+  let browser = await createBrowser(consoleLogger);
   let windowCount = 0;
   let detailCount = 0;
   let splitCount = 0;
+  let browserRelaunches = 0;
+  const maxBrowserRelaunches = 8;
   /** @type {string | null} */
   let lastWindowKey = null;
 
@@ -449,7 +451,7 @@ export async function runPinellasPermitHarvest(options, repoRoot) {
           await writeHarvestStatus({
             jobDir,
             options,
-            phase: isBrowserDisconnectedError(error) ? "failed" : "running",
+            phase: "running",
             windowCount,
             splitCount,
             detailCount,
@@ -458,7 +460,33 @@ export async function runPinellasPermitHarvest(options, repoRoot) {
             lastWindowKey,
           });
           if (isBrowserDisconnectedError(error)) {
-            throw error instanceof Error ? error : new Error(message);
+            if (browserRelaunches >= maxBrowserRelaunches) {
+              await writeHarvestStatus({
+                jobDir,
+                options,
+                phase: "failed",
+                windowCount,
+                splitCount,
+                detailCount,
+                startedAt,
+                queueRemaining: queue.length,
+                lastWindowKey,
+              });
+              throw error instanceof Error ? error : new Error(message);
+            }
+            browserRelaunches += 1;
+            console.log(
+              JSON.stringify({
+                event: "pinellas_accela_browser_relaunch",
+                windowKey,
+                browserRelaunches,
+                message,
+              }),
+            );
+            await browser.close().catch(() => undefined);
+            browser = await createBrowser(consoleLogger);
+            queue.unshift(window);
+            continue;
           }
           if (failCount < 3) {
             queue.push(window);
