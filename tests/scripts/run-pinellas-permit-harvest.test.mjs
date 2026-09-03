@@ -59,6 +59,13 @@ describe("Pinellas Accela date-window helpers", () => {
       { startDate: "2026-01-01", endDate: "2026-01-02" },
       { startDate: "2026-01-03", endDate: "2026-01-04" },
     ]);
+    expect(
+      shouldSplitAccelaWindow({
+        startDate: "2026-01-01",
+        endDate: "2026-01-01",
+        reportedTotal: 100,
+      }),
+    ).toBe(false);
   });
 
   it("resolves PINELLAS CapDetail hrefs and PER-H / EBP record numbers", () => {

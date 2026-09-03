@@ -29,6 +29,7 @@ import {
   PINELLAS_RECORD_NUMBER_PATTERN,
   PINELLAS_SPLIT_THRESHOLD,
   createAccelaDateWindows,
+  inclusiveDaySpan,
   shouldSplitAccelaWindow,
   splitAccelaWindow,
   todayIsoDate,
@@ -417,7 +418,10 @@ export async function runPinellasPermitHarvest(options, repoRoot) {
             endDate: window.endDate,
             portalUrl: PINELLAS_PORTAL_URL,
             maxPages: options.maxPages,
-            stopAfterFirstPageWhenTotalAtLeast: options.splitThreshold,
+            stopAfterFirstPageWhenTotalAtLeast:
+              inclusiveDaySpan(window.startDate, window.endDate) > 1
+                ? options.splitThreshold
+                : undefined,
             recordNumberPattern: PINELLAS_RECORD_NUMBER_PATTERN,
             logger: consoleLogger,
           });
@@ -454,14 +458,12 @@ export async function runPinellasPermitHarvest(options, repoRoot) {
           continue;
         }
         windowCount += 1;
-        const mustSplit =
-          searchResult.truncatedForSplit === true ||
-          shouldSplitAccelaWindow({
-            startDate: window.startDate,
-            endDate: window.endDate,
-            reportedTotal: searchResult.reportedTotal,
-            splitThreshold: options.splitThreshold,
-          });
+        const mustSplit = shouldSplitAccelaWindow({
+          startDate: window.startDate,
+          endDate: window.endDate,
+          reportedTotal: searchResult.reportedTotal,
+          splitThreshold: options.splitThreshold,
+        });
         if (mustSplit === false) {
           detailCount += await captureDetails({
             browser,
