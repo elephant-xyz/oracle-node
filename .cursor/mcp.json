@@ -26,9 +26,9 @@
         "ORACLE_OPEN_DATA_DEFAULT_COUNTY": "lee",
         "ORACLE_GEO_INDEX_IPNS": "k51qzi5uqu5djo3756w73x3swtt63g9y7igj7tvv1gs4skjk3haj3fuk7qosdi",
         "PERMIT_QUERY_TABLE_MAP": "{\"santa-clara\":\"https://ipfs.filebase.io/ipns/k51qzi5uqu5dm5dkii3wz7hj8vqurb1b773uy0qj9nlvsvgaqqyccuurz8kmic\",\"montgomery\":\"https://ipfs.filebase.io/ipns/k51qzi5uqu5dhmzrqgeg0dgdqwoey1of8qxi00fph5ea3z9niqujvmzcz009d8\",\"broward\":\"https://ipfs.filebase.io/ipns/k51qzi5uqu5dhns9u4o0lot4w4808yi4gdsyo5qx136lgmrplmgqdhah5qj7lg\"}",
-        "PERMIT_QUERY_TABLE_CID_FALLBACK_MAP_ADDITIONS": "{\"broward\":\"QmcDAHJBt5LHiHAHdDwqCKM2BZqPwTJBrxW4Z5DJ6qEJd2\"}",
+        "PERMIT_QUERY_TABLE_CID_FALLBACK_MAP_ADDITIONS": "{\"broward\":\"QmYE98KYHw8PCLV9U62oJFjkWpCmrmJUabXxUzxb5rvdg5\"}",
         "DATASET_COVERAGE_MAP": "{\"chester\":\"https://ipfs.filebase.io/ipns/k51qzi5uqu5djzghr538v7zskwn586juujd2nxzsox3fqr66konxwzlb08sebg\",\"montgomery\":\"https://ipfs.filebase.io/ipns/k51qzi5uqu5djrxnqch9zhkm7n4m0ieep6zgbdo6tkvy5xqwn7uy94jfucndjm\",\"pinellas\":\"https://ipfs.filebase.io/ipns/k51qzi5uqu5djrzm8n599i98ey7rpmwpbphgk8tvo5d6zjkfeqcmbrg7lh03xl\",\"broward\":\"https://ipfs.filebase.io/ipns/k51qzi5uqu5dhx6yqczp6f9na3xa9g1iiizxtquer62x9wavh8gpbng524vrbp\"}",
-        "DATASET_COVERAGE_CID_FALLBACK_MAP_ADDITIONS": "{\"broward\":\"QmTZndCJfNi29hxGzyLXpt9iYJedtmeM2DKFRa24LLA6dq\"}",
+        "DATASET_COVERAGE_CID_FALLBACK_MAP_ADDITIONS": "{\"broward\":\"QmQhT1ZZahifb575GRMLE2nfvWVvEn43Re6KjDiGzgRDCe\"}",
         "PATH": "/Users/shogan/.nvm/versions/node/v22.23.2/bin:/usr/bin:/bin:/usr/sbin:/sbin"
       }
     }
