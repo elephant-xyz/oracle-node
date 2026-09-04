@@ -138,6 +138,30 @@ const RECORD_TYPE_BY_PREFIX = new Map([
   ["USE", "Use"],
 ]);
 
+/** Fail-fast wait after Accela "Next >" so a stuck last page cannot spin `maxPages`. */
+const ACCELA_PAGINATION_ADVANCE_TIMEOUT_MS = 30_000;
+
+/** CapDetail navigation + record-visible wait. Shorter than 90s so hung tabs free the pool. */
+export const DEFAULT_DETAIL_NAVIGATION_TIMEOUT_MS = 60_000;
+
+/**
+ * @typedef {object} AccelaResultSummary
+ * @property {string | null} summary Normalized "X-Y of Z" banner without the "Showing" prefix.
+ * @property {number | null} start First 1-based result index on this page.
+ * @property {number | null} end Last 1-based result index on this page.
+ * @property {number | null} total Accela-reported result total.
+ */
+
+/**
+ * @typedef {"no_results" | "last_page" | "repeated_summary"} AccelaPaginationStopReason
+ */
+
+/**
+ * @typedef {object} AccelaPaginationDecision
+ * @property {boolean} stop True when the harvester must not click Next.
+ * @property {AccelaPaginationStopReason | null} reason Stop cause, or null when pagination should continue.
+ */
+
 /**
  * Convert an ISO date (`YYYY-MM-DD`) to Accela's expected `MM/DD/YYYY` display format.
  *
@@ -393,23 +417,140 @@ async function submitAccelaGeneralSearch(page) {
 }
 
 /**
- * Parse Accela's result summary text into a total count.
+ * Parse a comma-grouped Accela count such as `1,234`.
+ *
+ * @param {string} raw Digit string that may include commas.
+ * @returns {number | null} Parsed integer, or null when not finite.
+ */
+function parseAccelaCount(raw) {
+  const parsed = Number.parseInt(raw.replace(/,/g, ""), 10);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+/**
+ * Parse Accela's result summary text into page range and total count.
  *
  * @param {string} text - Page body text.
- * @returns {{ summary: string | null, total: number | null }} Parsed summary and total.
+ * @returns {AccelaResultSummary} Parsed summary, page range, and total.
  */
 export function parseResultSummary(text) {
-  const match = /Showing\s+([0-9,]+\s*-\s*[0-9,]+\s+of\s+([0-9,]+))/i.exec(
+  const match = /Showing\s+(([0-9,]+)\s*-\s*([0-9,]+)\s+of\s+([0-9,]+))/i.exec(
     text,
   );
-  if (!match) {
-    return { summary: null, total: null };
+  if (match === null) {
+    return { summary: null, start: null, end: null, total: null };
   }
-  const total = Number.parseInt(match[2].replace(/,/g, ""), 10);
+  const range = match[1];
+  const startRaw = match[2];
+  const endRaw = match[3];
+  const totalRaw = match[4];
+  if (
+    range === undefined ||
+    startRaw === undefined ||
+    endRaw === undefined ||
+    totalRaw === undefined
+  ) {
+    return { summary: null, start: null, end: null, total: null };
+  }
   return {
-    summary: collapseText(match[1]),
-    total: Number.isFinite(total) ? total : null,
+    summary: collapseText(range),
+    start: parseAccelaCount(startRaw),
+    end: parseAccelaCount(endRaw),
+    total: parseAccelaCount(totalRaw),
   };
+}
+
+/**
+ * True when the Showing banner is already on the last result page.
+ *
+ * Accela often still renders a "Next >" `__doPostBack` control on that page;
+ * clicking it re-renders the same summary and used to loop until `maxPages`
+ * (~47 minutes on a 1-day Pinellas window).
+ *
+ * @param {AccelaResultSummary} parsed Parsed "Showing X-Y of Z" banner.
+ * @returns {boolean} True when `end >= total`.
+ */
+export function isAccelaLastResultPage(parsed) {
+  if (parsed.end === null || parsed.total === null) return false;
+  return parsed.end >= parsed.total;
+}
+
+/**
+ * Decide whether Accela list pagination should stop before clicking Next.
+ *
+ * Stops on no-results, last page (`end >= total`), or the same Showing banner
+ * repeating after a Next click (stuck last-page pager).
+ *
+ * @param {object} params Pagination decision inputs.
+ * @param {boolean} params.noResults Accela reported no records.
+ * @param {AccelaResultSummary} params.parsed Current page banner.
+ * @param {string | null} params.previousSummary Prior page banner, or null on page 1.
+ * @returns {AccelaPaginationDecision} Stop flag and reason.
+ */
+export function shouldStopAccelaListPagination({
+  noResults,
+  parsed,
+  previousSummary,
+}) {
+  if (noResults) {
+    return { stop: true, reason: "no_results" };
+  }
+  if (isAccelaLastResultPage(parsed)) {
+    return { stop: true, reason: "last_page" };
+  }
+  if (
+    previousSummary !== null &&
+    parsed.summary !== null &&
+    previousSummary === parsed.summary
+  ) {
+    return { stop: true, reason: "repeated_summary" };
+  }
+  return { stop: false, reason: null };
+}
+
+/**
+ * Wait for Accela's Showing banner to change after a Next click.
+ *
+ * Accela list paging is often an UpdatePanel postback (no full navigation).
+ * `waitForAccelaSearchOutcome` is not enough: the stale banner still matches.
+ * A timeout means the pager did not advance — treat as last-page / stuck, not
+ * as a retryable hang.
+ *
+ * @param {import("puppeteer").Page} page Browser page.
+ * @param {string | null} previousSummary Banner captured before clicking Next.
+ * @param {number} timeoutMs Fail-fast wait for the banner to change.
+ * @returns {Promise<boolean>} True when the list advanced or hit a terminal page.
+ */
+async function waitForAccelaResultSummaryChange(
+  page,
+  previousSummary,
+  timeoutMs,
+) {
+  try {
+    await page.waitForFunction(
+      (prev) => {
+        const text = document.body?.innerText ?? "";
+        if (
+          /Your search returned no results|No records found|error\(s\) occurred on current page|unable to proceed|Object reference not set/i.test(
+            text,
+          )
+        ) {
+          return true;
+        }
+        const match = /Showing\s+([0-9,]+\s*-\s*[0-9,]+\s+of\s+[0-9,]+)/i.exec(
+          text,
+        );
+        if (match === null) return false;
+        const current = match[1].replace(/\s+/g, " ").trim();
+        return prev === null || current !== prev;
+      },
+      { timeout: timeoutMs },
+      previousSummary,
+    );
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -729,6 +870,8 @@ export async function searchLeePermitWindow({
 
     await submitAccelaGeneralSearch(page);
 
+    /** @type {string | null} */
+    let previousSummary = null;
     for (let pageNumber = 1; pageNumber <= maxPages; pageNumber += 1) {
       const html = await page.content();
       const text = htmlToText(html);
@@ -765,7 +908,8 @@ export async function searchLeePermitWindow({
         break;
       }
 
-      const { summary, total } = parseResultSummary(text);
+      const parsed = parseResultSummary(text);
+      const { summary, total } = parsed;
       reportedTotal = reportedTotal ?? total;
       noResults = /Your search returned no results|No records found/i.test(
         text,
@@ -807,17 +951,42 @@ export async function searchLeePermitWindow({
         break;
       }
 
-      if (noResults) break;
+      const pagination = shouldStopAccelaListPagination({
+        noResults,
+        parsed,
+        previousSummary,
+      });
+      if (pagination.stop) {
+        if (
+          pagination.reason === "last_page" ||
+          pagination.reason === "repeated_summary"
+        ) {
+          logger.info("lee_window_pagination_stopped", {
+            windowKey,
+            pageNumber,
+            reason: pagination.reason,
+            summary,
+          });
+        }
+        break;
+      }
+
+      previousSummary = summary;
       const clicked = await clickNextResultPage(page);
       if (!clicked) break;
-      await Promise.race([
-        page.waitForNavigation({
-          waitUntil: "domcontentloaded",
-          timeout: 45000,
-        }),
-        sleep(6000),
-      ]).catch(() => undefined);
-      await waitForAccelaSearchOutcome(page);
+      const advanced = await waitForAccelaResultSummaryChange(
+        page,
+        previousSummary,
+        ACCELA_PAGINATION_ADVANCE_TIMEOUT_MS,
+      );
+      if (!advanced) {
+        logger.warn("lee_window_pagination_stuck", {
+          windowKey,
+          pageNumber,
+          summary,
+        });
+        break;
+      }
       await sleep(2000);
     }
   } finally {
@@ -922,6 +1091,8 @@ export async function searchLeePermitParcel({
 
     await submitAccelaGeneralSearch(page);
 
+    /** @type {string | null} */
+    let previousSummary = null;
     for (let pageNumber = 1; pageNumber <= maxPages; pageNumber += 1) {
       const html = await page.content();
       const text = htmlToText(html);
@@ -956,7 +1127,8 @@ export async function searchLeePermitParcel({
         break;
       }
 
-      const { summary, total } = parseResultSummary(text);
+      const parsed = parseResultSummary(text);
+      const { summary, total } = parsed;
       reportedTotal = reportedTotal ?? total;
       noResults = /Your search returned no results|No records found/i.test(
         text,
@@ -985,39 +1157,42 @@ export async function searchLeePermitParcel({
       });
       permits.push(...pageLinks);
 
-      if (noResults) break;
-      // Snapshot the current page's result summary before clicking "Next >".
-      // The click triggers an ASP.NET UpdatePanel partial postback (no full
-      // navigation), so we must wait for the "Showing X-Y of Z" banner to
-      // CHANGE from this value before re-reading the DOM. Waiting only on
-      // waitForAccelaSearchOutcome here is unsafe: the stale prior-page banner
-      // still satisfies it, causing page.content() to re-read the old page.
-      const priorSummary = summary;
+      const pagination = shouldStopAccelaListPagination({
+        noResults,
+        parsed,
+        previousSummary,
+      });
+      if (pagination.stop) {
+        if (
+          pagination.reason === "last_page" ||
+          pagination.reason === "repeated_summary"
+        ) {
+          logger.info("lee_parcel_search_pagination_stopped", {
+            searchKey,
+            pageNumber,
+            reason: pagination.reason,
+            summary,
+          });
+        }
+        break;
+      }
+
+      previousSummary = summary;
       const clicked = await clickNextResultPage(page);
       if (!clicked) break;
-      await page.waitForFunction(
-        (previousSummary) => {
-          const text = document.body?.innerText ?? "";
-          // Resolve immediately on no-results or any Accela error-page pattern.
-          // Without this, an error page would spin the full 90s timeout on every
-          // retry instead of fast-failing to the loop body's error detection.
-          // Patterns mirror waitForAccelaSearchOutcome and the loop body guard.
-          if (
-            /Your search returned no results|No records found|error\(s\) occurred on current page|unable to proceed|Object reference not set/i.test(
-              text,
-            )
-          ) {
-            return true;
-          }
-          const match =
-            /Showing\s+([0-9,]+\s*-\s*[0-9,]+\s+of\s+([0-9,]+))/i.exec(text);
-          if (match === null) return false;
-          const currentSummary = match[1].replace(/\s+/g, " ").trim();
-          return previousSummary === null || currentSummary !== previousSummary;
-        },
-        { timeout: 90000 },
-        priorSummary,
+      const advanced = await waitForAccelaResultSummaryChange(
+        page,
+        previousSummary,
+        ACCELA_PAGINATION_ADVANCE_TIMEOUT_MS,
       );
+      if (!advanced) {
+        logger.warn("lee_parcel_search_pagination_stuck", {
+          searchKey,
+          pageNumber,
+          summary,
+        });
+        break;
+      }
       await sleep(2000);
     }
   } finally {
@@ -1424,6 +1599,7 @@ export function extractPermitDetail({ html, sourceUrl, fallbackRecordNumber }) {
  * @param {PermitLink} params.permit - Permit link to capture.
  * @param {Logger} params.logger - Structured logger.
  * @param {number} [params.settleMs=2500] Extra wait after the record number is visible.
+ * @param {number} [params.navigationTimeoutMs=60000] Navigation and record-visible wait per tab.
  * @returns {Promise<{ html: string, extraction: PermitDetailExtraction }>} Raw HTML and extracted data.
  */
 export async function captureLeePermitDetail({
@@ -1431,16 +1607,22 @@ export async function captureLeePermitDetail({
   permit,
   logger,
   settleMs = 2500,
+  navigationTimeoutMs = DEFAULT_DETAIL_NAVIGATION_TIMEOUT_MS,
 }) {
   const page = await createConfiguredPage(browser);
+  const gotoTimeoutMs =
+    Number.isFinite(navigationTimeoutMs) && navigationTimeoutMs > 0
+      ? navigationTimeoutMs
+      : DEFAULT_DETAIL_NAVIGATION_TIMEOUT_MS;
   try {
     logger.info("lee_detail_open", {
       recordNumber: permit.recordNumber,
       url: permit.url,
+      navigationTimeoutMs: gotoTimeoutMs,
     });
     await page.goto(permit.url, {
       waitUntil: "domcontentloaded",
-      timeout: 90000,
+      timeout: gotoTimeoutMs,
     });
     await page.waitForFunction(
       (recordNumber) => {
@@ -1453,7 +1635,7 @@ export async function captureLeePermitDetail({
           )
         );
       },
-      { timeout: 90000 },
+      { timeout: gotoTimeoutMs },
       permit.recordNumber,
     );
     const settleWaitMs =

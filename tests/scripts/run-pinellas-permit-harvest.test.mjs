@@ -10,6 +10,7 @@ import {
   splitAccelaWindow,
 } from "../../scripts/pinellas/accela-pinellas.mjs";
 import {
+  ACCELA_MAX_DETAIL_CONCURRENCY,
   isBrowserDisconnectedError,
   mapWithConcurrency,
   parseCliOptions,
@@ -139,8 +140,17 @@ describe("Pinellas permit harvest CLI", () => {
     expect(full.agencyKey).toBe("pinellas");
     expect(full.agencyCode).toBe("PINELLAS");
     expect(full.windowDays).toBe(1);
-    expect(full.concurrency).toBe(3);
+    expect(full.concurrency).toBe(ACCELA_MAX_DETAIL_CONCURRENCY);
+    expect(full.concurrency).toBe(4);
     expect(full.settleMs).toBe(250);
+    expect(full.detailTimeoutMs).toBe(60_000);
+    expect(() => parseCliOptions(["--concurrency", "5"])).toThrow(
+      /concurrency must be <= 4/,
+    );
+    expect(parseCliOptions(["--concurrency", "4"]).concurrency).toBe(4);
+    expect(
+      parseCliOptions(["--detail-timeout-ms", "45000"]).detailTimeoutMs,
+    ).toBe(45_000);
     const clearwater = parseCliOptions(["--agency", "clearwater", "--probe"]);
     expect(clearwater.agencyCode).toBe("CLEARWATER");
     expect(clearwater.portalUrl).toContain("/CLEARWATER/");

@@ -19,10 +19,14 @@ import {
   captureLeePermitDetail,
   consoleLogger,
   createBrowser,
+  DEFAULT_DETAIL_NAVIGATION_TIMEOUT_MS,
   searchLeePermitParcel,
   searchLeePermitWindow,
   safeKeyPart,
 } from "../workflow/lambdas/permit-harvest-worker/lee-accela.mjs";
+
+/** Accela CapDetail tab cap per portal/IP (Lee degraded above this). */
+export const ACCELA_MAX_DETAIL_CONCURRENCY = 4;
 import {
   createAccelaDateWindows,
   inclusiveDaySpan,
@@ -49,8 +53,9 @@ import { resolveAccelaAgency } from "./pinellas/accela-agencies.mjs";
  * @property {string} startDate Inclusive ISO start.
  * @property {string} endDate Inclusive ISO end.
  * @property {number} windowDays Initial list-window size.
- * @property {number} concurrency Parallel CapDetail captures per window.
+ * @property {number} concurrency Parallel CapDetail captures per window (max 4).
  * @property {number} settleMs Extra wait after a detail page shows the record number.
+ * @property {number} detailTimeoutMs CapDetail navigation timeout per tab.
  * @property {number} splitThreshold Accela list cap that forces a split.
  * @property {number} maxPages Max result pages on a terminal window.
  * @property {number} maxDetails 0 means unlimited detail captures this process.
@@ -120,15 +125,21 @@ export function parseCliOptions(argv) {
       values.get("window-days"),
       probe || pilot ? 14 : 1,
     ),
-    concurrency: parsePositiveInteger(
+    concurrency: parseBoundedPositiveInteger(
       "concurrency",
       values.get("concurrency"),
-      3,
+      ACCELA_MAX_DETAIL_CONCURRENCY,
+      ACCELA_MAX_DETAIL_CONCURRENCY,
     ),
     settleMs: parseNonNegativeInteger(
       "settle-ms",
       values.get("settle-ms"),
       250,
+    ),
+    detailTimeoutMs: parsePositiveInteger(
+      "detail-timeout-ms",
+      values.get("detail-timeout-ms"),
+      DEFAULT_DETAIL_NAVIGATION_TIMEOUT_MS,
     ),
     splitThreshold: parsePositiveInteger(
       "split-threshold",
@@ -142,6 +153,23 @@ export function parseCliOptions(argv) {
     probe,
     parcel: values.get("parcel") ?? null,
   };
+}
+
+/**
+ * @param {string} name Flag name.
+ * @param {string | undefined} value Raw value.
+ * @param {number} fallback Default.
+ * @param {number} maximum Inclusive upper bound.
+ * @returns {number} Positive integer at most `maximum`.
+ */
+function parseBoundedPositiveInteger(name, value, fallback, maximum) {
+  const parsed = parsePositiveInteger(name, value, fallback);
+  if (parsed > maximum) {
+    throw new Error(
+      `--${name} must be <= ${maximum} (Accela CapDetail tab cap)`,
+    );
+  }
+  return parsed;
 }
 
 /**
@@ -419,10 +447,8 @@ export async function runPinellasPermitHarvest(options, repoRoot) {
             continue;
           }
         }
-        /** @type {import("../workflow/lambdas/permit-harvest-worker/lee-accela.mjs").PermitSearchResult | null} */
-        let searchResult = null;
         try {
-          searchResult = await searchLeePermitWindow({
+          const searchResult = await searchLeePermitWindow({
             browser,
             startDate: window.startDate,
             endDate: window.endDate,
@@ -435,6 +461,85 @@ export async function runPinellasPermitHarvest(options, repoRoot) {
             recordNumberPattern: options.recordNumberPattern,
             logger: consoleLogger,
           });
+          windowCount += 1;
+          const mustSplit = shouldSplitAccelaWindow({
+            startDate: window.startDate,
+            endDate: window.endDate,
+            reportedTotal: searchResult.reportedTotal,
+            splitThreshold: options.splitThreshold,
+          });
+          if (mustSplit === false) {
+            detailCount += await captureDetails({
+              browser,
+              jobDir,
+              permits: searchResult.permits,
+              options,
+              alreadyCaptured: detailCount,
+            });
+          }
+          if (mustSplit) {
+            splitCount += 1;
+            const [left, right] = splitAccelaWindow(
+              window.startDate,
+              window.endDate,
+            );
+            await writeFile(
+              splitPath,
+              `${JSON.stringify(
+                {
+                  windowKey,
+                  reportedTotal: searchResult.reportedTotal,
+                  truncatedForSplit: searchResult.truncatedForSplit === true,
+                  left,
+                  right,
+                },
+                null,
+                2,
+              )}\n`,
+            );
+            queue.unshift(right);
+            queue.unshift(left);
+            console.log(
+              JSON.stringify({
+                event: "pinellas_accela_window_split",
+                windowKey,
+                reportedTotal: searchResult.reportedTotal,
+                left,
+                right,
+              }),
+            );
+          } else {
+            await writeFile(
+              terminalPath,
+              `${JSON.stringify(
+                {
+                  ...searchResult,
+                  pages: searchResult.pages.map((page) => ({
+                    pageNumber: page.pageNumber,
+                    url: page.url,
+                    resultSummary: page.resultSummary,
+                    htmlBytes: page.html.length,
+                  })),
+                },
+                null,
+                2,
+              )}\n`,
+            );
+          }
+          await writeHarvestStatus({
+            jobDir,
+            options,
+            phase: "running",
+            windowCount,
+            splitCount,
+            detailCount,
+            startedAt,
+            queueRemaining: queue.length,
+            lastWindowKey,
+          });
+          if (options.maxDetails > 0 && detailCount >= options.maxDetails) {
+            break;
+          }
         } catch (error) {
           const message =
             error instanceof Error ? error.message : String(error);
@@ -492,85 +597,6 @@ export async function runPinellasPermitHarvest(options, repoRoot) {
             queue.push(window);
           }
           continue;
-        }
-        windowCount += 1;
-        const mustSplit = shouldSplitAccelaWindow({
-          startDate: window.startDate,
-          endDate: window.endDate,
-          reportedTotal: searchResult.reportedTotal,
-          splitThreshold: options.splitThreshold,
-        });
-        if (mustSplit === false) {
-          detailCount += await captureDetails({
-            browser,
-            jobDir,
-            permits: searchResult.permits,
-            options,
-            alreadyCaptured: detailCount,
-          });
-        }
-        if (mustSplit) {
-          splitCount += 1;
-          const [left, right] = splitAccelaWindow(
-            window.startDate,
-            window.endDate,
-          );
-          await writeFile(
-            splitPath,
-            `${JSON.stringify(
-              {
-                windowKey,
-                reportedTotal: searchResult.reportedTotal,
-                truncatedForSplit: searchResult.truncatedForSplit === true,
-                left,
-                right,
-              },
-              null,
-              2,
-            )}\n`,
-          );
-          queue.unshift(right);
-          queue.unshift(left);
-          console.log(
-            JSON.stringify({
-              event: "pinellas_accela_window_split",
-              windowKey,
-              reportedTotal: searchResult.reportedTotal,
-              left,
-              right,
-            }),
-          );
-        } else {
-          await writeFile(
-            terminalPath,
-            `${JSON.stringify(
-              {
-                ...searchResult,
-                pages: searchResult.pages.map((page) => ({
-                  pageNumber: page.pageNumber,
-                  url: page.url,
-                  resultSummary: page.resultSummary,
-                  htmlBytes: page.html.length,
-                })),
-              },
-              null,
-              2,
-            )}\n`,
-          );
-        }
-        await writeHarvestStatus({
-          jobDir,
-          options,
-          phase: "running",
-          windowCount,
-          splitCount,
-          detailCount,
-          startedAt,
-          queueRemaining: queue.length,
-          lastWindowKey,
-        });
-        if (options.maxDetails > 0 && detailCount >= options.maxDetails) {
-          break;
         }
       }
     }
@@ -638,7 +664,10 @@ async function captureDetails({
 
   /** @type {number} */
   let captured = 0;
+  /** @type {Error | null} */
+  let disconnectError = null;
   await mapWithConcurrency(pending, options.concurrency, async (permit) => {
+    if (disconnectError !== null) return;
     const paths = detailPaths({ jobDir, permit });
     try {
       const { html, extraction } = await captureLeePermitDetail({
@@ -646,6 +675,7 @@ async function captureDetails({
         permit,
         logger: consoleLogger,
         settleMs: options.settleMs,
+        navigationTimeoutMs: options.detailTimeoutMs,
       });
       await writeFile(paths.htmlPath, html);
       await writeFile(
@@ -658,7 +688,9 @@ async function captureDetails({
       );
     } catch (error) {
       if (isBrowserDisconnectedError(error)) {
-        throw error instanceof Error ? error : new Error(String(error));
+        disconnectError =
+          error instanceof Error ? error : new Error(String(error));
+        return;
       }
       console.log(
         JSON.stringify({
@@ -679,6 +711,9 @@ async function captureDetails({
       }),
     );
   });
+  if (disconnectError !== null) {
+    throw disconnectError;
+  }
   return captured;
 }
 
