@@ -437,10 +437,7 @@ async function readPublishedCountyPublication(options) {
     queryTableUrl,
     permitQueryTableUrl,
     coverageUrl,
-    queryTableIpnsKey: readIpnsKey(
-      queryTableUrl,
-      "Broward query-table URL",
-    ),
+    queryTableIpnsKey: readIpnsKey(queryTableUrl, "Broward query-table URL"),
     permitQueryTableIpnsKey: readIpnsKey(
       permitQueryTableUrl,
       "Broward permit-table URL",

@@ -1350,7 +1350,9 @@
                   font-size: 13px;
                 "
               >
-                <span style="color: var(--warning)" id="appraisalEnrichmentLabel"
+                <span
+                  style="color: var(--warning)"
+                  id="appraisalEnrichmentLabel"
                   >Canonical enrichment:</span
                 >
                 <strong id="appraisalEnrichmentStatus">Pending</strong>
@@ -2883,8 +2885,9 @@
                 : pubStage.status === "pilot_validated"
                   ? "Ready"
                   : "Live";
-            document.getElementById("stepBadge6").className =
-              partialPublication ? "badge badge-blue" : "badge badge-green";
+            document.getElementById("stepBadge6").className = partialPublication
+              ? "badge badge-blue"
+              : "badge badge-green";
             document.getElementById("stepStatus6").innerText = pubStage.ipnsKey
               ? partialPublication
                 ? "Partial IPNS live"
@@ -2954,8 +2957,7 @@ Documentation: docs/${county.key}-county-findings.md`;
           const appCount = aStage?.count || 0;
           const appLoadedCount = aStage?.loadedCount ?? appCount;
           const appTerminalMisses = aStage?.terminalSourceMisses ?? 0;
-          const appTarget =
-            aStage?.target || county.targetParcels || 313735;
+          const appTarget = aStage?.target || county.targetParcels || 313735;
           const appPct =
             aStage?.pct ||
             (appTarget > 0
@@ -3030,8 +3032,7 @@ Documentation: docs/${county.key}-county-findings.md`;
             `tl_2024_us_county (${county.name})`;
 
           // TAB 9: Publish & IPFS
-          const qTableIpns =
-            pubStage?.ipnsKey || county.ipns?.queryTable;
+          const qTableIpns = pubStage?.ipnsKey || county.ipns?.queryTable;
           const permitTableIpns = pubStage?.permitIpnsKey;
           const openDataIpns = county.ipns?.openData;
           const coverageIpns =
@@ -3052,12 +3053,7 @@ Documentation: docs/${county.key}-county-findings.md`;
             : "Pending";
           const ipnsTable = document.getElementById("pubTableBody");
           if (ipnsTable) {
-            if (
-              qTableIpns ||
-              permitTableIpns ||
-              openDataIpns ||
-              coverageIpns
-            ) {
+            if (qTableIpns || permitTableIpns || openDataIpns || coverageIpns) {
               ipnsTable.innerHTML = `
                 <tr>
                   <td><strong>oracle-query-table-${county.key}</strong></td>

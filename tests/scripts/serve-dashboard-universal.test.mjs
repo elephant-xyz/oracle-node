@@ -93,10 +93,8 @@ function buildBrowardPublicationFixture() {
   return {
     status: "partially_published",
     scope: "partial",
-    queryTableUrl:
-      "https://ipfs.filebase.io/ipns/k51querytablebroward",
-    permitQueryTableUrl:
-      "https://ipfs.filebase.io/ipns/k51permittablebroward",
+    queryTableUrl: "https://ipfs.filebase.io/ipns/k51querytablebroward",
+    permitQueryTableUrl: "https://ipfs.filebase.io/ipns/k51permittablebroward",
     coverageUrl: "https://ipfs.filebase.io/ipns/k51coveragebroward",
     queryTableIpnsKey: "k51querytablebroward",
     permitQueryTableIpnsKey: "k51permittablebroward",
