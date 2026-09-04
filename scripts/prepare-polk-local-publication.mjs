@@ -33,6 +33,8 @@ const ipfsHash = require("ipfs-only-hash");
  * @property {string} sourceDirectory Completed local Polk export.
  * @property {string} outputDirectory Local family-separated staging root.
  * @property {string} [permitEnrichmentReceiptPath] Deep permit evidence receipt.
+ * @property {string} [permitNormalizationManifestPath] Verified list-source normalization manifest.
+ * @property {string} [permitPublicationReceiptPath] Gateway-verified permit-table publication receipt.
  * @property {string} [sunbizManifestPath] Sunbiz transform/match manifest.
  * @property {string} [bbbManifestPath] BBB contractor CRM receipt.
  * @property {string} [neonReceiptPath] Neon reconciliation receipt.
@@ -75,10 +77,12 @@ const ipfsHash = require("ipfs-only-hash");
 /**
  * @typedef {object} PolkPublicCoverageOptions
  * @property {number} propertyCount Reconciled published property count.
- * @property {number} permitCount Reconciled permit rows nested in property payloads.
+ * @property {number} permitCount Reconciled permit-table row count.
  * @property {string} exportedAt Export start timestamp.
  * @property {string} completedAt Export completion timestamp.
  * @property {string} openDataCid CID of the published open-data index.
+ * @property {string} [permitTableCid] CID of the separately published permit table.
+ * @property {string} [permitTableIpnsLabel] IPNS label of the separately published permit table.
  * @property {readonly JsonObject[]} [reconciledTracks] Optional passed Neon track receipts.
  */
 
@@ -102,6 +106,8 @@ export function parsePolkPublicationCliOptions(
       "source-dir": { type: "string" },
       "output-dir": { type: "string" },
       "permit-enrichment-receipt": { type: "string" },
+      "permit-normalization-manifest": { type: "string" },
+      "permit-publication-receipt": { type: "string" },
       "sunbiz-manifest": { type: "string" },
       "bbb-manifest": { type: "string" },
       "neon-receipt": { type: "string" },
@@ -141,6 +147,18 @@ export function parsePolkPublicationCliOptions(
       typeof values["permit-enrichment-receipt"] === "string"
         ? values["permit-enrichment-receipt"]
         : "tmp/polk/permits/enrichment-receipt.json",
+    ),
+    permitNormalizationManifestPath: path.resolve(
+      rootDirectory,
+      typeof values["permit-normalization-manifest"] === "string"
+        ? values["permit-normalization-manifest"]
+        : "tmp/polk/permits/load-ready/normalization-manifest.json",
+    ),
+    permitPublicationReceiptPath: path.resolve(
+      rootDirectory,
+      typeof values["permit-publication-receipt"] === "string"
+        ? values["permit-publication-receipt"]
+        : "tmp/polk/permits/permit-table-publication-receipt.json",
     ),
     sunbizManifestPath: path.resolve(
       rootDirectory,
@@ -375,6 +393,12 @@ export async function buildPolkPublicationPlan(options) {
   const permitEnrichmentReceiptPath =
     options.permitEnrichmentReceiptPath ??
     path.join(polkRoot, "permits", "enrichment-receipt.json");
+  const permitNormalizationManifestPath =
+    options.permitNormalizationManifestPath ??
+    path.join(polkRoot, "permits", "load-ready", "normalization-manifest.json");
+  const permitPublicationReceiptPath =
+    options.permitPublicationReceiptPath ??
+    path.join(polkRoot, "permits", "permit-table-publication-receipt.json");
   const sunbizManifestPath =
     options.sunbizManifestPath ??
     path.join(polkRoot, "sunbiz", "transformed", "manifest.json");
@@ -403,6 +427,8 @@ export async function buildPolkPublicationPlan(options) {
     inventory,
     overture,
     permitEnrichment,
+    permitNormalization,
+    permitPublication,
     sunbiz,
     bbb,
     neonReceipt,
@@ -416,6 +442,8 @@ export async function buildPolkPublicationPlan(options) {
     inventoryPolkPublicationSource(options.sourceDirectory),
     readOptionalJsonObject(overtureSummaryPath),
     readOptionalJsonObject(permitEnrichmentReceiptPath),
+    readOptionalJsonObject(permitNormalizationManifestPath),
+    readOptionalJsonObject(permitPublicationReceiptPath),
     readOptionalJsonObject(sunbizManifestPath),
     readOptionalJsonObject(bbbManifestPath),
     readOptionalJsonObject(neonReceiptPath),
@@ -459,7 +487,14 @@ export async function buildPolkPublicationPlan(options) {
   if (!isJsonObject(childRows)) {
     throw new Error("Polk source coverage child rows are missing");
   }
-  const permitCount = requiredCount(childRows, "permits", "coverage.childRows");
+  const propertyPermitCount = requiredCount(
+    childRows,
+    "permits",
+    "coverage.childRows",
+  );
+  const portalPermitCount =
+    nestedCount(permitNormalization, ["loadReadyPermitCount"]) ?? 0;
+  const permitCount = propertyPermitCount + portalPermitCount;
   const countsMatch =
     propertyCount === inventory.propertyCount &&
     propertyCount === queryTableRows &&
@@ -495,8 +530,56 @@ export async function buildPolkPublicationPlan(options) {
     permitEnrichment?.schemaVersion ===
       "oracle-node.polk-permit-enrichment-receipt.v1" &&
     permitEnrichment.complete === true &&
-    nestedCount(permitEnrichment, ["officialPermitCount"]) === permitCount &&
+    nestedCount(permitEnrichment, ["officialPermitCount"]) ===
+      propertyPermitCount &&
     nestedCount(permitEnrichment, ["unsupportedPermitCount"]) === 0;
+  const permitSourcesReady =
+    permitNormalization?.schemaVersion ===
+      "oracle-node.polk-permit-source-normalization.v1" &&
+    permitNormalization.county === "polk" &&
+    permitNormalization.queryDbPermitSourceSystem === "polk_permits" &&
+    permitNormalization.complete === true &&
+    permitNormalization.pilot === false &&
+    portalPermitCount > 0 &&
+    nestedCount(permitNormalization, ["unmatchedPermitCount"]) ===
+      portalPermitCount &&
+    nestedCount(permitNormalization, [
+      "excludedRecordCounts",
+      "contractor_license",
+    ]) !== null;
+  const permitPublicationCid =
+    typeof permitPublication?.cid === "string" &&
+    permitPublication.cid.trim().length > 0
+      ? permitPublication.cid.trim()
+      : null;
+  const permitPublicationIpnsLabel =
+    typeof permitPublication?.ipnsLabel === "string" &&
+    permitPublication.ipnsLabel.trim().length > 0
+      ? permitPublication.ipnsLabel.trim()
+      : null;
+  const permitPublicationIpnsName =
+    typeof permitPublication?.ipnsName === "string" &&
+    permitPublication.ipnsName.trim().length > 0
+      ? permitPublication.ipnsName.trim()
+      : null;
+  const permitPublicationGatewayUrl =
+    typeof permitPublication?.gatewayUrl === "string" &&
+    permitPublication.gatewayUrl.trim().length > 0
+      ? permitPublication.gatewayUrl.trim()
+      : null;
+  const permitPublicationReady =
+    permitPublication?.schemaVersion ===
+      "oracle-node.polk-permit-table-publication.v1" &&
+    permitPublication.county === "polk" &&
+    nestedCount(permitPublication, ["rowCount"]) === permitCount &&
+    nestedCount(permitPublication, ["distinctPermitIds"]) === permitCount &&
+    permitPublicationCid !== null &&
+    permitPublicationIpnsLabel === "oracle-permit-table-polk" &&
+    permitPublicationIpnsName !== null &&
+    permitPublicationGatewayUrl ===
+      `https://ipfs.filebase.io/ipns/${permitPublicationIpnsName}` &&
+    permitPublication.gatewayVerified === true &&
+    permitPublication.firstFourBytes === "PAR1";
   const sunbizReady =
     sunbiz?.schemaVersion === "oracle-node.polk-sunbiz-transform-match.v1" &&
     sunbiz.county === "polk" &&
@@ -555,6 +638,8 @@ export async function buildPolkPublicationPlan(options) {
       propertyCount,
       propertyBytes,
       permitCount,
+      propertyPermitCount,
+      portalPermitCount,
       sourceManifestCount: inventory.sourceManifestNames.length,
       queryTable: {
         file: queryTableFile,
@@ -579,6 +664,30 @@ export async function buildPolkPublicationPlan(options) {
           licenseEvidenceCount: nestedCount(permitEnrichment, [
             "licenseEvidenceCount",
           ]),
+        },
+        permitSources: {
+          manifestPath: permitNormalizationManifestPath,
+          ready: permitSourcesReady,
+          loadReadyPermitCount: portalPermitCount,
+          unmatchedPermitCount: nestedCount(permitNormalization, [
+            "unmatchedPermitCount",
+          ]),
+          excludedContractorLicenseCount: nestedCount(permitNormalization, [
+            "excludedRecordCounts",
+            "contractor_license",
+          ]),
+        },
+        permitPublication: {
+          receiptPath: permitPublicationReceiptPath,
+          ready: permitPublicationReady,
+          rowCount: nestedCount(permitPublication, ["rowCount"]),
+          distinctPermitIds: nestedCount(permitPublication, [
+            "distinctPermitIds",
+          ]),
+          cid: permitPublicationCid,
+          ipnsLabel: permitPublicationIpnsLabel,
+          ipnsName: permitPublicationIpnsName,
+          gatewayUrl: permitPublicationGatewayUrl,
         },
         sunbiz: {
           manifestPath: sunbizManifestPath,
@@ -621,6 +730,16 @@ export async function buildPolkPublicationPlan(options) {
         requiredIpnsLabel: "oracle-query-table-polk",
         externalStatus: "awaiting_human_approval",
       },
+      permitQueryTable: {
+        localFile:
+          "Generated from reconciled Neon by elephant-query-db export:permit-table",
+        requiredBucket: "elephant-oracle-permit-table-polk",
+        requiredIpnsLabel: "oracle-permit-table-polk",
+        expectedRowCount: permitCount,
+        externalStatus: permitPublicationReady
+          ? "published_and_gateway_verified"
+          : "awaiting_export_validation_and_human_approval",
+      },
       datasetCoverage: {
         localFile: path.join(
           options.outputDirectory,
@@ -659,19 +778,23 @@ export async function buildPolkPublicationPlan(options) {
         status: "published",
         queryTableUrl: "<verified-query-table-ipns-url>",
         datasetCoverageUrl: "<verified-coverage-ipns-url>",
-        permitQueryTableUrl: null,
+        permitQueryTableUrl: "<verified-permit-table-ipns-url>",
         placesTableUrl: overturePublicationReady
           ? "<verified-polk-places-ipns-url>"
           : null,
         updatedAt: "<verified-publication-timestamp>",
       },
-      updateCommandTemplate: `npm run catalog:update -- --county-key polk --county-name Polk --state-code FL --county-fips 12105 --query-table-url <verified-query-table-ipns-url> --dataset-coverage-url <verified-coverage-ipns-url>${overturePublicationReady ? " --places-table-url <verified-polk-places-ipns-url>" : ""} --updated-at <verified-publication-timestamp>`,
+      updateCommandTemplate: `npm run catalog:update -- --county-key polk --county-name Polk --state-code FL --county-fips 12105 --query-table-url <verified-query-table-ipns-url> --dataset-coverage-url <verified-coverage-ipns-url> --permit-query-table-url <verified-permit-table-ipns-url>${overturePublicationReady ? " --places-table-url <verified-polk-places-ipns-url>" : ""} --updated-at <verified-publication-timestamp>`,
       mcpMapTemplate: '{"polk":"<verified-query-table-ipns-url>"}',
+      permitMcpMapTemplate: '{"polk":"<verified-permit-table-ipns-url>"}',
     },
     externalActions: [
       "Obtain explicit human approval for public publication.",
       "Create or confirm Polk-specific Filebase buckets and IPNS labels for each artifact family.",
       "Upload locally staged artifacts and reconcile remote object counts and CIDs.",
+      permitPublicationReady
+        ? `The ${permitCount}-row Polk permit table is published and gateway-verified.`
+        : `Export and validate the ${permitCount}-row Polk permit table from the reconciled Neon branch before human-approved Filebase/IPNS publication.`,
       "Verify gateway query-table bytes begin with PAR1 and coverage identifies Polk.",
       "Register the stable verified URLs with catalog:update; do not hand-edit an unverified published entry.",
       "Merge the Polk URL into the existing MCP county map, redeploy the MCP, and run a Donphan smoke query.",
@@ -682,7 +805,7 @@ export async function buildPolkPublicationPlan(options) {
         : "Run and validate the full Polk Overture extract before loading or separately publishing the places family.",
     ],
     parityEvidenceReady:
-      permitEnrichmentReady &&
+      permitSourcesReady &&
       sunbizReady &&
       bbbReady &&
       neonReady &&
@@ -812,9 +935,10 @@ async function writeOpenDataShard(openDataDirectory, shardIndex, entries) {
 /**
  * Build the canonical MCP coverage snapshot for locally published Polk data.
  *
- * Appraisal and permit counts are published because both are reconciled into
- * the property payload family. Enrichment tracks remain explicitly zero with
- * unknown expected counts until independently loaded and reconciled.
+ * Appraisal retains the property-family CID. The combined permit count includes
+ * property-unmatched portal rows and links only to a separately published,
+ * gateway-verified permit-table family. Enrichment tracks remain explicitly
+ * zero with unknown expected counts until independently reconciled.
  *
  * @param {PolkPublicCoverageOptions} options Reconciled publication evidence.
  * @returns {JsonObject} MCP-compatible five-track coverage snapshot.
@@ -839,11 +963,16 @@ export function buildPolkPublicCoverageSnapshot(options) {
   /**
    * Build one enrichment row only from a passed Neon reconciliation track.
    *
-   * @param {"corporate" | "bbb" | "overture_places"} publicSource Published coverage source.
-   * @param {"sunbiz" | "bbb" | "overture_places"} receiptSource Reconciliation source.
+   * @param {"permits" | "corporate" | "bbb" | "overture_places"} publicSource Published coverage source.
+   * @param {"permits" | "sunbiz" | "bbb" | "overture_places"} receiptSource Reconciliation source.
+   * @param {{cid:string|null,ipnsLabel:string|null}} [publication] Optional public artifact linkage.
    * @returns {JsonObject} Reconciled or explicitly empty coverage row.
    */
-  const reconciledTrack = (publicSource, receiptSource) => {
+  const reconciledTrack = (
+    publicSource,
+    receiptSource,
+    publication = { cid: null, ipnsLabel: null },
+  ) => {
     const track = options.reconciledTracks?.find(
       (candidate) =>
         candidate.source === receiptSource && candidate.passed === true,
@@ -879,10 +1008,28 @@ export function buildPolkPublicCoverageSnapshot(options) {
         typeof track.firstLoadedAt === "string" ? track.firstLoadedAt : null,
       last_loaded_at:
         typeof track.lastLoadedAt === "string" ? track.lastLoadedAt : null,
-      cid: null,
-      ipns_label: null,
+      cid: publication.cid,
+      ipns_label: publication.ipnsLabel,
     };
   };
+  const reconciledPermits = reconciledTrack("permits", "permits", {
+    cid: options.permitTableCid ?? null,
+    ipnsLabel: options.permitTableIpnsLabel ?? null,
+  });
+  const permitCoverage =
+    reconciledPermits.expected_count !== options.permitCount ||
+    reconciledPermits.ingested_count !== options.permitCount
+      ? {
+          county: "polk",
+          source: "permits",
+          ingested_count: options.permitCount,
+          expected_count: options.permitCount,
+          first_loaded_at: options.exportedAt,
+          last_loaded_at: options.completedAt,
+          cid: options.permitTableCid ?? null,
+          ipns_label: options.permitTableIpnsLabel ?? null,
+        }
+      : reconciledPermits;
   return {
     county: "polk",
     exportedAt: options.completedAt,
@@ -897,16 +1044,7 @@ export function buildPolkPublicCoverageSnapshot(options) {
         cid: options.openDataCid,
         ipns_label: "oracle-open-data-polk",
       },
-      {
-        county: "polk",
-        source: "permits",
-        ingested_count: options.permitCount,
-        expected_count: options.permitCount,
-        first_loaded_at: options.exportedAt,
-        last_loaded_at: options.completedAt,
-        cid: options.openDataCid,
-        ipns_label: "oracle-open-data-polk",
-      },
+      permitCoverage,
       reconciledTrack("corporate", "sunbiz"),
       reconciledTrack("bbb", "bbb"),
       reconciledTrack("overture_places", "overture_places"),
@@ -1078,12 +1216,23 @@ async function materializePolkPublication(options, inventory, manifest, plan) {
   const reconciledTracks = Array.isArray(neon?.tracks)
     ? neon.tracks.filter(isJsonObject)
     : [];
+  const permitPublication = isJsonObject(enrichments?.permitPublication)
+    ? enrichments.permitPublication
+    : null;
   const publicCoverage = buildPolkPublicCoverageSnapshot({
     propertyCount: inventory.propertyCount,
     permitCount: requiredCount(validation, "permitCount", "plan.validation"),
     exportedAt,
     completedAt,
     openDataCid: localOpenDataIndexCid,
+    permitTableCid:
+      typeof permitPublication?.cid === "string"
+        ? permitPublication.cid
+        : undefined,
+    permitTableIpnsLabel:
+      typeof permitPublication?.ipnsLabel === "string"
+        ? permitPublication.ipnsLabel
+        : undefined,
     reconciledTracks,
   });
   await Promise.all([

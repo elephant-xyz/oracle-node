@@ -1,8 +1,17 @@
 #!/usr/bin/env node
 
+import { createHash } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
 import { createRequire } from "node:module";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  open,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import * as path from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
@@ -10,6 +19,7 @@ import { parseArgs } from "node:util";
 
 const require = createRequire(import.meta.url);
 const duckdb = require("duckdb");
+const POLK_PERMIT_ADAPTER_CONTRACT_VERSION = "2026-09-03.2";
 
 /**
  * @typedef {Record<string, unknown>} JsonObject
@@ -26,7 +36,7 @@ function isJsonObject(value) {
 }
 
 /**
- * @typedef {"official_bulk" | "accela" | "ims" | "tyler_esuite" | "iworq" | "municipal_portal" | "none_verified"} PolkPermitPortalKind
+ * @typedef {"official_bulk" | "accela" | "ims" | "tyler_esuite" | "iworq" | "govbuilt" | "municipal_portal" | "manual_records" | "none_verified"} PolkPermitPortalKind
  */
 
 /**
@@ -129,36 +139,171 @@ export const POLK_PERMIT_SOURCE_REGISTRY = Object.freeze([
       "Anonymous CitizenLink bootstrap, permit-number lookup, and detail requests were certified; permit details expose municipal contractor identity and class but not a Florida state licence number.",
     verifiedAt: "2026-08-31",
   },
-  ...[
-    "AUBURNDALE",
-    "BARTOW",
-    "DAVENPORT",
-    "DUNDEE",
-    "EAGLE LAKE",
-    "FORT MEADE",
-    "FROSTPROOF",
-    "LAKE ALFRED",
-    "LAKE HAMILTON",
-    "MULBERRY",
-    "POLK CITY",
-  ].map(
-    /**
-     * @param {string} agency Official bulk agency label.
-     * @returns {PolkPermitSource} Explicit unavailable-source registry row.
-     */
-    (agency) => ({
-      key: agency.toLowerCase().replaceAll(" ", "_"),
-      agency,
-      portalKind: "none_verified",
-      status: "no_public_detail_source_verified",
-      officialUrl: null,
-      searchUrl: null,
-      adapter: null,
-      evidence:
-        "The agency appears in the official Polk bulk permit projection, but no anonymous detail source and request contract are certified in this registry.",
-      verifiedAt: "2026-08-31",
-    }),
-  ),
+  {
+    key: "auburndale_govbuilt",
+    agency: "AUBURNDALE",
+    portalKind: "govbuilt",
+    status: "portal_verified_adapter_pending",
+    officialUrl: "https://auburndalefl.com/construction-services/",
+    searchUrl: "https://auburndalefl.govbuilt.com/",
+    adapter: null,
+    evidence:
+      "The official city page links GovBuilt. Historical retention, anonymous list access, identifier mapping, and safe throughput remain uncertified.",
+    verifiedAt: "2026-09-03",
+  },
+  {
+    key: "bartow_building",
+    agency: "BARTOW",
+    portalKind: "manual_records",
+    status: "no_public_detail_source_verified",
+    officialUrl: "https://www.cityofbartow.net/159/Building-Department",
+    searchUrl: null,
+    adapter: null,
+    evidence:
+      "The official department publishes applications and forms but no anonymous historical permit-record search or export has been verified.",
+    verifiedAt: "2026-09-03",
+  },
+  {
+    key: "davenport_iworq",
+    agency: "DAVENPORT",
+    portalKind: "iworq",
+    status: "portal_verified_adapter_pending",
+    officialUrl:
+      "https://www.mydavenport.org/index.asp?SEC=54C1C62E-BE5B-43DE-AF31-EF135278CEAD",
+    searchUrl: "https://portal.iworq.net/DAVENPORT/permits/600",
+    adapter: null,
+    evidence:
+      "The official city page links iWorQ status, document, and inspection access. Historical retention and predecessor County-held records remain uncertified.",
+    verifiedAt: "2026-09-03",
+  },
+  {
+    key: "dundee_mixed_custody",
+    agency: "DUNDEE",
+    portalKind: "accela",
+    status: "portal_verified_adapter_pending",
+    officialUrl: "https://townofdundee.com/departments/building-services/",
+    searchUrl:
+      "https://aca-prod.accela.com/POLKCO/Cap/CapHome.aspx?module=Building&TabName=Building",
+    adapter: null,
+    evidence:
+      "The town administers building services while recent BR records resolve in County Accela. Delegation and predecessor date boundaries require official confirmation.",
+    verifiedAt: "2026-09-03",
+  },
+  {
+    key: "eagle_lake_polkco",
+    agency: "EAGLE LAKE",
+    portalKind: "accela",
+    status: "portal_verified_adapter_pending",
+    officialUrl: "https://www.eaglelakefl.gov/building",
+    searchUrl:
+      "https://aca-prod.accela.com/POLKCO/Cap/CapHome.aspx?module=Building&TabName=Building",
+    adapter: null,
+    evidence:
+      "The city links County Accela and a recent BR record resolves there. A bounded historical and pagination pilot is still required.",
+    verifiedAt: "2026-09-03",
+  },
+  {
+    key: "fort_meade_polkco",
+    agency: "FORT MEADE",
+    portalKind: "accela",
+    status: "portal_verified_adapter_pending",
+    officialUrl: "https://www.cityoffortmeade.org/departments/building.php",
+    searchUrl:
+      "https://aca-prod.accela.com/POLKCO/Cap/CapHome.aspx?module=Building&TabName=Building",
+    adapter: null,
+    evidence:
+      "The city links County Accela and a recent BR record resolves there. Historical custody and accessible totals remain uncertified.",
+    verifiedAt: "2026-09-03",
+  },
+  {
+    key: "frostproof_building",
+    agency: "FROSTPROOF",
+    portalKind: "manual_records",
+    status: "no_public_detail_source_verified",
+    officialUrl: "https://cityoffrostproof.com/departments/building/",
+    searchUrl: null,
+    adapter: null,
+    evidence:
+      "The city publishes manual application contact paths but no anonymous historical record search or export has been verified.",
+    verifiedAt: "2026-09-03",
+  },
+  {
+    key: "lake_alfred_accela",
+    agency: "LAKE ALFRED",
+    portalKind: "accela",
+    status: "portal_verified_adapter_pending",
+    officialUrl: "https://www.mylakealfred.com/166/Building-Permits",
+    searchUrl: "https://aca-prod.accela.com/COLA/Default.aspx",
+    adapter: null,
+    evidence:
+      "The official city page links its Accela agency and a recent BR record resolves. Historical retention and identifier-family mapping remain uncertified.",
+    verifiedAt: "2026-09-03",
+  },
+  {
+    key: "lake_hamilton_iworq",
+    agency: "LAKE HAMILTON",
+    portalKind: "iworq",
+    status: "portal_verified_adapter_pending",
+    officialUrl: "https://townoflakehamilton.com/1205/Community-Development",
+    searchUrl:
+      "https://townoflakehamilton.portal.iworq.net/portalhome/townoflakehamilton",
+    adapter: null,
+    evidence:
+      "The official town page links iWorQ, but record lookup requires permit number plus contractor ID and historical retention is unknown.",
+    verifiedAt: "2026-09-03",
+  },
+  {
+    key: "mulberry_accela",
+    agency: "MULBERRY",
+    portalKind: "accela",
+    status: "portal_verified_adapter_pending",
+    officialUrl: "https://www.cityofmulberryfl.org/building-department",
+    searchUrl: "https://aca-prod.accela.com/MULBERRY/Default.aspx",
+    adapter: null,
+    evidence:
+      "The city has an Accela agency, but sampled Property Appraiser identifiers did not resolve; identifier mapping and historical retention remain uncertified.",
+    verifiedAt: "2026-09-03",
+  },
+  {
+    key: "polk_city_polkco",
+    agency: "POLK CITY",
+    portalKind: "accela",
+    status: "portal_verified_adapter_pending",
+    officialUrl: "https://www.mypolkcity.org/building",
+    searchUrl:
+      "https://aca-prod.accela.com/POLKCO/Cap/CapHome.aspx?module=Building&TabName=Building",
+    adapter: null,
+    evidence:
+      "The city explicitly uses County Accela and a recent BR record resolves. A historical boundary and throughput pilot remains required.",
+    verifiedAt: "2026-09-03",
+  },
+  {
+    key: "highland_park_polkco",
+    agency: "HIGHLAND PARK",
+    portalKind: "accela",
+    status: "portal_verified_adapter_pending",
+    officialUrl:
+      "https://www.highlandpark-fl.org/Permit_Authorization_Form_VHP.pdf",
+    searchUrl:
+      "https://aca-prod.accela.com/POLKCO/Cap/CapHome.aspx?module=Building&TabName=Building",
+    adapter: null,
+    evidence:
+      "Village permit authorization delegates issuance to Polk County under an interlocal arrangement; records are not separately labeled in the bulk projection.",
+    verifiedAt: "2026-09-03",
+  },
+  {
+    key: "hillcrest_heights_polkco",
+    agency: "HILLCREST HEIGHTS",
+    portalKind: "accela",
+    status: "portal_verified_adapter_pending",
+    officialUrl: "https://www.polkflpa.gov/permitagencies.aspx",
+    searchUrl:
+      "https://aca-prod.accela.com/POLKCO/Cap/CapHome.aspx?module=Building&TabName=Building",
+    adapter: null,
+    evidence:
+      "The Property Appraiser directory assigns County lookup. County-held records cannot currently be separated from agency-null or Polk County rows.",
+    verifiedAt: "2026-09-03",
+  },
 ]);
 
 /**
@@ -456,6 +601,65 @@ function escapeRegularExpression(value) {
 }
 
 /**
+ * Normalize a permit identifier for exact cross-source comparisons.
+ *
+ * @param {string} value Raw permit identifier.
+ * @returns {string} Uppercase alphanumeric identifier.
+ */
+function normalizePermitIdentifier(value) {
+  return value.toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+
+/**
+ * Confirm rendered source text contains the complete requested identifier.
+ *
+ * @param {string} text Rendered portal text.
+ * @param {string} permitNumber Requested permit identifier.
+ * @returns {boolean} Whether the complete identifier appears as one token.
+ */
+function containsExactPermitIdentifier(text, permitNumber) {
+  const normalized = permitNumber.trim();
+  if (normalized.length === 0) return false;
+  return new RegExp(
+    `(^|[^A-Z0-9])${escapeRegularExpression(normalized)}([^A-Z0-9]|$)`,
+    "i",
+  ).test(text);
+}
+
+/**
+ * Permanent per-record source miss that should not consume retry attempts.
+ */
+class PolkPermitNotFoundError extends Error {
+  /**
+   * @param {string} message Evidence-backed missing-record detail.
+   */
+  constructor(message) {
+    super(message);
+    this.name = "PolkPermitNotFoundError";
+  }
+}
+
+/**
+ * Add an abort signal to every request in one multi-step portal operation.
+ *
+ * @param {typeof fetch} fetchImplementation Injectable fetch implementation.
+ * @param {number} timeoutMs Per-request timeout in milliseconds.
+ * @returns {typeof fetch} Fetch implementation with a default timeout signal.
+ */
+export function createPolkPermitTimedFetch(fetchImplementation, timeoutMs) {
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1) {
+    throw new Error("Polk permit fetch timeout must be a positive integer");
+  }
+  return /** @type {typeof fetch} */ (
+    (input, init = {}) =>
+      fetchImplementation(input, {
+        ...init,
+        signal: init.signal ?? AbortSignal.timeout(timeoutMs),
+      })
+  );
+}
+
+/**
  * Normalize a phone number to its final ten digits.
  *
  * @param {string | null} value Raw phone.
@@ -650,7 +854,9 @@ export async function fetchPolkAccelaPermitDetail(
     },
   });
   if (!response.ok) {
-    throw new Error(`Polk Accela detail returned HTTP ${response.status}`);
+    const message = `Polk Accela detail returned HTTP ${response.status}`;
+    if (response.status === 404) throw new PolkPermitNotFoundError(message);
+    throw new Error(message);
   }
   return { url, html: await response.text() };
 }
@@ -676,6 +882,38 @@ export function buildWinterHavenPermitSearchUrl(permitNumber) {
 }
 
 /**
+ * Resolve the exact Winter Haven result row instead of accepting the first link.
+ *
+ * @param {string} html Public eSuite search result HTML.
+ * @param {string} permitNumber Requested permit number.
+ * @returns {string | null} Matching session-scoped detail path.
+ */
+export function findWinterHavenPermitDetailPath(html, permitNumber) {
+  const rows = [...html.matchAll(/<tr\b[^>]*>[\s\S]*?<\/tr>/gi)].map(
+    (match) => match[0],
+  );
+  for (const row of rows) {
+    if (!containsExactPermitIdentifier(permitHtmlToText(row), permitNumber)) {
+      continue;
+    }
+    const detailPath = firstCapture(
+      row,
+      /href=["']([^"']*ContractorPermitDetails\.aspx\?id=\d+[^"']*)["']/i,
+    );
+    if (detailPath !== null) return detailPath;
+  }
+  const allDetailPaths = [
+    ...html.matchAll(
+      /href=["']([^"']*ContractorPermitDetails\.aspx\?id=\d+[^"']*)["']/gi,
+    ),
+  ].flatMap((match) => (typeof match[1] === "string" ? [match[1]] : []));
+  return allDetailPaths.length === 1 &&
+    containsExactPermitIdentifier(permitHtmlToText(html), permitNumber)
+    ? (allDetailPaths[0] ?? null)
+    : null;
+}
+
+/**
  * Parse Lakeland's public iMS permit page into the shared detail contract.
  *
  * @param {string} html Public permit detail HTML.
@@ -685,10 +923,15 @@ export function buildWinterHavenPermitSearchUrl(permitNumber) {
 export function parseLakelandImsPermitDetailHtml(html, requestedPermitNumber) {
   const text = permitHtmlToText(html);
   const normalizedPermit = requestedPermitNumber.trim();
+  const parsedPermitNumber =
+    firstCapture(text, /\bPermit(?: Number)?:\s*([A-Z0-9-]+)/i) ??
+    firstCapture(text, /\bPermit\s+([A-Z0-9-]+)\b/i);
   const permitNumber =
-    normalizedPermit.length > 0
-      ? normalizedPermit
-      : firstCapture(text, /\bPermit(?: Number)?:\s*([A-Z0-9-]+)/i);
+    parsedPermitNumber !== null &&
+    normalizePermitIdentifier(parsedPermitNumber) ===
+      normalizePermitIdentifier(normalizedPermit)
+      ? parsedPermitNumber
+      : null;
   const headingIndex = text
     .toUpperCase()
     .lastIndexOf(normalizedPermit.toUpperCase());
@@ -769,11 +1012,16 @@ export function parseLakelandImsPermitDetailHtml(html, requestedPermitNumber) {
 export function parseWinterHavenPermitDetailHtml(html, requestedPermitNumber) {
   const text = permitHtmlToText(html);
   const normalizedPermit = requestedPermitNumber.trim();
+  const parsedPermitNumber =
+    firstCapture(text, /\bPermit(?: Number)?:\s*([A-Z0-9-]+)/i) ??
+    firstCapture(text, /\bPermit\s*#\s*:?\s*([A-Z0-9-]+)/i);
   return {
     permitNumber:
-      normalizedPermit.length > 0
-        ? normalizedPermit
-        : firstCapture(text, /\bPermit(?: Number)?:\s*([A-Z0-9-]+)/i),
+      parsedPermitNumber !== null &&
+      normalizePermitIdentifier(parsedPermitNumber) ===
+        normalizePermitIdentifier(normalizedPermit)
+        ? parsedPermitNumber
+        : null,
     recordType:
       firstCapture(text, /\bPermit Type\s+(.+?)\s+Permit #/i) ??
       firstCapture(
@@ -848,11 +1096,17 @@ export function parseLakeWalesPermitDetailHtml(html, requestedPermitNumber) {
           raw: contractorMatch[0],
         };
   const normalizedPermit = requestedPermitNumber.trim();
+  const parsedPermitNumber = firstCapture(
+    text,
+    /\bPermit(?: Number)?:\s*([A-Z0-9-]+)/i,
+  );
   return {
     permitNumber:
-      normalizedPermit.length > 0
-        ? normalizedPermit
-        : firstCapture(text, /\bPermit(?: Number)?:\s*([A-Z0-9-]+)/i),
+      parsedPermitNumber !== null &&
+      normalizePermitIdentifier(parsedPermitNumber) ===
+        normalizePermitIdentifier(normalizedPermit)
+        ? parsedPermitNumber
+        : null,
     recordType: firstCapture(
       text,
       /\b(?:Permit )?Type:\s*(.+?)(?:\s+Status:|\s+Address:|\s+Description:)/i,
@@ -971,12 +1225,15 @@ export async function fetchLakelandImsPermitDetail(
       fetchImplementation,
     );
   }
+  if (response.status === 404) {
+    throw new PolkPermitNotFoundError(
+      `Lakeland permit ${normalized} returned HTTP 404`,
+    );
+  }
   assertPublicResponse(response, "Lakeland permit detail");
   const html = await response.text();
-  if (
-    !permitHtmlToText(html).toUpperCase().includes(normalized.toUpperCase())
-  ) {
-    throw new Error(
+  if (!containsExactPermitIdentifier(permitHtmlToText(html), normalized)) {
+    throw new PolkPermitNotFoundError(
       `Lakeland permit ${normalized} did not resolve to a detail page`,
     );
   }
@@ -1004,12 +1261,12 @@ export async function fetchWinterHavenPermitDetail(
   );
   assertPublicResponse(searchResponse, "Winter Haven permit search");
   const searchHtml = await searchResponse.text();
-  const rawDetailPath = firstCapture(
+  const rawDetailPath = findWinterHavenPermitDetailPath(
     searchHtml,
-    /href=["']([^"']*ContractorPermitDetails\.aspx\?id=\d+[^"']*)["']/i,
+    permitNumber,
   );
   if (rawDetailPath === null) {
-    throw new Error(
+    throw new PolkPermitNotFoundError(
       `Winter Haven permit ${permitNumber} returned no detail link`,
     );
   }
@@ -1023,6 +1280,11 @@ export async function fetchWinterHavenPermitDetail(
     cookies,
     fetchImplementation,
   );
+  if (detailResponse.status === 404) {
+    throw new PolkPermitNotFoundError(
+      `Winter Haven permit ${permitNumber} returned HTTP 404`,
+    );
+  }
   assertPublicResponse(detailResponse, "Winter Haven permit detail");
   return { url: detailResponse.url, html: await detailResponse.text() };
 }
@@ -1082,11 +1344,13 @@ export async function fetchLakeWalesPermitDetail(
           isJsonObject(candidate) &&
           typeof candidate.id === "string" &&
           typeof candidate.text === "string" &&
-          candidate.text.toUpperCase().includes(normalized.toUpperCase()),
+          containsExactPermitIdentifier(candidate.text, normalized),
       )
     : undefined;
   if (!isJsonObject(suggestion) || typeof suggestion.id !== "string") {
-    throw new Error(`Lake Wales permit ${normalized} returned no exact result`);
+    throw new PolkPermitNotFoundError(
+      `Lake Wales permit ${normalized} returned no exact result`,
+    );
   }
   const detailBody = new URLSearchParams({
     phpClass: "coreShowFullPermit",
@@ -1131,18 +1395,18 @@ export async function fetchLakeWalesPermitDetail(
  * @param {string} adapter Certified adapter key.
  * @param {string} permitNumber Official permit number.
  * @param {typeof fetch} [fetchImplementation] Injectable fetch for tests.
+ * @param {number} [timeoutMs] Per-request timeout in milliseconds.
  * @returns {Promise<{url:string,detail:PolkAccelaPermitDetail}>} Parsed detail.
  */
 export async function fetchPolkPermitAdapterDetail(
   adapter,
   permitNumber,
   fetchImplementation = fetch,
+  timeoutMs = 30_000,
 ) {
+  const timedFetch = createPolkPermitTimedFetch(fetchImplementation, timeoutMs);
   if (adapter === "polk_accela_cap_detail_v1") {
-    const fetched = await fetchPolkAccelaPermitDetail(
-      permitNumber,
-      fetchImplementation,
-    );
+    const fetched = await fetchPolkAccelaPermitDetail(permitNumber, timedFetch);
     return {
       url: fetched.url,
       detail: parsePolkPermitAdapterHtml(adapter, fetched.html, permitNumber),
@@ -1151,7 +1415,7 @@ export async function fetchPolkPermitAdapterDetail(
   if (adapter === "lakeland_ims_permit_detail_v1") {
     const fetched = await fetchLakelandImsPermitDetail(
       permitNumber,
-      fetchImplementation,
+      timedFetch,
     );
     return {
       url: fetched.url,
@@ -1161,7 +1425,7 @@ export async function fetchPolkPermitAdapterDetail(
   if (adapter === "winter_haven_esuite_permit_detail_v1") {
     const fetched = await fetchWinterHavenPermitDetail(
       permitNumber,
-      fetchImplementation,
+      timedFetch,
     );
     return {
       url: fetched.url,
@@ -1169,13 +1433,19 @@ export async function fetchPolkPermitAdapterDetail(
     };
   }
   if (adapter === "lake_wales_citizenlink_permit_detail_v1") {
-    const fetched = await fetchLakeWalesPermitDetail(
+    const fetched = await fetchLakeWalesPermitDetail(permitNumber, timedFetch);
+    const detail = parsePolkPermitAdapterHtml(
+      adapter,
+      fetched.html,
       permitNumber,
-      fetchImplementation,
     );
     return {
       url: fetched.url,
-      detail: parsePolkPermitAdapterHtml(adapter, fetched.html, permitNumber),
+      detail: {
+        ...detail,
+        // The preceding AJAX lookup selected an exact permit-number result.
+        permitNumber: detail.permitNumber ?? permitNumber,
+      },
     };
   }
   throw new Error(`Unsupported Polk permit adapter: ${adapter}`);
@@ -1374,7 +1644,7 @@ function buildPolkPermitAgencyCoverage(permitSummary) {
   /** @type {JsonObject[]} */
   const agencyCoverage = [];
   for (const agencyRow of permitSummary.agencies) {
-    const source = registryByAgency.get(agencyRow.value);
+    const source = registryByAgency.get(agencyRow.value.trim().toUpperCase());
     const adapterReady = source?.status === "adapter_ready";
     if (adapterReady) adapterEligiblePermitCount += agencyRow.count;
     else unsupportedPermitCount += agencyRow.count;
@@ -1425,7 +1695,16 @@ export function buildPolkPermitEnrichmentReceiptFromRun(permitSummary, run) {
       ? "The adapter run contains invalid inputs or exhausted fetch failures."
       : null,
   ].filter((reason) => reason !== null);
-  const complete =
+  const candidateInputComplete =
+    run.inputRecordCount > 0 &&
+    run.invalidRecordCount === 0 &&
+    run.fetchErrorCount === 0 &&
+    (run.unsupportedRecordCount ?? 0) === 0 &&
+    run.supportedRecordCount + (run.partialAdapterAttemptedRecordCount ?? 0) ===
+      run.inputRecordCount &&
+    run.enrichedRecordCount + (run.partialAdapterEnrichedRecordCount ?? 0) ===
+      run.inputRecordCount;
+  const countyCoverageComplete =
     permitSummary.permitCount > 0 &&
     unsupportedPermitCount === 0 &&
     run.invalidRecordCount === 0 &&
@@ -1456,7 +1735,9 @@ export function buildPolkPermitEnrichmentReceiptFromRun(permitSummary, run) {
     input: run.input,
     output: run.output,
     agencyCoverage,
-    complete,
+    candidateInputComplete,
+    countyCoverageComplete,
+    complete: countyCoverageComplete,
     blocker: blockerReasons.length > 0 ? blockerReasons.join(" ") : null,
   };
 }
@@ -1515,6 +1796,7 @@ export function buildPolkPermitEnrichmentReceipt(permitSummary, records) {
  * @property {number} delayMs Minimum delay between starts for one source.
  * @property {number} retryDelayMs Base retry delay.
  * @property {number} attempts Maximum attempts per public request.
+ * @property {number} timeoutMs Per-request timeout in milliseconds.
  * @property {boolean} includePartial Whether explicitly requested partial adapters may run.
  * @property {boolean} network Whether to fetch live public pages.
  * @property {string} htmlDirectory Saved-HTML directory for offline runs.
@@ -1533,6 +1815,24 @@ export function buildPolkPermitEnrichmentReceipt(permitSummary, records) {
  * @property {number} fetchErrorCount Exhausted request failures.
  * @property {number} noDetailCount Successful requests without detail evidence.
  * @property {number} unsupportedRecordCount Unsupported input records.
+ */
+
+/**
+ * @typedef {object} PolkPermitCheckpoint
+ * @property {string} schemaVersion Checkpoint schema identifier.
+ * @property {string} updatedAt Last atomic update time.
+ * @property {string} input Candidate JSONL path.
+ * @property {string} output Aggregate JSONL path.
+ * @property {string} stateDirectory Deterministic part directory.
+ * @property {number} batchSize Records per part.
+ * @property {number} completedPartCount Contiguous verified parts.
+ * @property {number} totalPartCount Expected parts.
+ * @property {number} processedInputRecordCount Candidate rows represented by parts.
+ * @property {number} inputRecordCount Total non-empty input rows.
+ * @property {string | undefined} [inputFingerprint] SHA-256 of normalized candidates.
+ * @property {string | undefined} [adapterContractFingerprint] SHA-256 of adapter eligibility and parsing contract.
+ * @property {boolean | undefined} [includePartial] Whether partial adapters were eligible.
+ * @property {boolean | undefined} [aggregateComplete] Whether output was atomically assembled.
  */
 
 /**
@@ -1589,6 +1889,7 @@ export async function retryPolkPermitOperation(
       return await operation();
     } catch (caught) {
       lastError = caught instanceof Error ? caught : new Error(String(caught));
+      if (lastError instanceof PolkPermitNotFoundError) throw lastError;
       if (attempt < attempts) {
         await sleepImplementation(retryDelayMs * attempt);
       }
@@ -1683,14 +1984,14 @@ export async function redrivePolkPermitFetchErrors(
  * @param {number} delayMs Minimum milliseconds between starts per source.
  * @returns {(sourceKey:string,operation:() => Promise<{url:string,detail:PolkAccelaPermitDetail}>) => Promise<{url:string,detail:PolkAccelaPermitDetail}>} Scheduler.
  */
-function createPolkPermitSourceScheduler(delayMs) {
+export function createPolkPermitSourceScheduler(delayMs) {
   /** @type {Map<string, Promise<void>>} */
   const sourceTails = new Map();
   /** @type {Map<string, number>} */
   const sourceNextStart = new Map();
   return async (sourceKey, operation) => {
     const previous = sourceTails.get(sourceKey) ?? Promise.resolve();
-    const gate = previous
+    const scheduled = previous
       .catch(() => undefined)
       .then(async () => {
         const waitMs = Math.max(
@@ -1699,10 +2000,16 @@ function createPolkPermitSourceScheduler(delayMs) {
         );
         if (waitMs > 0) await sleep(waitMs);
         sourceNextStart.set(sourceKey, Date.now() + delayMs);
+        return operation();
       });
-    sourceTails.set(sourceKey, gate);
-    await gate;
-    return operation();
+    sourceTails.set(
+      sourceKey,
+      scheduled.then(
+        () => undefined,
+        () => undefined,
+      ),
+    );
+    return scheduled;
   };
 }
 
@@ -1733,6 +2040,217 @@ async function readPolkPermitWorkItems(input) {
 }
 
 /**
+ * Fingerprint normalized candidate identities without depending on file metadata.
+ *
+ * @param {readonly PolkPermitWorkItem[]} workItems Ordered candidate work.
+ * @returns {string} Lowercase SHA-256 digest.
+ */
+function fingerprintPolkPermitWorkItems(workItems) {
+  const hash = createHash("sha256");
+  for (const item of workItems) {
+    if (item.candidate === null) {
+      hash.update("<invalid>\n");
+      continue;
+    }
+    hash.update(item.candidate.agency);
+    hash.update("\0");
+    hash.update(item.candidate.permitNumber);
+    hash.update("\n");
+  }
+  return hash.digest("hex");
+}
+
+/**
+ * Pin adapter eligibility and parsing semantics across resumptions.
+ *
+ * @param {boolean} includePartial Whether partial adapters may run.
+ * @returns {string} Lowercase SHA-256 digest.
+ */
+function fingerprintPolkPermitAdapterContract(includePartial) {
+  return createHash("sha256")
+    .update(POLK_PERMIT_ADAPTER_CONTRACT_VERSION)
+    .update("\n")
+    .update(
+      JSON.stringify(
+        POLK_PERMIT_SOURCE_REGISTRY.map((source) => ({
+          key: source.key,
+          agency: source.agency,
+          status: source.status,
+          adapter: source.adapter,
+        })),
+      ),
+    )
+    .update(`\nincludePartial=${String(includePartial)}`)
+    .digest("hex");
+}
+
+/**
+ * Read and structurally validate a permit checkpoint when present.
+ *
+ * @param {string} checkpointPath Checkpoint path.
+ * @returns {Promise<PolkPermitCheckpoint | null>} Parsed checkpoint or null.
+ */
+async function readPolkPermitCheckpoint(checkpointPath) {
+  let value;
+  try {
+    value = /** @type {unknown} */ (
+      JSON.parse(await readFile(checkpointPath, "utf8"))
+    );
+  } catch (caught) {
+    if (
+      caught instanceof Error &&
+      "code" in caught &&
+      /** @type {NodeJS.ErrnoException} */ (caught).code === "ENOENT"
+    ) {
+      return null;
+    }
+    throw caught;
+  }
+  if (
+    !isJsonObject(value) ||
+    typeof value.schemaVersion !== "string" ||
+    typeof value.updatedAt !== "string" ||
+    typeof value.input !== "string" ||
+    typeof value.output !== "string" ||
+    typeof value.stateDirectory !== "string" ||
+    typeof value.batchSize !== "number" ||
+    typeof value.completedPartCount !== "number" ||
+    typeof value.totalPartCount !== "number" ||
+    typeof value.processedInputRecordCount !== "number" ||
+    typeof value.inputRecordCount !== "number" ||
+    (value.inputFingerprint !== undefined &&
+      typeof value.inputFingerprint !== "string") ||
+    (value.adapterContractFingerprint !== undefined &&
+      typeof value.adapterContractFingerprint !== "string") ||
+    (value.includePartial !== undefined &&
+      typeof value.includePartial !== "boolean") ||
+    (value.aggregateComplete !== undefined &&
+      typeof value.aggregateComplete !== "boolean")
+  ) {
+    throw new Error(`Invalid Polk permit checkpoint: ${checkpointPath}`);
+  }
+  return /** @type {PolkPermitCheckpoint} */ (value);
+}
+
+/**
+ * Reject reuse of parts against a changed candidate contract.
+ *
+ * Version 1 checkpoints are accepted only when all fields they carried match;
+ * the next write upgrades them with an input fingerprint.
+ *
+ * @param {PolkPermitCheckpoint} checkpoint Persisted checkpoint.
+ * @param {{input:string,output:string,stateDirectory:string,batchSize:number,totalPartCount:number,inputRecordCount:number,inputFingerprint:string,adapterContractFingerprint:string,includePartial:boolean}} expected Current run identity.
+ * @returns {void}
+ */
+function assertPolkPermitCheckpointCompatible(checkpoint, expected) {
+  const numericFields = [
+    checkpoint.batchSize,
+    checkpoint.completedPartCount,
+    checkpoint.totalPartCount,
+    checkpoint.processedInputRecordCount,
+    checkpoint.inputRecordCount,
+  ];
+  const incompatible =
+    !numericFields.every(
+      (value) => Number.isSafeInteger(value) && value >= 0,
+    ) ||
+    checkpoint.completedPartCount > checkpoint.totalPartCount ||
+    checkpoint.processedInputRecordCount > checkpoint.inputRecordCount ||
+    checkpoint.input !== expected.input ||
+    checkpoint.output !== expected.output ||
+    checkpoint.stateDirectory !== expected.stateDirectory ||
+    checkpoint.batchSize !== expected.batchSize ||
+    checkpoint.totalPartCount !== expected.totalPartCount ||
+    checkpoint.inputRecordCount !== expected.inputRecordCount ||
+    (checkpoint.inputFingerprint !== undefined &&
+      checkpoint.inputFingerprint !== expected.inputFingerprint) ||
+    (checkpoint.adapterContractFingerprint !== undefined &&
+      checkpoint.adapterContractFingerprint !==
+        expected.adapterContractFingerprint) ||
+    (checkpoint.includePartial !== undefined &&
+      checkpoint.includePartial !== expected.includePartial);
+  if (incompatible) {
+    throw new Error(
+      "Polk permit checkpoint is incompatible with the current input or run settings; use a new state directory or explicitly reset the checkpoint.",
+    );
+  }
+}
+
+/**
+ * Prevent concurrent writers from sharing one deterministic part directory.
+ *
+ * A stale lock left by a terminated process is removed only after its PID is
+ * confirmed absent. The returned release operation is safe to call repeatedly.
+ *
+ * @param {string} stateDirectory Deterministic part directory.
+ * @returns {Promise<() => Promise<void>>} Idempotent lock release operation.
+ */
+async function acquirePolkPermitRunLock(stateDirectory) {
+  const lockPath = path.join(stateDirectory, ".run.lock");
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const handle = await open(lockPath, "wx");
+      await handle.writeFile(
+        `${JSON.stringify({
+          pid: process.pid,
+          startedAt: new Date().toISOString(),
+        })}\n`,
+        "utf8",
+      );
+      let released = false;
+      return async () => {
+        if (released) return;
+        released = true;
+        await handle.close();
+        await rm(lockPath, { force: true });
+      };
+    } catch (caught) {
+      if (
+        !(caught instanceof Error) ||
+        !("code" in caught) ||
+        /** @type {NodeJS.ErrnoException} */ (caught).code !== "EEXIST"
+      ) {
+        throw caught;
+      }
+      let activePid = null;
+      try {
+        const lock = /** @type {unknown} */ (
+          JSON.parse(await readFile(lockPath, "utf8"))
+        );
+        activePid =
+          isJsonObject(lock) &&
+          typeof lock.pid === "number" &&
+          Number.isSafeInteger(lock.pid)
+            ? lock.pid
+            : null;
+      } catch {
+        activePid = null;
+      }
+      if (activePid !== null) {
+        try {
+          process.kill(activePid, 0);
+        } catch (processError) {
+          if (
+            processError instanceof Error &&
+            "code" in processError &&
+            /** @type {NodeJS.ErrnoException} */ (processError).code === "ESRCH"
+          ) {
+            await rm(lockPath, { force: true });
+            continue;
+          }
+          throw processError;
+        }
+        throw new Error(
+          `Polk permit state directory is already owned by process ${activePid}`,
+        );
+      }
+      await rm(lockPath, { force: true });
+    }
+  }
+  throw new Error(`Unable to acquire Polk permit run lock at ${lockPath}`);
+}
+
+/**
  * Write text through an atomic same-directory rename.
  *
  * @param {string} destination Final path.
@@ -1747,13 +2265,139 @@ async function writePolkPermitAtomicText(destination, text) {
 }
 
 /**
+ * Confirm a parsed detail carries evidence beyond its permit identity.
+ *
+ * @param {PolkAccelaPermitDetail} detail Parsed detail.
+ * @returns {boolean} Whether the source exposed a permit-specific field.
+ */
+function hasPolkPermitPageEvidence(detail) {
+  return (
+    detail.recordType !== null ||
+    detail.recordStatus !== null ||
+    detail.parcelIdentifier !== null ||
+    detail.workLocation !== null ||
+    detail.projectDescription !== null ||
+    detail.contractor !== null ||
+    detail.jobValuationUsd !== null
+  );
+}
+
+/**
+ * Validate one committed record against its expected source identity and
+ * status-specific invariants.
+ *
+ * @param {unknown} value Parsed part record.
+ * @param {{permitNumber:string,agency:string}} expected Expected candidate.
+ * @returns {value is PolkPermitEnrichmentRecord} Whether the record is safe to reuse.
+ */
+function isReusablePolkPermitRecord(value, expected) {
+  if (
+    !isJsonObject(value) ||
+    typeof value.permitNumber !== "string" ||
+    typeof value.agency !== "string" ||
+    typeof value.sourceKey !== "string" ||
+    (typeof value.sourceUrl !== "string" && value.sourceUrl !== null) ||
+    typeof value.status !== "string" ||
+    typeof value.retrievedAt !== "string" ||
+    !Number.isFinite(Date.parse(value.retrievedAt)) ||
+    value.permitNumber !== expected.permitNumber ||
+    value.agency !== expected.agency ||
+    value.sourceKey !==
+      (findPolkPermitSource(expected.agency)?.key ?? "unregistered") ||
+    (typeof value.error !== "string" && value.error !== null) ||
+    (!isJsonObject(value.detail) && value.detail !== null)
+  ) {
+    return false;
+  }
+  if (value.status === "enriched") {
+    if (
+      !isJsonObject(value.detail) ||
+      typeof value.detail.permitNumber !== "string" ||
+      normalizePermitIdentifier(value.detail.permitNumber) !==
+        normalizePermitIdentifier(expected.permitNumber) ||
+      value.error !== null
+    ) {
+      return false;
+    }
+    return hasPolkPermitPageEvidence(
+      /** @type {PolkAccelaPermitDetail} */ (value.detail),
+    );
+  }
+  if (value.status === "fetch_error") {
+    return value.detail === null && typeof value.error === "string";
+  }
+  if (value.status === "unsupported_source") {
+    return value.detail === null && typeof value.error === "string";
+  }
+  if (value.status === "no_detail") {
+    if (value.detail === null) return true;
+    const detailPermitNumber = value.detail.permitNumber;
+    return (
+      (detailPermitNumber === null ||
+        (typeof detailPermitNumber === "string" &&
+          normalizePermitIdentifier(detailPermitNumber) ===
+            normalizePermitIdentifier(expected.permitNumber))) &&
+      !hasPolkPermitPageEvidence(
+        /** @type {PolkAccelaPermitDetail} */ (value.detail),
+      )
+    );
+  }
+  return false;
+}
+
+/**
+ * Convert only deterministic legacy misclassifications that can be repaired
+ * without another source request.
+ *
+ * @param {unknown} value Parsed committed record.
+ * @param {{permitNumber:string,agency:string}} expected Expected candidate.
+ * @returns {unknown} Original value or a safely reclassified record.
+ */
+export function repairLegacyPolkPermitRecord(value, expected) {
+  if (
+    !isJsonObject(value) ||
+    typeof value.permitNumber !== "string" ||
+    typeof value.agency !== "string" ||
+    typeof value.sourceKey !== "string" ||
+    value.permitNumber !== expected.permitNumber ||
+    value.agency !== expected.agency ||
+    value.sourceKey !==
+      (findPolkPermitSource(expected.agency)?.key ?? "unregistered")
+  ) {
+    return value;
+  }
+  const record = reclassifyLegacyPolkPermitNotFound(
+    /** @type {PolkPermitEnrichmentRecord} */ (value),
+  );
+  if (
+    record.status === "enriched" &&
+    isJsonObject(record.detail) &&
+    typeof record.detail.permitNumber === "string" &&
+    normalizePermitIdentifier(record.detail.permitNumber) ===
+      normalizePermitIdentifier(expected.permitNumber) &&
+    !hasPolkPermitPageEvidence(
+      /** @type {PolkAccelaPermitDetail} */ (record.detail),
+    )
+  ) {
+    return {
+      ...record,
+      status: "no_detail",
+      detail: null,
+      error: "Legacy result contained no page-derived permit evidence.",
+    };
+  }
+  return record;
+}
+
+/**
  * Read and validate an existing deterministic batch part.
  *
  * @param {string} partPath Existing part path.
  * @param {readonly PolkPermitWorkItem[]} workItems Expected work items.
- * @returns {Promise<PolkPermitEnrichmentRecord[] | null>} Valid records or null when absent.
+ * @param {boolean} [repairLegacy] Whether deterministic legacy status repairs are allowed.
+ * @returns {Promise<{records:PolkPermitEnrichmentRecord[],reclassifiedRecordCount:number} | null>} Valid records or null when absent.
  */
-async function readPolkPermitPart(partPath, workItems) {
+async function readPolkPermitPart(partPath, workItems, repairLegacy = false) {
   let text;
   try {
     text = await readFile(partPath, "utf8");
@@ -1770,23 +2414,143 @@ async function readPolkPermitPart(partPath, workItems) {
   const expected = workItems.flatMap((item) =>
     item.candidate === null ? [] : [item.candidate],
   );
-  const records = text
+  const parsedRecords = text
     .split(/\r?\n/)
     .filter((line) => line.trim().length > 0)
-    .map(
-      (line) => /** @type {PolkPermitEnrichmentRecord} */ (JSON.parse(line)),
-    );
+    .map((line) => /** @type {unknown} */ (JSON.parse(line)));
+  const normalizedRecords = parsedRecords.map((record, index) => {
+    const candidate = expected[index];
+    return repairLegacy && candidate !== undefined
+      ? repairLegacyPolkPermitRecord(record, candidate)
+      : record;
+  });
   if (
-    records.length !== expected.length ||
-    records.some(
+    normalizedRecords.length !== expected.length ||
+    normalizedRecords.some(
       (record, index) =>
-        record.permitNumber !== expected[index]?.permitNumber ||
-        record.agency !== expected[index]?.agency,
+        expected[index] === undefined ||
+        !isReusablePolkPermitRecord(record, expected[index]),
     )
   ) {
     throw new Error(`Stale or incomplete permit enrichment part: ${partPath}`);
   }
-  return records;
+  return {
+    records: /** @type {PolkPermitEnrichmentRecord[]} */ (normalizedRecords),
+    reclassifiedRecordCount: normalizedRecords.filter(
+      (record, index) => record !== parsedRecords[index],
+    ).length,
+  };
+}
+
+/**
+ * Reclassify legacy permanent source misses that older code recorded as
+ * retryable failures. The source response already proved the record absent, so
+ * this repair requires no new network request.
+ *
+ * @param {PolkPermitEnrichmentRecord} record Existing committed record.
+ * @returns {PolkPermitEnrichmentRecord} Original or reclassified record.
+ */
+export function reclassifyLegacyPolkPermitNotFound(record) {
+  const permanentMiss =
+    record.status === "fetch_error" &&
+    typeof record.error === "string" &&
+    (record.error.includes("returned no detail link") ||
+      record.error.includes("returned no exact result") ||
+      record.error.includes("did not resolve to a detail page"));
+  return permanentMiss
+    ? {
+        ...record,
+        status: "no_detail",
+      }
+    : record;
+}
+
+/**
+ * Verify every contiguous committed part and reject skipped part indexes.
+ *
+ * @param {string} stateDirectory Deterministic part directory.
+ * @param {readonly PolkPermitWorkItem[]} workItems Ordered candidate work.
+ * @param {number} batchSize Records per part.
+ * @param {boolean} [repairLegacy] Whether deterministic legacy status repairs are allowed.
+ * @returns {Promise<{partPath:string,records:PolkPermitEnrichmentRecord[],reclassifiedRecordCount:number}[]>} Verified contiguous parts.
+ */
+async function verifyCommittedPolkPermitParts(
+  stateDirectory,
+  workItems,
+  batchSize,
+  repairLegacy = false,
+) {
+  const entries = await readdir(stateDirectory);
+  const indexedParts = new Map(
+    entries.flatMap((entry) => {
+      const match = /^part-(\d{6})\.jsonl$/.exec(entry);
+      return match?.[1] === undefined
+        ? []
+        : [[Number.parseInt(match[1], 10), entry]];
+    }),
+  );
+  const totalPartCount = Math.ceil(workItems.length / batchSize);
+  for (const partIndex of indexedParts.keys()) {
+    if (partIndex >= totalPartCount) {
+      throw new Error(
+        `Permit part index ${partIndex} exceeds expected part count ${totalPartCount}`,
+      );
+    }
+  }
+  /** @type {{partPath:string,records:PolkPermitEnrichmentRecord[],reclassifiedRecordCount:number}[]} */
+  const verified = [];
+  for (let partIndex = 0; partIndex < totalPartCount; partIndex += 1) {
+    const entry = indexedParts.get(partIndex);
+    if (entry === undefined) {
+      const laterPart = [...indexedParts.keys()].find(
+        (candidate) => candidate > partIndex,
+      );
+      if (laterPart !== undefined) {
+        throw new Error(
+          `Permit part sequence has a gap at ${partIndex} before committed part ${laterPart}`,
+        );
+      }
+      break;
+    }
+    const offset = partIndex * batchSize;
+    const partPath = path.join(stateDirectory, entry);
+    const records = await readPolkPermitPart(
+      partPath,
+      workItems.slice(offset, offset + batchSize),
+      repairLegacy,
+    );
+    if (records === null) {
+      throw new Error(`Committed permit part disappeared: ${partPath}`);
+    }
+    verified.push({
+      partPath,
+      records: records.records,
+      reclassifiedRecordCount: records.reclassifiedRecordCount,
+    });
+  }
+  return verified;
+}
+
+/**
+ * Atomically persist monotonic permit progress.
+ *
+ * @param {string} checkpointPath Checkpoint destination.
+ * @param {{input:string,output:string,stateDirectory:string,batchSize:number,completedPartCount:number,totalPartCount:number,processedInputRecordCount:number,inputRecordCount:number,inputFingerprint:string,adapterContractFingerprint:string,includePartial:boolean,aggregateComplete:boolean}} checkpoint Checkpoint fields.
+ * @returns {Promise<void>} Resolves after atomic replacement.
+ */
+function writePolkPermitCheckpoint(checkpointPath, checkpoint) {
+  return writePolkPermitAtomicText(
+    checkpointPath,
+    `${JSON.stringify(
+      {
+        schemaVersion: "oracle-node.polk-permit-enrichment-checkpoint.v2",
+        updatedAt: new Date().toISOString(),
+        ...checkpoint,
+      },
+      null,
+      2,
+    )}\n`,
+  );
 }
 
 /**
@@ -1816,6 +2580,22 @@ async function enrichPolkPermitCandidate(candidate, settings, scheduleRequest) {
       retrievedAt: new Date().toISOString(),
     };
   }
+  if (
+    source.key === "winter_haven_tyler_esuite" &&
+    !isWinterHavenHistoricalPermitNumber(candidate.permitNumber)
+  ) {
+    return {
+      permitNumber: candidate.permitNumber,
+      agency: candidate.agency,
+      sourceKey: source.key,
+      sourceUrl: source.searchUrl,
+      status: "unsupported_source",
+      detail: null,
+      error:
+        "Winter Haven eSuite is certified only for YYYY-NNNNNNNN historical identifiers.",
+      retrievedAt: new Date().toISOString(),
+    };
+  }
   try {
     const fetched = await retryPolkPermitOperation(
       () =>
@@ -1824,6 +2604,8 @@ async function enrichPolkPermitCandidate(candidate, settings, scheduleRequest) {
               fetchPolkPermitAdapterDetail(
                 /** @type {string} */ (source.adapter),
                 candidate.permitNumber,
+                fetch,
+                settings.timeoutMs,
               ),
             )
           : readFile(
@@ -1844,29 +2626,43 @@ async function enrichPolkPermitCandidate(candidate, settings, scheduleRequest) {
       settings.retryDelayMs,
     );
     const detail = fetched.detail;
-    const hasEvidence =
-      detail.permitNumber !== null ||
+    const exactPermitMatch =
+      detail.permitNumber !== null &&
+      normalizePermitIdentifier(detail.permitNumber) ===
+        normalizePermitIdentifier(candidate.permitNumber);
+    const hasPageEvidence =
+      detail.recordType !== null ||
       detail.recordStatus !== null ||
       detail.parcelIdentifier !== null ||
+      detail.workLocation !== null ||
+      detail.projectDescription !== null ||
       detail.contractor !== null ||
       detail.jobValuationUsd !== null;
+    const hasEvidence = exactPermitMatch && hasPageEvidence;
     return {
       permitNumber: candidate.permitNumber,
       agency: candidate.agency,
       sourceKey: source.key,
       sourceUrl: fetched.url,
       status: hasEvidence ? "enriched" : "no_detail",
-      detail,
-      error: null,
+      detail: hasEvidence ? detail : null,
+      error: hasEvidence
+        ? null
+        : detail.permitNumber === null
+          ? "Public detail did not expose the requested permit identifier."
+          : !exactPermitMatch
+            ? `Public detail returned permit ${detail.permitNumber} instead of ${candidate.permitNumber}.`
+            : "Public detail exposed no permit-specific evidence.",
       retrievedAt: new Date().toISOString(),
     };
   } catch (caught) {
+    const notFound = caught instanceof PolkPermitNotFoundError;
     return {
       permitNumber: candidate.permitNumber,
       agency: candidate.agency,
       sourceKey: source.key,
       sourceUrl: buildPolkPermitAdapterUrl(source, candidate.permitNumber),
-      status: "fetch_error",
+      status: notFound ? "no_detail" : "fetch_error",
       detail: null,
       error: caught instanceof Error ? caught.message : String(caught),
       retrievedAt: new Date().toISOString(),
@@ -1886,8 +2682,10 @@ function countPolkPermitPart(counters, records) {
     const source = POLK_PERMIT_SOURCE_REGISTRY.find(
       (candidate) => candidate.key === record.sourceKey,
     );
-    if (source?.status === "adapter_ready") counters.supportedRecordCount += 1;
-    if (source?.status === "partial_adapter_ready")
+    const attempted = record.status !== "unsupported_source";
+    if (attempted && source?.status === "adapter_ready")
+      counters.supportedRecordCount += 1;
+    if (attempted && source?.status === "partial_adapter_ready")
       counters.partialAdapterAttemptedRecordCount += 1;
     if (record.status === "enriched") {
       if (source?.status === "adapter_ready") counters.enrichedRecordCount += 1;
@@ -1968,10 +2766,12 @@ export async function runPolkPermitEnrichment(argv) {
       "delay-ms": { type: "string" },
       attempts: { type: "string" },
       "retry-delay-ms": { type: "string" },
+      "timeout-ms": { type: "string" },
       "state-dir": { type: "string" },
       checkpoint: { type: "string" },
       "reset-checkpoint": { type: "boolean" },
       "redrive-errors": { type: "boolean" },
+      "approve-scale": { type: "boolean" },
       "winter-haven-historical": { type: "boolean" },
     },
     strict: true,
@@ -2031,8 +2831,22 @@ export async function runPolkPermitEnrichment(argv) {
       winterHavenHistoricalOnly,
     });
   }
-  if (stage !== "enrich") {
-    throw new Error("--stage must be candidates or enrich");
+  if (
+    stage !== "enrich" &&
+    stage !== "verify" &&
+    stage !== "repair" &&
+    stage !== "redrive"
+  ) {
+    throw new Error(
+      "--stage must be candidates, verify, repair, redrive, or enrich",
+    );
+  }
+  const redriveRequested =
+    stage === "redrive" || values["redrive-errors"] === true;
+  if (stage === "repair" && redriveRequested) {
+    throw new Error(
+      "--stage repair is local-only and cannot be combined with --redrive-errors",
+    );
   }
   const settings = {
     concurrency: readBoundedPositiveInteger(
@@ -2060,6 +2874,12 @@ export async function runPolkPermitEnrichment(argv) {
       2_000,
       300_000,
     ),
+    timeoutMs: readBoundedPositiveInteger(
+      values["timeout-ms"],
+      "timeout-ms",
+      30_000,
+      300_000,
+    ),
     includePartial: values["include-partial"] === true,
     network: values.network === true,
     htmlDirectory,
@@ -2072,112 +2892,385 @@ export async function runPolkPermitEnrichment(argv) {
     typeof values.checkpoint === "string"
       ? values.checkpoint
       : `${output}.checkpoint.json`;
-  if (values["reset-checkpoint"] === true) {
-    await Promise.all([
-      rm(stateDirectory, { recursive: true, force: true }),
-      rm(checkpointPath, { force: true }),
-    ]);
-  }
   await Promise.all([
     mkdir(path.dirname(output), { recursive: true }),
     mkdir(path.dirname(receiptPath), { recursive: true }),
     mkdir(stateDirectory, { recursive: true }),
     mkdir(path.dirname(checkpointPath), { recursive: true }),
   ]);
-  const workItems = await readPolkPermitWorkItems(input);
-  /** @type {PolkPermitRunCounters} */
-  const counters = {
-    inputRecordCount: workItems.length,
-    invalidRecordCount: workItems.filter((item) => item.candidate === null)
-      .length,
-    supportedRecordCount: 0,
-    partialAdapterAttemptedRecordCount: 0,
-    enrichedRecordCount: 0,
-    partialAdapterEnrichedRecordCount: 0,
-    contractorEvidenceCount: 0,
-    licenseEvidenceCount: 0,
-    fetchErrorCount: 0,
-    noDetailCount: 0,
-    unsupportedRecordCount: 0,
-  };
-  const totalPartCount = Math.ceil(workItems.length / settings.batchSize);
-  const scheduleRequest = createPolkPermitSourceScheduler(settings.delayMs);
-  /** @type {string[]} */
-  const partPaths = [];
-  let completedPartCount = 0;
-  for (
-    let offset = 0;
-    offset < workItems.length;
-    offset += settings.batchSize
-  ) {
-    const partIndex = Math.floor(offset / settings.batchSize);
-    const partItems = workItems.slice(offset, offset + settings.batchSize);
-    const partPath = path.join(
-      stateDirectory,
-      `part-${String(partIndex).padStart(6, "0")}.jsonl`,
-    );
-    let records = await readPolkPermitPart(partPath, partItems);
-    const validItems = partItems.flatMap((item) =>
-      item.candidate === null ? [] : [item.candidate],
-    );
-    if (records !== null && values["redrive-errors"] === true) {
-      const redrive = await redrivePolkPermitFetchErrors(
-        records,
-        validItems,
-        settings.concurrency,
-        (candidate) =>
-          enrichPolkPermitCandidate(candidate, settings, scheduleRequest),
+  const releaseRunLock = await acquirePolkPermitRunLock(stateDirectory);
+  try {
+    if (values["reset-checkpoint"] === true) {
+      const committedParts = (await readdir(stateDirectory)).filter((entry) =>
+        /^part-\d{6}\.jsonl$/.test(entry),
       );
-      records = redrive.records;
-      if (redrive.redrivenCount > 0) {
+      let checkpointExists = true;
+      try {
+        await readFile(checkpointPath, "utf8");
+      } catch (caught) {
+        if (
+          caught instanceof Error &&
+          "code" in caught &&
+          /** @type {NodeJS.ErrnoException} */ (caught).code === "ENOENT"
+        ) {
+          checkpointExists = false;
+        } else {
+          throw caught;
+        }
+      }
+      if (committedParts.length > 0 || checkpointExists) {
+        throw new Error(
+          "--reset-checkpoint refuses to delete committed Polk permit work; use a new output and state directory.",
+        );
+      }
+    }
+    const workItems = await readPolkPermitWorkItems(input);
+    const invalidRecordCount = workItems.filter(
+      (item) => item.candidate === null,
+    ).length;
+    if (invalidRecordCount > 0) {
+      throw new Error(
+        `Permit candidate input contains ${invalidRecordCount} invalid non-empty JSONL record${invalidRecordCount === 1 ? "" : "s"}; no records were processed.`,
+      );
+    }
+    if (
+      stage === "enrich" &&
+      !redriveRequested &&
+      workItems.length > 100 &&
+      values["approve-scale"] !== true
+    ) {
+      throw new Error(
+        `Polk permit enrichment has ${workItems.length} candidates; --approve-scale is required after a documented GO decision.`,
+      );
+    }
+    const inputFingerprint = fingerprintPolkPermitWorkItems(workItems);
+    const adapterContractFingerprint = fingerprintPolkPermitAdapterContract(
+      settings.includePartial,
+    );
+    /** @type {PolkPermitRunCounters} */
+    const counters = {
+      inputRecordCount: workItems.length,
+      invalidRecordCount: 0,
+      supportedRecordCount: 0,
+      partialAdapterAttemptedRecordCount: 0,
+      enrichedRecordCount: 0,
+      partialAdapterEnrichedRecordCount: 0,
+      contractorEvidenceCount: 0,
+      licenseEvidenceCount: 0,
+      fetchErrorCount: 0,
+      noDetailCount: 0,
+      unsupportedRecordCount: 0,
+    };
+    const totalPartCount = Math.ceil(workItems.length / settings.batchSize);
+    const scheduleRequest = createPolkPermitSourceScheduler(settings.delayMs);
+    const checkpoint = await readPolkPermitCheckpoint(checkpointPath);
+    if (checkpoint !== null) {
+      assertPolkPermitCheckpointCompatible(checkpoint, {
+        input,
+        output,
+        stateDirectory,
+        batchSize: settings.batchSize,
+        totalPartCount,
+        inputRecordCount: workItems.length,
+        inputFingerprint,
+        adapterContractFingerprint,
+        includePartial: settings.includePartial,
+      });
+    }
+    const verifiedParts = await verifyCommittedPolkPermitParts(
+      stateDirectory,
+      workItems,
+      settings.batchSize,
+      stage === "repair",
+    );
+    if (
+      checkpoint !== null &&
+      checkpoint.completedPartCount > verifiedParts.length
+    ) {
+      throw new Error(
+        `Polk permit checkpoint claims ${checkpoint.completedPartCount} parts but only ${verifiedParts.length} contiguous parts verified.`,
+      );
+    }
+    if (stage === "verify") {
+      const records = verifiedParts.flatMap((part) => part.records);
+      return {
+        schemaVersion: "oracle-node.polk-permit-enrichment-verification.v1",
+        verifiedAt: new Date().toISOString(),
+        input,
+        output,
+        stateDirectory,
+        checkpoint: checkpointPath,
+        checkpointPartCount: checkpoint?.completedPartCount ?? 0,
+        verifiedPartCount: verifiedParts.length,
+        recoveredPartCount: Math.max(
+          0,
+          verifiedParts.length - (checkpoint?.completedPartCount ?? 0),
+        ),
+        totalPartCount,
+        verifiedRecordCount: records.length,
+        inputRecordCount: workItems.length,
+        inputFingerprint,
+        statusCounts: Object.fromEntries(
+          ["enriched", "no_detail", "unsupported_source", "fetch_error"].map(
+            (status) => [
+              status,
+              records.filter((record) => record.status === status).length,
+            ],
+          ),
+        ),
+        complete: verifiedParts.length === totalPartCount,
+      };
+    }
+
+    /**
+     * @param {{permitNumber:string,agency:string}} candidate Permit candidate.
+     * @returns {string} Stable duplicate-request key.
+     */
+    const requestKey = (candidate) =>
+      `${candidate.agency}\0${candidate.permitNumber}`;
+    /** @type {Map<string, Promise<PolkPermitEnrichmentRecord>>} */
+    const resultCache = new Map();
+    const statusRank = new Map([
+      ["unsupported_source", 1],
+      ["no_detail", 2],
+      ["enriched", 3],
+    ]);
+    /** @type {Map<string, PolkPermitEnrichmentRecord>} */
+    const cachedRecords = new Map();
+    for (const { records } of verifiedParts) {
+      for (const record of records) {
+        if (record.status === "fetch_error") continue;
+        const key = requestKey(record);
+        const existing = cachedRecords.get(key);
+        if (
+          existing === undefined ||
+          (statusRank.get(record.status) ?? 0) >
+            (statusRank.get(existing.status) ?? 0)
+        ) {
+          cachedRecords.set(key, record);
+        }
+      }
+    }
+    for (const [key, record] of cachedRecords) {
+      resultCache.set(key, Promise.resolve(record));
+    }
+    /**
+     * Reuse one source response for duplicate official bulk rows while retaining
+     * one output row per input candidate.
+     *
+     * @param {{permitNumber:string,agency:string}} candidate Candidate record.
+     * @returns {Promise<PolkPermitEnrichmentRecord>} Shared enrichment result.
+     */
+    const enrichWithCache = (candidate) => {
+      const key = requestKey(candidate);
+      const cached = resultCache.get(key);
+      if (cached !== undefined) return cached;
+      const pending = enrichPolkPermitCandidate(
+        candidate,
+        settings,
+        scheduleRequest,
+      );
+      resultCache.set(key, pending);
+      void pending.then((record) => {
+        if (
+          record.status === "fetch_error" &&
+          resultCache.get(key) === pending
+        ) {
+          resultCache.delete(key);
+        }
+      });
+      return pending;
+    };
+
+    /** @type {string[]} */
+    const partPaths = [];
+    let reclassifiedRecordCount = 0;
+    let redrivenRecordCount = 0;
+    for (let partIndex = 0; partIndex < verifiedParts.length; partIndex += 1) {
+      const verified = verifiedParts[partIndex];
+      if (verified === undefined) continue;
+      const offset = partIndex * settings.batchSize;
+      const partItems = workItems.slice(offset, offset + settings.batchSize);
+      const validItems = partItems.flatMap((item) =>
+        item.candidate === null ? [] : [item.candidate],
+      );
+      let records = verified.records.map((record) => {
+        const repaired = reclassifyLegacyPolkPermitNotFound(record);
+        if (repaired !== record) reclassifiedRecordCount += 1;
+        return repaired;
+      });
+      reclassifiedRecordCount += verified.reclassifiedRecordCount;
+      const reclassifiedInPart = records.some(
+        (record, index) => record !== verified.records[index],
+      );
+      if (
+        redriveRequested &&
+        records.some((record) => record.status === "fetch_error")
+      ) {
+        const redrive = await redrivePolkPermitFetchErrors(
+          records,
+          validItems,
+          settings.concurrency,
+          enrichWithCache,
+        );
+        records = redrive.records;
+        redrivenRecordCount += redrive.redrivenCount;
+      }
+      if (
+        verified.reclassifiedRecordCount > 0 ||
+        reclassifiedInPart ||
+        (redriveRequested &&
+          records.some((record, index) => record !== verified.records[index]))
+      ) {
         await writePolkPermitAtomicText(
-          partPath,
+          verified.partPath,
           records.map((record) => JSON.stringify(record)).join("\n") +
             (records.length > 0 ? "\n" : ""),
         );
       }
+      verified.records = records;
+      partPaths.push(verified.partPath);
+      countPolkPermitPart(counters, records);
     }
-    if (records === null) {
-      records = await mapPolkPermitWithConcurrency(
-        validItems,
-        settings.concurrency,
-        (candidate) =>
-          enrichPolkPermitCandidate(candidate, settings, scheduleRequest),
-      );
-      await writePolkPermitAtomicText(
-        partPath,
-        records.map((record) => JSON.stringify(record)).join("\n") +
-          (records.length > 0 ? "\n" : ""),
-      );
-    }
-    partPaths.push(partPath);
-    countPolkPermitPart(counters, records);
-    completedPartCount += 1;
-    await writePolkPermitAtomicText(
-      checkpointPath,
-      `${JSON.stringify(
-        {
-          schemaVersion: "oracle-node.polk-permit-enrichment-checkpoint.v1",
-          updatedAt: new Date().toISOString(),
+    let completedPartCount = verifiedParts.length;
+    await writePolkPermitCheckpoint(checkpointPath, {
+      input,
+      output,
+      stateDirectory,
+      batchSize: settings.batchSize,
+      completedPartCount,
+      totalPartCount,
+      processedInputRecordCount: Math.min(
+        workItems.length,
+        completedPartCount * settings.batchSize,
+      ),
+      inputRecordCount: workItems.length,
+      inputFingerprint,
+      adapterContractFingerprint,
+      includePartial: settings.includePartial,
+      aggregateComplete:
+        completedPartCount === totalPartCount &&
+        checkpoint?.aggregateComplete === true &&
+        !redriveRequested,
+    });
+    process.stdout.write(
+      `${JSON.stringify({
+        event: "polk_permit_enrichment_resume",
+        completedPartCount,
+        totalPartCount,
+        processedInputRecordCount: Math.min(
+          workItems.length,
+          completedPartCount * settings.batchSize,
+        ),
+        inputRecordCount: workItems.length,
+      })}\n`,
+    );
+    if (stage === "repair") {
+      if (completedPartCount === totalPartCount) {
+        await assemblePolkPermitOutput(partPaths, output);
+        await writePolkPermitCheckpoint(checkpointPath, {
           input,
           output,
           stateDirectory,
           batchSize: settings.batchSize,
           completedPartCount,
           totalPartCount,
-          processedInputRecordCount: Math.min(
-            workItems.length,
-            offset + partItems.length,
-          ),
+          processedInputRecordCount: workItems.length,
           inputRecordCount: workItems.length,
-        },
-        null,
-        2,
-      )}\n`,
-    );
-    process.stdout.write(
-      `${JSON.stringify({
-        event: "polk_permit_enrichment_progress",
+          inputFingerprint,
+          adapterContractFingerprint,
+          includePartial: settings.includePartial,
+          aggregateComplete: true,
+        });
+      }
+      return {
+        schemaVersion: "oracle-node.polk-permit-enrichment-repair.v1",
+        repairedAt: new Date().toISOString(),
+        input,
+        output,
+        stateDirectory,
+        checkpoint: checkpointPath,
+        reclassifiedRecordCount,
+        completedPartCount,
+        totalPartCount,
+        processedInputRecordCount: Math.min(
+          workItems.length,
+          completedPartCount * settings.batchSize,
+        ),
+        ...counters,
+        complete: completedPartCount === totalPartCount,
+      };
+    }
+    if (redriveRequested) {
+      if (completedPartCount === totalPartCount) {
+        await assemblePolkPermitOutput(partPaths, output);
+        await writePolkPermitCheckpoint(checkpointPath, {
+          input,
+          output,
+          stateDirectory,
+          batchSize: settings.batchSize,
+          completedPartCount,
+          totalPartCount,
+          processedInputRecordCount: workItems.length,
+          inputRecordCount: workItems.length,
+          inputFingerprint,
+          adapterContractFingerprint,
+          includePartial: settings.includePartial,
+          aggregateComplete: true,
+        });
+      }
+      return {
+        schemaVersion: "oracle-node.polk-permit-enrichment-redrive.v1",
+        redrivenAt: new Date().toISOString(),
+        input,
+        output,
+        stateDirectory,
+        checkpoint: checkpointPath,
+        reclassifiedRecordCount,
+        redrivenRecordCount,
+        completedPartCount,
+        totalPartCount,
+        processedInputRecordCount: Math.min(
+          workItems.length,
+          completedPartCount * settings.batchSize,
+        ),
+        ...counters,
+        complete: completedPartCount === totalPartCount,
+      };
+    }
+
+    for (
+      let partIndex = completedPartCount;
+      partIndex < totalPartCount;
+      partIndex += 1
+    ) {
+      const offset = partIndex * settings.batchSize;
+      const partItems = workItems.slice(offset, offset + settings.batchSize);
+      const partPath = path.join(
+        stateDirectory,
+        `part-${String(partIndex).padStart(6, "0")}.jsonl`,
+      );
+      const validItems = partItems.flatMap((item) =>
+        item.candidate === null ? [] : [item.candidate],
+      );
+      const records = await mapPolkPermitWithConcurrency(
+        validItems,
+        settings.concurrency,
+        enrichWithCache,
+      );
+      await writePolkPermitAtomicText(
+        partPath,
+        records.map((record) => JSON.stringify(record)).join("\n") +
+          (records.length > 0 ? "\n" : ""),
+      );
+      partPaths.push(partPath);
+      countPolkPermitPart(counters, records);
+      completedPartCount = partIndex + 1;
+      await writePolkPermitCheckpoint(checkpointPath, {
+        input,
+        output,
+        stateDirectory,
+        batchSize: settings.batchSize,
         completedPartCount,
         totalPartCount,
         processedInputRecordCount: Math.min(
@@ -2185,51 +3278,86 @@ export async function runPolkPermitEnrichment(argv) {
           offset + partItems.length,
         ),
         inputRecordCount: workItems.length,
-      })}\n`,
+        inputFingerprint,
+        adapterContractFingerprint,
+        includePartial: settings.includePartial,
+        aggregateComplete: false,
+      });
+      process.stdout.write(
+        `${JSON.stringify({
+          event: "polk_permit_enrichment_progress",
+          completedPartCount,
+          totalPartCount,
+          processedInputRecordCount: Math.min(
+            workItems.length,
+            offset + partItems.length,
+          ),
+          inputRecordCount: workItems.length,
+        })}\n`,
+      );
+    }
+    await assemblePolkPermitOutput(partPaths, output);
+    await writePolkPermitCheckpoint(checkpointPath, {
+      input,
+      output,
+      stateDirectory,
+      batchSize: settings.batchSize,
+      completedPartCount,
+      totalPartCount,
+      processedInputRecordCount: workItems.length,
+      inputRecordCount: workItems.length,
+      inputFingerprint,
+      adapterContractFingerprint,
+      includePartial: settings.includePartial,
+      aggregateComplete: true,
+    });
+    const run = {
+      input,
+      output,
+      networkUsed: settings.network,
+      ...counters,
+      complete:
+        counters.inputRecordCount > 0 &&
+        counters.invalidRecordCount === 0 &&
+        counters.fetchErrorCount === 0 &&
+        counters.supportedRecordCount +
+          counters.partialAdapterAttemptedRecordCount ===
+          counters.inputRecordCount &&
+        counters.enrichedRecordCount +
+          counters.partialAdapterEnrichedRecordCount ===
+          counters.inputRecordCount,
+    };
+    const permitSummary = /** @type {unknown} */ (
+      JSON.parse(await readFile(permitSummaryPath, "utf8"))
     );
-  }
-  await assemblePolkPermitOutput(partPaths, output);
-  const run = {
-    input,
-    output,
-    networkUsed: settings.network,
-    ...counters,
-    complete:
-      counters.inputRecordCount > 0 &&
-      counters.invalidRecordCount === 0 &&
-      counters.fetchErrorCount === 0 &&
-      counters.supportedRecordCount +
-        counters.partialAdapterAttemptedRecordCount ===
-        counters.inputRecordCount &&
-      counters.enrichedRecordCount +
-        counters.partialAdapterEnrichedRecordCount ===
-        counters.inputRecordCount,
-  };
-  const permitSummary = /** @type {unknown} */ (
-    JSON.parse(await readFile(permitSummaryPath, "utf8"))
-  );
-  if (
-    !isJsonObject(permitSummary) ||
-    typeof permitSummary.permitCount !== "number" ||
-    !Array.isArray(permitSummary.agencies)
-  ) {
-    throw new Error(
-      `A valid official permit summary is required at ${permitSummaryPath}`,
+    if (
+      !isJsonObject(permitSummary) ||
+      typeof permitSummary.permitCount !== "number" ||
+      !Array.isArray(permitSummary.agencies)
+    ) {
+      throw new Error(
+        `A valid official permit summary is required at ${permitSummaryPath}`,
+      );
+    }
+    const agencies = permitSummary.agencies.flatMap((candidate) =>
+      isJsonObject(candidate) &&
+      typeof candidate.value === "string" &&
+      typeof candidate.count === "number"
+        ? [{ value: candidate.value, count: candidate.count }]
+        : [],
     );
+    const receipt = buildPolkPermitEnrichmentReceiptFromRun(
+      { permitCount: permitSummary.permitCount, agencies },
+      run,
+    );
+    await writePolkPermitAtomicText(
+      receiptPath,
+      `${JSON.stringify(receipt, null, 2)}\n`,
+    );
+    return receipt;
+  } finally {
+    await releaseRunLock();
   }
-  const agencies = permitSummary.agencies.flatMap((candidate) =>
-    isJsonObject(candidate) &&
-    typeof candidate.value === "string" &&
-    typeof candidate.count === "number"
-      ? [{ value: candidate.value, count: candidate.count }]
-      : [],
-  );
-  const receipt = buildPolkPermitEnrichmentReceiptFromRun(
-    { permitCount: permitSummary.permitCount, agencies },
-    run,
-  );
-  await writeFile(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`, "utf8");
-  return receipt;
 }
 
 if (
