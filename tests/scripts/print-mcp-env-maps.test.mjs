@@ -90,6 +90,8 @@ describe("print-mcp-env-maps", () => {
         .permitQueryTableUrl,
       montgomery: catalog.counties.find((c) => c.countyKey === "montgomery")
         .permitQueryTableUrl,
+      polk: catalog.counties.find((c) => c.countyKey === "polk")
+        .permitQueryTableUrl,
       "rock-island": catalog.counties.find((c) => c.countyKey === "rock-island")
         .permitQueryTableUrl,
     });
