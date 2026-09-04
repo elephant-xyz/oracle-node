@@ -1317,7 +1317,9 @@
                   font-size: 13px;
                 "
               >
-                <span style="color: var(--danger)">Failed (Misses):</span>
+                <span style="color: var(--danger)" id="failureLabel"
+                  >Failed (Misses):</span
+                >
                 <strong id="failCount">0</strong>
               </div>
               <div
@@ -1339,6 +1341,19 @@
               >
                 <span style="color: var(--accent)">Skipped (Resumed):</span>
                 <strong id="skippedCount">0</strong>
+              </div>
+              <div
+                id="appraisalEnrichmentRow"
+                style="
+                  display: none;
+                  justify-content: space-between;
+                  font-size: 13px;
+                "
+              >
+                <span style="color: var(--warning)" id="appraisalEnrichmentLabel"
+                  >Canonical enrichment:</span
+                >
+                <strong id="appraisalEnrichmentStatus">Pending</strong>
               </div>
             </div>
           </div>
@@ -2650,7 +2665,9 @@
             document.getElementById("stepBadge3").className =
               "badge badge-green";
             document.getElementById("stepStatus3").innerText =
-              `${(aStage.count || 0).toLocaleString()} Lexicon`;
+              aStage.completionBasis === "durable_gis_outcomes"
+                ? `${(aStage.count || 0).toLocaleString()} durable GIS outcomes`
+                : `${(aStage.count || 0).toLocaleString()} Lexicon`;
           } else if (aStage?.status === "pilot_completed") {
             document.getElementById("stepBadge3").innerText = "Pilot";
             document.getElementById("stepBadge3").className =
@@ -2852,14 +2869,26 @@
           const pubStage = data.stages?.publish;
           if (
             pubStage?.status === "completed" ||
+            pubStage?.status === "published" ||
+            pubStage?.status === "partially_published" ||
+            pubStage?.status === "pilot_published" ||
             pubStage?.status === "pilot_validated"
           ) {
-            document.getElementById("stepBadge6").innerText =
-              pubStage.status === "completed" ? "Live" : "Ready";
+            const partialPublication =
+              pubStage.status === "partially_published";
+            document.getElementById("stepBadge6").innerText = partialPublication
+              ? "Partial"
+              : pubStage.status === "pilot_published"
+                ? "Pilot"
+                : pubStage.status === "pilot_validated"
+                  ? "Ready"
+                  : "Live";
             document.getElementById("stepBadge6").className =
-              "badge badge-green";
+              partialPublication ? "badge badge-blue" : "badge badge-green";
             document.getElementById("stepStatus6").innerText = pubStage.ipnsKey
-              ? "Live IPNS"
+              ? partialPublication
+                ? "Partial IPNS live"
+                : "Live IPNS"
               : "Parquet Ready";
           }
 
@@ -2879,7 +2908,11 @@
             county.permitVendors || []
           ).join(" • ");
           document.getElementById("overviewPublishVal").innerText =
-            pubStage?.ipnsKey ? "IPFS / IPNS Live" : "DuckDB Parquet";
+            pubStage?.status === "partially_published"
+              ? "Partial IPFS / IPNS"
+              : pubStage?.ipnsKey
+                ? "IPFS / IPNS Live"
+                : "DuckDB Parquet";
 
           // TAB 1: Discovery
           document.getElementById("discCountyName").innerText =
@@ -2919,9 +2952,15 @@ Documentation: docs/${county.key}-county-findings.md`;
 
           // TAB 3: Appraisal Harvest
           const appCount = aStage?.count || 0;
-          const appTarget = county.targetParcels || 313735;
+          const appLoadedCount = aStage?.loadedCount ?? appCount;
+          const appTerminalMisses = aStage?.terminalSourceMisses ?? 0;
+          const appTarget =
+            aStage?.target || county.targetParcels || 313735;
           const appPct =
-            appTarget > 0 ? ((appCount / appTarget) * 100).toFixed(2) : "0.00";
+            aStage?.pct ||
+            (appTarget > 0
+              ? ((appCount / appTarget) * 100).toFixed(2)
+              : "0.00");
           document.getElementById("pctVal").innerText = `${appPct}%`;
           document.getElementById("doneCount").innerText =
             appCount.toLocaleString();
@@ -2954,7 +2993,25 @@ Documentation: docs/${county.key}-county-findings.md`;
           document.getElementById("progressBar").style.width =
             `${Math.min(100, Math.max(0, parseFloat(appPct)))}%`;
           document.getElementById("successCount").innerText =
-            appCount.toLocaleString();
+            appLoadedCount.toLocaleString();
+          document.getElementById("failCount").innerText =
+            appTerminalMisses.toLocaleString();
+          document.getElementById("failureLabel").innerText =
+            aStage?.completionBasis === "durable_gis_outcomes"
+              ? "Terminal source misses:"
+              : "Failed (Misses):";
+          const appraisalEnrichmentRow = document.getElementById(
+            "appraisalEnrichmentRow",
+          );
+          if (aStage?.canonicalEnrichment) {
+            appraisalEnrichmentRow.style.display = "flex";
+            document.getElementById("appraisalEnrichmentLabel").innerText =
+              `${aStage.canonicalEnrichment.title}:`;
+            document.getElementById("appraisalEnrichmentStatus").innerText =
+              `${aStage.canonicalEnrichment.status} (separate enrichment)`;
+          } else {
+            appraisalEnrichmentRow.style.display = "none";
+          }
           document.getElementById("appraisalCommandBox").innerText =
             `node scripts/${county.key}/run-full-appraisal.mjs --concurrency=16`;
 
@@ -2973,13 +3030,34 @@ Documentation: docs/${county.key}-county-findings.md`;
             `tl_2024_us_county (${county.name})`;
 
           // TAB 9: Publish & IPFS
+          const qTableIpns =
+            pubStage?.ipnsKey || county.ipns?.queryTable;
+          const permitTableIpns = pubStage?.permitIpnsKey;
+          const openDataIpns = county.ipns?.openData;
+          const coverageIpns =
+            pubStage?.coverageIpnsKey || county.ipns?.coverage;
+          document.getElementById("pubParquetRows").innerText =
+            pubStage?.parquetCount === null ||
+            pubStage?.parquetCount === undefined
+              ? "--"
+              : pubStage.parquetCount.toLocaleString();
+          document.getElementById("pubIpfsStatus").innerText =
+            pubStage?.status === "partially_published"
+              ? "Partial published"
+              : qTableIpns
+                ? "Published"
+                : "Pending";
+          document.getElementById("pubIpnsStatus").innerText = qTableIpns
+            ? "Active"
+            : "Pending";
           const ipnsTable = document.getElementById("pubTableBody");
           if (ipnsTable) {
-            const qTableIpns = county.ipns?.queryTable;
-            const openDataIpns = county.ipns?.openData;
-            const coverageIpns = county.ipns?.coverage;
-
-            if (qTableIpns || openDataIpns) {
+            if (
+              qTableIpns ||
+              permitTableIpns ||
+              openDataIpns ||
+              coverageIpns
+            ) {
               ipnsTable.innerHTML = `
                 <tr>
                   <td><strong>oracle-query-table-${county.key}</strong></td>
@@ -2993,6 +3071,16 @@ Documentation: docs/${county.key}-county-findings.md`;
                   <td><span class="copy-pill" onclick="copyText('${openDataIpns || ""}', this)">${openDataIpns || "Pending Publish"}</span></td>
                   <td>${openDataIpns ? `<a href="https://ipfs.filebase.io/ipns/${openDataIpns}" target="_blank">Filebase Gateway &rarr;</a>` : "--"}</td>
                 </tr>
+                ${
+                  permitTableIpns
+                    ? `<tr>
+                  <td><strong>oracle-permit-query-table-${county.key}</strong></td>
+                  <td>DuckDB Range-Readable Permit Parquet Table</td>
+                  <td><span class="copy-pill" onclick="copyText('${permitTableIpns}', this)">${permitTableIpns}</span></td>
+                  <td><a href="https://ipfs.filebase.io/ipns/${permitTableIpns}" target="_blank">Filebase Gateway &rarr;</a></td>
+                </tr>`
+                    : ""
+                }
                 <tr>
                   <td><strong>oracle-dataset-coverage-${county.key}</strong></td>
                   <td>Dataset Quality & Metadata Snapshot</td>
@@ -3013,11 +3101,11 @@ Documentation: docs/${county.key}-county-findings.md`;
           }
 
           // DuckDB Snippet
-          const duckdbSnippet = county.ipns?.queryTable
+          const duckdbSnippet = qTableIpns
             ? `INSTALL httpfs; LOAD httpfs; SET unsafe_disable_etag_checks = true;
 -- Query ${county.name} Properties & Roof Signals via IPNS HTTP Range Request
 SELECT parcel_identifier, address_street, address_city, market_value, roof_covering_material, has_permits, permit_count
-FROM read_parquet('https://ipfs.filebase.io/ipns/${county.ipns.queryTable}')
+FROM read_parquet('https://ipfs.filebase.io/ipns/${qTableIpns}')
 WHERE has_permits = true
 LIMIT 25;`
             : `-- Query Local ${county.name} Parquet Table in DuckDB

@@ -9,6 +9,7 @@ import {
   listCounties,
 } from "../../scripts/common/county-registry.mjs";
 import {
+  createPublishedCountyPublicationReader,
   getBrowardLifecycleStatus,
   getLifecycleStatus,
   parseServerArgs,
@@ -82,6 +83,29 @@ function buildActiveEnumerationFixture() {
   };
 }
 
+/**
+ * Build the validated public metadata already merged into the main catalog.
+ *
+ * @returns {import("../../scripts/serve-dashboard.mjs").PublicCountyPublication}
+ *   Aggregate-safe publication fixture.
+ */
+function buildBrowardPublicationFixture() {
+  return {
+    status: "partially_published",
+    scope: "partial",
+    queryTableUrl:
+      "https://ipfs.filebase.io/ipns/k51querytablebroward",
+    permitQueryTableUrl:
+      "https://ipfs.filebase.io/ipns/k51permittablebroward",
+    coverageUrl: "https://ipfs.filebase.io/ipns/k51coveragebroward",
+    queryTableIpnsKey: "k51querytablebroward",
+    permitQueryTableIpnsKey: "k51permittablebroward",
+    coverageIpnsKey: "k51coveragebroward",
+    publishedPropertyCount: 526_068,
+    updatedAt: "2026-09-02T20:59:31.937Z",
+  };
+}
+
 describe("universal dashboard server & county registry", () => {
   it("parses CLI arguments with defaults", () => {
     const options = parseServerArgs([]);
@@ -127,82 +151,90 @@ describe("universal dashboard server & county registry", () => {
         JSON.stringify({ candidateCount: 1_381 }),
       );
       const permitRoutes = buildBrowardPermitRouteStatus();
-      const lifecycle = await getBrowardLifecycleStatus(root, async () => ({
-        progress: { properties: 534_309 },
-        permitInventory: {
-          records: 243_939,
-          roofing: 22_414,
-          matched: 192_813,
-        },
-        permitRoutes,
-        manualCaptchaProgress: {
-          sessionPolicy: "manual_captcha_sessions_expire",
-          countyComplete: false,
-          routes: [
-            {
-              jurisdiction: "Coral Springs",
-              registryStatus: "captcha_required",
-              progressState: "bounded_capture_in_progress",
-              evidence: "private_capture_checkpoint",
-              coverageBoundary: "bounded_capped_slice",
-              capturedRecords: 640,
-              loadedRecords: 0,
-              manualSessionRequired: true,
-              sessionsExpire: true,
-              validSearchCaptchaRequired: true,
-              countyComplete: false,
-            },
-            {
-              jurisdiction: "Hillsboro Beach",
-              registryStatus: "captcha_required",
-              progressState: "awaiting_manual_captcha",
-              evidence: "no_captured_aggregate",
-              coverageBoundary: "not_captured",
-              capturedRecords: 0,
-              loadedRecords: 0,
-              manualSessionRequired: true,
-              sessionsExpire: true,
-              validSearchCaptchaRequired: true,
-              countyComplete: false,
-            },
-            {
-              jurisdiction: "Pembroke Park",
-              registryStatus: "captcha_required",
-              progressState: "bounded_slice_loaded",
-              evidence: "durable_loaded_aggregate",
-              coverageBoundary: "bounded_slice",
-              capturedRecords: 166,
-              loadedRecords: 166,
-              manualSessionRequired: true,
-              sessionsExpire: true,
-              validSearchCaptchaRequired: true,
-              countyComplete: false,
-            },
-          ],
-        },
-        permitEnumeration: {
-          accessibleRecords: 430_087,
-          pausedWorkers: [
-            {
-              source: "BMSD / unincorporated",
-              reason: "checkpoint_stale",
-            },
-            { source: "Weston", reason: "source_cap" },
-          ],
-          coolingWorkers: [
-            {
-              source: "Pompano Beach",
-              reason: "operator_hold",
-              nextAttemptAt: "2026-09-02T01:00:00.000Z",
-              processAlive: true,
-              detailActive: false,
-              operatorNotBeforeAt: "2026-09-02T01:00:00.000Z",
-            },
-          ],
-        },
-        activePermitEnumeration: buildActiveEnumerationFixture(),
-        sunbizMatch: { registrations: 12_432, properties: 9_023 },
-      }));
+      const lifecycle = await getBrowardLifecycleStatus(
+        root,
+        async () => ({
+          progress: {
+            properties: 526_068,
+            terminalSourceMisses: 8_241,
+            durableCompleted: 534_309,
+          },
+          permitInventory: {
+            records: 243_939,
+            roofing: 22_414,
+            matched: 192_813,
+          },
+          permitRoutes,
+          manualCaptchaProgress: {
+            sessionPolicy: "manual_captcha_sessions_expire",
+            countyComplete: false,
+            routes: [
+              {
+                jurisdiction: "Coral Springs",
+                registryStatus: "captcha_required",
+                progressState: "bounded_capture_in_progress",
+                evidence: "private_capture_checkpoint",
+                coverageBoundary: "bounded_capped_slice",
+                capturedRecords: 640,
+                loadedRecords: 0,
+                manualSessionRequired: true,
+                sessionsExpire: true,
+                validSearchCaptchaRequired: true,
+                countyComplete: false,
+              },
+              {
+                jurisdiction: "Hillsboro Beach",
+                registryStatus: "captcha_required",
+                progressState: "awaiting_manual_captcha",
+                evidence: "no_captured_aggregate",
+                coverageBoundary: "not_captured",
+                capturedRecords: 0,
+                loadedRecords: 0,
+                manualSessionRequired: true,
+                sessionsExpire: true,
+                validSearchCaptchaRequired: true,
+                countyComplete: false,
+              },
+              {
+                jurisdiction: "Pembroke Park",
+                registryStatus: "captcha_required",
+                progressState: "bounded_slice_loaded",
+                evidence: "durable_loaded_aggregate",
+                coverageBoundary: "bounded_slice",
+                capturedRecords: 166,
+                loadedRecords: 166,
+                manualSessionRequired: true,
+                sessionsExpire: true,
+                validSearchCaptchaRequired: true,
+                countyComplete: false,
+              },
+            ],
+          },
+          permitEnumeration: {
+            accessibleRecords: 430_087,
+            pausedWorkers: [
+              {
+                source: "BMSD / unincorporated",
+                reason: "checkpoint_stale",
+              },
+              { source: "Weston", reason: "source_cap" },
+            ],
+            coolingWorkers: [
+              {
+                source: "Pompano Beach",
+                reason: "operator_hold",
+                nextAttemptAt: "2026-09-02T01:00:00.000Z",
+                processAlive: true,
+                detailActive: false,
+                operatorNotBeforeAt: "2026-09-02T01:00:00.000Z",
+              },
+            ],
+          },
+          activePermitEnumeration: buildActiveEnumerationFixture(),
+          sunbizMatch: { registrations: 12_432, properties: 9_023 },
+        }),
+        async () => buildBrowardPublicationFixture(),
+      );
       expect(lifecycle).toMatchObject({
         county: {
           key: "broward",
@@ -214,6 +246,14 @@ describe("universal dashboard server & county registry", () => {
           appraisal: {
             status: "completed",
             count: 534_309,
+            loadedCount: 526_068,
+            terminalSourceMisses: 8_241,
+            completionBasis: "durable_gis_outcomes",
+            canonicalEnrichment: {
+              key: "canonical_nal",
+              status: "pending",
+              countsTowardGisCompletion: false,
+            },
           },
           sourcing: {
             status: "in_progress",
@@ -284,8 +324,19 @@ describe("universal dashboard server & county registry", () => {
               status: "api_credentials_required",
             },
           },
-          publish: { status: "disabled" },
+          publish: {
+            status: "partially_published",
+            scope: "partial",
+            parquetCount: 526_068,
+            ipnsKey: "k51querytablebroward",
+            permitIpnsKey: "k51permittablebroward",
+            coverageIpnsKey: "k51coveragebroward",
+          },
         },
+      });
+      expect(lifecycle.county.ipns).toMatchObject({
+        queryTable: "k51querytablebroward",
+        coverage: "k51coveragebroward",
       });
       expect(JSON.stringify(lifecycle)).not.toMatch(
         /555-01|Roofing Pros|Atlantic Coast Roofing/iu,
@@ -320,6 +371,78 @@ describe("universal dashboard server & county registry", () => {
     }
   });
 
+  it("coalesces bounded main-catalog and coverage reads for Broward", async () => {
+    const root = await mkdtemp(
+      path.join(tmpdir(), "broward-publication-reader-"),
+    );
+    try {
+      let fetchCount = 0;
+      const fetchImplementation = /** @type {typeof fetch} */ (
+        async (input) => {
+          fetchCount += 1;
+          const url = String(input);
+          if (url.endsWith("published-counties.json")) {
+            return new Response(
+              JSON.stringify({
+                schemaVersion: "1.0",
+                counties: [
+                  {
+                    countyKey: "broward",
+                    countyFips: "12011",
+                    status: "published",
+                    queryTableUrl:
+                      "https://ipfs.filebase.io/ipns/k51querytablebroward",
+                    permitQueryTableUrl:
+                      "https://ipfs.filebase.io/ipns/k51permittablebroward",
+                    datasetCoverageUrl:
+                      "https://ipfs.filebase.io/ipns/k51coveragebroward",
+                    updatedAt: "2026-09-02T20:59:31.937Z",
+                  },
+                ],
+              }),
+              { status: 200 },
+            );
+          }
+          return new Response(
+            JSON.stringify({
+              county: "broward",
+              countyFips: "12011",
+              publicationScope: {
+                schemaVersion: "1.0",
+                level: "partial",
+                denominatorBasis: "county_total",
+              },
+              denominator_semantics: {
+                appraisal: { ingestedCount: 526_068 },
+              },
+            }),
+            { status: 200 },
+          );
+        }
+      );
+      const reader = createPublishedCountyPublicationReader({
+        rootPath: root,
+        countyKey: "broward",
+        expectedCountyFips: "12011",
+        catalogUrl: "https://example.test/published-counties.json",
+        fetchImplementation,
+        requestTimeoutMs: 1_000,
+        cacheTtlMs: 60_000,
+      });
+
+      const publications = await Promise.all([reader(), reader(), reader()]);
+      expect(publications).toEqual([
+        buildBrowardPublicationFixture(),
+        buildBrowardPublicationFixture(),
+        buildBrowardPublicationFixture(),
+      ]);
+      expect(await reader()).toEqual(buildBrowardPublicationFixture());
+      expect(fetchCount).toBe(2);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("includes a universal permit-route and operational-pause view", async () => {
     const dashboardHtml = await readFile(
       path.resolve(process.cwd(), "scripts/common/dashboard.html"),
@@ -332,6 +455,9 @@ describe("universal dashboard server & county registry", () => {
     expect(dashboardHtml).toContain('id="permitCoolingWorkerList"');
     expect(dashboardHtml).toContain('id="permitActiveEnumerationCard"');
     expect(dashboardHtml).toContain('id="permitActiveEnumerationRows"');
+    expect(dashboardHtml).toContain('id="appraisalEnrichmentRow"');
+    expect(dashboardHtml).toContain("Partial IPNS live");
+    expect(dashboardHtml).toContain("Terminal source misses:");
     expect(dashboardHtml).toContain("Operational pauses are shown separately");
     expect(dashboardHtml).toContain(
       "Process presence and checkpoint movement are",

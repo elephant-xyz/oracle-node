@@ -26,6 +26,10 @@ import {
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, "..");
 const DASHBOARD_HTML_PATH = resolve(__dirname, "common/dashboard.html");
+const PUBLISHED_COUNTY_CATALOG_URL =
+  "https://raw.githubusercontent.com/elephant-xyz/oracle-node/main/catalog/published-counties.json";
+const PUBLICATION_CACHE_TTL_MS = 5 * 60 * 1_000;
+const PUBLICATION_REQUEST_TIMEOUT_MS = 10_000;
 
 /**
  * @typedef {object} ServerOptions
@@ -143,6 +147,30 @@ const DASHBOARD_HTML_PATH = resolve(__dirname, "common/dashboard.html");
  * @property {boolean} snapshotStale - Whole-snapshot staleness.
  * @property {number} observationWindowSeconds - Longest observation window.
  * @property {UniversalActiveEnumerationWorker[]} workers - Exactly ten active routes.
+ *
+ * @typedef {object} PublicCountyPublication
+ * @property {"published" | "partially_published" | "pilot_published"} status
+ *   Catalog-backed public availability state.
+ * @property {"full" | "partial" | "pilot"} scope - Published coverage scope.
+ * @property {string} queryTableUrl - Public property query-table resolver.
+ * @property {string} permitQueryTableUrl - Public permit query-table resolver.
+ * @property {string} coverageUrl - Public coverage-metadata resolver.
+ * @property {string} queryTableIpnsKey - Property query-table IPNS key.
+ * @property {string} permitQueryTableIpnsKey - Permit query-table IPNS key.
+ * @property {string} coverageIpnsKey - Coverage-metadata IPNS key.
+ * @property {number | null} publishedPropertyCount
+ *   Coverage-declared appraisal rows, when available.
+ * @property {string} updatedAt - Catalog publication timestamp.
+ *
+ * @typedef {object} PublishedCountyPublicationReaderOptions
+ * @property {string} rootPath - Repository root containing the tracked catalog.
+ * @property {string} countyKey - Canonical lower-kebab county key.
+ * @property {string} expectedCountyFips - Expected five-digit county FIPS.
+ * @property {typeof fetch} [fetchImplementation] - Injectable bounded HTTP reader.
+ * @property {string} [catalogUrl] - Canonical merged catalog URL.
+ * @property {number} [cacheTtlMs] - Successful metadata cache lifetime.
+ * @property {number} [requestTimeoutMs] - Bound for each public HTTP read.
+ * @property {() => number} [now] - Injectable wall clock.
  */
 
 /**
@@ -194,19 +222,306 @@ export async function readBrowardAggregateStatus(
 }
 
 /**
+ * Require one public HTTP(S) URL.
+ *
+ * @param {unknown} value - Catalog field.
+ * @param {string} label - Aggregate-safe validation label.
+ * @returns {string} Validated URL.
+ */
+function requirePublicUrl(value, label) {
+  if (typeof value !== "string") {
+    throw new Error(`${label} is missing`);
+  }
+  const parsed = new URL(value);
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+    throw new Error(`${label} is invalid`);
+  }
+  return value;
+}
+
+/**
+ * Extract an IPNS key from a canonical public resolver URL.
+ *
+ * @param {string} value - Validated public resolver URL.
+ * @param {string} label - Aggregate-safe validation label.
+ * @returns {string} IPNS key.
+ */
+function readIpnsKey(value, label) {
+  const segments = new URL(value).pathname.split("/").filter(Boolean);
+  const markerIndex = segments.indexOf("ipns");
+  const key = markerIndex >= 0 ? segments[markerIndex + 1] : undefined;
+  if (typeof key !== "string" || !/^k[0-9a-z]+$/u.test(key)) {
+    throw new Error(`${label} does not identify IPNS`);
+  }
+  return key;
+}
+
+/**
+ * Validate the publication scope exposed by catalog or coverage metadata.
+ *
+ * @param {unknown} value - Candidate publication scope.
+ * @returns {"full" | "partial" | "pilot"} Validated scope level.
+ */
+function readPublicationScope(value) {
+  const scope = requireObject(value, "Broward publication scope");
+  if (
+    scope.level !== "full" &&
+    scope.level !== "partial" &&
+    scope.level !== "pilot"
+  ) {
+    throw new Error("Broward publication scope is invalid");
+  }
+  return scope.level;
+}
+
+/**
+ * Fetch one public JSON object with a finite wall-clock bound.
+ *
+ * @param {typeof fetch} fetchImplementation - Injectable HTTP implementation.
+ * @param {string} url - Public metadata URL.
+ * @param {number} requestTimeoutMs - Positive finite request timeout.
+ * @returns {Promise<Record<string, unknown>>} Parsed JSON object.
+ */
+async function fetchPublicJson(fetchImplementation, url, requestTimeoutMs) {
+  const response = await fetchImplementation(url, {
+    headers: { Accept: "application/json" },
+    signal: AbortSignal.timeout(requestTimeoutMs),
+  });
+  if (!response.ok) {
+    throw new Error("Published county metadata is unavailable");
+  }
+  const value = /** @type {unknown} */ (await response.json());
+  return requireObject(value, "Published county metadata");
+}
+
+/**
+ * Read one county entry from a validated catalog-shaped object.
+ *
+ * @param {Record<string, unknown>} catalog - Local or canonical main catalog.
+ * @param {string} countyKey - Canonical county key.
+ * @returns {Record<string, unknown> | null} Matching public entry.
+ */
+function findPublishedCounty(catalog, countyKey) {
+  if (!Array.isArray(catalog.counties)) {
+    throw new Error("Published county catalog is invalid");
+  }
+  for (const candidate of catalog.counties) {
+    if (
+      candidate !== null &&
+      typeof candidate === "object" &&
+      !Array.isArray(candidate)
+    ) {
+      const entry = /** @type {Record<string, unknown>} */ (candidate);
+      if (entry.countyKey === countyKey) return entry;
+    }
+  }
+  return null;
+}
+
+/**
+ * Read canonical catalog and coverage metadata without copying publication
+ * pointers into branch-local configuration. The tracked catalog is preferred;
+ * a branch that predates a merged publication entry falls back to bounded
+ * reads of the public main catalog and its IPNS coverage document.
+ *
+ * @param {PublishedCountyPublicationReaderOptions} options - Reader settings.
+ * @returns {Promise<PublicCountyPublication>} Validated public availability.
+ */
+async function readPublishedCountyPublication(options) {
+  const fetchImplementation = options.fetchImplementation ?? fetch;
+  const catalogUrl = options.catalogUrl ?? PUBLISHED_COUNTY_CATALOG_URL;
+  const requestTimeoutMs =
+    options.requestTimeoutMs ?? PUBLICATION_REQUEST_TIMEOUT_MS;
+  /** @type {Record<string, unknown> | null} */
+  let entry = null;
+  try {
+    const localValue = /** @type {unknown} */ (
+      JSON.parse(
+        await readFile(
+          resolve(options.rootPath, "catalog/published-counties.json"),
+          "utf8",
+        ),
+      )
+    );
+    entry = findPublishedCounty(
+      requireObject(localValue, "Published county catalog"),
+      options.countyKey,
+    );
+  } catch (error) {
+    if (
+      !(error instanceof Error && "code" in error && error.code === "ENOENT")
+    ) {
+      throw error;
+    }
+  }
+  if (entry === null) {
+    const mainCatalog = await fetchPublicJson(
+      fetchImplementation,
+      catalogUrl,
+      requestTimeoutMs,
+    );
+    entry = findPublishedCounty(mainCatalog, options.countyKey);
+  }
+  if (
+    entry === null ||
+    entry.status !== "published" ||
+    entry.countyFips !== options.expectedCountyFips
+  ) {
+    throw new Error("Broward is absent from the published county catalog");
+  }
+  const queryTableUrl = requirePublicUrl(
+    entry.queryTableUrl,
+    "Broward query-table URL",
+  );
+  const permitQueryTableUrl = requirePublicUrl(
+    entry.permitQueryTableUrl,
+    "Broward permit-table URL",
+  );
+  const coverageUrl = requirePublicUrl(
+    entry.datasetCoverageUrl,
+    "Broward coverage URL",
+  );
+  let scopeValue = entry.publicationScope;
+  /** @type {Record<string, unknown> | null} */
+  let coverage = null;
+  if (scopeValue === undefined) {
+    coverage = await fetchPublicJson(
+      fetchImplementation,
+      coverageUrl,
+      requestTimeoutMs,
+    );
+    if (
+      coverage.county !== options.countyKey ||
+      coverage.countyFips !== options.expectedCountyFips
+    ) {
+      throw new Error("Broward publication coverage identity is invalid");
+    }
+    scopeValue = coverage.publicationScope;
+  }
+  const scope = readPublicationScope(scopeValue);
+  if (coverage === null && scope === "partial") {
+    coverage = await fetchPublicJson(
+      fetchImplementation,
+      coverageUrl,
+      requestTimeoutMs,
+    );
+  }
+  let publishedPropertyCount = null;
+  if (coverage !== null) {
+    const denominatorSemantics = requireObject(
+      coverage.denominator_semantics,
+      "Broward coverage denominators",
+    );
+    const appraisal = requireObject(
+      denominatorSemantics.appraisal,
+      "Broward appraisal coverage",
+    );
+    publishedPropertyCount = requireNonNegativeNumber(
+      appraisal.ingestedCount,
+      "Broward published appraisal rows",
+    );
+  }
+  const updatedAt =
+    typeof entry.updatedAt === "string" ? entry.updatedAt : undefined;
+  if (updatedAt === undefined || !Number.isFinite(Date.parse(updatedAt))) {
+    throw new Error("Broward publication timestamp is invalid");
+  }
+  return {
+    status:
+      scope === "full"
+        ? "published"
+        : scope === "partial"
+          ? "partially_published"
+          : "pilot_published",
+    scope,
+    queryTableUrl,
+    permitQueryTableUrl,
+    coverageUrl,
+    queryTableIpnsKey: readIpnsKey(
+      queryTableUrl,
+      "Broward query-table URL",
+    ),
+    permitQueryTableIpnsKey: readIpnsKey(
+      permitQueryTableUrl,
+      "Broward permit-table URL",
+    ),
+    coverageIpnsKey: readIpnsKey(coverageUrl, "Broward coverage URL"),
+    publishedPropertyCount,
+    updatedAt,
+  };
+}
+
+/**
+ * Create a bounded, coalesced publication reader. Concurrent dashboard
+ * requests share one read, successful metadata is cached, and a temporary
+ * refresh failure may reuse the last validated public snapshot.
+ *
+ * @param {PublishedCountyPublicationReaderOptions} options - Reader settings.
+ * @returns {() => Promise<PublicCountyPublication>} Coalesced reader.
+ */
+export function createPublishedCountyPublicationReader(options) {
+  const cacheTtlMs = options.cacheTtlMs ?? PUBLICATION_CACHE_TTL_MS;
+  const now = options.now ?? Date.now;
+  /** @type {{value:PublicCountyPublication,expiresAt:number} | null} */
+  let cached = null;
+  /** @type {Promise<PublicCountyPublication> | null} */
+  let inFlight = null;
+  return async () => {
+    const currentTime = now();
+    if (cached !== null && currentTime < cached.expiresAt) {
+      return cached.value;
+    }
+    if (inFlight !== null) return inFlight;
+    inFlight = readPublishedCountyPublication(options)
+      .then((value) => {
+        cached = { value, expiresAt: now() + cacheTtlMs };
+        return value;
+      })
+      .catch((error) => {
+        if (cached !== null) return cached.value;
+        throw error;
+      })
+      .finally(() => {
+        inFlight = null;
+      });
+    return inFlight;
+  };
+}
+
+const readBrowardPublication = createPublishedCountyPublicationReader({
+  rootPath: ROOT,
+  countyKey: "broward",
+  expectedCountyFips: "12011",
+});
+
+/**
  * Map verified Broward telemetry into the universal lifecycle contract.
  *
  * @param {string} rootPath - Repository root.
  * @param {() => Promise<Record<string, unknown>>} [readStatus=readBrowardAggregateStatus]
  *   Injectable aggregate status reader.
+ * @param {() => Promise<PublicCountyPublication>} [readPublication=readBrowardPublication]
+ *   Injectable canonical publication reader.
  * @returns {Promise<Record<string, unknown>>} Real Broward lifecycle response.
  */
 export async function getBrowardLifecycleStatus(
   rootPath,
   readStatus = readBrowardAggregateStatus,
+  readPublication = readBrowardPublication,
 ) {
   const county = getCountyMetadata("broward");
-  const status = await readStatus();
+  const [status, publication] = await Promise.all([
+    readStatus(),
+    readPublication(),
+  ]);
+  const publishedCounty = {
+    ...county,
+    ipns: {
+      ...county.ipns,
+      queryTable: publication.queryTableIpnsKey,
+      coverage: publication.coverageIpnsKey,
+    },
+  };
   const progress = requireObject(status.progress, "Broward progress");
   const inventory = requireObject(
     status.permitInventory,
@@ -246,6 +561,20 @@ export async function getBrowardLifecycleStatus(
     progress.properties,
     "Broward properties",
   );
+  const terminalSourceMisses = requireNonNegativeNumber(
+    progress.terminalSourceMisses,
+    "Broward terminal appraisal misses",
+  );
+  const durableCompleted = requireNonNegativeNumber(
+    progress.durableCompleted,
+    "Broward durable appraisal outcomes",
+  );
+  if (
+    properties + terminalSourceMisses !== durableCompleted ||
+    durableCompleted > county.targetParcels
+  ) {
+    throw new Error("Broward durable appraisal outcomes do not reconcile");
+  }
   const permits = requireNonNegativeNumber(
     inventory.records,
     "Broward permits",
@@ -292,9 +621,9 @@ export async function getBrowardLifecycleStatus(
       throw error;
     }
   }
-  const appraisalComplete = properties >= county.targetParcels;
+  const appraisalComplete = durableCompleted === county.targetParcels;
   return {
-    county,
+    county: publishedCounty,
     timestamp: new Date().toISOString(),
     telemetrySource: "broward-neon-recovery-dashboard",
     stages: {
@@ -319,13 +648,23 @@ export async function getBrowardLifecycleStatus(
         number: 3,
         title: "Appraisal Harvest",
         status: appraisalComplete ? "completed" : "in_progress",
-        count: properties,
+        count: durableCompleted,
+        loadedCount: properties,
+        terminalSourceMisses,
         target: county.targetParcels,
-        pct: ((properties / Math.max(1, county.targetParcels)) * 100).toFixed(
-          2,
-        ),
+        pct: (
+          (durableCompleted / Math.max(1, county.targetParcels)) *
+          100
+        ).toFixed(2),
         speed: 0,
         eta: null,
+        completionBasis: "durable_gis_outcomes",
+        canonicalEnrichment: {
+          key: "canonical_nal",
+          title: "Canonical NAL",
+          status: "pending",
+          countsTowardGisCompletion: false,
+        },
       },
       sourcing: {
         number: 4,
@@ -375,11 +714,17 @@ export async function getBrowardLifecycleStatus(
       publish: {
         number: 6,
         title: "Publish & IPFS",
-        status: "disabled",
-        parquetCount: 0,
-        parquetSizeBytes: 0,
-        ipnsKey: null,
-        coverageIpnsKey: null,
+        status: publication.status,
+        scope: publication.scope,
+        parquetCount: publication.publishedPropertyCount,
+        parquetSizeBytes: null,
+        ipnsKey: publication.queryTableIpnsKey,
+        permitIpnsKey: publication.permitQueryTableIpnsKey,
+        coverageIpnsKey: publication.coverageIpnsKey,
+        queryTableUrl: publication.queryTableUrl,
+        permitQueryTableUrl: publication.permitQueryTableUrl,
+        coverageUrl: publication.coverageUrl,
+        updatedAt: publication.updatedAt,
       },
     },
     nextStep: {
