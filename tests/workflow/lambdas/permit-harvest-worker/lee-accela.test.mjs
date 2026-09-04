@@ -6,10 +6,12 @@ import {
   extractCurrentDetailPermitLinkFromHtml,
   extractPermitDetail,
   extractPermitLinksFromSearchHtml,
+  isAccelaLastResultPage,
   normalizeParcelSearchValue,
   parseCompletedInspections,
   parseMoreDetails,
   parseResultSummary,
+  shouldStopAccelaListPagination,
 } from "../../../../workflow/lambdas/permit-harvest-worker/lee-accela.mjs";
 
 describe("lee-accela permit harvest helpers", () => {
@@ -26,10 +28,14 @@ describe("lee-accela permit harvest helpers", () => {
   it("parses Accela result summaries", () => {
     expect(parseResultSummary("Showing 1-10 of 100 records")).toEqual({
       summary: "1-10 of 100",
+      start: 1,
+      end: 10,
       total: 100,
     });
     expect(parseResultSummary("No records found")).toEqual({
       summary: null,
+      start: null,
+      end: null,
       total: null,
     });
   });
@@ -579,10 +585,14 @@ describe("lee-accela permit harvest helpers", () => {
     // produces, so both sides compare like-for-like.
     expect(parseResultSummary("Showing 1-10 of 100 records found.")).toEqual({
       summary: "1-10 of 100",
+      start: 1,
+      end: 10,
       total: 100,
     });
     expect(parseResultSummary("Showing 11-20 of 100 records found.")).toEqual({
       summary: "11-20 of 100",
+      start: 11,
+      end: 20,
       total: 100,
     });
     // The two summaries are distinct — change-detection between page 1 and
@@ -592,5 +602,61 @@ describe("lee-accela permit harvest helpers", () => {
     ).not.toBe(
       parseResultSummary("Showing 11-20 of 100 records found.").summary,
     );
+  });
+
+  it("stops Accela list pagination on the last page and on a repeating summary", () => {
+    const lastPage = parseResultSummary("Showing 91-100 of 100 records found.");
+    expect(lastPage).toEqual({
+      summary: "91-100 of 100",
+      start: 91,
+      end: 100,
+      total: 100,
+    });
+    expect(isAccelaLastResultPage(lastPage)).toBe(true);
+    expect(
+      isAccelaLastResultPage(parseResultSummary("Showing 1-10 of 100")),
+    ).toBe(false);
+    expect(
+      shouldStopAccelaListPagination({
+        noResults: false,
+        parsed: lastPage,
+        previousSummary: "81-90 of 100",
+      }),
+    ).toEqual({ stop: true, reason: "last_page" });
+    expect(
+      shouldStopAccelaListPagination({
+        noResults: false,
+        parsed: lastPage,
+        previousSummary: "91-100 of 100",
+      }),
+    ).toEqual({ stop: true, reason: "last_page" });
+    expect(
+      shouldStopAccelaListPagination({
+        noResults: false,
+        parsed: parseResultSummary("Showing 1-10 of 100 records"),
+        previousSummary: "1-10 of 100",
+      }),
+    ).toEqual({ stop: true, reason: "repeated_summary" });
+    expect(
+      shouldStopAccelaListPagination({
+        noResults: true,
+        parsed: parseResultSummary("No records found"),
+        previousSummary: null,
+      }),
+    ).toEqual({ stop: true, reason: "no_results" });
+    expect(
+      shouldStopAccelaListPagination({
+        noResults: false,
+        parsed: parseResultSummary("Showing 1-10 of 100 records"),
+        previousSummary: null,
+      }),
+    ).toEqual({ stop: false, reason: null });
+    expect(
+      shouldStopAccelaListPagination({
+        noResults: false,
+        parsed: parseResultSummary("Showing 11-20 of 100 records"),
+        previousSummary: "1-10 of 100",
+      }),
+    ).toEqual({ stop: false, reason: null });
   });
 });

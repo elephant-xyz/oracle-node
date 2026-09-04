@@ -117,7 +117,7 @@ sources:
     category: permits
     name: Pinellas municipal permit portals (fragmented)
     access_pattern:
-      mode: on-demand runtime retrieval (NOT countywide bulk for pilot)
+      mode: local Accela PINELLAS date-window harvest (cities remain runtime retrieval)
       tooling: one adapter per vendor via county-permit-adapter; reuse Lee Accela worker for PINELLAS
     jurisdictions:
       - jurisdiction: unincorporated
@@ -127,24 +127,29 @@ sources:
         url: https://aca-prod.accela.com/PINELLAS/Cap/CapHome.aspx?TabName=Home&module=Building
         search: address (recommended); parcel via General Search
         probe: playwright-200-no-cloudflare
-        status: discovered
+        status: harvest-running
+        job: pinellas-accela-full-20260903
         priority: build-first
       - jurisdiction: Clearwater
         vendor: Accela
         agency: CLEARWATER
-        url: https://aca-prod.accela.com/CLEARWATER/Default.aspx
-        probe: playwright-200; epermit.myclearwater.com-timeout
-        status: discovered
+        url: https://aca-prod.accela.com/CLEARWATER/Cap/CapHome.aspx?TabName=Home&module=Building
+        probe: http-200-2026-09-03; full harvest clearwater-accela-full-20260903 concurrency 2
+        status: harvest-running
+        harvest: scripts/run-pinellas-permit-harvest.mjs --agency clearwater
       - jurisdiction: Largo
         vendor: Tyler EnerGov Civic Access
         url: https://cityoflargofl-energovweb.tylerhost.net/apps/selfservice#/home
-        probe: playwright-200
-        status: discovered
+        probe: http-200; Chrome keyword probe via scripts/probe-pinellas-tyler-civic-access.mjs --agency largo
+        status: adapter-ready
+        harvest: scripts/run-pinellas-tyler-permit-harvest.mjs --agency largo
       - jurisdiction: Pinellas Park
-        vendor: Tyler Portico / EnerGov
+        vendor: Tyler Portico launcher + EnerGov CSS
         url: https://pinellasparkfl.tylerportico.com/navigator/public/selections/navigator?parentId=5996
-        probe: playwright-200
-        status: discovered
+        energov_css: https://egcss.pinellas-park.com/energov_prod/selfservice
+        probe: Portico tile 5996 is Apply (not search); civic-access-integration isCivicAccess=false; CSS homepage HTTP 200
+        status: adapter-ready
+        harvest: scripts/probe-pinellas-tyler-civic-access.mjs --agency park
       - jurisdiction: Dunedin
         vendor: Tyler EP&L Citizen Self Service
         url: https://www.dunedin.gov/City-Services/Business-Development/Building-Codes-Permits-Construction/Permits-Inspections
@@ -154,8 +159,9 @@ sources:
         vendor: Click2Gov / aspgov
         url: https://tarp-egov.aspgov.com/Click2GovBP/index.html
         search: application# / address / parcel / name
-        probe: playwright-200
-        status: discovered
+        probe: HTTP address search certified (100 PINELLAS → application 13-00000647)
+        status: adapter-ready
+        harvest: scripts/run-tarpon-springs-permit-harvest.mjs
       - jurisdiction: St. Petersburg
         vendor: City portal + ProjectDox (Avolve)
         url: https://www.stpete.org/business/building_permitting/building_permits.php
@@ -272,4 +278,5 @@ notes:
     are named out of pilot (in_scope: false), not missing websites.
   - 18 cities remain needs-review: discovery did not confirm their permit URLs yet.
   - Local ingest (2026-08-27): PCPAO print HTML only. Permits/Sunbiz/BBB not pulled.
+  - Local Accela PINELLAS harvest (2026-09-03): full date-window job pinellas-accela-full-20260903 via scripts/run-pinellas-permit-harvest.mjs (1990-01-01 through today, skip-existing). City portals not in this pass.
   - Reuse Counties-trasform-scripts/pinellas; do not regenerate mapping scripts in discovery.
