@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -12,11 +12,17 @@ import {
   parseRecoveryOptions,
   readSeedStats,
   recordBrowardIngestStatus,
+  runOneAheadPipeline,
   verifyNeonTarget,
 } from "../../scripts/recover-broward-appraisal-to-neon.mjs";
 import {
+  buildBrowardPermitRouteStatus,
   buildRecoveryStatus,
   parseDashboardOptions,
+  readAccelaCsvReceiptAccessibleCount,
+  readCoralSpringsEtrakitStatus,
+  readPermitEnumerationStatus,
+  readPropertyFirstPermitStatus,
 } from "../../scripts/broward-neon-recovery-dashboard.mjs";
 
 /** @type {string[]} */
@@ -88,6 +94,85 @@ describe("durable Broward Neon recovery", () => {
       expectedBranchId: "br-broward-runtime-test",
       expectedEndpointId: "ep-broward-runtime-test",
     });
+  });
+
+  it("prepares one chunk ahead while preserving durable commit order", async () => {
+    /** @type {string[]} */
+    const events = [];
+    /**
+     * Yield three ordered chunks without retaining source identifiers.
+     *
+     * @returns {AsyncGenerator<readonly number[], void, void>} Numeric test chunks.
+     */
+    async function* chunks() {
+      yield [1];
+      yield [2];
+      yield [3];
+    }
+
+    await runOneAheadPipeline({
+      chunks: chunks(),
+      prepare(chunk, slotIndex) {
+        const value = chunk[0];
+        if (value === undefined) throw new Error("Test chunk is empty");
+        events.push(`prepare:${String(value)}:${String(slotIndex)}`);
+        return Promise.resolve({ value });
+      },
+      commit(prepared) {
+        events.push(`commit:${String(prepared.value)}`);
+        return Promise.resolve(prepared.value);
+      },
+      afterCommit(committed) {
+        events.push(`after:${String(committed)}`);
+      },
+    });
+
+    expect(events).toEqual([
+      "prepare:1:0",
+      "prepare:2:1",
+      "commit:1",
+      "after:1",
+      "prepare:3:0",
+      "commit:2",
+      "after:2",
+      "commit:3",
+      "after:3",
+    ]);
+  });
+
+  it("never advances a later prepared chunk after the current commit fails", async () => {
+    /** @type {string[]} */
+    const events = [];
+    /**
+     * Yield two ordered chunks for the commit-failure boundary.
+     *
+     * @returns {AsyncGenerator<readonly number[], void, void>} Numeric test chunks.
+     */
+    async function* chunks() {
+      yield [1];
+      yield [2];
+    }
+
+    await expect(
+      runOneAheadPipeline({
+        chunks: chunks(),
+        prepare(chunk, slotIndex) {
+          const value = chunk[0];
+          if (value === undefined) throw new Error("Test chunk is empty");
+          events.push(`prepare:${String(value)}:${String(slotIndex)}`);
+          return Promise.resolve({ value });
+        },
+        commit(prepared) {
+          events.push(`commit:${String(prepared.value)}`);
+          return Promise.reject(new Error("durable commit failed"));
+        },
+        afterCommit(committed) {
+          events.push(`after:${String(committed)}`);
+        },
+      }),
+    ).rejects.toThrow(/durable commit failed/u);
+
+    expect(events).toEqual(["prepare:1:0", "prepare:2:1", "commit:1"]);
   });
 
   it("builds a deterministic seed signature without numeric folio coercion", async () => {
@@ -336,6 +421,27 @@ describe("durable Broward Neon recovery", () => {
         permit_registry_jurisdictions: "32",
         permit_sources_implemented: "15",
         permit_sources_blocked: "17",
+        permit_inventory_records: "243939",
+        permit_inventory_matched: "192813",
+        permit_inventory_unmatched: "51126",
+        permit_inventory_roofing: "17483",
+        permit_inventory_parcels: "42522",
+        permit_inventory_sources: "13",
+        permit_inventory_loaded_at: "2026-08-31T20:50:00.000Z",
+        permit_bulk_source_rows: "204760",
+        permit_bulk_committed_rows: "204760",
+        permit_bulk_chunks: "205",
+        permit_list_loaded_rows: "28946",
+        permit_list_chunks: "29",
+        coral_etrakit_loaded: "1000",
+        coral_etrakit_linked: "780",
+        coral_etrakit_roofing: "1000",
+        pembroke_park_gov_easy_loaded: "166",
+        hillsboro_beach_communitycore_loaded: "0",
+        sunbiz_match_roles: "21512",
+        sunbiz_match_registrations: "12432",
+        sunbiz_match_properties: "9023",
+        sunbiz_match_chunks: "22",
       },
       Date.parse("2026-08-29T00:01:00.000Z"),
     );
@@ -370,12 +476,712 @@ describe("durable Broward Neon recovery", () => {
       allRecordsAccounted: true,
       queryRowsMatch: true,
       registryJurisdictions: 32,
-      currentSourcesImplemented: 15,
-      currentSourcesBlocked: 17,
+      currentSourcesImplemented: 24,
+      currentSourcesManualCaptcha: 3,
+      currentSourcesHardBlocked: 5,
+      currentSourcesUnattendedUnavailable: 8,
+    });
+    expect(status.permitRoutes).toEqual(buildBrowardPermitRouteStatus());
+    expect(status.permitInventory).toEqual({
+      records: 243_939,
+      matched: 192_813,
+      unmatched: 51_126,
+      roofing: 17_483,
+      distinctParcels: 42_522,
+      sourceSystems: 13,
+      lastLoadedAt: "2026-08-31T20:50:00.000Z",
+      bulkSourceRows: 204_760,
+      bulkCommittedRows: 204_760,
+      bulkChunks: 205,
+      listLoadedRows: 28_946,
+      listChunks: 29,
+    });
+    expect(status.coralSpringsPermit).toEqual({
+      reported: 59_379,
+      exposed: 1_000,
+      paged: 0,
+      unique: 0,
+      details: 0,
+      loaded: 1_000,
+      linked: 780,
+      roofing: 1_000,
+      completedPages: 0,
+      totalPages: 50,
+      captureComplete: false,
+      completenessBoundary: "bounded_capped_keyword_slice",
+      captchaPrerequisite: "manual_authorization_required",
+      registryStatus: "captcha_required",
+    });
+    expect(status.manualCaptchaProgress).toEqual({
+      sessionPolicy: "manual_captcha_sessions_expire",
+      countyComplete: false,
+      routes: [
+        {
+          jurisdiction: "Coral Springs",
+          registryStatus: "captcha_required",
+          progressState: "bounded_slice_loaded",
+          evidence: "durable_loaded_aggregate",
+          coverageBoundary: "bounded_capped_slice",
+          capturedRecords: 0,
+          loadedRecords: 1_000,
+          manualSessionRequired: true,
+          sessionsExpire: true,
+          validSearchCaptchaRequired: true,
+          countyComplete: false,
+        },
+        {
+          jurisdiction: "Hillsboro Beach",
+          registryStatus: "captcha_required",
+          progressState: "awaiting_manual_captcha",
+          evidence: "no_captured_aggregate",
+          coverageBoundary: "not_captured",
+          capturedRecords: 0,
+          loadedRecords: 0,
+          manualSessionRequired: true,
+          sessionsExpire: true,
+          validSearchCaptchaRequired: true,
+          countyComplete: false,
+        },
+        {
+          jurisdiction: "Pembroke Park",
+          registryStatus: "captcha_required",
+          progressState: "bounded_slice_loaded",
+          evidence: "durable_loaded_aggregate",
+          coverageBoundary: "bounded_slice",
+          capturedRecords: 166,
+          loadedRecords: 166,
+          manualSessionRequired: true,
+          sessionsExpire: true,
+          validSearchCaptchaRequired: true,
+          countyComplete: false,
+        },
+      ],
+    });
+    expect(status.sunbizMatch).toEqual({
+      matchedAddressRoles: 21_512,
+      registrations: 12_432,
+      properties: 9_023,
+      chunks: 22,
     });
     expect(JSON.stringify(status)).not.toContain("504108BJ0140");
     expect(JSON.stringify(status)).not.toContain("owner");
     expect(JSON.stringify(status)).not.toContain("address");
+  });
+
+  it("projects only reconciled Coral Springs checkpoint aggregates", async () => {
+    const root = await mkdtemp(
+      path.join(tmpdir(), "broward-coral-etrakit-dashboard-"),
+    );
+    temporaryDirectories.push(root);
+    const directory = path.join(
+      root,
+      "downloads/broward/coral-springs-etrakit/roof-permit-type-capped-20260901",
+    );
+    await mkdir(directory, { recursive: true });
+    /** @type {Record<string, {page:number,rowCount:number,rowDigest:string}>} */
+    const completedPages = {};
+    for (let page = 1; page <= 50; page += 1) {
+      completedPages[String(page)] = {
+        page,
+        rowCount: 20,
+        rowDigest: "0".repeat(64),
+      };
+    }
+    await writeFile(
+      path.join(directory, "checkpoint.private.json"),
+      JSON.stringify({
+        schemaVersion: "oracle-node.broward-etrakit-capture-checkpoint.v1",
+        sourceSystem: "broward_coral_springs_etrakit_permits",
+        sourceReportedCount: 59_379,
+        expectedPageCount: 50,
+        expectedPageSize: 20,
+        completedPages,
+        capturedRowCount: 1_000,
+        uniqueRecordCount: 1_000,
+        duplicateRecordCount: 0,
+        conflictRecordCount: 0,
+        completed: true,
+        updatedAt: "2026-09-01T23:00:00.000Z",
+      }),
+    );
+    await expect(readCoralSpringsEtrakitStatus(root)).resolves.toEqual({
+      reported: 59_379,
+      exposed: 1_000,
+      paged: 1_000,
+      unique: 1_000,
+      details: 0,
+      completedPages: 50,
+      totalPages: 50,
+      captureComplete: true,
+      completenessBoundary: "bounded_capped_keyword_slice",
+      captchaPrerequisite: "manual_authorization_required",
+      registryStatus: "captcha_required",
+    });
+    await writeFile(
+      path.join(directory, "checkpoint.private.json"),
+      JSON.stringify({
+        sourceReportedCount: 59_379,
+        expectedPageCount: 50,
+        expectedPageSize: 20,
+        completedPages,
+        capturedRowCount: 1_000,
+        uniqueRecordCount: 999,
+        duplicateRecordCount: 0,
+        conflictRecordCount: 0,
+        completed: true,
+      }),
+    );
+    await expect(readCoralSpringsEtrakitStatus(root)).rejects.toThrow(
+      "do not reconcile",
+    );
+  });
+
+  it("reconciles current permit routes without counting supplemental coverage", () => {
+    const routes = buildBrowardPermitRouteStatus();
+    expect(routes).toMatchObject({
+      registryVersion: "2026-09-01.2",
+      totalCurrentRoutes: 32,
+      implementedCurrentRoutes: 24,
+      manualCaptchaCurrentRoutes: 3,
+      hardBlockedCurrentRoutes: 5,
+      unattendedUnavailableCurrentRoutes: 8,
+    });
+    expect(routes.implementedJurisdictions).toHaveLength(24);
+    expect(routes.manualCaptchaJurisdictions).toEqual([
+      "Coral Springs",
+      "Hillsboro Beach",
+      "Pembroke Park",
+    ]);
+    expect(routes.hardBlockCategories).toEqual([
+      {
+        key: "software_or_transport",
+        kind: "software_transport",
+        label: "Software / transport",
+        count: 1,
+        jurisdictions: ["Lauderdale Lakes"],
+      },
+      {
+        key: "login_required",
+        kind: "source_policy",
+        label: "Login required",
+        count: 2,
+        jurisdictions: ["North Lauderdale", "Parkland"],
+      },
+      {
+        key: "no_anonymous_search",
+        kind: "source_policy",
+        label: "No anonymous search",
+        count: 1,
+        jurisdictions: ["Deerfield Beach"],
+      },
+      {
+        key: "custodian_only",
+        kind: "source_policy",
+        label: "Custodian only",
+        count: 1,
+        jurisdictions: ["Sea Ranch Lakes"],
+      },
+    ]);
+    expect(
+      routes.implementedCurrentRoutes +
+        routes.manualCaptchaCurrentRoutes +
+        routes.hardBlockedCurrentRoutes,
+    ).toBe(routes.totalCurrentRoutes);
+    expect(
+      routes.hardBlockCategories.reduce(
+        (sum, category) => sum + category.count,
+        0,
+      ),
+    ).toBe(routes.hardBlockedCurrentRoutes);
+    expect(
+      routes.hardBlockCategories.find(
+        (category) => category.key === "custodian_only",
+      )?.jurisdictions,
+    ).not.toContain("Sunrise");
+    expect(routes.unattendedUnavailableCurrentRoutes).toBe(
+      routes.manualCaptchaCurrentRoutes + routes.hardBlockedCurrentRoutes,
+    );
+    expect(
+      routes.hardBlockCategories.some(
+        (category) => category.key === "captcha_required",
+      ),
+    ).toBe(false);
+  });
+
+  it("reads aggregate permit worker checkpoints without exposing source rows", async () => {
+    const root = await mkdtemp(
+      path.join(tmpdir(), "broward-recovery-dashboard-permits-"),
+    );
+    temporaryDirectories.push(root);
+    const hollywoodDirectory = path.join(
+      root,
+      "downloads/broward/accela-csv-windows/hollywood-full",
+    );
+    const oaklandDirectory = path.join(
+      root,
+      "downloads/broward/tyler-date-windows/oakland-park-full-30d",
+    );
+    const plantationDirectory = path.join(
+      root,
+      "downloads/broward/accela-csv-windows/plantation-full-v2",
+    );
+    const cooperDirectory = path.join(
+      root,
+      "downloads/broward/accela-csv-windows/cooper-city-full",
+    );
+    const lighthouseDirectory = path.join(
+      root,
+      "downloads/broward/municipal-type-enumeration/lighthouse-point-full",
+    );
+    const pompanoDirectory = path.join(
+      root,
+      "downloads/broward/municipal-property-enumeration/pompano-beach-full",
+    );
+    await Promise.all([
+      mkdir(hollywoodDirectory, { recursive: true }),
+      mkdir(oaklandDirectory, { recursive: true }),
+      mkdir(plantationDirectory, { recursive: true }),
+      mkdir(lighthouseDirectory, { recursive: true }),
+      mkdir(pompanoDirectory, { recursive: true }),
+      mkdir(path.join(cooperDirectory, "property-gap-fill"), {
+        recursive: true,
+      }),
+    ]);
+    await writeFile(
+      path.join(hollywoodDirectory, "checkpoint.private.json"),
+      JSON.stringify({
+        pendingWindows: [{ startDate: "PRIVATE", endDate: "PRIVATE" }],
+        completedWindows: {
+          one: {
+            exportedRecordCount: 43,
+            excludedNonPermitCount: 2,
+          },
+        },
+        updatedAt: "2026-08-31T21:59:00.000Z",
+      }),
+    );
+    await writeFile(
+      path.join(oaklandDirectory, "checkpoint.private.json"),
+      JSON.stringify({
+        pendingWindows: [],
+        completedWindows: {
+          one: {
+            totalFound: 10,
+            invalidRecordCount: 0,
+            sourceMissingRecordCount: 1,
+          },
+        },
+        updatedAt: "2026-08-31T21:00:00.000Z",
+      }),
+    );
+    await writeFile(
+      path.join(plantationDirectory, "checkpoint.private.json"),
+      JSON.stringify({
+        pendingWindows: [{ startDate: "PRIVATE", endDate: "PRIVATE" }],
+        completedWindows: {},
+        updatedAt: "2026-08-31T20:00:00.000Z",
+        cooldown: {
+          reason: "timeout",
+          attemptCount: 2,
+          cooldownMs: 3_600_000,
+          scheduledAt: "2026-08-31T22:00:00.000Z",
+          nextAttemptAt: "2026-08-31T23:00:00.000Z",
+        },
+      }),
+    );
+    await writeFile(
+      path.join(cooperDirectory, "checkpoint.private.json"),
+      JSON.stringify({
+        pendingWindows: [{ startDate: "PRIVATE", endDate: "PRIVATE" }],
+        completedWindows: {},
+        updatedAt: "2026-08-31T20:00:00.000Z",
+        cooldown: null,
+      }),
+    );
+    await writeFile(
+      path.join(
+        cooperDirectory,
+        "property-gap-fill",
+        "checkpoint.private.json",
+      ),
+      JSON.stringify({
+        plans: {
+          one: {
+            inspectedPropertyCount: 1,
+            retainedRecordCount: 2,
+            seedExhausted: false,
+          },
+        },
+        cooldown: null,
+        updatedAt: "2026-08-31T21:59:30.000Z",
+      }),
+    );
+    await writeFile(
+      path.join(lighthouseDirectory, "checkpoint.private.json"),
+      JSON.stringify({
+        pendingPartitionValues: ["PRIVATE"],
+        completedPartitions: {
+          one: { recordCount: 3 },
+        },
+        sourcePartitionCount: 2,
+        uniqueRecords: 3,
+        status: "running",
+        blocker: null,
+        nextAttemptAt: null,
+        updatedAt: "2026-08-31T21:59:45.000Z",
+      }),
+    );
+    await writeFile(
+      path.join(pompanoDirectory, "checkpoint.private.json"),
+      JSON.stringify({
+        nextQueryIndex: 3,
+        completedQueries: 2,
+        totalQueries: 5,
+        uniqueRecords: 4,
+        deferredCapItems: {
+          ["a".repeat(64)]: {
+            reason: "client_all_exclusive_cap",
+          },
+        },
+        status: "paused",
+        blocker: "source_cap",
+        nextAttemptAt: null,
+        updatedAt: "2026-08-31T21:59:50.000Z",
+      }),
+    );
+    const status = await readPermitEnumerationStatus(
+      root,
+      Date.parse("2026-08-31T22:00:00.000Z"),
+      {
+        available: true,
+        routeKeys: new Set(["lighthouse-point", "municipal-pompano_beach"]),
+        detailRouteKeys: new Set(),
+        supervisorNotBeforeByKey: new Map([
+          ["municipal-pompano_beach", "2026-08-31T23:00:00.000Z"],
+        ]),
+      },
+    );
+    expect(status).toMatchObject({
+      activeWorkers: 3,
+      completedWorkers: 1,
+      completedWindows: 5,
+      totalWindows: 12,
+      accessibleRecords: 61,
+      excludedRecords: 2,
+      invalidRecords: 0,
+      sourceMissingRecords: 1,
+      deferredCapCount: 1,
+    });
+    expect(status.workers).toHaveLength(17);
+    expect(status.pausedWorkers).toEqual([]);
+    expect(status.coolingWorkers).toEqual([
+      {
+        source: "Plantation",
+        reason: "timeout",
+        nextAttemptAt: "2026-08-31T23:00:00.000Z",
+      },
+      {
+        source: "Pompano Beach",
+        reason: "operator_hold",
+        nextAttemptAt: "2026-08-31T23:00:00.000Z",
+        processAlive: true,
+        detailActive: false,
+        operatorNotBeforeAt: "2026-08-31T23:00:00.000Z",
+      },
+    ]);
+    expect(status.workers).toContainEqual(
+      expect.objectContaining({
+        source: "Plantation",
+        status: "cooling_down",
+        cooldownReason: "timeout",
+        nextAttemptAt: "2026-08-31T23:00:00.000Z",
+      }),
+    );
+    expect(status.workers).toContainEqual(
+      expect.objectContaining({
+        source: "Cooper City",
+        status: "running",
+        accessibleRecords: 2,
+        updatedAt: "2026-08-31T21:59:30.000Z",
+      }),
+    );
+    expect(status.workers).toContainEqual(
+      expect.objectContaining({
+        source: "Pompano Beach",
+        status: "cooling_down",
+        completedWindows: 2,
+        pendingWindows: 3,
+        deferredCapCount: 1,
+        cooldownReason: "operator_hold",
+        processAlive: true,
+        operatorNotBeforeAt: "2026-08-31T23:00:00.000Z",
+      }),
+    );
+    expect(status.workers).toContainEqual(
+      expect.objectContaining({
+        source: "Hollywood",
+        status: "running",
+        completedWindows: 1,
+        pendingWindows: 1,
+        accessibleRecords: 43,
+      }),
+    );
+    expect(status.workers).toContainEqual(
+      expect.objectContaining({
+        source: "Lighthouse Point",
+        family: "municipal_type",
+        status: "running",
+        completedWindows: 1,
+        pendingWindows: 1,
+        accessibleRecords: 3,
+        coverageBoundary:
+          "Complete official SmartGov exact-type option universe",
+      }),
+    );
+    expect(status.workers).toContainEqual(
+      expect.objectContaining({
+        source: "Sunrise",
+        status: "not_started",
+        startBlocker: "full_date_worker_not_started",
+        coverageBoundary: expect.stringContaining("legacy custodian separate"),
+      }),
+    );
+    expect(JSON.stringify(status)).not.toContain("PRIVATE");
+    expect(
+      buildBrowardPermitRouteStatus().unattendedUnavailableCurrentRoutes,
+    ).toBe(8);
+  });
+
+  it("projects a municipal pagination blocker instead of generic staleness", async () => {
+    const root = await mkdtemp(
+      path.join(tmpdir(), "broward-recovery-dashboard-pagination-"),
+    );
+    temporaryDirectories.push(root);
+    const daniaDirectory = path.join(
+      root,
+      "downloads/broward/municipal-type-enumeration/dania-beach-full",
+    );
+    await mkdir(daniaDirectory, { recursive: true });
+    await writeFile(
+      path.join(daniaDirectory, "checkpoint.private.json"),
+      JSON.stringify({
+        pendingPartitionValues: ["PRIVATE"],
+        completedPartitions: {},
+        sourcePartitionCount: 1,
+        uniqueRecords: 0,
+        status: "paused",
+        blocker: "incomplete_pagination",
+        nextAttemptAt: null,
+        updatedAt: "2026-09-02T20:00:00.000Z",
+      }),
+    );
+
+    const status = await readPermitEnumerationStatus(
+      root,
+      Date.parse("2026-09-02T20:01:00.000Z"),
+    );
+
+    expect(status.workers).toContainEqual(
+      expect.objectContaining({
+        source: "Dania Beach",
+        status: "paused",
+        pauseReason: "incomplete_pagination",
+      }),
+    );
+    expect(status.pausedWorkers).toContainEqual({
+      source: "Dania Beach",
+      reason: "incomplete_pagination",
+    });
+  });
+
+  it("requires live supervisor evidence before claiming automatic cooling", async () => {
+    const root = await mkdtemp(
+      path.join(tmpdir(), "broward-recovery-dashboard-supervisor-"),
+    );
+    temporaryDirectories.push(root);
+    const margateDirectory = path.join(
+      root,
+      "downloads/broward/municipal-property-enumeration/margate-full",
+    );
+    await mkdir(margateDirectory, { recursive: true });
+    await writeFile(
+      path.join(margateDirectory, "checkpoint.private.json"),
+      JSON.stringify({
+        nextQueryIndex: 2,
+        completedQueries: 2,
+        totalQueries: 5,
+        uniqueRecords: 4,
+        deferredCapItems: {},
+        status: "cooling",
+        blocker: "source_error",
+        nextAttemptAt: "2026-09-03T19:03:00.000Z",
+        updatedAt: "2026-09-03T18:48:00.000Z",
+      }),
+    );
+
+    const status = await readPermitEnumerationStatus(
+      root,
+      Date.parse("2026-09-03T18:53:00.000Z"),
+      {
+        available: true,
+        routeKeys: new Set(),
+        detailRouteKeys: new Set(),
+        supervisorNotBeforeByKey: new Map(),
+      },
+    );
+
+    expect(status.workers).toContainEqual(
+      expect.objectContaining({
+        source: "Margate",
+        status: "paused",
+        pauseReason: "supervisor_not_running",
+        processAlive: false,
+      }),
+    );
+    expect(status.coolingWorkers).not.toContainEqual(
+      expect.objectContaining({ source: "Margate" }),
+    );
+  });
+
+  it("keeps historical eSuite ceiling partitions unresolved", async () => {
+    const root = await mkdtemp(
+      path.join(tmpdir(), "broward-recovery-dashboard-esuite-cap-"),
+    );
+    temporaryDirectories.push(root);
+    const davieDirectory = path.join(
+      root,
+      "downloads/broward/municipal-type-enumeration/davie-full",
+    );
+    await mkdir(davieDirectory, { recursive: true });
+    await writeFile(
+      path.join(davieDirectory, "checkpoint.private.json"),
+      JSON.stringify({
+        pendingPartitionValues: [],
+        completedPartitions: {
+          capped: {
+            pageCount: 10,
+            recordCount: 100,
+            reportedCount: null,
+          },
+        },
+        cappedPartitionValues: ["capped"],
+        sourcePartitionCount: 1,
+        uniqueRecords: 100,
+        status: "paused",
+        blocker: "source_cap",
+        nextAttemptAt: null,
+        updatedAt: "2026-09-02T20:00:00.000Z",
+      }),
+    );
+
+    const status = await readPermitEnumerationStatus(
+      root,
+      Date.parse("2026-09-02T20:01:00.000Z"),
+    );
+
+    expect(status.workers).toContainEqual(
+      expect.objectContaining({
+        source: "Davie",
+        status: "paused",
+        completedWindows: 0,
+        pendingWindows: 1,
+        deferredCapCount: 1,
+        pauseReason: "source_cap",
+      }),
+    );
+  });
+
+  it("projects six source-scoped property-first aggregates without private identities", async () => {
+    const client = {
+      query: () =>
+        Promise.resolve({
+          rows: [
+            {
+              jurisdiction_key: "southwest-ranches",
+              candidate_count: 100,
+              terminal_count: 40,
+              record_count: 75,
+              terminal_missing_count: 2,
+              phase: "running",
+              next_attempt_at: null,
+              heartbeat_at: "2026-09-02T17:00:00.000Z",
+            },
+            {
+              jurisdiction_key: "wilton-manors",
+              candidate_count: 10,
+              terminal_count: 10,
+              record_count: 4,
+              terminal_missing_count: 1,
+              phase: "complete",
+              next_attempt_at: null,
+              heartbeat_at: "2026-09-02T16:00:00.000Z",
+            },
+            {
+              jurisdiction_key: "lazy-lake",
+              candidate_count: 18,
+              terminal_count: 18,
+              record_count: 148,
+              terminal_missing_count: 8,
+              phase: "running",
+              next_attempt_at: null,
+              heartbeat_at: "2026-09-02T16:30:00.000Z",
+            },
+          ],
+        }),
+    };
+    const status = await readPropertyFirstPermitStatus(
+      /** @type {import("pg").Client} */ (client),
+      Date.parse("2026-09-02T17:01:00.000Z"),
+    );
+    expect(status.workers).toHaveLength(6);
+    expect(status).toMatchObject({
+      activeWorkers: 1,
+      completedWorkers: 2,
+      completedWindows: 68,
+      totalWindows: 128,
+      accessibleRecords: 227,
+      sourceMissingRecords: 11,
+    });
+    expect(status.workers).toContainEqual(
+      expect.objectContaining({
+        source: "Southwest Ranches",
+        status: "running",
+        completedWindows: 40,
+        pendingWindows: 60,
+        coverageBoundary: expect.stringMatching(/building permits only/iu),
+      }),
+    );
+    expect(status.workers).toContainEqual(
+      expect.objectContaining({
+        source: "Lazy Lake",
+        status: "complete",
+        completedWindows: 18,
+        totalWindows: 18,
+        completionPercent: 100,
+      }),
+    );
+    expect(JSON.stringify(status)).not.toMatch(
+      /parcel_hash|folio|address|error_class|job_id/iu,
+    );
+  });
+
+  it("counts legacy, canonical, and list-only Accela receipts compatibly", () => {
+    expect(
+      readAccelaCsvReceiptAccessibleCount({ exportedRecordCount: 43 }),
+    ).toBe(43);
+    expect(readAccelaCsvReceiptAccessibleCount({ recordCount: 17 })).toBe(17);
+    expect(
+      readAccelaCsvReceiptAccessibleCount({
+        recordCount: 23,
+        listRecordCount: 23,
+      }),
+    ).toBe(23);
+    expect(() =>
+      readAccelaCsvReceiptAccessibleCount({
+        recordCount: 23,
+        exportedRecordCount: 22,
+      }),
+    ).toThrow("record counts conflict");
   });
 
   it("requires branch IDs for the recovery dashboard", () => {

@@ -8,6 +8,9 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      PUPPETEER_SKIP_DOWNLOAD: "true"
+      PUPPETEER_CHROME_HEADLESS_SHELL_SKIP_DOWNLOAD: "true"
 
     steps:
       - name: Checkout repository

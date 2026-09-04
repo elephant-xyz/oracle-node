@@ -26,6 +26,21 @@ explicit `1997-01-01` boundary. Plantation retains its portal's
 deduplicate the legacy source because no official Accela/BCLA migration date
 was certified.
 
+## Fort Lauderdale bulk-first override
+
+Fort Lauderdale now uses its official
+[Building Permits FeatureServer](https://gis.fortlauderdale.gov/server/rest/services/BuildingPermits/FeatureServer/0)
+for complete list discovery. The layer reported 204,760 rows on 2026-08-31 and
+includes BCPA parcel IDs, contractor/license fields, statuses, dates, and
+costs. See [the bulk ingest runbook](./broward-bulk-permit-ingest.md).
+
+The ArcGIS `PERMITID` display is truncated and repeated, so it is not a safe
+key. The bulk runner keys records by complete Accela `CASEKEY` and matches its
+three components to existing portal `capID1/capID2/capID3` URLs. The browser
+adapter remains useful for detail/inspection enrichment and history outside
+the certified bulk layer; it is no longer the primary Fort Lauderdale
+discovery path.
+
 ## Search and record contract
 
 For each target, the local adapter:
@@ -110,6 +125,74 @@ capture.
 The command imports no AWS client and does not access queues, databases, IPFS,
 publication paths, login flows, or CAPTCHA handling. It must not be used as a
 full municipal harvest.
+
+## Vendor-wide date-window enumeration
+
+`scripts/run-broward-accela-date-windows.mjs` replaces one-search-per-property
+discovery for the four Accela tenants that expose start/end dates:
+
+- Hollywood;
+- Plantation;
+- Cooper City; and
+- Weston.
+
+Each source uses one persistent browser process. Initial non-overlapping
+windows split recursively when Accela reports at least 100 rows; terminal
+windows paginate every visible page and reconcile permit plus explicitly
+excluded cross-module rows to the reported total. Raw HTML, terminal list
+records, and checkpoints are private mode-0600 artifacts. Fort Lauderdale is
+excluded because its Accela form has no date controls and its official
+FeatureServer is the list-discovery source.
+
+The Hollywood live pilot for `2026-08-30..2026-08-31` exposed temporary
+records without clickable detail anchors. Those rows still carry a full hidden
+three-part `RecordId`; the parser now builds the official cap-detail identity
+from that value. The corrected pilot reconciled **44/44** changing live records
+across five pages. Equivalent pilots reconciled:
+
+- Plantation: 26 permits plus 13 explicit Enforcement rows = 39/39;
+- Cooper City: 19/19 permits; and
+- Weston: 14/14 permits.
+
+Full persistent local workers use:
+
+```bash
+npm run broward:permits:run-accela-windows -- \
+  --source <hollywood|plantation|cooper-city|weston> \
+  --start-date <explicit-source-boundary> \
+  --end-date 2026-08-31 \
+  --window-days 30 \
+  --split-threshold 100 \
+  --max-pages 200 \
+  --delay-ms 1000 \
+  --output-dir downloads/broward/accela-date-windows/<source>-full
+```
+
+The AWS template adds a disabled-by-default encrypted FIFO enumeration queue.
+Its `MessageGroupId` is the jurisdiction key, so each tenant is serialized
+while different tenants can run concurrently. The event-source mapping starts
+at aggregate concurrency four and is not enabled before an AWS pilot. Cloud
+deployment is currently blocked because this VM has no usable AWS credentials;
+the four equivalent local workers are running instead.
+
+The 30-day production burn-in added two fail-closed source rules:
+
+- incomplete multi-day pagination is split again until the children reconcile;
+  Weston exercised this path; and
+- a single day that still reaches a portal cap cannot split by date. Plantation
+  has at least one such day and therefore requires sequential record-type
+  shards or an official bulk export before its inventory can be called
+  complete.
+
+The production inventory now uses Accela's own `Download results` CSV rather
+than treating the capped grid total as authoritative. A Hollywood one-day
+pilot exported 43/43 full permit numbers in 3.9 seconds. A Plantation two-day
+pilot exported 49 source rows and reconciled them as 30 permits plus 19
+explicit enforcement/business-tax/minor-development exclusions in 5.2
+seconds. CSV rows are merged with first-page identities for temporary records,
+and direct single-record redirects are retained when no export control is
+rendered. Each transient window gets up to three fresh browser sessions with a
+minimum five-second backoff.
 
 ## Bounded live evidence
 

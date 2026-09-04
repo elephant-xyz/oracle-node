@@ -1,6 +1,6 @@
 # Broward Tyler and Citizenserve local permit adapters
 
-Date: 2026-08-29  
+Date: 2026-09-01
 Scope: local-only, property-first source certification  
 Vendors: Tyler EnerGov/Civic Access and Citizenserve/CAP Government
 
@@ -25,7 +25,7 @@ not publication-approved.
 ## Implementation
 
 - `scripts/permit-source-adapters/broward-permit-jurisdictions.mjs`
-  contains the nine jurisdiction routes, official municipal evidence, portal
+  contains the ten jurisdiction routes, official municipal evidence, portal
   URL, source key, history limitation, supported query fields, and available
   validated appraisal sample.
 - `scripts/permit-source-adapters/tyler-civic-access.mjs` retains its existing
@@ -56,19 +56,67 @@ submission. The adapter lets the rendered official page execute that code. It
 does not request, inject, replay, solve, or bypass a token. A visible challenge
 or login form is a hard stop.
 
+## Tyler vendor-wide optimization (2026-08-31)
+
+`scripts/run-broward-tyler-date-windows.mjs` adds a separate list-first path
+for the five anonymous Tyler tenants: Pembroke Pines, Hallandale Beach,
+Miramar, Oakland Park, and Sunrise. The original property-first adapter and
+its bounds remain available for detail recertification. Sunrise's official
+tenant slug follows `/SelfService`, while its API is rooted at the parent
+`/SelfService/api`; the shared adapter validates both explicit same-origin
+routes.
+
+The optimized runner:
+
+- bootstraps the public tenant once per invocation;
+- clones the complete UI request model and switches it to advanced Permit
+  search;
+- uses explicit `ApplyDateFrom`/`ApplyDateTo` UTC timestamps;
+- requests 100 records per page;
+- reuses tenant cookies and required tenant headers;
+- reconciles `TotalFound`, `TotalPages`, permit entities, and stable `CaseId`;
+- applies both in-page and outer wall-clock request timeouts;
+- writes private raw JSON pages and deterministic normalized list JSONL; and
+- checkpoints after each complete application-date window.
+
+Two-day live pilots reconciled Pembroke Pines 30, Hallandale Beach 10, Miramar
+34, and Oakland Park 9 permits. Full runs use 30-day windows after year-wide
+historical probes proved too expensive/unbounded. Oakland Park begins at its
+documented `2019-11-01` Tyler boundary. Pembroke Pines begins at the City's
+documented 1992 records-request boundary but still does not claim portal
+completeness. Hallandale's migrated start remains unknown. Miramar restarts
+from 2019, with its separate FY2019/FY2020 official ArcGIS archives retained
+as reconciliation evidence.
+
+Completed list inventories load through
+`scripts/load-broward-permit-list-to-neon.mjs`. Tyler `CaseId` matches the
+existing detail-loader key, so later detail enrichment updates the same row.
+Exact 12-character folios link immediately; other permits remain valid
+unlinked rows. Loads use the shared permit writer lock and durable 1,000-row
+Neon chunks.
+
+Oakland Park completed its documented post-2019 Tyler inventory with 28,946
+accessible unique permits and one row reported by `TotalFound` but unavailable
+at every supported page size. The missing source row is recorded explicitly.
+The 28,946 accessible rows loaded to isolated Neon in 29 durable chunks:
+22,991 matched exact Broward folios and 5,955 remain valid unlinked permits.
+Tyler retries rebuild the complete tenant browser session after timeout or
+HTTP 401 instead of retrying inside expired state.
+
 ## Jurisdiction matrix
 
-| Jurisdiction          | Adapter/source                                 | Anonymous record status   | Boundary                                                                                                                                 |
-| --------------------- | ---------------------------------------------- | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| Pembroke Pines        | Tyler Civic Access, City Development HUB       | Enabled                   | Portal completeness is not inferred; the City separately documents a 1992-current records-search request.                                |
-| Hallandale Beach      | Tyler EnerGov/Civic Access                     | Enabled from official FAQ | The City explicitly documents anonymous permit/parcel/address global search. Earliest migrated history is unknown.                       |
-| Miramar               | Tyler EnerGov/Civic Access                     | Enabled                   | Public-record search is separate from authenticated project management.                                                                  |
-| Oakland Park          | Tyler EnerGov/Civic Access                     | Enabled                   | Tyler is post-2019 only. The City directs records before 2019-11-01 to legacy searches/public records.                                   |
-| North Lauderdale      | Tyler Enterprise Permitting & Licensing CSS    | **Skipped**               | The official City page says login is required. The runner rejects this jurisdiction before opening Chrome and never accepts credentials. |
-| Lauderdale-by-the-Sea | Citizenserve installation 117 / CAP Government | Enabled                   | Current town source only. Historical BCS-held records remain separate county provenance.                                                 |
-| Southwest Ranches     | Citizenserve installation 117 / CAP Government | Enabled                   | Building permits only; Town zoning/engineering and external approvals are separate processes.                                            |
-| West Park             | Citizenserve installation 261 / CAP Government | Enabled                   | Public search/detail only; account-required application submission is not used.                                                          |
-| Wilton Manors         | Citizenserve installation 125                  | Enabled                   | Records/files unavailable in the portal require the City's official records route.                                                       |
+| Jurisdiction          | Adapter/source                                 | Anonymous record status   | Boundary                                                                                                                                                  |
+| --------------------- | ---------------------------------------------- | ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Pembroke Pines        | Tyler Civic Access, City Development HUB       | Enabled                   | Portal completeness is not inferred; the City separately documents a 1992-current records-search request.                                                 |
+| Hallandale Beach      | Tyler EnerGov/Civic Access                     | Enabled from official FAQ | The City explicitly documents anonymous permit/parcel/address global search. Earliest migrated history is unknown.                                        |
+| Miramar               | Tyler EnerGov/Civic Access                     | Enabled                   | Public-record search is separate from authenticated project management.                                                                                   |
+| Oakland Park          | Tyler EnerGov/Civic Access                     | Enabled                   | Tyler is post-2019 only. The City directs records before 2019-11-01 to legacy searches/public records.                                                    |
+| Sunrise               | Tyler EnerGov/Civic Access, `SunriseFL Prod`   | Enabled                   | Official tenant reports authentication disabled. Portal results are not proof of complete historical holdings; City building records remain supplemental. |
+| North Lauderdale      | Tyler Enterprise Permitting & Licensing CSS    | **Skipped**               | The official City page says login is required. The runner rejects this jurisdiction before opening Chrome and never accepts credentials.                  |
+| Lauderdale-by-the-Sea | Citizenserve installation 117 / CAP Government | Enabled                   | Current town source only. Historical BCS-held records remain separate county provenance.                                                                  |
+| Southwest Ranches     | Citizenserve installation 117 / CAP Government | Enabled                   | Building permits only; Town zoning/engineering and external approvals are separate processes.                                                             |
+| West Park             | Citizenserve installation 261 / CAP Government | Enabled                   | Public search/detail only; account-required application submission is not used.                                                                           |
+| Wilton Manors         | Citizenserve installation 125                  | Enabled                   | Records/files unavailable in the portal require the City's official records route.                                                                        |
 
 “Enabled” means the adapter has an official anonymous search configuration. It
 does not certify all-history completeness or permit a full crawl.

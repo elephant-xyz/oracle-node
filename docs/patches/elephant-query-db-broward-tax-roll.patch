@@ -1,0 +1,2595 @@
+From 3120eeabbbf2a75c0275681f4f8dec6da467f316 Mon Sep 17 00:00:00 2001
+From: Cursor Agent <cursoragent@cursor.com>
+Date: Sat, 29 Aug 2026 23:02:06 +0000
+Subject: [PATCH 1/3] Add resumable Florida NAL tax-roll loader
+
+---
+ migrations/0010_florida_nal_tax_roll.sql | 118 ++++
+ package-lock.json                        |   7 +
+ package.json                             |   2 +
+ scripts/load-broward-nal.ts              | 807 ++++++++++++++++++++++
+ src/loader/bulk.ts                       |  63 +-
+ src/loader/florida-nal.ts                | 812 +++++++++++++++++++++++
+ src/loader/index.ts                      |   1 +
+ src/loader/sql.ts                        |  10 +-
+ src/loader/types.ts                      |   5 +
+ src/schema/appraisal.ts                  |  62 ++
+ src/types.ts                             |   6 +
+ tests/florida-nal.test.ts                | 220 ++++++
+ tests/schema.test.ts                     |   6 +
+ 13 files changed, 2117 insertions(+), 2 deletions(-)
+ create mode 100644 migrations/0010_florida_nal_tax_roll.sql
+ create mode 100644 scripts/load-broward-nal.ts
+ create mode 100644 src/loader/florida-nal.ts
+ create mode 100644 tests/florida-nal.test.ts
+
+diff --git a/migrations/0010_florida_nal_tax_roll.sql b/migrations/0010_florida_nal_tax_roll.sql
+new file mode 100644
+index 0000000..33a3a2f
+--- /dev/null
++++ b/migrations/0010_florida_nal_tax_roll.sql
+@@ -0,0 +1,118 @@
++CREATE TABLE IF NOT EXISTS "tax_authorities" (
++  "tax_authority_id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
++  "property_id" uuid,
++  "tax_id" uuid,
++  "request_identifier" text,
++  "authority_account_identifier" text,
++  "authority_category" text,
++  "authority_name" text,
++  "source_http_request" jsonb,
++  "source_payload" jsonb DEFAULT '{}'::jsonb NOT NULL,
++  "source_system" text NOT NULL,
++  "source_record_key" text NOT NULL,
++  "source_record_hash" text,
++  "source_artifact_uri" text,
++  "loaded_at" timestamp with time zone DEFAULT now() NOT NULL,
++  "created_at" timestamp with time zone DEFAULT now() NOT NULL,
++  "updated_at" timestamp with time zone DEFAULT now() NOT NULL,
++  CONSTRAINT "tax_authorities_property_id_properties_property_id_fk"
++    FOREIGN KEY ("property_id") REFERENCES "public"."properties"("property_id")
++    ON DELETE cascade,
++  CONSTRAINT "tax_authorities_tax_id_taxes_tax_id_fk"
++    FOREIGN KEY ("tax_id") REFERENCES "public"."taxes"("tax_id")
++    ON DELETE cascade
++);
++--> statement-breakpoint
++CREATE UNIQUE INDEX IF NOT EXISTS "tax_authorities_source_record_idx"
++  ON "tax_authorities" USING btree ("source_system", "source_record_key");
++--> statement-breakpoint
++CREATE INDEX IF NOT EXISTS "tax_authorities_property_idx"
++  ON "tax_authorities" USING btree ("property_id");
++--> statement-breakpoint
++CREATE INDEX IF NOT EXISTS "tax_authorities_tax_idx"
++  ON "tax_authorities" USING btree ("tax_id");
++--> statement-breakpoint
++CREATE TABLE IF NOT EXISTS "tax_exemptions" (
++  "tax_exemption_id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
++  "tax_id" uuid,
++  "request_identifier" text,
++  "exemption_type" text,
++  "exemption_value" numeric(18, 2),
++  "tax_rate" numeric(12, 6),
++  "tax_year" integer,
++  "taxable_value_amount" numeric(18, 2),
++  "source_http_request" jsonb,
++  "source_payload" jsonb DEFAULT '{}'::jsonb NOT NULL,
++  "source_system" text NOT NULL,
++  "source_record_key" text NOT NULL,
++  "source_record_hash" text,
++  "source_artifact_uri" text,
++  "loaded_at" timestamp with time zone DEFAULT now() NOT NULL,
++  "created_at" timestamp with time zone DEFAULT now() NOT NULL,
++  "updated_at" timestamp with time zone DEFAULT now() NOT NULL,
++  CONSTRAINT "tax_exemptions_tax_id_taxes_tax_id_fk"
++    FOREIGN KEY ("tax_id") REFERENCES "public"."taxes"("tax_id")
++    ON DELETE cascade
++);
++--> statement-breakpoint
++CREATE UNIQUE INDEX IF NOT EXISTS "tax_exemptions_source_record_idx"
++  ON "tax_exemptions" USING btree ("source_system", "source_record_key");
++--> statement-breakpoint
++CREATE INDEX IF NOT EXISTS "tax_exemptions_tax_idx"
++  ON "tax_exemptions" USING btree ("tax_id");
++--> statement-breakpoint
++CREATE INDEX IF NOT EXISTS "tax_exemptions_year_idx"
++  ON "tax_exemptions" USING btree ("tax_year");
++--> statement-breakpoint
++CREATE SCHEMA IF NOT EXISTS "ingest_control";
++--> statement-breakpoint
++CREATE TABLE IF NOT EXISTS "ingest_control"."florida_nal_sources" (
++  "source_sha256" text PRIMARY KEY,
++  "source_url" text NOT NULL,
++  "source_file_name" text NOT NULL,
++  "source_artifact_uri" text NOT NULL,
++  "county_number" text NOT NULL,
++  "county_name" text NOT NULL,
++  "roll_year" integer NOT NULL,
++  "certification_status" text NOT NULL CHECK (
++    "certification_status" IN ('preliminary', 'initial_final', 'final_certified')
++  ),
++  "retrieved_at" timestamp with time zone NOT NULL,
++  "source_row_count" bigint NOT NULL CHECK ("source_row_count" >= 0),
++  "unique_parcel_count" bigint NOT NULL CHECK ("unique_parcel_count" >= 0),
++  "registered_at" timestamp with time zone DEFAULT now() NOT NULL,
++  CHECK ("source_sha256" ~ '^[a-f0-9]{64}$')
++);
++--> statement-breakpoint
++CREATE TABLE IF NOT EXISTS "ingest_control"."florida_nal_chunks" (
++  "source_sha256" text NOT NULL,
++  "chunk_index" integer NOT NULL CHECK ("chunk_index" >= 0),
++  "first_source_row" bigint NOT NULL CHECK ("first_source_row" >= 0),
++  "last_source_row" bigint NOT NULL CHECK ("last_source_row" >= "first_source_row"),
++  "source_row_count" integer NOT NULL CHECK ("source_row_count" > 0),
++  "matched_property_count" integer NOT NULL CHECK ("matched_property_count" >= 0),
++  "created_property_count" integer NOT NULL CHECK ("created_property_count" >= 0),
++  "prepared_logical_row_count" integer NOT NULL CHECK ("prepared_logical_row_count" >= 0),
++  "committed_logical_row_count" integer NOT NULL CHECK ("committed_logical_row_count" >= 0),
++  "committed_at" timestamp with time zone DEFAULT now() NOT NULL,
++  PRIMARY KEY ("source_sha256", "chunk_index"),
++  CONSTRAINT "florida_nal_chunks_source_fk"
++    FOREIGN KEY ("source_sha256")
++    REFERENCES "ingest_control"."florida_nal_sources"("source_sha256")
++    ON DELETE restrict
++);
++--> statement-breakpoint
++CREATE TABLE IF NOT EXISTS "ingest_control"."florida_nal_gates" (
++  "source_sha256" text NOT NULL,
++  "gate_name" text NOT NULL CHECK ("gate_name" = 'pilot'),
++  "sample_count" integer NOT NULL CHECK ("sample_count" > 0),
++  "matched_geometry_count" integer NOT NULL CHECK ("matched_geometry_count" >= 0),
++  "null_geometry_count" integer NOT NULL CHECK ("null_geometry_count" >= 0),
++  "validation_failure_count" integer NOT NULL CHECK ("validation_failure_count" >= 0),
++  "committed_at" timestamp with time zone DEFAULT now() NOT NULL,
++  PRIMARY KEY ("source_sha256", "gate_name"),
++  CONSTRAINT "florida_nal_gates_source_fk"
++    FOREIGN KEY ("source_sha256")
++    REFERENCES "ingest_control"."florida_nal_sources"("source_sha256")
++    ON DELETE restrict
++);
+diff --git a/package-lock.json b/package-lock.json
+index 5fc469e..f587331 100644
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -13,6 +13,7 @@
+         "@dsnp/parquetjs": "^1.8.7",
+         "@vercel/blob": "^2.4.0",
+         "adm-zip": "^0.5.17",
++        "csv-parse": "^7.0.2",
+         "drizzle-orm": "^0.45.2",
+         "pg": "^8.21.0",
+         "pg-copy-streams": "^7.0.0",
+@@ -2573,6 +2574,12 @@
+       "dev": true,
+       "license": "MIT"
+     },
++    "node_modules/csv-parse": {
++      "version": "7.0.2",
++      "resolved": "https://registry.npmjs.org/csv-parse/-/csv-parse-7.0.2.tgz",
++      "integrity": "sha512-uKZghv9UmPkMVLYy//KZ9HFAIJsl7wkhoEdIL0+rhuSY9pZQlhaeGEDPIe+/w7eh81MOql8Q/9+inAGWG6ZHYA==",
++      "license": "MIT"
++    },
+     "node_modules/debug": {
+       "version": "4.4.3",
+       "resolved": "https://registry.npmjs.org/debug/-/debug-4.4.3.tgz",
+diff --git a/package.json b/package.json
+index d3667c2..c17b0f2 100644
+--- a/package.json
++++ b/package.json
+@@ -41,6 +41,7 @@
+     "appraisal:transform-data": "tsx scripts/run-lee-appraisal-transform-data-only.ts",
+     "load:bulk": "tsx scripts/run-bulk-data-load.ts",
+     "load:data": "tsx scripts/run-data-load.ts",
++    "load:florida-nal": "tsx scripts/load-broward-nal.ts",
+     "load:illinois-sos": "tsx scripts/run-illinois-sos-pilot.ts",
+     "load:illinois-sos-components": "tsx scripts/run-illinois-sos-components.ts",
+     "load:link-scoped-permits": "tsx scripts/link-scoped-permits-to-appraisals.ts",
+@@ -84,6 +85,7 @@
+     "@dsnp/parquetjs": "^1.8.7",
+     "@vercel/blob": "^2.4.0",
+     "adm-zip": "^0.5.17",
++    "csv-parse": "^7.0.2",
+     "drizzle-orm": "^0.45.2",
+     "pg": "^8.21.0",
+     "pg-copy-streams": "^7.0.0",
+diff --git a/scripts/load-broward-nal.ts b/scripts/load-broward-nal.ts
+new file mode 100644
+index 0000000..237ad99
+--- /dev/null
++++ b/scripts/load-broward-nal.ts
+@@ -0,0 +1,807 @@
++import { createReadStream } from "node:fs";
++import { Readable } from "node:stream";
++import { pipeline } from "node:stream/promises";
++
++import { parse } from "csv-parse";
++import pg from "pg";
++import { from as copyFrom } from "pg-copy-streams";
++
++import {
++  BULK_STAGE_COLUMNS,
++  createBulkStageTable,
++  mergeBulkStageTable,
++  readBulkTableColumns,
++  serializeBulkStageCsvHeader,
++  serializeBulkStageCsvRow,
++} from "../src/loader/bulk.js";
++import {
++  BROWARD_DOR_COUNTY_NUMBER,
++  FLORIDA_DOR_NAL_SOURCE_SYSTEM,
++  mapFloridaNalRow,
++  requireFloridaNalParcelId,
++  type FloridaNalCertificationStatus,
++  type FloridaNalContext,
++  type FloridaNalRawRow,
++  type FloridaNalMappingResult,
++} from "../src/loader/florida-nal.js";
++import type {
++  LogicalTableName,
++  PreparedRow,
++  QueryClient,
++} from "../src/loader/types.js";
++
++const { Client } = pg;
++const GIS_WRITER_LOCK_NAMESPACE = 12_011;
++const GIS_WRITER_LOCK_KEY = 1;
++const NAL_WRITER_LOCK_KEY = 2;
++const EXPECTED_PROJECT_ID = "raspy-frost-51580436";
++const PRODUCTION_ENDPOINT_PREFIX = "ep-mute-leaf";
++const COUNTY_NAME = "Broward";
++const STATE_CODE = "FL";
++const JURISDICTION_KEY = "broward_appraiser";
++const STAGE_TABLE_NAME = "broward_nal_chunk_stage";
++const TABLE_ORDER: readonly LogicalTableName[] = [
++  "addresses",
++  "parcels",
++  "properties",
++  "ownerships",
++  "taxes",
++  "property_valuations",
++  "sales_histories",
++  "tax_authorities",
++  "tax_exemptions",
++];
++
++type LoadMode = "dry-run" | "pilot" | "full";
++
++type CliOptions = {
++  readonly mode: LoadMode;
++  readonly input: string;
++  readonly sourceUrl: string;
++  readonly sourceArtifactUri: string;
++  readonly sourceFileName: string;
++  readonly sourceSha256: string;
++  readonly retrievedAt: string;
++  readonly rollYear: number;
++  readonly certificationStatus: FloridaNalCertificationStatus;
++  readonly sourceRowCount: number;
++  readonly sourceUniqueCount: number;
++  readonly chunkSize: number;
++  readonly limit: number | null;
++};
++
++type ExistingProperty = {
++  readonly requestIdentifier: string;
++  readonly sourceRecordKey: string;
++};
++
++type ChunkOutcome = {
++  readonly sourceRows: number;
++  readonly matchedProperties: number;
++  readonly createdProperties: number;
++  readonly preparedLogicalRows: number;
++  readonly committedLogicalRows: number;
++};
++
++/**
++ * Parse an explicit fail-closed CLI for Broward's official DOR NAL roll.
++ *
++ * Every source identity field is required so a local CSV cannot silently be
++ * loaded under stale or invented provenance.
++ *
++ * @param argv - Command arguments after the script filename.
++ * @returns Validated source, checkpoint, and mode options.
++ */
++export function parseCliOptions(argv: readonly string[]): CliOptions {
++  const values = new Map<string, string>();
++  for (let index = 0; index < argv.length; index += 2) {
++    const flag = argv[index];
++    const value = argv[index + 1];
++    if (flag === undefined || value === undefined || !flag.startsWith("--")) {
++      throw new Error("Broward NAL options must be --flag value pairs");
++    }
++    values.set(flag.slice(2), value);
++  }
++  const mode = required(values, "mode");
++  if (mode !== "dry-run" && mode !== "pilot" && mode !== "full") {
++    throw new Error("--mode must be dry-run, pilot, or full");
++  }
++  const certificationStatus = required(values, "certification-status");
++  if (
++    certificationStatus !== "preliminary" &&
++    certificationStatus !== "initial_final" &&
++    certificationStatus !== "final_certified"
++  ) {
++    throw new Error("--certification-status is invalid");
++  }
++  const sourceSha256 = required(values, "source-sha256");
++  if (!/^[a-f0-9]{64}$/.test(sourceSha256)) {
++    throw new Error("--source-sha256 must be a lowercase SHA-256");
++  }
++  const retrievedAt = required(values, "retrieved-at");
++  if (!Number.isFinite(Date.parse(retrievedAt))) {
++    throw new Error("--retrieved-at must be an ISO timestamp");
++  }
++  const chunkSize = integer(values.get("chunk-size") ?? "500", "chunk-size");
++  if (chunkSize < 1 || chunkSize > 5_000) {
++    throw new Error("--chunk-size must be from 1 through 5000");
++  }
++  const limitRaw = values.get("limit");
++  const limit =
++    limitRaw === undefined ? null : integer(limitRaw, "limit");
++  if (limit !== null && limit < 1) {
++    throw new Error("--limit must be positive");
++  }
++  if (mode !== "dry-run" && limit !== null) {
++    throw new Error("--limit is allowed only in dry-run mode");
++  }
++  return {
++    mode,
++    input: required(values, "input"),
++    sourceUrl: required(values, "source-url"),
++    sourceArtifactUri: required(values, "source-artifact-uri"),
++    sourceFileName: required(values, "source-file-name"),
++    sourceSha256,
++    retrievedAt: new Date(retrievedAt).toISOString(),
++    rollYear: integer(required(values, "roll-year"), "roll-year"),
++    certificationStatus,
++    sourceRowCount: integer(
++      required(values, "source-row-count"),
++      "source-row-count",
++    ),
++    sourceUniqueCount: integer(
++      required(values, "source-unique-count"),
++      "source-unique-count",
++    ),
++    chunkSize,
++    limit,
++  };
++}
++
++/**
++ * Load a pilot or full NAL CSV after verifying the isolated Neon branch.
++ *
++ * Dry-run mode maps rows without opening a database. Live modes require the GIS
++ * writer to be complete and its advisory lock to be free; this prevents DOR
++ * property stubs from racing county-appraiser properties for the same folio.
++ *
++ * @param options - Validated source and load options.
++ * @returns Aggregate run counters.
++ */
++export async function runBrowardNalLoad(
++  options: CliOptions,
++): Promise<ChunkOutcome> {
++  if (options.mode === "dry-run") {
++    return mapDryRun(options);
++  }
++  const databaseUrl = process.env.DATABASE_URL_UNPOOLED;
++  if (databaseUrl === undefined || databaseUrl.trim() === "") {
++    throw new Error("DATABASE_URL_UNPOOLED is required");
++  }
++  const client = new Client({
++    connectionString: databaseUrl,
++    application_name: "broward-florida-dor-nal-loader",
++    connectionTimeoutMillis: 10_000,
++    statement_timeout: 120_000,
++  });
++  await client.connect();
++  try {
++    await verifyNeonIdentity(client);
++    await requireCompletedGisIngest(client);
++    await requireNalSchema(client);
++    await acquireNalWriterLock(client);
++    await registerSource(client, options);
++    await createBulkStageTable(asQueryClient(client), STAGE_TABLE_NAME);
++    const columnsByTable = await readBulkTableColumns(
++      asQueryClient(client),
++      TABLE_ORDER,
++    );
++
++    if (options.mode === "pilot") {
++      const outcome = await loadInputRows({
++        client,
++        options,
++        columnsByTable,
++        firstSourceRow: 0,
++        firstChunkIndex: 0,
++        recordChunks: false,
++      });
++      await client.query(
++        `INSERT INTO ingest_control.florida_nal_gates (
++           source_sha256, gate_name, sample_count, matched_geometry_count,
++           null_geometry_count, validation_failure_count
++         ) VALUES ($1, 'pilot', $2, 0, 0, 0)
++         ON CONFLICT (source_sha256, gate_name) DO UPDATE SET
++           sample_count = EXCLUDED.sample_count,
++           validation_failure_count = EXCLUDED.validation_failure_count,
++           committed_at = now()`,
++        [options.sourceSha256, outcome.sourceRows],
++      );
++      return outcome;
++    }
++
++    await requirePilotGate(client, options.sourceSha256);
++    const checkpoint = await readFullCheckpoint(client, options.sourceSha256);
++    return loadInputRows({
++      client,
++      options,
++      columnsByTable,
++      firstSourceRow: checkpoint.nextSourceRow,
++      firstChunkIndex: checkpoint.nextChunkIndex,
++      recordChunks: true,
++    });
++  } finally {
++    await client.end();
++  }
++}
++
++async function mapDryRun(options: CliOptions): Promise<ChunkOutcome> {
++  let sourceRows = 0;
++  let preparedLogicalRows = 0;
++  for await (const row of streamNalRows(options.input)) {
++    const mapped = mapFloridaNalRow(
++      row,
++      mappingContext(options, null),
++    );
++    sourceRows += 1;
++    preparedLogicalRows += mapped.rows.length;
++    if (options.limit !== null && sourceRows >= options.limit) break;
++  }
++  return {
++    sourceRows,
++    matchedProperties: 0,
++    createdProperties: sourceRows,
++    preparedLogicalRows,
++    committedLogicalRows: 0,
++  };
++}
++
++async function loadInputRows(params: {
++  readonly client: pg.Client;
++  readonly options: CliOptions;
++  readonly columnsByTable: ReadonlyMap<
++    LogicalTableName,
++    readonly {
++      readonly table_name: LogicalTableName;
++      readonly column_name: string;
++      readonly ordinal_position: number;
++    }[]
++  >;
++  readonly firstSourceRow: number;
++  readonly firstChunkIndex: number;
++  readonly recordChunks: boolean;
++}): Promise<ChunkOutcome> {
++  let sourceRowIndex = 0;
++  let chunkIndex = params.firstChunkIndex;
++  let aggregate: ChunkOutcome = {
++    sourceRows: 0,
++    matchedProperties: 0,
++    createdProperties: 0,
++    preparedLogicalRows: 0,
++    committedLogicalRows: 0,
++  };
++  let chunk: FloridaNalRawRow[] = [];
++  const flush = async (): Promise<void> => {
++    if (chunk.length === 0) return;
++    const current = chunk;
++    chunk = [];
++    const firstSourceRow = sourceRowIndex - current.length;
++    const outcome = await loadChunk({
++      client: params.client,
++      options: params.options,
++      columnsByTable: params.columnsByTable,
++      rawRows: current,
++      chunkIndex,
++      firstSourceRow,
++      recordChunk: params.recordChunks,
++    });
++    aggregate = addOutcomes(aggregate, outcome);
++    chunkIndex += 1;
++    console.log(
++      JSON.stringify({
++        event: "broward_nal_chunk_committed",
++        chunkIndex: chunkIndex - 1,
++        sourceRows: outcome.sourceRows,
++        matchedProperties: outcome.matchedProperties,
++        createdProperties: outcome.createdProperties,
++        preparedLogicalRows: outcome.preparedLogicalRows,
++        committedLogicalRows: outcome.committedLogicalRows,
++      }),
++    );
++  };
++
++  for await (const row of streamNalRows(params.options.input)) {
++    if (sourceRowIndex < params.firstSourceRow) {
++      sourceRowIndex += 1;
++      continue;
++    }
++    chunk.push(row);
++    sourceRowIndex += 1;
++    if (chunk.length >= params.options.chunkSize) await flush();
++  }
++  await flush();
++  return aggregate;
++}
++
++async function loadChunk(params: {
++  readonly client: pg.Client;
++  readonly options: CliOptions;
++  readonly columnsByTable: ReadonlyMap<
++    LogicalTableName,
++    readonly {
++      readonly table_name: LogicalTableName;
++      readonly column_name: string;
++      readonly ordinal_position: number;
++    }[]
++  >;
++  readonly rawRows: readonly FloridaNalRawRow[];
++  readonly chunkIndex: number;
++  readonly firstSourceRow: number;
++  readonly recordChunk: boolean;
++}): Promise<ChunkOutcome> {
++  const parcelIds = params.rawRows.map((row) =>
++    requireFloridaNalParcelId(row.PARCEL_ID),
++  );
++  if (new Set(parcelIds).size !== parcelIds.length) {
++    throw new Error("NAL chunk contains duplicate parcel identifiers");
++  }
++  const existingProperties = await readExistingProperties(
++    params.client,
++    parcelIds,
++  );
++  const mapped = params.rawRows.map((row) => {
++    const parcelId = requireFloridaNalParcelId(row.PARCEL_ID);
++    return mapFloridaNalRow(
++      row,
++      mappingContext(
++        params.options,
++        existingProperties.get(parcelId)?.sourceRecordKey ?? null,
++      ),
++    );
++  });
++  const preparedRows = mapped.flatMap((item) => item.rows);
++  let committedLogicalRows = 0;
++
++  await params.client.query("BEGIN");
++  try {
++    await params.client.query(`TRUNCATE ${STAGE_TABLE_NAME}`);
++    await copyPreparedRows(params.client, preparedRows);
++    for (const tableName of TABLE_ORDER) {
++      const columns = params.columnsByTable.get(tableName);
++      if (columns === undefined) {
++        throw new Error(`Missing database columns for ${tableName}`);
++      }
++      const result = await mergeBulkStageTable(
++        asQueryClient(params.client),
++        { stageTableName: STAGE_TABLE_NAME, tableName, columns },
++      );
++      committedLogicalRows += result.changedRows;
++    }
++    await verifyChunk(params.client, parcelIds, params.options.rollYear);
++    if (params.recordChunk) {
++      await params.client.query(
++        `INSERT INTO ingest_control.florida_nal_chunks (
++           source_sha256, chunk_index, first_source_row, last_source_row,
++           source_row_count, matched_property_count, created_property_count,
++           prepared_logical_row_count, committed_logical_row_count
++         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
++         ON CONFLICT (source_sha256, chunk_index) DO NOTHING`,
++        [
++          params.options.sourceSha256,
++          params.chunkIndex,
++          params.firstSourceRow,
++          params.firstSourceRow + params.rawRows.length - 1,
++          params.rawRows.length,
++          existingProperties.size,
++          params.rawRows.length - existingProperties.size,
++          preparedRows.length,
++          committedLogicalRows,
++        ],
++      );
++    }
++    await params.client.query("COMMIT");
++  } catch (error) {
++    await params.client.query("ROLLBACK");
++    throw error;
++  }
++  return {
++    sourceRows: params.rawRows.length,
++    matchedProperties: existingProperties.size,
++    createdProperties: params.rawRows.length - existingProperties.size,
++    preparedLogicalRows: preparedRows.length,
++    committedLogicalRows,
++  };
++}
++
++async function copyPreparedRows(
++  client: pg.Client,
++  rows: readonly PreparedRow[],
++): Promise<void> {
++  const copy = client.query(
++    copyFrom(
++      `COPY ${STAGE_TABLE_NAME} (${BULK_STAGE_COLUMNS.join(",")})
++       FROM STDIN WITH (FORMAT csv, HEADER true, NULL '')`,
++    ),
++  );
++  const lines = [
++    serializeBulkStageCsvHeader(),
++    ...rows.map((row, index) =>
++      serializeBulkStageCsvRow({ rowIndex: index, row }),
++    ),
++  ];
++  await pipeline(Readable.from(lines), copy);
++}
++
++async function readExistingProperties(
++  client: pg.Client,
++  parcelIds: readonly string[],
++): Promise<ReadonlyMap<string, ExistingProperty>> {
++  const duplicates = await client.query<{
++    readonly request_identifier: string;
++    readonly property_count: number;
++  }>(
++    `SELECT request_identifier, count(*)::integer AS property_count
++     FROM public.properties
++     WHERE request_identifier = ANY($1::text[])
++       AND source_system IN ('broward_appraiser', 'florida_dor_nal')
++     GROUP BY request_identifier
++     HAVING count(*) > 1`,
++    [parcelIds],
++  );
++  if (duplicates.rowCount !== 0) {
++    throw new Error("Canonical Broward property identity is duplicated");
++  }
++  const result = await client.query<{
++    readonly request_identifier: string;
++    readonly source_record_key: string;
++  }>(
++    `SELECT request_identifier, source_record_key
++     FROM public.properties
++     WHERE request_identifier = ANY($1::text[])
++       AND source_system IN ('broward_appraiser', 'florida_dor_nal')`,
++    [parcelIds],
++  );
++  return new Map(
++    result.rows.map((row) => [
++      row.request_identifier,
++      {
++        requestIdentifier: row.request_identifier,
++        sourceRecordKey: row.source_record_key,
++      },
++    ]),
++  );
++}
++
++async function verifyChunk(
++  client: pg.Client,
++  parcelIds: readonly string[],
++  rollYear: number,
++): Promise<void> {
++  const result = await client.query<{
++    readonly property_count: number;
++    readonly tax_count: number;
++    readonly missing_tax_property_count: number;
++  }>(
++    `WITH canonical_properties AS (
++       SELECT request_identifier, min(property_id::text)::uuid AS property_id
++       FROM public.properties
++       WHERE request_identifier = ANY($1::text[])
++         AND source_system IN ('broward_appraiser', 'florida_dor_nal')
++       GROUP BY request_identifier
++     )
++     SELECT
++       (SELECT count(*)::integer FROM canonical_properties) AS property_count,
++       (SELECT count(*)::integer
++        FROM public.taxes
++        WHERE request_identifier = ANY($1::text[])
++          AND tax_year = $2
++          AND source_system = 'florida_dor_nal') AS tax_count,
++       (SELECT count(*)::integer
++        FROM public.taxes
++        WHERE request_identifier = ANY($1::text[])
++          AND tax_year = $2
++          AND source_system = 'florida_dor_nal'
++          AND property_id IS NULL) AS missing_tax_property_count`,
++    [parcelIds, rollYear],
++  );
++  const row = result.rows[0];
++  if (
++    row === undefined ||
++    row.property_count !== parcelIds.length ||
++    row.tax_count !== parcelIds.length ||
++    row.missing_tax_property_count !== 0
++  ) {
++    throw new Error("NAL chunk did not reconcile to canonical properties and taxes");
++  }
++}
++
++async function verifyNeonIdentity(client: pg.Client): Promise<void> {
++  const branchId = process.env.BROWARD_INGEST_NEON_BRANCH_ID;
++  const endpointId = process.env.BROWARD_INGEST_NEON_ENDPOINT_ID;
++  if (
++    branchId === undefined ||
++    !/^br-[a-z0-9-]+$/.test(branchId) ||
++    endpointId === undefined ||
++    !/^ep-[a-z0-9-]+$/.test(endpointId) ||
++    endpointId.startsWith(PRODUCTION_ENDPOINT_PREFIX)
++  ) {
++    throw new Error("Verified Broward Neon identity variables are required");
++  }
++  await client.query("BEGIN READ ONLY");
++  try {
++    const result = await client.query<{
++      readonly project_id: string;
++      readonly branch_id: string;
++      readonly endpoint_id: string;
++    }>(
++      `SELECT current_setting('neon.project_id', true) AS project_id,
++              current_setting('neon.branch_id', true) AS branch_id,
++              current_setting('neon.endpoint_id', true) AS endpoint_id`,
++    );
++    const row = result.rows[0];
++    if (
++      row?.project_id !== EXPECTED_PROJECT_ID ||
++      row.branch_id !== branchId ||
++      row.endpoint_id !== endpointId
++    ) {
++      throw new Error("Database identity is not the verified broward-ingest branch");
++    }
++    await client.query("ROLLBACK");
++  } catch (error) {
++    await client.query("ROLLBACK");
++    throw error;
++  }
++}
++
++async function requireCompletedGisIngest(client: pg.Client): Promise<void> {
++  const result = await client.query<{
++    readonly phase: string;
++    readonly attempted_count: string;
++    readonly lock_held: boolean;
++  }>(
++    `SELECT status.phase, status.attempted_count::text,
++       EXISTS (
++         SELECT 1 FROM pg_locks
++         WHERE locktype = 'advisory'
++           AND classid = $1
++           AND objid = $2
++       ) AS lock_held
++     FROM ingest_control.broward_ingest_status status
++     WHERE status.pipeline_key = 'broward-appraisal'`,
++    [GIS_WRITER_LOCK_NAMESPACE, GIS_WRITER_LOCK_KEY],
++  );
++  const row = result.rows[0];
++  if (
++    row?.phase !== "complete" ||
++    Number(row.attempted_count) !== 534_309 ||
++    row.lock_held
++  ) {
++    throw new Error(
++      "Broward GIS ingestion must be complete and unlocked before NAL loading",
++    );
++  }
++}
++
++async function requireNalSchema(client: pg.Client): Promise<void> {
++  const result = await client.query<{
++    readonly exemptions: string | null;
++    readonly authorities: string | null;
++    readonly sources: string | null;
++  }>(
++    `SELECT
++       to_regclass('public.tax_exemptions')::text AS exemptions,
++       to_regclass('public.tax_authorities')::text AS authorities,
++       to_regclass('ingest_control.florida_nal_sources')::text AS sources`,
++  );
++  const row = result.rows[0];
++  if (
++    row?.exemptions === null ||
++    row?.authorities === null ||
++    row?.sources === null
++  ) {
++    throw new Error("Florida NAL query-db migration is required");
++  }
++}
++
++async function acquireNalWriterLock(client: pg.Client): Promise<void> {
++  const result = await client.query<{ readonly acquired: boolean }>(
++    "SELECT pg_try_advisory_lock($1,$2) AS acquired",
++    [GIS_WRITER_LOCK_NAMESPACE, NAL_WRITER_LOCK_KEY],
++  );
++  if (result.rows[0]?.acquired !== true) {
++    throw new Error("Another Broward NAL loader owns the writer lock");
++  }
++}
++
++async function registerSource(
++  client: pg.Client,
++  options: CliOptions,
++): Promise<void> {
++  await client.query(
++    `INSERT INTO ingest_control.florida_nal_sources (
++       source_sha256, source_url, source_file_name, source_artifact_uri,
++       county_number, county_name, roll_year, certification_status,
++       retrieved_at, source_row_count, unique_parcel_count
++     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
++     ON CONFLICT (source_sha256) DO NOTHING`,
++    [
++      options.sourceSha256,
++      options.sourceUrl,
++      options.sourceFileName,
++      options.sourceArtifactUri,
++      BROWARD_DOR_COUNTY_NUMBER,
++      COUNTY_NAME,
++      options.rollYear,
++      options.certificationStatus,
++      options.retrievedAt,
++      options.sourceRowCount,
++      options.sourceUniqueCount,
++    ],
++  );
++  const result = await client.query<{
++    readonly source_url: string;
++    readonly source_file_name: string;
++    readonly source_artifact_uri: string;
++    readonly roll_year: number;
++    readonly certification_status: string;
++    readonly source_row_count: string;
++    readonly unique_parcel_count: string;
++  }>(
++    `SELECT source_url, source_file_name, source_artifact_uri, roll_year,
++            certification_status, source_row_count::text,
++            unique_parcel_count::text
++     FROM ingest_control.florida_nal_sources
++     WHERE source_sha256 = $1`,
++    [options.sourceSha256],
++  );
++  const row = result.rows[0];
++  if (
++    row?.source_url !== options.sourceUrl ||
++    row.source_file_name !== options.sourceFileName ||
++    row.source_artifact_uri !== options.sourceArtifactUri ||
++    row.roll_year !== options.rollYear ||
++    row.certification_status !== options.certificationStatus ||
++    Number(row.source_row_count) !== options.sourceRowCount ||
++    Number(row.unique_parcel_count) !== options.sourceUniqueCount
++  ) {
++    throw new Error("Existing NAL source registration does not match this file");
++  }
++}
++
++async function requirePilotGate(
++  client: pg.Client,
++  sourceSha256: string,
++): Promise<void> {
++  const result = await client.query(
++    `SELECT 1
++     FROM ingest_control.florida_nal_gates
++     WHERE source_sha256 = $1
++       AND gate_name = 'pilot'
++       AND validation_failure_count = 0`,
++    [sourceSha256],
++  );
++  if (result.rowCount !== 1) {
++    throw new Error("A successful NAL pilot gate is required before full load");
++  }
++}
++
++async function readFullCheckpoint(
++  client: pg.Client,
++  sourceSha256: string,
++): Promise<{ readonly nextSourceRow: number; readonly nextChunkIndex: number }> {
++  const result = await client.query<{
++    readonly chunk_index: number;
++    readonly first_source_row: string;
++    readonly last_source_row: string;
++  }>(
++    `SELECT chunk_index, first_source_row::text, last_source_row::text
++     FROM ingest_control.florida_nal_chunks
++     WHERE source_sha256 = $1
++     ORDER BY chunk_index`,
++    [sourceSha256],
++  );
++  let nextSourceRow = 0;
++  let nextChunkIndex = 0;
++  for (const row of result.rows) {
++    if (
++      row.chunk_index !== nextChunkIndex ||
++      Number(row.first_source_row) !== nextSourceRow ||
++      Number(row.last_source_row) < nextSourceRow
++    ) {
++      throw new Error("NAL durable chunk checkpoint is not contiguous");
++    }
++    nextSourceRow = Number(row.last_source_row) + 1;
++    nextChunkIndex += 1;
++  }
++  return { nextSourceRow, nextChunkIndex };
++}
++
++async function* streamNalRows(
++  input: string,
++): AsyncGenerator<FloridaNalRawRow, void, void> {
++  const parser = createReadStream(input).pipe(
++    parse({
++      bom: true,
++      columns: true,
++      relax_column_count: false,
++      skip_empty_lines: true,
++    }),
++  );
++  for await (const row of parser) {
++    if (typeof row !== "object" || row === null || Array.isArray(row)) {
++      throw new Error("NAL CSV parser returned an invalid record");
++    }
++    yield row as FloridaNalRawRow;
++  }
++}
++
++function mappingContext(
++  options: CliOptions,
++  existingPropertySourceRecordKey: string | null,
++): FloridaNalContext {
++  return {
++    countyName: COUNTY_NAME,
++    countyNumber: BROWARD_DOR_COUNTY_NUMBER,
++    stateCode: STATE_CODE,
++    jurisdictionKey: JURISDICTION_KEY,
++    rollYear: options.rollYear,
++    certificationStatus: options.certificationStatus,
++    retrievedAt: options.retrievedAt,
++    sourceArtifactUri: options.sourceArtifactUri,
++    sourceSha256: options.sourceSha256,
++    existingPropertySourceRecordKey,
++  };
++}
++
++function asQueryClient(client: pg.Client): QueryClient {
++  return client as unknown as QueryClient;
++}
++
++function addOutcomes(left: ChunkOutcome, right: ChunkOutcome): ChunkOutcome {
++  return {
++    sourceRows: left.sourceRows + right.sourceRows,
++    matchedProperties: left.matchedProperties + right.matchedProperties,
++    createdProperties: left.createdProperties + right.createdProperties,
++    preparedLogicalRows:
++      left.preparedLogicalRows + right.preparedLogicalRows,
++    committedLogicalRows:
++      left.committedLogicalRows + right.committedLogicalRows,
++  };
++}
++
++function required(values: ReadonlyMap<string, string>, name: string): string {
++  const value = values.get(name);
++  if (value === undefined || value.trim() === "") {
++    throw new Error(`--${name} is required`);
++  }
++  return value;
++}
++
++function integer(value: string, name: string): number {
++  const parsed = Number(value);
++  if (!Number.isSafeInteger(parsed) || parsed < 0) {
++    throw new Error(`--${name} must be a non-negative integer`);
++  }
++  return parsed;
++}
++
++if (import.meta.url === `file://${process.argv[1]}`) {
++  runBrowardNalLoad(parseCliOptions(process.argv.slice(2)))
++    .then((outcome) => {
++      console.log(
++        JSON.stringify({
++          event: "broward_nal_load_finished",
++          ...outcome,
++        }),
++      );
++    })
++    .catch((error: unknown) => {
++      console.error(
++        JSON.stringify({
++          event: "broward_nal_load_failed",
++          message: error instanceof Error ? error.message : "Unknown error",
++        }),
++      );
++      process.exitCode = 1;
++    });
++}
+diff --git a/src/loader/bulk.ts b/src/loader/bulk.ts
+index 9f2ebb9..f047466 100644
+--- a/src/loader/bulk.ts
++++ b/src/loader/bulk.ts
+@@ -107,6 +107,8 @@ const TABLES_WITH_UPDATED_AT = new Set<LogicalTableName>([
+   "properties",
+   "sales_histories",
+   "structures",
++  "tax_authorities",
++  "tax_exemptions",
+   "taxes",
+   "unnormalized_addresses",
+   "utilities",
+@@ -124,6 +126,10 @@ const TABLES_WITH_ADDRESS_ID = new Set<LogicalTableName>([
+   "property_improvements",
+ ]);
+ 
++const TABLES_WITH_MAILING_ADDRESS_ID = new Set<LogicalTableName>([
++  "ownerships",
++]);
++
+ const TABLES_WITH_BUSINESS_REGISTRATION_ID = new Set<LogicalTableName>([
+   "business_registration_addresses",
+   "business_registration_annual_reports",
+@@ -171,10 +177,16 @@ const TABLES_WITH_PROPERTY_ID = new Set<LogicalTableName>([
+   "property_valuations",
+   "sales_histories",
+   "structures",
++  "tax_authorities",
+   "taxes",
+   "utilities",
+ ]);
+ 
++const TABLES_WITH_TAX_ID = new Set<LogicalTableName>([
++  "tax_authorities",
++  "tax_exemptions",
++]);
++
+ const TABLES_WITH_PROPERTY_IMPROVEMENT_ID = new Set<LogicalTableName>([
+   "inspections",
+   "permit_contacts",
+@@ -218,6 +230,14 @@ const SOURCE_KEY_REFERENCE_RESOLUTIONS: readonly ReferenceResolution[] = [
+     targetTables: TABLES_WITH_ADDRESS_ID,
+     alias: "ref_address",
+   },
++  {
++    referenceJsonKey: "mailingAddressSourceRecordKey",
++    targetColumnName: "mailing_address_id",
++    targetIdColumnName: "address_id",
++    targetTableName: "addresses",
++    targetTables: TABLES_WITH_MAILING_ADDRESS_ID,
++    alias: "ref_mailing_address",
++  },
+   {
+     referenceJsonKey: "companySourceRecordKey",
+     targetColumnName: "company_id",
+@@ -298,6 +318,14 @@ const SOURCE_KEY_REFERENCE_RESOLUTIONS: readonly ReferenceResolution[] = [
+     targetTables: TABLES_WITH_PROPERTY_ID,
+     alias: "ref_property",
+   },
++  {
++    referenceJsonKey: "taxSourceRecordKey",
++    targetColumnName: "tax_id",
++    targetIdColumnName: "tax_id",
++    targetTableName: "taxes",
++    targetTables: TABLES_WITH_TAX_ID,
++    alias: "ref_tax",
++  },
+   {
+     referenceJsonKey: "businessReputationProfileSourceRecordKey",
+     targetColumnName: "business_reputation_profile_id",
+@@ -658,6 +686,10 @@ export function buildBulkMergeSql(params: {
+     insertColumnNames,
+     targetTableSql,
+   });
++  const precedenceGuard =
++    params.tableName === "taxes"
++      ? buildTaxRollPrecedenceGuard(targetTableSql)
++      : updateGuard;
+ 
+   return [
+     `WITH source_rows AS (`,
+@@ -678,7 +710,7 @@ export function buildBulkMergeSql(params: {
+     `FROM deduped_rows`,
+     `ON CONFLICT (${conflictColumnsSql}) DO UPDATE SET`,
+     updateAssignments.join(", "),
+-    updateGuard,
++    precedenceGuard,
+     `RETURNING 1`,
+     `) SELECT`,
+     `(SELECT count(*)::int FROM source_rows) AS attempted_rows,`,
+@@ -687,6 +719,35 @@ export function buildBulkMergeSql(params: {
+   ].join(" ");
+ }
+ 
++/**
++ * Keep the standardized Florida DOR NAL value row authoritative for a tax year.
++ *
++ * A final-certified NAL record cannot be downgraded by a preliminary replay.
++ * County live-appraiser artifacts may fill a year before NAL arrives, but they
++ * cannot overwrite an existing NAL row afterward.
++ *
++ * @param targetTableSql - Qualified and quoted taxes table name.
++ * @returns SQL predicate for the taxes `ON CONFLICT DO UPDATE` clause.
++ */
++function buildTaxRollPrecedenceGuard(targetTableSql: string): string {
++  const targetStatus = `${targetTableSql}."source_payload" ->> 'certification_status'`;
++  const incomingStatus = `EXCLUDED."source_payload" ->> 'certification_status'`;
++  return [
++    " WHERE (",
++    `EXCLUDED."source_system" = 'florida_dor_nal'`,
++    "AND (",
++    `${targetTableSql}."source_system" <> 'florida_dor_nal'`,
++    `OR ${targetStatus} IS DISTINCT FROM 'final_certified'`,
++    `OR ${incomingStatus} = 'final_certified'`,
++    ")",
++    ") OR (",
++    `${targetTableSql}."source_system" <> 'florida_dor_nal'`,
++    `AND EXCLUDED."source_system" <> 'florida_dor_nal'`,
++    `AND ${targetTableSql}."source_record_hash" IS DISTINCT FROM EXCLUDED."source_record_hash"`,
++    ")",
++  ].join(" ");
++}
++
+ /**
+  * Build the staged JSON expression used before `jsonb_populate_record` casts
+  * values into a target table row.
+diff --git a/src/loader/florida-nal.ts b/src/loader/florida-nal.ts
+new file mode 100644
+index 0000000..b4655ec
+--- /dev/null
++++ b/src/loader/florida-nal.ts
+@@ -0,0 +1,812 @@
++import {
++  buildNormalizedAddressKey,
++  buildSourceMetadata,
++  compactObject,
++  hashNormalizedAddressKey,
++  normalizePostalCode,
++  readInteger,
++  readNumber,
++  readString,
++} from "./normalizers.js";
++import type {
++  JsonObject,
++  PreparedRow,
++  PreparedRowBundle,
++  SourceSystem,
++} from "./types.js";
++
++export const FLORIDA_DOR_NAL_SOURCE_SYSTEM = "florida_dor_nal" as const;
++export const BROWARD_DOR_COUNTY_NUMBER = "16";
++
++export type FloridaNalCertificationStatus =
++  | "preliminary"
++  | "initial_final"
++  | "final_certified";
++
++export type FloridaNalRawRow = Readonly<Record<string, string | undefined>>;
++
++export type FloridaNalContext = {
++  readonly countyName: string;
++  readonly countyNumber: string;
++  readonly stateCode: string;
++  readonly jurisdictionKey: string;
++  readonly rollYear: number;
++  readonly certificationStatus: FloridaNalCertificationStatus;
++  readonly retrievedAt: string;
++  readonly sourceArtifactUri: string;
++  readonly sourceSha256: string;
++  readonly existingPropertySourceRecordKey: string | null;
++};
++
++export type FloridaNalPropertyClassification = {
++  readonly build_status: "Improved" | "VacantLand";
++  readonly ownership_estate_type:
++    | "Condominium"
++    | "Cooperative"
++    | "FeeSimple"
++    | "Leasehold"
++    | "RightOfWay"
++    | "SubsurfaceRights";
++  readonly property_type:
++    | "Building"
++    | "LandParcel"
++    | "ManufacturedHome"
++    | "Unit";
++  readonly property_usage_type: string;
++  readonly structure_form: string | null;
++};
++
++export type FloridaNalMappingResult = PreparedRowBundle & {
++  readonly parcelId: string;
++  readonly dorUseCode: string;
++  readonly isCondominium: boolean;
++  readonly createdCanonicalProperty: boolean;
++  readonly exemptionCount: number;
++  readonly saleCount: number;
++};
++
++const PARCEL_ID_PATTERN = /^[0-9A-Z]{12}$/;
++const SHA256_PATTERN = /^[a-f0-9]{64}$/;
++const EXEMPTION_FIELD_PATTERN = /^EXMPT_(?:0[1-9]|[1-4][0-9]|46|8[0-2])$/;
++
++/**
++ * Map one official Florida DOR NAL real-property row into query-db logical rows.
++ *
++ * Existing county-appraiser properties remain canonical. The caller supplies
++ * their exact source key after a database lookup. When no appraiser property
++ * exists, the mapper creates one DOR-backed parcel/property stub so tax-roll-
++ * only units remain queryable without inventing geometry.
++ *
++ * @param row - One parsed NAL CSV row with all values retained as strings.
++ * @param context - Verified source provenance and canonical-property decision.
++ * @returns Prepared logical rows with exact source keys and raw NAL preservation.
++ */
++export function mapFloridaNalRow(
++  row: FloridaNalRawRow,
++  context: FloridaNalContext,
++): FloridaNalMappingResult {
++  const parcelId = requireFloridaNalParcelId(row.PARCEL_ID);
++  const rowYear = requireInteger(row.ASMNT_YR, "ASMNT_YR");
++  if (row.CO_NO?.trim() !== context.countyNumber) {
++    throw new Error("NAL county number does not match the configured county");
++  }
++  if (row.FILE_T?.trim() !== "R") {
++    throw new Error("NAL row is not a real-property record");
++  }
++  if (rowYear !== context.rollYear) {
++    throw new Error("NAL assessment year does not match source metadata");
++  }
++  if (!SHA256_PATTERN.test(context.sourceSha256)) {
++    throw new Error("NAL source checksum must be a lowercase SHA-256");
++  }
++  const retrievedAt = new Date(context.retrievedAt);
++  if (!Number.isFinite(retrievedAt.getTime())) {
++    throw new Error("NAL retrieval timestamp must be an ISO timestamp");
++  }
++
++  const dorUseCode = requireDorUseCode(row.DOR_UC);
++  const classification = classifyFloridaDorUseCode(dorUseCode, row);
++  const sourcePayload: JsonObject = {
++    ...row,
++    certification_status: context.certificationStatus,
++    retrieved_at: retrievedAt.toISOString(),
++    source_sha256: context.sourceSha256,
++  };
++  const propertySourceRecordKey =
++    context.existingPropertySourceRecordKey ??
++    sourceKey(parcelId, "property", "property");
++  const taxSourceRecordKey = sourceKey(
++    parcelId,
++    "tax",
++    String(context.rollYear),
++  );
++  const siteAddressSourceRecordKey = sourceKey(parcelId, "address", "site");
++  const mailingAddressSourceRecordKey = sourceKey(
++    parcelId,
++    "address",
++    "owner-mailing",
++  );
++
++  const rows: PreparedRow[] = [
++    mapAddressRow({
++      parcelId,
++      role: "site",
++      addressLine1: row.PHY_ADDR1,
++      addressLine2: row.PHY_ADDR2,
++      city: row.PHY_CITY,
++      state: context.stateCode,
++      postalCode: row.PHY_ZIPCD,
++      countyName: context.countyName,
++      township: row.TWN,
++      range: row.RNG,
++      section: row.SEC,
++      sourceArtifactUri: context.sourceArtifactUri,
++      sourceRecordKey: siteAddressSourceRecordKey,
++    }),
++    mapAddressRow({
++      parcelId,
++      role: "owner-mailing",
++      addressLine1: row.OWN_ADDR1,
++      addressLine2: row.OWN_ADDR2,
++      city: row.OWN_CITY,
++      state: row.OWN_STATE,
++      postalCode: row.OWN_ZIPCD,
++      countyName: null,
++      township: null,
++      range: null,
++      section: null,
++      sourceArtifactUri: context.sourceArtifactUri,
++      sourceRecordKey: mailingAddressSourceRecordKey,
++    }),
++  ];
++
++  if (context.existingPropertySourceRecordKey === null) {
++    const parcelSourceRecordKey = sourceKey(parcelId, "parcel", "parcel");
++    rows.push(
++      {
++        tableName: "parcels",
++        values: compactObject({
++          ...metadata(
++            parcelSourceRecordKey,
++            {
++              parcel_id: parcelId,
++              county_number: context.countyNumber,
++              roll_year: context.rollYear,
++            },
++            context.sourceArtifactUri,
++          ),
++          request_identifier: parcelId,
++          parcel_identifier: parcelId,
++          county_name: context.countyName,
++          state_code: context.stateCode,
++          jurisdiction_key: context.jurisdictionKey,
++          source_payload: {
++            parcel_id: parcelId,
++            county_number: context.countyNumber,
++            roll_year: context.rollYear,
++          },
++        }),
++      },
++      {
++        tableName: "properties",
++        references: {
++          addressSourceRecordKey: siteAddressSourceRecordKey,
++          parcelSourceRecordKey,
++        },
++        values: compactObject({
++          ...metadata(
++            propertySourceRecordKey,
++            {
++              parcel_id: parcelId,
++              classification,
++              roll_year: context.rollYear,
++            },
++            context.sourceArtifactUri,
++          ),
++          request_identifier: parcelId,
++          parcel_identifier: parcelId,
++          ...classification,
++          property_legal_description_text: readString(row.S_LEGAL),
++          property_structure_built_year: readInteger(row.ACT_YR_BLT),
++          property_effective_built_year: readInteger(row.EFF_YR_BLT),
++          livable_floor_area: readString(row.TOT_LVG_AREA),
++          total_area: readString(row.LND_SQFOOT),
++          number_of_units: readInteger(row.NO_RES_UNTS),
++          number_of_units_type:
++            readInteger(row.NO_RES_UNTS) === null ? undefined : "Residential",
++          source_payload: {
++            parcel_id: parcelId,
++            dor_use_code: dorUseCode,
++            pa_use_code: readString(row.PA_UC),
++            roll_year: context.rollYear,
++            certification_status: context.certificationStatus,
++          },
++        }),
++      },
++    );
++  }
++
++  rows.push(
++    mapOwnershipRow({
++      row,
++      parcelId,
++      propertySourceRecordKey,
++      mailingAddressSourceRecordKey,
++      context,
++    }),
++    mapTaxRow({
++      row,
++      parcelId,
++      propertySourceRecordKey,
++      taxSourceRecordKey,
++      sourcePayload,
++      context,
++    }),
++    mapValuationRow({
++      row,
++      parcelId,
++      propertySourceRecordKey,
++      sourcePayload,
++      context,
++    }),
++  );
++
++  const authority = mapTaxAuthorityRow({
++    row,
++    parcelId,
++    propertySourceRecordKey,
++    taxSourceRecordKey,
++    context,
++  });
++  if (authority !== null) rows.push(authority);
++
++  const exemptionRows = mapTaxExemptionRows({
++    row,
++    parcelId,
++    taxSourceRecordKey,
++    context,
++  });
++  rows.push(...exemptionRows);
++
++  const saleRows = [1, 2].flatMap((slot) => {
++    const sale = mapSaleRow({
++      row,
++      slot,
++      parcelId,
++      propertySourceRecordKey,
++      context,
++    });
++    return sale === null ? [] : [sale];
++  });
++  rows.push(...saleRows);
++
++  return {
++    parcelId,
++    dorUseCode,
++    isCondominium: dorUseCode === "004",
++    createdCanonicalProperty: context.existingPropertySourceRecordKey === null,
++    exemptionCount: exemptionRows.length,
++    saleCount: saleRows.length,
++    rows,
++    skippedRecords: [],
++  };
++}
++
++/**
++ * Require Broward's exact undashed folio form without numeric coercion.
++ *
++ * @param value - Raw NAL parcel identifier.
++ * @returns Canonical 12-character uppercase alphanumeric folio.
++ */
++export function requireFloridaNalParcelId(value: unknown): string {
++  const parcelId = readString(value)?.toUpperCase();
++  if (parcelId === undefined || parcelId === null) {
++    throw new Error("NAL parcel identifier is missing");
++  }
++  if (!PARCEL_ID_PATTERN.test(parcelId)) {
++    throw new Error("NAL parcel identifier is malformed");
++  }
++  return parcelId;
++}
++
++/**
++ * Map a DOR predominant-use code to existing County Lexicon fields.
++ *
++ * The mapping intentionally stays at a defensible DOR category level. Local
++ * PA subcodes remain in the raw source payload rather than being guessed.
++ *
++ * @param dorUseCode - Three-digit DOR use code.
++ * @param row - Source row used only for explicit building/unit signals.
++ * @returns Existing Lexicon-compatible property classification.
++ */
++export function classifyFloridaDorUseCode(
++  dorUseCode: string,
++  row: FloridaNalRawRow,
++): FloridaNalPropertyClassification {
++  const code = Number(dorUseCode);
++  const explicitlyVacant = new Set([0, 10, 40, 70, 99]).has(code);
++  const buildingCount = readInteger(row.NO_BULDNG) ?? 0;
++  const livingArea = readNumber(row.TOT_LVG_AREA) ?? 0;
++  const buildStatus =
++    explicitlyVacant && buildingCount === 0 && livingArea === 0
++      ? "VacantLand"
++      : "Improved";
++
++  if (code === 2) {
++    return {
++      build_status: buildStatus,
++      ownership_estate_type: "FeeSimple",
++      property_type: "ManufacturedHome",
++      property_usage_type: "Residential",
++      structure_form: "ManufacturedHousing",
++    };
++  }
++  if (code === 4 || code === 5) {
++    return {
++      build_status: buildStatus,
++      ownership_estate_type: code === 4 ? "Condominium" : "Cooperative",
++      property_type: "Unit",
++      property_usage_type: "Residential",
++      structure_form: "ApartmentUnit",
++    };
++  }
++  if (code === 9) {
++    return genericClassification(
++      buildStatus,
++      "ResidentialCommonElementsAreas",
++      "LandParcel",
++    );
++  }
++  if (code >= 0 && code <= 8) {
++    return genericClassification(
++      buildStatus,
++      "Residential",
++      buildStatus === "VacantLand" ? "LandParcel" : "Building",
++    );
++  }
++  if (code >= 10 && code <= 39) {
++    return genericClassification(
++      buildStatus,
++      "Commercial",
++      buildStatus === "VacantLand" ? "LandParcel" : "Building",
++    );
++  }
++  if (code >= 40 && code <= 49) {
++    return genericClassification(
++      buildStatus,
++      "Industrial",
++      buildStatus === "VacantLand" ? "LandParcel" : "Building",
++    );
++  }
++  if (code >= 50 && code <= 69) {
++    return genericClassification(
++      buildStatus,
++      "Agricultural",
++      buildStatus === "VacantLand" ? "LandParcel" : "Building",
++    );
++  }
++
++  const institutionalUsage = new Map<number, string>([
++    [71, "Church"],
++    [72, "PrivateSchool"],
++    [73, "PrivateHospital"],
++    [74, "HomesForAged"],
++    [75, "NonProfitCharity"],
++    [76, "MortuaryCemetery"],
++    [77, "ClubsLodges"],
++    [78, "SanitariumConvalescentHome"],
++    [79, "CulturalOrganization"],
++    [80, "GovernmentProperty"],
++    [81, "Military"],
++    [82, "ForestParkRecreation"],
++    [83, "PublicSchool"],
++    [84, "PublicSchool"],
++    [85, "PublicHospital"],
++    [86, "GovernmentProperty"],
++    [87, "GovernmentProperty"],
++    [88, "GovernmentProperty"],
++    [89, "GovernmentProperty"],
++    [91, "Utility"],
++    [92, "MineralProcessing"],
++    [95, "RiversLakes"],
++    [96, "SewageDisposal"],
++    [97, "Recreational"],
++    [98, "Utility"],
++  ]);
++  const estateType =
++    code === 90
++      ? "Leasehold"
++      : code === 93
++        ? "SubsurfaceRights"
++        : code === 94
++          ? "RightOfWay"
++          : "FeeSimple";
++  return {
++    ...genericClassification(
++      buildStatus,
++      institutionalUsage.get(code) ?? "Commercial",
++      buildStatus === "VacantLand" ? "LandParcel" : "Building",
++    ),
++    ownership_estate_type: estateType,
++  };
++}
++
++function genericClassification(
++  buildStatus: "Improved" | "VacantLand",
++  usageType: string,
++  propertyType: "Building" | "LandParcel",
++): FloridaNalPropertyClassification {
++  return {
++    build_status: buildStatus,
++    ownership_estate_type: "FeeSimple",
++    property_type: propertyType,
++    property_usage_type: usageType,
++    structure_form: null,
++  };
++}
++
++function mapAddressRow(params: {
++  readonly parcelId: string;
++  readonly role: "site" | "owner-mailing";
++  readonly addressLine1: string | undefined;
++  readonly addressLine2: string | undefined;
++  readonly city: string | undefined;
++  readonly state: string | undefined;
++  readonly postalCode: string | undefined;
++  readonly countyName: string | null;
++  readonly township: string | null | undefined;
++  readonly range: string | null | undefined;
++  readonly section: string | null | undefined;
++  readonly sourceArtifactUri: string;
++  readonly sourceRecordKey: string;
++}): PreparedRow {
++  const parts = [
++    readString(params.addressLine1),
++    readString(params.addressLine2),
++    readString(params.city),
++    readString(params.state),
++    normalizePostalCode(params.postalCode),
++  ].filter((value): value is string => value !== null);
++  const unnormalizedAddress = parts.join(", ");
++  const normalizedAddressKey = buildNormalizedAddressKey(unnormalizedAddress);
++  const state = readString(params.state);
++  const payload = {
++    role: params.role,
++    address_line_1: readString(params.addressLine1),
++    address_line_2: readString(params.addressLine2),
++    city: readString(params.city),
++    state,
++    postal_code: normalizePostalCode(params.postalCode),
++  };
++  return {
++    tableName: "addresses",
++    values: compactObject({
++      ...metadata(
++        params.sourceRecordKey,
++        payload,
++        params.sourceArtifactUri,
++      ),
++      request_identifier: params.parcelId,
++      city_name: readString(params.city),
++      municipality_name: params.role === "site" ? readString(params.city) : null,
++      county_name: params.countyName,
++      state_code: state?.length === 2 ? state.toUpperCase() : null,
++      postal_code: normalizePostalCode(params.postalCode),
++      country_code:
++        normalizePostalCode(params.postalCode) === null ? null : "US",
++      township: readString(params.township),
++      range: readString(params.range),
++      section: readString(params.section),
++      unnormalized_address:
++        unnormalizedAddress.length === 0 ? null : unnormalizedAddress,
++      normalized_address_key: normalizedAddressKey,
++      normalized_address_hash:
++        hashNormalizedAddressKey(normalizedAddressKey),
++      source_payload: payload,
++    }),
++  };
++}
++
++function mapOwnershipRow(params: {
++  readonly row: FloridaNalRawRow;
++  readonly parcelId: string;
++  readonly propertySourceRecordKey: string;
++  readonly mailingAddressSourceRecordKey: string;
++  readonly context: FloridaNalContext;
++}): PreparedRow {
++  const payload = {
++    owner_name: readString(params.row.OWN_NAME),
++    owner_state_of_domicile: readString(params.row.OWN_STATE_DOM),
++    roll_year: params.context.rollYear,
++    certification_status: params.context.certificationStatus,
++  };
++  return {
++    tableName: "ownerships",
++    references: {
++      mailingAddressSourceRecordKey: params.mailingAddressSourceRecordKey,
++      propertySourceRecordKey: params.propertySourceRecordKey,
++    },
++    values: compactObject({
++      ...metadata(
++        sourceKey(
++          params.parcelId,
++          "ownership",
++          String(params.context.rollYear),
++        ),
++        payload,
++        params.context.sourceArtifactUri,
++      ),
++      ownership_identifier: `DOR-NAL-${String(params.context.rollYear)}`,
++      owned_by: readString(params.row.OWN_NAME),
++      source_payload: payload,
++    }),
++  };
++}
++
++function mapTaxRow(params: {
++  readonly row: FloridaNalRawRow;
++  readonly parcelId: string;
++  readonly propertySourceRecordKey: string;
++  readonly taxSourceRecordKey: string;
++  readonly sourcePayload: JsonObject;
++  readonly context: FloridaNalContext;
++}): PreparedRow {
++  const justValue = readNumber(params.row.JV);
++  const landValue = readNumber(params.row.LND_VAL);
++  const buildingValue =
++    justValue === null || landValue === null
++      ? null
++      : Math.max(0, justValue - landValue);
++  return {
++    tableName: "taxes",
++    references: {
++      propertySourceRecordKey: params.propertySourceRecordKey,
++    },
++    values: compactObject({
++      ...metadata(
++        params.taxSourceRecordKey,
++        params.sourcePayload,
++        params.context.sourceArtifactUri,
++      ),
++      request_identifier: params.parcelId,
++      tax_year: params.context.rollYear,
++      property_market_value_amount: justValue,
++      property_assessed_value_amount: readNumber(params.row.AV_NSD),
++      property_building_amount: buildingValue,
++      property_land_amount: landValue,
++      property_taxable_value_amount: readNumber(params.row.TV_NSD),
++      county_taxable_value_amount: readNumber(params.row.TV_NSD),
++      school_taxable_value_amount: readNumber(params.row.TV_SD),
++      agricultural_valuation_amount: readNumber(params.row.AV_CLASS_USE),
++      homestead_cap_loss_amount: nonnegativeDifference(
++        params.row.JV_HMSTD,
++        params.row.AV_HMSTD,
++      ),
++      period_start_date: `${String(params.context.rollYear)}-01-01`,
++      period_end_date: `${String(params.context.rollYear)}-12-31`,
++      source_payload: params.sourcePayload,
++    }),
++  };
++}
++
++function mapValuationRow(params: {
++  readonly row: FloridaNalRawRow;
++  readonly parcelId: string;
++  readonly propertySourceRecordKey: string;
++  readonly sourcePayload: JsonObject;
++  readonly context: FloridaNalContext;
++}): PreparedRow {
++  const payload = {
++    certification_status: params.context.certificationStatus,
++    dor_use_code: readString(params.row.DOR_UC),
++    roll_year: params.context.rollYear,
++    source_sha256: params.context.sourceSha256,
++  };
++  return {
++    tableName: "property_valuations",
++    references: {
++      propertySourceRecordKey: params.propertySourceRecordKey,
++    },
++    values: compactObject({
++      ...metadata(
++        sourceKey(
++          params.parcelId,
++          "property_valuation",
++          String(params.context.rollYear),
++        ),
++        payload,
++        params.context.sourceArtifactUri,
++      ),
++      valuation_date: `${String(params.context.rollYear)}-01-01`,
++      valuation_method_type: `FL_DOR_NAL_${params.context.certificationStatus.toUpperCase()}`,
++      current_avm_value: readNumber(params.row.JV),
++      source_payload: payload,
++    }),
++  };
++}
++
++function mapTaxAuthorityRow(params: {
++  readonly row: FloridaNalRawRow;
++  readonly parcelId: string;
++  readonly propertySourceRecordKey: string;
++  readonly taxSourceRecordKey: string;
++  readonly context: FloridaNalContext;
++}): PreparedRow | null {
++  const authorityCode = readString(params.row.TAX_AUTH_CD);
++  if (authorityCode === null) return null;
++  const payload = {
++    authority_account_identifier: authorityCode,
++    roll_year: params.context.rollYear,
++  };
++  return {
++    tableName: "tax_authorities",
++    references: {
++      propertySourceRecordKey: params.propertySourceRecordKey,
++      taxSourceRecordKey: params.taxSourceRecordKey,
++    },
++    values: compactObject({
++      ...metadata(
++        sourceKey(
++          params.parcelId,
++          "tax_authority",
++          String(params.context.rollYear),
++        ),
++        payload,
++        params.context.sourceArtifactUri,
++      ),
++      request_identifier: params.parcelId,
++      authority_account_identifier: authorityCode,
++      authority_category: "Florida DOR tax authority code",
++      source_payload: payload,
++    }),
++  };
++}
++
++function mapTaxExemptionRows(params: {
++  readonly row: FloridaNalRawRow;
++  readonly parcelId: string;
++  readonly taxSourceRecordKey: string;
++  readonly context: FloridaNalContext;
++}): PreparedRow[] {
++  return Object.entries(params.row).flatMap(([fieldName, rawValue]) => {
++    if (!EXEMPTION_FIELD_PATTERN.test(fieldName)) return [];
++    const exemptionValue = readNumber(rawValue);
++    if (exemptionValue === null || exemptionValue <= 0) return [];
++    const payload = {
++      exemption_type: fieldName,
++      exemption_value: exemptionValue,
++      roll_year: params.context.rollYear,
++    };
++    return [
++      {
++        tableName: "tax_exemptions" as const,
++        references: { taxSourceRecordKey: params.taxSourceRecordKey },
++        values: compactObject({
++          ...metadata(
++            sourceKey(
++              params.parcelId,
++              "tax_exemption",
++              `${String(params.context.rollYear)}:${fieldName}`,
++            ),
++            payload,
++            params.context.sourceArtifactUri,
++          ),
++          request_identifier: params.parcelId,
++          exemption_type: fieldName,
++          exemption_value: exemptionValue,
++          tax_year: params.context.rollYear,
++          source_payload: payload,
++        }),
++      },
++    ];
++  });
++}
++
++function mapSaleRow(params: {
++  readonly row: FloridaNalRawRow;
++  readonly slot: number;
++  readonly parcelId: string;
++  readonly propertySourceRecordKey: string;
++  readonly context: FloridaNalContext;
++}): PreparedRow | null {
++  const suffix = String(params.slot);
++  const salePrice = readNumber(params.row[`SALE_PRC${suffix}`]);
++  const saleYear = readInteger(params.row[`SALE_YR${suffix}`]);
++  const saleMonth = readInteger(params.row[`SALE_MO${suffix}`]);
++  const instrumentNumber = readString(params.row[`CLERK_NO${suffix}`]);
++  const deedBook = readString(params.row[`OR_BOOK${suffix}`]);
++  const deedPage = readString(params.row[`OR_PAGE${suffix}`]);
++  if (
++    salePrice === null &&
++    saleYear === null &&
++    instrumentNumber === null &&
++    deedBook === null
++  ) {
++    return null;
++  }
++  const payload = {
++    sale_year: saleYear,
++    sale_month: saleMonth,
++    qualification_code: readString(params.row[`QUAL_CD${suffix}`]),
++    vacant_improved_code: readString(params.row[`VI_CD${suffix}`]),
++    multi_parcel_sale_code: readString(
++      params.row[`MULTI_PAR_SAL${suffix}`],
++    ),
++    sale_change_code: readString(params.row[`SAL_CHNG_CD${suffix}`]),
++  };
++  return {
++    tableName: "sales_histories",
++    references: {
++      propertySourceRecordKey: params.propertySourceRecordKey,
++    },
++    values: compactObject({
++      ...metadata(
++        sourceKey(
++          params.parcelId,
++          "sales_history",
++          `${String(params.context.rollYear)}:${suffix}`,
++        ),
++        payload,
++        params.context.sourceArtifactUri,
++      ),
++      request_identifier: params.parcelId,
++      purchase_price_amount: salePrice,
++      sale_type:
++        payload.qualification_code === null
++          ? null
++          : `FL_DOR_QUAL_${payload.qualification_code}`,
++      deed_book: deedBook,
++      deed_page: deedPage,
++      instrument_number: instrumentNumber,
++      source_payload: payload,
++    }),
++  };
++}
++
++function metadata(
++  sourceRecordKey: string,
++  sourcePayload: unknown,
++  sourceArtifactUri: string,
++): ReturnType<typeof buildSourceMetadata> {
++  return buildSourceMetadata({
++    sourceSystem: FLORIDA_DOR_NAL_SOURCE_SYSTEM,
++    sourceRecordKey,
++    sourcePayload,
++    sourceArtifactUri,
++  });
++}
++
++function sourceKey(
++  parcelId: string,
++  classType: string,
++  localKey: string,
++): string {
++  return `${FLORIDA_DOR_NAL_SOURCE_SYSTEM}:${parcelId}:${classType}:${localKey}`;
++}
++
++function requireDorUseCode(value: unknown): string {
++  const code = readString(value);
++  if (code === null || !/^\d{3}$/.test(code)) {
++    throw new Error("NAL DOR use code must be three digits");
++  }
++  return code;
++}
++
++function requireInteger(value: unknown, fieldName: string): number {
++  const parsed = readInteger(value);
++  if (parsed === null) throw new Error(`NAL ${fieldName} is missing`);
++  return parsed;
++}
++
++function nonnegativeDifference(
++  left: unknown,
++  right: unknown,
++): number | null {
++  const leftNumber = readNumber(left);
++  const rightNumber = readNumber(right);
++  if (leftNumber === null || rightNumber === null) return null;
++  return Math.max(0, leftNumber - rightNumber);
++}
++
++const _sourceSystemTypeCheck: SourceSystem = FLORIDA_DOR_NAL_SOURCE_SYSTEM;
++void _sourceSystemTypeCheck;
+diff --git a/src/loader/index.ts b/src/loader/index.ts
+index 3d9ac5b..0996045 100644
+--- a/src/loader/index.ts
++++ b/src/loader/index.ts
+@@ -7,6 +7,7 @@ export * from "./artifacts.js";
+ export * from "./bbb.js";
+ export * from "./bulk.js";
+ export * from "./curated-sample.js";
++export * from "./florida-nal.js";
+ export * from "./illinois-sos-bulk.js";
+ export * from "./illinois-sos-confidence.js";
+ export * from "./illinois-sos.js";
+diff --git a/src/loader/sql.ts b/src/loader/sql.ts
+index 8619cb9..7a6128e 100644
+--- a/src/loader/sql.ts
++++ b/src/loader/sql.ts
+@@ -245,7 +245,15 @@ export const DEFAULT_TABLE_WRITE_SPECS: ReadonlyMap<LogicalTableName, TableWrite
+     ["sales_histories", defaultSpec("sales_histories", ["sales_history_id"])],
+     ["structures", defaultSpec("structures", ["structure_id"])],
+     ["sunbiz_extraction_chunks", defaultSpec("sunbiz_extraction_chunks", ["sunbiz_extraction_chunk_id"])],
+-    ["taxes", defaultSpec("taxes", ["tax_id"])],
++    ["tax_authorities", defaultSpec("tax_authorities", ["tax_authority_id"])],
++    ["tax_exemptions", defaultSpec("tax_exemptions", ["tax_exemption_id"])],
++    [
++      "taxes",
++      {
++        ...defaultSpec("taxes", ["tax_id"]),
++        conflictColumns: ["property_id", "tax_year"],
++      },
++    ],
+     ["unnormalized_addresses", defaultSpec("unnormalized_addresses", ["unnormalized_address_id"])],
+     ["utilities", defaultSpec("utilities", ["utility_id"])],
+   ]);
+diff --git a/src/loader/types.ts b/src/loader/types.ts
+index 98b846d..0f26203 100644
+--- a/src/loader/types.ts
++++ b/src/loader/types.ts
+@@ -15,6 +15,7 @@ export type SourceSystem =
+   | "illinois_sos"
+   | "sunbiz"
+   | "overture_places"
++  | "florida_dor_nal"
+   | `${string}_appraiser`
+   | `${string}_accela`
+   | `${string}_permits`;
+@@ -71,6 +72,8 @@ export type LogicalTableName =
+   | "sales_histories"
+   | "structures"
+   | "sunbiz_extraction_chunks"
++  | "tax_authorities"
++  | "tax_exemptions"
+   | "taxes"
+   | "unnormalized_addresses"
+   | "utilities";
+@@ -90,6 +93,7 @@ export type PreparedRow = {
+ 
+ export type PreparedRowReferences = {
+   readonly addressSourceRecordKey?: string;
++  readonly mailingAddressSourceRecordKey?: string;
+   readonly businessLocationSourceRecordKey?: string;
+   readonly businessReputationComplaintSourceRecordKey?: string;
+   readonly businessReputationProfileSourceRecordKey?: string;
+@@ -102,6 +106,7 @@ export type PreparedRowReferences = {
+   readonly businessRegistrationDocumentNumber?: string;
+   readonly businessRegistrationSourceRecordKey?: string;
+   readonly propertySourceRecordKey?: string;
++  readonly taxSourceRecordKey?: string;
+ };
+ 
+ export type PreparedRowBundle = {
+diff --git a/src/schema/appraisal.ts b/src/schema/appraisal.ts
+index 6938f6b..1bf8407 100644
+--- a/src/schema/appraisal.ts
++++ b/src/schema/appraisal.ts
+@@ -229,6 +229,68 @@ export const taxes = pgTable(
+   ],
+ );
+ 
++export const taxAuthorities = pgTable(
++  "tax_authorities",
++  {
++    taxAuthorityId: uuid("tax_authority_id").primaryKey().defaultRandom(),
++    propertyId: uuid("property_id").references(() => properties.propertyId, {
++      onDelete: "cascade",
++    }),
++    taxId: uuid("tax_id").references(() => taxes.taxId, {
++      onDelete: "cascade",
++    }),
++    requestIdentifier: text("request_identifier"),
++    authorityAccountIdentifier: text("authority_account_identifier"),
++    authorityCategory: text("authority_category"),
++    authorityName: text("authority_name"),
++    sourceHttpRequest: nullableJsonObjectColumn("source_http_request"),
++    sourcePayload: jsonObjectColumn("source_payload"),
++    ...sourceMetadataColumns(),
++    createdAt: createdAtColumn(),
++    updatedAt: updatedAtColumn(),
++  },
++  (table) => [
++    uniqueIndex("tax_authorities_source_record_idx").on(
++      table.sourceSystem,
++      table.sourceRecordKey,
++    ),
++    index("tax_authorities_property_idx").on(table.propertyId),
++    index("tax_authorities_tax_idx").on(table.taxId),
++  ],
++);
++
++export const taxExemptions = pgTable(
++  "tax_exemptions",
++  {
++    taxExemptionId: uuid("tax_exemption_id").primaryKey().defaultRandom(),
++    taxId: uuid("tax_id").references(() => taxes.taxId, {
++      onDelete: "cascade",
++    }),
++    requestIdentifier: text("request_identifier"),
++    exemptionType: text("exemption_type"),
++    exemptionValue: numeric("exemption_value", { precision: 18, scale: 2 }),
++    taxRate: numeric("tax_rate", { precision: 12, scale: 6 }),
++    taxYear: integer("tax_year"),
++    taxableValueAmount: numeric("taxable_value_amount", {
++      precision: 18,
++      scale: 2,
++    }),
++    sourceHttpRequest: nullableJsonObjectColumn("source_http_request"),
++    sourcePayload: jsonObjectColumn("source_payload"),
++    ...sourceMetadataColumns(),
++    createdAt: createdAtColumn(),
++    updatedAt: updatedAtColumn(),
++  },
++  (table) => [
++    uniqueIndex("tax_exemptions_source_record_idx").on(
++      table.sourceSystem,
++      table.sourceRecordKey,
++    ),
++    index("tax_exemptions_tax_idx").on(table.taxId),
++    index("tax_exemptions_year_idx").on(table.taxYear),
++  ],
++);
++
+ export const salesHistories = pgTable(
+   "sales_histories",
+   {
+diff --git a/src/types.ts b/src/types.ts
+index 9bfd9cb..6eeaa4e 100644
+--- a/src/types.ts
++++ b/src/types.ts
+@@ -42,6 +42,8 @@ import type {
+   salesHistories,
+   structures,
+   sunbizExtractionChunks,
++  taxAuthorities,
++  taxExemptions,
+   taxes,
+   unnormalizedAddresses,
+   utilities,
+@@ -62,6 +64,10 @@ export type Property = typeof properties.$inferSelect;
+ export type NewProperty = typeof properties.$inferInsert;
+ export type Tax = typeof taxes.$inferSelect;
+ export type NewTax = typeof taxes.$inferInsert;
++export type TaxAuthority = typeof taxAuthorities.$inferSelect;
++export type NewTaxAuthority = typeof taxAuthorities.$inferInsert;
++export type TaxExemption = typeof taxExemptions.$inferSelect;
++export type NewTaxExemption = typeof taxExemptions.$inferInsert;
+ export type SalesHistory = typeof salesHistories.$inferSelect;
+ export type NewSalesHistory = typeof salesHistories.$inferInsert;
+ export type PropertyValuation = typeof propertyValuations.$inferSelect;
+diff --git a/tests/florida-nal.test.ts b/tests/florida-nal.test.ts
+new file mode 100644
+index 0000000..0c22df8
+--- /dev/null
++++ b/tests/florida-nal.test.ts
+@@ -0,0 +1,220 @@
++import { readFile } from "node:fs/promises";
++
++import { describe, expect, it } from "vitest";
++
++import {
++  BROWARD_DOR_COUNTY_NUMBER,
++  classifyFloridaDorUseCode,
++  mapFloridaNalRow,
++  requireFloridaNalParcelId,
++  type FloridaNalContext,
++  type FloridaNalRawRow,
++} from "../src/loader/florida-nal.js";
++import { buildBulkMergeSql } from "../src/loader/bulk.js";
++
++const CONTEXT: FloridaNalContext = {
++  countyName: "Broward",
++  countyNumber: BROWARD_DOR_COUNTY_NUMBER,
++  stateCode: "FL",
++  jurisdictionKey: "broward_appraiser",
++  rollYear: 2026,
++  certificationStatus: "preliminary",
++  retrievedAt: "2026-08-29T22:49:05Z",
++  sourceArtifactUri:
++    "https://floridarevenue.com/example/Broward%20Preliminary%20NAL%202026.zip",
++  sourceSha256:
++    "a60bc20f212716fe4d22673d14dc630ebb959ee13c1ed474b7451b36b2c94d9f",
++  existingPropertySourceRecordKey: null,
++};
++
++const BASE_ROW: FloridaNalRawRow = {
++  CO_NO: "16",
++  PARCEL_ID: "504108BJ0140",
++  FILE_T: "R",
++  ASMNT_YR: "2026",
++  DOR_UC: "004",
++  PA_UC: "04",
++  JV: "500000",
++  AV_SD: "400000",
++  AV_NSD: "390000",
++  TV_SD: "350000",
++  TV_NSD: "340000",
++  JV_HMSTD: "300000",
++  AV_HMSTD: "250000",
++  AV_CLASS_USE: "0",
++  LND_VAL: "50000",
++  ACT_YR_BLT: "2001",
++  EFF_YR_BLT: "2010",
++  TOT_LVG_AREA: "1250",
++  NO_BULDNG: "",
++  NO_RES_UNTS: "1",
++  OWN_NAME: "PUBLIC SOURCE OWNER",
++  OWN_ADDR1: "PO BOX 123",
++  OWN_CITY: "FORT LAUDERDALE",
++  OWN_STATE: "FL",
++  OWN_ZIPCD: "33302",
++  OWN_STATE_DOM: "FL",
++  S_LEGAL: "UNIT 140 TEST CONDOMINIUM",
++  TAX_AUTH_CD: "0512",
++  TWN: "50",
++  RNG: "42",
++  SEC: "08",
++  PHY_ADDR1: "100 TEST AVE UNIT 140",
++  PHY_CITY: "FORT LAUDERDALE",
++  PHY_ZIPCD: "33301",
++  EXMPT_01: "25000",
++  EXMPT_02: "25000",
++  SALE_PRC1: "450000",
++  SALE_YR1: "2025",
++  SALE_MO1: "06",
++  QUAL_CD1: "01",
++  OR_BOOK1: "12345",
++  OR_PAGE1: "678",
++};
++
++describe("Florida DOR NAL mapping", () => {
++  it("preserves alphanumeric and leading-zero parcel identifiers as strings", () => {
++    expect(requireFloridaNalParcelId("504108BJ0140")).toBe("504108BJ0140");
++    expect(requireFloridaNalParcelId("004108BJ0140")).toBe("004108BJ0140");
++    expect(() => requireFloridaNalParcelId("4108BJ0140")).toThrow(
++      /malformed/,
++    );
++    expect(() => requireFloridaNalParcelId(4108)).toThrow(/missing/);
++  });
++
++  it("creates a null-geometry condominium property for a tax-roll-only unit", () => {
++    const mapped = mapFloridaNalRow(BASE_ROW, CONTEXT);
++    expect(mapped.parcelId).toBe("504108BJ0140");
++    expect(mapped.isCondominium).toBe(true);
++    expect(mapped.createdCanonicalProperty).toBe(true);
++    expect(mapped.exemptionCount).toBe(2);
++    expect(mapped.saleCount).toBe(1);
++    expect(mapped.rows.some((row) => row.tableName === "geometries")).toBe(
++      false,
++    );
++
++    const property = mapped.rows.find(
++      (row) => row.tableName === "properties",
++    );
++    expect(property?.values).toMatchObject({
++      parcel_identifier: "504108BJ0140",
++      request_identifier: "504108BJ0140",
++      ownership_estate_type: "Condominium",
++      property_type: "Unit",
++      property_usage_type: "Residential",
++      structure_form: "ApartmentUnit",
++    });
++
++    const tax = mapped.rows.find((row) => row.tableName === "taxes");
++    expect(tax?.values).toMatchObject({
++      property_market_value_amount: 500_000,
++      property_assessed_value_amount: 390_000,
++      property_building_amount: 450_000,
++      property_land_amount: 50_000,
++      property_taxable_value_amount: 340_000,
++      county_taxable_value_amount: 340_000,
++      school_taxable_value_amount: 350_000,
++      tax_year: 2026,
++    });
++    expect(tax?.values).not.toHaveProperty("property_exemption_amount");
++  });
++
++  it("attaches NAL facts to an existing appraiser property without duplicating it", () => {
++    const sourceRecordKey =
++      "broward_appraiser:504108BJ0140:property:property";
++    const mapped = mapFloridaNalRow(BASE_ROW, {
++      ...CONTEXT,
++      existingPropertySourceRecordKey: sourceRecordKey,
++    });
++    expect(mapped.createdCanonicalProperty).toBe(false);
++    expect(mapped.rows.some((row) => row.tableName === "properties")).toBe(
++      false,
++    );
++    expect(mapped.rows.some((row) => row.tableName === "parcels")).toBe(false);
++    for (const tableName of [
++      "ownerships",
++      "taxes",
++      "property_valuations",
++      "sales_histories",
++      "tax_authorities",
++    ]) {
++      const row = mapped.rows.find((candidate) => candidate.tableName === tableName);
++      expect(row?.references?.propertySourceRecordKey).toBe(sourceRecordKey);
++    }
++  });
++
++  it("preserves exemption codes and does not invent a sale day", () => {
++    const mapped = mapFloridaNalRow(BASE_ROW, CONTEXT);
++    const exemptions = mapped.rows.filter(
++      (row) => row.tableName === "tax_exemptions",
++    );
++    expect(
++      exemptions.map((row) => row.values.exemption_type).sort(),
++    ).toEqual(["EXMPT_01", "EXMPT_02"]);
++    expect(
++      exemptions.every(
++        (row) =>
++          row.references?.taxSourceRecordKey ===
++          "florida_dor_nal:504108BJ0140:tax:2026",
++      ),
++    ).toBe(true);
++    const sale = mapped.rows.find(
++      (row) => row.tableName === "sales_histories",
++    );
++    expect(sale?.values).not.toHaveProperty("ownership_transfer_date");
++    expect(sale?.values.source_payload).toMatchObject({
++      sale_year: 2025,
++      sale_month: 6,
++      qualification_code: "01",
++    });
++  });
++
++  it("maps broad DOR categories without local-use-code guesses", () => {
++    expect(classifyFloridaDorUseCode("000", { NO_BULDNG: "0" })).toMatchObject({
++      build_status: "VacantLand",
++      property_type: "LandParcel",
++      property_usage_type: "Residential",
++    });
++    expect(classifyFloridaDorUseCode("048", {})).toMatchObject({
++      property_usage_type: "Industrial",
++    });
++    expect(classifyFloridaDorUseCode("071", {})).toMatchObject({
++      property_usage_type: "Church",
++    });
++    expect(classifyFloridaDorUseCode("094", {})).toMatchObject({
++      ownership_estate_type: "RightOfWay",
++    });
++  });
++
++  it("uses property/year tax conflicts with DOR certification precedence", () => {
++    const sql = buildBulkMergeSql({
++      stageTableName: "nal_stage",
++      tableName: "taxes",
++      columns: [
++        { table_name: "taxes", column_name: "tax_id", ordinal_position: 1 },
++        { table_name: "taxes", column_name: "property_id", ordinal_position: 2 },
++        { table_name: "taxes", column_name: "tax_year", ordinal_position: 3 },
++        { table_name: "taxes", column_name: "source_system", ordinal_position: 4 },
++        { table_name: "taxes", column_name: "source_record_key", ordinal_position: 5 },
++        { table_name: "taxes", column_name: "source_record_hash", ordinal_position: 6 },
++        { table_name: "taxes", column_name: "source_payload", ordinal_position: 7 },
++      ],
++    });
++    expect(sql).toContain('ON CONFLICT ("property_id", "tax_year")');
++    expect(sql).toContain("EXCLUDED.\"source_system\" = 'florida_dor_nal'");
++    expect(sql).toContain("final_certified");
++  });
++
++  it("ships the resumable NAL schema and never defines NAP ingestion", async () => {
++    const migration = await readFile(
++      new URL("../migrations/0010_florida_nal_tax_roll.sql", import.meta.url),
++      "utf8",
++    );
++    expect(migration).toContain('CREATE TABLE IF NOT EXISTS "tax_exemptions"');
++    expect(migration).toContain('CREATE TABLE IF NOT EXISTS "tax_authorities"');
++    expect(migration).toContain(
++      '"ingest_control"."florida_nal_chunks"',
++    );
++    expect(migration).not.toMatch(/\bNAP\b/);
++  });
++});
+diff --git a/tests/schema.test.ts b/tests/schema.test.ts
+index fad5278..64fedd9 100644
+--- a/tests/schema.test.ts
++++ b/tests/schema.test.ts
+@@ -37,6 +37,8 @@ import {
+   salesHistories,
+   structures,
+   sunbizExtractionChunks,
++  taxAuthorities,
++  taxExemptions,
+   taxes,
+   unnormalizedAddresses,
+   utilities,
+@@ -75,6 +77,8 @@ const sourceTrackedTables = [
+   salesHistories,
+   structures,
+   sunbizExtractionChunks,
++  taxAuthorities,
++  taxExemptions,
+   taxes,
+   unnormalizedAddresses,
+   utilities,
+@@ -85,6 +89,8 @@ describe("query database schema", () => {
+     const classTypes = new Set(lexiconClasses.map((entry) => entry.type));
+     expect(classTypes).toContain("parcel");
+     expect(classTypes).toContain("property");
++    expect(classTypes).toContain("tax_authority");
++    expect(classTypes).toContain("tax_exemption");
+     expect(classTypes).toContain("property_improvement");
+     expect(classTypes).toContain("inspection");
+     expect(classTypes).toContain("business_registration");
+-- 
+2.43.0
+
+
+From 5ff4f03d99011cf8599e4939868456c683d21dd2 Mon Sep 17 00:00:00 2001
+From: Cursor Agent <cursoragent@cursor.com>
+Date: Sat, 29 Aug 2026 23:34:53 +0000
+Subject: [PATCH 2/3] Align NAL unit counts with Lexicon
+
+---
+ src/loader/florida-nal.ts | 15 +++++++++++++--
+ tests/florida-nal.test.ts |  2 ++
+ 2 files changed, 15 insertions(+), 2 deletions(-)
+
+diff --git a/src/loader/florida-nal.ts b/src/loader/florida-nal.ts
+index b4655ec..c249bb8 100644
+--- a/src/loader/florida-nal.ts
++++ b/src/loader/florida-nal.ts
+@@ -212,8 +212,9 @@ export function mapFloridaNalRow(
+           livable_floor_area: readString(row.TOT_LVG_AREA),
+           total_area: readString(row.LND_SQFOOT),
+           number_of_units: readInteger(row.NO_RES_UNTS),
+-          number_of_units_type:
+-            readInteger(row.NO_RES_UNTS) === null ? undefined : "Residential",
++          number_of_units_type: unitCountType(
++            readInteger(row.NO_RES_UNTS),
++          ),
+           source_payload: {
+             parcel_id: parcelId,
+             dor_use_code: dorUseCode,
+@@ -808,5 +809,15 @@ function nonnegativeDifference(
+   return Math.max(0, leftNumber - rightNumber);
+ }
+ 
++function unitCountType(
++  count: number | null,
++): "One" | "Two" | "Three" | "Four" | undefined {
++  if (count === 1) return "One";
++  if (count === 2) return "Two";
++  if (count === 3) return "Three";
++  if (count === 4) return "Four";
++  return undefined;
++}
++
+ const _sourceSystemTypeCheck: SourceSystem = FLORIDA_DOR_NAL_SOURCE_SYSTEM;
+ void _sourceSystemTypeCheck;
+diff --git a/tests/florida-nal.test.ts b/tests/florida-nal.test.ts
+index 0c22df8..3606904 100644
+--- a/tests/florida-nal.test.ts
++++ b/tests/florida-nal.test.ts
+@@ -103,6 +103,7 @@ describe("Florida DOR NAL mapping", () => {
+       property_type: "Unit",
+       property_usage_type: "Residential",
+       structure_form: "ApartmentUnit",
++      number_of_units_type: "One",
+     });
+ 
+     const tax = mapped.rows.find((row) => row.tableName === "taxes");
+@@ -117,6 +118,7 @@ describe("Florida DOR NAL mapping", () => {
+       tax_year: 2026,
+     });
+     expect(tax?.values).not.toHaveProperty("property_exemption_amount");
++    expect(tax?.values).not.toHaveProperty("monthly_tax_amount");
+   });
+ 
+   it("attaches NAL facts to an existing appraiser property without duplicating it", () => {
+-- 
+2.43.0
+
+
+From 0f7abe859e2df303436b1a3202ea1050e3e254fb Mon Sep 17 00:00:00 2001
+From: Cursor Agent <cursoragent@cursor.com>
+Date: Sat, 29 Aug 2026 23:39:56 +0000
+Subject: [PATCH 3/3] Support packed final NAL exemptions
+
+---
+ src/loader/florida-nal.ts | 59 +++++++++++++++++++++++++++++++++++++--
+ tests/florida-nal.test.ts | 38 +++++++++++++++++++++++++
+ 2 files changed, 95 insertions(+), 2 deletions(-)
+
+diff --git a/src/loader/florida-nal.ts b/src/loader/florida-nal.ts
+index c249bb8..a3809ac 100644
+--- a/src/loader/florida-nal.ts
++++ b/src/loader/florida-nal.ts
+@@ -669,10 +669,20 @@ function mapTaxExemptionRows(params: {
+   readonly taxSourceRecordKey: string;
+   readonly context: FloridaNalContext;
+ }): PreparedRow[] {
+-  return Object.entries(params.row).flatMap(([fieldName, rawValue]) => {
++  const explicitExemptions = Object.entries(params.row).flatMap(
++    ([fieldName, rawValue]) => {
+     if (!EXEMPTION_FIELD_PATTERN.test(fieldName)) return [];
+     const exemptionValue = readNumber(rawValue);
+     if (exemptionValue === null || exemptionValue <= 0) return [];
++      return [{ fieldName, exemptionValue }];
++    },
++  );
++  const packedExemptions =
++    explicitExemptions.length === 0
++      ? parsePackedExemptions(params.row.EXEMPTIONS)
++      : [];
++  return [...explicitExemptions, ...packedExemptions].map(
++    ({ fieldName, exemptionValue }) => {
+     const payload = {
+       exemption_type: fieldName,
+       exemption_value: exemptionValue,
+@@ -700,7 +710,52 @@ function mapTaxExemptionRows(params: {
+         }),
+       },
+     ];
+-  });
++    },
++  ).flat();
++}
++
++/**
++ * Parse DOR public-record exports that pack exemption code/value pairs into one
++ * semicolon-delimited field instead of separate `EXMPT_*` columns.
++ *
++ * @param value - Packed `EXEMPTIONS` value such as `01;25000;02;25722`.
++ * @returns Valid positive exemption code/value records.
++ */
++export function parsePackedExemptions(
++  value: unknown,
++): readonly { readonly fieldName: string; readonly exemptionValue: number }[] {
++  const text = readString(value);
++  if (text === null) return [];
++  const tokens = text.split(";").map((token) => token.trim());
++  if (tokens.length % 2 !== 0) {
++    throw new Error("Packed NAL exemptions must contain code/value pairs");
++  }
++  const seen = new Set<string>();
++  const exemptions: {
++    fieldName: string;
++    exemptionValue: number;
++  }[] = [];
++  for (let index = 0; index < tokens.length; index += 2) {
++    const code = tokens[index];
++    const rawValue = tokens[index + 1];
++    if (
++      code === undefined ||
++      !/^(?:0[1-9]|[1-4][0-9]|46|8[0-2])$/.test(code)
++    ) {
++      throw new Error("Packed NAL exemption code is invalid");
++    }
++    const exemptionValue = readNumber(rawValue);
++    if (exemptionValue === null || exemptionValue < 0) {
++      throw new Error("Packed NAL exemption value is invalid");
++    }
++    const fieldName = `EXMPT_${code}`;
++    if (seen.has(fieldName)) {
++      throw new Error("Packed NAL exemptions contain a duplicate code");
++    }
++    seen.add(fieldName);
++    if (exemptionValue > 0) exemptions.push({ fieldName, exemptionValue });
++  }
++  return exemptions;
+ }
+ 
+ function mapSaleRow(params: {
+diff --git a/tests/florida-nal.test.ts b/tests/florida-nal.test.ts
+index 3606904..8bcb92d 100644
+--- a/tests/florida-nal.test.ts
++++ b/tests/florida-nal.test.ts
+@@ -6,6 +6,7 @@ import {
+   BROWARD_DOR_COUNTY_NUMBER,
+   classifyFloridaDorUseCode,
+   mapFloridaNalRow,
++  parsePackedExemptions,
+   requireFloridaNalParcelId,
+   type FloridaNalContext,
+   type FloridaNalRawRow,
+@@ -171,6 +172,43 @@ describe("Florida DOR NAL mapping", () => {
+     });
+   });
+ 
++  it("maps packed final-roll exemptions without losing code identity", () => {
++    expect(
++      parsePackedExemptions(
++        "01;25000;02;25722;03;50000;80;845080",
++      ),
++    ).toEqual([
++      { fieldName: "EXMPT_01", exemptionValue: 25_000 },
++      { fieldName: "EXMPT_02", exemptionValue: 25_722 },
++      { fieldName: "EXMPT_03", exemptionValue: 50_000 },
++      { fieldName: "EXMPT_80", exemptionValue: 845_080 },
++    ]);
++    expect(() => parsePackedExemptions("01;25000;02")).toThrow(/code\/value/);
++    expect(() => parsePackedExemptions("01;25000;01;1")).toThrow(
++      /duplicate/,
++    );
++
++    const mapped = mapFloridaNalRow(
++      {
++        ...BASE_ROW,
++        ASMNT_YR: "2025",
++        EXMPT_01: undefined,
++        EXMPT_02: undefined,
++        EXEMPTIONS: "01;25000;02;25722",
++      },
++      {
++        ...CONTEXT,
++        rollYear: 2025,
++        certificationStatus: "initial_final",
++      },
++    );
++    expect(
++      mapped.rows
++        .filter((row) => row.tableName === "tax_exemptions")
++        .map((row) => row.values.exemption_type),
++    ).toEqual(["EXMPT_01", "EXMPT_02"]);
++  });
++
+   it("maps broad DOR categories without local-use-code guesses", () => {
+     expect(classifyFloridaDorUseCode("000", { NO_BULDNG: "0" })).toMatchObject({
+       build_status: "VacantLand",
+-- 
+2.43.0
+

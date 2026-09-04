@@ -97,8 +97,9 @@ Per the Lee/PB pattern, permits are **on-demand, not bulk**.
 | Pembroke Pines                 | Tyler EnerGov / Civic Access           | `https://pembrokepinesfl-energovweb.tylerhost.net/apps/selfservice`                  | 200 (redirect from `ppines.com/developmenthub`)                   |
 | County ePermits OneStop        | apply/review hub, not a harvest search | `https://www.broward.org/epermits`                                                   | 200                                                               |
 
-Weston and Sunrise official department pages 403'd from this egress. Catalog
-rows for the remaining cities are `needs-review` until the certify pass.
+Some Weston and Sunrise marketing/department pages returned 403 from this
+egress. That did not apply to Sunrise's separate official EnerGov
+public-information tenant, which was later certified as anonymous.
 
 **County BCS** is the first permit adapter to build for the pilot (search by
 folio/parcel, POSSE session). Accela cities can reuse the Lee Accela harvester
@@ -140,14 +141,14 @@ mixed). Residential and ROW should skip.
 
 ## 6. Additional data sources
 
-| Source                      | URL                                                         | Bulk?                       | In scope?                                                        |
-| --------------------------- | ----------------------------------------------------------- | --------------------------- | ---------------------------------------------------------------- |
-| Sunbiz (FL statewide)       | `https://dos.fl.gov/sunbiz/other-services/data-downloads/`  | yes                         | **yes** (reuse Lee; Broward ZIP prefixes only)                   |
-| BBB                         | national category harvest                                   | yes                         | **yes** (filter to Broward area)                                 |
-| Tax collector               | `https://browardtax.org/`                                   | unknown                     | discovery only                                                   |
-| Recorder / official records | `https://officialrecords.broward.org/`                      | 10-day FTP images           | Cloudflare on the search UI; out of ingest unless later approved |
-| County GIS (planning)       | `https://gis.browardcountyfl.org/` / `broward.org/Planning` | parcels are **fee from PA** | geometry taken from BCPA GIS instead                             |
-| Code enforcement            | BCS `ParcelSearchForEnforcement`                            | on-demand                   | not in this run                                                  |
+| Source                      | URL                                                         | Bulk?                       | In scope?                                                                          |
+| --------------------------- | ----------------------------------------------------------- | --------------------------- | ---------------------------------------------------------------------------------- |
+| Sunbiz (FL statewide)       | `https://dos.fl.gov/sunbiz/other-services/data-downloads/`  | yes                         | **yes** (reuse Lee; Broward ZIP prefixes only)                                     |
+| BBB                         | `https://developer.bbb.org/`                                | approved API only           | Roofing-only private worklist ready; external requests blocked pending credentials |
+| Tax collector               | `https://browardtax.org/`                                   | unknown                     | discovery only                                                                     |
+| Recorder / official records | `https://officialrecords.broward.org/`                      | 10-day FTP images           | Cloudflare on the search UI; out of ingest unless later approved                   |
+| County GIS (planning)       | `https://gis.browardcountyfl.org/` / `broward.org/Planning` | parcels are **fee from PA** | geometry taken from BCPA GIS instead                                               |
+| Code enforcement            | BCS `ParcelSearchForEnforcement`                            | on-demand                   | not in this run                                                                    |
 
 Broward ZIP prefixes for Sunbiz (not exhaustive): `33004`, `33009`,
 `33019`–`33029`, `33060`–`33076`, `33301`–`33334`, `33351`.
@@ -175,8 +176,9 @@ otherwise after the pilot timings.
 - **GetData 500** if `orderBy` is omitted (empty string). Use `NAME`.
 - **Coral Springs eTRAKiT reCAPTCHA** — browser or skip that city until
   solved.
-- **Fort Lauderdale / Weston / Sunrise** — city marketing sites 403 from
-  datacenter-like egress; Accela `FTL` host itself is reachable.
+- **Fort Lauderdale / Weston / Sunrise** — some city marketing sites 403 from
+  datacenter-like egress; the official `FTL` Accela and Sunrise EnerGov vendor
+  hosts themselves are reachable.
 - **Recorder Cloudflare** — do not use curl-only for official records.
 - **PA commercial-use policy** — InfoBroward fees apply to contracted bulk
   dumps; per-parcel public search JSON is what the website itself calls.
@@ -263,8 +265,8 @@ Remaining gates are full-run reconciliation, database loading when a
 Postgres/Neon connection is available, remaining municipal transports, and
 privacy review. The BCS, Accela, Tyler/Citizenserve, municipal prototype suite,
 and explicit 32-jurisdiction local registry now coexist, but the bounded permit
-evidence is not full permit acceptance: 15 current routes point to local
-adapters and 17 remain transport/access/custodian blocked. The 73 queryable
+evidence is not full permit acceptance: 16 current routes point to local
+adapters and 16 remain transport/access/custodian blocked. The 73 queryable
 rows are historical Lauderdale-by-the-Sea BCS records, Accela produced 21
 separate bounded details, and a positive contemporary BMSD control remains
 unresolved. Do not publish until those gates are clean. The transform fix exists as local commit

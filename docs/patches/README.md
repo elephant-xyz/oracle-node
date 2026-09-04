@@ -29,10 +29,11 @@ git am /workspace/docs/patches/elephant-query-db-broward-local-loader.patch
   `438fe3b59fb5538ac516cb65da0c86edc5d4390c`
 - Patch: `counties-transform-scripts-broward-live-capture.patch`
 - SHA-256:
-  `0a5cddfc53ce778317694c8968964ec42586e6acb1588362941bb8f66c666582`
+  `ef1e201c20503ae00c2107db035801861f5baf6256245d7f64c558e4517d191a`
 - Contents: multi-request response unwrapping, strict empty-source and unknown
   use-code handling, family-level use-code mapping, complete POST provenance,
-  integer lot area, and property-to-structure/utility relationships
+  integer lot area, property-to-structure/utility relationships, and direct
+  raw-JSON owner parsing that preserves escaped control characters
 - Scope: local runtime prerequisite only; no source captures or generated data
 
 Apply from a fresh checkout:

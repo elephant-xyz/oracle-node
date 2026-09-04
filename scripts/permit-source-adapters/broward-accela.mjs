@@ -4,6 +4,7 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
 import * as cheerio from "cheerio";
+import { parse as parseCsv } from "csv-parse/sync";
 
 import { normalizeBrowardFolio } from "../broward-folio.mjs";
 import {
@@ -17,6 +18,7 @@ import {
   parseResultSummary,
   safeKeyPart,
   shortHash,
+  toAccelaDate,
 } from "../../workflow/lambdas/permit-harvest-worker/lee-accela.mjs";
 
 /**
@@ -74,6 +76,7 @@ import {
  * @property {string | null} description - Search-result description or project name, when present.
  * @property {string | null} status - Search-result status, when present.
  * @property {string | null} recordType - Search-result record type, when present.
+ * @property {string | null | undefined} [recordDate] - Search-result record/file date text, when present.
  * @property {string} sourceSearchKey - Stable jurisdiction-and-folio search key.
  * @property {number} sourcePage - One-based result page on which the record was discovered.
  */
@@ -96,6 +99,62 @@ import {
  * @property {BrowardAccelaSearchPage[]} pages - Raw list/detail-redirect captures.
  * @property {number | null} reportedTotal - Accela's reported result count, when displayed.
  * @property {number} excludedNonPermitCount - Cross-module records (for example code enforcement) explicitly excluded from permit normalization.
+ */
+
+/**
+ * @typedef {object} BrowardAccelaDateWindowSearchResult
+ * @property {"records" | "no_records"} status - Explicit public source outcome.
+ * @property {string} searchKey - Stable jurisdiction/date-window identity.
+ * @property {string} startDate - Inclusive ISO source start date.
+ * @property {string} endDate - Inclusive ISO source end date.
+ * @property {BrowardAccelaSource} source - Jurisdiction source configuration.
+ * @property {BrowardAccelaPermitLink[]} permits - Deduplicated list records.
+ * @property {BrowardAccelaSearchPage[]} pages - Raw private page captures.
+ * @property {number | null} reportedTotal - Source-reported total when visible.
+ * @property {number} excludedNonPermitCount - Explicit cross-module rows.
+ * @property {boolean} truncatedForSplit - Whether a dense multi-day window intentionally stopped after page one.
+ */
+
+/**
+ * @typedef {object} BrowardAccelaCsvPermitRecord
+ * @property {"oracle-node.broward-accela-csv-list.v1"} schemaVersion - CSV list contract.
+ * @property {string} sourceSystem - Jurisdiction source identity.
+ * @property {string} jurisdiction - Issuing jurisdiction.
+ * @property {string} recordNumber - Full exported permit number.
+ * @property {string} sourceUrl - Official Accela detail lookup.
+ * @property {string} recordKey - Detail-compatible source key.
+ * @property {string | null} recordDate - Exported ISO record date.
+ * @property {string | null} recordType - Exported record type.
+ * @property {string | null} projectName - Exported project name.
+ * @property {string | null} address - Exported work address.
+ * @property {string | null} expirationDate - Exported ISO expiration date.
+ * @property {string | null} status - Exported status.
+ * @property {boolean} isRoofPermit - Conservative list classification.
+ * @property {string} sourceWindowKey - Inclusive date-window identity.
+ *
+ * @typedef {object} BrowardAccelaRecordTypeShard
+ * @property {string} value - Exact non-empty public record-type option value.
+ * @property {string} label - Exact collapsed public record-type option label.
+ *
+ * @typedef {"csv_export" | "list_pages" | "direct_detail" | "no_records" | "capped_probe"} BrowardAccelaCsvCaptureMode
+ *
+ * @typedef {object} BrowardAccelaCsvWindowResult
+ * @property {string} startDate - Inclusive ISO start.
+ * @property {string} endDate - Inclusive ISO end.
+ * @property {string} sourceWindowKey - Stable source/window identity.
+ * @property {number | null} displayedTotal - Untrusted/capped UI total.
+ * @property {boolean} displayedTotalCapped - Whether UI total equals known cap 100.
+ * @property {BrowardAccelaCsvCaptureMode} captureMode - Exact source mechanism that produced the reconciled records.
+ * @property {readonly BrowardAccelaCsvPermitRecord[]} records - Reconciled unique records, except first-page evidence for non-terminal `capped_probe`.
+ * @property {number} sourceRowCount - Source rows before identity deduplication and explicit exclusions, or observed first-page rows for `capped_probe`.
+ * @property {number} excludedNonPermitCount - Explicit non-permit CSV/list rows.
+ * @property {number} duplicateRecordCount - Repeated identical source identities removed during reconciliation.
+ * @property {number} pageCount - Fully traversed public result pages.
+ * @property {readonly BrowardAccelaRecordTypeShard[]} availableRecordTypes - Complete non-empty options exposed by the public form before submission.
+ * @property {BrowardAccelaRecordTypeShard | null} recordTypeShard - Exact record-type filter applied for this capture.
+ * @property {string} rawCsv - Exact official export bytes as UTF-8.
+ * @property {string} rawSearchHtml - First result/no-record page.
+ * @property {readonly string[]} rawListPages - Every list page used for list-only reconciliation.
  */
 
 /**
@@ -171,6 +230,7 @@ const DEFAULT_SELECTORS = Object.freeze({
   parcel: "#ctl00_PlaceHolderMain_generalSearchForm_txtGSParcelNo",
   startDate: "#ctl00_PlaceHolderMain_generalSearchForm_txtGSStartDate",
   endDate: "#ctl00_PlaceHolderMain_generalSearchForm_txtGSEndDate",
+  recordType: "#ctl00_PlaceHolderMain_generalSearchForm_ddlGSPermitType",
   submit: "#ctl00_PlaceHolderMain_btnNewSearch",
 });
 
@@ -181,6 +241,21 @@ const ACCESS_BLOCK_PATTERN =
 const SOURCE_ERROR_PATTERN =
   /technical difficulties|unable to proceed|Object reference not set|String was not recognized|error\(s\) occurred on current page|an unexpected error (?:has )?occurred|temporarily unavailable/i;
 const RECORD_NUMBER_PATTERN = /^[A-Z0-9][A-Z0-9./_-]{1,79}$/i;
+const ROOF_PERMIT_PATTERN = /\broof(?:ing)?\b/iu;
+
+/**
+ * Classify a result-list permit as roofing before opening its detail page.
+ *
+ * @param {BrowardAccelaPermitLink} permit - Reconciled Accela search result.
+ * @returns {boolean} True only when public list text explicitly identifies roofing.
+ */
+export function isBrowardAccelaRoofPermitCandidate(permit) {
+  return ROOF_PERMIT_PATTERN.test(
+    [permit.recordNumber, permit.recordType, permit.description]
+      .filter((value) => typeof value === "string")
+      .join(" "),
+  );
+}
 
 /**
  * Official source-specific configuration. Dates are deliberately conservative:
@@ -376,6 +451,48 @@ export function buildBrowardAccelaSearchKey(source, parcelIdentifier) {
 }
 
 /**
+ * Validate a real ISO calendar date without timezone inference.
+ *
+ * @param {string} value - Candidate YYYY-MM-DD value.
+ * @param {string} fieldName - Field name used in errors.
+ * @returns {string} Validated date.
+ */
+function requireIsoDate(value, fieldName) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/u.exec(value);
+  if (match === null) {
+    throw new Error(`Broward Accela ${fieldName} must be YYYY-MM-DD`);
+  }
+  const date = new Date(
+    Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])),
+  );
+  if (
+    date.getUTCFullYear() !== Number(match[1]) ||
+    date.getUTCMonth() !== Number(match[2]) - 1 ||
+    date.getUTCDate() !== Number(match[3])
+  ) {
+    throw new Error(`Broward Accela ${fieldName} is not a calendar date`);
+  }
+  return value;
+}
+
+/**
+ * Build a stable source key for one inclusive jurisdiction date window.
+ *
+ * @param {BrowardAccelaSource} source - Jurisdiction-specific source.
+ * @param {string} startDate - Inclusive ISO start date.
+ * @param {string} endDate - Inclusive ISO end date.
+ * @returns {string} Stable date-window identity.
+ */
+export function buildBrowardAccelaDateWindowKey(source, startDate, endDate) {
+  const start = requireIsoDate(startDate, "startDate");
+  const end = requireIsoDate(endDate, "endDate");
+  if (Date.parse(`${end}T00:00:00Z`) < Date.parse(`${start}T00:00:00Z`)) {
+    throw new Error("Broward Accela endDate must not precede startDate");
+  }
+  return `${source.key}:date:${start.replaceAll("-", "")}_${end.replaceAll("-", "")}`;
+}
+
+/**
  * Classify a loaded Accela page before interpreting zero records. Access and
  * source errors take precedence over no-result text so mixed error templates
  * cannot silently become successful empties.
@@ -433,6 +550,32 @@ function readRecordNumber(value) {
   return RECORD_NUMBER_PATTERN.test(recordNumber) && /\d/.test(recordNumber)
     ? recordNumber
     : null;
+}
+
+/**
+ * Construct an official Accela detail route from a complete hidden RecordId.
+ *
+ * Some temporary/in-process records are included in Accela's reported total
+ * but are rendered without an anchor. Their row still carries the complete
+ * three-part cap identity in `input#RecordId`; retaining that identity keeps
+ * list reconciliation complete without guessing from the permit number.
+ *
+ * @param {string} recordId - Three-part Accela cap identity.
+ * @param {BrowardAccelaSource} source - Jurisdiction source configuration.
+ * @returns {string | null} Official detail route or null for malformed identity.
+ */
+export function buildBrowardAccelaDetailUrlFromRecordId(recordId, source) {
+  const match = /^([A-Z0-9]+)-([A-Z0-9]+)-([A-Z0-9]+)$/iu.exec(recordId.trim());
+  if (match === null) return null;
+  const url = new URL("./CapDetail.aspx", source.portalUrl);
+  url.searchParams.set("Module", source.module);
+  url.searchParams.set("TabName", source.module);
+  url.searchParams.set("capID1", match[1] ?? "");
+  url.searchParams.set("capID2", match[2] ?? "");
+  url.searchParams.set("capID3", match[3] ?? "");
+  url.searchParams.set("agencyCode", source.agencyCode);
+  url.searchParams.set("IsToShowInspection", "");
+  return url.toString();
 }
 
 /**
@@ -515,9 +658,68 @@ export function extractBrowardAccelaPermitLinks({
       description: cellByHeader(["description", "project name"], 3),
       status: cellByHeader(["status", "record status"], 4),
       recordType: cellByHeader(["record type", "type"], -1),
+      recordDate: cellByHeader(
+        ["date", "record date", "file date", "opened date"],
+        -1,
+      ),
       sourceSearchKey: searchKey,
       sourcePage: pageNumber,
     });
+  });
+
+  const linkedRecordNumbers = new Set(
+    links.map((link) => link.recordNumber.toUpperCase()),
+  );
+  $("[id*='gdvPermitList'] tr").each((_, element) => {
+    const row = $(element);
+    if (row.find("a[href*='CapDetail.aspx']").length > 0) return;
+    const hiddenRecordId = collapseText(
+      row.find("input[id='RecordId']").first().attr("value"),
+    );
+    const url = buildBrowardAccelaDetailUrlFromRecordId(hiddenRecordId, source);
+    const recordNumber = readRecordNumber(
+      row
+        .find("[id$='_lblPermitNumber'],[id$='_lblPermitNumber1']")
+        .first()
+        .text(),
+    );
+    if (
+      url === null ||
+      recordNumber === null ||
+      linkedRecordNumbers.has(recordNumber.toUpperCase())
+    ) {
+      return;
+    }
+    const cells = row
+      .find("td")
+      .toArray()
+      .map((cell) => collapseText($(cell).text()));
+    const headers = row
+      .closest("table")
+      .find("th")
+      .toArray()
+      .map((header) => collapseText($(header).text()).toLowerCase());
+    /**
+     * @param {readonly string[]} labels - Accepted lowercase headers.
+     * @param {number} fallbackIndex - Standard grid fallback index.
+     * @returns {string | null} Matching list value.
+     */
+    const cellByHeader = (labels, fallbackIndex) => {
+      const index = headers.findIndex((header) => labels.includes(header));
+      const value = cells[index >= 0 ? index : fallbackIndex];
+      return value === undefined || value.length === 0 ? null : value;
+    };
+    links.push({
+      recordNumber,
+      url,
+      address: cellByHeader(["address", "work location"], 5),
+      description: cellByHeader(["description", "project name"], 4),
+      status: cellByHeader(["status", "record status"], 7),
+      recordType: cellByHeader(["record type", "type"], 3),
+      sourceSearchKey: searchKey,
+      sourcePage: pageNumber,
+    });
+    linkedRecordNumbers.add(recordNumber.toUpperCase());
   });
 
   return links;
@@ -731,13 +933,208 @@ async function waitForSearchFormOrFailure(context) {
 }
 
 /**
+ * Wait for enabled public date controls instead of treating an incompletely
+ * rendered Accela template as a source result. The caller rebuilds the whole
+ * browser session when this bounded readiness check fails.
+ *
+ * @param {AccelaDomContext} context - Current page or named Accela frame.
+ * @param {BrowardAccelaSource} source - Jurisdiction source configuration.
+ * @param {string} operation - Aggregate-safe operation description.
+ * @returns {Promise<void>} Resolves only after both controls are usable.
+ */
+async function waitForAccelaDateControls(context, source, operation) {
+  try {
+    await context.waitForFunction(
+      (startSelector, endSelector) => {
+        const start = document.querySelector(startSelector);
+        const end = document.querySelector(endSelector);
+        return (
+          start instanceof HTMLInputElement &&
+          end instanceof HTMLInputElement &&
+          !start.disabled &&
+          !end.disabled
+        );
+      },
+      { timeout: 45_000 },
+      DEFAULT_SELECTORS.startDate,
+      DEFAULT_SELECTORS.endDate,
+    );
+  } catch (error) {
+    const html = await context.content();
+    const classification = classifyBrowardAccelaPage(html);
+    if (
+      classification === "access_blocked" ||
+      classification === "source_error"
+    ) {
+      requireSuccessfulPageClassification(
+        html,
+        source,
+        context.url(),
+        operation,
+      );
+    }
+    throw new BrowardAccelaSourceError(
+      "unexpected_response",
+      source,
+      `${source.jurisdiction} Accela date controls did not become ready during ${operation}: ${error instanceof Error ? error.message : "bounded readiness timeout"}`,
+      context.url(),
+      html,
+    );
+  }
+}
+
+/**
+ * Read every non-empty record-type option exposed by the current public form.
+ * Sorting by source value makes a frozen shard plan deterministic across
+ * process restarts.
+ *
+ * @param {AccelaDomContext} context - Search-form DOM context.
+ * @returns {Promise<BrowardAccelaRecordTypeShard[]>} Stable public options.
+ */
+async function readAccelaRecordTypeShards(context) {
+  const options = await context.evaluate((selector) => {
+    const select = document.querySelector(selector);
+    if (!(select instanceof HTMLSelectElement)) return [];
+    return Array.from(select.options)
+      .map((option) => ({
+        value: option.value.trim(),
+        label: (option.textContent ?? "").replace(/\s+/g, " ").trim(),
+      }))
+      .filter((option) => option.value.length > 0 && option.label.length > 0);
+  }, DEFAULT_SELECTORS.recordType);
+  return /** @type {BrowardAccelaRecordTypeShard[]} */ (options).sort(
+    (left, right) =>
+      left.value.localeCompare(right.value) ||
+      left.label.localeCompare(right.label),
+  );
+}
+
+/**
+ * Select one exact public record type and verify that Accela retained it.
+ *
+ * @param {AccelaDomContext} context - Search-form DOM context.
+ * @param {BrowardAccelaSource} source - Jurisdiction source configuration.
+ * @param {BrowardAccelaRecordTypeShard} shard - Frozen public option.
+ * @returns {Promise<void>} Resolves after exact option verification.
+ */
+export async function selectAccelaRecordType(context, source, shard) {
+  const usesPostback = await context.evaluate((selector) => {
+    const select = document.querySelector(selector);
+    if (!(select instanceof HTMLSelectElement)) return false;
+    return /__doPostBack\s*\(/u.test(select.getAttribute("onchange") ?? "");
+  }, DEFAULT_SELECTORS.recordType);
+  const navigation = usesPostback
+    ? context.waitForNavigation({
+        waitUntil: "domcontentloaded",
+        timeout: 60_000,
+      })
+    : Promise.resolve(null);
+  const [selected] = await Promise.all([
+    context.select(DEFAULT_SELECTORS.recordType, shard.value),
+    navigation,
+  ]);
+  if (usesPostback) {
+    await waitForAccelaDateControls(
+      context,
+      source,
+      "record-type selection postback",
+    );
+  }
+  const observed = await context.evaluate((selector) => {
+    const select = document.querySelector(selector);
+    if (!(select instanceof HTMLSelectElement)) return null;
+    const option = select.selectedOptions[0];
+    return option === undefined
+      ? null
+      : {
+          value: option.value.trim(),
+          label: (option.textContent ?? "").replace(/\s+/g, " ").trim(),
+        };
+  }, DEFAULT_SELECTORS.recordType);
+  if (
+    selected.length !== 1 ||
+    observed === null ||
+    observed.value !== shard.value ||
+    observed.label !== shard.label
+  ) {
+    throw new BrowardAccelaSourceError(
+      "unexpected_response",
+      source,
+      `${source.jurisdiction} Accela did not retain the configured record-type shard`,
+      context.url(),
+      await context.content(),
+    );
+  }
+}
+
+/**
+ * Prove that the submitted public criteria survived the Accela postback.
+ *
+ * @param {AccelaDomContext} context - Result DOM context.
+ * @param {BrowardAccelaSource} source - Jurisdiction source configuration.
+ * @param {string} startDate - Inclusive ISO start.
+ * @param {string} endDate - Inclusive ISO end.
+ * @param {BrowardAccelaRecordTypeShard | null} recordTypeShard - Optional exact shard.
+ * @returns {Promise<void>} Resolves only when all criteria still match.
+ */
+async function verifyAccelaSubmittedCriteria(
+  context,
+  source,
+  startDate,
+  endDate,
+  recordTypeShard,
+) {
+  const expectedStart = toAccelaDate(startDate);
+  const expectedEnd = toAccelaDate(endDate);
+  const observed = await context.evaluate(
+    (startSelector, endSelector, typeSelector) => {
+      const start = document.querySelector(startSelector);
+      const end = document.querySelector(endSelector);
+      const type = document.querySelector(typeSelector);
+      return {
+        start: start instanceof HTMLInputElement ? start.value : null,
+        end: end instanceof HTMLInputElement ? end.value : null,
+        recordType:
+          type instanceof HTMLSelectElement ? type.value.trim() : null,
+      };
+    },
+    DEFAULT_SELECTORS.startDate,
+    DEFAULT_SELECTORS.endDate,
+    DEFAULT_SELECTORS.recordType,
+  );
+  if (
+    observed.start !== expectedStart ||
+    observed.end !== expectedEnd ||
+    (recordTypeShard !== null && observed.recordType !== recordTypeShard.value)
+  ) {
+    throw new BrowardAccelaSourceError(
+      "unexpected_response",
+      source,
+      `${source.jurisdiction} Accela did not preserve submitted date/type criteria`,
+      context.url(),
+      await context.content(),
+    );
+  }
+}
+
+/**
  * Wait until the submitted public search has produced a list, detail redirect,
  * explicit no-result marker, or explicit source/access failure.
  *
  * @param {AccelaDomContext} context - Current page or named Accela frame.
+ * @param {number} [timeoutMs=60000] - Finite source outcome deadline.
  * @returns {Promise<void>} Resolves only on a classifiable outcome.
  */
-async function waitForSearchOutcome(context) {
+async function waitForSearchOutcome(context, timeoutMs = 60_000) {
+  if (
+    !Number.isInteger(timeoutMs) ||
+    timeoutMs < 30_000 ||
+    timeoutMs > 180_000
+  ) {
+    throw new Error(
+      "Accela search outcome timeout must be 30000 through 180000",
+    );
+  }
   await context.waitForFunction(
     () => {
       const text = document.body?.innerText ?? "";
@@ -749,7 +1146,7 @@ async function waitForSearchOutcome(context) {
         )
       );
     },
-    { timeout: 60_000 },
+    { timeout: timeoutMs },
   );
 }
 
@@ -829,6 +1226,1205 @@ async function hasNextPage(context) {
         anchor.getAttribute("href")?.includes("__doPostBack"),
     ),
   );
+}
+
+/**
+ * Search one date-enabled Broward Accela agency without a parcel filter.
+ *
+ * A shared browser may call this repeatedly, giving each agency one persistent
+ * worker while every window gets a fresh page/session form. Dense multi-day
+ * windows may stop after page one so the caller can split them recursively.
+ * A terminal window reconciles all visible pages against Accela's total.
+ *
+ * @param {object} params - Public date-window search parameters.
+ * @param {import("puppeteer").Browser} params.browser - Reused browser.
+ * @param {BrowardAccelaSource} params.source - Date-enabled jurisdiction.
+ * @param {string} params.startDate - Inclusive ISO start date.
+ * @param {string} params.endDate - Inclusive ISO end date.
+ * @param {number} params.maxPages - Hard terminal pagination ceiling.
+ * @param {number | undefined} [params.stopAfterFirstPageWhenTotalAtLeast]
+ *   Dense-window split threshold.
+ * @param {Logger} params.logger - Structured logger.
+ * @returns {Promise<BrowardAccelaDateWindowSearchResult>} Reconciled source result.
+ */
+export async function searchBrowardAccelaDateWindow({
+  browser,
+  source,
+  startDate,
+  endDate,
+  maxPages,
+  stopAfterFirstPageWhenTotalAtLeast,
+  logger,
+}) {
+  const searchKey = buildBrowardAccelaDateWindowKey(source, startDate, endDate);
+  if (!Number.isInteger(maxPages) || maxPages < 1 || maxPages > 200) {
+    throw new Error(
+      "Broward Accela date-window maxPages must be 1 through 200",
+    );
+  }
+  if (
+    stopAfterFirstPageWhenTotalAtLeast !== undefined &&
+    (!Number.isInteger(stopAfterFirstPageWhenTotalAtLeast) ||
+      stopAfterFirstPageWhenTotalAtLeast < 2)
+  ) {
+    throw new Error(
+      "Broward Accela split threshold must be an integer of at least 2",
+    );
+  }
+  const page = await createConfiguredPage(browser);
+  /** @type {BrowardAccelaSearchPage[]} */
+  const pages = [];
+  /** @type {BrowardAccelaPermitLink[]} */
+  const permits = [];
+  let reportedTotal = /** @type {number | null} */ (null);
+  let excludedNonPermitCount = 0;
+  let truncatedForSplit = false;
+
+  try {
+    logger.info("broward_accela_date_window_open", {
+      sourceKey: source.key,
+      jurisdiction: source.jurisdiction,
+      startDate,
+      endDate,
+      searchKey,
+    });
+    await page.goto(source.portalUrl, {
+      waitUntil: "domcontentloaded",
+      timeout: 60_000,
+    });
+    const context = await resolveAccelaDomContext(page, source);
+    await waitForSearchFormOrFailure(context);
+    await waitForAccelaDateControls(
+      context,
+      source,
+      "date-window search form load",
+    );
+    const initialHtml = await context.content();
+    const initialClassification = classifyBrowardAccelaPage(initialHtml);
+    if (
+      initialClassification === "access_blocked" ||
+      initialClassification === "source_error"
+    ) {
+      requireSuccessfulPageClassification(
+        initialHtml,
+        source,
+        context.url(),
+        "date-window search form load",
+      );
+    }
+    if (
+      (await context.$(DEFAULT_SELECTORS.startDate)) === null ||
+      (await context.$(DEFAULT_SELECTORS.endDate)) === null
+    ) {
+      throw new BrowardAccelaSourceError(
+        "unexpected_response",
+        source,
+        `${source.jurisdiction} Accela does not expose start/end date controls`,
+        context.url(),
+        initialHtml,
+      );
+    }
+    await setAccelaInput(context, DEFAULT_SELECTORS.parcel, "");
+    await setAccelaInput(
+      context,
+      DEFAULT_SELECTORS.startDate,
+      toAccelaDate(startDate),
+    );
+    await setAccelaInput(
+      context,
+      DEFAULT_SELECTORS.endDate,
+      toAccelaDate(endDate),
+    );
+    // Accela commonly updates this form through an ASP.NET asynchronous
+    // postback without a top-level navigation. Waiting for navigation here
+    // burns the complete timeout after the result is already visible.
+    await context.click(DEFAULT_SELECTORS.submit);
+    await waitForSearchOutcome(context);
+
+    for (let pageNumber = 1; pageNumber <= maxPages; pageNumber += 1) {
+      const html = await context.content();
+      const text = htmlToText(html);
+      const classification = requireSuccessfulPageClassification(
+        html,
+        source,
+        context.url(),
+        `date-window search ${searchKey} page ${String(pageNumber)}`,
+      );
+      const directDetail = extractBrowardAccelaDirectDetailLink({
+        html,
+        pageUrl: context.url(),
+        source,
+        searchKey,
+        pageNumber,
+      });
+      if (pageNumber === 1 && directDetail === null) {
+        await verifyAccelaSubmittedCriteria(
+          context,
+          source,
+          startDate,
+          endDate,
+          null,
+        );
+      }
+      if (directDetail !== null) {
+        pages.push({
+          pageNumber,
+          url: context.url(),
+          resultSummary: "detail page",
+          html,
+        });
+        permits.push(directDetail);
+        reportedTotal = 1;
+        break;
+      }
+
+      const parsedSummary = parseResultSummary(text);
+      reportedTotal = reportedTotal ?? parsedSummary.total;
+      pages.push({
+        pageNumber,
+        url: context.url(),
+        resultSummary: parsedSummary.summary,
+        html,
+      });
+      if (classification === "no_records") {
+        if (pageNumber !== 1 || permits.length > 0) {
+          throw new BrowardAccelaSourceError(
+            "unexpected_response",
+            source,
+            `${source.jurisdiction} Accela mixed no-records and record pages`,
+            context.url(),
+            html,
+          );
+        }
+        return {
+          status: "no_records",
+          searchKey,
+          startDate,
+          endDate,
+          source,
+          permits: [],
+          pages,
+          reportedTotal: 0,
+          excludedNonPermitCount: 0,
+          truncatedForSplit: false,
+        };
+      }
+
+      const pageExcluded = countBrowardAccelaExcludedModuleLinks({
+        html,
+        source,
+      });
+      excludedNonPermitCount += pageExcluded;
+      const pageLinks = extractBrowardAccelaPermitLinks({
+        html,
+        source,
+        searchKey,
+        pageNumber,
+      });
+      if (pageLinks.length === 0 && pageExcluded === 0) {
+        throw new BrowardAccelaSourceError(
+          "unexpected_response",
+          source,
+          `${source.jurisdiction} Accela exposed no list records for ${searchKey}`,
+          context.url(),
+          html,
+        );
+      }
+      permits.push(...pageLinks);
+      logger.info("broward_accela_date_window_page_captured", {
+        sourceKey: source.key,
+        startDate,
+        endDate,
+        pageNumber,
+        pagePermitCount: pageLinks.length,
+        pageExcludedNonPermitCount: pageExcluded,
+        reportedTotal,
+      });
+
+      if (
+        pageNumber === 1 &&
+        stopAfterFirstPageWhenTotalAtLeast !== undefined &&
+        reportedTotal !== null &&
+        reportedTotal >= stopAfterFirstPageWhenTotalAtLeast
+      ) {
+        truncatedForSplit = true;
+        break;
+      }
+      const nextAvailable = await hasNextPage(context);
+      if (!nextAvailable) break;
+      if (pageNumber === maxPages) {
+        throw new BrowardAccelaSourceError(
+          "incomplete_pagination",
+          source,
+          `${source.jurisdiction} Accela exceeded date-window maxPages ${String(maxPages)}`,
+          context.url(),
+          html,
+        );
+      }
+      const priorSummary = parsedSummary.summary;
+      if (!(await clickNextPage(context))) {
+        throw new BrowardAccelaSourceError(
+          "incomplete_pagination",
+          source,
+          `${source.jurisdiction} Accela next-page control disappeared`,
+          context.url(),
+          html,
+        );
+      }
+      await context.waitForFunction(
+        (previousSummary) => {
+          const bodyText = document.body?.innerText ?? "";
+          if (
+            /Your search returned no results|No records found|access denied|captcha|technical difficulties|unable to proceed|Object reference not set|error\(s\) occurred on current page/i.test(
+              bodyText,
+            )
+          ) {
+            return true;
+          }
+          const match =
+            /Showing\s+([0-9,]+\s*-\s*[0-9,]+\s+of\s+[0-9,]+)/i.exec(bodyText);
+          const currentRange = match?.[1];
+          if (currentRange === undefined) return false;
+          const current = currentRange.replace(/\s+/g, " ").trim();
+          return current !== previousSummary;
+        },
+        { timeout: 60_000 },
+        priorSummary,
+      );
+    }
+  } finally {
+    await page.close().catch(() => undefined);
+  }
+
+  /** @type {Map<string, BrowardAccelaPermitLink>} */
+  const deduped = new Map();
+  for (const permit of permits) {
+    const identity = permit.url.toLowerCase();
+    const existing = deduped.get(identity);
+    if (
+      existing !== undefined &&
+      existing.recordNumber !== permit.recordNumber
+    ) {
+      throw new BrowardAccelaSourceError(
+        "identity_mismatch",
+        source,
+        `${source.jurisdiction} Accela returned conflicting date-window identities`,
+        permit.url,
+      );
+    }
+    deduped.set(identity, permit);
+  }
+  const accounted = deduped.size + excludedNonPermitCount;
+  if (
+    !truncatedForSplit &&
+    reportedTotal !== null &&
+    accounted < reportedTotal
+  ) {
+    throw new BrowardAccelaSourceError(
+      "incomplete_pagination",
+      source,
+      `${source.jurisdiction} Accela accounted for ${String(accounted)} of ${String(reportedTotal)} date-window records`,
+      source.portalUrl,
+    );
+  }
+  return {
+    status: "records",
+    searchKey,
+    startDate,
+    endDate,
+    source,
+    permits: [...deduped.values()],
+    pages,
+    reportedTotal,
+    excludedNonPermitCount,
+    truncatedForSplit,
+  };
+}
+
+/**
+ * Parse one official Accela CSV export into deterministic list records.
+ *
+ * @param {string} csvText - Exact UTF-8 export.
+ * @param {BrowardAccelaSource} source - Jurisdiction source.
+ * @param {string} startDate - Inclusive search start.
+ * @param {string} endDate - Inclusive search end.
+ * @returns {{records:BrowardAccelaCsvPermitRecord[],sourceRowCount:number,excludedNonPermitCount:number,duplicateRecordCount:number}}
+ *   In-scope records and complete CSV accounting.
+ */
+export function parseBrowardAccelaCsvExportSummary(
+  csvText,
+  source,
+  startDate,
+  endDate,
+) {
+  const sourceWindowKey = buildBrowardAccelaDateWindowKey(
+    source,
+    startDate,
+    endDate,
+  );
+  const parsed = /** @type {unknown} */ (
+    parseCsv(csvText, {
+      bom: true,
+      columns: true,
+      skip_empty_lines: true,
+      relax_column_count: true,
+      trim: true,
+    })
+  );
+  if (!Array.isArray(parsed)) {
+    throw new Error(`${source.jurisdiction} Accela CSV is not row data`);
+  }
+  /** @type {Map<string, BrowardAccelaCsvPermitRecord>} */
+  const byKey = new Map();
+  let excludedNonPermitCount = 0;
+  let inScopeRowCount = 0;
+  for (const value of parsed) {
+    if (!isRecord(value)) {
+      throw new Error(`${source.jurisdiction} Accela CSV row is malformed`);
+    }
+    const recordType = optionalCollapsedText(value["Record Type"]);
+    if (
+      source.key === "plantation" &&
+      recordType !== null &&
+      /\b(?:enforcement|local business tax|minor development)\b/iu.test(
+        recordType,
+      )
+    ) {
+      excludedNonPermitCount += 1;
+      continue;
+    }
+    const recordNumber = readRecordNumber(
+      value["Record Number"] ?? value["Record No."],
+    );
+    if (recordNumber === null) {
+      throw new Error(
+        `${source.jurisdiction} Accela CSV row has no record number`,
+      );
+    }
+    inScopeRowCount += 1;
+    const recordKey = `${source.sourceSystem}:permit:${recordNumber}`;
+    const record = {
+      schemaVersion: /** @type {"oracle-node.broward-accela-csv-list.v1"} */ (
+        "oracle-node.broward-accela-csv-list.v1"
+      ),
+      sourceSystem: source.sourceSystem,
+      jurisdiction: source.jurisdiction,
+      recordNumber,
+      sourceUrl: buildAccelaAltIdDetailUrl(source, recordNumber),
+      recordKey,
+      recordDate: parseAccelaCsvDate(value.Date),
+      recordType,
+      projectName: optionalCollapsedText(value["Project Name"]),
+      address: optionalCollapsedText(value.Address),
+      expirationDate: parseAccelaCsvDate(value["Expiration Date"]),
+      status: optionalCollapsedText(value.Status),
+      isRoofPermit: ROOF_PERMIT_PATTERN.test(
+        [
+          recordNumber,
+          optionalCollapsedText(value["Record Type"]),
+          optionalCollapsedText(value["Project Name"]),
+        ]
+          .filter((part) => typeof part === "string")
+          .join(" "),
+      ),
+      sourceWindowKey,
+    };
+    const existing = byKey.get(recordKey);
+    if (
+      existing !== undefined &&
+      JSON.stringify(existing) !== JSON.stringify(record)
+    ) {
+      throw new Error(
+        `${source.jurisdiction} Accela CSV conflicts for ${recordNumber}`,
+      );
+    }
+    byKey.set(recordKey, record);
+  }
+  return {
+    records: [...byKey.values()].sort((left, right) =>
+      left.recordKey.localeCompare(right.recordKey),
+    ),
+    sourceRowCount: parsed.length,
+    excludedNonPermitCount,
+    duplicateRecordCount: inScopeRowCount - byKey.size,
+  };
+}
+
+/**
+ * Parse only in-scope permit rows from an official Accela CSV export.
+ *
+ * @param {string} csvText - Exact UTF-8 export.
+ * @param {BrowardAccelaSource} source - Jurisdiction source.
+ * @param {string} startDate - Inclusive search start.
+ * @param {string} endDate - Inclusive search end.
+ * @returns {BrowardAccelaCsvPermitRecord[]} Unique in-scope permit records.
+ */
+export function parseBrowardAccelaCsvExport(
+  csvText,
+  source,
+  startDate,
+  endDate,
+) {
+  return parseBrowardAccelaCsvExportSummary(csvText, source, startDate, endDate)
+    .records;
+}
+
+/**
+ * Reconcile a complete list-only traversal when an agency does not expose a
+ * usable CSV export. Every page must contribute unique identities and the
+ * final unique-plus-excluded count must exactly equal an uncapped source total.
+ *
+ * @param {object} params - Captured list evidence.
+ * @param {readonly string[]} params.htmlPages - Result pages in traversal order.
+ * @param {BrowardAccelaSource} params.source - Jurisdiction source.
+ * @param {string} params.sourceWindowKey - Stable date-window key.
+ * @param {number | null} params.displayedTotal - First-page source total.
+ * @returns {{
+ *   records:BrowardAccelaCsvPermitRecord[],
+ *   sourceRowCount:number,
+ *   excludedNonPermitCount:number,
+ *   duplicateRecordCount:0
+ * }} Exact list reconciliation.
+ */
+export function reconcileBrowardAccelaListPages({
+  htmlPages,
+  source,
+  sourceWindowKey,
+  displayedTotal,
+}) {
+  if (
+    !Number.isSafeInteger(displayedTotal) ||
+    displayedTotal === null ||
+    displayedTotal < 1
+  ) {
+    throw new BrowardAccelaSourceError(
+      "incomplete_pagination",
+      source,
+      `${source.jurisdiction} Accela list-only mode has no positive displayed total`,
+      source.portalUrl,
+    );
+  }
+  if (displayedTotal === 100) {
+    throw new BrowardAccelaSourceError(
+      "incomplete_pagination",
+      source,
+      `${source.jurisdiction} Accela list-only total is capped at 100`,
+      source.portalUrl,
+    );
+  }
+  /** @type {Map<string, BrowardAccelaCsvPermitRecord>} */
+  const records = new Map();
+  /** @type {Set<string>} */
+  const pageSignatures = new Set();
+  let excludedNonPermitCount = 0;
+  for (const [index, html] of htmlPages.entries()) {
+    requireSuccessfulPageClassification(
+      html,
+      source,
+      source.portalUrl,
+      `list-only date-window page ${String(index + 1)}`,
+    );
+    const links = extractBrowardAccelaPermitLinks({
+      html,
+      source,
+      searchKey: sourceWindowKey,
+      pageNumber: index + 1,
+    });
+    const excluded = countBrowardAccelaExcludedModuleLinks({ html, source });
+    if (links.length === 0 && excluded === 0) {
+      throw new BrowardAccelaSourceError(
+        "incomplete_pagination",
+        source,
+        `${source.jurisdiction} Accela list-only page exposed no accountable rows`,
+        source.portalUrl,
+        html,
+      );
+    }
+    const pageRecords = csvRecordsFromPermitLinks(
+      links,
+      source,
+      sourceWindowKey,
+    );
+    const signature = pageRecords
+      .map((record) => record.recordKey)
+      .sort()
+      .join("\n");
+    if (pageSignatures.has(signature)) {
+      throw new BrowardAccelaSourceError(
+        "incomplete_pagination",
+        source,
+        `${source.jurisdiction} Accela repeated a list-only result page`,
+        source.portalUrl,
+        html,
+      );
+    }
+    pageSignatures.add(signature);
+    excludedNonPermitCount += excluded;
+    for (const record of pageRecords) {
+      if (records.has(record.recordKey)) {
+        throw new BrowardAccelaSourceError(
+          "incomplete_pagination",
+          source,
+          `${source.jurisdiction} Accela repeated a list identity across pages`,
+          record.sourceUrl,
+          html,
+        );
+      }
+      records.set(record.recordKey, record);
+    }
+  }
+  if (records.size + excludedNonPermitCount !== displayedTotal) {
+    throw new BrowardAccelaSourceError(
+      "incomplete_pagination",
+      source,
+      `${source.jurisdiction} Accela list-only mode accounted for ${String(records.size + excludedNonPermitCount)} of ${String(displayedTotal)} rows`,
+      source.portalUrl,
+    );
+  }
+  return {
+    records: [...records.values()].sort((left, right) =>
+      left.recordKey.localeCompare(right.recordKey),
+    ),
+    sourceRowCount: displayedTotal,
+    excludedNonPermitCount,
+    duplicateRecordCount: 0,
+  };
+}
+
+/**
+ * Capture the official full-result CSV for one date window.
+ *
+ * The UI total is retained only as provenance because several agencies report
+ * a capped or inconsistent value. The built-in `Download results` response is
+ * the source artifact and can contain more rows than the visible grid.
+ *
+ * @param {object} params - Export capture parameters.
+ * @param {import("puppeteer").Browser} params.browser - Persistent browser.
+ * @param {BrowardAccelaSource} params.source - Jurisdiction source.
+ * @param {string} params.startDate - Inclusive ISO start.
+ * @param {string} params.endDate - Inclusive ISO end.
+ * @param {string} params.downloadDirectory - Existing/private window directory.
+ * @param {number | undefined} [params.maxPages] - Bounded list-only page ceiling.
+ * @param {BrowardAccelaRecordTypeShard | null | undefined} [params.recordTypeShard] - Optional exact public record-type filter.
+ * @param {boolean | undefined} [params.stopAtCappedProbe] - Return non-terminal first-page evidence before an unsharded capped export.
+ * @param {number | undefined} [params.searchOutcomeTimeoutMs] - Finite wait for the source to render a search result.
+ * @param {Logger} params.logger - Structured logger.
+ * @returns {Promise<BrowardAccelaCsvWindowResult>} Official exported window.
+ */
+export async function captureBrowardAccelaCsvWindow({
+  browser,
+  source,
+  startDate,
+  endDate,
+  downloadDirectory,
+  maxPages = 200,
+  recordTypeShard = null,
+  stopAtCappedProbe = false,
+  searchOutcomeTimeoutMs = 60_000,
+  logger,
+}) {
+  const sourceWindowKey = buildBrowardAccelaDateWindowKey(
+    source,
+    startDate,
+    endDate,
+  );
+  if (!Number.isInteger(maxPages) || maxPages < 1 || maxPages > 200) {
+    throw new Error("Broward Accela CSV maxPages must be 1 through 200");
+  }
+  await mkdir(downloadDirectory, { recursive: true, mode: 0o700 });
+  const page = await browser.newPage();
+  try {
+    await page.goto(source.portalUrl, {
+      waitUntil: "domcontentloaded",
+      timeout: 60_000,
+    });
+    const context = await resolveAccelaDomContext(page, source);
+    await waitForSearchFormOrFailure(context);
+    await waitForAccelaDateControls(
+      context,
+      source,
+      "CSV date-window search form load",
+    );
+    const initialHtml = await context.content();
+    const availableRecordTypes = await readAccelaRecordTypeShards(context);
+    if (
+      recordTypeShard !== null &&
+      !availableRecordTypes.some(
+        (option) =>
+          option.value === recordTypeShard.value &&
+          option.label === recordTypeShard.label,
+      )
+    ) {
+      throw new BrowardAccelaSourceError(
+        "unexpected_response",
+        source,
+        `${source.jurisdiction} Accela no longer exposes the checkpointed record-type shard`,
+        context.url(),
+        initialHtml,
+      );
+    }
+    if (recordTypeShard !== null) {
+      await selectAccelaRecordType(context, source, recordTypeShard);
+    }
+    await setAccelaInput(context, DEFAULT_SELECTORS.parcel, "");
+    await setAccelaInput(
+      context,
+      DEFAULT_SELECTORS.startDate,
+      toAccelaDate(startDate),
+    );
+    await setAccelaInput(
+      context,
+      DEFAULT_SELECTORS.endDate,
+      toAccelaDate(endDate),
+    );
+    await context.click(DEFAULT_SELECTORS.submit);
+    try {
+      await waitForSearchOutcome(context, searchOutcomeTimeoutMs);
+    } catch (error) {
+      throw new BrowardAccelaSourceError(
+        "unexpected_response",
+        source,
+        `${source.jurisdiction} Accela type/date search outcome did not become ready: ${error instanceof Error ? error.message : "bounded source timeout"}`,
+        context.url(),
+        await context.content(),
+      );
+    }
+    const searchHtml = await context.content();
+    const classification = requireSuccessfulPageClassification(
+      searchHtml,
+      source,
+      context.url(),
+      `CSV date-window ${sourceWindowKey}`,
+    );
+    const displayedTotal = parseResultSummary(htmlToText(searchHtml)).total;
+    const directDetail = extractBrowardAccelaDirectDetailLink({
+      html: searchHtml,
+      pageUrl: context.url(),
+      source,
+      searchKey: sourceWindowKey,
+      pageNumber: 1,
+    });
+    if (directDetail === null) {
+      await verifyAccelaSubmittedCriteria(
+        context,
+        source,
+        startDate,
+        endDate,
+        recordTypeShard,
+      );
+    }
+    if (classification === "no_records") {
+      return {
+        startDate,
+        endDate,
+        sourceWindowKey,
+        displayedTotal: 0,
+        displayedTotalCapped: false,
+        captureMode: "no_records",
+        records: [],
+        sourceRowCount: 0,
+        excludedNonPermitCount: 0,
+        duplicateRecordCount: 0,
+        pageCount: 1,
+        availableRecordTypes,
+        recordTypeShard,
+        rawCsv: "",
+        rawSearchHtml: searchHtml,
+        rawListPages: [searchHtml],
+      };
+    }
+    const listLinks = extractBrowardAccelaPermitLinks({
+      html: searchHtml,
+      source,
+      searchKey: sourceWindowKey,
+      pageNumber: 1,
+    });
+    if (
+      stopAtCappedProbe &&
+      recordTypeShard === null &&
+      displayedTotal === 100
+    ) {
+      const excludedNonPermitCount = countBrowardAccelaExcludedModuleLinks({
+        html: searchHtml,
+        source,
+      });
+      const records = csvRecordsFromPermitLinks(
+        listLinks,
+        source,
+        sourceWindowKey,
+      );
+      return {
+        startDate,
+        endDate,
+        sourceWindowKey,
+        displayedTotal,
+        displayedTotalCapped: true,
+        captureMode: "capped_probe",
+        records,
+        sourceRowCount: records.length + excludedNonPermitCount,
+        excludedNonPermitCount,
+        duplicateRecordCount: 0,
+        pageCount: 1,
+        availableRecordTypes,
+        recordTypeShard,
+        rawCsv: "",
+        rawSearchHtml: searchHtml,
+        rawListPages: [searchHtml],
+      };
+    }
+    if (directDetail !== null) {
+      const record = {
+        schemaVersion: /** @type {"oracle-node.broward-accela-csv-list.v1"} */ (
+          "oracle-node.broward-accela-csv-list.v1"
+        ),
+        sourceSystem: source.sourceSystem,
+        jurisdiction: source.jurisdiction,
+        recordNumber: directDetail.recordNumber,
+        sourceUrl: directDetail.url,
+        recordKey: `${source.sourceSystem}:permit:${directDetail.recordNumber}`,
+        recordDate: null,
+        recordType: directDetail.recordType,
+        projectName: directDetail.description,
+        address: directDetail.address,
+        expirationDate: null,
+        status: directDetail.status,
+        isRoofPermit: isBrowardAccelaRoofPermitCandidate(directDetail),
+        sourceWindowKey,
+      };
+      return {
+        startDate,
+        endDate,
+        sourceWindowKey,
+        displayedTotal: displayedTotal ?? 1,
+        displayedTotalCapped: false,
+        captureMode: "direct_detail",
+        records: [record],
+        sourceRowCount: 1,
+        excludedNonPermitCount: 0,
+        duplicateRecordCount: 0,
+        pageCount: 1,
+        availableRecordTypes,
+        recordTypeShard,
+        rawCsv: "",
+        rawSearchHtml: searchHtml,
+        rawListPages: [searchHtml],
+      };
+    }
+
+    const exportLink = await context.$("a[id$='btnExport']");
+    if (exportLink === null) {
+      const listOnly = await captureAccelaListOnlyPages({
+        context,
+        source,
+        sourceWindowKey,
+        firstHtml: searchHtml,
+        displayedTotal,
+        maxPages,
+        logger,
+      });
+      return {
+        startDate,
+        endDate,
+        sourceWindowKey,
+        displayedTotal,
+        displayedTotalCapped: displayedTotal === 100,
+        captureMode: "list_pages",
+        ...listOnly.reconciliation,
+        pageCount: listOnly.htmlPages.length,
+        availableRecordTypes,
+        recordTypeShard,
+        rawCsv: "",
+        rawSearchHtml: searchHtml,
+        rawListPages: listOnly.htmlPages,
+      };
+    }
+    const cdp = await page.createCDPSession();
+    await cdp.send("Browser.setDownloadBehavior", {
+      behavior: "allowAndName",
+      downloadPath: downloadDirectory,
+      eventsEnabled: true,
+    });
+    const download = waitForAccelaDownload(cdp, 15_000);
+    await exportLink.click();
+    let completed;
+    try {
+      completed = await download;
+    } catch (error) {
+      logger.warn("broward_accela_csv_download_fallback_to_list", {
+        sourceKey: source.key,
+        startDate,
+        endDate,
+        error: error instanceof Error ? error.message : "Download failed",
+      });
+      const listOnly = await captureAccelaListOnlyPages({
+        context,
+        source,
+        sourceWindowKey,
+        firstHtml: searchHtml,
+        displayedTotal,
+        maxPages,
+        logger,
+      });
+      return {
+        startDate,
+        endDate,
+        sourceWindowKey,
+        displayedTotal,
+        displayedTotalCapped: displayedTotal === 100,
+        captureMode: "list_pages",
+        ...listOnly.reconciliation,
+        pageCount: listOnly.htmlPages.length,
+        availableRecordTypes,
+        recordTypeShard,
+        rawCsv: "",
+        rawSearchHtml: searchHtml,
+        rawListPages: listOnly.htmlPages,
+      };
+    }
+    const downloadedPath = `${downloadDirectory}/${completed.guid}`;
+    const rawCsv = await readFile(downloadedPath, "utf8");
+    const finalPath = `${downloadDirectory}/results.csv`;
+    await rename(downloadedPath, finalPath);
+    let exportSummary;
+    try {
+      exportSummary = parseBrowardAccelaCsvExportSummary(
+        rawCsv,
+        source,
+        startDate,
+        endDate,
+      );
+    } catch (error) {
+      logger.warn("broward_accela_csv_parse_fallback_to_list", {
+        sourceKey: source.key,
+        startDate,
+        endDate,
+        error:
+          error instanceof Error ? error.message : "CSV parsing failed closed",
+      });
+      const listOnly = await captureAccelaListOnlyPages({
+        context,
+        source,
+        sourceWindowKey,
+        firstHtml: searchHtml,
+        displayedTotal,
+        maxPages,
+        logger,
+      });
+      return {
+        startDate,
+        endDate,
+        sourceWindowKey,
+        displayedTotal,
+        displayedTotalCapped: displayedTotal === 100,
+        captureMode: "list_pages",
+        ...listOnly.reconciliation,
+        pageCount: listOnly.htmlPages.length,
+        availableRecordTypes,
+        recordTypeShard,
+        rawCsv: "",
+        rawSearchHtml: searchHtml,
+        rawListPages: listOnly.htmlPages,
+      };
+    }
+    const exportedRecords = exportSummary.records;
+    const recordsByKey = new Map(
+      exportedRecords.map((record) => [record.recordKey, record]),
+    );
+    for (const record of csvRecordsFromPermitLinks(
+      listLinks,
+      source,
+      sourceWindowKey,
+    )) {
+      if (!recordsByKey.has(record.recordKey)) {
+        throw new BrowardAccelaSourceError(
+          "incomplete_pagination",
+          source,
+          `${source.jurisdiction} Accela CSV omitted an identity shown on the first result page`,
+          record.sourceUrl,
+          searchHtml,
+        );
+      }
+    }
+    const records = [...recordsByKey.values()].sort((left, right) =>
+      left.recordKey.localeCompare(right.recordKey),
+    );
+    if (
+      displayedTotal !== null &&
+      displayedTotal < 100 &&
+      exportSummary.sourceRowCount !== displayedTotal
+    ) {
+      throw new BrowardAccelaSourceError(
+        "incomplete_pagination",
+        source,
+        `${source.jurisdiction} Accela CSV contained ${String(exportSummary.sourceRowCount)} rows for displayed total ${String(displayedTotal)}`,
+        context.url(),
+        searchHtml,
+      );
+    }
+    logger.info("broward_accela_csv_window_captured", {
+      sourceKey: source.key,
+      startDate,
+      endDate,
+      displayedTotal,
+      exportedRecordCount: records.length,
+      excludedNonPermitCount: exportSummary.excludedNonPermitCount,
+      finalPath,
+    });
+    return {
+      startDate,
+      endDate,
+      sourceWindowKey,
+      displayedTotal,
+      displayedTotalCapped: displayedTotal === 100,
+      captureMode: "csv_export",
+      records,
+      sourceRowCount: exportSummary.sourceRowCount,
+      excludedNonPermitCount: exportSummary.excludedNonPermitCount,
+      duplicateRecordCount: exportSummary.duplicateRecordCount,
+      pageCount: 1,
+      availableRecordTypes,
+      recordTypeShard,
+      rawCsv,
+      rawSearchHtml: searchHtml,
+      rawListPages: [searchHtml],
+    };
+  } finally {
+    await page.close().catch(() => undefined);
+  }
+}
+
+/**
+ * Traverse a list-only Accela result to exhaustion before applying exact
+ * identity/total reconciliation. Navigation is bounded independently by the
+ * caller's wall-clock deadline and this explicit page ceiling.
+ *
+ * @param {object} params - Active result-page state.
+ * @param {AccelaDomContext} params.context - Result DOM context.
+ * @param {BrowardAccelaSource} params.source - Jurisdiction source.
+ * @param {string} params.sourceWindowKey - Stable date-window key.
+ * @param {string} params.firstHtml - Already captured first page.
+ * @param {number | null} params.displayedTotal - First-page source total.
+ * @param {number} params.maxPages - Hard list traversal ceiling.
+ * @param {Logger} params.logger - Aggregate-only logger.
+ * @returns {Promise<{
+ *   htmlPages:string[],
+ *   reconciliation:ReturnType<typeof reconcileBrowardAccelaListPages>
+ * }>} Complete private pages and exact reconciliation.
+ */
+async function captureAccelaListOnlyPages({
+  context,
+  source,
+  sourceWindowKey,
+  firstHtml,
+  displayedTotal,
+  maxPages,
+  logger,
+}) {
+  if (displayedTotal === 100) {
+    throw new BrowardAccelaSourceError(
+      "incomplete_pagination",
+      source,
+      `${source.jurisdiction} Accela list-only total is capped at 100`,
+      context.url(),
+      firstHtml,
+    );
+  }
+  const htmlPages = [firstHtml];
+  for (let pageNumber = 1; ; pageNumber += 1) {
+    const currentHtml = htmlPages[htmlPages.length - 1];
+    if (currentHtml === undefined) {
+      throw new Error("Accela list-only traversal lost its current page");
+    }
+    const pageLinks = extractBrowardAccelaPermitLinks({
+      html: currentHtml,
+      source,
+      searchKey: sourceWindowKey,
+      pageNumber,
+    });
+    const excluded = countBrowardAccelaExcludedModuleLinks({
+      html: currentHtml,
+      source,
+    });
+    logger.info("broward_accela_list_only_page_captured", {
+      sourceKey: source.key,
+      pageNumber,
+      pagePermitCount: pageLinks.length,
+      pageExcludedNonPermitCount: excluded,
+      displayedTotal,
+    });
+    if (!(await hasNextPage(context))) break;
+    if (pageNumber >= maxPages) {
+      throw new BrowardAccelaSourceError(
+        "incomplete_pagination",
+        source,
+        `${source.jurisdiction} Accela list-only mode exceeded maxPages ${String(maxPages)}`,
+        context.url(),
+        currentHtml,
+      );
+    }
+    const previousSummary = parseResultSummary(htmlToText(currentHtml)).summary;
+    if (!(await clickNextPage(context))) {
+      throw new BrowardAccelaSourceError(
+        "incomplete_pagination",
+        source,
+        `${source.jurisdiction} Accela list-only next-page control disappeared`,
+        context.url(),
+        currentHtml,
+      );
+    }
+    try {
+      await context.waitForFunction(
+        (priorSummary) => {
+          const text = document.body?.innerText ?? "";
+          if (
+            /access denied|captcha|technical difficulties|unable to proceed|Object reference not set|error\(s\) occurred on current page|temporarily unavailable/i.test(
+              text,
+            )
+          ) {
+            return true;
+          }
+          const match =
+            /Showing\s+([0-9,]+\s*-\s*[0-9,]+\s+of\s+[0-9,]+)/i.exec(text);
+          const currentRange = match?.[1];
+          if (currentRange === undefined) return false;
+          const current = currentRange.replace(/\s+/g, " ").trim();
+          return current !== priorSummary;
+        },
+        { timeout: 60_000 },
+        previousSummary,
+      );
+    } catch (error) {
+      throw new BrowardAccelaSourceError(
+        "incomplete_pagination",
+        source,
+        `${source.jurisdiction} Accela list-only next page did not become ready: ${error instanceof Error ? error.message : "bounded page timeout"}`,
+        context.url(),
+        await context.content(),
+      );
+    }
+    htmlPages.push(await context.content());
+  }
+  return {
+    htmlPages,
+    reconciliation: reconcileBrowardAccelaListPages({
+      htmlPages,
+      source,
+      sourceWindowKey,
+      displayedTotal,
+    }),
+  };
+}
+
+/**
+ * Convert source list links to the CSV inventory contract.
+ *
+ * @param {readonly BrowardAccelaPermitLink[]} links - Reconciled first-page links.
+ * @param {BrowardAccelaSource} source - Jurisdiction source.
+ * @param {string} sourceWindowKey - Stable date-window key.
+ * @returns {BrowardAccelaCsvPermitRecord[]} List-backed inventory records.
+ */
+export function csvRecordsFromPermitLinks(links, source, sourceWindowKey) {
+  return links.map((link) => ({
+    schemaVersion: "oracle-node.broward-accela-csv-list.v1",
+    sourceSystem: source.sourceSystem,
+    jurisdiction: source.jurisdiction,
+    recordNumber: link.recordNumber,
+    sourceUrl: link.url,
+    recordKey: `${source.sourceSystem}:permit:${link.recordNumber}`,
+    recordDate: parseAccelaCsvDate(link.recordDate),
+    recordType: link.recordType,
+    projectName: link.description,
+    address: link.address,
+    expirationDate: null,
+    status: link.status,
+    isRoofPermit: isBrowardAccelaRoofPermitCandidate(link),
+    sourceWindowKey,
+  }));
+}
+
+/**
+ * Await one completed browser download by CDP GUID.
+ *
+ * @param {import("puppeteer").CDPSession} cdp - Page CDP session.
+ * @param {number} timeoutMs - Hard download deadline.
+ * @returns {Promise<{guid:string,suggestedFilename:string}>} Completed download.
+ */
+function waitForAccelaDownload(cdp, timeoutMs) {
+  return new Promise((resolvePromise, rejectPromise) => {
+    /** @type {Map<string,string>} */
+    const filenames = new Map();
+    const timeout = setTimeout(() => {
+      rejectPromise(new Error("Accela CSV download timed out"));
+    }, timeoutMs);
+    cdp.on("Browser.downloadWillBegin", (event) => {
+      if (
+        typeof event.guid === "string" &&
+        typeof event.suggestedFilename === "string"
+      ) {
+        filenames.set(event.guid, event.suggestedFilename);
+      }
+    });
+    cdp.on("Browser.downloadProgress", (event) => {
+      if (event.state !== "completed" || typeof event.guid !== "string") {
+        return;
+      }
+      const suggestedFilename = filenames.get(event.guid);
+      if (suggestedFilename === undefined) return;
+      clearTimeout(timeout);
+      resolvePromise({ guid: event.guid, suggestedFilename });
+    });
+  });
+}
+
+/**
+ * Build an official detail lookup from a full exported alternate ID.
+ *
+ * @param {BrowardAccelaSource} source - Jurisdiction source.
+ * @param {string} recordNumber - Full exported record number.
+ * @returns {string} Official detail lookup URL.
+ */
+function buildAccelaAltIdDetailUrl(source, recordNumber) {
+  const url = new URL("./CapDetail.aspx", source.portalUrl);
+  url.searchParams.set("Module", source.module);
+  url.searchParams.set("TabName", source.module);
+  url.searchParams.set("altId", recordNumber);
+  return url.toString();
+}
+
+/**
+ * Parse an Accela MM/DD/YYYY CSV field.
+ *
+ * @param {unknown} value - Candidate field.
+ * @returns {string | null} ISO date or null.
+ */
+function parseAccelaCsvDate(value) {
+  const text = optionalCollapsedText(value);
+  if (text === null) return null;
+  const match = /^(\d{2})\/(\d{2})\/(\d{4})$/u.exec(text);
+  if (match === null) return null;
+  const date = new Date(
+    Date.UTC(Number(match[3]), Number(match[1]) - 1, Number(match[2])),
+  );
+  if (
+    date.getUTCFullYear() !== Number(match[3]) ||
+    date.getUTCMonth() !== Number(match[1]) - 1 ||
+    date.getUTCDate() !== Number(match[2])
+  ) {
+    return null;
+  }
+  return date.toISOString().slice(0, 10);
+}
+
+/**
+ * Collapse an optional source value.
+ *
+ * @param {unknown} value - Candidate value.
+ * @returns {string | null} Non-empty collapsed text.
+ */
+function optionalCollapsedText(value) {
+  if (typeof value !== "string") return null;
+  const text = collapseText(value);
+  return text.length === 0 ? null : text;
 }
 
 /**
@@ -1117,9 +2713,10 @@ export async function searchBrowardAccelaParcel({
           }
           const match =
             /Showing\s+([0-9,]+\s*-\s*[0-9,]+\s+of\s+[0-9,]+)/i.exec(bodyText);
-          const current =
-            match === null ? null : match[1].replace(/\s+/g, " ").trim();
-          return current !== null && current !== previousSummary;
+          const currentRange = match?.[1];
+          if (currentRange === undefined) return false;
+          const current = currentRange.replace(/\s+/g, " ").trim();
+          return current !== previousSummary;
         },
         { timeout: 60_000 },
         priorSummary,

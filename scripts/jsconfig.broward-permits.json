@@ -19,10 +19,17 @@
   },
   "include": [
     "broward-folio.mjs",
+    "build-broward-roofing-bbb-worklist.mjs",
     "broward-permit-jurisdictions.mjs",
     "broward-permit-query-artifact.mjs",
+    "load-broward-permit-list-to-neon.mjs",
+    "load-broward-permit-pilot-to-neon.mjs",
+    "run-broward-bulk-permit-ingest.mjs",
+    "run-broward-etrakit-session-capture.mjs",
     "run-broward-permit-pilot.mjs",
+    "run-broward-supported-permit-ingest.mjs",
     "validate-broward-permits-with-donphan.mjs",
+    "permit-source-adapters/broward-arcgis-bulk.mjs",
     "permit-source-adapters/broward-bcs-posse.mjs"
   ]
 }

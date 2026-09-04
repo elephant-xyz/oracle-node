@@ -22,6 +22,7 @@ import {
  * @property {string | null} summaryPath - Optional local source-outcome JSON path.
  * @property {number} propertyDelayMs - Delay between property searches.
  * @property {number} detailDelayMs - Delay between detail-page requests.
+ * @property {boolean} roofOnly - Whether list candidates must explicitly identify roofing.
  */
 
 const USAGE = `Usage:
@@ -42,6 +43,7 @@ Scope and safety:
   - BCS coverage is BMSD/unincorporated plus BCS-held contract-city records, not countywide.
   - Output is local private staging and includes public contractor/address/legal-description data.
   - No AWS, queues, databases, IPFS, publication, login, CAPTCHA bypass, or full harvest is used.
+  - --roof-only filters list rows before detail requests.
 `;
 
 /**
@@ -92,12 +94,17 @@ export function parseOptions(args) {
   let summaryPath = null;
   let propertyDelayMs = 1_500;
   let detailDelayMs = 300;
+  let roofOnly = false;
 
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index];
     if (argument === "--help" || argument === "-h") return null;
     if (argument === "--pilot") {
       pilot = true;
+      continue;
+    }
+    if (argument === "--roof-only") {
+      roofOnly = true;
       continue;
     }
     if (argument === "--parcel-id") {
@@ -188,6 +195,7 @@ export function parseOptions(args) {
     summaryPath,
     propertyDelayMs,
     detailDelayMs,
+    roofOnly,
   };
 }
 
@@ -224,6 +232,7 @@ export async function main() {
     propertyDelayMs: options.propertyDelayMs,
     detailDelayMs: options.detailDelayMs,
     maxDetailPagesPerFolio: 75,
+    roofOnly: options.roofOnly,
   });
   const jsonl = renderBrowardBcsPermitJsonl(result.records);
   if (options.outputPath === null) {
@@ -241,6 +250,7 @@ export async function main() {
     coverageClaim:
       "BMSD/unincorporated and BCS-exposed contract-city records only; not countywide municipal coverage",
     isCuratedPilot: options.isCuratedPilot,
+    roofOnly: options.roofOnly,
     parcelCount: options.parcelIds.length,
     normalizedRecordCount: result.records.length,
     outputPath: options.outputPath,

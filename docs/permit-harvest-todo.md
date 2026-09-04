@@ -1,5 +1,90 @@
 # Permit Harvest TODO
 
+## Broward County bulk-first permits
+
+- [x] Preserve the paused property-first run and its 3,314 durable outcomes.
+- [x] Verify the Fort Lauderdale official Building Permits FeatureServer.
+- [x] Profile the live source: 204,760 rows; parcel, contractor, cost, status,
+      and date fields; 16,777 roof-like rows by source-text query.
+- [x] Implement object-ID snapshot capture, private raw checksums, deterministic
+      normalization, and durable Neon chunk receipts.
+- [x] Detect truncated/repeated `PERMITID` values in the live pilot and switch
+      identity to complete Accela `CASEKEY`.
+- [x] Reconcile a 100-row capture pilot with zero invalid or duplicate
+      `CASEKEY` records.
+- [x] Commit a 100-row Neon pilot: 76 exact BCPA matches and 24 unmatched
+      records retained; 1,603 prior portal payloads preserved.
+- [x] Drain `broward-permits-ftl-bulk-full-20260831`: 204,760 source rows,
+      204,751 unique `CASEKEY` permits, nine duplicate rows, zero invalid rows,
+      159,584 source-row property matches, and 45,176 unmatched source rows across
+      205 durable chunks.
+- [ ] Generalize the bulk runner to the Broward HCED/POSSE feed and Miramar
+      FY2019/FY2020 archives.
+- [x] Implement anonymous vendor-wide date-window pagination for Hollywood,
+      Plantation, Cooper City, and Weston Accela with persistent browsers,
+      recursive dense-window splitting, terminal-page reconciliation, and private
+      resume checkpoints.
+- [x] Reconcile bounded date-window pilots: Hollywood 44/44, Plantation 26
+      permits + 13 Enforcement rows, Cooper City 19/19, and Weston 14/14.
+- [x] Add a disabled-by-default encrypted AWS FIFO queue/DLQ and worker message
+      contract; jurisdiction message groups serialize each tenant while allowing
+      four tenants to run concurrently.
+- [ ] Deploy/enable the AWS enumeration mapping after credentials are available;
+      this VM currently has neither AWS CLI nor SDK credentials.
+- [ ] Complete the healthy persistent local Accela runs. Hollywood, Cooper City,
+      and Weston continue with 30-day windows; Weston now splits incomplete
+      multi-day pagination. Plantation requires permit-type shards because at least
+      one single day reaches the source's 100-row cap.
+- [x] Implement Tyler application-date enumeration for Pembroke Pines,
+      Hallandale Beach, Miramar, and Oakland Park with one tenant bootstrap,
+      100-row API pages, hard request deadlines, source-total reconciliation, and
+      private checkpoints.
+- [x] Reconcile Tyler pilots: Pembroke Pines 30, Hallandale Beach 10, Miramar
+      34, and Oakland Park 9 records.
+- [x] Complete and load Oakland Park post-2019 inventory: 28,946 accessible
+      permits, one explicit source-missing row, 22,991 exact property matches,
+      5,955 unlinked rows, and 29 durable Neon chunks.
+- [ ] Complete the healthy persistent Tyler runs. Production windows are 30
+      days; Oakland Park begins at its certified 2019-11-01 boundary.
+- [x] Add a durable list-to-Neon loader using detail-compatible Accela/Tyler
+      keys, exact Tyler folio links, 1,000-row commits, and richer-detail
+      precedence.
+- [x] Replace capped Accela grid traversal with official per-window CSV
+      exports; reconcile CSV/list identities and explicit non-permit exclusions.
+- [ ] Implement Citizenserve type-wide enumeration after per-host pressure
+      tests and parser drift repairs.
+- [ ] Obtain official bulk/custodian exports for routes that do not support
+      anonymous complete enumeration.
+- [ ] Keep publication disabled until every source receipt and jurisdictional
+      coverage boundary reconciles.
+
+## Broward Sunbiz property matching
+
+- [x] Reuse the 4,532,582 Sunbiz registrations already loaded in isolated
+      Neon; do not rescan the 12.6 million-row source archive.
+- [x] Profile 469,979 Broward-ZIP candidate address roles.
+- [x] Require exact normalized-address hashes resolving to one Broward
+      property; ZIP alone is not county proof.
+- [x] Exclude 460 ambiguous address roles from mutation.
+- [x] Apply and verify a 100-role pilot with original-address receipts.
+- [x] Complete the full match: 21,512 address roles, 12,432 registrations,
+      9,023 properties, and 22 durable chunks.
+- [x] Verify every updated role through a direct property/address join.
+- [ ] Add the verified Sunbiz match counts to the unpublished Broward query
+      coverage artifact when permit jurisdiction reconciliation is complete.
+
+## Broward roofing-only BBB preparation
+
+- [x] Confirm ordinary Puppeteer receives BBB HTTP 403 / Cloudflare challenge.
+- [x] Do not bypass the challenge or run unauthorized site aggregation.
+- [x] Restrict the planned BBB scope to contractors on loaded roofing permits.
+- [x] Build a private worklist from 10,067 contractor-bearing roofing permits.
+- [x] Exclude 384 owner-builder/TBD placeholder permit rows.
+- [x] Reconcile 1,381 unique licensed contractor candidates with checksum.
+- [ ] Obtain approved BBB API credentials before issuing any external request.
+- [ ] Load only permitted BBB fields; complaint/review data remains
+      internal-use-only.
+
 ## Lee County all-permits harvest
 
 - [x] Confirm usable elephant-cli GitHub ref for Browser Flow v2 / Transform v2.

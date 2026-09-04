@@ -1,4 +1,11 @@
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -7,6 +14,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   BROWARD_ACCELA_SOURCES,
   BrowardAccelaSourceError,
+  buildBrowardAccelaDateWindowKey,
+  buildBrowardAccelaDetailUrlFromRecordId,
   buildBrowardAccelaPermitStem,
   buildBrowardAccelaSearchKey,
   classifyBrowardAccelaPage,
@@ -16,16 +25,47 @@ import {
   extractBrowardAccelaDirectDetailLink,
   extractBrowardAccelaPermitDetail,
   extractBrowardAccelaPermitLinks,
+  isBrowardAccelaRoofPermitCandidate,
   normalizeBrowardPermitFolio,
+  parseBrowardAccelaCsvExport,
+  parseBrowardAccelaCsvExportSummary,
   parseBrowardAccelaMoreDetails,
+  reconcileBrowardAccelaListPages,
   readBrowardAccelaCheckpoint,
   readBrowardAccelaSource,
+  selectAccelaRecordType,
   writeBrowardAccelaCheckpoint,
 } from "../../scripts/permit-source-adapters/broward-accela.mjs";
 import {
   parseOptions,
   renderBrowardAccelaPermitJsonl,
 } from "../../scripts/probe-broward-accela-permits.mjs";
+import {
+  createBrowardAccelaDateWindows,
+  parseBrowardAccelaDateWindowOptions,
+  runBrowardAccelaDateWindows,
+  splitBrowardAccelaDateWindow,
+} from "../../scripts/run-broward-accela-date-windows.mjs";
+import {
+  createAccelaCsvDateWindows,
+  parseAccelaCsvWindowOptions,
+  retryAccelaCsvBackoffMs,
+  retryAccelaCsvCooldownMs,
+  runAccelaCsvWindows,
+  splitAccelaCsvDateWindow,
+} from "../../scripts/run-broward-accela-csv-windows.mjs";
+import {
+  createBrowardAccelaPropertySeedRows,
+  parseAccelaPropertySeedOptions,
+  renderBrowardAccelaPropertySeedRow,
+} from "../../scripts/build-broward-accela-property-seed.mjs";
+import {
+  isPropertyGapFillSeedRow,
+  parsePropertyGapFillOptions,
+  promiseWithTimeout,
+  runPropertyGapFill,
+  waitForPropertyGapFillCooldown,
+} from "../../scripts/run-broward-accela-property-gap-fill.mjs";
 
 const fixtureDirectory = new URL(
   "../fixtures/broward-accela/",
@@ -97,6 +137,32 @@ describe("Broward jurisdiction-specific Accela adapters", () => {
     expect(() => readBrowardAccelaSource("lee")).toThrow(
       "Unknown Broward Accela jurisdiction",
     );
+  });
+
+  it("classifies roofing from Accela result-list fields before detail", () => {
+    const base = {
+      recordNumber: "B24-00001",
+      url: "https://example.test/permit",
+      address: null,
+      description: null,
+      status: "Active",
+      recordType: "Building",
+      sourceSearchKey: "test",
+      sourcePage: 1,
+    };
+    expect(
+      isBrowardAccelaRoofPermitCandidate({
+        ...base,
+        recordNumber: "STRUC-ROOF-25-000925",
+      }),
+    ).toBe(true);
+    expect(
+      isBrowardAccelaRoofPermitCandidate({
+        ...base,
+        description: "Re-roof existing residence",
+      }),
+    ).toBe(true);
+    expect(isBrowardAccelaRoofPermitCandidate(base)).toBe(false);
   });
 
   it("preserves exact 12-character alphanumeric Broward folios without Lee STRAP normalization", () => {
@@ -195,6 +261,46 @@ describe("Broward jurisdiction-specific Accela adapters", () => {
       },
     ]);
     expect(countBrowardAccelaExcludedModuleLinks({ html, source })).toBe(1);
+  });
+
+  it("preserves reported temporary rows that have a hidden RecordId but no detail anchor", () => {
+    const html = `
+      <div>Showing 1-1 of 1</div>
+      <table id="ctl00_PlaceHolderMain_dgvPermitList_gdvPermitList">
+        <thead><tr>
+          <th></th><th>Date</th><th>Record Number</th><th>Record Type</th>
+          <th>Project Name</th><th>Address</th><th>Expiration Date</th>
+          <th>Status</th>
+        </tr></thead>
+        <tbody><tr>
+          <td></td><td>08/31/2026</td>
+          <td><span id="row_lblPermitNumber">26TMP-017930</span>
+            <input type="hidden" id="RecordId" value="26EST-00000-17950">
+          </td>
+          <td>Commercial Mechanical Permit</td><td>Temporary intake</td>
+          <td>2700 HOLLYWOOD BLVD</td><td></td><td></td>
+        </tr></tbody>
+      </table>`;
+    const source = BROWARD_ACCELA_SOURCES.hollywood;
+    expect(
+      buildBrowardAccelaDetailUrlFromRecordId("26EST-00000-17950", source),
+    ).toContain("capID3=17950");
+    expect(
+      extractBrowardAccelaPermitLinks({
+        html,
+        source,
+        searchKey: "hollywood:date:20260830_20260831",
+        pageNumber: 1,
+      }),
+    ).toMatchObject([
+      {
+        recordNumber: "26TMP-017930",
+        recordType: "Commercial Mechanical Permit",
+        description: "Temporary intake",
+        address: "2700 HOLLYWOOD BLVD",
+        sourcePage: 1,
+      },
+    ]);
   });
 
   it("distinguishes explicit no records from source errors and unknown pages", () => {
@@ -448,7 +554,9 @@ describe("Broward jurisdiction-specific Accela adapters", () => {
       isCuratedPilot: false,
       maxPages: 3,
       maxDetails: 4,
+      roofOnly: false,
     });
+    expect(parseOptions(["--pilot", "--roof-only"])?.roofOnly).toBe(true);
     expect(() =>
       parseOptions([
         "--target=hollywood:514111160200",
@@ -460,5 +568,1219 @@ describe("Broward jurisdiction-specific Accela adapters", () => {
     expect(() => parseOptions(["--pilot", "--detail-delay-ms=249"])).toThrow(
       "between 250",
     );
+  });
+});
+
+describe("Broward Accela vendor-wide date windows", () => {
+  it("builds exact non-overlapping windows and stable source keys", () => {
+    expect(
+      createBrowardAccelaDateWindows("2026-08-28", "2026-08-31", 2),
+    ).toEqual([
+      { startDate: "2026-08-28", endDate: "2026-08-29" },
+      { startDate: "2026-08-30", endDate: "2026-08-31" },
+    ]);
+    expect(
+      splitBrowardAccelaDateWindow({
+        startDate: "2026-08-28",
+        endDate: "2026-08-31",
+      }),
+    ).toEqual([
+      { startDate: "2026-08-28", endDate: "2026-08-29" },
+      { startDate: "2026-08-30", endDate: "2026-08-31" },
+    ]);
+    expect(
+      buildBrowardAccelaDateWindowKey(
+        BROWARD_ACCELA_SOURCES.hollywood,
+        "2026-08-30",
+        "2026-08-31",
+      ),
+    ).toBe("hollywood:date:20260830_20260831");
+    expect(() =>
+      splitBrowardAccelaDateWindow({
+        startDate: "2026-08-31",
+        endDate: "2026-08-31",
+      }),
+    ).toThrow(/cannot be split/u);
+  });
+
+  it("requires explicit dates and a certified date-enabled source", () => {
+    expect(
+      parseBrowardAccelaDateWindowOptions([
+        "--source",
+        "weston",
+        "--start-date",
+        "1997-01-01",
+        "--end-date",
+        "2026-08-31",
+        "--window-days",
+        "30",
+        "--max-windows",
+        "2",
+      ]),
+    ).toMatchObject({
+      sourceKey: "weston",
+      startDate: "1997-01-01",
+      endDate: "2026-08-31",
+      initialWindowDays: 30,
+      maxWindows: 2,
+    });
+    expect(() =>
+      parseBrowardAccelaDateWindowOptions([
+        "--source",
+        "fort-lauderdale",
+        "--start-date",
+        "2026-01-01",
+        "--end-date",
+        "2026-01-02",
+      ]),
+    ).toThrow(/hollywood, plantation, cooper-city, or weston/u);
+  });
+
+  it("checkpoints a bounded invocation and resumes the same persistent source run", async () => {
+    const outputDirectory = await mkdtemp(
+      join(tmpdir(), "broward-accela-date-window-"),
+    );
+    temporaryDirectories.push(outputDirectory);
+    let browserCreations = 0;
+    const closedBrowsers = [];
+    const searchedWindows = [];
+    const createBrowser = async () => {
+      browserCreations += 1;
+      return {
+        close: async () => {
+          closedBrowsers.push(browserCreations);
+        },
+      };
+    };
+    const searchWindow = async ({ source, startDate, endDate }) => {
+      searchedWindows.push(`${startDate}:${endDate}`);
+      const recordNumber = `B${startDate.replaceAll("-", "")}`;
+      return {
+        status: "records",
+        searchKey: `${source.key}:${startDate}:${endDate}`,
+        startDate,
+        endDate,
+        source,
+        permits: [
+          {
+            recordNumber,
+            url: `https://aca-prod.accela.com/HOLLYWOOD/Cap/CapDetail.aspx?Module=Building&capID1=${recordNumber}`,
+            address: "100 TEST AVE",
+            description: "Building permit",
+            status: "Issued",
+            recordType: "Building",
+            sourceSearchKey: `${source.key}:${startDate}:${endDate}`,
+            sourcePage: 1,
+          },
+        ],
+        pages: [
+          {
+            pageNumber: 1,
+            url: source.portalUrl,
+            resultSummary: "1-1 of 1",
+            html: "<html><body>fixture</body></html>",
+          },
+        ],
+        reportedTotal: 1,
+        excludedNonPermitCount: 0,
+        truncatedForSplit: false,
+      };
+    };
+    const baseOptions = {
+      sourceKey: "hollywood",
+      startDate: "2026-08-28",
+      endDate: "2026-08-31",
+      initialWindowDays: 2,
+      splitThreshold: 100,
+      maxPages: 200,
+      delayMs: 1_000,
+      maxWindows: 1,
+      outputDirectory,
+    };
+    const first = await runBrowardAccelaDateWindows(baseOptions, {
+      createBrowser,
+      searchWindow,
+      wait: async () => undefined,
+      now: () => "2026-08-31T18:00:00.000Z",
+    });
+    expect(first).toMatchObject({
+      status: "paused",
+      windowsProcessedThisInvocation: 1,
+      terminalWindowCount: 1,
+      pendingWindowCount: 1,
+      uniquePermitCount: 1,
+    });
+    const resumed = await runBrowardAccelaDateWindows(
+      { ...baseOptions, maxWindows: null },
+      {
+        createBrowser,
+        searchWindow,
+        wait: async () => undefined,
+        now: () => "2026-08-31T18:01:00.000Z",
+      },
+    );
+    expect(resumed).toMatchObject({
+      status: "complete",
+      windowsProcessedThisInvocation: 1,
+      terminalWindowCount: 2,
+      pendingWindowCount: 0,
+      uniquePermitCount: 2,
+    });
+    expect(searchedWindows).toEqual([
+      "2026-08-28:2026-08-29",
+      "2026-08-30:2026-08-31",
+    ]);
+    expect(browserCreations).toBe(2);
+    expect(closedBrowsers).toHaveLength(2);
+    expect(
+      (
+        await readFile(
+          join(outputDirectory, "normalized-list.private.jsonl"),
+          "utf8",
+        )
+      )
+        .trim()
+        .split("\n"),
+    ).toHaveLength(2);
+  });
+
+  it("splits an incomplete multi-day source window instead of accepting partial rows", async () => {
+    const outputDirectory = await mkdtemp(
+      join(tmpdir(), "broward-accela-incomplete-window-"),
+    );
+    temporaryDirectories.push(outputDirectory);
+    const summary = await runBrowardAccelaDateWindows(
+      {
+        sourceKey: "weston",
+        startDate: "2005-11-17",
+        endDate: "2005-11-18",
+        initialWindowDays: 2,
+        splitThreshold: 100,
+        maxPages: 200,
+        delayMs: 1_000,
+        maxWindows: 1,
+        outputDirectory,
+      },
+      {
+        createBrowser: async () => ({
+          close: async () => undefined,
+        }),
+        searchWindow: async ({ source }) => {
+          throw new BrowardAccelaSourceError(
+            "incomplete_pagination",
+            source,
+            "Source stopped before reported total",
+          );
+        },
+        wait: async () => undefined,
+        now: () => "2026-08-31T19:00:00.000Z",
+      },
+    );
+    expect(summary).toMatchObject({
+      status: "paused",
+      windowsProcessedThisInvocation: 1,
+      terminalWindowCount: 0,
+      splitWindowCount: 1,
+      pendingWindowCount: 2,
+      uniquePermitCount: 0,
+    });
+    const checkpoint = JSON.parse(
+      await readFile(join(outputDirectory, "checkpoint.private.json"), "utf8"),
+    );
+    expect(checkpoint.pendingWindows).toEqual([
+      { startDate: "2005-11-17", endDate: "2005-11-17" },
+      { startDate: "2005-11-18", endDate: "2005-11-18" },
+    ]);
+  });
+});
+
+describe("Broward official Accela CSV exports", () => {
+  it("waits for the record-type WebForms postback before using refreshed controls", async () => {
+    const events = [];
+    let evaluation = 0;
+    const shard = {
+      value: "Building/Electrical Permit/NA/NA",
+      label: "Electrical Permit",
+    };
+    const context = {
+      evaluate: async () => {
+        evaluation += 1;
+        return evaluation === 1 ? true : shard;
+      },
+      waitForNavigation: async () => {
+        events.push("navigation_registered");
+        return null;
+      },
+      select: async () => {
+        events.push("record_type_selected");
+        return [shard.value];
+      },
+      waitForFunction: async () => {
+        events.push("refreshed_date_controls_ready");
+      },
+      url: () => BROWARD_ACCELA_SOURCES.plantation.portalUrl,
+      content: async () => "<html>fixture</html>",
+    };
+
+    await selectAccelaRecordType(
+      context,
+      BROWARD_ACCELA_SOURCES.plantation,
+      shard,
+    );
+
+    expect(events).toEqual([
+      "navigation_registered",
+      "record_type_selected",
+      "refreshed_date_controls_ready",
+    ]);
+  });
+
+  it("retains property-first evidence without completing an unresolved parent", async () => {
+    const outputDirectory = await mkdtemp(
+      join(tmpdir(), "broward-accela-property-gap-fill-"),
+    );
+    temporaryDirectories.push(outputDirectory);
+    const seedPath = join(outputDirectory, "verified-seed.private.csv");
+    const parentCheckpointPath = join(
+      outputDirectory,
+      "checkpoint.private.json",
+    );
+    const parentCheckpoint = {
+      schemaVersion: "oracle-node.broward-accela-csv-windows.v1",
+      sourceKey: "plantation",
+      shardPlans: {
+        "20260831_20260831": {
+          startDate: "2026-08-31",
+          endDate: "2026-08-31",
+        },
+      },
+    };
+    await writeFile(
+      seedPath,
+      [
+        "request_identifier,city,address",
+        "504100000001,Plantation,PRIVATE",
+        "504100000002,Fort Lauderdale,PRIVATE",
+        "504100000003,Plantation,PRIVATE",
+      ].join("\n"),
+    );
+    await writeFile(
+      parentCheckpointPath,
+      `${JSON.stringify(parentCheckpoint)}\n`,
+    );
+    const gapDirectory = join(outputDirectory, "property-gap-fill");
+    await mkdir(gapDirectory);
+    await writeFile(
+      join(gapDirectory, "checkpoint.private.json"),
+      `${JSON.stringify({
+        schemaVersion: "oracle-node.broward-accela-property-gap-fill.v1",
+        sourceKey: "plantation",
+        seedSha256: "unqualified-gis-seed",
+        plans: {
+          "20260831_20260831": {
+            startDate: "2026-08-31",
+            endDate: "2026-08-31",
+            nextSeedRowIndex: 0,
+            inspectedPropertyCount: 0,
+            retainedRecordCount: 0,
+            existingRecordCount: 0,
+            undatedRecordCount: 0,
+            seedExhausted: true,
+            updatedAt: "2026-09-01T22:00:00.000Z",
+          },
+        },
+        cooldown: null,
+        startedAt: "2026-09-01T22:00:00.000Z",
+        updatedAt: "2026-09-01T22:00:00.000Z",
+      })}\n`,
+    );
+    await writeFile(
+      join(outputDirectory, "normalized-list.private.jsonl"),
+      `${JSON.stringify({
+        recordKey: "broward_plantation_accela_permits:permit:EXISTING-1",
+      })}\n`,
+    );
+    const before = await readFile(parentCheckpointPath, "utf8");
+    const summary = await runPropertyGapFill(
+      {
+        sourceKey: "plantation",
+        seedPath,
+        outputDirectory,
+        maxProperties: 1,
+        maxPages: 2,
+        delayMs: 30_000,
+      },
+      {
+        createBrowser: async () => ({
+          close: async () => undefined,
+        }),
+        searchParcel: async ({ source }) => ({
+          status: "records",
+          searchKey: "private",
+          parcelIdentifier: "504100000001",
+          source,
+          permits: [
+            {
+              recordNumber: "EXISTING-1",
+              url: `${source.portalUrl}&altId=EXISTING-1`,
+              address: null,
+              description: null,
+              status: "Issued",
+              recordType: "Building Permit",
+              recordDate: "08/31/2026",
+              sourceSearchKey: "private",
+              sourcePage: 1,
+            },
+            {
+              recordNumber: "NOVEL-1",
+              url: `${source.portalUrl}&altId=NOVEL-1`,
+              address: null,
+              description: null,
+              status: "Issued",
+              recordType: "Electrical Permit",
+              recordDate: "08/31/2026",
+              sourceSearchKey: "private",
+              sourcePage: 1,
+            },
+            {
+              recordNumber: "UNDATED-1",
+              url: `${source.portalUrl}&altId=UNDATED-1`,
+              address: null,
+              description: null,
+              status: "Issued",
+              recordType: "Plumbing Permit",
+              recordDate: null,
+              sourceSearchKey: "private",
+              sourcePage: 1,
+            },
+          ],
+          pages: [
+            {
+              pageNumber: 1,
+              url: source.portalUrl,
+              resultSummary: "aggregate fixture",
+              html: "<html>private fixture</html>",
+            },
+          ],
+          reportedTotal: 3,
+          excludedNonPermitCount: 0,
+        }),
+        now: () => "2026-09-01T23:00:00.000Z",
+        random: () => 0,
+        wait: async () => undefined,
+      },
+    );
+    expect(summary).toMatchObject({
+      status: "partial",
+      propertiesProcessedThisInvocation: 1,
+      inspectedPropertyCount: 1,
+      retainedRecordCount: 1,
+      existingRecordCount: 1,
+      undatedRecordCount: 1,
+      completenessEstablished: false,
+    });
+    expect(await readFile(parentCheckpointPath, "utf8")).toBe(before);
+    expect(
+      await readFile(
+        join(outputDirectory, "property-gap-fill", "records.private.jsonl"),
+        "utf8",
+      ),
+    ).toContain("NOVEL-1");
+    const migratedCheckpoint = JSON.parse(
+      await readFile(
+        join(outputDirectory, "property-gap-fill", "checkpoint.private.json"),
+        "utf8",
+      ),
+    );
+    expect(migratedCheckpoint).toMatchObject({
+      schemaVersion: "oracle-node.broward-accela-property-gap-fill.v2",
+      supersededSeeds: [
+        {
+          seedSha256: "unqualified-gis-seed",
+          reason: "unqualified_gis_seed",
+        },
+      ],
+    });
+  });
+
+  it("parses bounded gap-fill options and uses exact seed jurisdiction names", () => {
+    expect(
+      parsePropertyGapFillOptions([
+        "--source",
+        "cooper-city",
+        "--output-dir",
+        "downloads/private",
+        "--max-properties",
+        "2",
+      ]),
+    ).toMatchObject({
+      sourceKey: "cooper-city",
+      maxProperties: 2,
+      maxPages: 10,
+      delayMs: 30_000,
+      propertyTimeoutMs: 180_000,
+    });
+    expect(
+      isPropertyGapFillSeedRow("cooper-city", { city: " Cooper   City " }),
+    ).toBe(true);
+    expect(
+      isPropertyGapFillSeedRow("cooper-city", { city: "Cooper City area" }),
+    ).toBe(false);
+    expect(
+      isPropertyGapFillSeedRow("cooper-city", {
+        jurisdiction_key: "cooper-city",
+        city: "",
+      }),
+    ).toBe(true);
+    expect(
+      isPropertyGapFillSeedRow("cooper-city", {
+        jurisdiction_key: "plantation",
+        city: "Cooper City",
+      }),
+    ).toBe(false);
+  });
+
+  it("rechecks expired gap-fill cooldowns in suspension-safe timer slices", async () => {
+    let currentTime = "2026-09-02T20:00:00.000Z";
+    /** @type {number[]} */
+    const waits = [];
+
+    await waitForPropertyGapFillCooldown(
+      Date.parse("2026-09-03T08:00:00.000Z"),
+      () => currentTime,
+      async (milliseconds) => {
+        waits.push(milliseconds);
+        currentTime = "2026-09-03T09:00:00.000Z";
+      },
+    );
+
+    expect(waits).toEqual([60_000]);
+  });
+
+  it("rejects an unresponsive property operation at its outer deadline", async () => {
+    await expect(
+      promiseWithTimeout(
+        new Promise(() => undefined),
+        10,
+        "bounded property timeout",
+      ),
+    ).rejects.toThrow("bounded property timeout");
+  });
+
+  it("builds a deterministic Accela seed only from exact BCPA jurisdiction evidence", () => {
+    expect(parseAccelaPropertySeedOptions([]).outputPath).toMatch(
+      /broward-accela-property-seed\.private\.csv$/u,
+    );
+    const result = createBrowardAccelaPropertySeedRows([
+      {
+        request_identifier: "504100000002",
+        unnormalized_address: "2 PRIVATE STREET WESTON FL 33326",
+      },
+      {
+        request_identifier: "504100000001",
+        unnormalized_address: "1 PRIVATE STREET PLANTATION FL 33324",
+      },
+      {
+        request_identifier: "504100000003",
+        unnormalized_address: "3 PRIVATE STREET FORT LAUDERDALE FL 33301",
+      },
+      {
+        request_identifier: "invalid",
+        unnormalized_address: "4 PRIVATE STREET COOPER CITY FL 33330",
+      },
+      {
+        request_identifier: "504100000004",
+        unnormalized_address: "NO REGISTERED CITY",
+      },
+    ]);
+    expect(result).toMatchObject({
+      inputCount: 5,
+      invalidCount: 1,
+      unresolvedCount: 1,
+      otherJurisdictionCount: 1,
+      duplicateCount: 0,
+    });
+    expect(
+      result.rows.map((row) => ({
+        folio: row.request_identifier,
+        jurisdiction: row.jurisdiction_key,
+      })),
+    ).toEqual([
+      { folio: "504100000001", jurisdiction: "plantation" },
+      { folio: "504100000002", jurisdiction: "weston" },
+    ]);
+    expect(renderBrowardAccelaPropertySeedRow(result.rows[0])).toContain(
+      ",plantation,Plantation,",
+    );
+  });
+
+  it("accepts list-only mode only after exact page and identity reconciliation", () => {
+    const source = BROWARD_ACCELA_SOURCES.hollywood;
+    const sourceWindowKey = buildBrowardAccelaDateWindowKey(
+      source,
+      "2026-08-30",
+      "2026-08-31",
+    );
+    const reconciled = reconcileBrowardAccelaListPages({
+      htmlPages: [pageOneHtml, pageTwoHtml],
+      source,
+      sourceWindowKey,
+      displayedTotal: 3,
+    });
+    expect(reconciled).toMatchObject({
+      sourceRowCount: 3,
+      excludedNonPermitCount: 0,
+      duplicateRecordCount: 0,
+    });
+    expect(reconciled.records).toHaveLength(3);
+    expect(() =>
+      reconcileBrowardAccelaListPages({
+        htmlPages: [pageOneHtml],
+        source,
+        sourceWindowKey,
+        displayedTotal: 3,
+      }),
+    ).toThrow("accounted for 2 of 3");
+    expect(() =>
+      reconcileBrowardAccelaListPages({
+        htmlPages: [pageOneHtml, pageTwoHtml],
+        source,
+        sourceWindowKey,
+        displayedTotal: 100,
+      }),
+    ).toThrow("capped at 100");
+  });
+
+  it("parses full exported record numbers and stable detail-compatible keys", () => {
+    const records = parseBrowardAccelaCsvExport(
+      [
+        '"Date","Record Number","Record Type","Project Name","Address","Expiration Date","Status",',
+        '"01/16/2025","STRUC-ROOF-25-000185","Roofing Permit",,"6751 Harding St","09/02/2025","Closed - Complete",',
+        '"01/16/2025","RES-ELEC-25-000065","Residential Electrical Permit",,"4524 Jackson St","11/17/2025","Closed - Complete",',
+      ].join("\n"),
+      BROWARD_ACCELA_SOURCES.hollywood,
+      "2025-01-16",
+      "2025-01-16",
+    );
+    expect(records).toHaveLength(2);
+    expect(records[1]).toMatchObject({
+      recordNumber: "STRUC-ROOF-25-000185",
+      recordKey: "broward_hollywood_accela_permits:permit:STRUC-ROOF-25-000185",
+      recordDate: "2025-01-16",
+      expirationDate: "2025-09-02",
+      isRoofPermit: true,
+      sourceWindowKey: "hollywood:date:20250116_20250116",
+    });
+    expect(records[1]?.sourceUrl).toContain("altId=STRUC-ROOF-25-000185");
+  });
+
+  it("accepts Plantation Record No. and accounts for explicit non-permit modules", () => {
+    const summary = parseBrowardAccelaCsvExportSummary(
+      [
+        '"Date","Record No.","Record Type","Sub Type","Description","Address","Status",',
+        '"08/31/2026","CE26-02231","Code Enforcement",,"Bulk trash","100 TEST AVE","Investigate",',
+        '"08/31/2026","B26-03481","Building Permit","Misc","Kitchen","200 TEST AVE","Applied",',
+      ].join("\n"),
+      BROWARD_ACCELA_SOURCES.plantation,
+      "2026-08-31",
+      "2026-08-31",
+    );
+    expect(summary).toMatchObject({
+      sourceRowCount: 2,
+      excludedNonPermitCount: 1,
+      records: [
+        expect.objectContaining({
+          recordNumber: "B26-03481",
+          recordType: "Building Permit",
+        }),
+      ],
+    });
+  });
+
+  it("splits CSV windows deterministically and bounds jittered retry backoff", () => {
+    expect(
+      splitAccelaCsvDateWindow({
+        startDate: "2026-08-29",
+        endDate: "2026-08-31",
+      }),
+    ).toEqual([
+      { startDate: "2026-08-29", endDate: "2026-08-30" },
+      { startDate: "2026-08-31", endDate: "2026-08-31" },
+    ]);
+    expect(retryAccelaCsvBackoffMs(1_000, 1, () => 0.5)).toBe(5_625);
+    expect(retryAccelaCsvBackoffMs(1_000, 2, () => 0.5)).toBe(11_250);
+    expect(retryAccelaCsvCooldownMs(1, () => 0)).toBe(1_800_000);
+    expect(retryAccelaCsvCooldownMs(2, () => 0.5)).toBe(4_050_000);
+    expect(retryAccelaCsvCooldownMs(20, () => 0.5)).toBe(43_200_000);
+    expect(() => retryAccelaCsvBackoffMs(1_000, 1, () => 1)).toThrow(
+      "must be in [0,1)",
+    );
+  });
+
+  it("durably splits a capped multi-day Plantation parent without completing it", async () => {
+    const outputDirectory = await mkdtemp(
+      join(tmpdir(), "broward-accela-capped-date-split-"),
+    );
+    temporaryDirectories.push(outputDirectory);
+    const summary = await runAccelaCsvWindows(
+      {
+        sourceKey: "plantation",
+        startDate: "2026-08-30",
+        endDate: "2026-08-31",
+        windowDays: 2,
+        delayMs: 1_000,
+        maxAttempts: 2,
+        maxPages: 200,
+        windowTimeoutMs: 120_000,
+        maxWindows: 1,
+        outputDirectory,
+      },
+      {
+        createBrowser: async () => ({
+          close: async () => undefined,
+        }),
+        captureWindow: async ({
+          source,
+          startDate,
+          endDate,
+          recordTypeShard,
+        }) => ({
+          startDate,
+          endDate,
+          sourceWindowKey: `${source.key}:${startDate}:${endDate}`,
+          displayedTotal: 100,
+          displayedTotalCapped: true,
+          captureMode: "capped_probe",
+          records: [],
+          sourceRowCount: 0,
+          excludedNonPermitCount: 0,
+          duplicateRecordCount: 0,
+          pageCount: 1,
+          availableRecordTypes: [
+            {
+              value: "Building/Building Permit/NA/NA",
+              label: "Building Permit",
+            },
+          ],
+          recordTypeShard,
+          rawCsv: "",
+          rawSearchHtml: "<html>capped</html>",
+          rawListPages: ["<html>capped</html>"],
+        }),
+        wait: async () => undefined,
+        random: () => 0,
+        now: () => "2026-09-01T18:00:00.000Z",
+      },
+    );
+    expect(summary).toMatchObject({
+      status: "paused",
+      completedWindowCount: 0,
+      pendingWindowCount: 2,
+    });
+    const checkpoint = JSON.parse(
+      await readFile(join(outputDirectory, "checkpoint.private.json"), "utf8"),
+    );
+    expect(checkpoint.pendingWindows).toEqual([
+      { startDate: "2026-08-30", endDate: "2026-08-30" },
+      { startDate: "2026-08-31", endDate: "2026-08-31" },
+    ]);
+    expect(checkpoint.completedWindows).toEqual({});
+    expect(checkpoint.splitWindows["20260830_20260831"]).toMatchObject({
+      reason: "plantation_displayed_total_cap",
+    });
+  });
+
+  it("splits an unreconciled Weston list-only window instead of recording zero", async () => {
+    const outputDirectory = await mkdtemp(
+      join(tmpdir(), "broward-accela-weston-list-split-"),
+    );
+    temporaryDirectories.push(outputDirectory);
+    const summary = await runAccelaCsvWindows(
+      {
+        sourceKey: "weston",
+        startDate: "2006-05-14",
+        endDate: "2006-05-15",
+        windowDays: 2,
+        delayMs: 1_000,
+        maxAttempts: 1,
+        maxPages: 200,
+        windowTimeoutMs: 120_000,
+        maxWindows: 1,
+        outputDirectory,
+      },
+      {
+        createBrowser: async () => ({
+          close: async () => undefined,
+        }),
+        captureWindow: async ({ source }) => {
+          throw new BrowardAccelaSourceError(
+            "incomplete_pagination",
+            source,
+            "Displayed total could not be reconciled",
+          );
+        },
+        wait: async () => undefined,
+        random: () => 0,
+        now: () => "2026-09-01T18:00:00.000Z",
+      },
+    );
+    expect(summary).toMatchObject({
+      status: "paused",
+      completedWindowCount: 0,
+      pendingWindowCount: 2,
+      uniquePermitCount: 0,
+    });
+    const checkpoint = JSON.parse(
+      await readFile(join(outputDirectory, "checkpoint.private.json"), "utf8"),
+    );
+    expect(checkpoint.completedWindows).toEqual({});
+    expect(checkpoint.splitWindows["20060514_20060515"]).toMatchObject({
+      reason: "unreconciled_source_result",
+    });
+  });
+
+  it("plans exhaustive record-type shards for capped one-day tenant lists", async () => {
+    const outputDirectory = await mkdtemp(
+      join(tmpdir(), "broward-accela-tenant-type-shards-"),
+    );
+    temporaryDirectories.push(outputDirectory);
+    const calls = [];
+    const dependencies = {
+      createBrowser: async () => ({
+        close: async () => undefined,
+      }),
+      captureWindow: async ({
+        source,
+        startDate,
+        endDate,
+        recordTypeShard,
+        stopAtCappedProbe,
+      }) => {
+        calls.push({
+          sourceKey: source.key,
+          recordTypeShard,
+          stopAtCappedProbe,
+        });
+        if (recordTypeShard !== null) {
+          throw new Error("Waiting failed: bounded source timeout");
+        }
+        return {
+          startDate,
+          endDate,
+          sourceWindowKey: `${source.key}:date:${startDate}:${endDate}`,
+          displayedTotal: 100,
+          displayedTotalCapped: true,
+          captureMode: "capped_probe",
+          records: [],
+          sourceRowCount: 0,
+          excludedNonPermitCount: 0,
+          duplicateRecordCount: 0,
+          pageCount: 1,
+          availableRecordTypes: [
+            {
+              value: "Building/Building Permit/NA/NA",
+              label: "Building Permit",
+            },
+            {
+              value: "Building/Electrical Permit/NA/NA",
+              label: "Electrical Permit",
+            },
+            {
+              value: "Building/Mechanical Permit/NA/NA",
+              label: "Mechanical Permit",
+            },
+          ],
+          recordTypeShard,
+          rawCsv: "",
+          rawSearchHtml: "<html>capped</html>",
+          rawListPages: ["<html>capped</html>"],
+        };
+      },
+      wait: async () => undefined,
+      random: () => 0,
+      now: () => "2026-09-01T20:00:00.000Z",
+    };
+    for (const sourceKey of ["weston", "cooper-city"]) {
+      const sourceOutputDirectory = join(outputDirectory, sourceKey);
+      const summary = await runAccelaCsvWindows(
+        {
+          sourceKey,
+          startDate: "2006-04-22",
+          endDate: "2006-04-22",
+          windowDays: 1,
+          delayMs: 1_000,
+          maxAttempts: 1,
+          maxPages: 200,
+          windowTimeoutMs: 120_000,
+          maxWindows: 1,
+          outputDirectory: sourceOutputDirectory,
+        },
+        dependencies,
+      );
+      expect(summary).toMatchObject({
+        status: "paused",
+        completedWindowCount: 0,
+        pendingWindowCount: 1,
+      });
+      const checkpoint = JSON.parse(
+        await readFile(
+          join(sourceOutputDirectory, "checkpoint.private.json"),
+          "utf8",
+        ),
+      );
+      expect(
+        checkpoint.shardPlans["20060422_20060422"].expectedShards,
+      ).toHaveLength(3);
+      expect(checkpoint.completedWindows).toEqual({});
+    }
+    expect(calls).toEqual([
+      {
+        sourceKey: "weston",
+        recordTypeShard: null,
+        stopAtCappedProbe: true,
+      },
+      {
+        sourceKey: "cooper-city",
+        recordTypeShard: null,
+        stopAtCappedProbe: true,
+      },
+    ]);
+    const westonOutputDirectory = join(outputDirectory, "weston");
+    const cooling = await runAccelaCsvWindows(
+      {
+        sourceKey: "weston",
+        startDate: "2006-04-22",
+        endDate: "2006-04-22",
+        windowDays: 1,
+        delayMs: 1_000,
+        maxAttempts: 1,
+        maxPages: 200,
+        windowTimeoutMs: 120_000,
+        maxWindows: 1,
+        outputDirectory: westonOutputDirectory,
+      },
+      dependencies,
+    );
+    expect(cooling).toMatchObject({
+      status: "cooling_down",
+      deferredReason: "timeout",
+      nextAttemptAt: "2026-09-01T20:30:00.000Z",
+    });
+    const boundedCheckpoint = JSON.parse(
+      await readFile(
+        join(westonOutputDirectory, "checkpoint.private.json"),
+        "utf8",
+      ),
+    );
+    expect(
+      Object.values(
+        boundedCheckpoint.shardPlans["20060422_20060422"].failedShards,
+      ),
+    ).toHaveLength(1);
+    expect(boundedCheckpoint.cooldown).toMatchObject({
+      reason: "timeout",
+      attemptCount: 1,
+      cooldownMs: 1_800_000,
+      nextAttemptAt: "2026-09-01T20:30:00.000Z",
+    });
+  });
+
+  it("checkpoints and resumes exhaustive Plantation record-type shards", async () => {
+    const outputDirectory = await mkdtemp(
+      join(tmpdir(), "broward-accela-record-type-shards-"),
+    );
+    temporaryDirectories.push(outputDirectory);
+    const options = {
+      sourceKey: "plantation",
+      startDate: "2026-08-31",
+      endDate: "2026-08-31",
+      windowDays: 1,
+      delayMs: 1_000,
+      maxAttempts: 2,
+      maxPages: 200,
+      windowTimeoutMs: 120_000,
+      maxWindows: 1,
+      outputDirectory,
+    };
+    const publicOptions = [
+      {
+        value: "Building/Building Permit/NA/NA",
+        label: "Building Permit",
+      },
+      {
+        value: "Building/Electrical Permit/NA/NA",
+        label: "Electrical Permit",
+      },
+    ];
+    /** @type {string[]} */
+    const operations = [];
+    /** @type {number[]} */
+    const searchOutcomeTimeouts = [];
+    let buildingFailuresRemaining = 2;
+    let currentTime = "2026-09-01T18:00:00.000Z";
+    const captureWindow = async ({
+      source,
+      startDate,
+      endDate,
+      recordTypeShard,
+      searchOutcomeTimeoutMs,
+    }) => {
+      const operation =
+        recordTypeShard === null ? "parent" : recordTypeShard.label;
+      operations.push(operation);
+      searchOutcomeTimeouts.push(searchOutcomeTimeoutMs);
+      if (
+        recordTypeShard?.label === "Building Permit" &&
+        buildingFailuresRemaining > 0
+      ) {
+        buildingFailuresRemaining -= 1;
+        throw new Error("Waiting failed: 90000ms exceeded");
+      }
+      const label = recordTypeShard?.label ?? "Building Permit";
+      const suffix =
+        recordTypeShard === null
+          ? "PARENT"
+          : label.toUpperCase().replaceAll(" ", "-");
+      const record = {
+        schemaVersion: "oracle-node.broward-accela-csv-list.v1",
+        sourceSystem: source.sourceSystem,
+        jurisdiction: source.jurisdiction,
+        recordNumber: `B26-${suffix}`,
+        sourceUrl: `${source.portalUrl}&altId=B26-${suffix}`,
+        recordKey: `${source.sourceSystem}:permit:B26-${suffix}`,
+        recordDate: startDate,
+        recordType:
+          recordTypeShard === null ? label : `${label} public subtype`,
+        projectName: null,
+        address: null,
+        expirationDate: null,
+        status: "Issued",
+        isRoofPermit: false,
+        sourceWindowKey: `${source.key}:date:${startDate}:${endDate}`,
+      };
+      return {
+        startDate,
+        endDate,
+        sourceWindowKey: record.sourceWindowKey,
+        displayedTotal: 100,
+        displayedTotalCapped: true,
+        captureMode: "csv_export",
+        records: [record],
+        sourceRowCount: 1,
+        excludedNonPermitCount: 0,
+        duplicateRecordCount: 0,
+        pageCount: 1,
+        availableRecordTypes: publicOptions,
+        recordTypeShard,
+        rawCsv: `fixture-${operation}`,
+        rawSearchHtml: "<html>fixture</html>",
+        rawListPages: ["<html>fixture</html>"],
+      };
+    };
+    const dependencies = {
+      createBrowser: async () => ({
+        close: async () => undefined,
+      }),
+      captureWindow,
+      wait: async () => undefined,
+      random: () => 0,
+      now: () => currentTime,
+    };
+    const planned = await runAccelaCsvWindows(options, dependencies);
+    expect(planned).toMatchObject({
+      status: "paused",
+      completedWindowCount: 0,
+      pendingWindowCount: 1,
+    });
+    let checkpoint = JSON.parse(
+      await readFile(join(outputDirectory, "checkpoint.private.json"), "utf8"),
+    );
+    expect(Object.values(checkpoint.shardPlans)[0]).toMatchObject({
+      dimension: "record_type",
+      expectedShards: expect.arrayContaining([
+        expect.objectContaining({ label: "Building Permit" }),
+        expect.objectContaining({ label: "Electrical Permit" }),
+      ]),
+      completedShards: {},
+    });
+
+    const cooling = await runAccelaCsvWindows(
+      { ...options, maxWindows: 2 },
+      dependencies,
+    );
+    expect(cooling).toMatchObject({
+      status: "cooling_down",
+      deferredReason: "timeout",
+    });
+    checkpoint = JSON.parse(
+      await readFile(join(outputDirectory, "checkpoint.private.json"), "utf8"),
+    );
+    expect(
+      Object.keys(Object.values(checkpoint.shardPlans)[0].completedShards),
+    ).toHaveLength(0);
+    expect(Object.values(checkpoint.shardPlans)[0].failedShards).toEqual(
+      expect.objectContaining({
+        "record-type-25d182bab06ba7fa": expect.objectContaining({
+          reason: "timeout",
+          attemptCycles: 1,
+        }),
+      }),
+    );
+    currentTime = new Date(
+      Date.parse(checkpoint.cooldown.nextAttemptAt) + 1,
+    ).toISOString();
+    await runAccelaCsvWindows(options, dependencies);
+    checkpoint = JSON.parse(
+      await readFile(join(outputDirectory, "checkpoint.private.json"), "utf8"),
+    );
+    expect(
+      Object.keys(Object.values(checkpoint.shardPlans)[0].completedShards),
+    ).toHaveLength(1);
+    expect(checkpoint.cooldown).toBeNull();
+
+    const completed = await runAccelaCsvWindows(
+      { ...options, maxWindows: null },
+      dependencies,
+    );
+    expect(completed).toMatchObject({
+      status: "complete",
+      completedWindowCount: 1,
+      pendingWindowCount: 0,
+      uniquePermitCount: 2,
+    });
+    expect(operations).toEqual([
+      "parent",
+      "Building Permit",
+      "Building Permit",
+      "Building Permit",
+      "Electrical Permit",
+    ]);
+    expect(searchOutcomeTimeouts).toEqual([
+      60_000, 90_000, 90_000, 90_000, 90_000,
+    ]);
+    checkpoint = JSON.parse(
+      await readFile(join(outputDirectory, "checkpoint.private.json"), "utf8"),
+    );
+    expect(checkpoint.shardPlans).toEqual({});
+    expect(checkpoint.completedWindows["20260831_20260831"]).toMatchObject({
+      captureMode: "record_type_shards",
+      recordCount: 2,
+      sourceRowCount: 2,
+    });
+  });
+
+  it("creates deterministic CSV windows and checkpointed inventory", async () => {
+    const outputDirectory = await mkdtemp(
+      join(tmpdir(), "broward-accela-csv-window-"),
+    );
+    temporaryDirectories.push(outputDirectory);
+    expect(createAccelaCsvDateWindows("2025-01-01", "2025-01-03", 2)).toEqual([
+      { startDate: "2025-01-01", endDate: "2025-01-02" },
+      { startDate: "2025-01-03", endDate: "2025-01-03" },
+    ]);
+    expect(
+      parseAccelaCsvWindowOptions([
+        "--source",
+        "hollywood",
+        "--start-date",
+        "2025-01-01",
+        "--end-date",
+        "2025-01-03",
+        "--max-windows",
+        "1",
+      ]),
+    ).toMatchObject({
+      sourceKey: "hollywood",
+      windowDays: 30,
+      maxAttempts: 3,
+      maxPages: 200,
+      windowTimeoutMs: 120_000,
+      maxWindows: 1,
+    });
+    const options = {
+      sourceKey: "hollywood",
+      startDate: "2025-01-01",
+      endDate: "2025-01-03",
+      windowDays: 2,
+      delayMs: 1_000,
+      maxAttempts: 3,
+      maxPages: 200,
+      windowTimeoutMs: 120_000,
+      maxWindows: null,
+      outputDirectory,
+    };
+    let captureAttempts = 0;
+    let browserCreations = 0;
+    let browserCloses = 0;
+    const summary = await runAccelaCsvWindows(options, {
+      createBrowser: async () => {
+        browserCreations += 1;
+        return {
+          close: async () => {
+            browserCloses += 1;
+          },
+        };
+      },
+      captureWindow: async ({
+        source,
+        startDate,
+        endDate,
+        recordTypeShard,
+      }) => {
+        captureAttempts += 1;
+        if (captureAttempts === 1) {
+          throw new Error("transient export failure");
+        }
+        const [record] = parseBrowardAccelaCsvExport(
+          [
+            '"Date","Record Number","Record Type","Project Name","Address","Expiration Date","Status",',
+            `"01/01/2025","B-${startDate.replaceAll("-", "")}","Building Permit",,"100 TEST AVE",,"Open",`,
+          ].join("\n"),
+          source,
+          startDate,
+          endDate,
+        );
+        return {
+          startDate,
+          endDate,
+          sourceWindowKey: record.sourceWindowKey,
+          displayedTotal: 100,
+          displayedTotalCapped: true,
+          captureMode: "csv_export",
+          records: [record],
+          sourceRowCount: 1,
+          excludedNonPermitCount: 0,
+          duplicateRecordCount: 0,
+          pageCount: 1,
+          availableRecordTypes: [],
+          recordTypeShard,
+          rawCsv: "fixture",
+          rawSearchHtml: "<html>fixture</html>",
+          rawListPages: ["<html>fixture</html>"],
+        };
+      },
+      wait: async () => undefined,
+      random: () => 0,
+      now: () => "2026-08-31T19:00:00.000Z",
+    });
+    expect(summary).toMatchObject({
+      status: "complete",
+      completedWindowCount: 2,
+      uniquePermitCount: 2,
+      cappedDisplayedTotalWindowCount: 2,
+    });
+    expect(captureAttempts).toBe(3);
+    expect(browserCreations).toBe(2);
+    expect(browserCloses).toBe(2);
+    expect(
+      (
+        await readFile(
+          join(outputDirectory, "normalized-list.private.jsonl"),
+          "utf8",
+        )
+      )
+        .trim()
+        .split("\n"),
+    ).toHaveLength(2);
   });
 });

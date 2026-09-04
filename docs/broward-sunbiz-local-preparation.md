@@ -144,3 +144,49 @@ one emitted Broward registration, one cross-boundary outside registration, one
 unresolved registration, one non-candidate registration, and one invalid row.
 The integration test exercises a pause/resume cycle and a small generated ZIP.
 No quarterly archive is downloaded or published by the test or CLI.
+
+## Existing-Neon exact property matching (2026-08-31)
+
+The isolated Broward Neon branch already contains 4,532,582 normalized Sunbiz
+registrations and 9,062,823 registration-address roles from the official
+quarterly source. `scripts/match-broward-sunbiz-to-properties.mjs` therefore
+avoids rescanning the 12.6 million-row fixed-width archive.
+
+The matcher:
+
+1. uses this catalog's exact Broward ZIPs only as a candidate screen;
+2. compares the existing `normalized_address_hash` on Sunbiz and Broward
+   property addresses;
+3. accepts a match only when the hash resolves to exactly one Broward
+   property;
+4. stores the original address ID, matched canonical address ID, registration
+   ID, property ID, role, and hash in
+   `ingest_control.broward_sunbiz_property_matches`;
+5. repoints only the verified registration-address reference and marks it
+   `normalized_address_hash` / `exact`; and
+6. commits resumable 1,000-row chunks with immutable candidate hashes.
+
+Commands:
+
+```bash
+# Full dry-run
+npm run broward:sunbiz:match-properties -- \
+  --job-id broward-sunbiz-property-dry-run-20260831 \
+  --source-catalog docs/broward-sources.yaml \
+  --chunk-size 1000 \
+  --apply false
+
+# Full verified run
+npm run broward:sunbiz:match-properties -- \
+  --job-id broward-sunbiz-property-full-20260831 \
+  --source-catalog docs/broward-sources.yaml \
+  --chunk-size 1000 \
+  --apply true
+```
+
+Final result: 21,512 exact address-role matches, 12,432 distinct
+registrations, and 9,023 distinct Broward properties across 22 durable chunks.
+All 21,512 updates read back through direct property/address joins. The 460
+roles whose address hash maps to multiple Broward properties remain
+unmodified. This is verified property enrichment, not a claim that every
+ZIP-candidate Sunbiz entity is physically inside Broward.

@@ -3,11 +3,11 @@
 import { createHash } from "node:crypto";
 
 /**
- * @typedef {"click2gov" | "tyler_esuite" | "gov_easy" | "smartgov" | "opengov" | "communitycore" | "mgo_connect" | "egovplus" | "records_request"} BrowardMunicipalProtocol
+ * @typedef {"coconut_creek" | "click2gov" | "tyler_esuite" | "tyler_energov" | "gov_easy" | "smartgov" | "opengov" | "communitycore" | "mgo_connect" | "egovplus" | "records_request"} BrowardMunicipalProtocol
  */
 
 /**
- * @typedef {"anonymous" | "login_required" | "captcha_required" | "records_request"} BrowardMunicipalAccessMode
+ * @typedef {"anonymous" | "login_required" | "captcha_required" | "no_anonymous_search" | "records_request"} BrowardMunicipalAccessMode
  */
 
 /**
@@ -15,13 +15,13 @@ import { createHash } from "node:crypto";
  */
 
 /**
- * @typedef {"permit_number" | "address" | "folio"} BrowardMunicipalQueryKind
+ * @typedef {"permit_number" | "address" | "folio" | "record_type"} BrowardMunicipalQueryKind
  */
 
 /**
  * @typedef {object} BrowardMunicipalQuery
  * @property {BrowardMunicipalQueryKind} kind - Exact source field used for this lookup.
- * @property {string} value - Trimmed query text; folios are canonical uppercase 12-character strings.
+ * @property {string} value - Trimmed query text; folios are canonical uppercase 12-character strings and record types retain the source option identity.
  */
 
 /**
@@ -104,6 +104,7 @@ import { createHash } from "node:crypto";
  * @typedef {object} BrowardMunicipalSearchPage
  * @property {readonly BrowardMunicipalSearchReference[]} references - Source-order record references.
  * @property {number | string | null} nextPage - Next one-based page/cursor, or null when source pagination is complete.
+ * @property {number | null | undefined} [reportedCount] - Optional source-reported total for strict partition reconciliation.
  */
 
 /**
@@ -130,7 +131,7 @@ import { createHash } from "node:crypto";
 /**
  * @typedef {object} BrowardMunicipalAccessDecision
  * @property {"probe" | "skip"} action - Whether network search/detail work is allowed.
- * @property {"anonymous_certified" | "login_required" | "captcha_required" | "records_request" | "landing_only" | "blocked"} reason - Machine-readable access disposition.
+ * @property {"anonymous_certified" | "login_required" | "captcha_required" | "no_anonymous_search" | "records_request" | "landing_only" | "blocked"} reason - Machine-readable access disposition.
  * @property {string} note - Operator-facing explanation.
  */
 
@@ -214,7 +215,9 @@ export function validateMunicipalQueries(queries, maxQueries = MAX_QUERIES) {
   const normalized = [];
   const identities = new Set();
   for (const query of queries) {
-    if (!["permit_number", "address", "folio"].includes(query.kind)) {
+    if (
+      !["permit_number", "address", "folio", "record_type"].includes(query.kind)
+    ) {
       throw new Error(
         `Unsupported Broward municipal query kind: ${query.kind}`,
       );
@@ -298,6 +301,13 @@ export function decideMunicipalSourceAccess(config) {
     return {
       action: "skip",
       reason: "captcha_required",
+      note: config.accessNote,
+    };
+  }
+  if (config.accessMode === "no_anonymous_search") {
+    return {
+      action: "skip",
+      reason: "no_anonymous_search",
       note: config.accessNote,
     };
   }
@@ -480,6 +490,7 @@ export function renderMunicipalPermitJsonl(records) {
  * @param {unknown} [params.checkpoint] - Optional parsed checkpoint to resume.
  * @param {(query: BrowardMunicipalQuery, page: number | string) => Promise<BrowardMunicipalSearchPage>} params.fetchSearchPage - Protocol search/page transport and parser.
  * @param {(reference: BrowardMunicipalSearchReference, query: BrowardMunicipalQuery) => Promise<NormalizedBrowardMunicipalPermit>} params.fetchDetail - Protocol detail transport and parser.
+ * @param {(record: NormalizedBrowardMunicipalPermit) => Promise<void>} [params.onRecord] - Optional idempotent private record sink called before its checkpoint identity advances.
  * @param {(checkpoint: BrowardMunicipalCheckpoint) => Promise<void>} [params.onCheckpoint] - Optional local checkpoint sink.
  * @param {(milliseconds: number) => Promise<void>} [params.wait] - Injectable serialized delay.
  * @returns {Promise<BrowardMunicipalProbeResult>} Explicit skip or completed result.
@@ -491,6 +502,7 @@ export async function runBoundedMunicipalCapture({
   checkpoint: rawCheckpoint,
   fetchSearchPage,
   fetchDetail,
+  onRecord = async () => {},
   onCheckpoint = async () => {},
   wait = (milliseconds) =>
     new Promise((resolve) => {
@@ -602,6 +614,7 @@ export async function runBoundedMunicipalCapture({
           `Broward municipal detail identity mismatch for ${reference.permitNumber}`,
         );
       }
+      await onRecord(record);
       records.push(record);
       capturedSet.add(key);
       capturedRecordKeys = [...capturedSet].sort((left, right) =>

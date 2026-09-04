@@ -96,16 +96,34 @@ function collectLabeledFields($) {
   for (const rowElement of $("tr").toArray()) {
     const cells = $(rowElement).children("th,td").toArray();
     if (cells.length < 2) continue;
-    add(
-      readSelectionText($(cells[0])),
-      readText(
-        cells
-          .slice(1)
-          .map((cell) => readSelectionText($(cell)))
-          .filter((value) => value !== null)
-          .join(" "),
-      ),
-    );
+    if (cells.length % 2 === 0) {
+      for (let index = 0; index < cells.length; index += 2) {
+        const labelCell = cells[index];
+        const valueCell = cells[index + 1];
+        if (labelCell !== undefined && valueCell !== undefined) {
+          const value = $(valueCell);
+          add(
+            readSelectionText($(labelCell)),
+            value.hasClass("case-header-field-value")
+              ? readSelectionText(
+                  value.children().not(".case-header-status-badge"),
+                )
+              : readSelectionText(value),
+          );
+        }
+      }
+    } else {
+      add(
+        readSelectionText($(cells[0])),
+        readText(
+          cells
+            .slice(1)
+            .map((cell) => readSelectionText($(cell)))
+            .filter((value) => value !== null)
+            .join(" "),
+        ),
+      );
+    }
   }
   for (const termElement of $("dt").toArray()) {
     const term = $(termElement);
@@ -115,7 +133,7 @@ function collectLabeledFields($) {
     const label = $(labelElement);
     const targetId = label.attr("for");
     let value = null;
-    if (targetId !== undefined) {
+    if (targetId !== undefined && targetId.length > 0) {
       const target = $("[id]")
         .filter((_index, element) => $(element).attr("id") === targetId)
         .first();
@@ -124,18 +142,42 @@ function collectLabeledFields($) {
         readSelectionText(target) ??
         readSelectionText(label.parent().children().not(label));
     } else {
-      value = readSelectionText(label.parent().children().not(label));
+      value =
+        readSelectionText(label.next()) ??
+        readSelectionText(label.parent().children().not(label));
     }
     add(readSelectionText(label), value);
   }
   for (const labelElement of $(
-    ".field-label, .field_label, .detail-label, .control-label",
+    [
+      ".field-label",
+      ".field_label",
+      ".detail-label",
+      ".control-label",
+      ".case-header-field-label",
+      ".project-section-field-label",
+    ].join(", "),
   ).toArray()) {
     const label = $(labelElement);
+    const structuredValue = label.next(
+      ".case-header-field-value, .project-section-field-value, .field-value, .detail-value",
+    );
+    const caseHeaderValue = label.hasClass("case-header-field-label")
+      ? readSelectionText(
+          structuredValue.children().not(".case-header-status-badge"),
+        )
+      : null;
+    const adjacentValue = readSelectionText(label.next());
+    const parentFallback =
+      label.hasClass("field-label") || label.hasClass("field_label")
+        ? null
+        : readSelectionText(label.parent().children().not(label));
     add(
       readSelectionText(label),
-      readSelectionText(label.next()) ??
-        readSelectionText(label.parent().children().not(label)),
+      caseHeaderValue ??
+        readSelectionText(structuredValue) ??
+        adjacentValue ??
+        parentFallback,
     );
   }
   return fields;
@@ -168,7 +210,9 @@ function field(fields, aliases) {
  * @returns {string | null} ISO calendar date.
  */
 function parseSourceDate(value, fieldName) {
-  if (value === null || value === "") return null;
+  if (value === null || value === "" || /^(?:-\s*)+$/u.test(value)) {
+    return null;
+  }
   const match = /^(\d{1,2})[/-](\d{1,2})[/-](\d{2}|\d{4})$/u.exec(value);
   if (match === null) {
     throw new Error(`Invalid Broward municipal ${fieldName}: ${value}`);
@@ -223,23 +267,29 @@ function parseSourceNumber(value, fieldName) {
 function canonicalSourceUrl(config, href) {
   const searchUrl = new URL(config.searchUrl);
   const parsed = new URL(href, searchUrl);
-  const protocolPrefix =
-    config.protocol === "click2gov"
-      ? "/Click2GovBP/"
-      : config.protocol === "tyler_esuite"
-        ? searchUrl.pathname.slice(
-            0,
-            searchUrl.pathname.toLowerCase().indexOf("/esuite.permits/") +
-              "/eSuite.Permits/".length,
-          )
-        : config.protocol === "egovplus"
-          ? "/eGovPlus83/"
-          : config.protocol === "smartgov"
-            ? "/ApplicationPublic/"
-            : "/";
+  const protocolPrefixes =
+    config.protocol === "coconut_creek"
+      ? ["/sd/permit/"]
+      : config.protocol === "click2gov"
+        ? ["/Click2GovBP/"]
+        : config.protocol === "tyler_esuite"
+          ? [
+              searchUrl.pathname.slice(
+                0,
+                searchUrl.pathname.toLowerCase().indexOf("/esuite.permits/") +
+                  "/eSuite.Permits/".length,
+              ),
+            ]
+          : config.protocol === "egovplus"
+            ? ["/eGovPlus83/"]
+            : config.protocol === "smartgov"
+              ? ["/ApplicationPublic/", "/PermittingPublic/"]
+              : ["/"];
   if (
     parsed.origin !== searchUrl.origin ||
-    !parsed.pathname.toLowerCase().startsWith(protocolPrefix.toLowerCase()) ||
+    !protocolPrefixes.some((prefix) =>
+      parsed.pathname.toLowerCase().startsWith(prefix.toLowerCase()),
+    ) ||
     parsed.username !== "" ||
     parsed.password !== ""
   ) {
@@ -317,10 +367,10 @@ function dedupeReferences(references) {
  * contacts, and scheduling controls.
  *
  * @param {import("cheerio").CheerioAPI} $ - Parsed detail document.
- * @param {number} [maxInspections=100] - Hard row ceiling.
+ * @param {number} [maxInspections=1000] - Hard row ceiling.
  * @returns {readonly BrowardMunicipalInspection[]} Allow-listed inspection summaries.
  */
-function parseInspectionTables($, maxInspections = 100) {
+function parseInspectionTables($, maxInspections = 1_000) {
   /** @type {BrowardMunicipalInspection[]} */
   const inspections = [];
   for (const tableElement of $("table").toArray()) {
@@ -390,6 +440,177 @@ function parseInspectionTables($, maxInspections = 100) {
 }
 
 /**
+ * Read one allow-listed string from search-list provenance.
+ *
+ * @param {BrowardMunicipalSearchReference} reference - Parsed source reference.
+ * @param {string} key - Fixed allow-listed list field.
+ * @returns {string | null} Collapsed source value.
+ */
+function listField(reference, key) {
+  return readText(reference.listData[key]);
+}
+
+/**
+ * Parse the Coconut Creek legacy permit-status result table.
+ *
+ * The permit number is carried by a submit control rather than visible anchor
+ * text. Owner cells are deliberately ignored. A header-only result table is a
+ * reconciled empty response; a redirect back to the search form is rejected by
+ * the transport before this parser is called.
+ *
+ * @param {string} html - Official result HTML.
+ * @param {BrowardMunicipalJurisdictionConfig} config - Coconut Creek configuration.
+ * @param {object} [options] - Parser safety controls.
+ * @param {number} [options.maxRows=50] - Exclusive raw result-row ceiling.
+ * @returns {BrowardMunicipalSearchPage} Stable same-session result references.
+ */
+export function parseCoconutCreekSearchHtml(
+  html,
+  config,
+  { maxRows = 50 } = {},
+) {
+  if (config.protocol !== "coconut_creek") {
+    throw new Error(
+      "Coconut Creek parser received a different vendor protocol",
+    );
+  }
+  const $ = cheerio.load(html);
+  const title = readText($("title").text());
+  if (title === null || !/Permit Status.*Coconut Creek/iu.test(title)) {
+    throw new Error(
+      `Unexpected Coconut Creek result title: ${title ?? "(missing)"}`,
+    );
+  }
+  const table = $("table")
+    .filter((_index, element) => {
+      const headers = $(element)
+        .find("th")
+        .toArray()
+        .map((cell) => labelKey(readSelectionText($(cell)) ?? ""));
+      return (
+        headers.includes("permit") &&
+        headers.includes("status") &&
+        headers.includes("type") &&
+        headers.includes("address")
+      );
+    })
+    .first();
+  if (table.length === 0) {
+    throw new Error("Coconut Creek result response lacks the permit table");
+  }
+  const rows = table
+    .find("tr")
+    .toArray()
+    .filter(
+      (row) => $(row).find('input[name="btnsubmit"][value]').length === 1,
+    );
+  if (rows.length >= maxRows) {
+    throw new Error(
+      `Coconut Creek result row limit ${String(maxRows)} reached (${String(rows.length)})`,
+    );
+  }
+  /** @type {BrowardMunicipalSearchReference[]} */
+  const references = [];
+  for (const rowElement of rows) {
+    const row = $(rowElement);
+    const permitNumber = requireText(
+      readText(row.find('input[name="btnsubmit"]').attr("value")),
+      "Coconut Creek permit number",
+    );
+    if (!/^[A-Z0-9-]+$/iu.test(permitNumber)) {
+      throw new Error("Coconut Creek result has an invalid permit identity");
+    }
+    const values = mapResultRow($, row);
+    references.push({
+      sourceRecordId: permitNumber,
+      permitNumber,
+      detailUrl: canonicalSourceUrl(config, "permit_status_03.asp"),
+      sourcePage: 1,
+      listData: {
+        address: values.get("address") ?? null,
+        record_status: values.get("status") ?? null,
+        record_type: values.get("type") ?? null,
+      },
+    });
+  }
+  return { references: dedupeReferences(references), nextPage: null };
+}
+
+/**
+ * Parse one selected Coconut Creek status detail.
+ *
+ * The source exposes a compact status record rather than inspection history.
+ * Search-list status/type values are reconciled with the selected permit
+ * identity, while owner and payment fields are omitted.
+ *
+ * @param {string} html - Official selected-record HTML.
+ * @param {object} context - Search identity and provenance.
+ * @param {BrowardMunicipalJurisdictionConfig} context.config - Coconut Creek configuration.
+ * @param {BrowardMunicipalSearchReference} context.reference - Search reference selected in the same ASP session.
+ * @param {BrowardMunicipalQuery} context.query - Exact query that discovered the record.
+ * @returns {NormalizedBrowardMunicipalPermit} Reconciled status record.
+ */
+export function parseCoconutCreekDetailHtml(
+  html,
+  { config, reference, query },
+) {
+  if (config.protocol !== "coconut_creek") {
+    throw new Error(
+      "Coconut Creek parser received a different vendor protocol",
+    );
+  }
+  const $ = cheerio.load(html);
+  const title = readText($("title").text());
+  if (title === null || !/Permit Status.*Coconut Creek/iu.test(title)) {
+    throw new Error(
+      `Unexpected Coconut Creek detail title: ${title ?? "(missing)"}`,
+    );
+  }
+  const fields = collectLabeledFields($);
+  const permitNumber = requireText(
+    field(fields, ["Permit #", "Permit Number"]),
+    "Coconut Creek detail permit number",
+  );
+  if (permitNumber !== reference.permitNumber) {
+    throw new Error("Coconut Creek detail permit identity mismatch");
+  }
+  const recordType = listField(reference, "record_type");
+  const description = field(fields, ["Permit Desc", "Permit Description"]);
+  return {
+    source_system: config.sourceSystem,
+    source_protocol: "coconut_creek",
+    source_url: canonicalSourceUrl(config, reference.detailUrl),
+    source_search_url: config.searchUrl,
+    source_record_id: reference.sourceRecordId,
+    record_key: `${config.sourceSystem}:${reference.sourceRecordId}`,
+    jurisdiction: config.jurisdiction,
+    permit_number: permitNumber,
+    parcel_identifier: preserveMunicipalParcelIdentifier(
+      field(fields, ["Property ID", "Parcel ID"]),
+    ),
+    query_folio: query.kind === "folio" ? query.value : null,
+    work_location:
+      field(fields, ["Property Address"]) ?? listField(reference, "address"),
+    application_date: null,
+    permit_issue_date: null,
+    expiration_date: null,
+    record_status: listField(reference, "record_status"),
+    record_type: recordType,
+    project_description: description,
+    job_value: null,
+    inspections: [],
+    is_roof_permit: /\broof(?:ing)?\b/iu.test(
+      `${recordType ?? ""} ${description ?? ""}`,
+    ),
+    raw: {
+      source_page: reference.sourcePage,
+      query_kind: query.kind,
+      detail_contract: "same_anonymous_asp_session",
+    },
+  };
+}
+
+/**
  * Parse a Click2Gov client-side result table.
  *
  * One permit can appear repeatedly for owner/contractor names. Those contact
@@ -414,9 +635,16 @@ export function parseClick2GovSearchHtml(
   }
   const $ = cheerio.load(html);
   const title = readText($("title").text());
-  if (title === null || !/Click2Gov.*Select Permit Results/iu.test(title)) {
+  if (
+    title === null ||
+    !/(?:Click2Gov|Building Permits).*Select Permit Results/iu.test(title)
+  ) {
     const body = readSelectionText($("body")) ?? "";
-    if (/no matching|no permits found|no records found/iu.test(body)) {
+    if (
+      /no matching|no permits found|no records found|no results returned/iu.test(
+        body,
+      )
+    ) {
       return { references: [], nextPage: null };
     }
     throw new Error(
@@ -433,7 +661,7 @@ export function parseClick2GovSearchHtml(
           )
           .toArray().length > 0,
     );
-  if (rows.length > maxRows) {
+  if (rows.length >= maxRows) {
     throw new Error(
       `Click2Gov result row limit ${String(maxRows)} exceeded (${String(rows.length)})`,
     );
@@ -498,13 +726,17 @@ function normalizeClick2GovApplicationNumber(value) {
 export function parseClick2GovDetailHtml(html, { config, reference, query }) {
   const $ = cheerio.load(html);
   const title = requireText(readText($("title").text()), "Click2Gov title");
-  if (!/Click2Gov.*Status Detail/iu.test(title)) {
+  if (!/(?:Click2Gov|Building Permits).*Status Detail/iu.test(title)) {
     throw new Error(`Unexpected Click2Gov detail title: ${title}`);
   }
   const fields = collectLabeledFields($);
   const detailPermitNumber = normalizeClick2GovApplicationNumber(
     requireText(
-      field(fields, ["Application #", "Application Number"]),
+      field(fields, [
+        "Application #",
+        "Application Number",
+        "Permit (Application) Number",
+      ]),
       "Click2Gov detail application number",
     ),
   );
@@ -565,7 +797,8 @@ export function parseClick2GovDetailHtml(html, { config, reference, query }) {
  * Parse one Tyler/New World eSuite search page.
  *
  * Responsive markup can repeat the same detail anchor. Stable numeric permit
- * ids are deduplicated, while a bounded numbered next-page marker is retained.
+ * ids are deduplicated, while printable public permit/application identifiers
+ * retain legacy punctuation and spaces for strict detail reconciliation.
  *
  * @param {string} html - Official eSuite search response.
  * @param {BrowardMunicipalJurisdictionConfig} config - eSuite jurisdiction.
@@ -598,7 +831,16 @@ export function parseTylerEsuiteSearchHtml(
   for (const anchorElement of anchors) {
     const anchor = $(anchorElement);
     const permitNumber = readSelectionText(anchor);
-    if (permitNumber === null || !/^[A-Z0-9-]+$/iu.test(permitNumber)) continue;
+    if (
+      permitNumber === null ||
+      permitNumber.length > 100 ||
+      !/[A-Z0-9]/iu.test(permitNumber) ||
+      /[^\x20-\x7e]/u.test(permitNumber)
+    ) {
+      throw new Error(
+        "eSuite linked result lacks a bounded printable public identifier",
+      );
+    }
     const detailUrl = canonicalSourceUrl(config, anchor.attr("href") ?? "");
     const sourceRecordId = new URL(detailUrl).searchParams.get("id");
     if (sourceRecordId === null || !/^\d+$/u.test(sourceRecordId)) {
@@ -627,7 +869,16 @@ export function parseTylerEsuiteSearchHtml(
   const nextPageText =
     $(`a[data-page="${String(sourcePage + 1)}"]`).attr("data-page") ??
     $("a[rel='next']").attr("data-page") ??
-    null;
+    $("a[href*='__doPostBack']")
+      .toArray()
+      .map((element) => $(element).attr("href") ?? "")
+      .find((href) => href.includes(`Page$${String(sourcePage + 1)}`))
+      ?.match(/Page\$(\d+)/u)?.[1] ??
+    ($("a[href*='action=next']")
+      .toArray()
+      .some((element) => /^next$/iu.test(readSelectionText($(element)) ?? ""))
+      ? String(sourcePage + 1)
+      : null);
   const nextPage =
     nextPageText === null
       ? null
@@ -654,10 +905,19 @@ export function parseTylerEsuiteDetailHtml(html, { config, reference, query }) {
     throw new Error(`Unexpected eSuite detail title: ${title}`);
   }
   const fields = collectLabeledFields($);
-  const permitNumber = requireText(
-    field(fields, ["Permit #", "Permit Number"]),
-    "eSuite detail permit number",
-  );
+  const detailPermitNumber = field(fields, ["Permit #", "Permit Number"]);
+  const detailApplicationNumber = field(fields, [
+    "Application #",
+    "Application Number",
+  ]);
+  const permitNumber =
+    detailPermitNumber ??
+    requireText(
+      detailApplicationNumber,
+      "eSuite detail permit or application number",
+    );
+  const publicRecordKind =
+    detailPermitNumber === null ? "permit_application" : "permit";
   if (permitNumber !== reference.permitNumber) {
     throw new Error("eSuite detail permit identity mismatch");
   }
@@ -714,6 +974,7 @@ export function parseTylerEsuiteDetailHtml(html, { config, reference, query }) {
       source_page: reference.sourcePage,
       query_kind: query.kind,
       detail_contract: "same_anonymous_session",
+      public_record_kind: publicRecordKind,
     },
   };
 }
@@ -745,9 +1006,13 @@ export function parseSmartGovSearchHtml(
     );
   }
   const anchors = $(
-    'a[href*="/ApplicationPublic/"][href*="ApplicationDetail"], a[href*="/ApplicationPublic/Application/"]',
+    [
+      'a[href*="/ApplicationPublic/"][href*="ApplicationDetail"]',
+      'a[href*="/ApplicationPublic/Application/"]',
+      '.search-result-title a[onclick*="FormSupport.submitAction"][onclick*="Detail/"]',
+    ].join(", "),
   ).toArray();
-  if (anchors.length > maxRows) {
+  if (anchors.length >= maxRows) {
     throw new Error(
       `SmartGov result row limit ${String(maxRows)} exceeded (${String(anchors.length)})`,
     );
@@ -758,7 +1023,22 @@ export function parseSmartGovSearchHtml(
     const anchor = $(anchorElement);
     const permitNumber = readSelectionText(anchor);
     if (permitNumber === null) continue;
-    const detailUrl = canonicalSourceUrl(config, anchor.attr("href") ?? "");
+    const directHref = anchor.attr("href");
+    const detailAction = /Detail\/([A-Z0-9-]+)/iu.exec(
+      anchor.attr("onclick") ?? "",
+    );
+    const detailHref =
+      directHref !== undefined &&
+      directHref !== "#" &&
+      !directHref.toLowerCase().startsWith("javascript:")
+        ? directHref
+        : detailAction?.[1] === undefined
+          ? null
+          : `/PermittingPublic/PermitLandingPagePublic/Index/${detailAction[1]}`;
+    if (detailHref === null) {
+      throw new Error("SmartGov search result lacks a public detail identity");
+    }
+    const detailUrl = canonicalSourceUrl(config, detailHref);
     const pathParts = new URL(detailUrl).pathname.split("/").filter(Boolean);
     const sourceRecordId = pathParts.at(-1);
     if (
@@ -769,7 +1049,20 @@ export function parseSmartGovSearchHtml(
         `SmartGov detail link has invalid identity: ${detailUrl}`,
       );
     }
+    const resultItem = anchor.closest(".search-result-item");
+    const resultColumns = resultItem.children(".row").children("div");
+    const firstColumnValues = resultColumns
+      .eq(0)
+      .children("div")
+      .toArray()
+      .map((element) => readSelectionText($(element)));
+    const secondColumnValues = resultColumns
+      .eq(1)
+      .children("div")
+      .toArray()
+      .map((element) => readSelectionText($(element)));
     const rowValues = mapResultRow($, anchor.closest("tr"));
+    const statusDisplay = firstColumnValues[1] ?? null;
     references.push({
       sourceRecordId,
       permitNumber,
@@ -777,24 +1070,54 @@ export function parseSmartGovSearchHtml(
       sourcePage,
       listData: {
         address:
-          rowValues.get("site address") ?? rowValues.get("address") ?? null,
+          rowValues.get("site address") ??
+          rowValues.get("address") ??
+          secondColumnValues[0] ??
+          null,
         record_status:
-          rowValues.get("process status") ?? rowValues.get("status") ?? null,
+          rowValues.get("process status") ??
+          rowValues.get("status") ??
+          readText(statusDisplay?.replace(/,\s*\d{1,2}\/\d{1,2}\/\d{4}$/u, "")),
         record_type:
-          rowValues.get("application type") ?? rowValues.get("type") ?? null,
+          rowValues.get("application type") ??
+          rowValues.get("type") ??
+          firstColumnValues[0] ??
+          null,
       },
     });
   }
   const nextPageText =
     $(`a[data-page="${String(sourcePage + 1)}"]`).attr("data-page") ??
     $("a[rel='next']").attr("data-page") ??
+    ($("a[onclick*='gotoPage']")
+      .toArray()
+      .some((element) =>
+        new RegExp(`gotoPage\\(\\s*${String(sourcePage)}\\s*\\)`, "u").test(
+          $(element).attr("onclick") ?? "",
+        ),
+      )
+      ? String(sourcePage + 1)
+      : null) ??
     null;
+  const resultText = readSelectionText($("#search-results")) ?? "";
+  const reportedMatch = /([\d,]+)\s+results\b/iu.exec(resultText);
+  const reportedCount =
+    reportedMatch?.[1] === undefined
+      ? null
+      : Number(reportedMatch[1].replaceAll(",", ""));
+  if (
+    reportedCount !== null &&
+    (!Number.isSafeInteger(reportedCount) || reportedCount < references.length)
+  ) {
+    throw new Error("SmartGov source reported an invalid result total");
+  }
   return {
     references: dedupeReferences(references),
     nextPage:
       nextPageText !== null && /^\d+$/u.test(nextPageText)
         ? Number(nextPageText)
         : null,
+    reportedCount,
   };
 }
 
@@ -819,17 +1142,21 @@ export function parseSmartGovDetailHtml(html, { config, reference, query }) {
   }
   const fields = collectLabeledFields($);
   const permitNumber = requireText(
-    field(fields, ["Application Number", "Permit Number"]),
+    field(fields, ["Application Number", "Permit Number", "Record Number"]),
     "SmartGov application number",
   );
   if (permitNumber !== reference.permitNumber) {
     throw new Error("SmartGov detail application identity mismatch");
   }
-  const recordType = field(fields, ["Application Type", "Type"]);
+  const recordType =
+    field(fields, ["Application Type", "Permit Type", "Type"]) ??
+    listField(reference, "record_type");
   const description = field(fields, [
     "Permit Project Name",
     "Project Name",
     "Description",
+    "Give your project a name",
+    "Describe the purpose of the project",
   ]);
   return {
     source_system: config.sourceSystem,
@@ -844,20 +1171,23 @@ export function parseSmartGovDetailHtml(html, { config, reference, query }) {
       field(fields, ["Parcel Number", "Parcel"]),
     ),
     query_folio: query.kind === "folio" ? query.value : null,
-    work_location: field(fields, ["Site Address", "Address"]),
+    work_location: field(fields, ["Site Address", "Address", "Location"]),
     application_date: parseSourceDate(
-      field(fields, ["Submitted On", "Application Date"]),
+      field(fields, ["Submitted On", "Submitted", "Application Date"]),
       "SmartGov submitted date",
     ),
     permit_issue_date: parseSourceDate(
-      field(fields, ["Issued On", "Issued Date"]),
+      field(fields, ["Issued On", "Issued", "Issued Date"]),
       "SmartGov issued date",
     ),
     expiration_date: parseSourceDate(
-      field(fields, ["Expiration Date", "Expires"]),
+      field(fields, ["Expiration Date", "Expires", "Application Expires"]),
       "SmartGov expiration date",
     ),
-    record_status: field(fields, ["Process Status", "Status"]),
+    record_status:
+      field(fields, ["Process Status", "Status"]) ??
+      readSelectionText($(".case-header-status-badge").first()) ??
+      listField(reference, "record_status"),
     record_type: recordType,
     project_description: description,
     job_value: parseSourceNumber(
@@ -898,7 +1228,7 @@ export function parseEgovPlusSearchHtml(html, config, { maxRows = 50 } = {}) {
   if (anchors.length === 0 && /No matching records found/iu.test(bodyText)) {
     return { references: [], nextPage: null };
   }
-  if (anchors.length > maxRows) {
+  if (anchors.length >= maxRows) {
     throw new Error(
       `eGovPLUS result row limit ${String(maxRows)} exceeded (${String(anchors.length)})`,
     );

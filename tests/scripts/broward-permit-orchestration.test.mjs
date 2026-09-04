@@ -20,6 +20,15 @@ import {
   mapBrowardPermitToDonphanRow,
 } from "../../scripts/broward-permit-query-artifact.mjs";
 import {
+  buildAccelaPermitUpsertValues,
+  buildMunicipalPermitUpsertValues,
+  buildPermitUpsertValues,
+  parsePermitLoadOptions,
+  readNormalizedAccelaPermitRecords,
+  readNormalizedMunicipalPermitRecords,
+  readNormalizedPermitRecords,
+} from "../../scripts/load-broward-permit-pilot-to-neon.mjs";
+import {
   dedupeBrowardPermitPilotRecords,
   parseBrowardPermitPilotOptions,
   readBrowardPermitPilotFolios,
@@ -27,6 +36,17 @@ import {
   runBrowardPermitPilot,
   verifyBrowardPermitStatusTarget,
 } from "../../scripts/run-broward-permit-pilot.mjs";
+import {
+  createWarmCitizenserveBrowserPool,
+  failureCooldownDelayMs,
+  normalizeMigratedPermitItem,
+  parseSupportedPermitOptions,
+  processByRouteWithConcurrency,
+  readBcsSummaryRecordCount,
+  readJurisdictionKeys,
+  runNode,
+  supportedPermitClientConfig,
+} from "../../scripts/run-broward-supported-permit-ingest.mjs";
 import {
   parseDonphanToolResult,
   parseDonphanValidationOptions,
@@ -98,6 +118,599 @@ function permitRecord(overrides = {}) {
   };
 }
 
+/**
+ * Build the complete BCS shape consumed by the Neon permit loader.
+ *
+ * @returns {Record<string, unknown>} Complete normalized public permit record.
+ */
+function permitLoadRecord() {
+  return {
+    ...permitRecord(),
+    source_search_url: "https://dpepp.broward.org/BCS/Default.aspx",
+    source_list_url:
+      "https://dpepp.broward.org/BCS/Default.aspx?PossePresentation=ParcelPermitList",
+    source_folio_number: "0123456",
+    issuing_jurisdiction: "LAUDERDALE-BY-THE-SEA",
+    work_location: "218 E COMMERCIAL BLVD",
+    legal_description: "PUBLIC LEGAL DESCRIPTION",
+    contractor_name: "PUBLIC CONTRACTOR",
+    contractor_license: "PUBLIC-LICENSE",
+    building_use: "COMMERCIAL",
+    present_use: "OFFICE",
+    proposed_use: "OFFICE",
+    square_footage: 1_250,
+    occupancy_type: "BUSINESS",
+    construction_type: "TYPE II",
+    occupant_load: 10,
+    finish_floor_above_road: 1.5,
+    finish_floor_above_sea_level: 8.2,
+    is_roof_permit: false,
+    inspections: [
+      {
+        source_url: "https://dpepp.broward.org/BCS/inspection/1",
+        source_object_id: "1",
+        inspection_type: "BUILDING FINAL",
+        requested_date: "2005-05-03",
+        result: "Passed",
+        completed_date: "2005-05-04",
+      },
+    ],
+    raw: {
+      search_method: "ParcelID",
+      reference_number: "REF-1",
+      list_contractor: "PUBLIC CONTRACTOR",
+      detail_page_title: "Permit",
+    },
+  };
+}
+
+describe("Broward permit Neon pilot loader", () => {
+  it("builds exact parent-linked permit values and latest inspection evidence", () => {
+    const values = buildPermitUpsertValues(
+      /** @type {Parameters<typeof buildPermitUpsertValues>[0]} */ (
+        permitLoadRecord()
+      ),
+      {
+        propertyId: "11111111-1111-4111-8111-111111111111",
+        parcelId: "22222222-2222-4222-8222-222222222222",
+      },
+    );
+    expect(values).toMatchObject({
+      propertyId: "11111111-1111-4111-8111-111111111111",
+      parcelId: "22222222-2222-4222-8222-222222222222",
+      parcelIdentifier: "494318013550",
+      permitNumber: "04-07545",
+      improvementAction: "permit_record",
+      finalInspectionDate: "2005-05-04",
+      estimatedSqFt: 1_250,
+    });
+    expect(values.moreDetails).toMatchObject({
+      issuing_jurisdiction: "LAUDERDALE-BY-THE-SEA",
+      contractor_license: "PUBLIC-LICENSE",
+      source_object_id: "15703657",
+    });
+    expect(values.sourceRecordHash).toMatch(/^[a-f0-9]{64}$/u);
+  });
+
+  it("requires a unique reconciled input and an exact optional count", async () => {
+    expect(
+      parsePermitLoadOptions([
+        "--input",
+        "pilot.jsonl",
+        "--expected-records",
+        "73",
+        "--accela-input",
+        "accela.jsonl",
+        "--expected-accela-records",
+        "14",
+        "--municipal-input",
+        "tyler.jsonl",
+        "--municipal-input",
+        "citizenserve.jsonl",
+        "--expected-municipal-records",
+        "17",
+      ]),
+    ).toEqual({
+      inputPath: "pilot.jsonl",
+      expectedRecords: 73,
+      includeBcs: true,
+      accelaInputPath: "accela.jsonl",
+      expectedAccelaRecords: 14,
+      municipalInputPaths: ["tyler.jsonl", "citizenserve.jsonl"],
+      expectedMunicipalRecords: 17,
+    });
+    const directory = await createTemporaryDirectory();
+    const inputPath = join(directory, "permits.private.jsonl");
+    const record = permitLoadRecord();
+    await writeFile(
+      inputPath,
+      `${JSON.stringify(record)}\n${JSON.stringify(record)}\n`,
+    );
+    await expect(readNormalizedPermitRecords(inputPath)).rejects.toThrow(
+      /duplicate key/u,
+    );
+  });
+
+  it("maps bounded Accela records without inventing dates", async () => {
+    const record = {
+      schemaVersion: "permit-harvest.accela.v1",
+      source: "Accela",
+      sourceSystem: "broward_plantation_accela_permits",
+      jurisdiction: "Plantation",
+      retrievedAt: "2026-08-31T06:00:00Z",
+      sourceUrl: "https://aca.plantation.org/permit/1",
+      recordNumber: "B22-03630",
+      recordType: "Building",
+      recordStatus: "Closed",
+      workLocation: "100 TEST AVE",
+      parcelIdentifier: "504108BJ0140",
+      sourceParcelIdentifier: "504108BJ0140",
+      applicant: null,
+      licensedProfessional: null,
+      projectDescription: "PUBLIC PROJECT",
+      moreDetails: { Type: "Building" },
+      moreDetailsRawText: null,
+      inspectionsRawText: null,
+      completedInspections: [],
+      processingStatusRawText: null,
+      documentLinks: [],
+      relatedLinks: [],
+      rawText: "",
+      sourceSearchResult: { recordNumber: "B22-03630" },
+      idempotencyKey: "broward_plantation_accela_permits:B22-03630",
+      provenance: { searchMethod: "parcel" },
+    };
+    const directory = await createTemporaryDirectory();
+    const inputPath = join(directory, "accela.private.jsonl");
+    await writeFile(inputPath, `${JSON.stringify(record)}\n`);
+    await expect(
+      readNormalizedAccelaPermitRecords(inputPath),
+    ).resolves.toMatchObject({
+      records: [expect.objectContaining({ recordNumber: "B22-03630" })],
+      sourceSha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+    });
+    const values = buildAccelaPermitUpsertValues(
+      /** @type {Parameters<typeof buildAccelaPermitUpsertValues>[0]} */ (
+        record
+      ),
+      {
+        propertyId: "11111111-1111-4111-8111-111111111111",
+        parcelId: "22222222-2222-4222-8222-222222222222",
+      },
+    );
+    expect(values).toMatchObject({
+      sourceSystem: "broward_plantation_accela_permits",
+      permitNumber: "B22-03630",
+      parcelIdentifier: "504108BJ0140",
+      improvementAction: "permit_record",
+      permitIssueDate: null,
+      applicationReceivedDate: null,
+    });
+  });
+
+  it("reconciles and maps bounded Tyler/Citizenserve permit records", async () => {
+    const record = {
+      source_system: "broward_pembroke_pines_tyler_permits",
+      source_vendor: "tyler_energov_civic_access",
+      source_url: "https://example.test/permit/1",
+      source_record_id: "1",
+      record_key: "broward_pembroke_pines_tyler_permits:1",
+      city: "Pembroke Pines",
+      permit_number: "22-08581",
+      parcel_identifier: "513914101320",
+      work_location: "470 SW 198 TER",
+      permit_issue_date: "2022-10-01",
+      application_date: "2022-09-01",
+      expiration_date: null,
+      finalized_date: "2023-01-01",
+      record_status: "Complete",
+      record_type: "Building",
+      work_class: "Alteration",
+      project_description: "PUBLIC PROJECT",
+      square_feet: 500,
+      job_value: 25_000,
+      is_roof_permit: false,
+      provenance: { query_kind: "folio" },
+      raw: { source: "public" },
+    };
+    const directory = await createTemporaryDirectory();
+    const inputPath = join(directory, "municipal.private.jsonl");
+    await writeFile(inputPath, `${JSON.stringify(record)}\n`);
+    await expect(
+      readNormalizedMunicipalPermitRecords([inputPath]),
+    ).resolves.toMatchObject({
+      records: [expect.objectContaining({ permit_number: "22-08581" })],
+      sourceSha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+    });
+    const values = buildMunicipalPermitUpsertValues(
+      /** @type {Parameters<typeof buildMunicipalPermitUpsertValues>[0]} */ (
+        record
+      ),
+      {
+        propertyId: "11111111-1111-4111-8111-111111111111",
+        parcelId: "22222222-2222-4222-8222-222222222222",
+      },
+    );
+    expect(values).toMatchObject({
+      sourceSystem: "broward_pembroke_pines_tyler_permits",
+      permitNumber: "22-08581",
+      applicationReceivedDate: "2022-09-01",
+      permitIssueDate: "2022-10-01",
+      finalInspectionDate: null,
+      estimatedJobValue: 25_000,
+      estimatedSqFt: 500,
+    });
+    expect(values.moreDetails).toMatchObject({
+      source_vendor: "tyler_energov_civic_access",
+      finalized_date: "2023-01-01",
+    });
+  });
+});
+
+describe("Broward supported-route permit ingest", () => {
+  it("keeps the control session alive and bounds network-silent queries", () => {
+    expect(supportedPermitClientConfig("postgresql://example.test/db")).toEqual(
+      expect.objectContaining({
+        connectionString: "postgresql://example.test/db",
+        keepAlive: true,
+        keepAliveInitialDelayMillis: 10_000,
+        query_timeout: 120_000,
+        statement_timeout: 120_000,
+      }),
+    );
+  });
+
+  it("reconciles the exact BCS child summary field and property identity", () => {
+    const summary = {
+      event: "broward_bcs_permit_probe_completed",
+      sourceSystem: "broward_county_bcs_posse_permits",
+      parcelCount: 1,
+      roofOnly: false,
+      normalizedRecordCount: 7,
+      observations: [
+        {
+          parcelIdentifier: "PRIVATE",
+          normalizedRecordCount: 7,
+          status: "records",
+        },
+      ],
+    };
+    expect(readBcsSummaryRecordCount(summary, "PRIVATE", false)).toBe(7);
+    expect(() =>
+      readBcsSummaryRecordCount(
+        {
+          ...summary,
+          observations: [
+            {
+              parcelIdentifier: "DIFFERENT",
+              normalizedRecordCount: 7,
+            },
+          ],
+        },
+        "PRIVATE",
+        false,
+      ),
+    ).toThrow(/identity changed/u);
+    expect(() =>
+      readBcsSummaryRecordCount(
+        {
+          ...summary,
+          normalizedRecordCount: 6,
+        },
+        "PRIVATE",
+        false,
+      ),
+    ).toThrow(/do not reconcile/u);
+  });
+
+  it("caps total concurrency and requires a stable job ID", () => {
+    expect(
+      parseSupportedPermitOptions([
+        "--job-id",
+        "broward-permits-supported-pilot-20260831",
+        "--limit",
+        "30",
+        "--concurrency",
+        "4",
+        "--max-attempts",
+        "3",
+        "--max-items",
+        "2",
+        "--jurisdictions",
+        "unincorporated-broward,lazy-lake",
+        "--migrate-from-job",
+        "broward-permits-supported-full-20260831",
+      ]),
+    ).toEqual({
+      jobId: "broward-permits-supported-pilot-20260831",
+      limit: 30,
+      concurrency: 4,
+      maxAttempts: 3,
+      maxItems: 2,
+      workDirectory: "downloads/broward/supported-permit-ingest",
+      scope: "all",
+      jurisdictionKeys: ["lazy-lake", "unincorporated-broward"],
+      migrateFromJobId: "broward-permits-supported-full-20260831",
+      browserReuse: "enabled",
+    });
+    expect(() =>
+      parseSupportedPermitOptions([
+        "--job-id",
+        "broward-permits-supported",
+        "--concurrency",
+        "5",
+      ]),
+    ).toThrow(/through 4/u);
+    expect(() =>
+      parseSupportedPermitOptions(["--job-id", "unscoped-run"]),
+    ).toThrow(/broward-permits-/u);
+    expect(
+      parseSupportedPermitOptions([
+        "--job-id",
+        "broward-permits-roofing-pilot-20260831",
+        "--scope",
+        "roofing",
+      ]).scope,
+    ).toBe("roofing");
+    expect(
+      parseSupportedPermitOptions([
+        "--job-id",
+        "broward-permits-supported-pilot-20260831",
+        "--browser-reuse",
+        "disabled",
+      ]).browserReuse,
+    ).toBe("disabled");
+    expect(() =>
+      parseSupportedPermitOptions([
+        "--job-id",
+        "broward-permits-supported-pilot-20260831",
+        "--browser-reuse",
+        "unbounded",
+      ]),
+    ).toThrow(/enabled or disabled/u);
+    expect(() => readJurisdictionKeys("plantation,plantation")).toThrow(
+      /unique implemented/u,
+    );
+    expect(failureCooldownDelayMs(1)).toBe(5 * 60_000);
+    expect(failureCooldownDelayMs(5)).toBe(4 * 60 * 60_000);
+  });
+
+  it("migrates only exact current seed identities and extends finite failures", () => {
+    const candidate = {
+      folio: "PRIVATE",
+      parcelHash: "a".repeat(64),
+      situsAddress: "PRIVATE",
+      jurisdictionKey: "lazy-lake",
+      adapterKey: BROWARD_BCS_ADAPTER_KEY,
+    };
+    expect(
+      normalizeMigratedPermitItem(
+        {
+          parcel_hash: candidate.parcelHash,
+          jurisdiction_key: candidate.jurisdictionKey,
+          adapter_key: candidate.adapterKey,
+          status: "failed_exhausted",
+          record_count: 0,
+          attempt_count: 3,
+          error_class: "source_or_load_error",
+        },
+        new Map([[candidate.parcelHash, candidate]]),
+        5,
+      ),
+    ).toMatchObject({
+      status: "failed",
+      attemptCount: 3,
+      recordCount: 0,
+    });
+    expect(() =>
+      normalizeMigratedPermitItem(
+        {
+          parcel_hash: "b".repeat(64),
+          jurisdiction_key: candidate.jurisdictionKey,
+          adapter_key: candidate.adapterKey,
+          status: "records",
+          record_count: 1,
+          attempt_count: 1,
+          error_class: null,
+        },
+        new Map([[candidate.parcelHash, candidate]]),
+        5,
+      ),
+    ).toThrow(/compatible/u);
+  });
+
+  it("does not let a waiting same-route item reserve a global worker", async () => {
+    const events = [];
+    const items = [
+      { route: "a", id: 1, delay: 30 },
+      { route: "a", id: 2, delay: 1 },
+      { route: "b", id: 1, delay: 1 },
+      { route: "c", id: 1, delay: 1 },
+    ];
+    let active = 0;
+    let maximumActive = 0;
+    const routeActive = new Set();
+    await processByRouteWithConcurrency(
+      items,
+      2,
+      (item) => item.route,
+      async (item) => {
+        expect(routeActive.has(item.route)).toBe(false);
+        routeActive.add(item.route);
+        active += 1;
+        maximumActive = Math.max(maximumActive, active);
+        events.push(`start:${item.route}:${String(item.id)}`);
+        await new Promise((resolvePromise) =>
+          setTimeout(resolvePromise, item.delay),
+        );
+        events.push(`end:${item.route}:${String(item.id)}`);
+        active -= 1;
+        routeActive.delete(item.route);
+      },
+    );
+    expect(maximumActive).toBe(2);
+    expect(events.indexOf("start:c:1")).toBeLessThan(events.indexOf("end:a:1"));
+    expect(events.indexOf("start:a:2")).toBeGreaterThan(
+      events.indexOf("end:a:1"),
+    );
+  });
+
+  it("reuses one healthy browser and serializes operations by tenant", async () => {
+    /** @type {import("puppeteer").Browser[]} */
+    const launched = [];
+    /** @type {import("puppeteer").Browser[]} */
+    const closed = [];
+    let active = 0;
+    let maximumActive = 0;
+    /** @type {(() => void) | null} */
+    let releaseFirst = null;
+    const pool = createWarmCitizenserveBrowserPool({
+      launchBrowser: async () => {
+        const browser = /** @type {import("puppeteer").Browser} */ (
+          /** @type {unknown} */ ({ identity: launched.length + 1 })
+        );
+        launched.push(browser);
+        return browser;
+      },
+      closeBrowser: async (browser) => {
+        closed.push(browser);
+      },
+      isConnected: () => true,
+      wallNow: () => 10_000,
+      monotonicNow: () => 5_000,
+    });
+    const first = pool.run("www6.citizenserve.com:117", async (browser) => {
+      active += 1;
+      maximumActive = Math.max(maximumActive, active);
+      await new Promise((resolvePromise) => {
+        releaseFirst = resolvePromise;
+      });
+      active -= 1;
+      return browser;
+    });
+    const second = pool.run("www6.citizenserve.com:117", async (browser) => {
+      active += 1;
+      maximumActive = Math.max(maximumActive, active);
+      active -= 1;
+      return browser;
+    });
+    while (releaseFirst === null) {
+      await new Promise((resolvePromise) => setImmediate(resolvePromise));
+    }
+    expect(launched).toHaveLength(1);
+    releaseFirst();
+    const [firstBrowser, secondBrowser] = await Promise.all([first, second]);
+    expect(firstBrowser).toBe(secondBrowser);
+    expect(maximumActive).toBe(1);
+    expect(pool.snapshot()).toEqual({
+      launches: 1,
+      reuses: 1,
+      invalidations: 0,
+    });
+    await pool.close();
+    expect(closed).toEqual([firstBrowser]);
+  });
+
+  it("invalidates warm state across suspension and source failure", async () => {
+    /** @type {import("puppeteer").Browser[]} */
+    const launched = [];
+    /** @type {import("puppeteer").Browser[]} */
+    const closed = [];
+    let wall = 10_000;
+    let monotonic = 5_000;
+    const pool = createWarmCitizenserveBrowserPool({
+      launchBrowser: async () => {
+        const browser = /** @type {import("puppeteer").Browser} */ (
+          /** @type {unknown} */ ({ identity: launched.length + 1 })
+        );
+        launched.push(browser);
+        return browser;
+      },
+      closeBrowser: async (browser) => {
+        closed.push(browser);
+      },
+      isConnected: () => true,
+      wallNow: () => wall,
+      monotonicNow: () => monotonic,
+      maxIdleMs: 300_000,
+      maxClockSkewMs: 30_000,
+      maxOperationWallMs: 600_000,
+    });
+    const first = await pool.run(
+      "www6.citizenserve.com:117",
+      async (browser) => browser,
+    );
+    wall += 120_000;
+    monotonic += 1_000;
+    const second = await pool.run(
+      "www6.citizenserve.com:117",
+      async (browser) => browser,
+    );
+    expect(second).not.toBe(first);
+    await expect(
+      pool.run("www6.citizenserve.com:117", async () => {
+        throw new Error("source failed");
+      }),
+    ).rejects.toThrow("source failed");
+    const third = await pool.run(
+      "www6.citizenserve.com:117",
+      async (browser) => browser,
+    );
+    expect(third).not.toBe(second);
+    expect(pool.snapshot()).toEqual({
+      launches: 3,
+      reuses: 1,
+      invalidations: 2,
+    });
+    await pool.close();
+    expect(closed).toHaveLength(3);
+  });
+
+  it("rejects a result completed across unsafe wall-clock movement", async () => {
+    let wall = 10_000;
+    let monotonic = 5_000;
+    const pool = createWarmCitizenserveBrowserPool({
+      launchBrowser: async () =>
+        /** @type {import("puppeteer").Browser} */ (
+          /** @type {unknown} */ ({ identity: 1 })
+        ),
+      closeBrowser: async () => undefined,
+      isConnected: () => true,
+      wallNow: () => wall,
+      monotonicNow: () => monotonic,
+      maxIdleMs: 300_000,
+      maxClockSkewMs: 30_000,
+      maxOperationWallMs: 600_000,
+    });
+    await expect(
+      pool.run("www6.citizenserve.com:117", async () => {
+        wall += 120_000;
+        monotonic += 1_000;
+        return "unsafe";
+      }),
+    ).rejects.toThrow(/unsafe clock movement/u);
+    expect(pool.snapshot()).toEqual({
+      launches: 1,
+      reuses: 0,
+      invalidations: 1,
+    });
+    await pool.close();
+  });
+
+  it("terminates a probe process group at its hard deadline", async () => {
+    const startedAt = Date.now();
+    const result = await runNode(
+      ["-e", "setTimeout(() => undefined, 60_000)"],
+      50,
+    );
+    expect(result).toMatchObject({
+      exitCode: -1,
+      timedOut: true,
+    });
+    expect(Date.now() - startedAt).toBeLessThan(5_000);
+  });
+});
+
 describe("Broward 32-jurisdiction permit registry", () => {
   it("registers every jurisdiction without treating BCS as countywide", () => {
     expect(BROWARD_PERMIT_JURISDICTIONS).toHaveLength(32);
@@ -153,7 +766,7 @@ describe("Broward 32-jurisdiction permit registry", () => {
     }
 
     expect(Object.keys(BROWARD_TYLER_CITIZENSERVE_JURISDICTIONS)).toHaveLength(
-      9,
+      10,
     );
     for (const config of Object.values(
       BROWARD_TYLER_CITIZENSERVE_JURISDICTIONS,
@@ -179,8 +792,10 @@ describe("Broward 32-jurisdiction permit registry", () => {
     }
 
     const municipalAdapterKeys = new Map([
+      ["coconut_creek", "coconut-creek-permit-status"],
       ["click2gov", "click2gov"],
       ["tyler_esuite", "tyler-esuite"],
+      ["tyler_energov", BROWARD_TYLER_CIVIC_ACCESS_ADAPTER_KEY],
       ["gov_easy", "gov-easy"],
       ["smartgov", "granicus-smartgov"],
       ["opengov", "opengov"],
@@ -189,7 +804,7 @@ describe("Broward 32-jurisdiction permit registry", () => {
       ["egovplus", "egovplus"],
       ["records_request", null],
     ]);
-    expect(BROWARD_MUNICIPAL_PERMIT_JURISDICTIONS).toHaveLength(13);
+    expect(BROWARD_MUNICIPAL_PERMIT_JURISDICTIONS).toHaveLength(14);
     for (const config of BROWARD_MUNICIPAL_PERMIT_JURISDICTIONS) {
       const jurisdiction = unifiedByKey.get(config.key.replaceAll("_", "-"));
       const routes =
@@ -207,27 +822,32 @@ describe("Broward 32-jurisdiction permit registry", () => {
       BROWARD_PERMIT_JURISDICTIONS.filter(
         (entry) => entry.primarySource.status === "implemented",
       ),
-    ).toHaveLength(15);
+    ).toHaveLength(24);
     expect(
       BROWARD_PERMIT_JURISDICTIONS.filter(
         (entry) => entry.primarySource.status === "adapter_unavailable",
       ),
-    ).toHaveLength(9);
+    ).toHaveLength(1);
     expect(
       BROWARD_PERMIT_JURISDICTIONS.filter(
         (entry) => entry.primarySource.status === "login_required",
       ),
-    ).toHaveLength(4);
+    ).toHaveLength(2);
+    expect(
+      BROWARD_PERMIT_JURISDICTIONS.filter(
+        (entry) => entry.primarySource.status === "no_anonymous_search",
+      ),
+    ).toHaveLength(1);
     expect(
       BROWARD_PERMIT_JURISDICTIONS.filter(
         (entry) => entry.primarySource.status === "captcha_required",
       ),
-    ).toHaveLength(2);
+    ).toHaveLength(3);
     expect(
       BROWARD_PERMIT_JURISDICTIONS.filter(
         (entry) => entry.primarySource.status === "custodian_only",
       ),
-    ).toHaveLength(2);
+    ).toHaveLength(1);
   });
 
   it("derives routes from BCPA situs city/address and never guesses BCS", () => {
@@ -272,6 +892,49 @@ describe("Broward 32-jurisdiction permit registry", () => {
         (entry) => entry.key === "north-lauderdale",
       )?.primarySource.status,
     ).toBe("login_required");
+    expect(
+      BROWARD_PERMIT_JURISDICTIONS.find(
+        (entry) => entry.key === "hillsboro-beach",
+      )?.primarySource.status,
+    ).toBe("captcha_required");
+    expect(
+      BROWARD_PERMIT_JURISDICTIONS.find(
+        (entry) => entry.key === "pembroke-park",
+      )?.primarySource,
+    ).toMatchObject({
+      status: "captcha_required",
+      reason: expect.stringMatching(
+        /user-authorized validated session.*never anonymous access/iu,
+      ),
+    });
+    expect(
+      BROWARD_PERMIT_JURISDICTIONS.find(
+        (entry) => entry.key === "deerfield-beach",
+      )?.primarySource.status,
+    ).toBe("no_anonymous_search");
+  });
+
+  it("keeps Sea Ranch BCS evidence supplemental and Sunrise anonymously implemented", () => {
+    const seaRanch = BROWARD_PERMIT_JURISDICTIONS.find(
+      (entry) => entry.key === "sea-ranch-lakes",
+    );
+    expect(seaRanch?.primarySource).toMatchObject({
+      status: "custodian_only",
+      coverageKind: "current",
+    });
+    expect(seaRanch?.supplementalSources).toEqual([
+      expect.objectContaining({
+        adapterKey: BROWARD_BCS_ADAPTER_KEY,
+        coverageKind: "supplemental",
+      }),
+    ]);
+    expect(
+      BROWARD_PERMIT_JURISDICTIONS.find((entry) => entry.key === "sunrise")
+        ?.primarySource,
+    ).toMatchObject({
+      adapterKey: BROWARD_TYLER_CIVIC_ACCESS_ADAPTER_KEY,
+      status: "implemented",
+    });
   });
 });
 
@@ -406,8 +1069,8 @@ describe("checkpointed local Broward permit pilot", () => {
       allRecordsAccountedFor: true,
       queryRowsMatchUniqueRecords: true,
       allJurisdictionsRegistered: true,
-      currentSourceJurisdictionsImplemented: 15,
-      currentSourceJurisdictionsBlocked: 17,
+      currentSourceJurisdictionsImplemented: 24,
+      currentSourceJurisdictionsBlocked: 8,
     });
     expect(first.acceptance).toEqual({
       localPilotPassed: true,

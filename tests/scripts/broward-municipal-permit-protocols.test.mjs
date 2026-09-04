@@ -21,6 +21,8 @@ import {
   normalizeOpenGovDetailPayload,
   parseClick2GovDetailHtml,
   parseClick2GovSearchHtml,
+  parseCoconutCreekDetailHtml,
+  parseCoconutCreekSearchHtml,
   parseEgovPlusDetailHtml,
   parseEgovPlusSearchHtml,
   parseOpenGovSearchPayload,
@@ -29,6 +31,18 @@ import {
   parseTylerEsuiteDetailHtml,
   parseTylerEsuiteSearchHtml,
 } from "../../scripts/permit-source-adapters/broward-municipal-protocols.mjs";
+import {
+  advanceSmartGovPage,
+  buildMunicipalBrowserUserAgent,
+  buildClick2GovSearchBody,
+  buildCoconutCreekSearchBody,
+  buildEgovPlusSearchBody,
+  buildSmartGovSearchBody,
+  isCoconutCreekEmptyResultRedirect,
+  parseMunicipalStreetAddress,
+  probeBoundedBrowardMunicipalPermits,
+} from "../../scripts/permit-source-adapters/broward-municipal-transport.mjs";
+import { parseBrowardMunicipalPilotOptions } from "../../scripts/run-broward-municipal-permit-pilot.mjs";
 
 const FIXTURE_ROOT = new URL(
   "../fixtures/broward-municipal-permits/",
@@ -36,6 +50,8 @@ const FIXTURE_ROOT = new URL(
 );
 
 const [
+  coconutCreekSearch,
+  coconutCreekDetail,
   clickSearch,
   clickDetail,
   esuiteSearch,
@@ -48,6 +64,8 @@ const [
   openGovDetail,
 ] = await Promise.all(
   [
+    "coconut-creek-search.html",
+    "coconut-creek-detail.html",
     "click2gov-search.html",
     "click2gov-detail.html",
     "esuite-search.html",
@@ -121,6 +139,7 @@ describe("Broward municipal permit jurisdiction routing", () => {
         (config) => config.jurisdiction,
       ),
     ).toEqual([
+      "Coconut Creek",
       "Pompano Beach",
       "Tamarac",
       "Margate",
@@ -141,15 +160,16 @@ describe("Broward municipal permit jurisdiction routing", () => {
       ),
     ).toEqual(
       new Set([
+        "coconut_creek",
         "click2gov",
         "tyler_esuite",
+        "tyler_energov",
         "gov_easy",
         "smartgov",
         "opengov",
         "communitycore",
         "mgo_connect",
         "egovplus",
-        "records_request",
       ]),
     );
   });
@@ -158,12 +178,13 @@ describe("Broward municipal permit jurisdiction routing", () => {
     const deerfield = getBrowardMunicipalPermitConfig("deerfield_beach");
     const sunrise = getBrowardMunicipalPermitConfig("sunrise");
     const davie = getBrowardMunicipalPermitConfig("davie");
+    const coconutCreek = getBrowardMunicipalPermitConfig("coconut_creek");
 
     expect(deerfield.supplementalRoutes).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          purpose: "current_permits_from_2025",
-          accessMode: "login_required",
+          purpose: "current_applicant_portal_from_2025",
+          accessMode: "no_anonymous_search",
           url: "https://deerfieldbeach.geocivix.com/secure/",
         }),
       ]),
@@ -172,6 +193,25 @@ describe("Broward municipal permit jurisdiction routing", () => {
       purpose: "new_2026_submissions",
       accessMode: "login_required",
     });
+    expect(coconutCreek).toMatchObject({
+      protocol: "coconut_creek",
+      accessMode: "anonymous",
+      probeStatus: "enabled",
+      capabilities: {
+        searchBy: ["permit_number", "address", "folio"],
+        pagination: "client_all",
+      },
+    });
+    expect(sunrise).toMatchObject({
+      sourceSystem: "broward_sunrise_tyler_permits",
+      protocol: "tyler_energov",
+      accessMode: "anonymous",
+      probeStatus: "enabled",
+      capabilities: {
+        searchBy: ["permit_number", "address", "folio"],
+        pagination: "numbered",
+      },
+    });
     expect(sunrise.supplementalRoutes.map((route) => route.purpose)).toEqual([
       "official_building_records_request_form",
       "city_clerk_public_records_custodian",
@@ -179,11 +219,12 @@ describe("Broward municipal permit jurisdiction routing", () => {
   });
 
   it("makes login, CAPTCHA, temporary availability, and records-request skips explicit", () => {
+    const pembrokePark = getBrowardMunicipalPermitConfig("pembroke_park");
     expect(
       decideMunicipalSourceAccess(
         getBrowardMunicipalPermitConfig("hillsboro_beach"),
       ).reason,
-    ).toBe("login_required");
+    ).toBe("captcha_required");
     expect(
       decideMunicipalSourceAccess(getBrowardMunicipalPermitConfig("parkland"))
         .reason,
@@ -193,11 +234,14 @@ describe("Broward municipal permit jurisdiction routing", () => {
         getBrowardMunicipalPermitConfig("deerfield_beach"),
       ).reason,
     ).toBe("captcha_required");
-    expect(
-      decideMunicipalSourceAccess(
-        getBrowardMunicipalPermitConfig("pembroke_park"),
-      ).reason,
-    ).toBe("captcha_required");
+    expect(decideMunicipalSourceAccess(pembrokePark).reason).toBe(
+      "captcha_required",
+    );
+    expect(pembrokePark).toMatchObject({
+      sourceSystem: "broward_pembroke_park_gov_easy_permits",
+      accessMode: "captcha_required",
+      probeStatus: "blocked",
+    });
     expect(
       decideMunicipalSourceAccess(
         getBrowardMunicipalPermitConfig("lauderdale_lakes"),
@@ -206,7 +250,7 @@ describe("Broward municipal permit jurisdiction routing", () => {
     expect(
       decideMunicipalSourceAccess(getBrowardMunicipalPermitConfig("sunrise"))
         .reason,
-    ).toBe("records_request");
+    ).toBe("anonymous_certified");
   });
 });
 
@@ -243,6 +287,210 @@ describe("Broward municipal folio and query safety", () => {
   });
 });
 
+describe("Broward municipal live transport form contracts", () => {
+  it("waits for SmartGov's zero-based AJAX page result replacement", async () => {
+    const numberedClick = vi.fn(async () => {});
+    const nextClick = vi.fn(async () => {});
+    const links = [
+      {
+        evaluate: async () => ({
+          onclick: "ApplicationSearchAdvancedResults.gotoPage(1)",
+          text: "2",
+        }),
+        click: numberedClick,
+      },
+      {
+        evaluate: async () => ({
+          onclick: "ApplicationSearchAdvancedResults.gotoPage(1)",
+          text: "",
+        }),
+        click: nextClick,
+      },
+    ];
+    const waitForFunction = vi.fn(async () => {});
+    const page = /** @type {import("puppeteer").Page} */ ({
+      $$: async () => links,
+      $eval: async () => "FormSupport.submitAction('Detail/FIXTURE-1')",
+      waitForFunction,
+    });
+
+    await advanceSmartGovPage(page, 2);
+
+    expect(numberedClick).toHaveBeenCalledOnce();
+    expect(nextClick).not.toHaveBeenCalled();
+    expect(waitForFunction).toHaveBeenCalledWith(
+      expect.any(Function),
+      {},
+      1,
+      "FormSupport.submitAction('Detail/FIXTURE-1')",
+    );
+  });
+
+  it("retains Chromium capabilities in the stable browser identity", () => {
+    expect(
+      buildMunicipalBrowserUserAgent(
+        "Mozilla/5.0 HeadlessChrome/140.0 Safari/537.36",
+      ),
+    ).toBe(
+      "Mozilla/5.0 HeadlessChrome/140.0 Safari/537.36 oracle-node-broward-permit/1.0",
+    );
+    expect(() => buildMunicipalBrowserUserAgent(" \n ")).toThrow(
+      "user agent is invalid",
+    );
+  });
+
+  it("accepts only Coconut Creek's fixed same-origin no-match redirect", () => {
+    const searchUrl =
+      "https://www3.coconutcreek.gov/sd/permit/permit_status_01.asp";
+    expect(
+      isCoconutCreekEmptyResultRedirect(
+        searchUrl,
+        new URL(`${searchUrl}?error_num=2&2=PRIVATE-FIXTURE-FOLIO`),
+      ),
+    ).toBe(true);
+    expect(
+      isCoconutCreekEmptyResultRedirect(
+        searchUrl,
+        new URL(`${searchUrl}?error_num=1`),
+      ),
+    ).toBe(false);
+    expect(
+      isCoconutCreekEmptyResultRedirect(
+        searchUrl,
+        new URL(
+          "https://example.test/sd/permit/permit_status_01.asp?error_num=2",
+        ),
+      ),
+    ).toBe(false);
+  });
+
+  it("parses bounded addresses and populates exactly one legacy search mode", () => {
+    expect(parseMunicipalStreetAddress("100 NE SAMPLE BLVD")).toEqual({
+      houseNumber: "100",
+      direction: "NE",
+      streetName: "SAMPLE",
+      suffix: "BLVD",
+    });
+    expect(() => parseMunicipalStreetAddress("SAMPLE ADDRESS")).toThrow(
+      "house number",
+    );
+
+    const coconutBody = buildCoconutCreekSearchBody({
+      kind: "folio",
+      value: "484205AB0010",
+    });
+    expect(Object.fromEntries(coconutBody)).toMatchObject({
+      permit_no: "",
+      parcel_id: "484205AB0010",
+      house_num: "",
+      street: "",
+    });
+    const egovBody = buildEgovPlusSearchBody({
+      kind: "address",
+      value: "5581 W OAKLAND PARK BLVD",
+    });
+    expect(Object.fromEntries(egovBody)).toMatchObject({
+      permit_no: "",
+      parcel_id: "",
+      house_num: "5581",
+      street: "W OAKLAND PARK BLVD",
+    });
+  });
+
+  it("keeps Click2Gov parcel segmentation disabled and SmartGov people fields blank", () => {
+    const clickLanding = `<!doctype html><form>
+      <input name="validatePermitView" value="true">
+      <input name="searchType" value="0">
+      <input name="OWASP_CSRFTOKEN" value="private-token">
+    </form>`;
+    const clickConfig = getBrowardMunicipalPermitConfig("pompano_beach");
+    const click = buildClick2GovSearchBody(clickLanding, clickConfig, {
+      kind: "permit_number",
+      value: "26-00001234",
+    });
+    expect(click.body.get("permit.appYear")).toBe("26");
+    expect(click.body.get("permit.appNumber")).toBe("1234");
+    expect(() =>
+      buildClick2GovSearchBody(clickLanding, clickConfig, {
+        kind: "folio",
+        value: "484205AB0010",
+      }),
+    ).toThrow("mapping is not certified");
+
+    const smartBody = buildSmartGovSearchBody(
+      '<input name="_conv" value="private-conversation">',
+      { kind: "folio", value: "484205AB0010" },
+    );
+    expect(smartBody.get("PrimaryParcel.Parcel.ParcelNumber")).toBe(
+      "484205AB0010",
+    );
+    expect(smartBody.get("PrimaryContact.Contact.DisplayName")).toBe("");
+    expect(smartBody.get("PrimaryContractor.Contact.DisplayName")).toBe("");
+  });
+
+  it("parses a local-only pilot without exposing query values in fixed metadata", () => {
+    const options = parseBrowardMunicipalPilotOptions([
+      "--jurisdiction",
+      "lauderhill",
+      "--folio",
+      "494123AB0020",
+      "--output-dir",
+      "downloads/private",
+      "--max-details",
+      "2",
+    ]);
+    expect(options).toMatchObject({
+      jurisdictionKey: "lauderhill",
+      query: { kind: "folio", value: "494123AB0020" },
+      limits: { maxQueries: 1, maxDetailPages: 2 },
+      requestTimeoutMs: 30_000,
+    });
+    expect(() =>
+      parseBrowardMunicipalPilotOptions([
+        "--jurisdiction",
+        "pompano_beach",
+        "--folio",
+        "484205AB0010",
+        "--output-dir",
+        "downloads/private",
+      ]),
+    ).toThrow("does not support");
+  });
+});
+
+describe("Coconut Creek legacy permit-status protocol", () => {
+  it("selects one session detail and omits owner/payment fields", () => {
+    const config = getBrowardMunicipalPermitConfig("coconut_creek");
+    const page = parseCoconutCreekSearchHtml(coconutCreekSearch, config);
+    expect(page.references).toHaveLength(1);
+    const sourceReference = page.references[0];
+    expect(sourceReference).toMatchObject({
+      sourceRecordId: "26001234",
+      permitNumber: "26001234",
+      listData: {
+        record_status: "Issued",
+        record_type: "Roof",
+      },
+    });
+    expect(sourceReference).toBeDefined();
+    const record = parseCoconutCreekDetailHtml(coconutCreekDetail, {
+      config,
+      reference: sourceReference,
+      query: { kind: "folio", value: "484205AB0010" },
+    });
+    expect(record).toMatchObject({
+      source_protocol: "coconut_creek",
+      permit_number: "26001234",
+      parcel_identifier: "484205AB0010",
+      query_folio: "484205AB0010",
+      record_status: "Issued",
+      record_type: "Roof",
+      is_roof_permit: true,
+    });
+    expect(JSON.stringify(record)).not.toMatch(/PRIVATE FIXTURE/iu);
+  });
+});
+
 describe("Click2Gov protocol", () => {
   it("deduplicates contact-expanded rows and strips session tokens", () => {
     const config = getBrowardMunicipalPermitConfig("pompano_beach");
@@ -262,6 +510,23 @@ describe("Click2Gov protocol", () => {
     expect(() =>
       parseClick2GovSearchHtml(clickSearch, config, { maxRows: 1 }),
     ).toThrow("result row limit");
+  });
+
+  it("treats the live generic no-results landing as terminal empty", () => {
+    const config = getBrowardMunicipalPermitConfig("pompano_beach");
+    const page = parseClick2GovSearchHtml(
+      `<!doctype html><html>
+        <head><title>Click2Gov Building Permit - Select Permit</title></head>
+        <body>
+          <div class="alert alert-danger">
+            There are errors, please see below. No results returned
+          </div>
+        </body>
+      </html>`,
+      config,
+    );
+
+    expect(page).toEqual({ references: [], nextPage: null });
   });
 
   it("captures bounded detail provenance while excluding owner/contact fields", () => {
@@ -302,6 +567,84 @@ describe("Click2Gov protocol", () => {
   });
 });
 
+describe("anonymous municipal transport orchestration", () => {
+  it("maintains Click2Gov cookies and persists a record before checkpoint advancement", async () => {
+    const landing = `<!doctype html><html><body><form action="selectpermit.html" method="post">
+      <input name="validatePermitView" value="true">
+      <input name="searchType" value="0">
+      <input name="OWASP_CSRFTOKEN" value="private-token-1">
+    </form></body></html>`;
+    const requests = [];
+    const fetchImpl = vi.fn(async (url, init = {}) => {
+      const parsedUrl = new URL(String(url));
+      const method = init.method ?? "GET";
+      requests.push({
+        method,
+        path: parsedUrl.pathname,
+        hasCookie: new Headers(init.headers).has("cookie"),
+      });
+      if (method === "GET" && requests.length === 1) {
+        return new Response(landing, {
+          status: 200,
+          headers: { "Set-Cookie": "JSESSIONID=private-session-1; Path=/" },
+        });
+      }
+      if (method === "POST") {
+        return new Response(clickSearch, {
+          status: 200,
+          headers: { "Set-Cookie": "JSESSIONID=private-session-2; Path=/" },
+        });
+      }
+      return new Response(clickDetail, { status: 200 });
+    });
+    const durableEvents = [];
+    const result = await probeBoundedBrowardMunicipalPermits({
+      config: getBrowardMunicipalPermitConfig("pompano_beach"),
+      queries: [{ kind: "permit_number", value: "26-00001234" }],
+      limits: {
+        maxQueries: 1,
+        maxSearchPages: 1,
+        maxResults: 1,
+        maxDetailPages: 1,
+        delayMs: 1_000,
+      },
+      dependencies: { fetchImpl },
+      wait: async () => {},
+      onRecord: async (record) => {
+        durableEvents.push(`record:${record.record_key}`);
+      },
+      onCheckpoint: async (checkpoint) => {
+        durableEvents.push(
+          `checkpoint:${String(checkpoint.capturedRecordKeys.length)}`,
+        );
+      },
+    });
+
+    expect(result.status).toBe("completed");
+    expect(result.records).toHaveLength(1);
+    expect(requests).toEqual([
+      {
+        method: "GET",
+        path: "/Click2GovBP/selectpermit.html",
+        hasCookie: false,
+      },
+      {
+        method: "POST",
+        path: "/Click2GovBP/selectpermit.html",
+        hasCookie: true,
+      },
+      {
+        method: "GET",
+        path: "/Click2GovBP/selectpermit.html",
+        hasCookie: true,
+      },
+    ]);
+    expect(durableEvents[0]).toMatch(/^record:/u);
+    expect(durableEvents[1]).toBe("checkpoint:1");
+    expect(durableEvents.at(-1)).toBe("checkpoint:1");
+  });
+});
+
 describe("Tyler eSuite protocol", () => {
   it("deduplicates responsive links and retains numbered pagination", () => {
     const config = getBrowardMunicipalPermitConfig("davie");
@@ -318,6 +661,53 @@ describe("Tyler eSuite protocol", () => {
         record_type: "E-Fire Alarm",
       },
     });
+  });
+
+  it("recognizes the source sequential Next postback as the next numbered page", () => {
+    const config = getBrowardMunicipalPermitConfig("davie");
+    const sequential = esuiteSearch.replace(
+      '<a data-page="2" href="#">2</a>',
+      '<a href="javascript:WebForm_DoPostBackWithOptions(new WebForm_PostBackOptions(&quot;pager&quot;, &quot;&quot;, false, &quot;&quot;, &quot;AdvancedSearch.aspx?action=next&quot;, false, true))">Next</a>',
+    );
+    expect(
+      parseTylerEsuiteSearchHtml(sequential, config, { sourcePage: 3 })
+        .nextPage,
+    ).toBe(4);
+  });
+
+  it("retains linked legacy identifiers containing punctuation and spaces", () => {
+    const config = getBrowardMunicipalPermitConfig("dania_beach");
+    const legacyIdentifiers = esuiteSearch.replace(
+      "</tbody>",
+      `<tr>
+        <td>Revision</td>
+        <td><a href="../ContractorPermitDetailsPage/ContractorPermitDetails.aspx?id=400069">APP. 2026/0042</a></td>
+        <td>PRIVATE APPLICATION COLUMN</td><td>Pending</td><td>PRIVATE ADDRESS</td>
+      </tr>
+      <tr>
+        <td>Cancellation</td>
+        <td><a href="../ContractorPermitDetailsPage/ContractorPermitDetails.aspx?id=400070">LEGACY PERMIT 7</a></td>
+        <td>PRIVATE APPLICATION COLUMN</td><td>Pending</td><td>PRIVATE ADDRESS</td>
+      </tr></tbody>`,
+    );
+
+    const page = parseTylerEsuiteSearchHtml(legacyIdentifiers, config);
+
+    expect(page.references).toHaveLength(3);
+    expect(page.references.map((reference) => reference.permitNumber)).toEqual([
+      "2026-00004503",
+      "APP. 2026/0042",
+      "LEGACY PERMIT 7",
+    ]);
+  });
+
+  it("fails closed when a linked eSuite row has no public identifier", () => {
+    const config = getBrowardMunicipalPermitConfig("davie");
+    const blankIdentifier = esuiteSearch.replace(">2026-00004503</a", "></a");
+
+    expect(() => parseTylerEsuiteSearchHtml(blankIdentifier, config)).toThrow(
+      "bounded printable public identifier",
+    );
   });
 
   it("normalizes same-session details and bounded inspection outcomes", () => {
@@ -350,10 +740,73 @@ describe("Tyler eSuite protocol", () => {
           result: "Pass",
         },
       ],
+      raw: {
+        public_record_kind: "permit",
+      },
     });
     expect(JSON.stringify(record)).not.toMatch(
       /PRIVATE FIXTURE OWNER|private-fixture|555-0111|PRIVATE FIXTURE COMMENT/,
     );
+  });
+
+  it("preserves an unissued eSuite application under its stable vendor identity", () => {
+    const config = getBrowardMunicipalPermitConfig("dania_beach");
+    const sourceReference = parseTylerEsuiteSearchHtml(esuiteSearch, config)
+      .references[0];
+    expect(sourceReference).toBeDefined();
+    const applicationOnlyDetail = esuiteDetail
+      .replace(
+        `<dt>Permit #</dt>
+        <dd>2026-00004503</dd>`,
+        `<dt>Permit #</dt>
+        <dd></dd>`,
+      )
+      .replace("Permit Issued on 06/23/2026", "Application Submitted");
+
+    const record = parseTylerEsuiteDetailHtml(applicationOnlyDetail, {
+      config,
+      reference: sourceReference,
+      query: { kind: "record_type", value: "1" },
+    });
+
+    expect(record).toMatchObject({
+      source_record_id: "400068",
+      record_key: `${config.sourceSystem}:400068`,
+      permit_number: "2026-00004503",
+      permit_issue_date: null,
+      record_status: "Application Submitted",
+      raw: {
+        public_record_kind: "permit_application",
+      },
+    });
+  });
+
+  it("rejects an eSuite application fallback that differs from its list identity", () => {
+    const config = getBrowardMunicipalPermitConfig("davie");
+    const sourceReference = parseTylerEsuiteSearchHtml(esuiteSearch, config)
+      .references[0];
+    expect(sourceReference).toBeDefined();
+    const conflictingApplicationDetail = esuiteDetail
+      .replace(
+        `<dt>Permit #</dt>
+        <dd>2026-00004503</dd>`,
+        `<dt>Permit #</dt>
+        <dd></dd>`,
+      )
+      .replace(
+        `<dt>Application #</dt>
+        <dd>2026-00004503</dd>`,
+        `<dt>Application #</dt>
+        <dd>DIFFERENT-APPLICATION</dd>`,
+      );
+
+    expect(() =>
+      parseTylerEsuiteDetailHtml(conflictingApplicationDetail, {
+        config,
+        reference: sourceReference,
+        query: { kind: "record_type", value: "1" },
+      }),
+    ).toThrow("identity mismatch");
   });
 });
 
@@ -381,6 +834,88 @@ describe("SmartGov and eGovPLUS HTML protocols", () => {
       is_roof_permit: true,
     });
     expect(JSON.stringify(record)).not.toContain("PRIVATE FIXTURE CONTACT");
+  });
+
+  it("parses live-style SmartGov result cards and landing-page detail labels", () => {
+    const config = getBrowardMunicipalPermitConfig("lighthouse_point");
+    const search = `<!doctype html><html><head>
+      <title>City of Lighthouse Point Public Portal</title></head><body>
+      <div id="search-results">21 results
+        <div class="search-result-item">
+          <div class="search-result-title">
+            <a href="javascript:void(0)" onclick="FormSupport.submitAction( 'Detail/APP-7788' );">BLD26-0012</a>
+          </div>
+          <div class="row">
+            <div><div>ROOF</div><div>Issued, 8/10/2026</div></div>
+            <div><div>2200 NE 38TH ST</div><div>LIGHTHOUSE POINT, FL</div></div>
+            <div><div>OMITTED CONTRACTOR</div><div>OMITTED LICENSE</div></div>
+          </div>
+        </div>
+        <a href="#" onclick="ApplicationSearchAdvancedResults.gotoPage(1)">2</a>
+      </div></body></html>`;
+    const page = parseSmartGovSearchHtml(search, config);
+    expect(page).toMatchObject({
+      nextPage: 2,
+      reportedCount: 21,
+      references: [
+        {
+          sourceRecordId: "APP-7788",
+          permitNumber: "BLD26-0012",
+          listData: {
+            address: "2200 NE 38TH ST",
+            record_status: "Issued",
+            record_type: "ROOF",
+          },
+        },
+      ],
+    });
+    expect(page.references[0]?.detailUrl).toBe(
+      "https://ci-lighthousepoint-fl.smartgovcommunity.com/PermittingPublic/PermitLandingPagePublic/Index/APP-7788",
+    );
+
+    const detail = `<!doctype html><html><head>
+      <title>City of Lighthouse Point Public Portal</title></head><body>
+      <table><tr>
+        <td class="case-header-field-label">Record Number</td>
+        <td class="case-header-field-value">
+          <span class="m-r-sm">BLD26-0012</span>
+          <div class="case-header-status-badge issued">Issued</div>
+        </td>
+      </tr></table>
+      <div><span class="project-section-field-label">Location</span><span class="project-section-field-value">2200 NE 38TH ST</span></div>
+      <div><span class="project-section-field-label">Submitted</span><span class="project-section-field-value">08/01/2026</span></div>
+      <div><span class="project-section-field-label">Issued</span><span class="project-section-field-value">08/10/2026</span></div>
+      <div><span class="project-section-field-label">Application Expires</span><span class="project-section-field-value">08/10/2027</span></div>
+      <div><span class="project-section-field-label">Describe the purpose of the project</span><span class="project-section-field-value">RE-ROOF</span></div>
+      </body></html>`;
+    const record = parseSmartGovDetailHtml(detail, {
+      config,
+      reference: page.references[0],
+      query: { kind: "record_type", value: "ROOF" },
+    });
+    expect(record).toMatchObject({
+      permit_number: "BLD26-0012",
+      work_location: "2200 NE 38TH ST",
+      application_date: "2026-08-01",
+      permit_issue_date: "2026-08-10",
+      expiration_date: "2027-08-10",
+      record_status: "Issued",
+      record_type: "ROOF",
+      project_description: "RE-ROOF",
+    });
+    const unissuedRecord = parseSmartGovDetailHtml(
+      detail.replace(
+        '<span class="project-section-field-value">08/10/2026</span>',
+        '<span class="project-section-field-value">- -</span>',
+      ),
+      {
+        config,
+        reference: page.references[0],
+        query: { kind: "record_type", value: "ROOF" },
+      },
+    );
+    expect(unissuedRecord.permit_issue_date).toBeNull();
+    expect(JSON.stringify(record)).not.toContain("OMITTED CONTRACTOR");
   });
 
   it("normalizes eGovPLUS details without owner, reviewer, or inspector data", () => {
@@ -415,6 +950,46 @@ describe("SmartGov and eGovPLUS HTML protocols", () => {
         },
       ],
     });
+    const additionalInspectionRows = Array.from(
+      { length: 100 },
+      (_value, index) => `<tr>
+        <td>${String(index + 2)}</td>
+        <td>BUILDING FOLLOW-UP</td>
+        <td>02-20-2026</td>
+        <td>02-20-2026</td>
+        <td>Completed</td>
+        <td>Passed</td>
+        <td>PRIVATE FIXTURE INSPECTOR</td>
+      </tr>`,
+    ).join("");
+    const largeInspectionRecord = parseEgovPlusDetailHtml(
+      egovPlusDetail.replace("</tbody>", `${additionalInspectionRows}</tbody>`),
+      {
+        config,
+        reference: sourceReference,
+        query: { kind: "folio", value: "494123AB0020" },
+      },
+    );
+    expect(largeInspectionRecord.inspections).toHaveLength(101);
+    const blankDateRecord = parseEgovPlusDetailHtml(
+      egovPlusDetail.replace(
+        `<th>Application Date</th>
+        <td>02-02-2026</td>`,
+        `<td class="field_label">Application Date</td>
+        <td class="field_data"></td>
+        <td class="field_label">Operator</td>
+        <td class="field_data">PRIVATE FIXTURE OPERATOR</td>`,
+      ),
+      {
+        config,
+        reference: sourceReference,
+        query: { kind: "folio", value: "494123AB0020" },
+      },
+    );
+    expect(blankDateRecord.application_date).toBeNull();
+    expect(JSON.stringify(blankDateRecord)).not.toContain(
+      "PRIVATE FIXTURE OPERATOR",
+    );
     expect(JSON.stringify(record)).not.toMatch(
       /PRIVATE FIXTURE OWNER|PRIVATE FIXTURE INSPECTOR|555-0123/,
     );
@@ -500,14 +1075,14 @@ describe("reusable bounded capture and checkpoints", () => {
       nextPage: 1,
       completed: true,
       seenReferenceKeys: [
-        "pompano_beach_click2gov_permits:1",
-        "pompano_beach_click2gov_permits:2",
-        "pompano_beach_click2gov_permits:3",
+        "broward_pompano_beach_click2gov_permits:1",
+        "broward_pompano_beach_click2gov_permits:2",
+        "broward_pompano_beach_click2gov_permits:3",
       ],
       capturedRecordKeys: [
-        "pompano_beach_click2gov_permits:1",
-        "pompano_beach_click2gov_permits:2",
-        "pompano_beach_click2gov_permits:3",
+        "broward_pompano_beach_click2gov_permits:1",
+        "broward_pompano_beach_click2gov_permits:2",
+        "broward_pompano_beach_click2gov_permits:3",
       ],
     });
     expect(checkpoints).toHaveLength(5);
@@ -524,8 +1099,8 @@ describe("reusable bounded capture and checkpoints", () => {
     const initial = createMunicipalCheckpoint(config, queries);
     const partial = {
       ...initial,
-      seenReferenceKeys: ["pompano_beach_click2gov_permits:1"],
-      capturedRecordKeys: ["pompano_beach_click2gov_permits:1"],
+      seenReferenceKeys: ["broward_pompano_beach_click2gov_permits:1"],
+      capturedRecordKeys: ["broward_pompano_beach_click2gov_permits:1"],
     };
     const details = vi.fn(async (sourceReference) =>
       buildNormalizedRecord(config, sourceReference),
@@ -583,6 +1158,14 @@ describe("reusable bounded capture and checkpoints", () => {
     });
     expect(skipped.status).toBe("skipped");
     expect(skipped.access.reason).toBe("captcha_required");
+    const hillsboroSkipped = await runBoundedMunicipalCapture({
+      config: getBrowardMunicipalPermitConfig("hillsboro_beach"),
+      queries: [],
+      fetchSearchPage: search,
+      fetchDetail: detail,
+    });
+    expect(hillsboroSkipped.status).toBe("skipped");
+    expect(hillsboroSkipped.access.reason).toBe("captcha_required");
     expect(search).not.toHaveBeenCalled();
     expect(detail).not.toHaveBeenCalled();
   });

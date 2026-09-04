@@ -33,6 +33,7 @@ import { probeBoundedTylerCivicAccess } from "./permit-source-adapters/tyler-civ
  * @property {number} maxDetails - Detail-page ceiling.
  * @property {number} searchDelayMs - Delay between source search pages.
  * @property {number} detailDelayMs - Delay between source detail pages.
+ * @property {boolean} roofOnly - Whether result rows must explicitly identify roofing.
  */
 
 const USAGE = `Usage:
@@ -40,6 +41,7 @@ const USAGE = `Usage:
     --jurisdiction <key> (--folio <12-character-id> | --address <situs>) \\
     --output-dir <local-directory> [--max-pages 1] [--max-details 3] \\
     [--search-delay-ms 1500] [--detail-delay-ms 500]
+    [--roof-only]
 
 Jurisdictions:
 ${Object.values(BROWARD_PERMIT_JURISDICTIONS)
@@ -54,6 +56,7 @@ Safety:
   - At most 3 result pages and 10 details, serialized and rate-delayed.
   - Local mode-0600 checkpoint, private JSONL, and summary files only.
   - No AWS, queues, databases, publication, credentials, or login attempts.
+  - --roof-only filters result rows before detail requests.
 `;
 
 /**
@@ -110,10 +113,15 @@ export function parseOptions(args) {
   let maxDetails = 3;
   let searchDelayMs = 1_500;
   let detailDelayMs = 500;
+  let roofOnly = false;
 
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index];
     if (argument === "--help" || argument === "-h") return null;
+    if (argument === "--roof-only") {
+      roofOnly = true;
+      continue;
+    }
 
     if (argument === "--jurisdiction") {
       const parsed = readFollowingValue(args, index, argument);
@@ -216,6 +224,7 @@ export function parseOptions(args) {
     maxDetails,
     searchDelayMs,
     detailDelayMs,
+    roofOnly,
   };
 }
 
@@ -223,9 +232,14 @@ export function parseOptions(args) {
  * Execute one bounded local probe with atomic per-detail checkpointing.
  *
  * @param {BrowardMunicipalPermitProbeOptions} options - Validated CLI options.
+ * @param {{citizenserveBrowser?:import("puppeteer").Browser}} [dependencies={}]
+ *   Optional caller-owned warm resources. Supplying a browser changes only
+ *   Chromium process ownership; every query still follows the complete
+ *   rendered search, challenge check, detail reconciliation, and checkpoint
+ *   path.
  * @returns {Promise<Readonly<Record<string, unknown>>>} Local run summary.
  */
-export async function runProbe(options) {
+export async function runProbe(options, dependencies = {}) {
   const config = getBrowardPermitJurisdiction(options.jurisdictionKey);
   if (config.anonymousSearchCertified !== true) {
     throw new Error(config.skipReason ?? "Anonymous search is not certified");
@@ -249,6 +263,7 @@ export async function runProbe(options) {
     maxDetails: options.maxDetails,
     searchDelayMs: options.searchDelayMs,
     detailDelayMs: options.detailDelayMs,
+    roofOnly: options.roofOnly,
     checkpoint,
     onCheckpoint: async (
       /** @type {import("./permit-source-adapters/bounded-permit-common.mjs").PermitAdapterCheckpoint} */ nextCheckpoint,
@@ -267,6 +282,7 @@ export async function runProbe(options) {
             citizenserveInstallationId:
               requireCitizenserveInstallationId(config),
           },
+          browser: dependencies.citizenserveBrowser,
         });
 
   await writePrivateFile(
@@ -284,6 +300,7 @@ export async function runProbe(options) {
     officialSourceUrl: config.officialSourceUrl,
     portalBaseUrl: config.portalBaseUrl,
     coverageNote: config.coverageNote,
+    roofOnly: options.roofOnly,
     query: options.query,
     limits: {
       maxPages: options.maxPages,

@@ -27,6 +27,14 @@ Parameters:
     Description: Name for the property-first permit harvest SQS queue
     Type: String
     Default: elephant-oracle-node-property-first-permit-queue
+  BrowardPermitEnumerationQueueName:
+    Description: FIFO queue for jurisdiction-isolated Broward vendor-wide enumeration
+    Type: String
+    Default: elephant-oracle-node-broward-permit-enumeration.fifo
+  BrowardPermitEnumerationDeadLetterQueueName:
+    Description: FIFO dead-letter queue for Broward vendor-wide enumeration
+    Type: String
+    Default: elephant-oracle-node-broward-permit-enumeration-dlq.fifo
   PermitHarvestReservedConcurrency:
     Description: Reserved concurrency for all permit-harvest Lambda event sources; keep low because county portals are slow
     Type: Number
@@ -39,6 +47,12 @@ Parameters:
     Description: Max concurrent Lambda invocations from the property-first permit queue
     Type: Number
     Default: 10
+  BrowardPermitEnumerationMaximumConcurrency:
+    Description: Aggregate Broward enumeration concurrency; FIFO groups keep each tenant serial
+    Type: Number
+    Default: 4
+    MinValue: 2
+    MaxValue: 12
   PermitHarvestOutputPrefix:
     Description: S3 URI prefix for raw and extracted permit harvest artifacts
     Type: String
@@ -104,6 +118,35 @@ Resources:
         - Key: Environment
           Value: !Ref EnvironmentName
 
+  BrowardPermitEnumerationDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Ref BrowardPermitEnumerationDeadLetterQueueName
+      FifoQueue: true
+      ContentBasedDeduplication: true
+      MessageRetentionPeriod: 1209600
+      VisibilityTimeout: 900
+      SqsManagedSseEnabled: true
+      Tags:
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  BrowardPermitEnumerationQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Ref BrowardPermitEnumerationQueueName
+      FifoQueue: true
+      ContentBasedDeduplication: true
+      VisibilityTimeout: 5400
+      MessageRetentionPeriod: 1209600
+      SqsManagedSseEnabled: true
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt BrowardPermitEnumerationDeadLetterQueue.Arn
+        maxReceiveCount: 5
+      Tags:
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
   PermitHarvestWorkerRole:
     Type: AWS::IAM::Role
     Properties:
@@ -146,6 +189,7 @@ Resources:
                 Resource:
                   - !GetAtt PermitHarvestQueue.Arn
                   - !GetAtt PropertyFirstPermitQueue.Arn
+                  - !GetAtt BrowardPermitEnumerationQueue.Arn
               - !If
                 - HasWorkflowQueueArn
                 - Effect: Allow
@@ -193,6 +237,7 @@ Resources:
       Environment:
         Variables:
           PERMIT_HARVEST_QUEUE_URL: !Ref PermitHarvestQueue
+          BROWARD_PERMIT_ENUMERATION_QUEUE_URL: !Ref BrowardPermitEnumerationQueue
           PERMIT_HARVEST_OUTPUT_PREFIX: !Ref PermitHarvestOutputPrefix
           QUERY_DB_DATABASE_URL_SECRET_ARN: !Ref QueryDatabaseUrlSecretArn
       Tags:
@@ -221,6 +266,17 @@ Resources:
         MaximumConcurrency: !Ref PropertyFirstPermitMaximumConcurrency
       Enabled: true
 
+  BrowardPermitEnumerationWorkerEventSourceMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      EventSourceArn: !GetAtt BrowardPermitEnumerationQueue.Arn
+      FunctionName: !Ref PermitHarvestWorkerFunction
+      BatchSize: 1
+      MaximumBatchingWindowInSeconds: 0
+      ScalingConfig:
+        MaximumConcurrency: !Ref BrowardPermitEnumerationMaximumConcurrency
+      Enabled: false
+
 Outputs:
   PermitHarvestQueueUrl:
     Description: URL of the separate permit harvest SQS queue
@@ -234,6 +290,18 @@ Outputs:
   PropertyFirstPermitQueueArn:
     Description: ARN of the property-first permit harvest SQS queue
     Value: !GetAtt PropertyFirstPermitQueue.Arn
+  BrowardPermitEnumerationQueueUrl:
+    Description: FIFO queue URL for jurisdiction-isolated Broward enumeration
+    Value: !Ref BrowardPermitEnumerationQueue
+  BrowardPermitEnumerationQueueArn:
+    Description: FIFO queue ARN for jurisdiction-isolated Broward enumeration
+    Value: !GetAtt BrowardPermitEnumerationQueue.Arn
+  BrowardPermitEnumerationDeadLetterQueueUrl:
+    Description: FIFO dead-letter queue URL for Broward enumeration
+    Value: !Ref BrowardPermitEnumerationDeadLetterQueue
+  BrowardPermitEnumerationEventSourceMappingId:
+    Description: Disabled-by-default event source mapping for staged pilot enablement
+    Value: !Ref BrowardPermitEnumerationWorkerEventSourceMapping
   PermitHarvestDeadLetterQueueUrl:
     Description: URL of the permit harvest dead-letter queue
     Value: !Ref PermitHarvestDeadLetterQueue

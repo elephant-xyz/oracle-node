@@ -47,8 +47,8 @@ function snapshot(overrides: Partial<StatusSnapshot> = {}): StatusSnapshot {
       localPilotPassed: true,
       countyPermitComplete: false,
       registryJurisdictions: 32,
-      currentSourceImplemented: 15,
-      currentSourceBlocked: 17,
+      currentSourceImplemented: 24,
+      currentSourceBlocked: 8,
     },
     throughputAttempted: 30,
     throughputWindowSeconds: 600,
@@ -105,8 +105,8 @@ describe("aggregate dashboard status", () => {
         permitSourceAttempts: 2,
         uniquePermitRecords: 73,
         queryRows: 73,
-        currentSourceImplemented: 15,
-        currentSourceBlocked: 17,
+        currentSourceImplemented: 24,
+        currentSourceBlocked: 8,
       },
     });
   });
@@ -132,8 +132,8 @@ describe("aggregate dashboard status", () => {
           localPilotPassed: null,
           countyPermitComplete: null,
           registryJurisdictions: 32,
-          currentSourceImplemented: 15,
-          currentSourceBlocked: 17,
+          currentSourceImplemented: 24,
+          currentSourceBlocked: 8,
         },
       }),
       NOW_MS,
@@ -146,7 +146,7 @@ describe("aggregate dashboard status", () => {
       permitSourceAttempts: null,
       uniquePermitRecords: null,
       queryRows: null,
-      currentSourceBlocked: 17,
+      currentSourceBlocked: 8,
     });
   });
 

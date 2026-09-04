@@ -16,6 +16,9 @@ import {
   normalizeBrowardFolio,
 } from "./broward-folio.mjs";
 
+/** @type {15_000} Maximum wall time for one BCPA source request. */
+export const BROWARD_SOURCE_TIMEOUT_MS = 15_000;
+
 /**
  * @typedef {object} BrowardParcelEnvelope
  * @property {{ parcelInfok__BackingField?: unknown[] | null } | null} [d] - ASP.NET envelope.
@@ -46,6 +49,7 @@ export async function fetchBrowardParcelEnvelope(folio) {
       Referer: "https://web.bcpa.net/BcpaClient/search.aspx",
     },
     body: JSON.stringify(browardDetailRequestBody(folio)),
+    signal: AbortSignal.timeout(BROWARD_SOURCE_TIMEOUT_MS),
   });
   if (!response.ok) {
     throw new Error(

@@ -12,6 +12,7 @@ import {
   buildBrowardAccelaSearchKey,
   captureBrowardAccelaPermitDetail,
   createBrowardAccelaBrowser,
+  isBrowardAccelaRoofPermitCandidate,
   normalizeBrowardPermitFolio,
   readBrowardAccelaCheckpoint,
   readBrowardAccelaSource,
@@ -49,6 +50,7 @@ import {
  * @property {number} maxDetails - Maximum detail pages per jurisdiction/folio search.
  * @property {number} targetDelayMs - Minimum delay between jurisdiction/folio searches.
  * @property {number} detailDelayMs - Minimum delay between detail requests.
+ * @property {boolean} roofOnly - Whether search candidates must explicitly identify roofing.
  */
 
 const DEFAULT_OUTPUT_PATH =
@@ -108,6 +110,7 @@ Options:
   --max-details <1-25>        Detail pages per target. Default: 20
   --target-delay-ms <>=1000>  Delay between targets. Default: 1500
   --detail-delay-ms <>=250>   Delay between details. Default: 300
+  --roof-only                 Detail only list rows explicitly marked roofing
   --help                      Show this text.
 
 Safety and scope:
@@ -240,12 +243,17 @@ export function parseOptions(args) {
   let maxDetails = 20;
   let targetDelayMs = 1_500;
   let detailDelayMs = 300;
+  let roofOnly = false;
 
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index];
     if (argument === "--help" || argument === "-h") return null;
     if (argument === "--pilot") {
       pilot = true;
+      continue;
+    }
+    if (argument === "--roof-only") {
+      roofOnly = true;
       continue;
     }
     if (argument === "--target") {
@@ -325,6 +333,7 @@ export function parseOptions(args) {
     maxDetails,
     targetDelayMs,
     detailDelayMs,
+    roofOnly,
   };
 }
 
@@ -522,7 +531,9 @@ export async function runBrowardAccelaProbe(options) {
           });
           state.reportedTotal = searchResult.reportedTotal;
           state.excludedNonPermitCount = searchResult.excludedNonPermitCount;
-          state.permits = searchResult.permits;
+          state.permits = options.roofOnly
+            ? searchResult.permits.filter(isBrowardAccelaRoofPermitCandidate)
+            : searchResult.permits;
           state.searchCapturePaths = [];
           for (const page of searchResult.pages) {
             const capturePath = join(
@@ -672,6 +683,7 @@ export async function runBrowardAccelaProbe(options) {
     startedAt,
     completedAt: new Date().toISOString(),
     isCuratedPilot: options.isCuratedPilot,
+    roofOnly: options.roofOnly,
     publicAnonymousSearch: true,
     targetCount: options.targets.length,
     maxTargetsPerJurisdiction: MAX_TARGETS_PER_JURISDICTION,

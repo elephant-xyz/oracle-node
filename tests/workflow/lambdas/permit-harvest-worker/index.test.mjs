@@ -2,6 +2,42 @@ import { describe, expect, it } from "vitest";
 import { _private } from "../../../../workflow/lambdas/permit-harvest-worker/index.mjs";
 
 describe("permit harvest worker message helpers", () => {
+  it("validates Broward tenant windows and keeps split children in one source group", () => {
+    const message = _private.validateMessage({
+      type: "broward-accela-list-window",
+      version: 1,
+      jobId: "broward-permits-hollywood-20260831",
+      jurisdictionKey: "hollywood",
+      startDate: "2026-08-01",
+      endDate: "2026-08-30",
+      maxPages: 200,
+      splitThreshold: 100,
+      outputPrefix: "s3://example-bucket/permit-harvest",
+    });
+    expect(message).toMatchObject({
+      type: "broward-accela-list-window",
+      jurisdictionKey: "hollywood",
+    });
+    expect(_private.buildBrowardAccelaSplitMessages(message)).toEqual([
+      expect.objectContaining({
+        jurisdictionKey: "hollywood",
+        startDate: "2026-08-01",
+        endDate: "2026-08-15",
+      }),
+      expect.objectContaining({
+        jurisdictionKey: "hollywood",
+        startDate: "2026-08-16",
+        endDate: "2026-08-30",
+      }),
+    ]);
+    expect(() =>
+      _private.validateMessage({
+        ...message,
+        jurisdictionKey: "fort-lauderdale",
+      }),
+    ).toThrow(/date-enabled jurisdictionKey/u);
+  });
+
   it("builds Lee detail batches even for windows that may continue splitting", () => {
     const sourceMessage = {
       type: "lee-permit-list-window",

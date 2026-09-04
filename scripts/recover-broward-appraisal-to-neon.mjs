@@ -123,6 +123,17 @@ const DASHBOARD_PHASES = new Set([
  * @property {Readonly<Record<string, number>>} usageTypeCounts
  *   Aggregate verified-property counts by validated Lexicon usage type.
  *
+ * @typedef {Omit<ChunkResult, "preparedRows">} PreparedChunkResult
+ *
+ * @typedef {object} PreparedChunk
+ * @property {string} activeDirectory - Private disposable capture/transform directory.
+ * @property {string} canonicalDirectory - Stable local-URI artifact directory for this slot.
+ * @property {string} stageDirectory - Disposable query-db loader stage directory.
+ * @property {readonly SeedCandidate[]} candidates - Ordered official-seed candidates.
+ * @property {readonly { folio: string, canonicalPath: string }[]} artifacts
+ *   Classified query-data-only artifacts ready for mapping and loading.
+ * @property {PreparedChunkResult} result - Aggregate capture/transform outcomes.
+ *
  * @typedef {object} DurableCompletion
  * @property {Set<string>} loadedFolios
  *   Property identifiers already visible in Neon, including any interrupted partial load.
@@ -876,6 +887,41 @@ async function* streamPendingCandidates(
 }
 
 /**
+ * Group pending official-seed candidates into bounded ordered chunks.
+ *
+ * The source iterator remains the authority for deduplication. Grouping does
+ * not alter hashes or advance a checkpoint, so a prepared-but-uncommitted
+ * chunk is safely reconstructed after a restart.
+ *
+ * @param {string} seedPath - Full official GIS seed.
+ * @param {ReadonlySet<string>} completedHashes - Fully verified seed-key hashes.
+ * @param {ReadonlySet<string>} terminalHashes - Confirmed source-miss hashes.
+ * @param {number} chunkSize - Maximum candidates in each durable chunk.
+ * @returns {AsyncGenerator<readonly SeedCandidate[], void, void>}
+ *   Ordered, non-overlapping pending chunks.
+ */
+async function* streamPendingCandidateChunks(
+  seedPath,
+  completedHashes,
+  terminalHashes,
+  chunkSize,
+) {
+  /** @type {SeedCandidate[]} */
+  let chunk = [];
+  for await (const candidate of streamPendingCandidates(
+    seedPath,
+    completedHashes,
+    terminalHashes,
+  )) {
+    chunk.push(candidate);
+    if (chunk.length < chunkSize) continue;
+    yield chunk;
+    chunk = [];
+  }
+  if (chunk.length > 0) yield chunk;
+}
+
+/**
  * Write one bounded private seed without logging identifiers.
  *
  * @param {string} seedPath - Destination CSV.
@@ -1263,24 +1309,109 @@ async function commitChunkCheckpoint({
 }
 
 /**
- * Capture, warm-transform, load, verify, checkpoint, and clean one chunk.
+ * Convert a promise into an explicitly handled result.
  *
- * @param {object} params - Chunk dependencies.
- * @param {import("pg").Client} params.client - Verified Neon client.
- * @param {RecoveryOptions} params.options - Runtime paths and bounds.
- * @param {SeedStats} params.seedStats - Stable full-seed identity.
- * @param {readonly SeedCandidate[]} params.candidates - Bounded source rows.
- * @returns {Promise<ChunkResult>} Verified aggregate outcome.
+ * Preparation runs concurrently with the previous chunk's Neon load. Handling
+ * rejection immediately prevents an early producer failure from becoming an
+ * unhandled rejection while the current durable commit is still in flight.
+ *
+ * @template Value
+ * @param {Promise<Value>} promise - Concurrent preparation promise.
+ * @returns {Promise<
+ *   { ok: true, value: Value } | { ok: false, error: unknown }
+ * >} Settled preparation result.
  */
-async function processChunk({ client, options, seedStats, candidates }) {
-  const activeDirectory = path.join(options.workDirectory, "active-chunk");
+function settlePreparation(promise) {
+  return promise.then(
+    (value) => ({ ok: /** @type {const} */ (true), value }),
+    (error) => ({ ok: /** @type {const} */ (false), error }),
+  );
+}
+
+/**
+ * Process ordered chunks with at most one non-durable chunk prepared ahead.
+ *
+ * The next source/transform chunk begins only after the current preparation is
+ * complete and while the current chunk loads, verifies, and commits. Commit
+ * order remains identical to official seed order. The callback runs only after
+ * durable commit succeeds. If either stage fails, no later chunk is committed.
+ *
+ * @template Input
+ * @template Prepared
+ * @template Committed
+ * @param {object} params - Ordered two-stage pipeline dependencies.
+ * @param {AsyncIterable<readonly Input[]>} params.chunks - Ordered input chunks.
+ * @param {(chunk: readonly Input[], slotIndex: number) => Promise<Prepared>}
+ *   params.prepare - Capture/transform preparation for one of two private slots.
+ * @param {(prepared: Prepared) => Promise<Committed>} params.commit
+ *   Load, exact verification, and durable checkpoint stage.
+ * @param {(committed: Committed) => void | Promise<void>} params.afterCommit
+ *   In-memory bookkeeping and aggregate logging after durable commit.
+ * @returns {Promise<void>} Resolves after all chunks commit in order.
+ */
+export async function runOneAheadPipeline({
+  chunks,
+  prepare,
+  commit,
+  afterCommit,
+}) {
+  const iterator = chunks[Symbol.asyncIterator]();
+  let nextChunk = await iterator.next();
+  if (nextChunk.done === true) return;
+
+  let slotIndex = 0;
+  let current = /** @type {Prepared} */ (
+    await prepare(nextChunk.value, slotIndex)
+  );
+  while (true) {
+    nextChunk = await iterator.next();
+    const nextSlotIndex = slotIndex === 0 ? 1 : 0;
+    const nextPreparation =
+      nextChunk.done === true
+        ? null
+        : settlePreparation(prepare(nextChunk.value, nextSlotIndex));
+
+    let committed;
+    try {
+      committed = await commit(current);
+      await afterCommit(committed);
+    } catch (error) {
+      if (nextPreparation !== null) await nextPreparation;
+      throw error;
+    }
+
+    if (nextPreparation === null) return;
+    const settled = await nextPreparation;
+    if (!settled.ok) throw settled.error;
+    current = /** @type {Prepared} */ (settled.value);
+    slotIndex = nextSlotIndex;
+  }
+}
+
+/**
+ * Capture and warm-transform one chunk into a private pipeline slot.
+ *
+ * No database checkpoint advances here. A VM loss or later load failure leaves
+ * these candidates pending in Neon, so the next run safely recaptures them.
+ *
+ * @param {object} params - Preparation dependencies.
+ * @param {RecoveryOptions} params.options - Runtime paths and bounds.
+ * @param {readonly SeedCandidate[]} params.candidates - Bounded source rows.
+ * @param {number} params.slotIndex - Alternating zero/one private pipeline slot.
+ * @returns {Promise<PreparedChunk>} Classified private artifacts and aggregate outcomes.
+ */
+async function prepareChunk({ options, candidates, slotIndex }) {
+  const activeDirectory = path.join(
+    options.workDirectory,
+    `active-chunk-${String(slotIndex)}`,
+  );
   const ingestDirectory = path.join(
     activeDirectory,
     "query-data-only-ingestion",
   );
   const canonicalDirectory = path.join(
     options.workDirectory,
-    "canonical-artifacts",
+    `canonical-artifacts-${String(slotIndex)}`,
   );
   const stageDirectory = path.join(activeDirectory, "loader-stage");
   await rm(activeDirectory, { recursive: true, force: true });
@@ -1357,6 +1488,47 @@ async function processChunk({ client, options, seedStats, candidates }) {
     }
   }
 
+  return {
+    activeDirectory,
+    canonicalDirectory,
+    stageDirectory,
+    candidates,
+    artifacts,
+    result: {
+      attempted: candidates.length,
+      loaded: artifacts.length,
+      sourceMisses,
+      sourceErrors,
+      transformErrors,
+      loadedFolios,
+      terminalFolioHashes,
+      usageTypeCounts,
+    },
+  };
+}
+
+/**
+ * Load, verify, checkpoint, and clean one previously prepared chunk.
+ *
+ * All Neon source-key checks and the aggregate checkpoint remain serial and in
+ * official seed order. Cleanup happens only after the checkpoint transaction
+ * and dashboard projection succeed.
+ *
+ * @param {object} params - Durable commit dependencies.
+ * @param {import("pg").Client} params.client - Verified Neon control client.
+ * @param {RecoveryOptions} params.options - Runtime paths and safety bounds.
+ * @param {SeedStats} params.seedStats - Stable full-seed identity.
+ * @param {PreparedChunk} params.prepared - Private prepared chunk.
+ * @returns {Promise<ChunkResult>} Verified and durably checkpointed outcome.
+ */
+async function commitPreparedChunk({ client, options, seedStats, prepared }) {
+  const {
+    activeDirectory,
+    canonicalDirectory,
+    stageDirectory,
+    candidates,
+    artifacts,
+  } = prepared;
   let preparedRows = 0;
   let committedRows = 0;
   if (artifacts.length > 0) {
@@ -1379,7 +1551,7 @@ async function processChunk({ client, options, seedStats, candidates }) {
       committedRows = await verifyCommittedChunk(
         client,
         expected,
-        loadedFolios,
+        prepared.result.loadedFolios,
       );
       preparedRows = expected.preparedRows;
     } catch (error) {
@@ -1388,15 +1560,8 @@ async function processChunk({ client, options, seedStats, candidates }) {
     }
   }
   const result = {
-    attempted: candidates.length,
-    loaded: artifacts.length,
-    sourceMisses,
-    sourceErrors,
-    transformErrors,
+    ...prepared.result,
     preparedRows,
-    loadedFolios,
-    terminalFolioHashes,
-    usageTypeCounts,
   };
   await commitChunkCheckpoint({
     client,
@@ -1409,6 +1574,28 @@ async function processChunk({ client, options, seedStats, candidates }) {
   await rm(activeDirectory, { recursive: true, force: true });
   await rm(canonicalDirectory, { recursive: true, force: true });
   return result;
+}
+
+/**
+ * Capture, warm-transform, load, verify, checkpoint, and clean one chunk.
+ *
+ * Pilot mode uses this sequential wrapper. Full mode uses the same preparation
+ * and commit functions through `runOneAheadPipeline`.
+ *
+ * @param {object} params - Chunk dependencies.
+ * @param {import("pg").Client} params.client - Verified Neon client.
+ * @param {RecoveryOptions} params.options - Runtime paths and bounds.
+ * @param {SeedStats} params.seedStats - Stable full-seed identity.
+ * @param {readonly SeedCandidate[]} params.candidates - Bounded source rows.
+ * @returns {Promise<ChunkResult>} Verified aggregate outcome.
+ */
+async function processChunk({ client, options, seedStats, candidates }) {
+  const prepared = await prepareChunk({
+    options,
+    candidates,
+    slotIndex: 0,
+  });
+  return commitPreparedChunk({ client, options, seedStats, prepared });
 }
 
 /**
@@ -1632,49 +1819,43 @@ async function runFull({
   terminalHashes,
 }) {
   await requirePilotCheckpoint(client, options, seedStats);
-  /** @type {SeedCandidate[]} */
-  let chunk = [];
-  const flush = async () => {
-    if (chunk.length === 0) return;
-    const candidates = chunk;
-    chunk = [];
-    const result = await processChunk({
-      client,
-      options,
-      seedStats,
-      candidates,
-    });
-    for (const folio of result.loadedFolios) loadedFolios.add(folio);
-    for (const folio of result.loadedFolios) {
-      completedHashes.add(hashSeedKey(folio));
-    }
-    for (const hash of result.terminalFolioHashes) terminalHashes.add(hash);
-    console.log(
-      JSON.stringify({
-        event: "broward_recovery_chunk_committed",
-        mode: "full",
-        attempted: result.attempted,
-        loaded: result.loaded,
-        preparedRows: result.preparedRows,
-        sourceMisses: result.sourceMisses,
-        sourceErrors: result.sourceErrors,
-        transformErrors: result.transformErrors,
-        durableProperties: loadedFolios.size,
-        durableTerminalMisses: terminalHashes.size,
-        durableCompleted: loadedFolios.size + terminalHashes.size,
-        denominator: BROWARD_ROW_DENOMINATOR,
-      }),
-    );
-  };
-  for await (const candidate of streamPendingCandidates(
-    options.seedPath,
-    completedHashes,
-    terminalHashes,
-  )) {
-    chunk.push(candidate);
-    if (chunk.length >= options.chunkSize) await flush();
-  }
-  await flush();
+  await runOneAheadPipeline({
+    chunks: streamPendingCandidateChunks(
+      options.seedPath,
+      completedHashes,
+      terminalHashes,
+      options.chunkSize,
+    ),
+    prepare(candidates, slotIndex) {
+      return prepareChunk({ options, candidates, slotIndex });
+    },
+    commit(prepared) {
+      return commitPreparedChunk({ client, options, seedStats, prepared });
+    },
+    afterCommit(result) {
+      for (const folio of result.loadedFolios) loadedFolios.add(folio);
+      for (const folio of result.loadedFolios) {
+        completedHashes.add(hashSeedKey(folio));
+      }
+      for (const hash of result.terminalFolioHashes) terminalHashes.add(hash);
+      console.log(
+        JSON.stringify({
+          event: "broward_recovery_chunk_committed",
+          mode: "full",
+          attempted: result.attempted,
+          loaded: result.loaded,
+          preparedRows: result.preparedRows,
+          sourceMisses: result.sourceMisses,
+          sourceErrors: result.sourceErrors,
+          transformErrors: result.transformErrors,
+          durableProperties: loadedFolios.size,
+          durableTerminalMisses: terminalHashes.size,
+          durableCompleted: loadedFolios.size + terminalHashes.size,
+          denominator: BROWARD_ROW_DENOMINATOR,
+        }),
+      );
+    },
+  });
 }
 
 /**

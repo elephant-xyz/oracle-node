@@ -2,6 +2,7 @@
 
 import puppeteer from "puppeteer";
 
+import { createBrowardAccelaBrowser } from "./broward-accela.mjs";
 import {
   checkpointCapturedPermit,
   checkpointCompletedSearchPage,
@@ -15,9 +16,24 @@ import {
 
 /**
  * @typedef {object} TylerCivicAccessConfig
- * @property {string} portalBaseUrl - Civic Access base URL ending at `/apps/selfservice`.
+ * @property {string} portalBaseUrl - Civic Access public hash-route base, optionally including a trailing tenant slug.
+ * @property {string | undefined} [apiBaseUrl] - Optional same-origin API base when the public tenant slug follows `/SelfService`.
+ * @property {string | null | undefined} [expectedTenantId] - Optional exact public tenant header identity.
+ * @property {string | null | undefined} [expectedTenantName] - Optional exact public tenant name paired with `expectedTenantId`.
+ * @property {boolean | undefined} [strictListReconciliation] - Whether list enumeration must account for every source-reported row.
  * @property {string} city - Issuing city written to normalized permit rows.
  * @property {string} sourceSystem - City-level source key ending in `_permits`.
+ */
+
+/**
+ * @typedef {object} ValidatedTylerCivicAccessConfig
+ * @property {string} portalBaseUrl - Normalized public tenant route used for hash navigation and record links.
+ * @property {string} apiBaseUrl - Normalized same-origin base used for anonymous API calls.
+ * @property {string | null} expectedTenantId - Exact public tenant ID when configured.
+ * @property {string | null} expectedTenantName - Exact public tenant name when configured.
+ * @property {boolean} strictListReconciliation - Whether source-reported list gaps fail closed.
+ * @property {string} city - Trimmed issuing city.
+ * @property {string} sourceSystem - Stable city-level source key.
  */
 
 /**
@@ -53,6 +69,35 @@ import {
  */
 
 /**
+ * @typedef {object} TylerDateWindowSession
+ * @property {import("puppeteer").Browser} browser - Persistent tenant browser.
+ * @property {import("puppeteer").Page} page - Bootstrapped same-origin page.
+ * @property {ValidatedTylerCivicAccessConfig} config - Validated tenant configuration.
+ * @property {string} endpoint - Tenant search API.
+ * @property {Record<string, unknown>} requestTemplate - Complete UI request model.
+ * @property {Record<string, string>} tenantHeaders - Tenant headers captured from the UI.
+ *
+ * @typedef {object} TylerDateWindowPage
+ * @property {number} pageSize - Public UI-supported traversal page size.
+ * @property {number} pageNumber - One-based source page.
+ * @property {number} totalFound - Source-reported matching permits.
+ * @property {number} totalPages - Source-reported total pages.
+ * @property {readonly NormalizedCityPermit[]} records - Page-normalized permits.
+ * @property {number} invalidRecordCount - Source rows lacking normalized permit identity.
+ * @property {string} rawJson - Exact public response JSON.
+ *
+ * @typedef {object} TylerDateWindowResult
+ * @property {string} startDate - Inclusive ISO application date.
+ * @property {string} endDate - Inclusive ISO application date.
+ * @property {number} totalFound - Stable source total.
+ * @property {number} totalPages - Stable source page count.
+ * @property {readonly NormalizedCityPermit[]} records - Deduplicated permit rows.
+ * @property {number} invalidRecordCount - Raw source rows that could not normalize.
+ * @property {number} sourceMissingRecordCount - Reported rows absent from every supported page-size traversal.
+ * @property {readonly TylerDateWindowPage[]} pages - Raw page responses.
+ */
+
+/**
  * @typedef {object} TylerApiResult
  * @property {readonly unknown[]} EntityResults - Public search result entities.
  * @property {number | null} TotalFound - Total matching entities across modules.
@@ -71,17 +116,46 @@ const MAX_SAFE_LOOKUPS = 10;
  */
 function normalizePortalBaseUrl(value) {
   const parsed = new URL(value);
-  if (parsed.protocol !== "https:") {
+  if (
+    parsed.protocol !== "https:" ||
+    parsed.username !== "" ||
+    parsed.password !== "" ||
+    parsed.search !== "" ||
+    parsed.hash !== ""
+  ) {
     throw new Error("Tyler Civic Access portalBaseUrl must use HTTPS");
   }
   return parsed.toString().replace(/\/$/, "");
 }
 
 /**
+ * Normalize an optional API base and bind it to the public portal origin.
+ *
+ * Most Tyler tenants serve APIs directly below the hash-route base. Sunrise
+ * adds a tenant slug after `/SelfService`, while its API remains below the
+ * parent `/SelfService` path. Keeping both routes explicit avoids guessing or
+ * rewriting tenant-specific URLs.
+ *
+ * @param {string | undefined} value - Optional configured API base.
+ * @param {string} portalBaseUrl - Already-normalized public portal route.
+ * @returns {string} Normalized same-origin API base without a trailing slash.
+ */
+function normalizeApiBaseUrl(value, portalBaseUrl) {
+  const normalized =
+    value === undefined ? portalBaseUrl : normalizePortalBaseUrl(value);
+  if (new URL(normalized).origin !== new URL(portalBaseUrl).origin) {
+    throw new Error(
+      "Tyler Civic Access apiBaseUrl must share the public portal origin",
+    );
+  }
+  return normalized;
+}
+
+/**
  * Validate the immutable jurisdiction configuration used for every normalized row.
  *
  * @param {TylerCivicAccessConfig} config - Candidate source configuration.
- * @returns {TylerCivicAccessConfig} Validated configuration with a normalized URL.
+ * @returns {ValidatedTylerCivicAccessConfig} Validated configuration with normalized public and API routes.
  */
 function validateConfig(config) {
   if (typeof config.city !== "string" || config.city.trim().length === 0) {
@@ -95,11 +169,55 @@ function validateConfig(config) {
       "Tyler Civic Access sourceSystem must be a lowercase underscore key ending in _permits",
     );
   }
+  const portalBaseUrl = normalizePortalBaseUrl(config.portalBaseUrl);
+  const expectedTenantId = readString(config.expectedTenantId);
+  const expectedTenantName = readString(config.expectedTenantName);
+  if ((expectedTenantId === null) !== (expectedTenantName === null)) {
+    throw new Error(
+      "Tyler expectedTenantId and expectedTenantName must be configured together",
+    );
+  }
+  if (
+    config.strictListReconciliation !== undefined &&
+    typeof config.strictListReconciliation !== "boolean"
+  ) {
+    throw new Error("Tyler strictListReconciliation must be boolean");
+  }
   return {
-    portalBaseUrl: normalizePortalBaseUrl(config.portalBaseUrl),
+    portalBaseUrl,
+    apiBaseUrl: normalizeApiBaseUrl(config.apiBaseUrl, portalBaseUrl),
+    expectedTenantId,
+    expectedTenantName,
+    strictListReconciliation: config.strictListReconciliation === true,
     city: config.city.trim(),
     sourceSystem: config.sourceSystem,
   };
+}
+
+/**
+ * Build one same-origin Tyler API URL from explicit tenant configuration.
+ *
+ * @param {TylerCivicAccessConfig} rawConfig - Candidate tenant configuration.
+ * @param {string} apiPath - API-relative path beginning with `api/`.
+ * @returns {string} Absolute anonymous API URL.
+ */
+export function buildTylerApiUrl(rawConfig, apiPath) {
+  const config = validateConfig(rawConfig);
+  return buildValidatedTylerApiUrl(config, apiPath);
+}
+
+/**
+ * Join a validated API base and constrained API-relative path.
+ *
+ * @param {ValidatedTylerCivicAccessConfig} config - Validated tenant configuration.
+ * @param {string} apiPath - API-relative path beginning with `api/`.
+ * @returns {string} Absolute same-origin API URL.
+ */
+function buildValidatedTylerApiUrl(config, apiPath) {
+  if (typeof apiPath !== "string" || !/^api\/[a-z0-9/_-]+$/iu.test(apiPath)) {
+    throw new Error("Tyler API path must be a constrained api/ route");
+  }
+  return `${config.apiBaseUrl}/${apiPath}`;
 }
 
 /**
@@ -387,6 +505,537 @@ export function renderNormalizedPermitJsonl(records) {
 }
 
 /**
+ * Create a persistent anonymous tenant session and capture the UI's complete
+ * request model plus tenant headers.
+ *
+ * @param {TylerCivicAccessConfig} rawConfig - Jurisdiction tenant config.
+ * @param {{info:(message:string,details?:Record<string,unknown>)=>void,warn:(message:string,details?:Record<string,unknown>)=>void,error:(message:string,details?:Record<string,unknown>)=>void}} logger
+ *   Structured aggregate-safe logger.
+ * @returns {Promise<TylerDateWindowSession>} Bootstrapped date-search session.
+ */
+export async function createTylerDateWindowSession(rawConfig, logger) {
+  const config = validateConfig(rawConfig);
+  const browser = await createBrowardAccelaBrowser(logger);
+  const page = await browser.newPage();
+  const endpoint = buildValidatedTylerApiUrl(
+    config,
+    "api/energov/search/search",
+  );
+  const bootstrapValue = "__cursor_tenant_bootstrap_no_match__";
+  const route = `${config.portalBaseUrl}#/search?${new URLSearchParams({
+    m: "1",
+    fm: "1",
+    ps: "10",
+    pn: "1",
+    em: "true",
+    st: bootstrapValue,
+  }).toString()}`;
+  try {
+    const responsePromise = page.waitForResponse(
+      (response) =>
+        response.url().toLowerCase() === endpoint.toLowerCase() &&
+        response.request().method() === "POST",
+      { timeout: DEFAULT_SEARCH_TIMEOUT_MS },
+    );
+    await page.goto(route, {
+      waitUntil: "domcontentloaded",
+      timeout: DEFAULT_NAVIGATION_TIMEOUT_MS,
+    });
+    const response = await responsePromise;
+    if (!response.ok()) {
+      throw new Error(
+        `${config.city} Tyler bootstrap returned HTTP ${String(response.status())}`,
+      );
+    }
+    const postData = response.request().postData();
+    if (typeof postData !== "string") {
+      throw new Error(`${config.city} Tyler bootstrap request body is missing`);
+    }
+    const requestTemplate = /** @type {unknown} */ (JSON.parse(postData));
+    if (
+      !isRecord(requestTemplate) ||
+      !isRecord(requestTemplate.PermitCriteria)
+    ) {
+      throw new Error(`${config.city} Tyler bootstrap model is malformed`);
+    }
+    const observedHeaders = response.request().headers();
+    /** @type {Record<string,string>} */
+    const tenantHeaders = {};
+    for (const name of [
+      "tenantid",
+      "tenantname",
+      "tyler-tenanturl",
+      "tyler-tenant-culture",
+    ]) {
+      const value = observedHeaders[name];
+      if (typeof value !== "string" || value.length === 0) {
+        throw new Error(
+          `${config.city} Tyler bootstrap omitted tenant header ${name}`,
+        );
+      }
+      tenantHeaders[name] = value;
+    }
+    assertExpectedTenantHeaders(config, tenantHeaders, "bootstrap");
+    logger.info("broward_tyler_date_session_ready", {
+      city: config.city,
+      sourceSystem: config.sourceSystem,
+    });
+    return {
+      browser,
+      page,
+      config,
+      endpoint,
+      requestTemplate,
+      tenantHeaders,
+    };
+  } catch (error) {
+    await page.close().catch(() => undefined);
+    await browser.close().catch(() => undefined);
+    throw error;
+  }
+}
+
+/**
+ * Close a persistent Tyler date-window session.
+ *
+ * @param {TylerDateWindowSession} session - Open tenant session.
+ * @returns {Promise<void>} Resolves after browser resources close.
+ */
+export async function closeTylerDateWindowSession(session) {
+  const browserProcess = session.browser.process();
+  try {
+    await promiseWithTimeout(
+      (async () => {
+        await session.page.close().catch(() => undefined);
+        await session.browser.close().catch(() => undefined);
+      })(),
+      15_000,
+      `${session.config.city} Tyler session close timed out`,
+    );
+  } catch {
+    if (browserProcess !== null && browserProcess.exitCode === null) {
+      browserProcess.kill("SIGKILL");
+    }
+  }
+}
+
+/**
+ * Build the exact advanced Permit-search request from a captured UI model.
+ *
+ * @param {Record<string, unknown>} template - Complete tenant UI model.
+ * @param {string} startDate - Inclusive ISO application date.
+ * @param {string} endDate - Inclusive ISO application date.
+ * @param {number} pageNumber - One-based result page.
+ * @param {number} pageSize - Result rows per page.
+ * @returns {Record<string, unknown>} Complete advanced Permit request.
+ */
+export function buildTylerDateWindowRequest(
+  template,
+  startDate,
+  endDate,
+  pageNumber,
+  pageSize,
+) {
+  const start = requireTylerIsoDate(startDate, "startDate");
+  const end = requireTylerIsoDate(endDate, "endDate");
+  if (Date.parse(`${end}T00:00:00Z`) < Date.parse(`${start}T00:00:00Z`)) {
+    throw new Error("Tyler date-window endDate must not precede startDate");
+  }
+  if (!Number.isInteger(pageNumber) || pageNumber < 1) {
+    throw new Error("Tyler date-window pageNumber must be positive");
+  }
+  if (![10, 25, 50, 100].includes(pageSize)) {
+    throw new Error("Tyler date-window pageSize must be 10, 25, 50, or 100");
+  }
+  const cloned = /** @type {unknown} */ (JSON.parse(JSON.stringify(template)));
+  if (!isRecord(cloned) || !isRecord(cloned.PermitCriteria)) {
+    throw new Error("Tyler date-window request template is malformed");
+  }
+  cloned.SearchModule = 2;
+  cloned.FilterModule = 0;
+  cloned.Keyword = "";
+  cloned.ExactMatch = true;
+  cloned.PageNumber = pageNumber;
+  cloned.PageSize = pageSize;
+  cloned.SortBy = "PermitNumber.keyword";
+  cloned.SortAscending = true;
+  Object.assign(cloned.PermitCriteria, {
+    PermitNumber: null,
+    PermitTypeId: "none",
+    PermitWorkclassId: null,
+    PermitStatusId: "none",
+    ProjectName: null,
+    IssueDateFrom: null,
+    IssueDateTo: null,
+    Address: null,
+    Description: null,
+    ExpireDateFrom: null,
+    ExpireDateTo: null,
+    FinalDateFrom: null,
+    FinalDateTo: null,
+    ApplyDateFrom: `${start}T00:00:00.000Z`,
+    ApplyDateTo: `${end}T00:00:00.000Z`,
+    SearchMainAddress: false,
+    ContactId: null,
+    TypeId: null,
+    WorkClassIds: null,
+    ParcelNumber: null,
+    ExcludeCases: null,
+    EnableDescriptionSearch: false,
+    PageNumber: pageNumber,
+    PageSize: pageSize,
+    SortBy: "PermitNumber.keyword",
+    SortAscending: false,
+  });
+  return cloned;
+}
+
+/**
+ * Search one application-date window through the bootstrapped tenant API.
+ *
+ * @param {TylerDateWindowSession} session - Persistent tenant session.
+ * @param {string} startDate - Inclusive ISO application date.
+ * @param {string} endDate - Inclusive ISO application date.
+ * @param {number} [pageSize=100] - Public UI-supported page size.
+ * @param {number} [maxPages=200] - Hard source page ceiling.
+ * @param {number} [delayMs=1000] - Delay between API pages.
+ * @param {(milliseconds:number)=>Promise<void>} [wait] - Injectable delay.
+ * @returns {Promise<TylerDateWindowResult>} Complete page/list result.
+ */
+export async function searchTylerDateWindow(
+  session,
+  startDate,
+  endDate,
+  pageSize = 100,
+  maxPages = 200,
+  delayMs = 1_000,
+  wait = waitForPermitDelay,
+) {
+  /** @type {TylerDateWindowResult[]} */
+  const traversals = [];
+  let currentPageSize = pageSize;
+  while (true) {
+    if (traversals.length > 0) await wait(delayMs);
+    traversals.push(
+      await searchTylerDateWindowPageSize(
+        session,
+        startDate,
+        endDate,
+        currentPageSize,
+        maxPages,
+        delayMs,
+        wait,
+      ),
+    );
+    const reconciled = reconcileTylerPageSizeTraversals(traversals, false);
+    if (reconciled.sourceMissingRecordCount === 0) return reconciled;
+    const smallerPageSize = nextSmallerTylerPageSize(currentPageSize);
+    if (smallerPageSize === null) {
+      return reconcileTylerPageSizeTraversals(
+        traversals,
+        session.config.strictListReconciliation,
+      );
+    }
+    currentPageSize = smallerPageSize;
+  }
+}
+
+/**
+ * Traverse one date window at exactly one public UI page size.
+ *
+ * @param {TylerDateWindowSession} session - Persistent tenant session.
+ * @param {string} startDate - Inclusive ISO application date.
+ * @param {string} endDate - Inclusive ISO application date.
+ * @param {number} pageSize - Public UI-supported page size.
+ * @param {number} maxPages - Hard pages per traversal.
+ * @param {number} delayMs - Delay between API pages.
+ * @param {(milliseconds:number)=>Promise<void>} wait - Injectable delay.
+ * @returns {Promise<TylerDateWindowResult>} One internally reconciled traversal.
+ */
+async function searchTylerDateWindowPageSize(
+  session,
+  startDate,
+  endDate,
+  pageSize,
+  maxPages,
+  delayMs,
+  wait,
+) {
+  if (!Number.isInteger(maxPages) || maxPages < 1 || maxPages > 200) {
+    throw new Error("Tyler date-window maxPages must be 1 through 200");
+  }
+  if (!Number.isInteger(delayMs) || delayMs < MIN_DELAY_MS) {
+    throw new Error(
+      `Tyler date-window delayMs must be at least ${MIN_DELAY_MS}`,
+    );
+  }
+  /** @type {TylerDateWindowPage[]} */
+  const pages = [];
+  /** @type {NormalizedCityPermit[]} */
+  const records = [];
+  let expectedTotal = /** @type {number | null} */ (null);
+  let expectedPages = /** @type {number | null} */ (null);
+  let invalidRecordCount = 0;
+  for (let pageNumber = 1; pageNumber <= maxPages; pageNumber += 1) {
+    if (pageNumber > 1) await wait(delayMs);
+    const requestBody = buildTylerDateWindowRequest(
+      session.requestTemplate,
+      startDate,
+      endDate,
+      pageNumber,
+      pageSize,
+    );
+    const response = await promiseWithTimeout(
+      session.page.evaluate(
+        async (input) => {
+          const result = await fetch(input.endpoint, {
+            method: "POST",
+            headers: {
+              Accept: "application/json, text/plain, */*",
+              "Content-Type": "application/json;charset=UTF-8",
+              ...input.headers,
+            },
+            credentials: "include",
+            body: JSON.stringify(input.body),
+            signal: AbortSignal.timeout(input.timeoutMs),
+          });
+          return { status: result.status, text: await result.text() };
+        },
+        {
+          endpoint: session.endpoint,
+          headers: session.tenantHeaders,
+          body: requestBody,
+          timeoutMs: DEFAULT_SEARCH_TIMEOUT_MS,
+        },
+      ),
+      DEFAULT_SEARCH_TIMEOUT_MS + 5_000,
+      `${session.config.city} Tyler date request timed out`,
+    );
+    if (response.status !== 200) {
+      throw new Error(
+        `${session.config.city} Tyler date search returned HTTP ${String(response.status)}`,
+      );
+    }
+    const payload = /** @type {unknown} */ (JSON.parse(response.text));
+    const result = readApiResult(payload);
+    const totalPages = readTylerTotalPages(payload);
+    const totalFound = result.TotalFound ?? result.EntityResults.length;
+    if (
+      (expectedTotal !== null && expectedTotal !== totalFound) ||
+      (expectedPages !== null && expectedPages !== totalPages)
+    ) {
+      throw new Error(
+        `${session.config.city} Tyler totals changed during one date window`,
+      );
+    }
+    expectedTotal = totalFound;
+    expectedPages = totalPages;
+    if (totalPages > maxPages) {
+      throw new Error(
+        `${session.config.city} Tyler date window exceeds maxPages ${String(maxPages)}`,
+      );
+    }
+    const normalized = normalizeTylerSearchResponse(payload, session.config);
+    const pageInvalidCount = result.EntityResults.length - normalized.length;
+    if (pageInvalidCount < 0) {
+      throw new Error(
+        `${session.config.city} Tyler normalized more rows than the source returned`,
+      );
+    }
+    invalidRecordCount += pageInvalidCount;
+    pages.push({
+      pageSize,
+      pageNumber,
+      totalFound,
+      totalPages,
+      records: normalized,
+      invalidRecordCount: pageInvalidCount,
+      rawJson: response.text,
+    });
+    records.push(...normalized);
+    if (pageNumber >= totalPages) break;
+  }
+  const totalFound = expectedTotal ?? 0;
+  const totalPages = expectedPages ?? 0;
+  const deduped = dedupeAndSortNormalizedPermits(records);
+  const accounted = deduped.length + invalidRecordCount;
+  if (accounted > totalFound) {
+    throw new Error(
+      `${session.config.city} Tyler returned more unique/invalid rows than TotalFound`,
+    );
+  }
+  const sourceMissingRecordCount = reconcileTylerDateWindowCounts({
+    totalFound,
+    uniquePermitCount: deduped.length,
+    invalidRecordCount,
+    strict: false,
+  });
+  return {
+    startDate,
+    endDate,
+    totalFound,
+    totalPages,
+    records: deduped,
+    invalidRecordCount,
+    sourceMissingRecordCount,
+    pages,
+  };
+}
+
+/**
+ * Reconcile and union stable source identities exposed by adaptive page sizes.
+ *
+ * Tyler occasionally repeats a boundary row at one supported page size while
+ * exposing the displaced identity at another. Every traversal must report the
+ * same total and invalid-row count. Only byte-compatible CaseId records are
+ * unioned; no missing identity is inferred.
+ *
+ * @param {readonly TylerDateWindowResult[]} traversals - Completed page-size traversals.
+ * @param {boolean} strict - Whether a remaining source gap must fail closed.
+ * @returns {TylerDateWindowResult} Unioned exact source records and raw pages.
+ */
+export function reconcileTylerPageSizeTraversals(traversals, strict) {
+  const first = traversals[0];
+  if (first === undefined) {
+    throw new Error("Tyler adaptive reconciliation requires a traversal");
+  }
+  if (
+    traversals.some(
+      (traversal) =>
+        traversal.startDate !== first.startDate ||
+        traversal.endDate !== first.endDate ||
+        traversal.totalFound !== first.totalFound ||
+        traversal.invalidRecordCount !== first.invalidRecordCount,
+    )
+  ) {
+    throw new Error("Tyler adaptive page-size traversals disagree");
+  }
+  const records = dedupeAndSortNormalizedPermits(
+    traversals.flatMap((traversal) => traversal.records),
+  );
+  const sourceMissingRecordCount = reconcileTylerDateWindowCounts({
+    totalFound: first.totalFound,
+    uniquePermitCount: records.length,
+    invalidRecordCount: first.invalidRecordCount,
+    strict,
+  });
+  const last = traversals.at(-1);
+  if (last === undefined) {
+    throw new Error("Tyler adaptive reconciliation lost its traversal");
+  }
+  return {
+    startDate: first.startDate,
+    endDate: first.endDate,
+    totalFound: first.totalFound,
+    totalPages: last.totalPages,
+    records,
+    invalidRecordCount: first.invalidRecordCount,
+    sourceMissingRecordCount,
+    pages: traversals.flatMap((traversal) => traversal.pages),
+  };
+}
+
+/**
+ * Reconcile one terminal Tyler list traversal with its source-reported total.
+ *
+ * @param {object} counts - Terminal source and normalized counts.
+ * @param {number} counts.totalFound - Stable source-reported result total.
+ * @param {number} counts.uniquePermitCount - Unique stable Case ID count.
+ * @param {number} counts.invalidRecordCount - Source rows lacking valid normalized identity.
+ * @param {boolean} counts.strict - Whether an under-count must fail closed.
+ * @returns {number} Explicit source rows absent from the traversal.
+ */
+export function reconcileTylerDateWindowCounts({
+  totalFound,
+  uniquePermitCount,
+  invalidRecordCount,
+  strict,
+}) {
+  /** @type {readonly (readonly [string, number])[]} */
+  const values = [
+    ["totalFound", totalFound],
+    ["uniquePermitCount", uniquePermitCount],
+    ["invalidRecordCount", invalidRecordCount],
+  ];
+  for (const [name, value] of values) {
+    if (!Number.isInteger(value) || value < 0) {
+      throw new Error(`Tyler ${name} must be a non-negative integer`);
+    }
+  }
+  const accounted = uniquePermitCount + invalidRecordCount;
+  if (accounted > totalFound) {
+    throw new Error("Tyler returned more unique/invalid rows than TotalFound");
+  }
+  const sourceMissingRecordCount = totalFound - accounted;
+  if (strict && sourceMissingRecordCount > 0) {
+    throw new Error(
+      "Tyler strict list reconciliation found source-reported rows missing from every supported page-size traversal",
+    );
+  }
+  return sourceMissingRecordCount;
+}
+
+/**
+ * Return the next smaller public UI page size for pagination recovery.
+ *
+ * @param {number} pageSize - Current supported page size.
+ * @returns {10 | 25 | 50 | null} Smaller page size or null at minimum.
+ */
+export function nextSmallerTylerPageSize(pageSize) {
+  if (pageSize === 100) return 50;
+  if (pageSize === 50) return 25;
+  if (pageSize === 25) return 10;
+  return null;
+}
+
+/**
+ * Bound a browser-evaluation promise even when its in-page abort is ignored.
+ *
+ * @template Result
+ * @param {Promise<Result>} promise - Source operation.
+ * @param {number} timeoutMs - Maximum wall time.
+ * @param {string} message - Timeout error.
+ * @returns {Promise<Result>} Source result within the deadline.
+ */
+async function promiseWithTimeout(promise, timeoutMs, message) {
+  /** @type {NodeJS.Timeout | undefined} */
+  let timeout;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timeout = setTimeout(() => reject(new Error(message)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout);
+  }
+}
+
+/**
+ * Validate a real ISO calendar date.
+ *
+ * @param {string} value - Candidate YYYY-MM-DD.
+ * @param {string} name - Field name for errors.
+ * @returns {string} Validated date.
+ */
+function requireTylerIsoDate(value, name) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/u.exec(value);
+  if (match === null) throw new Error(`Tyler ${name} must be YYYY-MM-DD`);
+  const date = new Date(
+    Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])),
+  );
+  if (
+    date.getUTCFullYear() !== Number(match[1]) ||
+    date.getUTCMonth() !== Number(match[2]) - 1 ||
+    date.getUTCDate() !== Number(match[3])
+  ) {
+    throw new Error(`Tyler ${name} is not a calendar date`);
+  }
+  return value;
+}
+
+/**
  * Resolve a usable local Chrome executable without downloading or repairing browsers.
  *
  * @returns {string | null} Explicit/system Chrome path, or `null` for Puppeteer's default.
@@ -431,6 +1080,26 @@ function readSubmittedKeyword(response) {
 }
 
 /**
+ * Verify a configured public tenant identity on one browser-produced request.
+ *
+ * @param {ValidatedTylerCivicAccessConfig} config - Validated tenant configuration.
+ * @param {Readonly<Record<string, string>>} headers - Lowercase Puppeteer request headers.
+ * @param {string} operation - Aggregate-safe operation name for failures.
+ * @returns {void}
+ */
+function assertExpectedTenantHeaders(config, headers, operation) {
+  if (config.expectedTenantId === null) return;
+  if (
+    headers.tenantid !== config.expectedTenantId ||
+    headers.tenantname !== config.expectedTenantName
+  ) {
+    throw new Error(
+      `${config.city} Tyler ${operation} selected an unexpected public tenant`,
+    );
+  }
+}
+
+/**
  * Run conservative anonymous permit-number/address lookups through a rendered
  * Tyler Civic Access session and return only allow-listed normalized records.
  *
@@ -470,7 +1139,10 @@ export async function probeTylerCivicAccess({
   const records = [];
   /** @type {TylerProbeObservation[]} */
   const observations = [];
-  const searchApiUrl = `${config.portalBaseUrl}/api/energov/search/search`;
+  const searchApiUrl = buildValidatedTylerApiUrl(
+    config,
+    "api/energov/search/search",
+  );
 
   try {
     for (const [index, query] of queries.entries()) {
@@ -490,6 +1162,11 @@ export async function probeTylerCivicAccess({
         });
         const bootstrapMs = Date.now() - bootstrapStarted;
         const response = await responsePromise;
+        assertExpectedTenantHeaders(
+          config,
+          response.request().headers(),
+          "search",
+        );
         const submittedKeyword = readSubmittedKeyword(response);
         if (submittedKeyword !== query) {
           throw new Error(
@@ -540,6 +1217,14 @@ export async function probeTylerCivicAccess({
  *   anonymousSearchCertified: boolean,
  *   coverageNote: string
  * }} BoundedTylerCivicAccessConfig
+ */
+
+/**
+ * @typedef {ValidatedTylerCivicAccessConfig & {
+ *   officialSourceUrl: string,
+ *   anonymousSearchCertified: true,
+ *   coverageNote: string
+ * }} ValidatedBoundedTylerCivicAccessConfig
  */
 
 /**
@@ -760,6 +1445,7 @@ export function normalizeTylerPermitDetailResponse(payload, context) {
  * @param {(checkpoint: PermitAdapterCheckpoint) => Promise<void>} [params.onCheckpoint] - Durable state callback after each detail/page.
  * @param {number} [params.navigationTimeoutMs=45000] - Public route timeout.
  * @param {number} [params.responseTimeoutMs=45000] - Public API response timeout.
+ * @param {boolean} [params.roofOnly=false] - Detail only search rows explicitly marked roofing.
  * @returns {Promise<TylerBoundedProbeResult>} Captures, provenance, and resume state.
  */
 export async function probeBoundedTylerCivicAccess({
@@ -773,6 +1459,7 @@ export async function probeBoundedTylerCivicAccess({
   onCheckpoint,
   navigationTimeoutMs = DEFAULT_NAVIGATION_TIMEOUT_MS,
   responseTimeoutMs = DEFAULT_SEARCH_TIMEOUT_MS,
+  roofOnly = false,
 }) {
   const config = validateBoundedTylerConfig(rawConfig);
   const query = normalizePermitSearchQuery(rawQuery);
@@ -817,8 +1504,10 @@ export async function probeBoundedTylerCivicAccess({
       let payload;
       let httpStatus = 0;
       try {
-        const searchEndpoint =
-          `${config.portalBaseUrl}/api/energov/search/search`.toLowerCase();
+        const searchEndpoint = buildValidatedTylerApiUrl(
+          config,
+          "api/energov/search/search",
+        ).toLowerCase();
         const responsePromise = searchPage.waitForResponse(
           (response) =>
             response.url().toLowerCase() === searchEndpoint &&
@@ -830,6 +1519,11 @@ export async function probeBoundedTylerCivicAccess({
           timeout: navigationTimeoutMs,
         });
         const response = await responsePromise;
+        assertExpectedTenantHeaders(
+          config,
+          response.request().headers(),
+          "search",
+        );
         assertTylerSearchRequest(response, query.value, pageNumber);
         payload = /** @type {unknown} */ (await response.json());
         httpStatus = response.status();
@@ -844,7 +1538,10 @@ export async function probeBoundedTylerCivicAccess({
       reportedTotalPages = Math.max(reportedTotalPages, totalPages);
       paginationTruncated ||= totalPages > maxPages;
 
-      const candidates = readTylerPermitCandidates(result.EntityResults);
+      const allCandidates = readTylerPermitCandidates(result.EntityResults);
+      const candidates = roofOnly
+        ? allCandidates.filter(isTylerRoofPermitCandidate)
+        : allCandidates;
       observations.push({
         pageNumber,
         httpStatus,
@@ -922,7 +1619,7 @@ export async function probeBoundedTylerCivicAccess({
  * Validate the extended Tyler source configuration and anonymous-access gate.
  *
  * @param {BoundedTylerCivicAccessConfig} rawConfig - Candidate source configuration.
- * @returns {BoundedTylerCivicAccessConfig} Normalized configuration.
+ * @returns {ValidatedBoundedTylerCivicAccessConfig} Normalized configuration.
  */
 function validateBoundedTylerConfig(rawConfig) {
   const base = validateConfig(rawConfig);
@@ -1081,11 +1778,30 @@ function readTylerPermitCandidates(entities) {
 }
 
 /**
+ * Classify a Tyler search candidate before opening its detail API route.
+ *
+ * @param {TylerPermitCandidate} candidate - Public Tyler search entity.
+ * @returns {boolean} True only when type, work class, or description says roofing.
+ */
+export function isTylerRoofPermitCandidate(candidate) {
+  return /\broof(?:ing)?\b/iu.test(
+    [
+      candidate.entity.CaseType,
+      candidate.entity.CaseWorkclass,
+      candidate.entity.Description,
+      candidate.entity.ProjectName,
+    ]
+      .filter((value) => typeof value === "string")
+      .join(" "),
+  );
+}
+
+/**
  * Capture one public detail through the initialized Tyler browser session.
  *
  * @param {object} params - Detail request parameters.
  * @param {import("puppeteer").Browser} params.browser - Initialized browser.
- * @param {BoundedTylerCivicAccessConfig} params.config - Validated source configuration.
+ * @param {ValidatedBoundedTylerCivicAccessConfig} params.config - Validated source configuration.
  * @param {PermitSearchQuery} params.query - Exact property query.
  * @param {TylerPermitCandidate} params.candidate - Search result identity.
  * @param {number} params.searchPage - One-based source result page.
@@ -1106,8 +1822,10 @@ async function captureTylerPermitDetail({
 }) {
   const page = await browser.newPage();
   try {
-    const detailEndpoint =
-      `${config.portalBaseUrl}/api/energov/permits/permitdetail`.toLowerCase();
+    const detailEndpoint = buildValidatedTylerApiUrl(
+      config,
+      "api/energov/permits/permitdetail",
+    ).toLowerCase();
     const responsePromise = page.waitForResponse(
       (response) =>
         response.url().toLowerCase() === detailEndpoint &&
@@ -1122,6 +1840,7 @@ async function captureTylerPermitDetail({
       },
     );
     const response = await responsePromise;
+    assertExpectedTenantHeaders(config, response.request().headers(), "detail");
     const body = response.request().postData();
     const parsedBody =
       typeof body === "string"
@@ -1146,6 +1865,83 @@ async function captureTylerPermitDetail({
   } finally {
     await page.close().catch(() => undefined);
   }
+}
+
+/**
+ * Recover one detail for an exact CaseId retained by a completed list inventory.
+ *
+ * The existing bootstrapped date-window browser is reused. Property provenance
+ * comes only from the source list's exact folio or work address; a row lacking
+ * both is rejected rather than assigned an invented query.
+ *
+ * @param {TylerDateWindowSession} session - Active anonymous tenant session.
+ * @param {BoundedTylerCivicAccessConfig} rawConfig - Certified source config.
+ * @param {NormalizedCityPermit} listRecord - Exact recovered list identity.
+ * @param {number} [timeoutMs=DEFAULT_SEARCH_TIMEOUT_MS] - Page/API deadline.
+ * @returns {Promise<NormalizedMunicipalPermit>} Reconciled detail-backed row.
+ */
+export async function captureRecoveredTylerPermitDetail(
+  session,
+  rawConfig,
+  listRecord,
+  timeoutMs = DEFAULT_SEARCH_TIMEOUT_MS,
+) {
+  const config = validateBoundedTylerConfig(rawConfig);
+  const caseId = readSourceText(listRecord.raw.case_id);
+  if (
+    caseId === null ||
+    readSourceText(listRecord.permit_number) === null ||
+    listRecord.source_system !== config.sourceSystem ||
+    !Number.isInteger(timeoutMs) ||
+    timeoutMs < 1_000
+  ) {
+    throw new Error("Recovered Tyler list identity is invalid");
+  }
+  const query =
+    typeof listRecord.parcel_identifier === "string" &&
+    /^[A-Z0-9]{12}$/u.test(listRecord.parcel_identifier.toUpperCase())
+      ? {
+          kind: /** @type {"folio"} */ ("folio"),
+          value: listRecord.parcel_identifier,
+        }
+      : typeof listRecord.work_location === "string" &&
+          /\d/u.test(listRecord.work_location)
+        ? {
+            kind: /** @type {"address"} */ ("address"),
+            value: listRecord.work_location,
+          }
+        : null;
+  if (query === null) {
+    throw new Error("Recovered Tyler identity lacks exact property provenance");
+  }
+  const candidate = {
+    caseId,
+    permitNumber: listRecord.permit_number,
+    entity: {
+      CaseId: caseId,
+      CaseNumber: listRecord.permit_number,
+      MainParcel: listRecord.parcel_identifier,
+      AddressDisplay: listRecord.work_location,
+      IssueDate: listRecord.permit_issue_date,
+      ApplyDate: listRecord.raw.applied_date,
+      FinalDate: listRecord.raw.finalized_date,
+      ExpireDate: listRecord.raw.expiration_date,
+      CaseStatus: listRecord.record_status,
+      CaseType: listRecord.record_type,
+      CaseWorkclass: listRecord.raw.work_class,
+      Description: listRecord.project_description,
+    },
+  };
+  return captureTylerPermitDetail({
+    browser: session.browser,
+    config,
+    query,
+    candidate,
+    searchPage: 1,
+    searchUrl: buildPagedSearchRouteUrl(config.portalBaseUrl, query.value, 1),
+    navigationTimeoutMs: timeoutMs,
+    responseTimeoutMs: timeoutMs,
+  });
 }
 
 /**

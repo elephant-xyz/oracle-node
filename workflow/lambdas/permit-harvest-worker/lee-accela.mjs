@@ -405,9 +405,14 @@ export function parseResultSummary(text) {
   if (!match) {
     return { summary: null, total: null };
   }
-  const total = Number.parseInt(match[2].replace(/,/g, ""), 10);
+  const summaryText = match[1];
+  const totalText = match[2];
+  if (summaryText === undefined || totalText === undefined) {
+    return { summary: null, total: null };
+  }
+  const total = Number.parseInt(totalText.replace(/,/g, ""), 10);
   return {
-    summary: collapseText(match[1]),
+    summary: collapseText(summaryText),
     total: Number.isFinite(total) ? total : null,
   };
 }
@@ -508,7 +513,9 @@ export function extractCurrentDetailPermitLinkFromHtml({
   const recordHeader = PERMIT_RECORD_HEADER_PATTERN.exec(text);
   if (recordHeader === null) return null;
 
-  const recordNumber = readPermitRecordNumber(recordHeader[1]);
+  const recordHeaderText = recordHeader[1];
+  if (recordHeaderText === undefined) return null;
+  const recordNumber = readPermitRecordNumber(recordHeaderText);
   if (recordNumber === null) return null;
   const formAction = $("form#aspnetForm").attr("action") ?? null;
   const sourceUrl = /CapDetail\.aspx/i.test(pageUrl)
@@ -986,7 +993,9 @@ export async function searchLeePermitParcel({
           const match =
             /Showing\s+([0-9,]+\s*-\s*[0-9,]+\s+of\s+([0-9,]+))/i.exec(text);
           if (match === null) return false;
-          const currentSummary = match[1].replace(/\s+/g, " ").trim();
+          const currentRange = match[1];
+          if (currentRange === undefined) return false;
+          const currentSummary = currentRange.replace(/\s+/g, " ").trim();
           return previousSummary === null || currentSummary !== previousSummary;
         },
         { timeout: 90000 },

@@ -10,8 +10,14 @@ import {
   verifyPublishedCountyArtifacts,
 } from "../scripts/update-published-county-catalog.mjs";
 
-const baseCatalog = {
+const fullPublicationScope = {
   schemaVersion: "1.0",
+  level: "full",
+  denominatorBasis: "county_total",
+};
+
+const baseCatalog = {
+  schemaVersion: "1.1",
   generatedAt: "2026-07-24T00:00:00.000Z",
   counties: [
     {
@@ -20,10 +26,10 @@ const baseCatalog = {
       stateCode: "FL",
       countyFips: "12071",
       status: "published",
+      publicationScope: fullPublicationScope,
       queryTableUrl: "https://example.com/lee.parquet",
       datasetCoverageUrl: "https://example.com/lee-coverage.json",
       permitQueryTableUrl: null,
-      placesTableUrl: null,
       updatedAt: "2026-07-23T00:00:00.000Z",
     },
   ],
@@ -39,10 +45,14 @@ describe("published county catalog", () => {
 
     expect(result.counties.length).toBeGreaterThan(0);
     expect(result.counties.map((county) => county.countyKey)).toEqual([
+      "chester",
+      "hillsborough",
       "lee",
       "miami-dade",
+      "montgomery",
       "orange",
       "palm-beach",
+      "pinellas",
       "rock-island",
     ]);
   });
@@ -61,10 +71,10 @@ describe("published county catalog", () => {
         stateCode: "CA",
         countyFips: "06001",
         status: "published",
+        publicationScope: fullPublicationScope,
         queryTableUrl: "https://example.com/alameda.parquet",
         datasetCoverageUrl: "https://example.com/alameda-coverage.json",
         permitQueryTableUrl: null,
-        placesTableUrl: null,
         updatedAt: "2026-07-24T10:00:00.000Z",
       },
       "2026-07-24T10:01:00.000Z",
@@ -141,6 +151,74 @@ describe("published county catalog", () => {
     ).toThrow("duplicate countyFips '12071'");
   });
 
+  it("keeps a 50-of-50 pilot explicitly sample-scoped", async () => {
+    const fixture = JSON.parse(
+      await readFile(resolve("fixtures/publication-scope-v1.json"), "utf8"),
+    );
+    const pilot = fixture.scenarios.find(
+      (scenario) => scenario.id === "hillsborough-50-of-50-pilot",
+    );
+
+    expect(pilot).toMatchObject({
+      countyKey: "hillsborough",
+      ingestedCount: 50,
+      expectedCount: 50,
+      factEligible: false,
+      publicationScope: {
+        schemaVersion: "1.0",
+        level: "pilot",
+        denominatorBasis: "published_subset",
+      },
+    });
+  });
+
+  it("rejects missing and unsupported publication scope", () => {
+    const { publicationScope: _scope, ...withoutScope } =
+      baseCatalog.counties[0];
+    expect(() =>
+      validateCatalog({ ...baseCatalog, counties: [withoutScope] }),
+    ).toThrow("publicationScope must be an object");
+    expect(() =>
+      validateCatalog({
+        ...baseCatalog,
+        counties: [
+          {
+            ...baseCatalog.counties[0],
+            publicationScope: {
+              ...fullPublicationScope,
+              level: "unknown",
+            },
+          },
+        ],
+      }),
+    ).toThrow("level must be full, partial, or pilot");
+  });
+
+  it("changes the catalog when a county transitions from pilot to full", () => {
+    const pilotCatalog = validateCatalog({
+      ...baseCatalog,
+      counties: [
+        {
+          ...baseCatalog.counties[0],
+          publicationScope: {
+            schemaVersion: "1.0",
+            level: "pilot",
+            denominatorBasis: "published_subset",
+          },
+        },
+      ],
+    });
+    const transitioned = upsertCounty(
+      pilotCatalog,
+      baseCatalog.counties[0],
+      "2026-07-25T00:00:00.000Z",
+    );
+
+    expect(transitioned.counties[0].publicationScope).toEqual(
+      fullPublicationScope,
+    );
+  });
+
   it("reads back artifacts and verifies the coverage county", async () => {
     const requests = [];
     const fetchImpl = async (url, init) => {
@@ -148,10 +226,17 @@ describe("published county catalog", () => {
       if (init?.method === "HEAD") {
         return new Response(null, { status: 200 });
       }
-      return new Response(JSON.stringify({ county: "Lee", datasets: [] }), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      });
+      return new Response(
+        JSON.stringify({
+          county: "Lee",
+          publicationScope: fullPublicationScope,
+          datasets: [],
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      );
     };
 
     await verifyPublishedCountyArtifacts(
@@ -172,7 +257,13 @@ describe("published county catalog", () => {
       if (init?.method === "HEAD") {
         return new Response(null, { status: 200 });
       }
-      return new Response(JSON.stringify({ county: "Lee" }), { status: 200 });
+      return new Response(
+        JSON.stringify({
+          county: "Lee",
+          publicationScope: fullPublicationScope,
+        }),
+        { status: 200 },
+      );
     };
     const county = {
       ...validateCatalog(baseCatalog).counties[0],
@@ -194,7 +285,13 @@ describe("published county catalog", () => {
       if (init?.method === "HEAD") {
         return new Response(null, { status: 200 });
       }
-      return new Response(JSON.stringify({ county: "Lee" }), { status: 200 });
+      return new Response(
+        JSON.stringify({
+          county: "Lee",
+          publicationScope: fullPublicationScope,
+        }),
+        { status: 200 },
+      );
     };
     const county = {
       ...validateCatalog(baseCatalog).counties[0],
@@ -221,6 +318,32 @@ describe("published county catalog", () => {
         fetchImpl,
       ),
     ).rejects.toThrow("does not match 'lee'");
+  });
+
+  it("rejects inconsistent catalog and coverage scope", async () => {
+    const fetchImpl = async (_url, init) =>
+      init?.method === "HEAD"
+        ? new Response(null, { status: 200 })
+        : new Response(
+            JSON.stringify({
+              county: "Lee",
+              publicationScope: {
+                schemaVersion: "1.0",
+                level: "partial",
+                denominatorBasis: "county_total",
+              },
+            }),
+            { status: 200 },
+          );
+
+    await expect(
+      verifyPublishedCountyArtifacts(
+        validateCatalog(baseCatalog).counties[0],
+        fetchImpl,
+      ),
+    ).rejects.toThrow(
+      "dataset coverage publicationScope does not match catalog",
+    );
   });
 
   it("rejects non-public query table URLs", () => {

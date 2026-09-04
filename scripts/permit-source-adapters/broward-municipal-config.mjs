@@ -28,9 +28,7 @@ function defineJurisdiction(config) {
 }
 
 const CLICK2GOV_CAPABILITIES = Object.freeze({
-  searchBy: Object.freeze(
-    /** @type {const} */ (["permit_number", "address", "folio"]),
-  ),
+  searchBy: Object.freeze(/** @type {const} */ (["permit_number", "address"])),
   pagination: /** @type {const} */ ("client_all"),
   detail: /** @type {const} */ ("same_session"),
   inspections: true,
@@ -38,7 +36,9 @@ const CLICK2GOV_CAPABILITIES = Object.freeze({
 });
 
 const ESUITE_CAPABILITIES = Object.freeze({
-  searchBy: Object.freeze(/** @type {const} */ (["permit_number", "address"])),
+  searchBy: Object.freeze(
+    /** @type {const} */ (["permit_number", "address", "record_type"]),
+  ),
   pagination: /** @type {const} */ ("numbered"),
   detail: /** @type {const} */ ("same_session"),
   inspections: true,
@@ -50,9 +50,30 @@ const ESUITE_CAPABILITIES = Object.freeze({
  */
 export const BROWARD_MUNICIPAL_PERMIT_JURISDICTIONS = Object.freeze([
   defineJurisdiction({
+    key: "coconut_creek",
+    jurisdiction: "Coconut Creek",
+    sourceSystem: "broward_coconut_creek_permit_status",
+    protocol: "coconut_creek",
+    searchUrl: "https://www3.coconutcreek.gov/sd/permit/permit_status_01.asp",
+    officialEvidenceUrl:
+      "https://www3.coconutcreek.gov/sd/permit/permit_status_01.asp",
+    accessMode: "anonymous",
+    probeStatus: "enabled",
+    accessNote:
+      "The official legacy status application anonymously accepts exact permit, property-id, and address searches. Search selection and detail retrieval rotate an ASP session and are serialized.",
+    capabilities: {
+      searchBy: ["permit_number", "address", "folio"],
+      pagination: "client_all",
+      detail: "same_session",
+      inspections: false,
+      planReview: false,
+    },
+    supplementalRoutes: [],
+  }),
+  defineJurisdiction({
     key: "pompano_beach",
     jurisdiction: "Pompano Beach",
-    sourceSystem: "pompano_beach_click2gov_permits",
+    sourceSystem: "broward_pompano_beach_click2gov_permits",
     protocol: "click2gov",
     searchUrl: "https://c2g.pompanobeachfl.gov/Click2GovBP/selectpermit.html",
     officialEvidenceUrl:
@@ -60,28 +81,28 @@ export const BROWARD_MUNICIPAL_PERMIT_JURISDICTIONS = Object.freeze([
     accessMode: "anonymous",
     probeStatus: "enabled",
     accessNote:
-      "Anonymous application/address/parcel search is available; broad result pages must hit the local row cap before any detail traversal.",
+      "Anonymous application and address search is available. The segmented source parcel fields have no certified BCPA-folio mapping and are not submitted by the adapter; broad result pages fail at the local row cap before detail traversal.",
     capabilities: CLICK2GOV_CAPABILITIES,
     supplementalRoutes: [],
   }),
   defineJurisdiction({
     key: "tamarac",
     jurisdiction: "Tamarac",
-    sourceSystem: "tamarac_click2gov_permits",
+    sourceSystem: "broward_tamarac_click2gov_permits",
     protocol: "click2gov",
     searchUrl: "https://e-gov.tamarac.org/Click2GovBP/selectpermit.html",
     officialEvidenceUrl: "https://tamarac.gov/672/Permit-History",
     accessMode: "anonymous",
     probeStatus: "enabled",
     accessNote:
-      "The official city instructions certify anonymous application/address/parcel/name history search; authenticated application functions are out of scope.",
+      "The official city instructions certify anonymous application/address/parcel/name history search. The adapter uses only application/address fields because no BCPA-to-segmented-parcel mapping is certified; authenticated application functions are out of scope.",
     capabilities: CLICK2GOV_CAPABILITIES,
     supplementalRoutes: [],
   }),
   defineJurisdiction({
     key: "margate",
     jurisdiction: "Margate",
-    sourceSystem: "margate_click2gov_permits",
+    sourceSystem: "broward_margate_click2gov_permits",
     protocol: "click2gov",
     searchUrl: "https://marg-egov.aspgov.com/Click2GovBP/selectpermit.html",
     officialEvidenceUrl:
@@ -89,14 +110,14 @@ export const BROWARD_MUNICIPAL_PERMIT_JURISDICTIONS = Object.freeze([
     accessMode: "anonymous",
     probeStatus: "enabled",
     accessNote:
-      "Anonymous Click2Gov history search is available; the separate inspection scheduler and plan-review portals are not traversed.",
+      "Anonymous Click2Gov application/address history search is available. Segmented parcel fields are not used without a certified BCPA mapping; the separate inspection scheduler and plan-review portals are not traversed.",
     capabilities: CLICK2GOV_CAPABILITIES,
     supplementalRoutes: [],
   }),
   defineJurisdiction({
     key: "davie",
     jurisdiction: "Davie",
-    sourceSystem: "davie_tyler_esuite_permits",
+    sourceSystem: "broward_davie_tyler_esuite_permits",
     protocol: "tyler_esuite",
     searchUrl:
       "https://esuite.davie-fl.gov/eSuite.Permits/AdvancedSearchPage/AdvancedSearch.aspx",
@@ -119,7 +140,7 @@ export const BROWARD_MUNICIPAL_PERMIT_JURISDICTIONS = Object.freeze([
   defineJurisdiction({
     key: "dania_beach",
     jurisdiction: "Dania Beach",
-    sourceSystem: "dania_beach_tyler_esuite_permits",
+    sourceSystem: "broward_dania_beach_tyler_esuite_permits",
     protocol: "tyler_esuite",
     searchUrl:
       "https://cityofdaniabeachfl.nwerp.tylerapp.com/nwprod/eSuite.Permits/AdvancedSearchPage/AdvancedSearch.aspx",
@@ -153,17 +174,17 @@ export const BROWARD_MUNICIPAL_PERMIT_JURISDICTIONS = Object.freeze([
     },
     supplementalRoutes: [
       {
-        purpose: "current_permits_from_2025",
+        purpose: "current_applicant_portal_from_2025",
         url: "https://deerfieldbeach.geocivix.com/secure/",
-        accessMode: "login_required",
-        note: "Current GeoCivix route is explicitly secure/login-gated; use the city records-request route for complete cross-system history.",
+        accessMode: "no_anonymous_search",
+        note: "Current GeoCivix is an applicant portal with no anonymous public permit search. The adapter does not register, authenticate, or infer record coverage from this route.",
       },
     ],
   }),
   defineJurisdiction({
     key: "pembroke_park",
     jurisdiction: "Pembroke Park",
-    sourceSystem: "pembroke_park_gov_easy_permits",
+    sourceSystem: "broward_pembroke_park_gov_easy_permits",
     protocol: "gov_easy",
     searchUrl:
       "https://apps.gov-easy.com/Home/PermitInspection/Search?clientId=d60f9827-2c53-44a4-9037-31e1de2b3f09",
@@ -171,7 +192,7 @@ export const BROWARD_MUNICIPAL_PERMIT_JURISDICTIONS = Object.freeze([
     accessMode: "captcha_required",
     probeStatus: "blocked",
     accessNote:
-      "The official town page links Gov-Easy for status, but the shared search requires a numeric CAPTCHA. Submissions require staff email and are not an anonymous data route.",
+      "The official town page links Gov-Easy for status, but the shared search requires a numeric CAPTCHA. A user-authorized manually validated browser session may support a bounded private capture while it remains valid; unattended transport stays blocked, and a keyword slice is not complete permit or roofing coverage.",
     capabilities: {
       searchBy: ["permit_number", "address", "folio"],
       pagination: "numbered",
@@ -184,7 +205,7 @@ export const BROWARD_MUNICIPAL_PERMIT_JURISDICTIONS = Object.freeze([
   defineJurisdiction({
     key: "lighthouse_point",
     jurisdiction: "Lighthouse Point",
-    sourceSystem: "lighthouse_point_smartgov_permits",
+    sourceSystem: "broward_lighthouse_point_smartgov_permits",
     protocol: "smartgov",
     searchUrl:
       "https://ci-lighthousepoint-fl.smartgovcommunity.com/ApplicationPublic/ApplicationSearchAdvanced",
@@ -193,9 +214,9 @@ export const BROWARD_MUNICIPAL_PERMIT_JURISDICTIONS = Object.freeze([
     accessMode: "anonymous",
     probeStatus: "enabled",
     accessNote:
-      "Anonymous advanced permit/address/parcel search is available. Sign-up/login controls are not needed for public search and are never used.",
+      "Anonymous advanced permit/address/parcel and exact record-type search is available. Sign-up/login controls are not needed for public search and are never used.",
     capabilities: {
-      searchBy: ["permit_number", "address", "folio"],
+      searchBy: ["permit_number", "address", "folio", "record_type"],
       pagination: "numbered",
       detail: "public_url",
       inspections: true,
@@ -206,7 +227,7 @@ export const BROWARD_MUNICIPAL_PERMIT_JURISDICTIONS = Object.freeze([
   defineJurisdiction({
     key: "lauderdale_lakes",
     jurisdiction: "Lauderdale Lakes",
-    sourceSystem: "lauderdale_lakes_opengov_permits",
+    sourceSystem: "broward_lauderdale_lakes_opengov_permits",
     protocol: "opengov",
     searchUrl: "https://lauderdalelakesfl.portal.opengov.com/search",
     officialEvidenceUrl: "https://lauderdalelakesfl.portal.opengov.com/search",
@@ -229,19 +250,19 @@ export const BROWARD_MUNICIPAL_PERMIT_JURISDICTIONS = Object.freeze([
     sourceSystem: "hillsboro_beach_communitycore_permits",
     protocol: "communitycore",
     searchUrl:
-      "https://app.communitycore.com/app/public-portal/c98c7b46-2cba-4ba2-bbd5-7a76966f42dd",
+      "https://app.communitycore.com/app/public-portal/c98c7b46-2cba-4ba2-bbd5-7a76966f42dd/search-permits",
     officialEvidenceUrl:
-      "https://app.communitycore.com/app/public-portal/c98c7b46-2cba-4ba2-bbd5-7a76966f42dd",
-    accessMode: "login_required",
+      "https://app.communitycore.com/app/public-portal/c98c7b46-2cba-4ba2-bbd5-7a76966f42dd/search-permits",
+    accessMode: "captcha_required",
     probeStatus: "blocked",
     accessNote:
-      "CommunityCore requires an account for permit status, review comments, fees, and inspections; no anonymous record endpoint is called.",
+      "The anonymous UI offers jobsite-address, permit-number, parcel-number, and owner fields, but a permit-number test stopped at 'reCaptcha header validation failed' before any search API request. No CAPTCHA is solved or bypassed, and owner search is excluded.",
     capabilities: {
-      searchBy: [],
+      searchBy: ["permit_number", "address", "folio"],
       pagination: "none",
-      detail: "none",
-      inspections: false,
-      planReview: false,
+      detail: "public_url",
+      inspections: true,
+      planReview: true,
     },
     supplementalRoutes: [],
   }),
@@ -268,7 +289,7 @@ export const BROWARD_MUNICIPAL_PERMIT_JURISDICTIONS = Object.freeze([
   defineJurisdiction({
     key: "lauderhill",
     jurisdiction: "Lauderhill",
-    sourceSystem: "lauderhill_egovplus_permits",
+    sourceSystem: "broward_lauderhill_egovplus_permits",
     protocol: "egovplus",
     searchUrl:
       "http://egov.lauderhill-fl.gov/eGovPlus83/permit/perm_status.aspx",
@@ -290,22 +311,22 @@ export const BROWARD_MUNICIPAL_PERMIT_JURISDICTIONS = Object.freeze([
   defineJurisdiction({
     key: "sunrise",
     jurisdiction: "Sunrise",
-    sourceSystem: "sunrise_building_records_request",
-    protocol: "records_request",
+    sourceSystem: "broward_sunrise_tyler_permits",
+    protocol: "tyler_energov",
     searchUrl:
-      "https://www.sunrisefl.gov/departments-services/community-development/building/building-records",
+      "https://energov.sunrisefl.gov/EnerGov_Prod/SelfService/SunriseFL%20Prod#/search?category=permits",
     officialEvidenceUrl:
-      "https://www.sunrisefl.gov/departments-services/community-development/building/building-records",
-    accessMode: "records_request",
-    probeStatus: "blocked",
+      "https://energov.sunrisefl.gov/EnerGov_Prod/SelfService/SunriseFL%20Prod#/search?category=permits",
+    accessMode: "anonymous",
+    probeStatus: "enabled",
     accessNote:
-      "Building records are held on microfilm. The official route directs open-permit and public-record inquiries to BuildingRecords@sunrisefl.gov; this adapter records the route but never sends a request.",
+      "The official SunriseFL Prod tenant reports authentication is not required and exposes anonymous permit search/setup APIs. The shared bounded Tyler adapter uses tenant headers, strict page totals, deadlines, private checkpoints, and no credentials.",
     capabilities: {
-      searchBy: [],
-      pagination: "none",
-      detail: "none",
-      inspections: false,
-      planReview: false,
+      searchBy: ["permit_number", "address", "folio"],
+      pagination: "numbered",
+      detail: "public_url",
+      inspections: true,
+      planReview: true,
     },
     supplementalRoutes: [
       {

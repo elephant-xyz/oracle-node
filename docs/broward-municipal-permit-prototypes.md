@@ -1,242 +1,267 @@
-# Broward municipal permit vendor-family prototypes
+# Broward municipal permit vendor-family adapters
 
-Date: 2026-08-29  
-Scope: local-only source-contract prototypes; no harvest, cloud service, database,
-publication, login, CAPTCHA solution, or records request
+Date: 2026-09-01
+Scope: bounded local anonymous transports; no cloud harvest, database write,
+publication, login, CAPTCHA solution, registration, or records request
 
-## What is implemented
+## Implemented contract
 
-The implementation separates jurisdiction routing from reusable protocol logic:
+The implementation separates jurisdiction routing, vendor parsing, transport,
+and durable local execution:
 
-- `broward-municipal-config.mjs` holds 13 city configurations, official
-  evidence, current/legacy split routes, capabilities, and executable access
+- `broward-municipal-config.mjs` records 14 source configurations, official
+  evidence, current/legacy boundaries, capabilities, and executable access
   dispositions.
-- `broward-municipal-protocols.mjs` parses bounded Click2Gov, Tyler/New World
-  eSuite, SmartGov, eGovPLUS, and fixture-only OpenGov search/detail responses.
-- `broward-municipal-core.mjs` owns the cross-vendor safety contract: exact
-  string queries, alphanumeric folios, serialized requests, hard query/page/
-  result/detail limits, deterministic dedupe, identity reconciliation, and
-  resumable checkpoints.
+- `broward-municipal-protocols.mjs` normalizes Coconut Creek legacy ASP,
+  Click2Gov, Tyler/New World eSuite, SmartGov, and eGovPLUS responses. OpenGov
+  GraphQL normalization remains fixture-only while the live app is unhealthy.
+- `broward-municipal-transport.mjs` implements same-origin cookie sessions,
+  rotating ASP/CSRF state, strict redirects and response sizes, direct HTML
+  pagination where certified, and persistent headless Chromium only for
+  eSuite's JavaScript autocomplete and ASP.NET postbacks.
+- `broward-municipal-core.mjs` owns shared safety invariants: exact string
+  queries, alphanumeric folios, serialized requests, hard query/page/result/
+  detail limits, identity reconciliation, deterministic dedupe, and resumable
+  checkpoints.
+- `run-broward-municipal-permit-pilot.mjs` writes owner-only records before
+  advancing their checkpoint identities. Summaries contain aggregate counts
+  and query kinds/digests, never query values or source rows.
 
-These are protocol prototypes, not a full-harvest command. A future transport
-must supply one parsed result page and one parsed detail at a time to
-`runBoundedMunicipalCapture`. The runner refuses access-controlled
-jurisdictions before invoking either callback.
+Default ceilings are one CLI query, three result pages, 25 unique references,
+three details, at least 1,250 ms between operations, a 30-second request
+deadline, a 2 MB response limit, and an exclusive 50-row raw HTML ceiling.
+Absolute core ceilings remain three queries, six pages, 50 references, and ten
+details.
 
-Default hard ceilings are three queries, three result pages, 25 unique
-references, five details, and at least 1,250 ms between source requests.
-Absolute code ceilings are three queries, six result pages, 50 references, ten
-details, and at least 1,000 ms. The tests inject a no-wait clock; production
-callers cannot lower the configured delay.
+## Route disposition and bounded pilots
 
-## Jurisdiction routing
+Pilots used existing private appraisal evidence. The table contains aggregate
+results only.
 
-| Protocol                 | Jurisdictions                         | Prototype capability                                                                                                       | Operational disposition                                                      |
-| ------------------------ | ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| Click2Gov                | Pompano Beach, Tamarac, Margate       | application/address/parcel result parsing; contact-expanded row dedupe; session-token removal; same-session detail parsing | bounded anonymous transport may be added                                     |
-| Tyler/New World eSuite   | Davie, Dania Beach                    | permit/address result parsing; numeric permit-id dedupe; numbered-page checkpoint; same-session detail and inspections     | bounded anonymous transport may be added                                     |
-| Gov-Easy                 | Deerfield Beach legacy, Pembroke Park | route/capability metadata only                                                                                             | skip: six-digit numeric CAPTCHA                                              |
-| GeoCivix                 | Deerfield Beach current records       | split-route metadata                                                                                                       | skip: secure/login route                                                     |
-| SmartGov                 | Lighthouse Point                      | advanced-search result, numbered page, public detail, and inspection parsing                                               | anonymous prototype; positive detail still needs certification               |
-| OpenGov/ViewPoint        | Lauderdale Lakes                      | GraphQL edge/detail fixture parser and opaque-cursor checkpoint support                                                    | landing-only skip while the rendered application reports itself inaccessible |
-| CommunityCore            | Hillsboro Beach                       | official route metadata                                                                                                    | skip: account required                                                       |
-| MGO Connect              | Parkland                              | official route metadata                                                                                                    | skip: account required                                                       |
-| eGovPLUS                 | Lauderhill                            | permit/folio/address results; client-all result contract; public detail and inspection parsing                             | bounded anonymous transport may be added                                     |
-| Official records request | Sunrise                               | microfilm/building-record route, official request form, and city-clerk fallback                                            | skip: do not send a request                                                  |
+| Protocol                 | Jurisdictions                   |                              Live bounded result | Disposition                                                  |
+| ------------------------ | ------------------------------- | -----------------------------------------------: | ------------------------------------------------------------ |
+| Coconut Creek legacy ASP | Coconut Creek                   |       1 search page, 1 selected detail, 1 record | implemented                                                  |
+| Click2Gov                | Margate, Pompano Beach, Tamarac |         each: 1 exact search, 1 detail, 1 record | implemented                                                  |
+| Tyler/New World eSuite   | Dania Beach, Davie              |     each: 1 address page, 10 details, 10 records | implemented through persistent isolated headless Chromium    |
+| SmartGov                 | Lighthouse Point                | 1 folio search, explicit empty result, 0 details | implemented; positive detail remains fixture-covered         |
+| eGovPLUS                 | Lauderhill                      |               1 exact search, 1 detail, 1 record | implemented                                                  |
+| OpenGov/ViewPoint        | Lauderdale Lakes                |                  0 requests, `landing_only` skip | blocked: official rendered application reports inaccessible  |
+| Gov-Easy / GeoCivix      | Deerfield Beach, Pembroke Park  | Pembroke manual session: 17 pages, 166 list rows | CAPTCHA remains required; unattended transport stays blocked |
+| CommunityCore            | Hillsboro Beach                 |                                       0 requests | blocked by reCAPTCHA                                         |
+| MGO Connect              | Parkland                        |                                       0 requests | blocked by login                                             |
+| Tyler EnerGov            | Sunrise                         |         shared Tyler adapter, tracked separately | implemented                                                  |
 
-Davie eSuite is explicitly legacy/public history, not complete 2026 coverage.
-The config retains the city's separate Avolve OAS submission route as
-login-required supplemental provenance. Deerfield similarly retains both
-legacy Gov-Easy and current GeoCivix instead of silently treating either as the
-whole history.
+Davie eSuite remains an explicitly bounded public-history/status route. The
+separate 2026 OAS submission system is login-gated, so eSuite results do not
+establish complete new-submission coverage.
 
-## Folio and provenance contract
+Click2Gov exposes segmented parcel fields, but no certified conversion from a
+12-character BCPA folio to those tenant-specific segments was found. The
+adapter therefore supports exact permit-number and address searches only.
 
-BCPA folios remain strings. Display dashes/spaces may be removed and letters
-uppercased for a submitted 12-character folio, but letters are never stripped,
-values are never parsed as numbers, and missing characters are never padded.
-For example, `504108-bj-0140` becomes `504108BJ0140`.
+## Privacy and normalization
 
-Vendor parcel displays are a separate field and are preserved as source text.
-This matters because Pompano Click2Gov returned
-`9202-06-37-1T1000100HALL`, which is neither a numeric field nor a certified
-BCPA folio conversion. The implementation does not invent a crosswalk.
+Every normalized private record retains source system/protocol, official
+search and token-free detail URL, stable vendor identity, query kind, source
+parcel display, dates/status/type/description/value where present, bounded
+inspection outcomes, and conservative roofing classification.
 
-Every normalized row retains:
+Owner, applicant, contact, personal phone/email, reviewer, inspector,
+free-form inspection comments, and payment/fee details are omitted.
+Locations and descriptions remain private staging fields.
 
-- jurisdiction-level source system and reusable protocol;
-- official search and token-free detail URL;
-- stable vendor record id and reconciled permit/application number;
-- source parcel display and separately submitted BCPA folio, if any;
-- source page and query kind;
-- permit dates/status/type, project location/description/value, and bounded
-  inspection summaries where exposed.
+Roofing is true only when permit type or project description contains the
+standalone word `roof` or `roofing`; contractor identity and generic
+construction language do not classify a permit as roofing.
 
-Owner, applicant, primary-contact, personal email/phone, reviewer, inspector,
-free-form inspection comments, and fee-detail fields are deliberately omitted.
-Locations and descriptions remain private-staging data and are not approved
-for publication.
+## Checkpoint and reconciliation behavior
 
-## Checkpoint and pagination behavior
-
-Checkpoints contain a SHA-256 digest of normalized queries rather than raw
-addresses. They record jurisdiction, next query, next numbered page or opaque
-cursor, all seen source identities, all captured detail identities, and
+Checkpoints contain a SHA-256 digest of normalized queries rather than permit
+numbers, addresses, or folios. They record jurisdiction, next query/page or
+opaque cursor, seen source identities, captured detail identities, and
 completion.
 
-A result page is not advanced until all of its permitted details complete. If
-a process stops during details, resume refetches that one page and skips the
-already captured identities. Overlap across pages or queries is deduplicated.
-Conflicting detail identities or conflicting normalized records fail closed.
-Malformed, regressing, repeated, or overlong cursors also fail.
+The local runner atomically persists a normalized record before checkpointing
+that identity. A crash between those writes safely refetches the detail and
+accepts only an exact duplicate. Result pages advance only after all permitted
+details finish. Conflicting identities, repeated/regressing pages, malformed
+cursors, source-row ceilings, cross-origin links, and identity mismatches fail
+closed.
 
-Click2Gov and eGovPLUS currently expose all matching rows in one client-side
-page; their raw row caps apply before dedupe. eSuite and SmartGov retain
-numbered next-page state. OpenGov fixture support retains the public opaque end
-cursor, but no Lauderdale Lakes GraphQL request is currently allowed.
+Click2Gov, Coconut Creek, and eGovPLUS return client-all result pages; the raw
+row ceiling is exclusive so a page at the limit is never claimed complete.
+eSuite retains its persistent result page while details open in same-context
+pages, allowing numbered ASP.NET postbacks without losing session state.
+SmartGov follows only same-origin direct page links and fails if pagination
+requires an uncertified script postback.
 
-## Bounded official-site observations
+## Production enumeration boundaries
 
-Only sources already documented as anonymous were searched. All requests were
-serialized and no source response was saved as a private artifact.
+Two production runners now reuse the certified vendor parsers/transports:
 
-### Click2Gov
+- `run-broward-municipal-record-type-enumeration.mjs` snapshots the complete
+  official eSuite or SmartGov type selector, partitions by exact option value,
+  requires ten records on every non-terminal page, reconciles SmartGov's
+  reported total, verifies replayed pages on resume, and rejects overlap across
+  partitions. Duplicate eSuite labels remain separate because their source
+  option IDs are distinct. Historical eSuite rows with no issued permit number
+  retain the matching public application number and an explicit
+  `permit_application` provenance kind; the stable numeric detail ID remains
+  the record key and mismatched application/list identities fail closed.
+- `build-broward-municipal-property-seed.mjs` derives jurisdiction only from
+  the executable BCPA situs registry. It produces exact folio queries for
+  Coconut Creek/Lauderhill and deduplicated normalized base-address queries for
+  Margate/Pompano Beach/Tamarac. Any target property whose address cannot be
+  represented is written to a separate mode-0600 gap ledger by canonical
+  property identifier and reason, without retaining the rejected address.
+- `run-broward-municipal-property-enumeration.mjs` consumes that immutable
+  private seed, requires each client-all page to stay below its exclusive cap,
+  captures every detail before advancing the query checkpoint, and preserves
+  source-cap/time-out/pagination blockers without treating them as empty. An
+  address at or above the cap advances only into a separate unresolved state:
+  the mode-0600 deferred-cap ledger stores plan/query hashes, aggregate counts,
+  reason, and bounded attempt timing but no address. Terminal progress excludes
+  those items. The runner continues the primary seed, then permits at most
+  three due deferred retries per later invocation, at 24-hour intervals and
+  no more than three observations per item.
 
-The Pompano Beach, Tamarac, and Margate official portal landings returned HTTP
-200 and exposed the same four search modes: application number, address,
-segmented parcel, and name. The form uses a session CSRF token, and permit
-detail remains in that anonymous session.
+The live Pompano Beach and Tamarac address forms expose no permit-type, status,
+application-year, or date-range filter that can partition a capped address.
+They expose segmented parcel controls, but no BCPA-to-vendor segment mapping
+has been certified and the controls cannot be assumed to partition the same
+address result set. Capped items therefore remain deferred; no wildcard,
+permit-number-prefix, or parcel split is attempted.
 
-One Pompano city-hall address query (`100 W ATLANTIC`) produced a 1.1 MB
-contact-expanded page with more than the prototype's 50-row ceiling. No bulk
-detail traversal followed. One exact application already visible in that
-bounded result, `99-00007758`, returned one detail:
+All three scripts write mode-0600 files below ignored owner-only directories.
+Their console summaries and dashboard projections contain aggregate counts and
+allowlisted blocker states only.
 
-- source parcel display `9202-06-37-1T1000100HALL`;
-- application date `1999-12-27`;
-- type `MECHANICAL-STAND ALONE-97`;
-- status `CLOSED`;
-- valuation `$8,500`.
+| Jurisdiction     | Deterministic boundary                                                                                            | Full-worker gate                                                                                           |
+| ---------------- | ----------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| Coconut Creek    | Every exact folio in the reconciled current BCPA Coconut Creek property seed                                      | Seed has zero target-query omissions and a small terminal folio pilot                                      |
+| Dania Beach      | Every non-placeholder exact option ID in the official eSuite permit-type selector                                 | Sequential paging reconciles; application-only rows preserve their vendor ID and explicit application kind |
+| Davie            | Every legacy eSuite exact type; login-gated 2026 OAS submissions remain excluded                                  | Same as Dania; output retains the explicit OAS boundary                                                    |
+| Lauderhill       | Every exact folio in the reconciled current BCPA Lauderhill property seed                                         | Seed has zero target-query omissions and a small terminal folio pilot                                      |
+| Lighthouse Point | Every exact value in the official SmartGov type selector                                                          | Positive live list/detail identity plus reported-total/page reconciliation                                 |
+| Margate          | 13,535 shared-address queries representing 15,059 properties; 1,450 properties remain in the private gap ledger   | Representable capture may run; full coverage remains partial until the ledger/custodian gap is resolved    |
+| Pompano Beach    | 23,900 shared-address queries; 2,961 properties remain in the private gap ledger; exclusive cap stays fail-closed | A positive 5-row address query and all details reconciled below the exclusive 100-row cap                  |
+| Sunrise          | EnerGov application-date windows from 1900-01-01 through the run end date                                         | One-day window reconciles; microfilm/records absent from EnerGov remain custodian-only                     |
+| Tamarac          | 18,362 shared-address queries representing 19,800 properties; 1,378 properties remain in the private gap ledger   | Representable capture may run; full coverage remains partial until the ledger/custodian gap is resolved    |
 
-The fixture uses synthetic values but preserves the observed HTML contract.
-No Tamarac or Margate record search was run after their shared protocol landing
-was confirmed.
+The recovery dashboard includes fixed rows for all nine routes. Missing
+checkpoints render as no-start with the exact gate above; recent checkpoints
+render running, future retry deadlines render cooling down, and only exhausted
+query/partition/window denominators render complete.
 
-### Tyler/New World eSuite
+### eSuite legacy identifier pagination
 
-Davie and Dania Beach landings returned HTTP 200 with public permit type,
-permit number, and service-address fields. Contractor login is a separate
-control and was not used.
+Dania Beach and Davie initially paused as `incomplete_pagination` even though
+the live eSuite grids displayed ten rows and a next-page control. Structural
+inspection found no reported total, missing detail links, blank permit cells,
+or overlap with preceding pages. The parser had discarded printable linked
+identifiers outside its former alphanumeric-and-hyphen pattern: three of ten
+Dania page-six rows used punctuation/spacing and two of ten Davie page-one rows
+used spaces. Each rejected row had a distinct numeric detail URL ID, a matching
+hidden detail ID, and a detail permit/application identifier equal to the list
+anchor.
 
-Davie's official address autocomplete returned eight candidates for prefix
-`8800`. Selecting the exact public candidate
-`8800 SW 36 ST BLD A, DAVIE, FL 33328` returned nine permit references. One
-same-session detail, record id `400068` / permit `2026-00004503`, was captured:
+The parser now accepts only bounded printable identifiers containing at least
+one alphanumeric character and still requires exact detail identity. Blank,
+control-character, conflicting, or inaccessible identities fail closed. A
+selected-type replay recovered Dania's blocked listing to 100 unique records
+over ten pages and reconciled Davie's blocked type to 16 over two pages, with
+zero page overlap or missing rows.
 
-- parcel `504129010010`;
-- status `Permit Issued` on `2026-06-23`;
-- type `E-Fire Alarm`;
-- description `INSTALL FIRE ALARM COMMUNICATOR`;
-- estimated improvement value `$300`;
-- three requestable and four completed inspection rows on the detail page.
+The Dania listing stopped on a full tenth page without a reported total. The
+same 100-row shape existed in multiple prior Dania and Davie type receipts.
+Neither public search form exposes a date, status, page-size, or other
+subdivision control: only exact permit type and exact permit number are
+available. The runner therefore treats a no-total, ten-full-page eSuite result
+as an anonymous source cap rather than accepting it as complete. Historical
+100-row receipts are retained but projected as capped, unresolved partitions.
+Both eSuite routes require an official bulk export or a newly exposed exhaustive
+public filter before source-wide completion. Davie's login-gated 2026 OAS
+boundary remains excluded.
 
-Only the allow-listed summary above was retained. Contact, owner, comments,
-email, phone, and reviewer content displayed by the page were not retained. No
-Dania Beach record search was run.
+## Remaining software blocker
 
-### Gov-Easy / GeoCivix
+Lauderdale Lakes OpenGov remains the only actionable route not promoted. The
+official landing returns HTTP 200, but its own rendered fallback still says
+the permitting application is inaccessible. The fixture parser and cursor
+checkpoint contract remain available, while `probeStatus: landing_only`
+prevents GraphQL transport construction or requests.
 
-Both Gov-Easy client landings returned HTTP 200:
+The seven policy/source barriers remain unchanged and fail closed: Coral
+Springs, Hillsboro Beach, and Pembroke Park require CAPTCHA; North Lauderdale
+and Parkland require login; Deerfield has no anonymous current search and a
+CAPTCHA-protected historical route; Sea Ranch Lakes is custodian-only, with
+BCS evidence supplemental rather than proof of municipal completeness.
 
-- Deerfield Beach client `dce877e0-e162-4827-a60d-7249ec4e8fe2`;
-- Pembroke Park client `d60f9827-2c53-44a4-9037-31e1de2b3f09`, linked by the
-  town's official online-permitting page.
+## Pembroke Park manually validated list evidence
 
-Both load `numeric-captcha.js`. The public client generates and validates a
-six-digit canvas CAPTCHA before allowing search. No CAPTCHA was solved, no
-session flag was set, and no Gov-Easy data endpoint was called.
+A user-authorized browser session with a manually completed Gov-Easy CAPTCHA
+was reused in place without refreshing the page or reading, solving, or
+persisting CAPTCHA/session material. The `Job Name=ROOF` search reported 166
+results across 17 pages. All 17 pages reconciled to 166 list rows and 166 stable
+application identities, with zero duplicates, conflicting identities, invalid
+rows, or missing permit-number/status/location/job-name fields.
 
-Deerfield's current GeoCivix URL is `/secure/`; it was recorded as the current
-side of the 2025 split and not opened as an anonymous record source.
+The allow-listed list capture omits owner and contractor names and does not
+collect contact, payment, or PDF data. The existing standalone-word roofing
+rule classifies 149 of the 166 rows; the remaining 17 stay in the keyword slice
+without being relabeled roofing. No detail pages were required for stable list
+identity, status, and work location.
 
-### SmartGov
+This evidence does not change the source policy. Gov-Easy remains
+`captcha_required` and blocked for unattended transport. The captured slice is
+only the records returned by that exact keyword search; it is not proof of all
+Pembroke Park roofing permits, all Pembroke Park permits, historical
+completeness, or anonymous access.
 
-Lighthouse Point's landing and advanced search returned HTTP 200. The public
-advanced form exposes permits/licenses, application number, type/status/date,
-site address, parcel, contact/contractor, and project fields. The prototype
-allows only permit number, address, and folio; it does not query people.
+## Coral Springs manually authorized capped list evidence
 
-One exact city-hall address search (`2200 NE 38TH ST`) passed SmartGov's normal
-form validation and returned the source's explicit `No results found`. No
-detail request followed. This certifies anonymous search and empty-result
-behavior, not a positive Lighthouse Point record.
+A user-authorized, already-open Chrome tab with a manually completed eTRAKiT
+reCAPTCHA is attached in place. The adapter never launches or refreshes a
+browser, reads or changes cookies/tokens, or copies the CAPTCHA response. It
+allow-lists only list `RECORDID`, permit number/type/status, site address, and
+folio; owner and contractor columns, contacts, details, fees, and PDFs are
+excluded.
 
-### OpenGov
+The approved `Permit Type` `Contains` `ROOF` search reports 59,379 matches, but
+the Telerik grid exposes only 50 pages of 20 rows (1,000). The exact deployed
+contract is an ASP.NET POST with `__VIEWSTATE`, no `__EVENTVALIDATION` input,
+and grid command
+`__doPostBack('ctl00$cplMain$rgSearchRslts',
+'FireCommand:ctl00$cplMain$rgSearchRslts$ctl00;Page;…')`. The capture invokes
+the rendered next-page control sequentially, waits at least six seconds between
+postbacks, and atomically checkpoints each reconciled page before consuming the
+next clipboard envelope. CAPTCHA/session material is never persisted.
 
-Lauderdale Lakes' official OpenGov landing returned HTTP 200, but its own
-rendered fallback says the permitting and licensing application is currently
-inaccessible. No GraphQL request was made. The checked-in GraphQL fixtures
-exercise cursor/detail normalization only; `probeStatus: landing_only`
-prevents a live transport call.
+No exhaustive partition has been proved:
 
-### eGovPLUS
+- The live search-field taxonomy is permit number, site address, permit type,
+  owner, contractor, folio, and status. There is no applied, issued, final, or
+  other date input; this is direct form evidence, not an inference from result
+  columns.
+- Only one field/operator/value criterion is accepted per search, so a roofing
+  condition cannot be intersected with a permit-number year/range or folio.
+- Permit type is free text rather than a complete enumerable taxonomy.
+  Exact-type values observed in the capped slice cannot prove that no other
+  roofing type exists beyond the cap.
+- The page exposes an Excel action, but its all-results/cap semantics are not
+  certified and the grid includes owner/contractor columns. It is not invoked
+  or treated as a safe bulk contract.
+- The permit-number namespace and historical start are not certified.
+  Prefix/year partitions would therefore have unproved gaps.
 
-Lauderhill's official HTTP-only landing returned HTTP 200 and exposed permit,
-permit type, folio, street number/name, and status fields. Its page's example
-number returned the explicit `No matching records found`.
-
-One city-hall address query (`5581 W OAKLAND PARK`) returned 56 rows, over the
-50-row prototype ceiling, so no broad detail traversal followed. One exact
-record from that page, permit `26020017`, returned one detail:
-
-- folio `494123090020`;
-- status `Open`;
-- type `TNC`;
-- application date `2026-02-02`;
-- issue date `2026-02-17`;
-- applied value `1200`;
-- three listed final-inspection requirements.
-
-Owner, applicant, contractor contacts, reviewers, inspectors, notes, and fees
-were not retained.
-
-### Explicit no-network routes
-
-No record request or authenticated/challenged source request was attempted:
-
-- Hillsboro Beach CommunityCore: account required;
-- Parkland MGO Connect: free account required;
-- Deerfield GeoCivix: secure/login route;
-- Deerfield and Pembroke Park Gov-Easy: CAPTCHA;
-- Sunrise: building records are primarily microfilm and the official page
-  directs open-permit/public-record inquiries to
-  `BuildingRecords@sunrisefl.gov`.
-
-Sunrise's official building-record page returned the already documented access
-denial from this environment. The configuration retains the official 2025
-building-record request form and city-clerk custodian page but never sends
-email or submits a form.
-
-## Remaining blockers
-
-1. Click2Gov's segmented parcel labels and its source parcel display do not
-   establish a BCPA 12-character conversion. Do not auto-split a BCPA folio
-   until a city publishes the mapping.
-2. eSuite result postbacks and detail URLs are session-bound. A production
-   transport needs tenant-specific autocomplete and numbered-postback
-   certification before expansion beyond explicit probes.
-3. Gov-Easy is blocked by CAPTCHA, and Deerfield's current GeoCivix side is
-   login-gated. Completeness requires a custodian-supplied route or records
-   request.
-4. SmartGov still needs one known positive official Lighthouse Point example
-   to certify the detail parser against live markup.
-5. OpenGov must remain landing-only until the official Lauderdale Lakes search
-   renders normally and an anonymous GraphQL contract can be observed without
-   a challenge.
-6. CommunityCore and MGO Connect have no certified anonymous record-level
-   access.
-7. Sunrise is a human records-request workflow with potential retrieval/open-
-   permit fees, not an unattended permit endpoint.
-
-No AWS credentials, queues, databases, appraisal ingestion, IPFS, or
-publication paths are imported or used by these prototypes.
+Consequently, even a fully reconciled 1,000-row capture is labeled
+`bounded_capped_keyword_slice`, while the executable registry remains
+`captcha_required`. The gap plan is (1) property-first exact-folio retrieval
+for the finite Coral Springs appraisal property set during future manually
+authorized sessions, with missing/duplicate/conflict receipts and no owner
+fields; and (2) a public-records bulk request for a non-personal permit export
+limited to stable record ID, permit number/type/status, lifecycle dates, site
+address, and folio. Property-first coverage is useful for parcel linkage but
+cannot by itself prove permits with absent or bad folios; only a reconciled
+custodian export can close that residual gap. No request is submitted by this
+implementation.

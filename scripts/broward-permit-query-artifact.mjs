@@ -7,13 +7,27 @@ import { dirname } from "node:path";
 import { ParquetSchema, ParquetWriter } from "@dsnp/parquetjs";
 
 /**
+ * @typedef {object} BrowardNormalizedInspection
+ * @property {string} source_url - Official public inspection-detail URL.
+ * @property {string} source_object_id - Stable source inspection identity.
+ * @property {string} inspection_type - Public inspection type.
+ * @property {string | null} requested_date - ISO request date when exposed.
+ * @property {string} result - Public inspection result.
+ * @property {string | null} completed_date - ISO completion date when exposed.
+ */
+
+/**
  * @typedef {object} BrowardNormalizedPermit
  * @property {string} source_system - County-prefixed permit source system.
  * @property {string} source_url - Official detail URL.
+ * @property {string} source_search_url - Official property-first search URL.
+ * @property {string} source_list_url - Official permit-list URL.
  * @property {string} source_object_id - Official source object identifier.
  * @property {"master" | "permit"} source_record_kind - BCS master application or permit detail.
  * @property {string} record_key - Globally stable source identity.
  * @property {string} parcel_identifier - Exact 12-character BCPA parcel identifier.
+ * @property {string} source_folio_number - Source-displayed legacy folio.
+ * @property {string} issuing_jurisdiction - Source-displayed issuing jurisdiction.
  * @property {string} permit_number - Public permit/application number.
  * @property {string} record_status - Public source status.
  * @property {string} record_type - Public source permit/application type.
@@ -22,8 +36,23 @@ import { ParquetSchema, ParquetWriter } from "@dsnp/parquetjs";
  * @property {string | null} expiration_date - ISO expiration date.
  * @property {string | null} project_title - Public project title.
  * @property {string | null} project_description - Public project description.
+ * @property {string} work_location - Public work location.
+ * @property {string} legal_description - Public legal description.
+ * @property {string | null} contractor_name - Public contractor name.
+ * @property {string | null} contractor_license - Public contractor licence.
+ * @property {string | null} building_use - Public building-use label.
+ * @property {string | null} present_use - Public present-use label.
+ * @property {string | null} proposed_use - Public proposed-use label.
  * @property {number | null} job_value - Public estimated job value.
- * @property {readonly { completed_date: string | null }[]} inspections - Public inspection completion evidence.
+ * @property {number | null} square_footage - Public project square footage.
+ * @property {string | null} occupancy_type - Public occupancy label.
+ * @property {string | null} construction_type - Public construction label.
+ * @property {number | null} occupant_load - Public occupant count.
+ * @property {number | null} finish_floor_above_road - Public elevation above road.
+ * @property {number | null} finish_floor_above_sea_level - Public elevation above sea level.
+ * @property {readonly BrowardNormalizedInspection[]} inspections - Public inspection evidence.
+ * @property {boolean} is_roof_permit - Conservative source-text roof classification.
+ * @property {Record<string, unknown>} raw - Minimal source-specific provenance.
  */
 
 /**

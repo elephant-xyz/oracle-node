@@ -21,9 +21,17 @@
     "permit-source-adapters/broward-permit-jurisdictions.mjs",
     "permit-source-adapters/citizenserve.mjs",
     "permit-source-adapters/tyler-civic-access.mjs",
+    "run-broward-tyler-date-windows.mjs",
+    "retry-broward-tyler-source-missing.mjs",
     "probe-broward-municipal-permits.mjs",
     "permit-source-adapters/broward-municipal-core.mjs",
     "permit-source-adapters/broward-municipal-config.mjs",
-    "permit-source-adapters/broward-municipal-protocols.mjs"
+    "permit-source-adapters/broward-municipal-protocols.mjs",
+    "permit-source-adapters/broward-municipal-transport.mjs",
+    "run-broward-municipal-permit-pilot.mjs",
+    "build-broward-municipal-property-seed.mjs",
+    "run-broward-municipal-property-enumeration.mjs",
+    "run-broward-municipal-record-type-enumeration.mjs",
+    "run-broward-municipal-enumeration-supervisor.mjs"
   ]
 }

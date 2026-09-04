@@ -96,7 +96,7 @@ git am \
 ```
 
 Required SHA-256:
-`0a5cddfc53ce778317694c8968964ec42586e6acb1588362941bb8f66c666582`.
+`ef1e201c20503ae00c2107db035801861f5baf6256245d7f64c558e4517d191a`.
 The runtime scripts are then available at
 `/tmp/Counties-trasform-scripts/broward/scripts`. Captures and transforms remain
 private and are never uploaded.
@@ -193,10 +193,23 @@ Open `http://127.0.0.1:47832/` inside the VM or preview port 47832. The API is
 `GET /api/status`; liveness is `GET /healthz`. It reports only visible
 properties, distinct folios, verified completion hashes, terminal source
 misses, prepared/committed row counts, source/transform/load failure attempts,
-recent verified throughput, advisory-lock process state, and the aggregate
-bounded permit pilot status installed by dashboard migration `002`. Permit
-counts remain null until a reconciled pilot is explicitly recorded, and local
-pilot acceptance is always displayed separately from countywide completeness.
+recent verified throughput, and advisory-lock process state.
+
+The same private view now includes aggregate permit and Sunbiz progress:
+
+- current Neon permit rows, exact-property links, unlinked rows, roofing
+  classifications, source-system count, and latest load;
+- Fort Lauderdale bulk and list-loader durable chunk receipts;
+- eight fixed Accela/Tyler worker rows with running/paused/complete state,
+  completed/remaining windows, locally captured records, exclusions, invalid
+  rows, and source-missing rows; and
+- verified Sunbiz matched address roles, registrations, properties, and
+  durable chunks.
+
+No permit number, parcel ID, address, company/person name, raw source row,
+error text, connection string, or local path is returned. Local pilot
+acceptance remains separate from countywide completeness. The API coalesces
+overlapping reads and the UI refreshes every ten seconds to reduce Neon load.
 
 Resume uses the identical full command. Never reset or edit Neon source rows,
 terminal hashes, or chunk records. A changed official seed signature fails

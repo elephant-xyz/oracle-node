@@ -39,8 +39,8 @@ INSERT INTO ingest_control.broward_permit_control (
   50,
   5,
   32,
-  15,
-  17
+  24,
+  8
 )
 ON CONFLICT (pipeline_key) DO UPDATE SET
   contract_version = EXCLUDED.contract_version,
