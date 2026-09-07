@@ -283,9 +283,9 @@ describe("published county catalog", () => {
     ).toBe("QmQhc18TqKTjBymQkfxdsbWNg6SxrDmQ3bfYBJdWWdU7cF");
     expect(
       JSON.parse(env.PERMIT_QUERY_TABLE_CID_FALLBACK_MAP_ADDITIONS).broward,
-    ).toBe("QmcDAHJBt5LHiHAHdDwqCKM2BZqPwTJBrxW4Z5DJ6qEJd2");
+    ).toBe("QmQue98qAe66bpPb1UreTKKGuiAbwNifqZ9wAvKes7nxeg");
     expect(
       JSON.parse(env.DATASET_COVERAGE_CID_FALLBACK_MAP_ADDITIONS).broward,
-    ).toBe("QmTZndCJfNi29hxGzyLXpt9iYJedtmeM2DKFRa24LLA6dq");
+    ).toBe("QmW93JmWvFQnxcmZP8YYjmGApP84p5kAKxDNYhozSBgh5s");
   });
 });
