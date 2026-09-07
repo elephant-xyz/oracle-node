@@ -115,6 +115,19 @@ async function createPublicationFixture() {
   await writeJson(path.join(sourceDirectory, ".state", "checkpoint.json"), {
     complete: true,
   });
+  await writeJson(
+    path.join(root, "permits", "load-ready", "normalization-manifest.json"),
+    {
+      schemaVersion: "oracle-node.polk-permit-source-normalization.v1",
+      county: "polk",
+      queryDbPermitSourceSystem: "polk_permits",
+      loadReadyPermitCount: 2,
+      unmatchedPermitCount: 2,
+      excludedRecordCounts: { contractor_license: 1 },
+      pilot: false,
+      complete: true,
+    },
+  );
   return {
     root,
     sourceDirectory,
@@ -131,6 +144,10 @@ describe("Polk publication preparation", () => {
       outputDirectory: "/repo/tmp/polk/publication-prepared",
       permitEnrichmentReceiptPath:
         "/repo/tmp/polk/permits/enrichment-receipt.json",
+      permitNormalizationManifestPath:
+        "/repo/tmp/polk/permits/load-ready/normalization-manifest.json",
+      permitPublicationReceiptPath:
+        "/repo/tmp/polk/permits/permit-table-publication-receipt.json",
       sunbizManifestPath: "/repo/tmp/polk/sunbiz/transformed/manifest.json",
       bbbManifestPath: "/repo/tmp/polk/bbb/manifest/contractor-crm.json",
       neonReceiptPath: "/repo/tmp/polk/neon/reconciliation-receipt.json",
@@ -190,7 +207,9 @@ describe("Polk publication preparation", () => {
     expect(plan.validation).toMatchObject({
       passed: true,
       propertyCount: 1,
-      permitCount: 7,
+      permitCount: 9,
+      propertyPermitCount: 7,
+      portalPermitCount: 2,
       privacyPassed: true,
       checkpointComplete: true,
     });
@@ -202,6 +221,10 @@ describe("Polk publication preparation", () => {
       },
       queryTable: {
         requiredIpnsLabel: "oracle-query-table-polk",
+      },
+      permitQueryTable: {
+        requiredIpnsLabel: "oracle-permit-table-polk",
+        expectedRowCount: 9,
       },
       places: {
         externalStatus:
@@ -215,6 +238,7 @@ describe("Polk publication preparation", () => {
         countyKey: "polk",
         countyFips: "12105",
         queryTableUrl: "<verified-query-table-ipns-url>",
+        permitQueryTableUrl: "<verified-permit-table-ipns-url>",
       },
     });
     expect(plan.status).toBe("dry_run");
@@ -225,7 +249,7 @@ describe("Polk publication preparation", () => {
     expect(
       buildPolkPublicCoverageSnapshot({
         propertyCount: 438612,
-        permitCount: 531344,
+        permitCount: 1128608,
         exportedAt: "2026-08-28T22:31:53.851Z",
         completedAt: "2026-08-28T22:44:54.220Z",
         openDataCid: "QmPolkOpenDataIndex",
@@ -247,12 +271,12 @@ describe("Polk publication preparation", () => {
         {
           county: "polk",
           source: "permits",
-          ingested_count: 531344,
-          expected_count: 531344,
+          ingested_count: 1128608,
+          expected_count: 1128608,
           first_loaded_at: "2026-08-28T22:31:53.851Z",
           last_loaded_at: "2026-08-28T22:44:54.220Z",
-          cid: "QmPolkOpenDataIndex",
-          ipns_label: "oracle-open-data-polk",
+          cid: null,
+          ipns_label: null,
         },
         {
           county: "polk",
@@ -295,7 +319,17 @@ describe("Polk publication preparation", () => {
       exportedAt: "2026-08-28T22:31:53.851Z",
       completedAt: "2026-08-28T22:44:54.220Z",
       openDataCid: "QmPolkOpenDataIndex",
+      permitTableCid: "QmPolkPermitTable",
+      permitTableIpnsLabel: "oracle-permit-table-polk",
       reconciledTracks: [
+        {
+          source: "permits",
+          localCount: 20,
+          neonCoverageCount: 20,
+          firstLoadedAt: "2026-08-28T22:39:00.000Z",
+          lastLoadedAt: "2026-08-28T22:42:00.000Z",
+          passed: true,
+        },
         {
           source: "sunbiz",
           localCount: 5,
@@ -315,6 +349,15 @@ describe("Polk publication preparation", () => {
       ],
     });
 
+    expect(snapshot.datasets[1]).toMatchObject({
+      source: "permits",
+      ingested_count: 20,
+      expected_count: 20,
+      first_loaded_at: "2026-08-28T22:39:00.000Z",
+      last_loaded_at: "2026-08-28T22:42:00.000Z",
+      cid: "QmPolkPermitTable",
+      ipns_label: "oracle-permit-table-polk",
+    });
     expect(snapshot.datasets[2]).toMatchObject({
       source: "corporate",
       ingested_count: 5,
@@ -370,12 +413,44 @@ describe("Polk publication preparation", () => {
 
   it("materializes separate open-data, query-table, and coverage families locally", async () => {
     const fixture = await createPublicationFixture();
+    await writeJson(
+      path.join(
+        fixture.root,
+        "permits",
+        "permit-table-publication-receipt.json",
+      ),
+      {
+        schemaVersion: "oracle-node.polk-permit-table-publication.v1",
+        county: "polk",
+        rowCount: 9,
+        distinctPermitIds: 9,
+        cid: "QmPolkPermitTable",
+        ipnsLabel: "oracle-permit-table-polk",
+        ipnsName: "k51-polk-permit-table",
+        gatewayUrl: "https://ipfs.filebase.io/ipns/k51-polk-permit-table",
+        gatewayVerified: true,
+        firstFourBytes: "PAR1",
+      },
+    );
 
     const plan = await runPreparePolkLocalPublication([
       "--source-dir",
       fixture.sourceDirectory,
       "--output-dir",
       fixture.outputDirectory,
+      "--permit-normalization-manifest",
+      path.join(
+        fixture.root,
+        "permits",
+        "load-ready",
+        "normalization-manifest.json",
+      ),
+      "--permit-publication-receipt",
+      path.join(
+        fixture.root,
+        "permits",
+        "permit-table-publication-receipt.json",
+      ),
       "--materialize",
       "--shard-size",
       "1",
@@ -412,7 +487,7 @@ describe("Polk publication preparation", () => {
         ),
       ),
     ).toEqual(fixture.queryTableBody);
-    expect(
+    const publicCoverage = JSON.parse(
       await readFile(
         path.join(
           fixture.outputDirectory,
@@ -421,7 +496,17 @@ describe("Polk publication preparation", () => {
         ),
         "utf8",
       ),
-    ).toContain('"source": "permits"');
+    );
+    expect(publicCoverage.datasets[1]).toMatchObject({
+      source: "permits",
+      ingested_count: 9,
+      expected_count: 9,
+      cid: "QmPolkPermitTable",
+      ipns_label: "oracle-permit-table-polk",
+    });
+    expect(plan.families.permitQueryTable.externalStatus).toBe(
+      "published_and_gateway_verified",
+    );
     expect(plan.status).toBe("materialized");
   });
 

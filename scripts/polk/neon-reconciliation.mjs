@@ -135,7 +135,7 @@ async function localTrack(
  * denominators and the generic query-db loader contract an authorized operator
  * can use after placing artifacts in a non-production staging prefix.
  *
- * @param {{sourceDirectory:string,permitSummaryPath:string,sunbizManifestPath:string,bbbManifestPath:string,overtureSummaryPath:string}} options Artifact paths.
+ * @param {{sourceDirectory:string,permitSummaryPath:string,permitNormalizationManifestPath?:string,sunbizManifestPath:string,bbbManifestPath:string,overtureSummaryPath:string}} options Artifact paths.
  * @returns {Promise<PolkLocalLoadManifest>} Local handoff manifest.
  */
 export async function buildPolkLocalLoadManifest(options) {
@@ -148,15 +148,31 @@ export async function buildPolkLocalLoadManifest(options) {
     ".state",
     "checkpoint.json",
   );
-  const [appraisal, checkpoint, permits, sunbiz, bbb, overture] =
-    await Promise.all([
-      readOptionalJsonObject(appraisalManifestPath),
-      readOptionalJsonObject(checkpointPath),
-      readOptionalJsonObject(options.permitSummaryPath),
-      readOptionalJsonObject(options.sunbizManifestPath),
-      readOptionalJsonObject(options.bbbManifestPath),
-      readOptionalJsonObject(options.overtureSummaryPath),
-    ]);
+  const permitNormalizationManifestPath =
+    options.permitNormalizationManifestPath ??
+    path.join(
+      path.resolve(options.sourceDirectory, ".."),
+      "permits",
+      "load-ready",
+      "normalization-manifest.json",
+    );
+  const [
+    appraisal,
+    checkpoint,
+    permits,
+    permitNormalization,
+    sunbiz,
+    bbb,
+    overture,
+  ] = await Promise.all([
+    readOptionalJsonObject(appraisalManifestPath),
+    readOptionalJsonObject(checkpointPath),
+    readOptionalJsonObject(options.permitSummaryPath),
+    readOptionalJsonObject(permitNormalizationManifestPath),
+    readOptionalJsonObject(options.sunbizManifestPath),
+    readOptionalJsonObject(options.bbbManifestPath),
+    readOptionalJsonObject(options.overtureSummaryPath),
+  ]);
 
   const appraisalCount = nestedCount(appraisal, ["output", "propertyCount"]);
   const appraisalRows = nestedCount(appraisal, [
@@ -176,9 +192,28 @@ export async function buildPolkLocalLoadManifest(options) {
     appraisalDistinct === appraisalCount &&
     checkpoint?.complete === true;
 
-  const permitCount = nestedCount(permits, ["permitCount"]);
+  const officialBulkPermitCount = nestedCount(permits, ["permitCount"]);
+  const normalizedPortalPermitCount = nestedCount(permitNormalization, [
+    "loadReadyPermitCount",
+  ]);
+  const permitCount =
+    officialBulkPermitCount === null || normalizedPortalPermitCount === null
+      ? null
+      : officialBulkPermitCount + normalizedPortalPermitCount;
   const permitsReady =
     permits?.schemaVersion === "oracle-node.polk-permit-enrichment.v1" &&
+    permitNormalization?.schemaVersion ===
+      "oracle-node.polk-permit-source-normalization.v1" &&
+    permitNormalization.county === "polk" &&
+    permitNormalization.queryDbPermitSourceSystem === "polk_permits" &&
+    permitNormalization.complete === true &&
+    permitNormalization.pilot === false &&
+    nestedCount(permitNormalization, ["unmatchedPermitCount"]) ===
+      normalizedPortalPermitCount &&
+    nestedCount(permitNormalization, [
+      "excludedRecordCounts",
+      "contractor_license",
+    ]) !== null &&
     permitCount !== null &&
     permitCount > 0;
 
@@ -230,8 +265,8 @@ export async function buildPolkLocalLoadManifest(options) {
       permitCount,
       permitsReady,
       permitsReady
-        ? `${permitCount} official bulk permit rows are locally evidenced.`
-        : "The official Polk permit summary is absent or empty.",
+        ? `${permitCount} permit rows are locally evidenced: ${officialBulkPermitCount} property-appraiser CAMA rows plus ${normalizedPortalPermitCount} verified, property-unmatched Accela/Lakeland rows.`
+        : "Both the official Polk CAMA permit summary and complete portal-source normalization manifest are required.",
     ),
     localTrack(
       "sunbiz",
@@ -277,14 +312,17 @@ export async function buildPolkLocalLoadManifest(options) {
       requiredInputs: {
         bucket: "<authorized-non-production-staging-bucket>",
         appraisalPrefix: "<staged-polk-appraisal-prefix>",
-        permitPrefix: "<staged-polk-permit-prefix>",
+        camaPermitStageFile: "<local-polk-cama-permit-stage.csv>",
+        normalizedPermitPrefix: "<staged-polk-normalized-permit-prefix>",
         sunbizPrefix: "<staged-sunbiz-polk-corporate-classes-prefix>",
         bbbPrefix: "<staged-bbb/category-data/polk-county-prefix>",
         placesPrefix: "<staged-overture-places/polk/release-prefix>",
         envFile: "<authorized-non-production-neon-env-file>",
       },
-      commandTemplate:
-        "npm --prefix ../elephant-query-db run load:bulk -- --env-file <authorized-non-production-neon-env-file> --bucket <authorized-non-production-staging-bucket> --jurisdiction-key polk_appraiser --tracks appraisal,permits,sunbiz,bbb,places --appraisal-prefix <staged-polk-appraisal-prefix> --permit-prefix <staged-polk-permit-prefix> --sunbiz-prefix <staged-sunbiz-polk-corporate-classes-prefix> --bbb-prefix <staged-bbb/category-data/polk-county-prefix> --places-prefix <staged-overture-places/polk/release-prefix>",
+      permitCommandTemplates: [
+        "npm --prefix ../elephant-query-db run load:bulk -- --phase load --env-file <authorized-non-production-neon-env-file> --jurisdiction-key polk_appraiser --tracks permits --stage-file <local-polk-cama-permit-stage.csv>",
+        "npm --prefix ../elephant-query-db run load:bulk -- --env-file <authorized-non-production-neon-env-file> --bucket <authorized-non-production-staging-bucket> --jurisdiction-key polk_appraiser --tracks permits --permit-format normalized-jsonl --permit-source-system polk_permits --permit-prefix <staged-polk-normalized-permit-prefix>",
+      ],
       executed: false,
       reason:
         "This repository prepares evidence only. Artifact staging and Neon mutation require authorized credentials and an explicit target environment.",
@@ -537,19 +575,18 @@ export async function observePolkNeon(options) {
   await client.connect();
   try {
     await client.query("BEGIN READ ONLY");
-    const [coverageResult, placesResult, extractionResult] = await Promise.all([
-      client.query(
-        `
+    const coverageResult = await client.query(
+      `
           SELECT source, ingested_count, expected_count,
                  first_loaded_at::text, last_loaded_at::text
           FROM oracle_dataset_coverage
           WHERE county = $1
           ORDER BY source
         `,
-        ["polk"],
-      ),
-      client.query(
-        `
+      ["polk"],
+    );
+    const placesResult = await client.query(
+      `
           SELECT count(*)::text AS row_count,
                  count(DISTINCT gers_id)::text AS distinct_gers_ids
           FROM business_locations
@@ -558,18 +595,17 @@ export async function observePolkNeon(options) {
             AND last_seen_release = $2
             AND is_current = true
         `,
-        ["polk", options.release],
-      ),
-      client.query(
-        `
+      ["polk", options.release],
+    );
+    const extractionResult = await client.query(
+      `
           SELECT clip_count, licence_gate_passed
           FROM overture_place_extractions
           WHERE county_key = $1 AND overture_release = $2
           LIMIT 1
         `,
-        ["polk", options.release],
-      ),
-    ]);
+      ["polk", options.release],
+    );
     await client.query("COMMIT");
     return parsePolkNeonObservations({
       schemaVersion: "oracle-node.polk-neon-observations.v1",
@@ -606,6 +642,7 @@ export async function runPolkNeonReconciliation(argv) {
       mode: { type: "string" },
       "source-dir": { type: "string" },
       "permit-summary": { type: "string" },
+      "permit-normalization-manifest": { type: "string" },
       "sunbiz-manifest": { type: "string" },
       "bbb-manifest": { type: "string" },
       "overture-summary": { type: "string" },
@@ -630,6 +667,10 @@ export async function runPolkNeonReconciliation(argv) {
       typeof values["permit-summary"] === "string"
         ? values["permit-summary"]
         : "tmp/polk/parity/permit-enrichment.json",
+    permitNormalizationManifestPath:
+      typeof values["permit-normalization-manifest"] === "string"
+        ? values["permit-normalization-manifest"]
+        : "tmp/polk/permits/load-ready/normalization-manifest.json",
     sunbizManifestPath:
       typeof values["sunbiz-manifest"] === "string"
         ? values["sunbiz-manifest"]

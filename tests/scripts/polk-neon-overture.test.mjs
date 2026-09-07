@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 
@@ -35,6 +35,18 @@ async function createTemporaryDirectory() {
   const directory = await mkdtemp(path.join(tmpdir(), "polk-neon-"));
   temporaryDirectories.push(directory);
   return directory;
+}
+
+/**
+ * Write JSON fixture data.
+ *
+ * @param {string} filePath Destination path.
+ * @param {unknown} value JSON-compatible value.
+ * @returns {Promise<void>} Resolves after write.
+ */
+async function writeJson(filePath, value) {
+  await mkdir(path.dirname(filePath), { recursive: true });
+  await writeFile(filePath, `${JSON.stringify(value)}\n`, "utf8");
 }
 
 /**
@@ -84,6 +96,58 @@ describe("Polk local-to-Neon receipts", () => {
     expect(manifest.loaderHandoff).toMatchObject({
       executed: false,
       requiredJurisdictionKey: "polk_appraiser",
+    });
+  });
+
+  it("combines CAMA and verified portal permits without counting licenses", async () => {
+    const root = await createTemporaryDirectory();
+    const sourceDirectory = path.join(root, "full");
+    const permitSummaryPath = path.join(root, "permit.json");
+    const permitNormalizationManifestPath = path.join(
+      root,
+      "permit-normalization.json",
+    );
+    await Promise.all([
+      writeJson(path.join(sourceDirectory, "manifest.json"), {
+        output: {
+          propertyCount: 1,
+          queryTable: { rowCount: 1 },
+          validation: { distinctParcels: 1 },
+        },
+      }),
+      writeJson(path.join(sourceDirectory, ".state", "checkpoint.json"), {
+        complete: true,
+      }),
+      writeJson(permitSummaryPath, {
+        schemaVersion: "oracle-node.polk-permit-enrichment.v1",
+        permitCount: 7,
+      }),
+      writeJson(permitNormalizationManifestPath, {
+        schemaVersion: "oracle-node.polk-permit-source-normalization.v1",
+        county: "polk",
+        queryDbPermitSourceSystem: "polk_permits",
+        loadReadyPermitCount: 2,
+        unmatchedPermitCount: 2,
+        excludedRecordCounts: { contractor_license: 1 },
+        pilot: false,
+        complete: true,
+      }),
+    ]);
+
+    const manifest = await buildPolkLocalLoadManifest({
+      sourceDirectory,
+      permitSummaryPath,
+      permitNormalizationManifestPath,
+      sunbizManifestPath: path.join(root, "sunbiz.json"),
+      bbbManifestPath: path.join(root, "bbb.json"),
+      overtureSummaryPath: path.join(root, "overture.json"),
+    });
+
+    expect(
+      manifest.tracks.find((track) => track.source === "permits"),
+    ).toMatchObject({
+      localCount: 9,
+      ready: true,
     });
   });
 
