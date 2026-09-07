@@ -145,4 +145,14 @@ describe("Pinellas BBB harvest plan", () => {
       expect(job.command).not.toMatch(/--max-pages 1(?:\s|$)/);
     }
   });
+
+  it("supports resuming full harvest from job 2 after clearwater roofing completes", () => {
+    const jobs = buildPinellasBbbFullHarvestJobs("/tmp/pinellas-bbb-harvest");
+    const resumedFromJob2 = jobs.slice(2 - 1);
+    expect(resumedFromJob2).toHaveLength(5);
+    expect(resumedFromJob2[0]).toMatchObject({
+      cityKey: "clearwater",
+      tradeKey: "hvac",
+    });
+  });
 });
