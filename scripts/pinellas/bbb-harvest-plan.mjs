@@ -102,7 +102,10 @@ export const PINELLAS_BBB_CATEGORY_SOURCES = Object.freeze(
       cityName: city.name,
       tradeKey: trade.key,
       tradeName: trade.name,
-      categoryUrl: buildPinellasBbbCategoryUrl(city.bbbSlug, trade.categorySlug),
+      categoryUrl: buildPinellasBbbCategoryUrl(
+        city.bbbSlug,
+        trade.categorySlug,
+      ),
     })),
   ),
 );
@@ -231,14 +234,12 @@ export function buildPinellasBbbHarvestPlan(outputRoot, options = {}) {
       harvesterPaginationQuery: "?page=N",
       multiPageScrape: "stop",
       localMaxPages: PINELLAS_BBB_ROBOTS_COMPLIANT_MAX_PAGES,
-      note:
-        "Do not run uncapped or multi-page category harvests. Page 2+ returns HTTP 403.",
+      note: "Do not run uncapped or multi-page category harvests. Page 2+ returns HTTP 403.",
     },
     recommendedProductionPath: {
       method: "bbb-api",
       applicationUrl: PINELLAS_BBB_PRODUCTION_API_URL,
-      note:
-        "Apply for official BBB API access for production contractor reputation enrichment.",
+      note: "Apply for official BBB API access for production contractor reputation enrichment.",
     },
     operatorNextStep:
       "Apply for BBB API access at developer.bbb.org. Do not run full paginated browser harvests. If local browser sampling continues, use page-1-only commands from this plan.",
@@ -247,11 +248,7 @@ export function buildPinellasBbbHarvestPlan(outputRoot, options = {}) {
     probeCommand: buildPinellasBbbProbeCommand(resolvedRoot, pageOneOptions),
     categories: PINELLAS_BBB_CATEGORY_SOURCES.map((source) => ({
       ...source,
-      outputDirectory: path.join(
-        resolvedRoot,
-        source.cityKey,
-        source.tradeKey,
-      ),
+      outputDirectory: path.join(resolvedRoot, source.cityKey, source.tradeKey),
       command: buildPinellasBbbHarvestCommand(
         source,
         path.join(resolvedRoot, source.cityKey, source.tradeKey),

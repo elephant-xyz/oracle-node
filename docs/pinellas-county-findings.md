@@ -358,14 +358,14 @@ CHROME_EXECUTABLE_PATH=/usr/local/bin/google-chrome node scripts/harvest-bbb-cat
   --profile-subpages none --page-delay-ms 2000 --profile-delay-ms 1500
 ```
 
-| Metric | Value |
-| --- | --- |
-| Egress | `US` (`curl -s ipinfo.io/country`) |
-| Category pages | 2 visited (historical sample only); **8,068** St. Pete roofing results claimed |
-| Profiles harvested / failed | **15 / 0** (~5 min; Cloudflare cleared in headless Chrome) |
-| Output | `downloads/pinellas/bbb-probe/st-petersburg/roofing/` |
-| Accela impact | `pinellas-accela-full-20260903` left running (pid 996439) |
-| Pagination follow-up | Page 1 OK; `?page=2` → **403** on repeat from vanilla Puppeteer |
+| Metric                      | Value                                                                          |
+| --------------------------- | ------------------------------------------------------------------------------ |
+| Egress                      | `US` (`curl -s ipinfo.io/country`)                                             |
+| Category pages              | 2 visited (historical sample only); **8,068** St. Pete roofing results claimed |
+| Profiles harvested / failed | **15 / 0** (~5 min; Cloudflare cleared in headless Chrome)                     |
+| Output                      | `downloads/pinellas/bbb-probe/st-petersburg/roofing/`                          |
+| Accela impact               | `pinellas-accela-full-20260903` left running (pid 996439)                      |
+| Pagination follow-up        | Page 1 OK; `?page=2` → **403** on repeat from vanilla Puppeteer                |
 
 ### Operator next step
 

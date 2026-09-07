@@ -51,10 +51,7 @@ describe("Pinellas BBB harvest plan", () => {
 
   it("builds category URLs from city and trade slugs", () => {
     expect(
-      buildPinellasBbbCategoryUrl(
-        "st-petersburg",
-        "solar-energy-contractors",
-      ),
+      buildPinellasBbbCategoryUrl("st-petersburg", "solar-energy-contractors"),
     ).toBe(
       "https://www.bbb.org/us/fl/st-petersburg/category/solar-energy-contractors",
     );
