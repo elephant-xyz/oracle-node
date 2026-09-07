@@ -14,6 +14,8 @@ const DEFAULT_CHALLENGE_ATTEMPTS = 5;
 const DEFAULT_CHALLENGE_CHECK_INTERVAL_MS = 3_000;
 const DEFAULT_CHALLENGE_CHECKS_PER_ATTEMPT = 12;
 const DEFAULT_NAVIGATION_TIMEOUT_MS = 90_000;
+const DEFAULT_PAGE_READ_TIMEOUT_MS = 5_000;
+const DEFAULT_CONSECUTIVE_EMPTY_CATEGORY_PAGES_LIMIT = 3;
 const DEFAULT_PART_RECORD_LIMIT = 100;
 const DEFAULT_VIEWPORT_WIDTH = 1365;
 const DEFAULT_VIEWPORT_HEIGHT = 900;
@@ -170,6 +172,14 @@ const DEFAULT_PROFILE_SUBPAGES = [
  * @property {number | null} status - HTTP status from the most recent navigation response.
  * @property {string} title - Final document title.
  * @property {string} previewText - First visible characters from the page body.
+ * @property {boolean} [readFailed] - True when title/preview could not be read before the short timeout.
+ */
+
+/**
+ * @typedef {object} PageChallengeState
+ * @property {string} title - Document title, empty when unreadable.
+ * @property {string} previewText - Body preview, empty when unreadable.
+ * @property {boolean} readFailed - True when title/preview could not be read in time.
  */
 
 /**
@@ -189,6 +199,8 @@ const DEFAULT_PROFILE_SUBPAGES = [
  * @property {number} challengeCheckIntervalMs - Delay between challenge checks.
  * @property {number} challengeChecksPerAttempt - Number of challenge checks per navigation attempt.
  * @property {number} navigationTimeoutMs - Puppeteer navigation timeout in milliseconds.
+ * @property {number} pageReadTimeoutMs - Short timeout for title/body reads during challenge checks.
+ * @property {number} consecutiveEmptyCategoryPagesLimit - Stop category pagination after this many empty listing pages in a row.
  * @property {boolean} includeHtml - Whether raw HTML snapshots should be stored.
  * @property {readonly string[]} profileSubpages - Profile subpages to visit after the main profile page.
  */
@@ -295,6 +307,7 @@ export async function harvestBbbCategoryInExistingPage(options, page) {
 
   let parsedPageCount = options.maxPages;
   let pageNumber = options.startPage;
+  let consecutiveEmptyListingPages = 0;
   while (
     parsedPageCount === null ||
     pageNumber < options.startPage + parsedPageCount
@@ -321,6 +334,19 @@ export async function harvestBbbCategoryInExistingPage(options, page) {
       if (!profileListingByUrl.has(listing.profileUrl)) {
         profileListingByUrl.set(listing.profileUrl, listing);
       }
+    }
+    if (categoryRecord.profileListings.length === 0) {
+      consecutiveEmptyListingPages += 1;
+      if (
+        shouldStopCategoryPagination(
+          consecutiveEmptyListingPages,
+          options.consecutiveEmptyCategoryPagesLimit,
+        )
+      ) {
+        break;
+      }
+    } else {
+      consecutiveEmptyListingPages = 0;
     }
     if (parsedPageCount === null) {
       parsedPageCount = categoryRecord.pageCount ?? 1;
@@ -459,6 +485,20 @@ export function isRecoverableBbbPageError(caught) {
   return /detached frame|session closed|target closed|protocol error|protocol timeout|runtime\.[a-z]+ timed out/i.test(
     message,
   );
+}
+
+/**
+ * Decide whether category pagination should stop after another empty listing page.
+ *
+ * @param {number} consecutiveEmptyListingPages - Count of consecutive category pages with zero profile listings.
+ * @param {number} limit - Stop threshold configured for the harvest.
+ * @returns {boolean} True when pagination should end.
+ */
+export function shouldStopCategoryPagination(
+  consecutiveEmptyListingPages,
+  limit,
+) {
+  return consecutiveEmptyListingPages >= limit;
 }
 
 /**
@@ -849,13 +889,19 @@ async function gotoAccessibleBbbPage(page, url, options) {
     status = response?.status() ?? null;
     for (let check = 0; check < options.challengeChecksPerAttempt; check += 1) {
       await sleep(options.challengeCheckIntervalMs);
-      const state = await readPageChallengeState(page);
+      const state = await readPageChallengeState(
+        page,
+        options.pageReadTimeoutMs,
+      );
       lastResult = {
         ok:
-          !isCloudflareChallenge(state.title, state.previewText) &&
-          !isBbbErrorPage(state.title, state.previewText),
+          state.readFailed ||
+          (!isCloudflareChallenge(state.title, state.previewText) &&
+            !isBbbErrorPage(state.title, state.previewText)),
         status,
-        ...state,
+        title: state.title,
+        previewText: state.previewText,
+        readFailed: state.readFailed,
       };
       if (lastResult.ok) return lastResult;
     }
@@ -864,17 +910,101 @@ async function gotoAccessibleBbbPage(page, url, options) {
 }
 
 /**
- * Read title and preview text for challenge detection.
+ * Read title and preview text for challenge detection with a short timeout so a
+ * hung CDP call cannot block the crawl for the full navigation timeout.
  *
  * @param {import("puppeteer").Page} page - Puppeteer page.
- * @returns {Promise<{ readonly title: string, readonly previewText: string }>} Page title and body preview.
+ * @param {number} [timeoutMs=DEFAULT_PAGE_READ_TIMEOUT_MS] - Maximum wait for title/preview reads.
+ * @returns {Promise<PageChallengeState>} Page title and body preview, with `readFailed` when unreadable.
  */
-async function readPageChallengeState(page) {
-  const title = await page.title();
-  const previewText = await page.evaluate(
-    () => document.body?.innerText?.slice(0, 500) ?? "",
+export async function readPageChallengeState(page, timeoutMs) {
+  const readTimeoutMs = timeoutMs ?? DEFAULT_PAGE_READ_TIMEOUT_MS;
+  const titleResult = await readPageTitleWithTimeout(page, readTimeoutMs);
+  const previewResult = await readPagePreviewTextWithTimeout(
+    page,
+    readTimeoutMs,
   );
-  return { title, previewText };
+  return {
+    title: titleResult.value,
+    previewText: previewResult.value,
+    readFailed: titleResult.failed || previewResult.failed,
+  };
+}
+
+/**
+ * Read a page title with a short timeout. Protocol/timeouts return an empty title
+ * so challenge detection can treat the page as non-Cloudflare and continue.
+ *
+ * @param {import("puppeteer").Page} page - Puppeteer page.
+ * @param {number} timeoutMs - Maximum wait in milliseconds.
+ * @returns {Promise<{ readonly value: string, readonly failed: boolean }>} Document title and failure flag.
+ */
+async function readPageTitleWithTimeout(page, timeoutMs) {
+  try {
+    const value = await raceWithTimeout(
+      () => page.title(),
+      timeoutMs,
+      `page.title() timed out after ${timeoutMs}ms`,
+    );
+    return { value, failed: false };
+  } catch (caught) {
+    if (isRecoverableBbbPageError(caught) || isPageReadTimeoutError(caught)) {
+      return { value: "", failed: true };
+    }
+    throw caught;
+  }
+}
+
+/**
+ * Read the first visible body characters with a short timeout.
+ *
+ * @param {import("puppeteer").Page} page - Puppeteer page.
+ * @param {number} timeoutMs - Maximum wait in milliseconds.
+ * @returns {Promise<{ readonly value: string, readonly failed: boolean }>} Body preview text and failure flag.
+ */
+async function readPagePreviewTextWithTimeout(page, timeoutMs) {
+  try {
+    const value = await raceWithTimeout(
+      () => page.evaluate(() => document.body?.innerText?.slice(0, 500) ?? ""),
+      timeoutMs,
+      `page preview read timed out after ${timeoutMs}ms`,
+    );
+    return { value, failed: false };
+  } catch (caught) {
+    if (isRecoverableBbbPageError(caught) || isPageReadTimeoutError(caught)) {
+      return { value: "", failed: true };
+    }
+    throw caught;
+  }
+}
+
+/**
+ * Race an async page read against a fixed timeout.
+ *
+ * @template T
+ * @param {() => Promise<T>} read - Async read to perform.
+ * @param {number} timeoutMs - Maximum wait in milliseconds.
+ * @param {string} timeoutMessage - Error message when the read exceeds the timeout.
+ * @returns {Promise<T>} Read result when it completes before the timeout.
+ */
+async function raceWithTimeout(read, timeoutMs, timeoutMessage) {
+  /** @type {Promise<T>} */
+  const readPromise = read();
+  const timeoutPromise = sleep(timeoutMs).then(() => {
+    throw new Error(timeoutMessage);
+  });
+  return Promise.race([readPromise, timeoutPromise]);
+}
+
+/**
+ * Identify short-timeout page read failures.
+ *
+ * @param {unknown} caught - Thrown error.
+ * @returns {boolean} True when the error represents a bounded page read timeout.
+ */
+function isPageReadTimeoutError(caught) {
+  const message = caught instanceof Error ? caught.message : String(caught);
+  return /timed out after \d+ms/i.test(message);
 }
 
 /**
@@ -1569,6 +1699,8 @@ function parseCliOptions(args) {
       "challenge-check-interval-ms": { type: "string" },
       "challenge-checks-per-attempt": { type: "string" },
       "navigation-timeout-ms": { type: "string" },
+      "page-read-timeout-ms": { type: "string" },
+      "consecutive-empty-category-pages-limit": { type: "string" },
       "profile-subpages": { type: "string" },
       "no-html": { type: "boolean" },
     },
@@ -1631,6 +1763,16 @@ function parseCliOptions(args) {
         values["navigation-timeout-ms"],
         "navigation-timeout-ms",
       ) ?? DEFAULT_NAVIGATION_TIMEOUT_MS,
+    pageReadTimeoutMs:
+      parsePositiveIntegerOption(
+        values["page-read-timeout-ms"],
+        "page-read-timeout-ms",
+      ) ?? DEFAULT_PAGE_READ_TIMEOUT_MS,
+    consecutiveEmptyCategoryPagesLimit:
+      parsePositiveIntegerOption(
+        values["consecutive-empty-category-pages-limit"],
+        "consecutive-empty-category-pages-limit",
+      ) ?? DEFAULT_CONSECUTIVE_EMPTY_CATEGORY_PAGES_LIMIT,
     includeHtml: values["no-html"] !== true,
     profileSubpages: parseProfileSubpages(
       readStringOption(values, "profile-subpages"),

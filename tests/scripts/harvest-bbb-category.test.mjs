@@ -9,6 +9,8 @@ import {
   harvestBbbCategoryInExistingPage,
   parseBbbProfileUrlIdentity,
   parseCategoryCounts,
+  readPageChallengeState,
+  shouldStopCategoryPagination,
 } from "../../scripts/harvest-bbb-category.mjs";
 
 /**
@@ -63,6 +65,205 @@ describe("BBB category harvester", () => {
     });
   });
 
+  it("stops category pagination after consecutive empty listing pages", async () => {
+    const outputDirectory = await mkdtemp(
+      path.join(tmpdir(), "bbb-empty-page-stop-"),
+    );
+    temporaryDirectories.push(outputDirectory);
+    const categoryUrl = "https://www.bbb.org/us/fl/example/category/hvac";
+    const profileUrl =
+      "https://www.bbb.org/us/fl/example/profile/hvac/example-hvac-0633-12345678";
+    let currentUrl = categoryUrl;
+    let requestedPageNumber = 0;
+    /** @type {import("puppeteer").Page} */
+    const page = {
+      browser: () => ({
+        newPage: async () => page,
+      }),
+      close: async () => undefined,
+      setDefaultNavigationTimeout: () => undefined,
+      setDefaultTimeout: () => undefined,
+      setCacheEnabled: async () => undefined,
+      setViewport: async () => undefined,
+      setUserAgent: async () => undefined,
+      evaluateOnNewDocument: async () => undefined,
+      goto: async (url) => {
+        currentUrl = url;
+        requestedPageNumber = Number(
+          new URL(url).searchParams.get("page") ?? 1,
+        );
+        return { status: () => 200 };
+      },
+      title: async () => "Accessible BBB page",
+      evaluate: async (_callback, ...args) => {
+        if (args.length === 0) return "";
+        const pageNumber = requestedPageNumber;
+        if (pageNumber === 1) {
+          return {
+            url: `${categoryUrl}?page=1`,
+            title: "HVAC near Example",
+            text: "Showing: 1 result for HVAC near Example",
+            headings: [],
+            links: [{ text: "Example HVAC", href: profileUrl }],
+            jsonLd: [],
+            html: null,
+          };
+        }
+        return {
+          url: `${categoryUrl}?page=${pageNumber}`,
+          title: "HVAC near Example",
+          text: "Showing: 0 results for HVAC near Example",
+          headings: [],
+          links: [
+            {
+              text: "Page 1000",
+              href: `${categoryUrl}?page=1000`,
+            },
+          ],
+          jsonLd: [],
+          html: null,
+        };
+      },
+    };
+
+    const summary = await harvestBbbCategoryInExistingPage(
+      {
+        categoryUrl,
+        outputLocation: { kind: "local", dir: outputDirectory },
+        chromiumExecutablePath: null,
+        headless: true,
+        startPage: 1,
+        maxPages: 1000,
+        maxProfiles: null,
+        partRecordLimit: 100,
+        pageDelayMs: 0,
+        profileDelayMs: 0,
+        profileAttempts: 1,
+        challengeAttempts: 1,
+        challengeCheckIntervalMs: 0,
+        challengeChecksPerAttempt: 1,
+        navigationTimeoutMs: 1_000,
+        pageReadTimeoutMs: 50,
+        consecutiveEmptyCategoryPagesLimit: 3,
+        includeHtml: false,
+        profileSubpages: [],
+      },
+      page,
+    );
+
+    expect(summary.categoryPagesVisited).toBe(4);
+    expect(summary.profileUrlsDiscovered).toBe(1);
+    expect(shouldStopCategoryPagination(3, 3)).toBe(true);
+    expect(shouldStopCategoryPagination(2, 3)).toBe(false);
+  });
+
+  it("continues category pagination when page.title() hits a ProtocolError timeout", async () => {
+    const outputDirectory = await mkdtemp(
+      path.join(tmpdir(), "bbb-title-timeout-"),
+    );
+    temporaryDirectories.push(outputDirectory);
+    const categoryUrl = "https://www.bbb.org/us/fl/example/category/hvac";
+    const profileUrl =
+      "https://www.bbb.org/us/fl/example/profile/hvac/example-hvac-0633-12345678";
+    let currentUrl = categoryUrl;
+    let titleCallCount = 0;
+    /** @type {import("puppeteer").Page} */
+    const page = {
+      browser: () => ({
+        newPage: async () => page,
+      }),
+      close: async () => undefined,
+      setDefaultNavigationTimeout: () => undefined,
+      setDefaultTimeout: () => undefined,
+      setCacheEnabled: async () => undefined,
+      setViewport: async () => undefined,
+      setUserAgent: async () => undefined,
+      evaluateOnNewDocument: async () => undefined,
+      goto: async (url) => {
+        currentUrl = url;
+        return { status: () => 200 };
+      },
+      title: async () => {
+        titleCallCount += 1;
+        if (titleCallCount === 1) {
+          throw new Error(
+            "ProtocolError: Runtime.callFunctionOn timed out after 90000ms",
+          );
+        }
+        return "Accessible BBB page";
+      },
+      evaluate: async (_callback, ...args) => {
+        if (args.length === 0) {
+          return "Visible HVAC listings";
+        }
+        if (currentUrl === categoryUrl) {
+          return {
+            url: categoryUrl,
+            title: "HVAC near Example",
+            text: "Showing: 1 result for HVAC near Example",
+            headings: [],
+            links: [{ text: "Example HVAC", href: profileUrl }],
+            jsonLd: [],
+            html: null,
+          };
+        }
+        return {
+          url: profileUrl,
+          title: "Example HVAC | BBB Business Profile",
+          text: "Example HVAC LLC",
+          headings: ["Example HVAC LLC"],
+          links: [],
+          jsonLd: [
+            JSON.stringify({
+              "@context": "https://schema.org",
+              "@type": "LocalBusiness",
+              name: "Example HVAC LLC",
+            }),
+          ],
+          html: null,
+        };
+      },
+    };
+
+    const challengeState = await readPageChallengeState(page, 50);
+    expect(challengeState).toEqual({
+      title: "",
+      previewText: "Visible HVAC listings",
+      readFailed: true,
+    });
+
+    const summary = await harvestBbbCategoryInExistingPage(
+      {
+        categoryUrl,
+        outputLocation: { kind: "local", dir: outputDirectory },
+        chromiumExecutablePath: null,
+        headless: true,
+        startPage: 1,
+        maxPages: 1,
+        maxProfiles: 1,
+        partRecordLimit: 100,
+        pageDelayMs: 0,
+        profileDelayMs: 0,
+        profileAttempts: 1,
+        challengeAttempts: 1,
+        challengeCheckIntervalMs: 0,
+        challengeChecksPerAttempt: 1,
+        navigationTimeoutMs: 1_000,
+        pageReadTimeoutMs: 50,
+        consecutiveEmptyCategoryPagesLimit: 3,
+        includeHtml: false,
+        profileSubpages: [],
+      },
+      page,
+    );
+
+    expect(summary).toMatchObject({
+      categoryPagesVisited: 1,
+      profilesHarvested: 1,
+      profilesFailed: 0,
+    });
+  });
+
   it("retries a transient profile failure before recording a failed profile", async () => {
     const outputDirectory = await mkdtemp(
       path.join(tmpdir(), "bbb-profile-retry-"),
@@ -100,11 +301,11 @@ describe("BBB category harvester", () => {
       title: async () => "Accessible BBB page",
       evaluate: async (_callback, ...args) => {
         if (args.length === 0) {
-          if (currentUrl === profileUrl && firstProfileAttempt) {
-            firstProfileAttempt = false;
-            throw new Error("transient protocol timeout");
-          }
           return "";
+        }
+        if (currentUrl === profileUrl && firstProfileAttempt) {
+          firstProfileAttempt = false;
+          throw new Error("transient protocol timeout");
         }
         if (currentUrl === categoryUrl) {
           return {
@@ -152,6 +353,8 @@ describe("BBB category harvester", () => {
         challengeCheckIntervalMs: 0,
         challengeChecksPerAttempt: 1,
         navigationTimeoutMs: 1_000,
+        pageReadTimeoutMs: 50,
+        consecutiveEmptyCategoryPagesLimit: 3,
         includeHtml: false,
         profileSubpages: [],
       },
