@@ -108,10 +108,26 @@ export const PINELLAS_BBB_CATEGORY_SOURCES = Object.freeze(
 );
 
 /**
+ * Robots-compliant page cap for any local Pinellas BBB browser harvest.
+ * BBB robots.txt disallows `/*?`; `harvest-bbb-category.mjs` paginates with
+ * `?page=N`, and page 2+ returns HTTP 403 from a vanilla Puppeteer session.
+ *
+ * @type {1}
+ */
+export const PINELLAS_BBB_ROBOTS_COMPLIANT_MAX_PAGES = 1;
+
+/**
+ * Official BBB developer portal for production contractor enrichment.
+ *
+ * @type {"https://developer.bbb.org"}
+ */
+export const PINELLAS_BBB_PRODUCTION_API_URL = "https://developer.bbb.org";
+
+/**
  * @typedef {object} PinellasBbbHarvestPlanOptions
  * @property {string} [chromiumExecutablePath="/usr/local/bin/google-chrome"] Chromium executable for Puppeteer.
  * @property {boolean} [headless=true] Whether Puppeteer should run headless.
- * @property {number | null} [maxPages=null] Optional per-category page cap.
+ * @property {number | null} [maxPages=1] Per-category page cap; defaults to robots-compliant page 1 only.
  * @property {number | null} [maxProfiles=null] Optional per-category profile cap.
  * @property {boolean} [includeHtml=false] Whether raw HTML should be retained.
  */
@@ -142,8 +158,12 @@ export function buildPinellasBbbHarvestCommand(
     "--profile-subpages none",
   ];
   if (!includeHtml) args.push("--no-html");
-  if (options.maxPages !== undefined && options.maxPages !== null) {
-    args.push(`--max-pages ${options.maxPages}`);
+  const maxPages =
+    options.maxPages === undefined
+      ? PINELLAS_BBB_ROBOTS_COMPLIANT_MAX_PAGES
+      : options.maxPages;
+  if (maxPages !== null) {
+    args.push(`--max-pages ${maxPages}`);
   }
   if (options.maxProfiles !== undefined && options.maxProfiles !== null) {
     args.push(`--max-profiles ${options.maxProfiles}`);
@@ -152,7 +172,10 @@ export function buildPinellasBbbHarvestCommand(
 }
 
 /**
- * Build the recommended Pinellas BBB probe command (St. Petersburg roofing).
+ * Build a robots-compliant page-1 Pinellas BBB probe command (St. Petersburg roofing).
+ *
+ * The 2026-09-07 warm-session sample that reached page 2 is historical evidence only;
+ * do not treat a successful `?page=2` fetch as permission to scale paginated crawls.
  *
  * @param {string} [outputRoot="downloads/pinellas/bbb-probe"] Probe output root.
  * @param {PinellasBbbHarvestPlanOptions} [options] Harvest CLI options.
@@ -176,7 +199,7 @@ export function buildPinellasBbbProbeCommand(
   );
   return buildPinellasBbbHarvestCommand(source, outputDirectory, {
     ...options,
-    maxPages: 2,
+    maxPages: PINELLAS_BBB_ROBOTS_COMPLIANT_MAX_PAGES,
     maxProfiles: 15,
   });
 }
@@ -184,19 +207,44 @@ export function buildPinellasBbbProbeCommand(
 /**
  * Build a local multi-city, multi-trade BBB harvest plan without launching a browser.
  *
+ * Production enrichment should use the official BBB API (`developer.bbb.org`).
+ * Local browser commands are page-1-only fallbacks and must not paginate with `?page=N`.
+ *
  * @param {string} outputRoot BBB output root.
  * @param {PinellasBbbHarvestPlanOptions} [options] Harvest CLI options.
- * @returns {JsonObject} Planned verified category inputs.
+ * @returns {JsonObject} Planned verified category inputs and operator guidance.
  */
 export function buildPinellasBbbHarvestPlan(outputRoot, options = {}) {
   const resolvedRoot = path.resolve(outputRoot);
+  const pageOneOptions = {
+    ...options,
+    maxPages: PINELLAS_BBB_ROBOTS_COMPLIANT_MAX_PAGES,
+  };
   return {
-    schemaVersion: "oracle-node.pinellas-bbb-harvest-plan.v1",
+    schemaVersion: "oracle-node.pinellas-bbb-harvest-plan.v2",
     county: "pinellas",
     locationBasis:
       "BBB St. Petersburg and Clearwater, FL category search (Tampa excluded)",
     outputRoot: resolvedRoot,
-    probeCommand: buildPinellasBbbProbeCommand(resolvedRoot, options),
+    paginationPolicy: {
+      robotsTxtDisallow: "/*?",
+      harvesterPaginationQuery: "?page=N",
+      multiPageScrape: "stop",
+      localMaxPages: PINELLAS_BBB_ROBOTS_COMPLIANT_MAX_PAGES,
+      note:
+        "Do not run uncapped or multi-page category harvests. Page 2+ returns HTTP 403.",
+    },
+    recommendedProductionPath: {
+      method: "bbb-api",
+      applicationUrl: PINELLAS_BBB_PRODUCTION_API_URL,
+      note:
+        "Apply for official BBB API access for production contractor reputation enrichment.",
+    },
+    operatorNextStep:
+      "Apply for BBB API access at developer.bbb.org. Do not run full paginated browser harvests. If local browser sampling continues, use page-1-only commands from this plan.",
+    doNotRun:
+      "Full paginated category harvest (omit --max-pages or set --max-pages > 1).",
+    probeCommand: buildPinellasBbbProbeCommand(resolvedRoot, pageOneOptions),
     categories: PINELLAS_BBB_CATEGORY_SOURCES.map((source) => ({
       ...source,
       outputDirectory: path.join(
@@ -207,11 +255,11 @@ export function buildPinellasBbbHarvestPlan(outputRoot, options = {}) {
       command: buildPinellasBbbHarvestCommand(
         source,
         path.join(resolvedRoot, source.cityKey, source.tradeKey),
-        options,
+        pageOneOptions,
       ),
     })),
     complete: false,
     evidence:
-      "Plan only. Completion requires uncapped harvest manifests and zero failed profiles for every configured city/trade pair.",
+      "Plan only. The 2026-09-07 St. Petersburg roofing probe (2 pages, 15 profiles) ran in a warm browser session and is not a license to scale ?page=N crawls. Production enrichment requires BBB API approval.",
   };
 }

@@ -338,7 +338,16 @@ Pinellas BBB harvest anchors on **St. Petersburg** and **Clearwater** category
 searches (Tampa excluded). Trade plan module:
 `scripts/pinellas/bbb-harvest-plan.mjs`.
 
-### St. Petersburg roofing probe (local Puppeteer, Accela still running)
+**Do not run full paginated browser harvests.** BBB `robots.txt` disallows `/*?`;
+`scripts/harvest-bbb-category.mjs` paginates with `?page=N`, and page 2 returns
+HTTP 403 from vanilla Puppeteer. Production contractor enrichment should use the
+official BBB API — apply at [developer.bbb.org](https://developer.bbb.org).
+
+### Completed warm-session sample (historical — do not scale)
+
+The probe below ran successfully in a warm browser session while Accela was active.
+It is evidence that page 1 and a one-off page 2 worked once; it is **not** permission
+to scale `?page=N` crawls.
 
 ```bash
 CHROME_EXECUTABLE_PATH=/usr/local/bin/google-chrome node scripts/harvest-bbb-category.mjs \
@@ -352,29 +361,30 @@ CHROME_EXECUTABLE_PATH=/usr/local/bin/google-chrome node scripts/harvest-bbb-cat
 | Metric | Value |
 | --- | --- |
 | Egress | `US` (`curl -s ipinfo.io/country`) |
-| Category pages | 2 visited; **8,068** St. Pete roofing results claimed |
+| Category pages | 2 visited (historical sample only); **8,068** St. Pete roofing results claimed |
 | Profiles harvested / failed | **15 / 0** (~5 min; Cloudflare cleared in headless Chrome) |
 | Output | `downloads/pinellas/bbb-probe/st-petersburg/roofing/` |
 | Accela impact | `pinellas-accela-full-20260903` left running (pid 996439) |
+| Pagination follow-up | Page 1 OK; `?page=2` → **403** on repeat from vanilla Puppeteer |
 
-**48-hour gate (rough):** six city×trade categories (2 cities × roofing/HVAC/solar).
-At ~20 s/profile from the probe, a naive full crawl of thousands of listings per
-category likely exceeds 48 hours. Run **one category at a time** sequentially
-(1 browser / 1 tab) and reconcile `manifest/summary.json` before scaling.
+### Operator next step
 
-**Next command (single-category gated run — St. Petersburg roofing, uncapped pages):**
+1. **Production:** Apply for BBB API access at [developer.bbb.org](https://developer.bbb.org).
+2. **Do not run** uncapped or multi-page category harvests (`--max-pages` omitted or `> 1`).
+3. **Local fallback only:** page-1-only commands from
+   `buildPinellasBbbHarvestPlan("downloads/pinellas/bbb-fallback")` — one category
+   at a time, `--max-pages 1`, reconcile `manifest/summary.json` before repeating.
+
+Example page-1-only fallback (not a production crawl):
 
 ```bash
 CHROME_EXECUTABLE_PATH=/usr/local/bin/google-chrome node scripts/harvest-bbb-category.mjs \
   --category-url "https://www.bbb.org/us/fl/st-petersburg/category/roofing-contractors" \
-  --output-dir downloads/pinellas/bbb-harvest/st-petersburg/roofing \
+  --output-dir downloads/pinellas/bbb-fallback/st-petersburg/roofing \
   --chromium-executable-path /usr/local/bin/google-chrome \
-  --headless true --no-html --profile-subpages none \
+  --headless true --max-pages 1 --no-html --profile-subpages none \
   --page-delay-ms 2000 --profile-delay-ms 1500
 ```
-
-After St. Petersburg roofing completes, repeat for Clearwater roofing, then HVAC
-and solar per `buildPinellasBbbHarvestPlan("downloads/pinellas/bbb-harvest")`.
 
 ## Probe evidence
 

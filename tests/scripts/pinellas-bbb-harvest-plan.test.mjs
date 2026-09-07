@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   PINELLAS_BBB_CATEGORY_SOURCES,
   PINELLAS_BBB_CITIES,
+  PINELLAS_BBB_PRODUCTION_API_URL,
+  PINELLAS_BBB_ROBOTS_COMPLIANT_MAX_PAGES,
   PINELLAS_BBB_TRADES,
   buildPinellasBbbCategoryUrl,
   buildPinellasBbbHarvestPlan,
@@ -58,20 +60,41 @@ describe("Pinellas BBB harvest plan", () => {
     );
   });
 
-  it("emits a probe command with conservative bounds", () => {
+  it("emits a page-1-only probe command with conservative bounds", () => {
     const command = buildPinellasBbbProbeCommand("/tmp/pinellas-bbb-probe");
     expect(command).toContain("st-petersburg");
     expect(command).toContain("roofing-contractors");
-    expect(command).toContain("--max-pages 2");
+    expect(command).toContain(
+      `--max-pages ${PINELLAS_BBB_ROBOTS_COMPLIANT_MAX_PAGES}`,
+    );
+    expect(command).not.toContain("--max-pages 2");
     expect(command).toContain("--max-profiles 15");
     expect(command).toContain("--profile-subpages none");
   });
 
-  it("does not claim completion in the harvest plan", () => {
+  it("does not recommend paginated harvest in the plan", () => {
     const plan = buildPinellasBbbHarvestPlan("/tmp/pinellas-bbb");
     expect(plan.county).toBe("pinellas");
     expect(plan.categories).toHaveLength(6);
     expect(plan.complete).toBe(false);
-    expect(plan.probeCommand).toContain("--max-pages 2");
+    expect(plan.schemaVersion).toBe("oracle-node.pinellas-bbb-harvest-plan.v2");
+    expect(plan.paginationPolicy.multiPageScrape).toBe("stop");
+    expect(plan.paginationPolicy.localMaxPages).toBe(
+      PINELLAS_BBB_ROBOTS_COMPLIANT_MAX_PAGES,
+    );
+    expect(plan.recommendedProductionPath.applicationUrl).toBe(
+      PINELLAS_BBB_PRODUCTION_API_URL,
+    );
+    expect(plan.operatorNextStep).toContain("Apply for BBB API access");
+    expect(plan.doNotRun).toContain("paginated");
+    expect(plan.probeCommand).toContain(
+      `--max-pages ${PINELLAS_BBB_ROBOTS_COMPLIANT_MAX_PAGES}`,
+    );
+    for (const category of plan.categories) {
+      expect(category.command).toContain(
+        `--max-pages ${PINELLAS_BBB_ROBOTS_COMPLIANT_MAX_PAGES}`,
+      );
+      expect(category.command).not.toContain("--max-pages 2");
+    }
   });
 });
