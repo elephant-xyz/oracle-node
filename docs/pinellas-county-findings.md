@@ -332,6 +332,50 @@ existing transform outputs / bulk columns:
 Not in the pilot contract: clerk document images, tax-bill PDF, FEMA certificates,
 code-enforcement cases, municipal BTRs.
 
+## BBB contractor reputation probe (2026-09-07)
+
+Pinellas BBB harvest anchors on **St. Petersburg** and **Clearwater** category
+searches (Tampa excluded). Trade plan module:
+`scripts/pinellas/bbb-harvest-plan.mjs`.
+
+### St. Petersburg roofing probe (local Puppeteer, Accela still running)
+
+```bash
+CHROME_EXECUTABLE_PATH=/usr/local/bin/google-chrome node scripts/harvest-bbb-category.mjs \
+  --category-url "https://www.bbb.org/us/fl/st-petersburg/category/roofing-contractors" \
+  --output-dir downloads/pinellas/bbb-probe/st-petersburg/roofing \
+  --chromium-executable-path /usr/local/bin/google-chrome \
+  --headless true --max-pages 2 --max-profiles 15 --no-html \
+  --profile-subpages none --page-delay-ms 2000 --profile-delay-ms 1500
+```
+
+| Metric | Value |
+| --- | --- |
+| Egress | `US` (`curl -s ipinfo.io/country`) |
+| Category pages | 2 visited; **8,068** St. Pete roofing results claimed |
+| Profiles harvested / failed | **15 / 0** (~5 min; Cloudflare cleared in headless Chrome) |
+| Output | `downloads/pinellas/bbb-probe/st-petersburg/roofing/` |
+| Accela impact | `pinellas-accela-full-20260903` left running (pid 996439) |
+
+**48-hour gate (rough):** six city×trade categories (2 cities × roofing/HVAC/solar).
+At ~20 s/profile from the probe, a naive full crawl of thousands of listings per
+category likely exceeds 48 hours. Run **one category at a time** sequentially
+(1 browser / 1 tab) and reconcile `manifest/summary.json` before scaling.
+
+**Next command (single-category gated run — St. Petersburg roofing, uncapped pages):**
+
+```bash
+CHROME_EXECUTABLE_PATH=/usr/local/bin/google-chrome node scripts/harvest-bbb-category.mjs \
+  --category-url "https://www.bbb.org/us/fl/st-petersburg/category/roofing-contractors" \
+  --output-dir downloads/pinellas/bbb-harvest/st-petersburg/roofing \
+  --chromium-executable-path /usr/local/bin/google-chrome \
+  --headless true --no-html --profile-subpages none \
+  --page-delay-ms 2000 --profile-delay-ms 1500
+```
+
+After St. Petersburg roofing completes, repeat for Clearwater roofing, then HVAC
+and solar per `buildPinellasBbbHarvestPlan("downloads/pinellas/bbb-harvest")`.
+
 ## Probe evidence
 
 - Script: `oracle-node/scripts/pinellas-discovery-probe.mjs`
