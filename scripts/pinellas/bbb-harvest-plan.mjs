@@ -343,8 +343,13 @@ export function buildPinellasBbbFullHarvestJobs(outputRoot, options = {}) {
 /**
  * Build a local multi-city, multi-trade BBB harvest plan without launching a browser.
  *
- * Production enrichment should use the official BBB API (`developer.bbb.org`).
- * Local browser commands are page-1-only fallbacks and must not paginate with `?page=N`.
+ * Two paths coexist:
+ * - **This function** — robots-compliant page-1-only sampling and API-first guidance
+ *   for agents evaluating BBB without an operator override.
+ * - **`buildPinellasBbbFullHarvestJobs`** — operator full-ingest path (sequential
+ *   multi-page harvest via `scripts/pinellas/run-bbb-full-harvest.mjs`). If tmux
+ *   `pinellas-bbb-full` is already running, do not stop it because this plan's
+ *   `doNotRun` field discourages *new* unapproved paginated crawls.
  *
  * @param {string} outputRoot BBB output root.
  * @param {PinellasBbbHarvestPlanOptions} [options] Harvest CLI options.
@@ -367,17 +372,28 @@ export function buildPinellasBbbHarvestPlan(outputRoot, options = {}) {
       harvesterPaginationQuery: "?page=N",
       multiPageScrape: "stop",
       localMaxPages: PINELLAS_BBB_ROBOTS_COMPLIANT_MAX_PAGES,
-      note: "Do not run uncapped or multi-page category harvests. Page 2+ returns HTTP 403.",
+      note: "Cold-session page 2+ may return HTTP 403. Operator override 2026-09-07: full ingest uses buildPinellasBbbFullHarvestJobs — leave pinellas-bbb-full running.",
     },
     recommendedProductionPath: {
       method: "bbb-api",
       applicationUrl: PINELLAS_BBB_PRODUCTION_API_URL,
       note: "Apply for official BBB API access for production contractor reputation enrichment.",
     },
+    operatorFullIngestPath: {
+      method: "sequential-browser-pagination",
+      planBuilder: "buildPinellasBbbFullHarvestJobs",
+      runnerShell: "scripts/pinellas/run-bbb-full-harvest.sh",
+      runnerModule: "scripts/pinellas/run-bbb-full-harvest.mjs",
+      tmuxSession: "pinellas-bbb-full",
+      outputRoot: "downloads/pinellas/bbb-harvest",
+      jobCount: 6,
+      chromiumExecutablePath: "/usr/local/bin/google-chrome",
+      note: "Operator override 2026-09-07. Vanilla Puppeteer (not stealth, not BBB API). If already running, do not kill Accela or BBB.",
+    },
     operatorNextStep:
-      "Apply for BBB API access at developer.bbb.org. Do not run full paginated browser harvests. If local browser sampling continues, use page-1-only commands from this plan.",
+      "If pinellas-bbb-full is already running, monitor downloads/pinellas/bbb-harvest/ and do not stop it. Otherwise Apply for BBB API access at developer.bbb.org, or use page-1-only commands from this plan for sampling.",
     doNotRun:
-      "Full paginated category harvest (omit --max-pages or set --max-pages > 1).",
+      "Starting a new unapproved full paginated category harvest (omit --max-pages or set --max-pages > 1) when pinellas-bbb-full is not already running.",
     probeCommand: buildPinellasBbbProbeCommand(resolvedRoot, pageOneOptions),
     categories: PINELLAS_BBB_CATEGORY_SOURCES.map((source) => ({
       ...source,
@@ -390,6 +406,6 @@ export function buildPinellasBbbHarvestPlan(outputRoot, options = {}) {
     })),
     complete: false,
     evidence:
-      "Plan only. The 2026-09-07 St. Petersburg roofing probe (2 pages, 15 profiles) ran in a warm browser session and is not a license to scale ?page=N crawls. Production enrichment requires BBB API approval.",
+      "Plan only. Page-1 probes and cold-session 403 notes are historical context. Operator override 2026-09-07: full ingest runs via buildPinellasBbbFullHarvestJobs (tmux pinellas-bbb-full). Long-term pipeline enrichment may still use BBB API approval.",
   };
 }

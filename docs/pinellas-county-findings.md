@@ -332,22 +332,25 @@ existing transform outputs / bulk columns:
 Not in the pilot contract: clerk document images, tax-bill PDF, FEMA certificates,
 code-enforcement cases, municipal BTRs.
 
-## BBB contractor reputation probe (2026-09-07)
+## BBB contractor reputation (2026-09-07)
 
 Pinellas BBB harvest anchors on **St. Petersburg** and **Clearwater** category
 searches (Tampa excluded). Trade plan module:
 `scripts/pinellas/bbb-harvest-plan.mjs`.
 
-**Do not run full paginated browser harvests.** BBB `robots.txt` disallows `/*?`;
-`scripts/harvest-bbb-category.mjs` paginates with `?page=N`, and page 2 returns
-HTTP 403 from vanilla Puppeteer. Production contractor enrichment should use the
-official BBB API — apply at [developer.bbb.org](https://developer.bbb.org).
+### Historical probe notes (cold session / policy context)
 
-### Completed warm-session sample (historical — do not scale)
+- BBB `robots.txt` still disallows `/*?`; `scripts/harvest-bbb-category.mjs`
+  paginates with `?page=N`.
+- Nelson Jacksonville cold `?page=2` still returns **HTTP 403** from vanilla
+  Puppeteer — pagination is not universally reliable without a warm session.
+- Long-term production enrichment may still use the official BBB API
+  ([developer.bbb.org](https://developer.bbb.org)); that remains the Restate /
+  pipeline recommendation in `buildPinellasBbbHarvestPlan()`.
 
-The probe below ran successfully in a warm browser session while Accela was active.
-It is evidence that page 1 and a one-off page 2 worked once; it is **not** permission
-to scale `?page=N` crawls.
+### Completed warm-session samples (historical)
+
+**St. Petersburg roofing (2 pages, 15 profiles):**
 
 ```bash
 CHROME_EXECUTABLE_PATH=/usr/local/bin/google-chrome node scripts/harvest-bbb-category.mjs \
@@ -358,33 +361,56 @@ CHROME_EXECUTABLE_PATH=/usr/local/bin/google-chrome node scripts/harvest-bbb-cat
   --profile-subpages none --page-delay-ms 2000 --profile-delay-ms 1500
 ```
 
-| Metric                      | Value                                                                          |
-| --------------------------- | ------------------------------------------------------------------------------ |
-| Egress                      | `US` (`curl -s ipinfo.io/country`)                                             |
-| Category pages              | 2 visited (historical sample only); **8,068** St. Pete roofing results claimed |
-| Profiles harvested / failed | **15 / 0** (~5 min; Cloudflare cleared in headless Chrome)                     |
-| Output                      | `downloads/pinellas/bbb-probe/st-petersburg/roofing/`                          |
-| Accela impact               | `pinellas-accela-full-20260903` left running (pid 996439)                      |
-| Pagination follow-up        | Page 1 OK; `?page=2` → **403** on repeat from vanilla Puppeteer                |
+| Metric                      | Value                                                      |
+| --------------------------- | ---------------------------------------------------------- |
+| Egress                      | `US` (`curl -s ipinfo.io/country`)                         |
+| Category pages              | 2 visited; **8,068** St. Pete roofing results claimed      |
+| Profiles harvested / failed | **15 / 0** (~5 min; Cloudflare cleared in headless Chrome) |
+| Output                      | `downloads/pinellas/bbb-probe/st-petersburg/roofing/`      |
 
-### Operator next step
+**Clearwater roofing 4-page E2E (2026-09-07):** ~200s wall time, **66/66** profiles,
+warm session while Accela stayed up. Output under
+`downloads/pinellas/bbb-probe/clearwater/roofing-4page/`.
 
-1. **Production:** Apply for BBB API access at [developer.bbb.org](https://developer.bbb.org).
-2. **Do not run** uncapped or multi-page category harvests (`--max-pages` omitted or `> 1`).
-3. **Local fallback only:** page-1-only commands from
-   `buildPinellasBbbHarvestPlan("downloads/pinellas/bbb-fallback")` — one category
-   at a time, `--max-pages 1`, reconcile `manifest/summary.json` before repeating.
+Page-1-only fallback commands (robots-compliant sampling, not full ingest) live in
+`buildPinellasBbbHarvestPlan("downloads/pinellas/bbb-fallback")`.
 
-Example page-1-only fallback (not a production crawl):
+### Operator override — full BBB ingest running (2026-09-07)
+
+**Current operator policy:** run the full paginated browser harvest locally. Agents
+must **not** refuse, restart, or kill this work because of the historical 403/robots
+notes above.
+
+| Do not kill     | Detail                                                                          |
+| --------------- | ------------------------------------------------------------------------------- |
+| Accela          | tmux `pinellas-accela-full`, pid **996439**, Chrome profile separate from BBB   |
+| BBB full ingest | tmux `pinellas-bbb-full`, sequential runner, Chrome **lnGVgQ** (operator label) |
+
+**Do not start** city permit portals (Clearwater/Largo/Tarpon probes or full runs) —
+only county Accela + BBB are in scope for this pass.
+
+| Item         | Value                                                                                                             |
+| ------------ | ----------------------------------------------------------------------------------------------------------------- |
+| Harvester    | Vanilla Puppeteer `scripts/harvest-bbb-category.mjs` — **not** stealth, **not** BBB API                           |
+| Orchestrator | `scripts/pinellas/run-bbb-full-harvest.sh` → `run-bbb-full-harvest.mjs`                                           |
+| tmux         | `pinellas-bbb-full` — **6 sequential jobs**, **1 browser / 1 tab**                                                |
+| Chrome       | `/usr/local/bin/google-chrome`, profile separate from Accela                                                      |
+| Flags        | `--headless true --no-html --profile-subpages none --max-pages 1000 --page-delay-ms 2000 --profile-delay-ms 1500` |
+| Output       | `downloads/pinellas/bbb-harvest/{clearwater,st-petersburg}/{roofing,hvac,solar}`                                  |
+| Logs         | `downloads/pinellas/bbb-harvest/logs/runner.log` + per-city/trade logs                                            |
+| Job order    | Clearwater roofing → HVAC → solar, then St. Pete roofing → HVAC → solar                                           |
+| First job    | Clearwater roofing (~**4,882** listings)                                                                          |
+
+Live start command (for reference — **do not re-run** if `pinellas-bbb-full` is already active):
 
 ```bash
-CHROME_EXECUTABLE_PATH=/usr/local/bin/google-chrome node scripts/harvest-bbb-category.mjs \
-  --category-url "https://www.bbb.org/us/fl/st-petersburg/category/roofing-contractors" \
-  --output-dir downloads/pinellas/bbb-fallback/st-petersburg/roofing \
-  --chromium-executable-path /usr/local/bin/google-chrome \
-  --headless true --max-pages 1 --no-html --profile-subpages none \
-  --page-delay-ms 2000 --profile-delay-ms 1500
+tmux -f /exec-daemon/tmux.portal.conf new-session -d -s pinellas-bbb-full \
+  'cd /workspace && scripts/pinellas/run-bbb-full-harvest.sh 2>&1 | tee downloads/pinellas/bbb-harvest/logs/runner.log'
 ```
+
+Plan builder for the six jobs: `buildPinellasBbbFullHarvestJobs()` in
+`scripts/pinellas/bbb-harvest-plan.mjs`. Documented for agents in
+`.claude/skills/bbb-harvest/SKILL.md` (Pinellas local CLI section).
 
 ## Probe evidence
 
