@@ -10,13 +10,19 @@ import {
   buildPolkPermitCandidateSql,
   buildPolkPermitEnrichmentReceipt,
   buildWinterHavenPermitSearchUrl,
+  createPolkPermitSourceScheduler,
+  createPolkPermitTimedFetch,
+  fetchPolkPermitAdapterDetail,
   findPolkPermitSource,
+  findWinterHavenPermitDetailPath,
   isWinterHavenHistoricalPermitNumber,
   mapPolkPermitWithConcurrency,
   parseLakelandImsPermitDetailHtml,
   parseLakeWalesPermitDetailHtml,
   parsePolkAccelaPermitDetailHtml,
   parseWinterHavenPermitDetailHtml,
+  reclassifyLegacyPolkPermitNotFound,
+  repairLegacyPolkPermitRecord,
   redrivePolkPermitFetchErrors,
   retryPolkPermitOperation,
   runPolkPermitEnrichment,
@@ -57,6 +63,39 @@ describe("Polk permit source registry", () => {
       adapter: null,
     });
     expect(findPolkPermitSource("unknown")).toBeNull();
+  });
+
+  it("enumerates every named, delegated, and predecessor jurisdiction", () => {
+    const agencies = new Set(
+      POLK_PERMIT_SOURCE_REGISTRY.map((source) => source.agency),
+    );
+    for (const agency of [
+      "POLK COUNTY",
+      "AUBURNDALE",
+      "BARTOW",
+      "DAVENPORT",
+      "DUNDEE",
+      "EAGLE LAKE",
+      "FORT MEADE",
+      "FROSTPROOF",
+      "HAINES CITY",
+      "HIGHLAND PARK",
+      "HILLCREST HEIGHTS",
+      "LAKE ALFRED",
+      "LAKE HAMILTON",
+      "LAKE WALES",
+      "LAKELAND",
+      "MULBERRY",
+      "POLK CITY",
+      "WINTER HAVEN",
+    ]) {
+      expect(agencies.has(agency), agency).toBe(true);
+    }
+    expect(
+      POLK_PERMIT_SOURCE_REGISTRY.every(
+        (source) => source.officialUrl !== null && source.evidence.length > 20,
+      ),
+    ).toBe(true);
   });
 
   it("builds the certified anonymous Accela altId lookup", () => {
@@ -238,6 +277,37 @@ describe("Polk municipal permit parsers", () => {
     });
   });
 
+  it("does not treat requested identifiers as page-derived evidence", () => {
+    expect(
+      parseLakelandImsPermitDetailHtml(
+        "<h1>Search for BLD24-1</h1><div>Status: Issued Address: 1 OTHER ST</div>",
+        "BLD24-1",
+      ),
+    ).toMatchObject({ permitNumber: null });
+    expect(
+      parseWinterHavenPermitDetailHtml(
+        "<h1>No permit found</h1>",
+        "2025-00000001",
+      ),
+    ).toMatchObject({ permitNumber: null });
+    expect(
+      parseLakeWalesPermitDetailHtml("<h1>No permit found</h1>", "202400001"),
+    ).toMatchObject({ permitNumber: null });
+  });
+
+  it("matches the exact Winter Haven result row", () => {
+    const html = `
+      <table>
+        <tr><td>2025-00000001</td><td><a href="ContractorPermitDetails.aspx?id=1">View</a></td></tr>
+        <tr><td>2025-00000002</td><td><a href="ContractorPermitDetails.aspx?id=2">View</a></td></tr>
+      </table>
+    `;
+    expect(findWinterHavenPermitDetailPath(html, "2025-00000002")).toBe(
+      "ContractorPermitDetails.aspx?id=2",
+    );
+    expect(findWinterHavenPermitDetailPath(html, "2025-00000003")).toBeNull();
+  });
+
   it("keeps Lake Wales municipal contractor numbers separate from licenses", () => {
     const detail = parseLakeWalesPermitDetailHtml(
       `
@@ -255,6 +325,35 @@ describe("Polk municipal permit parsers", () => {
         licenseNumber: null,
         licenseType: "LICENSED MECHANICAL CONTRACTOR",
       },
+    });
+  });
+
+  it("uses Lake Wales exact lookup evidence when detail omits the permit number", async () => {
+    const encodedDetail = Buffer.from(
+      "<div>Permit Status: Issued Closed Date: 09/01/2026</div>",
+    ).toString("base64");
+    const responses = [
+      new Response("<html>portal</html>"),
+      new Response("<html>ready</html>"),
+      Response.json([{ id: "42", text: "202600882 - 1 MAIN ST" }]),
+      Response.json({ body: encodedDetail }),
+    ];
+    const detail = await fetchPolkPermitAdapterDetail(
+      "lake_wales_citizenlink_permit_detail_v1",
+      "202600882",
+      /** @type {typeof fetch} */ (
+        async () => {
+          const response = responses.shift();
+          if (response === undefined) throw new Error("Unexpected request");
+          return response;
+        }
+      ),
+      100,
+    );
+
+    expect(detail.detail).toMatchObject({
+      permitNumber: "202600882",
+      recordStatus: "Issued",
     });
   });
 });
@@ -307,6 +406,8 @@ describe("Polk permit enrichment receipt", () => {
       attemptedAdapterRecords: 1,
       contractorEvidenceCount: 1,
       licenseEvidenceCount: 1,
+      candidateInputComplete: true,
+      countyCoverageComplete: false,
       complete: false,
     });
     expect(receipt.blocker).toMatch(/2 adapter-eligible permit rows/);
@@ -379,6 +480,50 @@ describe("Polk permit enrichment execution controls", () => {
     expect(maximumActive).toBe(2);
   });
 
+  it("serializes in-flight requests for each source", async () => {
+    const schedule = createPolkPermitSourceScheduler(1);
+    let active = 0;
+    let maximumActive = 0;
+    const operation = async () => {
+      active += 1;
+      maximumActive = Math.max(maximumActive, active);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      active -= 1;
+      return {
+        url: "https://example.test/permit",
+        detail: parsePolkAccelaPermitDetailHtml(
+          "<h1>Record BR-1:</h1><div>Record Status: Issued Work Location</div>",
+        ),
+      };
+    };
+
+    await Promise.all([
+      schedule("polk_county_accela", operation),
+      schedule("polk_county_accela", operation),
+      schedule("polk_county_accela", operation),
+    ]);
+
+    expect(maximumActive).toBe(1);
+  });
+
+  it("adds a bounded abort signal to portal requests", async () => {
+    /** @type {AbortSignal | null} */
+    let observedSignal = null;
+    const timedFetch = createPolkPermitTimedFetch(
+      /** @type {typeof fetch} */ (
+        async (_input, init) => {
+          observedSignal = init?.signal ?? null;
+          return new Response("ok");
+        }
+      ),
+      25,
+    );
+
+    await timedFetch("https://example.test");
+
+    expect(observedSignal).toBeInstanceOf(AbortSignal);
+  });
+
   it("redrives only failed records while preserving successful evidence", async () => {
     const successfulRecord = {
       permitNumber: "BR-1",
@@ -434,6 +579,61 @@ describe("Polk permit enrichment execution controls", () => {
     });
   });
 
+  it("repairs legacy permanent misses without changing transient failures", () => {
+    const legacy = {
+      permitNumber: "2022-1",
+      agency: "WINTER HAVEN",
+      sourceKey: "winter_haven_tyler_esuite",
+      sourceUrl: "https://example.test",
+      status: "fetch_error",
+      detail: null,
+      error: "Winter Haven permit 2022-1 returned no detail link",
+      retrievedAt: "2026-09-03T00:00:00.000Z",
+    };
+    const transient = {
+      ...legacy,
+      error: "Winter Haven permit search returned HTTP 503",
+    };
+
+    expect(reclassifyLegacyPolkPermitNotFound(legacy)).toMatchObject({
+      status: "no_detail",
+    });
+    expect(reclassifyLegacyPolkPermitNotFound(transient)).toBe(transient);
+  });
+
+  it("repairs legacy false enrichment without guessing permit evidence", () => {
+    const legacy = {
+      permitNumber: "2021-00116810",
+      agency: "WINTER HAVEN",
+      sourceKey: "winter_haven_tyler_esuite",
+      sourceUrl: "https://example.test/Errors/Error.aspx",
+      status: "enriched",
+      detail: {
+        permitNumber: "2021-00116810",
+        recordType: null,
+        recordStatus: null,
+        parcelIdentifier: null,
+        workLocation: null,
+        projectDescription: null,
+        jobValuationUsd: null,
+        contractor: null,
+      },
+      error: null,
+      retrievedAt: "2026-09-03T00:00:00.000Z",
+    };
+
+    expect(
+      repairLegacyPolkPermitRecord(legacy, {
+        permitNumber: "2021-00116810",
+        agency: "WINTER HAVEN",
+      }),
+    ).toMatchObject({
+      status: "no_detail",
+      detail: null,
+      error: "Legacy result contained no page-derived permit evidence.",
+    });
+  });
+
   it("does not count absent contractor licenses in partitioned output", async () => {
     const directory = await mkdtemp(
       path.join(tmpdir(), "polk-permit-license-count-"),
@@ -453,7 +653,7 @@ describe("Polk permit enrichment execution controls", () => {
       ),
       writeFile(
         path.join(htmlDirectory, "BR-1.html"),
-        "<h1>Record BR-1:</h1><div>Record Status: Issued</div>",
+        "<h1>Record BR-1:</h1><div>Record Status: Issued Work Location 1 MAIN ST Record Details</div>",
       ),
       writeFile(
         permitSummary,
@@ -544,6 +744,18 @@ describe("Polk permit enrichment execution controls", () => {
 
     const first = await runPolkPermitEnrichment(argumentsList);
     await writeFile(output, "stale aggregate\n");
+    const rewoundCheckpoint = JSON.parse(await readFile(checkpoint, "utf8"));
+    rewoundCheckpoint.completedPartCount = 1;
+    rewoundCheckpoint.processedInputRecordCount = 1;
+    await writeFile(
+      checkpoint,
+      `${JSON.stringify(rewoundCheckpoint, null, 2)}\n`,
+    );
+    const verification = await runPolkPermitEnrichment([
+      ...argumentsList,
+      "--stage",
+      "verify",
+    ]);
     const resumed = await runPolkPermitEnrichment(argumentsList);
     const records = (await readFile(output, "utf8"))
       .trim()
@@ -561,14 +773,348 @@ describe("Polk permit enrichment execution controls", () => {
       unsupportedInputRecordCount: 2,
       complete: false,
     });
+    expect(verification).toMatchObject({
+      checkpointPartCount: 1,
+      verifiedPartCount: 2,
+      recoveredPartCount: 1,
+      verifiedRecordCount: 2,
+      complete: true,
+    });
     expect(records.map((record) => record.permitNumber)).toEqual([
       "HC-1",
       "HC-2",
     ]);
     expect(checkpointValue).toMatchObject({
+      schemaVersion: "oracle-node.polk-permit-enrichment-checkpoint.v2",
       completedPartCount: 2,
       totalPartCount: 2,
       processedInputRecordCount: 2,
+      adapterContractFingerprint: expect.any(String),
+      includePartial: false,
+      aggregateComplete: true,
     });
+  });
+
+  it("rejects incompatible checkpoint settings without deleting parts", async () => {
+    const directory = await mkdtemp(
+      path.join(tmpdir(), "polk-permit-incompatible-"),
+    );
+    temporaryDirectories.push(directory);
+    const input = path.join(directory, "candidates.jsonl");
+    const output = path.join(directory, "enriched.jsonl");
+    const stateDirectory = path.join(directory, "parts");
+    const checkpoint = path.join(directory, "checkpoint.json");
+    const receipt = path.join(directory, "receipt.json");
+    const permitSummary = path.join(directory, "permit-summary.json");
+    await Promise.all([
+      writeFile(
+        input,
+        `${JSON.stringify({ permitNumber: "HC-1", agency: "HAINES CITY" })}\n`,
+      ),
+      writeFile(
+        permitSummary,
+        `${JSON.stringify({
+          permitCount: 1,
+          agencies: [{ value: "HAINES CITY", count: 1 }],
+        })}\n`,
+      ),
+    ]);
+    const argumentsList = [
+      "--input",
+      input,
+      "--output",
+      output,
+      "--state-dir",
+      stateDirectory,
+      "--checkpoint",
+      checkpoint,
+      "--receipt",
+      receipt,
+      "--permit-summary",
+      permitSummary,
+      "--batch-size",
+      "1",
+      "--delay-ms",
+      "1",
+      "--attempts",
+      "1",
+      "--retry-delay-ms",
+      "1",
+    ];
+    await runPolkPermitEnrichment(argumentsList);
+
+    await expect(
+      runPolkPermitEnrichment([
+        ...argumentsList.slice(0, -8),
+        "--batch-size",
+        "2",
+        "--delay-ms",
+        "1",
+        "--attempts",
+        "1",
+        "--retry-delay-ms",
+        "1",
+      ]),
+    ).rejects.toThrow(/checkpoint is incompatible/);
+    await expect(
+      runPolkPermitEnrichment([...argumentsList, "--reset-checkpoint"]),
+    ).rejects.toThrow(/refuses to delete committed/);
+    expect(
+      await readFile(path.join(stateDirectory, "part-000000.jsonl"), "utf8"),
+    ).toContain("HC-1");
+  });
+
+  it("rejects an active writer lock", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "polk-permit-lock-"));
+    temporaryDirectories.push(directory);
+    const input = path.join(directory, "candidates.jsonl");
+    const stateDirectory = path.join(directory, "parts");
+    await mkdir(stateDirectory, { recursive: true });
+    await Promise.all([
+      writeFile(
+        input,
+        `${JSON.stringify({ permitNumber: "HC-1", agency: "HAINES CITY" })}\n`,
+      ),
+      writeFile(
+        path.join(stateDirectory, ".run.lock"),
+        `${JSON.stringify({ pid: process.pid })}\n`,
+      ),
+    ]);
+
+    await expect(
+      runPolkPermitEnrichment([
+        "--stage",
+        "verify",
+        "--input",
+        input,
+        "--output",
+        path.join(directory, "output.jsonl"),
+        "--state-dir",
+        stateDirectory,
+        "--checkpoint",
+        path.join(directory, "checkpoint.json"),
+        "--batch-size",
+        "1",
+        "--delay-ms",
+        "1",
+        "--attempts",
+        "1",
+        "--retry-delay-ms",
+        "1",
+      ]),
+    ).rejects.toThrow(/already owned/);
+    expect(
+      JSON.parse(await readFile(path.join(stateDirectory, ".run.lock"), "utf8"))
+        .pid,
+    ).toBe(process.pid);
+  });
+
+  it("rejects semantically corrupt enriched parts", async () => {
+    const directory = await mkdtemp(
+      path.join(tmpdir(), "polk-permit-corrupt-"),
+    );
+    temporaryDirectories.push(directory);
+    const input = path.join(directory, "candidates.jsonl");
+    const stateDirectory = path.join(directory, "parts");
+    await mkdir(stateDirectory, { recursive: true });
+    await Promise.all([
+      writeFile(
+        input,
+        `${JSON.stringify({ permitNumber: "BR-1", agency: "POLK COUNTY" })}\n`,
+      ),
+      writeFile(
+        path.join(stateDirectory, "part-000000.jsonl"),
+        `${JSON.stringify({
+          permitNumber: "BR-1",
+          agency: "POLK COUNTY",
+          sourceKey: "polk_county_accela",
+          sourceUrl: buildPolkAccelaDetailUrl("BR-1"),
+          status: "enriched",
+          detail: {
+            ...parsePolkAccelaPermitDetailHtml(
+              "<h1>Record BR-2:</h1><div>Record Status: Issued Work Location</div>",
+            ),
+          },
+          error: null,
+          retrievedAt: "2026-09-03T00:00:00.000Z",
+        })}\n`,
+      ),
+    ]);
+
+    await expect(
+      runPolkPermitEnrichment([
+        "--stage",
+        "verify",
+        "--input",
+        input,
+        "--output",
+        path.join(directory, "output.jsonl"),
+        "--state-dir",
+        stateDirectory,
+        "--checkpoint",
+        path.join(directory, "checkpoint.json"),
+        "--batch-size",
+        "1",
+        "--delay-ms",
+        "1",
+        "--attempts",
+        "1",
+        "--retry-delay-ms",
+        "1",
+      ]),
+    ).rejects.toThrow(/Stale or incomplete permit enrichment part/);
+  });
+
+  it("requires explicit approval for more than 100 untouched candidates", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "polk-permit-scale-"));
+    temporaryDirectories.push(directory);
+    const input = path.join(directory, "candidates.jsonl");
+    await writeFile(
+      input,
+      `${Array.from({ length: 101 }, (_, index) =>
+        JSON.stringify({
+          permitNumber: `HC-${index}`,
+          agency: "HAINES CITY",
+        }),
+      ).join("\n")}\n`,
+    );
+
+    await expect(
+      runPolkPermitEnrichment([
+        "--stage",
+        "enrich",
+        "--input",
+        input,
+        "--output",
+        path.join(directory, "output.jsonl"),
+        "--state-dir",
+        path.join(directory, "parts"),
+        "--checkpoint",
+        path.join(directory, "checkpoint.json"),
+        "--batch-size",
+        "1",
+        "--delay-ms",
+        "1",
+        "--attempts",
+        "1",
+        "--retry-delay-ms",
+        "1",
+      ]),
+    ).rejects.toThrow(/--approve-scale is required/);
+  });
+
+  it("terminates a redrive before admitting untouched parts", async () => {
+    const directory = await mkdtemp(
+      path.join(tmpdir(), "polk-permit-redrive-only-"),
+    );
+    temporaryDirectories.push(directory);
+    const input = path.join(directory, "candidates.jsonl");
+    const output = path.join(directory, "output.jsonl");
+    const stateDirectory = path.join(directory, "parts");
+    const htmlDirectory = path.join(directory, "html");
+    await Promise.all([
+      mkdir(stateDirectory, { recursive: true }),
+      mkdir(htmlDirectory, { recursive: true }),
+    ]);
+    await Promise.all([
+      writeFile(
+        input,
+        [
+          JSON.stringify({ permitNumber: "BR-1", agency: "POLK COUNTY" }),
+          JSON.stringify({ permitNumber: "BR-2", agency: "POLK COUNTY" }),
+        ].join("\n") + "\n",
+      ),
+      writeFile(
+        path.join(htmlDirectory, "BR-1.html"),
+        "<h1>Record BR-1:</h1><div>Record Status: Issued Work Location 1 MAIN ST Record Details</div>",
+      ),
+      writeFile(
+        path.join(stateDirectory, "part-000000.jsonl"),
+        `${JSON.stringify({
+          permitNumber: "BR-1",
+          agency: "POLK COUNTY",
+          sourceKey: "polk_county_accela",
+          sourceUrl: buildPolkAccelaDetailUrl("BR-1"),
+          status: "fetch_error",
+          detail: null,
+          error: "temporary timeout",
+          retrievedAt: "2026-09-03T00:00:00.000Z",
+        })}\n`,
+      ),
+    ]);
+
+    const result = await runPolkPermitEnrichment([
+      "--stage",
+      "redrive",
+      "--input",
+      input,
+      "--output",
+      output,
+      "--state-dir",
+      stateDirectory,
+      "--checkpoint",
+      path.join(directory, "checkpoint.json"),
+      "--html-dir",
+      htmlDirectory,
+      "--batch-size",
+      "1",
+      "--delay-ms",
+      "1",
+      "--attempts",
+      "1",
+      "--retry-delay-ms",
+      "1",
+    ]);
+
+    expect(result).toMatchObject({
+      redrivenRecordCount: 1,
+      completedPartCount: 1,
+      totalPartCount: 2,
+      complete: false,
+    });
+    expect(
+      JSON.parse(
+        await readFile(path.join(stateDirectory, "part-000000.jsonl"), "utf8"),
+      ).status,
+    ).toBe("enriched");
+    await expect(
+      readFile(path.join(stateDirectory, "part-000001.jsonl"), "utf8"),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("fails closed on invalid candidate lines before writing parts", async () => {
+    const directory = await mkdtemp(
+      path.join(tmpdir(), "polk-permit-invalid-"),
+    );
+    temporaryDirectories.push(directory);
+    const input = path.join(directory, "candidates.jsonl");
+    const stateDirectory = path.join(directory, "parts");
+    await writeFile(input, '{"permitNumber":"BR-1"}\n');
+
+    await expect(
+      runPolkPermitEnrichment([
+        "--input",
+        input,
+        "--output",
+        path.join(directory, "output.jsonl"),
+        "--state-dir",
+        stateDirectory,
+        "--checkpoint",
+        path.join(directory, "checkpoint.json"),
+        "--receipt",
+        path.join(directory, "receipt.json"),
+        "--permit-summary",
+        path.join(directory, "missing-summary.json"),
+        "--delay-ms",
+        "1",
+        "--attempts",
+        "1",
+        "--retry-delay-ms",
+        "1",
+      ]),
+    ).rejects.toThrow(/invalid non-empty JSONL record/);
+    await expect(
+      readFile(path.join(stateDirectory, "part-000000.jsonl"), "utf8"),
+    ).rejects.toMatchObject({ code: "ENOENT" });
   });
 });
