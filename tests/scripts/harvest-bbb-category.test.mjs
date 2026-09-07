@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 
@@ -11,6 +11,7 @@ import {
   parseCategoryCounts,
   readPageChallengeState,
   shouldStopCategoryPagination,
+  snapshotPage,
 } from "../../scripts/harvest-bbb-category.mjs";
 
 /**
@@ -144,6 +145,7 @@ describe("BBB category harvester", () => {
         challengeChecksPerAttempt: 1,
         navigationTimeoutMs: 1_000,
         pageReadTimeoutMs: 50,
+        snapshotTimeoutMs: 1_000,
         consecutiveEmptyCategoryPagesLimit: 3,
         includeHtml: false,
         profileSubpages: [],
@@ -250,6 +252,7 @@ describe("BBB category harvester", () => {
         challengeChecksPerAttempt: 1,
         navigationTimeoutMs: 1_000,
         pageReadTimeoutMs: 50,
+        snapshotTimeoutMs: 1_000,
         consecutiveEmptyCategoryPagesLimit: 3,
         includeHtml: false,
         profileSubpages: [],
@@ -354,6 +357,7 @@ describe("BBB category harvester", () => {
         challengeChecksPerAttempt: 1,
         navigationTimeoutMs: 1_000,
         pageReadTimeoutMs: 50,
+        snapshotTimeoutMs: 1_000,
         consecutiveEmptyCategoryPagesLimit: 3,
         includeHtml: false,
         profileSubpages: [],
@@ -628,5 +632,205 @@ This business has committed to upholding the BBB Standards for Trust.
     expect(record.bbbHarvest).toMatchObject({
       mainPage: { text: expect.stringContaining("Business Details") },
     });
+  });
+
+  it("records a failed profile when snapshot evaluate hits a ProtocolError", async () => {
+    const outputDirectory = await mkdtemp(
+      path.join(tmpdir(), "bbb-snapshot-protocol-error-"),
+    );
+    temporaryDirectories.push(outputDirectory);
+    const categoryUrl = "https://www.bbb.org/us/fl/example/category/hvac";
+    const profileUrl =
+      "https://www.bbb.org/us/fl/example/profile/hvac/example-hvac-0633-12345678";
+    let currentUrl = categoryUrl;
+    /** @type {import("puppeteer").Page} */
+    const page = {
+      browser: () => ({
+        newPage: async () => page,
+      }),
+      close: async () => undefined,
+      setDefaultNavigationTimeout: () => undefined,
+      setDefaultTimeout: () => undefined,
+      setCacheEnabled: async () => undefined,
+      setViewport: async () => undefined,
+      setUserAgent: async () => undefined,
+      evaluateOnNewDocument: async () => undefined,
+      goto: async (url) => {
+        currentUrl = url;
+        return { status: () => 200 };
+      },
+      title: async () => "Accessible BBB page",
+      evaluate: async (_callback, ...args) => {
+        if (args.length === 0) {
+          return "";
+        }
+        if (currentUrl === categoryUrl) {
+          return {
+            url: categoryUrl,
+            title: "HVAC near Example",
+            text: "Showing: 1 result for HVAC near Example",
+            headings: [],
+            links: [{ text: "Example HVAC", href: profileUrl }],
+            jsonLd: [],
+            html: null,
+          };
+        }
+        throw new Error(
+          "ProtocolError: Runtime.callFunctionOn timed out after 90000ms",
+        );
+      },
+    };
+
+    const summary = await harvestBbbCategoryInExistingPage(
+      {
+        categoryUrl,
+        outputLocation: { kind: "local", dir: outputDirectory },
+        chromiumExecutablePath: null,
+        headless: true,
+        startPage: 1,
+        maxPages: 1,
+        maxProfiles: 1,
+        partRecordLimit: 25,
+        pageDelayMs: 0,
+        profileDelayMs: 0,
+        profileAttempts: 1,
+        challengeAttempts: 1,
+        challengeCheckIntervalMs: 0,
+        challengeChecksPerAttempt: 1,
+        navigationTimeoutMs: 1_000,
+        pageReadTimeoutMs: 50,
+        snapshotTimeoutMs: 50,
+        consecutiveEmptyCategoryPagesLimit: 3,
+        includeHtml: false,
+        profileSubpages: [],
+      },
+      page,
+    );
+
+    expect(summary).toMatchObject({
+      profilesHarvested: 0,
+      profilesFailed: 1,
+    });
+  });
+
+  it("flushes profile JSONL parts at partRecordLimit", async () => {
+    const outputDirectory = await mkdtemp(
+      path.join(tmpdir(), "bbb-profile-flush-"),
+    );
+    temporaryDirectories.push(outputDirectory);
+    const categoryUrl = "https://www.bbb.org/us/fl/example/category/hvac";
+    const profileUrls = Array.from(
+      { length: 3 },
+      (_entry, index) =>
+        `https://www.bbb.org/us/fl/example/profile/hvac/example-hvac-${index}-0633-1234567${index}`,
+    );
+    let currentUrl = categoryUrl;
+    /** @type {import("puppeteer").Page} */
+    const page = {
+      browser: () => ({
+        newPage: async () => page,
+      }),
+      close: async () => undefined,
+      setDefaultNavigationTimeout: () => undefined,
+      setDefaultTimeout: () => undefined,
+      setCacheEnabled: async () => undefined,
+      setViewport: async () => undefined,
+      setUserAgent: async () => undefined,
+      evaluateOnNewDocument: async () => undefined,
+      goto: async (url) => {
+        currentUrl = url;
+        return { status: () => 200 };
+      },
+      title: async () => "Accessible BBB page",
+      evaluate: async (_callback, ...args) => {
+        if (args.length === 0) {
+          return "";
+        }
+        if (currentUrl === categoryUrl) {
+          return {
+            url: categoryUrl,
+            title: "HVAC near Example",
+            text: "Showing: 3 results for HVAC near Example",
+            headings: [],
+            links: profileUrls.map((profileUrl, index) => ({
+              text: `Example HVAC ${index}`,
+              href: profileUrl,
+            })),
+            jsonLd: [],
+            html: null,
+          };
+        }
+        const profileIndex = profileUrls.indexOf(currentUrl);
+        return {
+          url: currentUrl,
+          title: `Example HVAC ${profileIndex} | BBB Business Profile`,
+          text: `Example HVAC ${profileIndex} LLC`,
+          headings: [`Example HVAC ${profileIndex} LLC`],
+          links: [],
+          jsonLd: [
+            JSON.stringify({
+              "@context": "https://schema.org",
+              "@type": "LocalBusiness",
+              name: `Example HVAC ${profileIndex} LLC`,
+            }),
+          ],
+          html: null,
+        };
+      },
+    };
+
+    const summary = await harvestBbbCategoryInExistingPage(
+      {
+        categoryUrl,
+        outputLocation: { kind: "local", dir: outputDirectory },
+        chromiumExecutablePath: null,
+        headless: true,
+        startPage: 1,
+        maxPages: 1,
+        maxProfiles: 3,
+        partRecordLimit: 2,
+        pageDelayMs: 0,
+        profileDelayMs: 0,
+        profileAttempts: 1,
+        challengeAttempts: 1,
+        challengeCheckIntervalMs: 0,
+        challengeChecksPerAttempt: 1,
+        navigationTimeoutMs: 1_000,
+        pageReadTimeoutMs: 50,
+        snapshotTimeoutMs: 1_000,
+        consecutiveEmptyCategoryPagesLimit: 3,
+        includeHtml: false,
+        profileSubpages: [],
+      },
+      page,
+    );
+
+    expect(summary.profilesHarvested).toBe(3);
+    const profilePartFiles = await readdir(
+      path.join(outputDirectory, "profiles"),
+    );
+    expect(profilePartFiles).toEqual([
+      "profiles-part-0001.jsonl",
+      "profiles-part-0002.jsonl",
+    ]);
+    const firstPart = await readFile(
+      path.join(outputDirectory, "profiles", "profiles-part-0001.jsonl"),
+      "utf8",
+    );
+    expect(firstPart.trim().split("\n")).toHaveLength(2);
+  });
+
+  it("times out hung snapshot evaluate calls instead of waiting indefinitely", async () => {
+    /** @type {import("puppeteer").Page} */
+    const page = {
+      evaluate: async () => {
+        await new Promise(() => {});
+        return {};
+      },
+    };
+
+    await expect(snapshotPage(page, false, 50)).rejects.toThrow(
+      "page snapshot timed out after 50ms",
+    );
   });
 });

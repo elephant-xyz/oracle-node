@@ -16,7 +16,8 @@ const DEFAULT_CHALLENGE_CHECKS_PER_ATTEMPT = 12;
 const DEFAULT_NAVIGATION_TIMEOUT_MS = 90_000;
 const DEFAULT_PAGE_READ_TIMEOUT_MS = 5_000;
 const DEFAULT_CONSECUTIVE_EMPTY_CATEGORY_PAGES_LIMIT = 3;
-const DEFAULT_PART_RECORD_LIMIT = 100;
+const DEFAULT_PART_RECORD_LIMIT = 25;
+const DEFAULT_SNAPSHOT_TIMEOUT_MS = 30_000;
 const DEFAULT_VIEWPORT_WIDTH = 1365;
 const DEFAULT_VIEWPORT_HEIGHT = 900;
 const DEFAULT_USER_AGENT =
@@ -200,6 +201,7 @@ const DEFAULT_PROFILE_SUBPAGES = [
  * @property {number} challengeChecksPerAttempt - Number of challenge checks per navigation attempt.
  * @property {number} navigationTimeoutMs - Puppeteer navigation timeout in milliseconds.
  * @property {number} pageReadTimeoutMs - Short timeout for title/body reads during challenge checks.
+ * @property {number} snapshotTimeoutMs - Maximum wait for full page snapshot evaluate calls.
  * @property {number} consecutiveEmptyCategoryPagesLimit - Stop category pagination after this many empty listing pages in a row.
  * @property {boolean} includeHtml - Whether raw HTML snapshots should be stored.
  * @property {readonly string[]} profileSubpages - Profile subpages to visit after the main profile page.
@@ -323,7 +325,11 @@ export async function harvestBbbCategoryInExistingPage(options, page) {
         `Could not load BBB category page ${pageUrl}: ${navigation.title}`,
       );
     }
-    const snapshot = await snapshotPage(activePage, options.includeHtml);
+    const snapshot = await snapshotPage(
+      activePage,
+      options.includeHtml,
+      options.snapshotTimeoutMs,
+    );
     const categoryRecord = buildCategoryPageRecord({
       categoryUrl: options.categoryUrl,
       pageNumber,
@@ -739,7 +745,11 @@ async function harvestProfileRecord({
       `Could not load BBB profile ${listing.profileUrl}: ${navigation.title}`,
     );
   }
-  const mainPage = await snapshotPage(page, options.includeHtml);
+  const mainPage = await snapshotPage(
+    page,
+    options.includeHtml,
+    options.snapshotTimeoutMs,
+  );
   const subpageTargets = discoverProfileSubpages(
     mainPage.links,
     profileSubpages,
@@ -760,7 +770,11 @@ async function harvestProfileRecord({
         status: subpageNavigation.status,
         ok: subpageNavigation.ok,
         page: subpageNavigation.ok
-          ? await snapshotPage(page, options.includeHtml)
+          ? await snapshotPage(
+              page,
+              options.includeHtml,
+              options.snapshotTimeoutMs,
+            )
           : null,
         error: subpageNavigation.ok
           ? null
@@ -1008,38 +1022,57 @@ function isPageReadTimeoutError(caught) {
 }
 
 /**
- * Snapshot visible and structured page data.
+ * Snapshot visible and structured page data with a bounded evaluate timeout so a
+ * hung CDP call cannot block profile harvesting for the full navigation timeout.
  *
  * @param {import("puppeteer").Page} page - Puppeteer page.
  * @param {boolean} includeHtml - Whether to include full HTML in the snapshot.
+ * @param {number} [timeoutMs=DEFAULT_SNAPSHOT_TIMEOUT_MS] - Maximum wait for the snapshot evaluate.
  * @returns {Promise<PageSnapshot>} Captured page snapshot.
  */
-async function snapshotPage(page, includeHtml) {
-  return page.evaluate((shouldIncludeHtml) => {
-    const links = [...document.querySelectorAll("a[href]")]
-      .map((anchor) => ({
-        text: anchor.textContent?.trim().replace(/\s+/g, " ") ?? "",
-        href: /** @type {HTMLAnchorElement} */ (anchor).href,
-      }))
-      .filter((link) => link.text.length > 0 || link.href.length > 0);
-    const headings = [...document.querySelectorAll("h1,h2,h3,h4")]
-      .map((heading) => heading.textContent?.trim().replace(/\s+/g, " ") ?? "")
-      .filter((heading) => heading.length > 0);
-    const jsonLd = [
-      ...document.querySelectorAll('script[type="application/ld+json"]'),
-    ]
-      .map((script) => script.textContent ?? "")
-      .filter((text) => text.trim().length > 0);
-    return {
-      url: location.href,
-      title: document.title,
-      text: document.body?.innerText ?? "",
-      headings,
-      links,
-      jsonLd,
-      html: shouldIncludeHtml ? document.documentElement.outerHTML : null,
-    };
-  }, includeHtml);
+export async function snapshotPage(page, includeHtml, timeoutMs) {
+  const readTimeoutMs = timeoutMs ?? DEFAULT_SNAPSHOT_TIMEOUT_MS;
+  try {
+    return await raceWithTimeout(
+      () =>
+        page.evaluate((shouldIncludeHtml) => {
+          const links = [...document.querySelectorAll("a[href]")]
+            .map((anchor) => ({
+              text: anchor.textContent?.trim().replace(/\s+/g, " ") ?? "",
+              href: /** @type {HTMLAnchorElement} */ (anchor).href,
+            }))
+            .filter((link) => link.text.length > 0 || link.href.length > 0);
+          const headings = [...document.querySelectorAll("h1,h2,h3,h4")]
+            .map(
+              (heading) =>
+                heading.textContent?.trim().replace(/\s+/g, " ") ?? "",
+            )
+            .filter((heading) => heading.length > 0);
+          const jsonLd = [
+            ...document.querySelectorAll('script[type="application/ld+json"]'),
+          ]
+            .map((script) => script.textContent ?? "")
+            .filter((text) => text.trim().length > 0);
+          return {
+            url: location.href,
+            title: document.title,
+            text: document.body?.innerText ?? "",
+            headings,
+            links,
+            jsonLd,
+            html: shouldIncludeHtml ? document.documentElement.outerHTML : null,
+          };
+        }, includeHtml),
+      readTimeoutMs,
+      `page snapshot timed out after ${readTimeoutMs}ms`,
+    );
+  } catch (caught) {
+    if (isRecoverableBbbPageError(caught) || isPageReadTimeoutError(caught)) {
+      const message = caught instanceof Error ? caught.message : String(caught);
+      throw new Error(`page snapshot failed: ${message}`);
+    }
+    throw caught;
+  }
 }
 
 /**
@@ -1700,6 +1733,7 @@ function parseCliOptions(args) {
       "challenge-checks-per-attempt": { type: "string" },
       "navigation-timeout-ms": { type: "string" },
       "page-read-timeout-ms": { type: "string" },
+      "snapshot-timeout-ms": { type: "string" },
       "consecutive-empty-category-pages-limit": { type: "string" },
       "profile-subpages": { type: "string" },
       "no-html": { type: "boolean" },
@@ -1768,6 +1802,11 @@ function parseCliOptions(args) {
         values["page-read-timeout-ms"],
         "page-read-timeout-ms",
       ) ?? DEFAULT_PAGE_READ_TIMEOUT_MS,
+    snapshotTimeoutMs:
+      parsePositiveIntegerOption(
+        values["snapshot-timeout-ms"],
+        "snapshot-timeout-ms",
+      ) ?? DEFAULT_SNAPSHOT_TIMEOUT_MS,
     consecutiveEmptyCategoryPagesLimit:
       parsePositiveIntegerOption(
         values["consecutive-empty-category-pages-limit"],
