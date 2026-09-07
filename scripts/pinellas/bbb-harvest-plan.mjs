@@ -127,12 +127,75 @@ export const PINELLAS_BBB_ROBOTS_COMPLIANT_MAX_PAGES = 1;
 export const PINELLAS_BBB_PRODUCTION_API_URL = "https://developer.bbb.org";
 
 /**
+ * City execution order for the operator full-paginate harvest runner.
+ * Clearwater is sequenced first because it was proven in warm-session runs.
+ *
+ * @type {readonly PinellasBbbCityKey[]}
+ */
+export const PINELLAS_BBB_FULL_HARVEST_CITY_ORDER = Object.freeze([
+  "clearwater",
+  "st-petersburg",
+]);
+
+/**
+ * Trade execution order within each city for the full-paginate harvest runner.
+ *
+ * @type {readonly PinellasBbbTradeKey[]}
+ */
+export const PINELLAS_BBB_FULL_HARVEST_TRADE_ORDER = Object.freeze([
+  "roofing",
+  "hvac",
+  "solar",
+]);
+
+/**
+ * Default page cap for the operator full-paginate harvest runner.
+ *
+ * @type {1000}
+ */
+export const PINELLAS_BBB_FULL_HARVEST_MAX_PAGES = 1000;
+
+/**
+ * Default delay between category pages for the full-paginate harvest runner.
+ *
+ * @type {2000}
+ */
+export const PINELLAS_BBB_FULL_HARVEST_PAGE_DELAY_MS = 2000;
+
+/**
+ * Default delay between profile fetches for the full-paginate harvest runner.
+ *
+ * @type {1500}
+ */
+export const PINELLAS_BBB_FULL_HARVEST_PROFILE_DELAY_MS = 1500;
+
+/**
  * @typedef {object} PinellasBbbHarvestPlanOptions
  * @property {string} [chromiumExecutablePath="/usr/local/bin/google-chrome"] Chromium executable for Puppeteer.
  * @property {boolean} [headless=true] Whether Puppeteer should run headless.
  * @property {number | null} [maxPages=1] Per-category page cap; defaults to robots-compliant page 1 only.
  * @property {number | null} [maxProfiles=null] Optional per-category profile cap.
  * @property {boolean} [includeHtml=false] Whether raw HTML should be retained.
+ * @property {number} [pageDelayMs] Delay between category pages in milliseconds.
+ * @property {number} [profileDelayMs] Delay between profile fetches in milliseconds.
+ */
+
+/**
+ * @typedef {object} PinellasBbbFullHarvestJob
+ * @property {PinellasBbbCityKey} cityKey Stable Pinellas city key.
+ * @property {PinellasBbbTradeKey} tradeKey Stable trade key.
+ * @property {string} categoryUrl Verified BBB category URL.
+ * @property {string} outputDirectory Absolute output directory for the job.
+ * @property {string} command Shell-ready harvest command for the job.
+ */
+
+/**
+ * @typedef {object} PinellasBbbFullHarvestPlanOptions
+ * @property {string} [chromiumExecutablePath="/usr/local/bin/google-chrome"] Chromium executable for Puppeteer.
+ * @property {boolean} [headless=true] Whether Puppeteer should run headless.
+ * @property {number} [maxPages=1000] Per-category page cap for operator full harvest.
+ * @property {number} [pageDelayMs=2000] Delay between category pages in milliseconds.
+ * @property {number} [profileDelayMs=1500] Delay between profile fetches in milliseconds.
  */
 
 /**
@@ -171,6 +234,12 @@ export function buildPinellasBbbHarvestCommand(
   if (options.maxProfiles !== undefined && options.maxProfiles !== null) {
     args.push(`--max-profiles ${options.maxProfiles}`);
   }
+  if (options.pageDelayMs !== undefined) {
+    args.push(`--page-delay-ms ${options.pageDelayMs}`);
+  }
+  if (options.profileDelayMs !== undefined) {
+    args.push(`--profile-delay-ms ${options.profileDelayMs}`);
+  }
   return args.join(" ");
 }
 
@@ -205,6 +274,70 @@ export function buildPinellasBbbProbeCommand(
     maxPages: PINELLAS_BBB_ROBOTS_COMPLIANT_MAX_PAGES,
     maxProfiles: 15,
   });
+}
+
+/**
+ * Resolve a verified Pinellas BBB category source by city and trade keys.
+ *
+ * @param {PinellasBbbCityKey} cityKey Stable Pinellas city key.
+ * @param {PinellasBbbTradeKey} tradeKey Stable trade key.
+ * @returns {PinellasBbbCategorySource} Matching verified category source.
+ */
+export function findPinellasBbbCategorySource(cityKey, tradeKey) {
+  const source = PINELLAS_BBB_CATEGORY_SOURCES.find(
+    (entry) => entry.cityKey === cityKey && entry.tradeKey === tradeKey,
+  );
+  if (source === undefined) {
+    throw new Error(`Missing Pinellas BBB source for ${cityKey}/${tradeKey}`);
+  }
+  return source;
+}
+
+/**
+ * Build the ordered operator full-paginate harvest jobs for Pinellas BBB.
+ *
+ * This is an explicit operator override for warm-session multi-page harvests.
+ * It does not replace the robots-compliant page-1 plan in
+ * `buildPinellasBbbHarvestPlan`.
+ *
+ * @param {string} outputRoot BBB output root.
+ * @param {PinellasBbbFullHarvestPlanOptions} [options] Full harvest CLI options.
+ * @returns {readonly PinellasBbbFullHarvestJob[]} Ordered city/trade jobs.
+ */
+export function buildPinellasBbbFullHarvestJobs(outputRoot, options = {}) {
+  const resolvedRoot = path.resolve(outputRoot);
+  const harvestOptions = {
+    chromiumExecutablePath:
+      options.chromiumExecutablePath ?? "/usr/local/bin/google-chrome",
+    headless: options.headless ?? true,
+    includeHtml: false,
+    maxPages: options.maxPages ?? PINELLAS_BBB_FULL_HARVEST_MAX_PAGES,
+    pageDelayMs: options.pageDelayMs ?? PINELLAS_BBB_FULL_HARVEST_PAGE_DELAY_MS,
+    profileDelayMs:
+      options.profileDelayMs ?? PINELLAS_BBB_FULL_HARVEST_PROFILE_DELAY_MS,
+  };
+
+  return PINELLAS_BBB_FULL_HARVEST_CITY_ORDER.flatMap((cityKey) =>
+    PINELLAS_BBB_FULL_HARVEST_TRADE_ORDER.map((tradeKey) => {
+      const source = findPinellasBbbCategorySource(cityKey, tradeKey);
+      const outputDirectory = path.join(
+        resolvedRoot,
+        source.cityKey,
+        source.tradeKey,
+      );
+      return {
+        cityKey: source.cityKey,
+        tradeKey: source.tradeKey,
+        categoryUrl: source.categoryUrl,
+        outputDirectory,
+        command: buildPinellasBbbHarvestCommand(
+          source,
+          outputDirectory,
+          harvestOptions,
+        ),
+      };
+    }),
+  );
 }
 
 /**

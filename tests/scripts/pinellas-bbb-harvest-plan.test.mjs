@@ -3,10 +3,16 @@ import { describe, expect, it } from "vitest";
 import {
   PINELLAS_BBB_CATEGORY_SOURCES,
   PINELLAS_BBB_CITIES,
+  PINELLAS_BBB_FULL_HARVEST_CITY_ORDER,
+  PINELLAS_BBB_FULL_HARVEST_MAX_PAGES,
+  PINELLAS_BBB_FULL_HARVEST_PAGE_DELAY_MS,
+  PINELLAS_BBB_FULL_HARVEST_PROFILE_DELAY_MS,
+  PINELLAS_BBB_FULL_HARVEST_TRADE_ORDER,
   PINELLAS_BBB_PRODUCTION_API_URL,
   PINELLAS_BBB_ROBOTS_COMPLIANT_MAX_PAGES,
   PINELLAS_BBB_TRADES,
   buildPinellasBbbCategoryUrl,
+  buildPinellasBbbFullHarvestJobs,
   buildPinellasBbbHarvestPlan,
   buildPinellasBbbProbeCommand,
 } from "../../scripts/pinellas/bbb-harvest-plan.mjs";
@@ -92,6 +98,51 @@ describe("Pinellas BBB harvest plan", () => {
         `--max-pages ${PINELLAS_BBB_ROBOTS_COMPLIANT_MAX_PAGES}`,
       );
       expect(category.command).not.toContain("--max-pages 2");
+    }
+  });
+
+  it("builds the operator full-paginate job sequence with conservative delays", () => {
+    const jobs = buildPinellasBbbFullHarvestJobs("/tmp/pinellas-bbb-harvest");
+    expect(jobs).toHaveLength(6);
+    expect(jobs.map((job) => `${job.cityKey}/${job.tradeKey}`)).toEqual([
+      "clearwater/roofing",
+      "clearwater/hvac",
+      "clearwater/solar",
+      "st-petersburg/roofing",
+      "st-petersburg/hvac",
+      "st-petersburg/solar",
+    ]);
+    expect(PINELLAS_BBB_FULL_HARVEST_CITY_ORDER).toEqual([
+      "clearwater",
+      "st-petersburg",
+    ]);
+    expect(PINELLAS_BBB_FULL_HARVEST_TRADE_ORDER).toEqual([
+      "roofing",
+      "hvac",
+      "solar",
+    ]);
+
+    for (const job of jobs) {
+      const source = PINELLAS_BBB_CATEGORY_SOURCES.find(
+        (entry) =>
+          entry.cityKey === job.cityKey && entry.tradeKey === job.tradeKey,
+      );
+      expect(source).toBeDefined();
+      expect(job.categoryUrl).toBe(source?.categoryUrl);
+      expect(job.outputDirectory).toBe(
+        `/tmp/pinellas-bbb-harvest/${job.cityKey}/${job.tradeKey}`,
+      );
+      expect(job.command).toContain(job.categoryUrl);
+      expect(job.command).toContain(
+        `--max-pages ${PINELLAS_BBB_FULL_HARVEST_MAX_PAGES}`,
+      );
+      expect(job.command).toContain(
+        `--page-delay-ms ${PINELLAS_BBB_FULL_HARVEST_PAGE_DELAY_MS}`,
+      );
+      expect(job.command).toContain(
+        `--profile-delay-ms ${PINELLAS_BBB_FULL_HARVEST_PROFILE_DELAY_MS}`,
+      );
+      expect(job.command).not.toMatch(/--max-pages 1(?:\s|$)/);
     }
   });
 });
