@@ -63,19 +63,38 @@ function appendLogLine(logPath, message) {
 }
 
 /**
+ * @typedef {object} PinellasBbbFullHarvestRunOptions
+ * @property {number} [fromJob=1] 1-based job index to start from (skips earlier jobs).
+ */
+
+/**
  * Run the sequential Pinellas BBB full-paginate harvest jobs.
  *
  * @param {string} [outputRoot=downloads/pinellas/bbb-harvest] Output root.
+ * @param {PinellasBbbFullHarvestRunOptions} [options] Resume options.
  * @returns {Promise<void>} Resolves when every job completes successfully.
  */
 export async function runPinellasBbbFullHarvest(
   outputRoot = defaultOutputRoot,
+  options = {},
 ) {
   const resolvedOutputRoot = path.resolve(outputRoot);
   const logDirectory = path.join(resolvedOutputRoot, "logs");
   fs.mkdirSync(logDirectory, { recursive: true });
 
-  const jobs = buildPinellasBbbFullHarvestJobs(resolvedOutputRoot);
+  const fromJob = options.fromJob ?? 1;
+  if (!Number.isInteger(fromJob) || fromJob < 1) {
+    throw new Error(`fromJob must be a positive integer, received ${fromJob}`);
+  }
+
+  const jobs = buildPinellasBbbFullHarvestJobs(resolvedOutputRoot).slice(
+    fromJob - 1,
+  );
+  if (jobs.length === 0) {
+    throw new Error(
+      `No harvest jobs remain after skipping to fromJob=${fromJob}`,
+    );
+  }
   for (const job of jobs) {
     const logPath = path.join(
       logDirectory,
@@ -101,10 +120,42 @@ export async function runPinellasBbbFullHarvest(
   );
 }
 
+/**
+ * Parse CLI args for the full harvest runner.
+ *
+ * @param {readonly string[]} argv Process argv slice after node executable.
+ * @returns {{ outputRoot: string, fromJob: number }} Parsed CLI options.
+ */
+function parseCliArgs(argv) {
+  let outputRoot = defaultOutputRoot;
+  let fromJob = 1;
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+    if (arg === "--from-job") {
+      const value = argv[index + 1];
+      if (value === undefined) {
+        throw new Error("--from-job requires a 1-based job index");
+      }
+      fromJob = Number.parseInt(value, 10);
+      index += 1;
+      continue;
+    }
+    if (!arg.startsWith("-") && outputRoot === defaultOutputRoot) {
+      outputRoot = arg;
+    }
+  }
+  return { outputRoot, fromJob };
+}
+
 if (fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
-  const outputRoot = process.argv[2] ?? defaultOutputRoot;
-  runPinellasBbbFullHarvest(outputRoot).catch((error) => {
+  try {
+    const { outputRoot, fromJob } = parseCliArgs(process.argv.slice(2));
+    runPinellasBbbFullHarvest(outputRoot, { fromJob }).catch((error) => {
+      console.error(error instanceof Error ? error.message : String(error));
+      process.exitCode = 1;
+    });
+  } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = 1;
-  });
+  }
 }
