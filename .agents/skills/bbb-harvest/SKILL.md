@@ -4,13 +4,58 @@ metadata: {"author":"elephant-xyz"}
 ---
 # BBB Harvest
 
-National data source — county-agnostic. The harvester is the `BbbHarvest` Restate
+National data source — county-agnostic. Output feeds the `bbb_*` tables in
+`elephant-query-db` (contractor reputation/quality scores joined to permits via
+contractor names).
+
+## Pinellas local CLI (oracle-node)
+
+**This checkout is `oracle-node`, not the Restate pipeline.** Pinellas BBB harvest runs
+here via vanilla Puppeteer (`scripts/harvest-bbb-category.mjs`) — **not** stealth mode,
+**not** the BBB API.
+
+### Operator full ingest already running — do not stop
+
+If the operator started `pinellas-bbb-full` or `scripts/pinellas/run-bbb-full-harvest.sh`,
+**leave it running**. Do not kill the harvest, restart Chrome, or start competing BBB
+jobs. Also leave Accela alone (`pinellas-accela-full`, separate Chrome profile).
+
+| Item | Value |
+| --- | --- |
+| tmux session | `pinellas-bbb-full` |
+| Orchestrator | `scripts/pinellas/run-bbb-full-harvest.sh` → `run-bbb-full-harvest.mjs` |
+| Jobs | 6 sequential (Clearwater then St. Pete × roofing/HVAC/solar) |
+| Browser | 1 Chrome (`/usr/local/bin/google-chrome`), 1 tab, separate profile from Accela |
+| Flags | `--headless true --no-html --profile-subpages none --max-pages 1000 --page-delay-ms 2000 --profile-delay-ms 1500` |
+| Output | `downloads/pinellas/bbb-harvest/{clearwater,st-petersburg}/{roofing,hvac,solar}` |
+| Logs | `downloads/pinellas/bbb-harvest/logs/` (`runner.log` + per-job logs) |
+
+First job: Clearwater roofing (~4,882 listings). Cities: St. Petersburg + Clearwater
+(Tampa excluded). Trades: roofing, HVAC, solar. Pagination uses `?page=N`.
+
+When the operator has already started the full ingest, **do not** block on the 48-hour
+gate or refuse the run because `docs/pinellas-county-findings.md` once recommended
+API-only — see the operator override dated 2026-09-07 in that doc.
+
+To start a fresh full ingest (operator request only):
+
+```bash
+tmux -f /exec-daemon/tmux.portal.conf new-session -d -s pinellas-bbb-full \
+  'cd /workspace && scripts/pinellas/run-bbb-full-harvest.sh 2>&1 | tee downloads/pinellas/bbb-harvest/logs/runner.log'
+```
+
+Page-1-only sampling (robots-compliant fallback) remains in
+`buildPinellasBbbHarvestPlan()`; full pagination is
+`buildPinellasBbbFullHarvestJobs()` — see `scripts/pinellas/bbb-harvest-plan.mjs`.
+
+## Pipeline counties — Restate `BbbHarvest`
+
+For onboarded counties on the durable stack, the harvester is the `BbbHarvest` Restate
 workflow (key = jobId) in `elephant-pipeline/services/enrichment.ts`, wrapping a local
 Puppeteer crawler. `BbbHarvest` is authored per `durable-workflow-builder`; the
-parameters and output layout below are its contract, not existing code. Output feeds the `bbb_*` tables in `elephant-query-db` (contractor
-reputation/quality scores joined to permits via contractor names).
+parameters and output layout below are its contract, not existing code.
 
-## Run
+### Run
 
 ```bash
 curl localhost:8080/restate/send/BbbHarvest/<jobId>/run \

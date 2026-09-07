@@ -39,7 +39,16 @@
     "duval-seed-sample": "node scripts/build-duval-validation-sample.mjs",
     "duval-pilot": "node scripts/duval-local-pilot.mjs",
     "duval-validate": "node scripts/validate-duval-appraisal.mjs",
-    "duval-query-table": "node scripts/export-duval-query-table.mjs"
+    "duval-query-table": "node scripts/export-duval-query-table.mjs",
+    "pinellas:permits": "node scripts/run-pinellas-permit-harvest.mjs",
+    "pinellas:permits:clearwater": "node scripts/run-pinellas-permit-harvest.mjs --agency clearwater",
+    "pinellas:permits:municipal-probe": "node scripts/probe-pinellas-municipal-permits.mjs",
+    "pinellas:permits:largo-probe": "node scripts/probe-pinellas-tyler-civic-access.mjs --agency largo",
+    "pinellas:permits:largo": "node scripts/run-pinellas-tyler-permit-harvest.mjs --agency largo",
+    "pinellas:permits:tarpon-probe": "node scripts/probe-tarpon-springs-click2gov.mjs",
+    "pinellas:permits:tarpon": "node scripts/run-tarpon-springs-permit-harvest.mjs",
+    "pinellas:permits:park-probe": "node scripts/probe-pinellas-park-portico.mjs",
+    "pinellas:permits:park": "node scripts/probe-pinellas-tyler-civic-access.mjs --agency park"
   },
   "devDependencies": {
     "@aws-sdk/client-cloudformation": "^3.895.0",

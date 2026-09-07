@@ -122,10 +122,21 @@ Cities”) and warns the table is incomplete.
 | City of St. Petersburg                                                                                                                                                                                                                                                                                      | City site + ProjectDox ePlan (`stpetersburg-fl-us.avolvecloud.com`) | `https://www.stpete.org/business/building_permitting/building_permits.php`                                      | Playwright **200** on city page. Historical lookup vs application portal still needs a public search-by-parcel certification.                                                           | needs-review                  |
 | Remaining municipalities (Belleair, Belleair Beach, Belleair Bluffs, Belleair Shore, Gulfport, Indian Rocks Beach, Indian Shores, Kenneth City, Madeira Beach, North Redington Beach, Oldsmar, Redington Beach, Redington Shores, Safety Harbor, Seminole, South Pasadena, St. Pete Beach, Treasure Island) | mixed / some may use county Accela                                  | —                                                                                                               | Catalog rows seeded `needs-review`. Web sources: Seminole reportedly CitizenServe; some beach towns / Safety Harbor / Oldsmar may defer to county Building Services.                    | needs-review                  |
 
-**Pilot recommendation:** harvest county Accela (`PINELLAS`) + reuse appraisal-page
-permit rows for the ~50-parcel sample. Do **not** bulk-harvest every municipal
-portal before the appraisal pilot is certified. One adapter per vendor via
-`county-permit-adapter` (Accela already exists for Lee).
+**Pilot recommendation:** harvest county Accela (`PINELLAS`) first via
+`scripts/run-pinellas-permit-harvest.mjs` (date-window list search, Lee Accela
+helpers, local artifacts under `downloads/pinellas/permits/`). Municipal vendors
+are separate adapters. Do not 311k-parcel-search Accela.
+
+```bash
+# 3-day live probe (one detail)
+node scripts/run-pinellas-permit-harvest.mjs --probe
+# 14-day pilot
+node scripts/run-pinellas-permit-harvest.mjs --pilot
+# Full Accela PINELLAS history (1990-today, resumable)
+node scripts/run-pinellas-permit-harvest.mjs --job-id pinellas-accela-full-20260903
+```
+
+Live probe (2026-09-03): window `2026-09-01`–`2026-09-03` returned Accela’s **`Showing 1-10 of 100`** cap, so a 3-day span is already truncated. Sample record `BC-RMR-26-00368` (parcel `022715274860000100`, Tarpon Springs). **48-hour countywide estimate fails** at that density. Operator started the full Accela PINELLAS date-window harvest locally: job `pinellas-accela-full-20260903`, 1990-01-01 through today, **1-day windows**, **3 parallel CapDetail tabs**, 250ms settle, `--skip-existing`. City portals are not in this pass. Resume by re-running the same job id.
 
 ## 4. Bulk data sources (seed + geometry)
 
@@ -275,15 +286,15 @@ Expected SQL after restart against the live table: `SELECT count(*) FROM propert
 
 ## 7. Source feasibility
 
-| Source            | Volume                                            | Probe                                                                                       | Safe concurrency                                                           | Est. full download                                                              | Recommended mode                                                                                                                                                                                   |
-| ----------------- | ------------------------------------------------- | ------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| PCPAO print HTML  | ~311k tax parcels                                 | 8 sequential `property-details` ~2.8–3.1s (Playwright, includes wait); print URL ~0.4s curl | Start **2**; PCPAO is UA-sensitive and Drupal sessioned. Do not jump to 8. | Print @ 0.4s × 311k serial ≈ **35 h**; conc 2 + delay ≈ **20–24 h**. Under 48h. | **Pilot:** print HTML for ~50 STRAPs. **Countywide:** prefer **bulk `RP_*` CSVs** for roll attributes + shapefile/REST for geometry; HTML only for fields the transform still needs from the page. |
-| PCPAO bulk CSVs   | 30 tables, nightly                                | Download zip via DAL after UI click                                                         | 1–2 (large zips)                                                           | Minutes–low hours depending on table                                            | **Bulk artifact download** (seed + completeness).                                                                                                                                                  |
-| GIS REST          | 311,582 tax polygons                              | count + mixed USE_CODE queries succeeded                                                    | 1–2 (maxRecord 1k–15k; page with `resultOffset`)                           | Minutes                                                                         | **Bulk / seed.**                                                                                                                                                                                   |
-| Accela PINELLAS   | unknown permit count; search last-2-years default | Portal 200, guest search                                                                    | Lee Accela used conc ~2–4                                                  | Unknown until a 10–25 record timing pass on CapHome                             | **Runtime retrieval** for pilot; date-window harvest later if <48h.                                                                                                                                |
-| Municipal permits | 24 cities + county                                | 5 portals 200; rest uncertified                                                             | Vendor-specific                                                            | Do not full-download                                                            | **Runtime retrieval** per vendor adapter.                                                                                                                                                          |
-| Sunbiz            | statewide quarterly zip                           | Downloads page 200 in browser                                                               | 1                                                                          | Hours (zip + Deflate64 unzip)                                                   | **Bulk** statewide, ZIP-filter Pinellas.                                                                                                                                                           |
-| BBB               | category crawl                                    | Playwright 200 / curl 403                                                                   | 1 with challenge retry                                                     | Hours                                                                           | **Browser harvest** (`bbb-harvest`).                                                                                                                                                               |
+| Source            | Volume                                                           | Probe                                                                                       | Safe concurrency                                                           | Est. full download                                                              | Recommended mode                                                                                                                                                                                   |
+| ----------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| PCPAO print HTML  | ~311k tax parcels                                                | 8 sequential `property-details` ~2.8–3.1s (Playwright, includes wait); print URL ~0.4s curl | Start **2**; PCPAO is UA-sensitive and Drupal sessioned. Do not jump to 8. | Print @ 0.4s × 311k serial ≈ **35 h**; conc 2 + delay ≈ **20–24 h**. Under 48h. | **Pilot:** print HTML for ~50 STRAPs. **Countywide:** prefer **bulk `RP_*` CSVs** for roll attributes + shapefile/REST for geometry; HTML only for fields the transform still needs from the page. |
+| PCPAO bulk CSVs   | 30 tables, nightly                                               | Download zip via DAL after UI click                                                         | 1–2 (large zips)                                                           | Minutes–low hours depending on table                                            | **Bulk artifact download** (seed + completeness).                                                                                                                                                  |
+| GIS REST          | 311,582 tax polygons                                             | count + mixed USE_CODE queries succeeded                                                    | 1–2 (maxRecord 1k–15k; page with `resultOffset`)                           | Minutes                                                                         | **Bulk / seed.**                                                                                                                                                                                   |
+| Accela PINELLAS   | list cap 100; 3-day window already at cap (~33+/day lower bound) | 2026-09-03 probe: `Showing 1-10 of 100`; 1 detail `BC-RMR-26-00368`                         | **3** CapDetail tabs locally (Lee Lambda used 2–4)                         | **Above 48h** — operator started full local 1-day-window harvest anyway         | **Bulk date-window harvest** in progress (`pinellas-accela-full-20260903`, 1990–today). Not 311k parcel search. Cities still runtime.                                                              |
+| Municipal permits | 24 cities + county                                               | 5 portals 200; rest uncertified                                                             | Vendor-specific                                                            | Do not full-download                                                            | **Runtime retrieval** per vendor adapter.                                                                                                                                                          |
+| Sunbiz            | statewide quarterly zip                                          | Downloads page 200 in browser                                                               | 1                                                                          | Hours (zip + Deflate64 unzip)                                                   | **Bulk** statewide, ZIP-filter Pinellas.                                                                                                                                                           |
+| BBB               | category crawl                                                   | Playwright 200 / curl 403                                                                   | 1 with challenge retry                                                     | Hours                                                                           | **Browser harvest** (`bbb-harvest`).                                                                                                                                                               |
 
 No source in the Oracle baseline is estimated **above 48 hours** if bulk CSVs + GIS
 are used for appraisal. A naive countywide HTML scrape is close to the 48h line;
@@ -320,6 +331,86 @@ existing transform outputs / bulk columns:
 
 Not in the pilot contract: clerk document images, tax-bill PDF, FEMA certificates,
 code-enforcement cases, municipal BTRs.
+
+## BBB contractor reputation (2026-09-07)
+
+Pinellas BBB harvest anchors on **St. Petersburg** and **Clearwater** category
+searches (Tampa excluded). Trade plan module:
+`scripts/pinellas/bbb-harvest-plan.mjs`.
+
+### Historical probe notes (cold session / policy context)
+
+- BBB `robots.txt` still disallows `/*?`; `scripts/harvest-bbb-category.mjs`
+  paginates with `?page=N`.
+- Nelson Jacksonville cold `?page=2` still returns **HTTP 403** from vanilla
+  Puppeteer — pagination is not universally reliable without a warm session.
+- Long-term production enrichment may still use the official BBB API
+  ([developer.bbb.org](https://developer.bbb.org)); that remains the Restate /
+  pipeline recommendation in `buildPinellasBbbHarvestPlan()`.
+
+### Completed warm-session samples (historical)
+
+**St. Petersburg roofing (2 pages, 15 profiles):**
+
+```bash
+CHROME_EXECUTABLE_PATH=/usr/local/bin/google-chrome node scripts/harvest-bbb-category.mjs \
+  --category-url "https://www.bbb.org/us/fl/st-petersburg/category/roofing-contractors" \
+  --output-dir downloads/pinellas/bbb-probe/st-petersburg/roofing \
+  --chromium-executable-path /usr/local/bin/google-chrome \
+  --headless true --max-pages 2 --max-profiles 15 --no-html \
+  --profile-subpages none --page-delay-ms 2000 --profile-delay-ms 1500
+```
+
+| Metric                      | Value                                                      |
+| --------------------------- | ---------------------------------------------------------- |
+| Egress                      | `US` (`curl -s ipinfo.io/country`)                         |
+| Category pages              | 2 visited; **8,068** St. Pete roofing results claimed      |
+| Profiles harvested / failed | **15 / 0** (~5 min; Cloudflare cleared in headless Chrome) |
+| Output                      | `downloads/pinellas/bbb-probe/st-petersburg/roofing/`      |
+
+**Clearwater roofing 4-page E2E (2026-09-07):** ~200s wall time, **66/66** profiles,
+warm session while Accela stayed up. Output under
+`downloads/pinellas/bbb-probe/clearwater/roofing-4page/`.
+
+Page-1-only fallback commands (robots-compliant sampling, not full ingest) live in
+`buildPinellasBbbHarvestPlan("downloads/pinellas/bbb-fallback")`.
+
+### Operator override — full BBB ingest running (2026-09-07)
+
+**Current operator policy:** run the full paginated browser harvest locally. Agents
+must **not** refuse, restart, or kill this work because of the historical 403/robots
+notes above.
+
+| Do not kill     | Detail                                                                          |
+| --------------- | ------------------------------------------------------------------------------- |
+| Accela          | tmux `pinellas-accela-full`, pid **996439**, Chrome profile separate from BBB   |
+| BBB full ingest | tmux `pinellas-bbb-full`, sequential runner, Chrome **lnGVgQ** (operator label) |
+
+**Do not start** city permit portals (Clearwater/Largo/Tarpon probes or full runs) —
+only county Accela + BBB are in scope for this pass.
+
+| Item         | Value                                                                                                             |
+| ------------ | ----------------------------------------------------------------------------------------------------------------- |
+| Harvester    | Vanilla Puppeteer `scripts/harvest-bbb-category.mjs` — **not** stealth, **not** BBB API                           |
+| Orchestrator | `scripts/pinellas/run-bbb-full-harvest.sh` → `run-bbb-full-harvest.mjs`                                           |
+| tmux         | `pinellas-bbb-full` — **6 sequential jobs**, **1 browser / 1 tab**                                                |
+| Chrome       | `/usr/local/bin/google-chrome`, profile separate from Accela                                                      |
+| Flags        | `--headless true --no-html --profile-subpages none --max-pages 1000 --page-delay-ms 2000 --profile-delay-ms 1500` |
+| Output       | `downloads/pinellas/bbb-harvest/{clearwater,st-petersburg}/{roofing,hvac,solar}`                                  |
+| Logs         | `downloads/pinellas/bbb-harvest/logs/runner.log` + per-city/trade logs                                            |
+| Job order    | Clearwater roofing → HVAC → solar, then St. Pete roofing → HVAC → solar                                           |
+| First job    | Clearwater roofing (~**4,882** listings)                                                                          |
+
+Live start command (for reference — **do not re-run** if `pinellas-bbb-full` is already active):
+
+```bash
+tmux -f /exec-daemon/tmux.portal.conf new-session -d -s pinellas-bbb-full \
+  'cd /workspace && scripts/pinellas/run-bbb-full-harvest.sh 2>&1 | tee downloads/pinellas/bbb-harvest/logs/runner.log'
+```
+
+Plan builder for the six jobs: `buildPinellasBbbFullHarvestJobs()` in
+`scripts/pinellas/bbb-harvest-plan.mjs`. Documented for agents in
+`.claude/skills/bbb-harvest/SKILL.md` (Pinellas local CLI section).
 
 ## Probe evidence
 
