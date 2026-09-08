@@ -286,7 +286,7 @@ describe("published county catalog", () => {
     ).toBe("QmQue98qAe66bpPb1UreTKKGuiAbwNifqZ9wAvKes7nxeg");
     expect(
       JSON.parse(env.DATASET_COVERAGE_CID_FALLBACK_MAP_ADDITIONS).broward,
-    ).toBe("QmSAoNw1BYscToHjf1Aedsg8zir3LXRvDn8crrwe3R1sFx");
+    ).toBe("QmUJYobtqq1dSvGs6etoTNQMT8zDjSpGA8qEVce4jfnTfQ");
     expect(JSON.parse(env.ORACLE_OPEN_DATA_IPNS_MAP).broward).toBe(
       "k51qzi5uqu5dh5q2ovjs5iazajd9cgvmw21dh7ppvlunlqmj0p38c71nesccj6",
     );
