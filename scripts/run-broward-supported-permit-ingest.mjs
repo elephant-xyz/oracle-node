@@ -126,6 +126,24 @@ const WARM_CITIZENSERVE_BROWSER_KEYS = new Map([
  * @property {number} recordCount - Previously committed records.
  * @property {number} attemptCount - Preserved finite source attempts.
  * @property {string | null} errorClass - Aggregate-safe prior failure class.
+ *
+ * @typedef {object} SupportedPermitItemState
+ * @property {string} parcelHash - One-way durable item identity.
+ * @property {SupportedPermitItemStatus} status - Current durable item status.
+ * @property {number} attemptCount - Completed source attempts.
+ * @property {number | null} nextAttemptAtMs
+ *   Absolute retry boundary in epoch milliseconds, or null when unrestricted.
+ *
+ * @typedef {object} SupportedPermitRouteState
+ * @property {string} jurisdictionKey - Stable registry route identity.
+ * @property {number | null} nextAttemptAtMs
+ *   Absolute route circuit-breaker boundary, or null when unrestricted.
+ *
+ * @typedef {object} SupportedPermitSelection
+ * @property {readonly SupportedPermitCandidate[]} selected
+ *   Unique ready candidates, never-attempted first and route-interleaved.
+ * @property {string | null} nextAttemptAt
+ *   Earliest skipped item or route retry boundary, or null when none exists.
  */
 
 /**
@@ -473,6 +491,7 @@ export function supportedPermitClientConfig(connectionString) {
  *   terminal:number,
  *   failed:number,
  *   cooling:number,
+ *   nextAttemptAt:string|null,
  *   migrated:number,
  *   browserLaunches:number,
  *   browserReuses:number,
@@ -511,31 +530,33 @@ export async function runSupportedPermitIngest(options) {
     const migrated = await migrateCompatibleItems(client, options, candidates);
     await reconcileReusableBcsArtifacts(client, options, candidates);
     await refreshRouteAggregates(client, options.jobId);
-    const disposition = await readItemDisposition(
-      client,
-      options.jobId,
+    const selectionState = await readSelectionState(client, options.jobId);
+    const selection = selectSupportedPermitCandidates(
+      candidates,
+      selectionState.items,
+      selectionState.routes,
       options.maxAttempts,
+      options.maxItems,
     );
-    const pending = candidates.filter(
-      (candidate) =>
-        !disposition.completed.has(candidate.parcelHash) &&
-        !disposition.cooling.has(candidate.parcelHash),
-    );
-    const selectedPending =
-      options.maxItems === null ? pending : pending.slice(0, options.maxItems);
     await mkdir(path.resolve(options.workDirectory), {
       recursive: true,
       mode: 0o700,
     });
 
     let processed = 0;
-    let terminal = disposition.completed.size;
+    let terminal = selectionState.items.filter(
+      (item) =>
+        TERMINAL_STATUSES.has(item.status) ||
+        item.attemptCount >= options.maxAttempts,
+    ).length;
     let failed = 0;
+    const newlyCoolingRoutes = new Set();
     await processByRouteWithConcurrency(
-      selectedPending,
+      selection.selected,
       options.concurrency,
       (candidate) => candidate.jurisdictionKey,
       async (candidate) => {
+        if (newlyCoolingRoutes.has(candidate.jurisdictionKey)) return;
         const attempt = await readAttemptCount(
           client,
           options.jobId,
@@ -571,6 +592,9 @@ export async function runSupportedPermitIngest(options) {
           if (finalStatus === "failed" || finalStatus === "failed_exhausted") {
             failed += 1;
           }
+          if (finalStatus === "failed") {
+            newlyCoolingRoutes.add(candidate.jurisdictionKey);
+          }
         } catch {
           if (controlConnectionFailed) {
             throw new Error("Permit control connection failed");
@@ -592,6 +616,9 @@ export async function runSupportedPermitIngest(options) {
           processed += 1;
           failed += 1;
           if (finalStatus === "failed_exhausted") terminal += 1;
+          if (finalStatus === "failed") {
+            newlyCoolingRoutes.add(candidate.jurisdictionKey);
+          }
         }
       },
     );
@@ -630,6 +657,7 @@ export async function runSupportedPermitIngest(options) {
       terminal: aggregate.terminalCount,
       failed: aggregate.failureCount,
       cooling: aggregate.coolingCount,
+      nextAttemptAt: aggregate.nextAttemptAt ?? selection.nextAttemptAt,
       migrated,
       browserLaunches: browserMetrics.launches,
       browserReuses: browserMetrics.reuses,
@@ -1606,38 +1634,205 @@ async function finalizeRoutePhases(client, jobId) {
 }
 
 /**
- * Read terminal and currently cooling one-way parcel hashes.
+ * Read normalized item and route eligibility state for one bounded selection.
  *
- * @param {import("pg").Client} client - Verified control client.
+ * @param {import("pg").Client} client - Verified direct client.
  * @param {string} jobId - Stable run identifier.
- * @param {number} maxAttempts - Failure exhaustion threshold.
- * @returns {Promise<{completed:Set<string>,cooling:Set<string>}>}
- *   Durable item disposition without exposing source identities.
+ * @returns {Promise<{
+ *   items:readonly SupportedPermitItemState[],
+ *   routes:readonly SupportedPermitRouteState[]
+ * }>} Durable private eligibility state without source query values.
  */
-async function readItemDisposition(client, jobId, maxAttempts) {
-  const result = await client.query(
+async function readSelectionState(client, jobId) {
+  const itemResult = await client.query(
     `SELECT parcel_hash,status,attempt_count,next_attempt_at
      FROM ${CONTROL_SCHEMA}.broward_supported_permit_items WHERE job_id=$1`,
     [jobId],
   );
-  const completed = new Set();
-  const cooling = new Set();
-  const now = Date.now();
-  for (const row of result.rows) {
-    if (typeof row.parcel_hash !== "string") continue;
+  const routeResult = await client.query(
+    `SELECT jurisdiction_key,next_attempt_at
+     FROM ${CONTROL_SCHEMA}.broward_supported_permit_routes WHERE job_id=$1`,
+    [jobId],
+  );
+  const items = itemResult.rows.map((row) => {
+    const attemptCount = Number(row.attempt_count);
     if (
-      TERMINAL_STATUSES.has(row.status) ||
-      Number(row.attempt_count) >= maxAttempts
+      typeof row.parcel_hash !== "string" ||
+      typeof row.status !== "string" ||
+      ![
+        "records",
+        "no_permits",
+        "truncated",
+        "failed",
+        "failed_exhausted",
+      ].includes(row.status) ||
+      !Number.isSafeInteger(attemptCount) ||
+      attemptCount < 1
     ) {
-      completed.add(row.parcel_hash);
-    } else if (
-      row.status === "failed" &&
-      timestampMillis(row.next_attempt_at) > now
-    ) {
-      cooling.add(row.parcel_hash);
+      throw new Error("Supported permit item eligibility state is invalid");
     }
+    return {
+      parcelHash: row.parcel_hash,
+      status: /** @type {SupportedPermitItemStatus} */ (row.status),
+      attemptCount,
+      nextAttemptAtMs: optionalTimestampMillis(row.next_attempt_at),
+    };
+  });
+  const routes = routeResult.rows.map((row) => {
+    if (typeof row.jurisdiction_key !== "string") {
+      throw new Error("Supported permit route eligibility state is invalid");
+    }
+    return {
+      jurisdictionKey: row.jurisdiction_key,
+      nextAttemptAtMs: optionalTimestampMillis(row.next_attempt_at),
+    };
+  });
+  return { items: Object.freeze(items), routes: Object.freeze(routes) };
+}
+
+/**
+ * Select unique ready work without allowing retries or one cooling route to
+ * starve unrelated never-attempted properties.
+ *
+ * A route-level `nextAttemptAt` is a source circuit breaker and excludes every
+ * candidate on that route until the boundary. Item-level retry boundaries and
+ * exhausted attempts are also fail-closed. Within each priority class,
+ * candidates are round-robin interleaved after filtering so prior progress on
+ * one route cannot skew a bounded prefix toward another route.
+ *
+ * @param {readonly SupportedPermitCandidate[]} candidates
+ *   Deterministic signed candidate population.
+ * @param {readonly SupportedPermitItemState[]} itemStates
+ *   Existing durable item states for the exact job.
+ * @param {readonly SupportedPermitRouteState[]} routeStates
+ *   Existing durable route circuit-breaker states for the exact job.
+ * @param {number} maxAttempts - Immutable finite source-attempt ceiling.
+ * @param {number | null} limit - Optional invocation work bound.
+ * @param {number} [nowMs=Date.now()] - Injectable selection wall clock.
+ * @returns {SupportedPermitSelection} Ready unique work and next safe wake.
+ */
+export function selectSupportedPermitCandidates(
+  candidates,
+  itemStates,
+  routeStates,
+  maxAttempts,
+  limit,
+  nowMs = Date.now(),
+) {
+  if (
+    !Number.isSafeInteger(maxAttempts) ||
+    maxAttempts < 1 ||
+    (limit !== null && (!Number.isSafeInteger(limit) || limit < 1)) ||
+    !Number.isFinite(nowMs)
+  ) {
+    throw new Error("Supported permit selection bounds are invalid");
   }
-  return { completed, cooling };
+  const itemByHash = new Map();
+  for (const item of itemStates) {
+    if (itemByHash.has(item.parcelHash)) {
+      throw new Error("Duplicate durable supported permit item identity");
+    }
+    itemByHash.set(item.parcelHash, item);
+  }
+  const routeByKey = new Map();
+  for (const route of routeStates) {
+    if (routeByKey.has(route.jurisdictionKey)) {
+      throw new Error("Duplicate durable supported permit route identity");
+    }
+    routeByKey.set(route.jurisdictionKey, route);
+  }
+
+  /** @type {Map<string, SupportedPermitCandidate[]>} */
+  const neverAttempted = new Map();
+  /** @type {Map<string, SupportedPermitCandidate[]>} */
+  const retryReady = new Map();
+  /** @type {number[]} */
+  const wakeDeadlines = [];
+  const candidateHashes = new Set();
+  for (const candidate of candidates) {
+    if (candidateHashes.has(candidate.parcelHash)) {
+      throw new Error("Duplicate supported permit candidate claim");
+    }
+    candidateHashes.add(candidate.parcelHash);
+    const route = routeByKey.get(candidate.jurisdictionKey);
+    if (route === undefined) {
+      throw new Error("Supported permit candidate route state is absent");
+    }
+    if (route.nextAttemptAtMs !== null && route.nextAttemptAtMs > nowMs) {
+      wakeDeadlines.push(route.nextAttemptAtMs);
+      continue;
+    }
+    const item = itemByHash.get(candidate.parcelHash);
+    if (item === undefined) {
+      appendRouteCandidate(neverAttempted, candidate);
+      continue;
+    }
+    if (
+      TERMINAL_STATUSES.has(item.status) ||
+      item.attemptCount >= maxAttempts
+    ) {
+      continue;
+    }
+    if (item.status !== "failed") {
+      throw new Error("Supported permit item has invalid nonterminal status");
+    }
+    if (item.nextAttemptAtMs !== null && item.nextAttemptAtMs > nowMs) {
+      wakeDeadlines.push(item.nextAttemptAtMs);
+      continue;
+    }
+    appendRouteCandidate(retryReady, candidate);
+  }
+
+  /** @type {SupportedPermitCandidate[]} */
+  const selected = [];
+  appendInterleavedRoutes(neverAttempted, selected, limit);
+  appendInterleavedRoutes(retryReady, selected, limit);
+  const nextWakeMs =
+    wakeDeadlines.length === 0 ? null : Math.min(...wakeDeadlines);
+  return {
+    selected: Object.freeze(selected),
+    nextAttemptAt:
+      nextWakeMs === null ? null : new Date(nextWakeMs).toISOString(),
+  };
+}
+
+/**
+ * Append one candidate to its stable route bucket.
+ *
+ * @param {Map<string, SupportedPermitCandidate[]>} routes - Mutable buckets.
+ * @param {SupportedPermitCandidate} candidate - Unique ready candidate.
+ * @returns {void}
+ */
+function appendRouteCandidate(routes, candidate) {
+  const queue = routes.get(candidate.jurisdictionKey) ?? [];
+  queue.push(candidate);
+  routes.set(candidate.jurisdictionKey, queue);
+}
+
+/**
+ * Append route queues round-robin until exhausted or the global bound is met.
+ *
+ * @param {ReadonlyMap<string, readonly SupportedPermitCandidate[]>} routes
+ *   Ready candidates grouped by route.
+ * @param {SupportedPermitCandidate[]} selected - Mutable aggregate selection.
+ * @param {number | null} limit - Optional global invocation work bound.
+ * @returns {void}
+ */
+function appendInterleavedRoutes(routes, selected, limit) {
+  const routeKeys = [...routes.keys()].sort();
+  let offset = 0;
+  while (limit === null || selected.length < limit) {
+    let appended = false;
+    for (const routeKey of routeKeys) {
+      if (limit !== null && selected.length >= limit) return;
+      const candidate = routes.get(routeKey)?.[offset];
+      if (candidate === undefined) continue;
+      selected.push(candidate);
+      appended = true;
+    }
+    if (!appended) return;
+    offset += 1;
+  }
 }
 
 /**
@@ -1894,6 +2089,21 @@ function timestampMillis(value) {
     return Number.isFinite(parsed) ? parsed : Number.NEGATIVE_INFINITY;
   }
   return Number.NEGATIVE_INFINITY;
+}
+
+/**
+ * Parse an optional PostgreSQL timestamp without converting absence to ready.
+ *
+ * @param {unknown} value - Date object, ISO string, or absent timestamp.
+ * @returns {number | null} Finite epoch milliseconds, or null when absent.
+ */
+function optionalTimestampMillis(value) {
+  if (value === null || value === undefined) return null;
+  const parsed = timestampMillis(value);
+  if (!Number.isFinite(parsed)) {
+    throw new Error("Supported permit retry timestamp is invalid");
+  }
+  return parsed;
 }
 
 /**

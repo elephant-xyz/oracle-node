@@ -45,6 +45,7 @@ import {
   readBcsSummaryRecordCount,
   readJurisdictionKeys,
   runNode,
+  selectSupportedPermitCandidates,
   supportedPermitClientConfig,
 } from "../../scripts/run-broward-supported-permit-ingest.mjs";
 import {
@@ -76,6 +77,24 @@ async function createTemporaryDirectory() {
   );
   temporaryDirectories.push(directory);
   return directory;
+}
+
+/**
+ * Build one private-free candidate for deterministic selection tests.
+ *
+ * @param {string} id - Short unique fixture identity.
+ * @param {string} jurisdictionKey - Stable fixture route.
+ * @returns {Parameters<typeof selectSupportedPermitCandidates>[0][number]}
+ *   Complete supported-permit candidate.
+ */
+function selectionCandidate(id, jurisdictionKey) {
+  return {
+    folio: `folio-${id}`,
+    parcelHash: id.padEnd(64, id.at(-1) ?? "0"),
+    situsAddress: `address-${id}`,
+    jurisdictionKey,
+    adapterKey: BROWARD_CITIZENSERVE_ADAPTER_KEY,
+  };
 }
 
 /**
@@ -348,6 +367,140 @@ describe("Broward permit Neon pilot loader", () => {
 });
 
 describe("Broward supported-route permit ingest", () => {
+  it("prioritizes never-attempted work over ready retries and skips cooling items", () => {
+    const now = Date.parse("2026-09-08T15:00:00.000Z");
+    const retry = selectionCandidate("1", "route-a");
+    const cooling = selectionCandidate("2", "route-a");
+    const neverAttempted = selectionCandidate("3", "route-a");
+    const selection = selectSupportedPermitCandidates(
+      [retry, cooling, neverAttempted],
+      [
+        {
+          parcelHash: retry.parcelHash,
+          status: "failed",
+          attemptCount: 2,
+          nextAttemptAtMs: null,
+        },
+        {
+          parcelHash: cooling.parcelHash,
+          status: "failed",
+          attemptCount: 2,
+          nextAttemptAtMs: now + 60_000,
+        },
+      ],
+      [{ jurisdictionKey: "route-a", nextAttemptAtMs: null }],
+      5,
+      2,
+      now,
+    );
+
+    expect(selection.selected.map((candidate) => candidate.folio)).toEqual([
+      neverAttempted.folio,
+      retry.folio,
+    ]);
+    expect(selection.nextAttemptAt).toBe("2026-09-08T15:01:00.000Z");
+  });
+
+  it("returns a no-op and the earliest wake when all remaining work is cooling", () => {
+    const now = Date.parse("2026-09-08T15:00:00.000Z");
+    const itemCooling = selectionCandidate("4", "route-a");
+    const routeCooling = selectionCandidate("5", "route-b");
+    const selection = selectSupportedPermitCandidates(
+      [itemCooling, routeCooling],
+      [
+        {
+          parcelHash: itemCooling.parcelHash,
+          status: "failed",
+          attemptCount: 1,
+          nextAttemptAtMs: now + 30_000,
+        },
+      ],
+      [
+        { jurisdictionKey: "route-a", nextAttemptAtMs: null },
+        { jurisdictionKey: "route-b", nextAttemptAtMs: now + 60_000 },
+      ],
+      5,
+      25,
+      now,
+    );
+
+    expect(selection.selected).toEqual([]);
+    expect(selection.nextAttemptAt).toBe("2026-09-08T15:00:30.000Z");
+  });
+
+  it("round-robins ready routes after filtering a cooling route", () => {
+    const now = Date.parse("2026-09-08T15:00:00.000Z");
+    const cooling = selectionCandidate("6", "route-a");
+    const b1 = selectionCandidate("7", "route-b");
+    const b2 = selectionCandidate("8", "route-b");
+    const b3 = selectionCandidate("9", "route-b");
+    const c1 = selectionCandidate("a", "route-c");
+    const c2 = selectionCandidate("b", "route-c");
+    const c3 = selectionCandidate("c", "route-c");
+    const selection = selectSupportedPermitCandidates(
+      [cooling, b1, b2, b3, c1, c2, c3],
+      [],
+      [
+        { jurisdictionKey: "route-a", nextAttemptAtMs: now + 60_000 },
+        { jurisdictionKey: "route-b", nextAttemptAtMs: null },
+        { jurisdictionKey: "route-c", nextAttemptAtMs: null },
+      ],
+      5,
+      4,
+      now,
+    );
+
+    expect(selection.selected.map((candidate) => candidate.folio)).toEqual([
+      b1.folio,
+      c1.folio,
+      b2.folio,
+      c2.folio,
+    ]);
+  });
+
+  it("excludes explicit and attempt-count exhausted items", () => {
+    const exhaustedStatus = selectionCandidate("d", "route-a");
+    const exhaustedAttempts = selectionCandidate("e", "route-a");
+    const selection = selectSupportedPermitCandidates(
+      [exhaustedStatus, exhaustedAttempts],
+      [
+        {
+          parcelHash: exhaustedStatus.parcelHash,
+          status: "failed_exhausted",
+          attemptCount: 4,
+          nextAttemptAtMs: null,
+        },
+        {
+          parcelHash: exhaustedAttempts.parcelHash,
+          status: "failed",
+          attemptCount: 5,
+          nextAttemptAtMs: null,
+        },
+      ],
+      [{ jurisdictionKey: "route-a", nextAttemptAtMs: null }],
+      5,
+      25,
+      Date.parse("2026-09-08T15:00:00.000Z"),
+    );
+
+    expect(selection.selected).toEqual([]);
+    expect(selection.nextAttemptAt).toBeNull();
+  });
+
+  it("fails closed before issuing duplicate candidate claims", () => {
+    const candidate = selectionCandidate("f", "route-a");
+    expect(() =>
+      selectSupportedPermitCandidates(
+        [candidate, { ...candidate }],
+        [],
+        [{ jurisdictionKey: "route-a", nextAttemptAtMs: null }],
+        5,
+        25,
+        Date.parse("2026-09-08T15:00:00.000Z"),
+      ),
+    ).toThrow(/duplicate supported permit candidate claim/iu);
+  });
+
   it("keeps the control session alive and bounds network-silent queries", () => {
     expect(supportedPermitClientConfig("postgresql://example.test/db")).toEqual(
       expect.objectContaining({
