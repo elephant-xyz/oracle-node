@@ -215,6 +215,11 @@ Resume uses the identical full command. Never reset or edit Neon source rows,
 terminal hashes, or chunk records. A changed official seed signature fails
 closed. Permit collection and all publishing remain outside this run.
 
+The 8,241 August `source_miss` hashes were re-classified on 2026-09-08
+(`docs/broward-appraisal-terminal-miss-20260908.md`). A 40-folio live BCPA
+sample recovered 0 records (100% empty official backing field). Do not replay
+those hashes and do not mint empty property rows for them.
+
 The persistent Vercel dashboard is documented separately in
 `apps/broward-ingest-dashboard/README.md`. Its migration must be applied to the
 verified branch before recovery starts. Recovery then projects aggregate status
