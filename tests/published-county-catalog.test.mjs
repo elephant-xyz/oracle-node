@@ -258,7 +258,7 @@ describe("published county catalog", () => {
     );
   });
 
-  it("lists all Broward table and coverage URLs in the Cursor Elephant MCP maps", async () => {
+  it("lists all Broward publication routes in the Cursor Elephant MCP maps", async () => {
     const tracked = JSON.parse(
       await readFile(resolve("catalog/published-counties.json"), "utf8"),
     );
@@ -280,12 +280,15 @@ describe("published county catalog", () => {
     );
     expect(
       JSON.parse(env.PROPERTY_QUERY_TABLE_CID_FALLBACK_MAP_ADDITIONS).broward,
-    ).toBe("QmQhc18TqKTjBymQkfxdsbWNg6SxrDmQ3bfYBJdWWdU7cF");
+    ).toBe("QmdC9ncphrh3KM6ZZFuHobaeSukQqyJfUpGVzvixkrce3W");
     expect(
       JSON.parse(env.PERMIT_QUERY_TABLE_CID_FALLBACK_MAP_ADDITIONS).broward,
-    ).toBe("QmcDAHJBt5LHiHAHdDwqCKM2BZqPwTJBrxW4Z5DJ6qEJd2");
+    ).toBe("QmQue98qAe66bpPb1UreTKKGuiAbwNifqZ9wAvKes7nxeg");
     expect(
       JSON.parse(env.DATASET_COVERAGE_CID_FALLBACK_MAP_ADDITIONS).broward,
-    ).toBe("QmTZndCJfNi29hxGzyLXpt9iYJedtmeM2DKFRa24LLA6dq");
+    ).toBe("QmSAoNw1BYscToHjf1Aedsg8zir3LXRvDn8crrwe3R1sFx");
+    expect(JSON.parse(env.ORACLE_OPEN_DATA_IPNS_MAP).broward).toBe(
+      "k51qzi5uqu5dh5q2ovjs5iazajd9cgvmw21dh7ppvlunlqmj0p38c71nesccj6",
+    );
   });
 });

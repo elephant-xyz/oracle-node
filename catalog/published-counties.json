@@ -1,6 +1,6 @@
 {
   "schemaVersion": "1.0",
-  "generatedAt": "2026-09-04T17:20:07.518Z",
+  "generatedAt": "2026-09-08T18:02:22.201Z",
   "counties": [
     {
       "countyKey": "broward",
@@ -12,7 +12,7 @@
       "datasetCoverageUrl": "https://ipfs.filebase.io/ipns/k51qzi5uqu5dhx6yqczp6f9na3xa9g1iiizxtquer62x9wavh8gpbng524vrbp",
       "permitQueryTableUrl": "https://ipfs.filebase.io/ipns/k51qzi5uqu5dhns9u4o0lot4w4808yi4gdsyo5qx136lgmrplmgqdhah5qj7lg",
       "placesTableUrl": null,
-      "updatedAt": "2026-09-02T20:59:31.937Z"
+      "updatedAt": "2026-09-08T18:02:22.201Z"
     },
     {
       "countyKey": "chester",
