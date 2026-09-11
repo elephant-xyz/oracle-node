@@ -17,6 +17,7 @@ import {
 import AdmZip from "adm-zip";
 import { parse } from "csv-parse";
 import {
+  buildAppraisalSitusAddressContext,
   extractLeeAppraisalMediaLinks,
   inferMediaExtension,
   mapAppraisalTransformedFile,
@@ -958,15 +959,19 @@ async function readAppraisalRowsFromS3(appraisalOutputS3Uri) {
         entry.isDirectory === false && /^data\/.+\.json$/.test(entry.entryName),
     )
     .sort((left, right) => left.entryName.localeCompare(right.entryName));
+  const parsedEntries = entries.map((entry) => ({
+    entry,
+    filePath: entry.entryName,
+    record: JSON.parse(entry.getData().toString("utf8")),
+  }));
+  const situsAddressContext = buildAppraisalSitusAddressContext(parsedEntries);
 
-  for (const entry of entries) {
-    const record = /** @type {unknown} */ (
-      JSON.parse(entry.getData().toString("utf8"))
-    );
+  for (const { entry, record } of parsedEntries) {
     const bundle = mapAppraisalTransformedFile({
       artifactUri: appraisalOutputS3Uri,
       filePath: entry.entryName,
       record,
+      situsAddressContext,
     });
     rows.push(...bundle.rows);
     skippedRecordCount += bundle.skippedRecords.length;

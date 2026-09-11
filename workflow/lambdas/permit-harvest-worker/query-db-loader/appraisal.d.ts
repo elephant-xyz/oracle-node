@@ -1,4 +1,17 @@
 import type { PreparedRowBundle } from "./types.js";
+
+export type AppraisalSitusAddressContext = {
+  readonly fullAddress: string;
+  readonly stateCode: "FL";
+};
+
+export declare function buildAppraisalSitusAddressContext(
+  entries: readonly {
+    readonly filePath: string;
+    readonly record: unknown;
+  }[],
+): AppraisalSitusAddressContext | null;
+
 /**
  * Map one Lee appraiser transformed JSON file into a logical query-db row bundle.
  *
@@ -10,4 +23,5 @@ export declare function mapAppraisalTransformedFile(params: {
   readonly record: unknown;
   readonly artifactUri: string | null;
   readonly requestIdentifier?: string | null;
+  readonly situsAddressContext?: AppraisalSitusAddressContext | null;
 }): PreparedRowBundle;

@@ -13,6 +13,10 @@ import {
   readNumber,
   readString,
 } from "./normalizers.js";
+import {
+  mintSitusAddressIdentity,
+  parseUnnormalizedAddress,
+} from "./address-signature.js";
 const APPRAISER_SOURCE_SYSTEM = "lee_appraiser";
 const PROPERTY_COLUMNS = [
   "property_legal_description_text",
@@ -387,6 +391,26 @@ const APPRAISAL_BOOLEAN_COLUMNS = new Set([
   "solar_panel_present",
   "veteran_status",
 ]);
+
+export function buildAppraisalSitusAddressContext(entries) {
+  const entry = entries.find(
+    ({ filePath }) =>
+      (filePath.split("/").pop() ?? filePath) === "unnormalized_address.json",
+  );
+  if (entry === undefined || !isJsonObject(entry.record)) return null;
+  const fullAddress =
+    readString(entry.record.full_address) ??
+    readString(entry.record.unnormalized_address);
+  const parsed = parseUnnormalizedAddress(fullAddress);
+  const hasSitusContent =
+    parsed.city !== null ||
+    parsed.postalCode !== null ||
+    (parsed.street !== null && /\d/.test(parsed.street));
+  return fullAddress !== null && hasSitusContent
+    ? { fullAddress, stateCode: "FL" }
+    : null;
+}
+
 /**
  * Map one Lee appraiser transformed JSON file into a logical query-db row bundle.
  *
@@ -423,6 +447,7 @@ export function mapAppraisalTransformedFile(params) {
     params.record,
     requestIdentifier,
     params.artifactUri,
+    params.situsAddressContext ?? null,
   );
   return rows === null
     ? skipped(
@@ -437,6 +462,7 @@ function mapKnownAppraisalRecord(
   record,
   requestIdentifier,
   artifactUri,
+  situsAddressContext,
 ) {
   if (fileName === "property_seed.json")
     return [mapParcel(record, requestIdentifier, artifactUri)];
@@ -449,7 +475,15 @@ function mapKnownAppraisalRecord(
     fileName === "address.json" ||
     /^mailing_address_\d+\.json$/.test(fileName)
   ) {
-    return [mapAddress(record, fileName, requestIdentifier, artifactUri)];
+    return [
+      mapAddress(
+        record,
+        fileName,
+        requestIdentifier,
+        artifactUri,
+        situsAddressContext,
+      ),
+    ];
   }
   if (/^person_\d+\.json$/.test(fileName))
     return mapAppraisalPersonOwnerRows(
@@ -635,22 +669,73 @@ function mapUnnormalizedAddress(record, requestIdentifier, artifactUri) {
     }),
   };
 }
-function mapAddress(record, fileName, requestIdentifier, artifactUri) {
+function mapAddress(
+  record,
+  fileName,
+  requestIdentifier,
+  artifactUri,
+  situsAddressContext,
+) {
   const addressRole =
     fileName === "address.json" ? "site" : fileName.replace(/\.json$/, "");
   const sourceRecordKey = sourceKey(requestIdentifier, "address", addressRole);
   const unnormalizedAddress = readString(record.unnormalized_address);
   const normalizedAddressKey = buildNormalizedAddressKey(unnormalizedAddress);
+  const parsedAddress = parseUnnormalizedAddress(unnormalizedAddress);
+  const streetParts = [
+    readString(record.street_number),
+    readString(record.street_pre_directional_text),
+    readString(record.street_name),
+    readString(record.street_suffix_type),
+    readString(record.street_post_directional_text),
+  ].filter((part) => part !== null);
+  const structuredStreet =
+    streetParts.length > 0 ? streetParts.join(" ") : null;
+  const authoritativeAddress =
+    addressRole === "site" && situsAddressContext !== null
+      ? parseUnnormalizedAddress(situsAddressContext.fullAddress)
+      : null;
+  const postalCode =
+    authoritativeAddress?.postalCode ??
+    readString(record.postal_code) ??
+    parsedAddress.postalCode ??
+    extractPostalCodeFromAddress(unnormalizedAddress);
+  const stateCode =
+    situsAddressContext?.stateCode ??
+    readString(record.state_code) ??
+    (/\bFL\b/i.test(unnormalizedAddress ?? "") ? "FL" : null);
+  const identity =
+    addressRole === "site"
+      ? mintSitusAddressIdentity({
+          state: stateCode,
+          postalCode,
+          street:
+            authoritativeAddress?.street ??
+            structuredStreet ??
+            parsedAddress.street,
+        })
+      : null;
   const values = compactObject({
     ...metadata(sourceRecordKey, record, artifactUri),
     request_identifier: requestIdentifier,
+    street_number: readString(record.street_number),
+    street_pre_directional_text: readString(record.street_pre_directional_text),
+    street_name: readString(record.street_name),
+    street_suffix_type: readString(record.street_suffix_type),
+    street_post_directional_text: readString(
+      record.street_post_directional_text,
+    ),
+    unit_identifier: readString(record.unit_identifier),
+    city_name: readString(record.city_name) ?? parsedAddress.city,
     unnormalized_address: unnormalizedAddress,
     normalized_address_key: normalizedAddressKey,
     normalized_address_hash: hashNormalizedAddressKey(normalizedAddressKey),
-    postal_code: extractPostalCodeFromAddress(unnormalizedAddress),
-    state_code: /\bFL\b/i.test(unnormalizedAddress ?? "") ? "FL" : null,
+    postal_code: postalCode,
+    state_code: stateCode,
     county_name: readString(record.county_name),
     country_code: readString(record.country_code) ?? "US",
+    elephant_uuid: identity?.elephantUuid ?? null,
+    elephant_token: identity?.elephantToken ?? null,
     township: readString(record.township),
     range: readString(record.range),
     section: readString(record.section),
