@@ -23,19 +23,20 @@
 | Nassau | 4 | `QmdjszjPcVjt3KepeDyE37JfdBx2TaidTsy6Qwem4nf9N6` |
 | Palm Beach | 3 | `QmQ1gzMkF7Af3S6DpYKt17LDxsjd8jApN8snNTFxRVfSTg` |
 | Clay | 1 | `Qmd9r8oU6SJzEYmb8EoBoGrrwP3RDc4uj6w1XTkC5X4pfo` |
+| Lee | 1 | `QmXUhFPnWxwywQaksFW1ikSAoMCgmjDrHfZvHPnCRuFtZh` |
 | Columbia | 1 | `QmVd5YxqhwyJHRzzamSbGv4ertMjPL5V2kEjMrtGTwqH57` |
 | Sarasota | 1 | `QmfL1XDLG8NhvB8QH9WftjSeksJ3TGWJh7qLZDCadmH4mx` |
 
 Current verified checkpoint:
 
-- Closed APN-backed rows: 511 of 527.
-- Published UUIDs across base county tables: 18,203.
-- Latest OpenDoor source overlap: 18,196 of 18,225 (99.841%).
-- Remaining gaps: 29 total; 16 APN-backed and 13 without APNs.
+- Closed APN-backed rows: 512 of 527.
+- Published UUIDs across base county tables: 18,204.
+- Latest OpenDoor source overlap: 18,197 of 18,225 (99.846%).
+- Remaining gaps: 28 total; 15 APN-backed and 13 without APNs.
 - Exact fresh-process MCP checks passed for each published UUID/token pair.
 - A Pasco token mismatch was caught by post-publication validation, corrected, republished, and then verified 31/31.
 
-Evidence: `data/artifacts/opendoor-apn-gap-closure/fresh-mcp-verification-6.json`.
+Evidence: `data/artifacts/opendoor-apn-gap-closure/fresh-mcp-verification-8.json`.
 
 ## Source results
 
@@ -53,6 +54,7 @@ Evidence: `data/artifacts/opendoor-apn-gap-closure/fresh-mcp-verification-6.json
 | Duval | 8 additional | COJ Property Appraiser detail pages through AWS Batch | 8/8 exact RE numbers and matching situs; 8 rows appended |
 | Palm Beach | 2 additional | PBCPAO detail pages through AWS Batch | 2/2 exact PCNs and matching situs; 2 rows appended |
 | Clay | 1 | Florida DOR statewide cadastral FeatureServer | Exact Clay PA parcel and situs for `41-04-26-018793-071-00`; one row appended |
+| Lee | 1 | Florida DOR statewide cadastral FeatureServer | Exact alphanumeric parcel `364523350000C0206` and situs; corrected the county table's letter-stripped identifier and assigned one null target |
 
 Each automatic assignment has one authoritative parcel, an exact or documented county-specific APN transformation, matching situs evidence, a null target identity, and the frozen OpenDoor UUID/token pair.
 
@@ -71,10 +73,11 @@ The updated identity subsets were evaluated against the verified statewide 2026 
 | Duval AWS-closed | 8 | 1 | 1 |
 | Palm Beach AWS-closed | 2 | 0 | 0 |
 | Clay DOR-closed | 1 | 0 | 0 |
+| Lee DOR-closed | 1 | 1 | 0 |
 
 Nassau, Sarasota, and Columbia produced no safe new association: the outcomes were no subdivision, no Sunbiz HOA, or non-unique. No ambiguous match was published.
 
-The AWS-closed rows were evaluated with a new complete two-pass scan of all 12,808,196 records in the verified statewide 2026 Q3 Sunbiz archive. Existing HOA/PM overlay rows were preserved byte-for-byte before the new rows were appended. Published overlay CIDs are Broward `QmQ14o8m9LVCk6Wgkk6fB7iCnjcGKHQo3TshtLGesPpYk8`, Duval `QmWFVt1tBnMQtt1yJDzTEDAPn2m1TYa9GJYFCQ1NP1AFSc`, Palm Beach `QmcduEc8TrmXfev4Y2Vn6zFjSPT6mxMV6kMgiMceocinQa`, and Clay `QmaiKW68swEjXU6agFt1Qnu4JayyKQFoZoG3V4tmGR79UN`.
+The newly closed rows were evaluated with complete two-pass scans of all 12,808,196 records in the verified statewide 2026 Q3 Sunbiz archive. Existing HOA/PM overlay rows were preserved byte-for-byte before the new rows were appended. Published overlay CIDs are Broward `QmQ14o8m9LVCk6Wgkk6fB7iCnjcGKHQo3TshtLGesPpYk8`, Duval `QmWFVt1tBnMQtt1yJDzTEDAPn2m1TYa9GJYFCQ1NP1AFSc`, Palm Beach `QmcduEc8TrmXfev4Y2Vn6zFjSPT6mxMV6kMgiMceocinQa`, Clay `QmaiKW68swEjXU6agFt1Qnu4JayyKQFoZoG3V4tmGR79UN`, and Lee `QmeJrWHFixTf3tYY1Q2WJkvN2KBtbC72NVkkorj9hierH3`.
 
 ## Access findings
 
@@ -91,6 +94,8 @@ The AWS-closed rows were evaluated with a new complete two-pass scan of all 12,8
 - BCPA's GIS joined-attribute queries timed out, but its official `search.aspx` JSON methods resolved all 12 Broward folios exactly.
 - The eight remaining Orange APNs still return HTTP 200 with an empty OCPA result, so they are source-record exceptions rather than IP blocks.
 - Both Miami-Dade addresses validate to the supplied folios in the county address service, but the live Property Appraiser returns `Folio not found` for both.
+- Lee's source table had dropped the `C` from multiple alphanumeric condominium STRAPs. The exact DOR parcel and situs proved that `364523350000C0206` maps uniquely to 15989 Mandolin Bay Drive unit 206.
+- Full-cohort verification rejected a divergent Lee live-IPNS table that would have lost 27 existing OpenDoor identities. The final publication was rebuilt from the catalog-frozen CID, preserved all 32 prior Lee identity pairs, and added the verified row.
 
 ## Current delegation and exception queue
 
@@ -101,7 +106,6 @@ The AWS-closed rows were evaluated with a new complete two-pass scan of all 12,8
 | Miami-Dade | 2 | County address service validates each address/folio pair, but the live Property Appraiser reports both folios absent; historical/inactive-folio review required |
 | Clay | 1 | Occupied-target conflict; the parcel already carries a different OpenDoor identity |
 | Polk | 2 | One occupied-target conflict; one source APN is an address string rather than a parcel identifier |
-| Lee | 1 | Unique current-table situs candidate; exact official STRAP confirmation pending |
 | Hillsborough | 1 | Source folio is absent; the situs now resolves to a different official folio and requires manual identity review |
 
 The two occupied targets must never be overwritten:
@@ -132,3 +136,6 @@ AWS evidence and publication receipts:
 - `data/artifacts/opendoor-apn-gap-closure/clay-statewide-resolution-report.json`
 - `data/artifacts/opendoor-apn-gap-closure/clay-statewide-publication-receipt.json`
 - `data/artifacts/opendoor-apn-gap-closure/clay-statewide-mcp-verification.json`
+- `data/artifacts/opendoor-apn-gap-closure/lee-statewide-resolution-report.json`
+- `data/artifacts/opendoor-apn-gap-closure/lee-statewide-publication-receipt.json`
+- `data/artifacts/opendoor-apn-gap-closure/lee-statewide-mcp-verification.json`
