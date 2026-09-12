@@ -390,3 +390,10 @@ permit-node.zip
 # Full Pinellas seed is generated locally / uploaded to S3; do not commit ~311k rows.
 data/seeds/pinellas.csv
 data/seeds/pinellas-full.csv
+
+# OpenDoor ingestion inputs and outputs are generated locally and may contain addresses.
+data/seeds/*.csv
+!data/seeds/pinellas-pilot.csv
+data/artifacts/
+data/sources/
+.DS_Store
