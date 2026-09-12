@@ -101,6 +101,8 @@ The newly closed rows were evaluated with complete two-pass scans of all 12,808,
 
 ## Current delegation and exception queue
 
+The row-level Joaquin handoff is in `docs/opendoor-apn-gap-delegation-2026-09-12.md`.
+
 | County | Rows | Current evidence / required action |
 | --- | ---: | --- |
 | Duval | 1 | Placeholder APN `00000000`; the situs points to RE `1525625734`, so this is address-only identity review rather than an APN match |
