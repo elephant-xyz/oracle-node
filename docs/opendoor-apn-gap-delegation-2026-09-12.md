@@ -3,13 +3,32 @@
 ## Checkpoint
 
 - OpenDoor source rows: 18,225.
-- Published source overlap: 18,198 (99.852%).
-- Closed APN-backed cohort: 513 of 527.
-- Remaining: 14 APN-backed exceptions and 13 rows without APNs.
-- This packet covers only the 14 APN-backed exceptions.
+- Published source overlap: 18,199 (99.857%).
+- Closed APN-backed cohort: 514 of 527.
+- Remaining: 13 APN-backed exceptions and 13 rows without APNs.
+- This packet covers only the 13 APN-backed exceptions.
 
 Source cohort: `data/artifacts/opendoor-apn-gap-closure/apn-backed-gaps.csv`.
-Verification: `data/artifacts/opendoor-apn-gap-closure/fresh-mcp-verification-9.json`.
+Verification: `data/artifacts/opendoor-apn-gap-closure/fresh-mcp-verification-10.json`.
+
+## Resolved after the initial packet
+
+Polk parcel `24-29-14-283150-000280` (`242914283150000280`) is the authoritative
+current parcel for 6121 Sunset Vista Dr, Lakeland. The live Polk Property
+Appraiser parcel page confirms the exact physical address and records the July
+2021 sale to OpenDoor Property Trust I. The published target row had no existing
+Elephant identity.
+
+- OpenDoor UUID: `1728b2da-f7fe-51b3-bde6-b259a16bdc1a`.
+- Base CID: `QmV7nzNj2EkFjtcjzJyA1cyp5nEwrDd2fGUPBdgmNsTdBS`.
+- HOA/PM CID: `QmbXhSifohRV3RyQ28ck3CmYSK1qBbuSFEPhGci83u2jJ5`.
+- Statewide 2026 Q3 Sunbiz result: `SUNSET VISTA HOMEOWNERS ASSOCIATION, INC.`
+  (`N05000005443`), with no company property manager resolvable from its
+  registered-agent record.
+- Official parcel:
+  `https://www.polkflpa.gov/CamaDisplay.aspx?OutputMode=Display&ParcelID=242914283150000280&SearchType=RealEstate&cookie_test=true`.
+- Official GIS:
+  `https://gis.polk-county.net/server/rest/services/Map_Property_Appraiser/MapServer/1/query`.
 
 ## Joaquin delegation
 
@@ -40,9 +59,8 @@ The county address service validates each address to the supplied folio, but the
 
 The address uniquely points to current RE `1525625734`, but `00000000` is not a parcel identifier. Treat this as address-only identity review; require explicit approval before assigning the current RE.
 
-### Polk — one malformed source value and one occupied target
+### Polk — one occupied target
 
-- `6121 SUNSET VISTA DR LAKELAND FL 33812` — 6121 Sunset Vista Dr, Lakeland 33812 — UUID `1728b2da-f7fe-51b3-bde6-b259a16bdc1a`. The APN field contains an address; obtain the authoritative parcel ID.
 - `272817828700000230` — 67 7th St S, Lake Hamilton 33851 — UUID `9fb06c39-f7d8-5b27-8df8-0b56a9847d4e`. The exact parcel row already carries UUID `b6cddeca-f8f1-50aa-9dd2-3078d089c516`; resolve the source-identity collision. Never overwrite it automatically.
 
 ### Hillsborough — one changed folio
