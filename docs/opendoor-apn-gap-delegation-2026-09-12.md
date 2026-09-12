@@ -3,13 +3,13 @@
 ## Checkpoint
 
 - OpenDoor source rows: 18,225.
-- Published source overlap: 18,199 (99.857%).
-- Closed APN-backed cohort: 514 of 527.
-- Remaining: 13 APN-backed exceptions and 13 rows without APNs.
-- This packet covers only the 13 APN-backed exceptions.
+- Published source overlap across all Florida MCP routes: 18,200 (99.863%).
+- Closed APN-backed cohort: 515 of 527.
+- Remaining: 12 APN-backed exceptions and 13 rows without usable APNs.
+- This packet covers only the 12 APN-backed exceptions.
 
 Source cohort: `data/artifacts/opendoor-apn-gap-closure/apn-backed-gaps.csv`.
-Verification: `data/artifacts/opendoor-apn-gap-closure/fresh-mcp-verification-10.json`.
+Verification: `data/artifacts/opendoor-apn-gap-closure/latest-mcp-global-coverage-2026-09-12.json`.
 
 ## Resolved after the initial packet
 
@@ -29,6 +29,14 @@ Elephant identity.
   `https://www.polkflpa.gov/CamaDisplay.aspx?OutputMode=Display&ParcelID=242914283150000280&SearchType=RealEstate&cookie_test=true`.
 - Official GIS:
   `https://gis.polk-county.net/server/rest/services/Map_Property_Appraiser/MapServer/1/query`.
+
+Duval RE `1525625734` is the authoritative current parcel for 7156 Deerfoot Point Cir unit 3. The National Address List mailing address exactly matches the frozen OpenDoor identity, and the appraiser situs records the same condominium as unit `6-3`. The target identity was null before assignment.
+
+- OpenDoor UUID: `b72e3903-b48c-5d79-a35c-e56f0f7f5acf`.
+- Base CID: `QmVBXXV3UKuCHE7QCTzT3o6ULaFj7XJL1f1Tzrk8DsLsvD`.
+- HOA/PM CID: `QmVrF1SNmn83uke67Qj1msggLt1cGBBwogXQCAJtZaFQUD`.
+- HOA/PM result: `no_sunbiz_hoa`.
+- Coverage CID: `QmXKwxHyj9c8JmqH5G1PZQQwFT4CvbmCkM5EZXPdU4pjGs`.
 
 ## Joaquin delegation
 
@@ -52,12 +60,6 @@ The county address service validates each address to the supplied folio, but the
 
 - `10-7915-004-0180` — 394 NE 36th Avenue Rd, Homestead 33033 — UUID `a8fca7b3-14e5-554a-bb76-a38633b531dd`.
 - `04-3108-001-0100` — 783 E 17th St, Hialeah 33010 — UUID `87406ef9-5dc0-58b3-8dc0-7f630d502399`.
-
-### Duval — one placeholder APN
-
-- `00000000` — 7156 Deerfoot Point Cir unit 3, Jacksonville 32256 — UUID `b72e3903-b48c-5d79-a35c-e56f0f7f5acf`.
-
-The address uniquely points to current RE `1525625734`, but `00000000` is not a parcel identifier. Treat this as address-only identity review; require explicit approval before assigning the current RE.
 
 ### Polk — one occupied target
 
