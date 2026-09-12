@@ -22,19 +22,20 @@
 | Duval | 9 | `QmazNstZWjYu77HPbPLyvCzTC938rpfGLwyU7WKnvv6iE4` |
 | Nassau | 4 | `QmdjszjPcVjt3KepeDyE37JfdBx2TaidTsy6Qwem4nf9N6` |
 | Palm Beach | 3 | `QmQ1gzMkF7Af3S6DpYKt17LDxsjd8jApN8snNTFxRVfSTg` |
+| Clay | 1 | `Qmd9r8oU6SJzEYmb8EoBoGrrwP3RDc4uj6w1XTkC5X4pfo` |
 | Columbia | 1 | `QmVd5YxqhwyJHRzzamSbGv4ertMjPL5V2kEjMrtGTwqH57` |
 | Sarasota | 1 | `QmfL1XDLG8NhvB8QH9WftjSeksJ3TGWJh7qLZDCadmH4mx` |
 
 Current verified checkpoint:
 
-- Closed APN-backed rows: 510 of 527.
-- Published UUIDs across base county tables: 18,202.
-- Latest OpenDoor source overlap: 18,195 of 18,225 (99.835%).
-- Remaining gaps: 30 total; 17 APN-backed and 13 without APNs.
+- Closed APN-backed rows: 511 of 527.
+- Published UUIDs across base county tables: 18,203.
+- Latest OpenDoor source overlap: 18,196 of 18,225 (99.841%).
+- Remaining gaps: 29 total; 16 APN-backed and 13 without APNs.
 - Exact fresh-process MCP checks passed for each published UUID/token pair.
 - A Pasco token mismatch was caught by post-publication validation, corrected, republished, and then verified 31/31.
 
-Evidence: `data/artifacts/opendoor-apn-gap-closure/fresh-mcp-verification-5.json`.
+Evidence: `data/artifacts/opendoor-apn-gap-closure/fresh-mcp-verification-6.json`.
 
 ## Source results
 
@@ -51,6 +52,7 @@ Evidence: `data/artifacts/opendoor-apn-gap-closure/fresh-mcp-verification-5.json
 | Broward | 12 | BCPA `search.aspx/GetData` and `getParcelInformation` through AWS Batch | 12/12 exact folios and matching situs; 12 rows appended |
 | Duval | 8 additional | COJ Property Appraiser detail pages through AWS Batch | 8/8 exact RE numbers and matching situs; 8 rows appended |
 | Palm Beach | 2 additional | PBCPAO detail pages through AWS Batch | 2/2 exact PCNs and matching situs; 2 rows appended |
+| Clay | 1 | Florida DOR statewide cadastral FeatureServer | Exact Clay PA parcel and situs for `41-04-26-018793-071-00`; one row appended |
 
 Each automatic assignment has one authoritative parcel, an exact or documented county-specific APN transformation, matching situs evidence, a null target identity, and the frozen OpenDoor UUID/token pair.
 
@@ -68,10 +70,11 @@ The updated identity subsets were evaluated against the verified statewide 2026 
 | Broward AWS-closed | 12 | 1 | 0 |
 | Duval AWS-closed | 8 | 1 | 1 |
 | Palm Beach AWS-closed | 2 | 0 | 0 |
+| Clay DOR-closed | 1 | 0 | 0 |
 
 Nassau, Sarasota, and Columbia produced no safe new association: the outcomes were no subdivision, no Sunbiz HOA, or non-unique. No ambiguous match was published.
 
-The AWS-closed rows were evaluated with a new complete two-pass scan of all 12,808,196 records in the verified statewide 2026 Q3 Sunbiz archive. Existing HOA/PM overlay rows were preserved byte-for-byte before the new rows were appended. Published overlay CIDs are Broward `QmQ14o8m9LVCk6Wgkk6fB7iCnjcGKHQo3TshtLGesPpYk8`, Duval `QmWFVt1tBnMQtt1yJDzTEDAPn2m1TYa9GJYFCQ1NP1AFSc`, and Palm Beach `QmcduEc8TrmXfev4Y2Vn6zFjSPT6mxMV6kMgiMceocinQa`.
+The AWS-closed rows were evaluated with a new complete two-pass scan of all 12,808,196 records in the verified statewide 2026 Q3 Sunbiz archive. Existing HOA/PM overlay rows were preserved byte-for-byte before the new rows were appended. Published overlay CIDs are Broward `QmQ14o8m9LVCk6Wgkk6fB7iCnjcGKHQo3TshtLGesPpYk8`, Duval `QmWFVt1tBnMQtt1yJDzTEDAPn2m1TYa9GJYFCQ1NP1AFSc`, Palm Beach `QmcduEc8TrmXfev4Y2Vn6zFjSPT6mxMV6kMgiMceocinQa`, and Clay `QmaiKW68swEjXU6agFt1Qnu4JayyKQFoZoG3V4tmGR79UN`.
 
 ## Access findings
 
@@ -80,7 +83,7 @@ The AWS-closed rows were evaluated with a new complete two-pass scan of all 12,8
 - Pinellas PublicWebGIS is an official working alternate and resolved all 78 rows locally.
 - Hillsborough's county ArcGIS service timed out locally but resolved 335/336 rows through Railway.
 - Orange's official API succeeded in local probes, began returning HTTP 403 during the batch, and then resolved 21/29 rows through Railway.
-- The Florida statewide cadastral query endpoint times out from the local machine and Railway; this is a service/query availability issue, not evidence of a local IP ban.
+- The Florida statewide cadastral endpoint timed out during earlier broad probes from local and Railway, but a later exact `PARCELNO` query succeeded and returned the missing Clay parcel. Treat broad-query timeouts as service availability, not an IP ban.
 - Osceola, Nassau, Sarasota, Columbia, Pasco, and Pinellas PublicWebGIS sources are locally accessible.
 - Railway MCP live discovery/authentication timed out; Railway CLI/SSH remains usable.
 - AWS SSO and the existing `opendoor-lake-appraisal-dev` Fargate Batch runtime are working in account `282516654782`.
@@ -96,7 +99,7 @@ The AWS-closed rows were evaluated with a new complete two-pass scan of all 12,8
 | Duval | 1 | Placeholder APN `00000000`; the situs points to RE `1525625734`, so this is address-only identity review rather than an APN match |
 | Orange | 8 | Current OCPA API returns no parcel for the transformed source APNs; source correction or historical lookup required |
 | Miami-Dade | 2 | County address service validates each address/folio pair, but the live Property Appraiser reports both folios absent; historical/inactive-folio review required |
-| Clay | 2 | One occupied-target conflict; one absent parcel |
+| Clay | 1 | Occupied-target conflict; the parcel already carries a different OpenDoor identity |
 | Polk | 2 | One occupied-target conflict; one source APN is an address string rather than a parcel identifier |
 | Lee | 1 | Unique current-table situs candidate; exact official STRAP confirmation pending |
 | Hillsborough | 1 | Source folio is absent; the situs now resolves to a different official folio and requires manual identity review |
@@ -126,3 +129,6 @@ AWS evidence and publication receipts:
 - `data/artifacts/opendoor-apn-gap-closure/aws-safe-hoa-pm-merge-report.json`
 - `data/artifacts/opendoor-apn-gap-closure/aws-safe-publication-receipt.json`
 - `data/artifacts/opendoor-apn-gap-closure/aws-safe-targeted-mcp-verification.json`
+- `data/artifacts/opendoor-apn-gap-closure/clay-statewide-resolution-report.json`
+- `data/artifacts/opendoor-apn-gap-closure/clay-statewide-publication-receipt.json`
+- `data/artifacts/opendoor-apn-gap-closure/clay-statewide-mcp-verification.json`
