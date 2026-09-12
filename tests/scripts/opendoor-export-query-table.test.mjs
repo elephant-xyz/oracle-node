@@ -27,9 +27,7 @@ describe("OpenDoor targeted query-table export", () => {
   });
 
   it("parses the transformed situs address", () => {
-    expect(
-      parseAddress("14741 11TH STREET, DADE CITY, FL 33523"),
-    ).toEqual({
+    expect(parseAddress("14741 11TH STREET, DADE CITY, FL 33523")).toEqual({
       street: "14741 11TH STREET",
       city: "DADE CITY",
       zip: "33523",
@@ -37,10 +35,7 @@ describe("OpenDoor targeted query-table export", () => {
   });
 
   it("uses a stable county-scoped property id", () => {
-    const first = propertyId(
-      "pasco_appraiser",
-      "27-24-21-0570-00000-0260",
-    );
+    const first = propertyId("pasco_appraiser", "27-24-21-0570-00000-0260");
     expect(first).toBe(
       propertyId("pasco_appraiser", "27-24-21-0570-00000-0260"),
     );
@@ -62,8 +57,7 @@ describe("OpenDoor targeted query-table export", () => {
       [
         "address.json",
         {
-          unnormalized_address:
-            "1207 LONG COVE LOOP, DAVENPORT, FL 33896",
+          unnormalized_address: "1207 LONG COVE LOOP, DAVENPORT, FL 33896",
         },
       ],
     ]);
@@ -83,9 +77,7 @@ describe("OpenDoor targeted query-table export", () => {
       captureAddress: null,
     });
 
-    expect(row.elephant_uuid).toBe(
-      "b9f97069-135a-5094-8706-94c37ca35e35",
-    );
+    expect(row.elephant_uuid).toBe("b9f97069-135a-5094-8706-94c37ca35e35");
     expect(row.elephant_token).toBe(
       "a71e797946e7e60d0bba18e4e044b656e5b55e15a58c0609cf3bdf2455f7430d",
     );

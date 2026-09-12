@@ -9,7 +9,10 @@ import { ParquetReader } from "@dsnp/parquetjs";
 
 import { parseCsvRecords } from "../run-pinellas-local-ingest.mjs";
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+const ROOT = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../..",
+);
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -54,8 +57,14 @@ async function validateCounty(county) {
   const bytes = await readFile(parquetPath);
   const sha256 = createHash("sha256").update(bytes).digest("hex");
 
-  assert(rows.length === seedRows.length, `${county}: Parquet row count mismatch`);
-  assert(report.rowCount === rows.length, `${county}: report row count mismatch`);
+  assert(
+    rows.length === seedRows.length,
+    `${county}: Parquet row count mismatch`,
+  );
+  assert(
+    report.rowCount === rows.length,
+    `${county}: report row count mismatch`,
+  );
   assert(report.sha256 === sha256, `${county}: Parquet hash mismatch`);
   assert(
     report.fileSizeBytes === bytes.byteLength,

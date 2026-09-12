@@ -19,7 +19,8 @@ describe("OpenDoor Filebase publication reviews", () => {
   it("binds review entries to exact bytes", () => {
     expect(integrity(Buffer.from("PAR1"))).toEqual({
       bytes: 4,
-      sha256: "fbc62d3b511368ee275ddc74117d8689b430e1427220e25d30816201d89ca7b6",
+      sha256:
+        "fbc62d3b511368ee275ddc74117d8689b430e1427220e25d30816201d89ca7b6",
     });
   });
 });

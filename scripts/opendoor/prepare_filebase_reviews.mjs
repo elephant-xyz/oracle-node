@@ -5,7 +5,10 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+const ROOT = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../..",
+);
 const BUCKET = "elephant-oracle-query-table";
 const COUNTIES = [
   "baker",
@@ -25,10 +28,12 @@ function parseOptions(argv) {
   const values = new Map();
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index];
-    if (!token?.startsWith("--")) throw new Error(`Unexpected argument: ${token}`);
+    if (!token?.startsWith("--"))
+      throw new Error(`Unexpected argument: ${token}`);
     const name = token.slice(2);
     const value = argv[index + 1];
-    if (!value || value.startsWith("--")) throw new Error(`Missing value for --${name}`);
+    if (!value || value.startsWith("--"))
+      throw new Error(`Missing value for --${name}`);
     values.set(name, value);
     index += 1;
   }
@@ -186,7 +191,10 @@ async function main() {
   );
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
+if (
+  process.argv[1] &&
+  fileURLToPath(import.meta.url) === path.resolve(process.argv[1])
+) {
   main().catch((error) => {
     console.error(error instanceof Error ? error.stack : error);
     process.exitCode = 1;

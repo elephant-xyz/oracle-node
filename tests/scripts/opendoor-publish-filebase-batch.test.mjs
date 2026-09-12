@@ -19,8 +19,8 @@ describe("OpenDoor Filebase batch publisher", () => {
       queryTableIpnsLabel: "oracle-query-table-martin-hoa-pm",
       coverageIpnsLabel: "oracle-dataset-coverage-martin-hoa-pm",
     });
-    expect(
-      artifactPaths("martin", "hoa-pm").hoaPmObjectsPath,
-    ).toContain("/martin/hoa-pm/objects/hoa-pm-objects.jsonl");
+    expect(artifactPaths("martin", "hoa-pm").hoaPmObjectsPath).toContain(
+      "/martin/hoa-pm/objects/hoa-pm-objects.jsonl",
+    );
   });
 });

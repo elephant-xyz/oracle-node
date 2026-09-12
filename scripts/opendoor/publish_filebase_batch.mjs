@@ -1,14 +1,13 @@
 #!/usr/bin/env node
 
-import {
-  mkdir,
-  readFile,
-  writeFile,
-} from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+const ROOT = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../..",
+);
 const COUNTIES = [
   "baker",
   "st-lucie",
@@ -27,14 +26,16 @@ function parseOptions(argv) {
   const values = new Map();
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index];
-    if (!token?.startsWith("--")) throw new Error(`Unexpected argument: ${token}`);
+    if (!token?.startsWith("--"))
+      throw new Error(`Unexpected argument: ${token}`);
     const name = token.slice(2);
     if (name === "cid-only") {
       values.set(name, true);
       continue;
     }
     const value = argv[index + 1];
-    if (!value || value.startsWith("--")) throw new Error(`Missing value for --${name}`);
+    if (!value || value.startsWith("--"))
+      throw new Error(`Missing value for --${name}`);
     values.set(name, value);
     index += 1;
   }
@@ -48,7 +49,14 @@ function parseOptions(argv) {
     envFile: values.get("env-file") ?? path.join(ROOT, ".env"),
     runtimeDir:
       values.get("runtime-dir") ??
-      path.join(ROOT, "..", "soofi-xyz-team-kit", "skills", "use-oracle", "runtime"),
+      path.join(
+        ROOT,
+        "..",
+        "soofi-xyz-team-kit",
+        "skills",
+        "use-oracle",
+        "runtime",
+      ),
   };
 }
 
@@ -94,7 +102,10 @@ async function verifyPublishedResult(county, result) {
     `https://ipfs.filebase.io/ipfs/${result.queryTableCid}`,
     { headers: { Range: "bytes=0-3" } },
   );
-  const queryPrefix = Buffer.from(await queryResponse.arrayBuffer()).subarray(0, 4);
+  const queryPrefix = Buffer.from(await queryResponse.arrayBuffer()).subarray(
+    0,
+    4,
+  );
   if (queryPrefix.toString("utf8") !== "PAR1") {
     throw new Error(`${county}: published query-table CID is not Parquet`);
   }
@@ -188,7 +199,10 @@ async function main() {
   console.log(JSON.stringify(report, null, 2));
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
+if (
+  process.argv[1] &&
+  fileURLToPath(import.meta.url) === path.resolve(process.argv[1])
+) {
   main().catch((error) => {
     console.error(error instanceof Error ? error.stack : error);
     process.exitCode = 1;

@@ -16,7 +16,10 @@ import { ParquetSchema, ParquetWriter } from "@dsnp/parquetjs";
 
 import { parseCsvRecords } from "../run-pinellas-local-ingest.mjs";
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+const ROOT = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../..",
+);
 
 const QUERY_TABLE_SCHEMA = new ParquetSchema({
   property_id: { type: "UTF8" },
@@ -213,7 +216,8 @@ export function rowFromArtifacts({
     structures[0] ??
     {};
   const taxes = recordsMatching(files, /^tax_\d+\.json$/).sort(
-    (left, right) => (number(right.tax_year) ?? 0) - (number(left.tax_year) ?? 0),
+    (left, right) =>
+      (number(right.tax_year) ?? 0) - (number(left.tax_year) ?? 0),
   );
   const sales = recordsMatching(files, /^sales_history_\d+\.json$/).sort(
     (left, right) =>
@@ -232,10 +236,9 @@ export function rowFromArtifacts({
       seedRow.situs_address,
   );
   const uuid = text(identity?.elephant_uuid ?? seedRow.elephant_uuid);
-  const token = text(identity?.elephant_token ?? seedRow.elephant_token)?.replace(
-    /^address:v1:/,
-    "",
-  );
+  const token = text(
+    identity?.elephant_token ?? seedRow.elephant_token,
+  )?.replace(/^address:v1:/, "");
   if (!uuid || !/^[0-9a-f]{64}$/i.test(token ?? "")) {
     throw new Error(`Invalid Elephant identity for ${requestIdentifier}`);
   }
@@ -272,7 +275,8 @@ export function rowFromArtifacts({
     roof_covering_material: text(structure.roof_covering_material),
     property_type: text(property.property_type),
     property_usage_type: text(property.property_usage_type),
-    built_year: Math.trunc(number(property.property_structure_built_year) ?? 0) || null,
+    built_year:
+      Math.trunc(number(property.property_structure_built_year) ?? 0) || null,
     livable_floor_area:
       number(property.livable_floor_area) ?? number(property.area_under_air),
     total_area: number(property.total_area),
@@ -298,7 +302,9 @@ export function rowFromArtifacts({
 
 function sparse(row) {
   return Object.fromEntries(
-    Object.entries(row).filter(([, value]) => value !== null && value !== undefined),
+    Object.entries(row).filter(
+      ([, value]) => value !== null && value !== undefined,
+    ),
   );
 }
 
@@ -351,7 +357,10 @@ export async function exportTargetedQueryTable(options) {
   const parquetPath = path.join(outputDirectory, "query-table.parquet");
   const temporaryPath = `${parquetPath}.${process.pid}.tmp`;
   await rm(temporaryPath, { force: true });
-  const writer = await ParquetWriter.openFile(QUERY_TABLE_SCHEMA, temporaryPath);
+  const writer = await ParquetWriter.openFile(
+    QUERY_TABLE_SCHEMA,
+    temporaryPath,
+  );
   try {
     for (const row of rows) await writer.appendRow(sparse(row));
     await writer.close();
@@ -397,7 +406,10 @@ async function main() {
   console.log(JSON.stringify(report, null, 2));
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
+if (
+  process.argv[1] &&
+  fileURLToPath(import.meta.url) === path.resolve(process.argv[1])
+) {
   main().catch((error) => {
     console.error(error instanceof Error ? error.stack : error);
     process.exitCode = 1;

@@ -1,20 +1,17 @@
 #!/usr/bin/env node
 
 import { createHash } from "node:crypto";
-import {
-  mkdir,
-  readFile,
-  rename,
-  rm,
-  writeFile,
-} from "node:fs/promises";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const require = createRequire(import.meta.url);
 const { ParquetReader } = require("@dsnp/parquetjs");
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+const ROOT = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../..",
+);
 const DEFAULT_COUNTIES = [
   "baker",
   "st-lucie",
@@ -33,14 +30,16 @@ function parseOptions(argv) {
   const values = new Map();
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index];
-    if (!token?.startsWith("--")) throw new Error(`Unexpected argument: ${token}`);
+    if (!token?.startsWith("--"))
+      throw new Error(`Unexpected argument: ${token}`);
     const [name, inlineValue] = token.slice(2).split("=", 2);
     if (inlineValue !== undefined) {
       values.set(name, inlineValue);
       continue;
     }
     const value = argv[index + 1];
-    if (!value || value.startsWith("--")) throw new Error(`Missing value for --${name}`);
+    if (!value || value.startsWith("--"))
+      throw new Error(`Missing value for --${name}`);
     values.set(name, value);
     index += 1;
   }
@@ -60,7 +59,14 @@ function parseOptions(argv) {
     runtimeDir:
       values.get("runtime-dir") ??
       process.env.HOA_PM_RUNTIME_PATH ??
-      path.join(ROOT, "..", "soofi-xyz-team-kit", "skills", "use-oracle", "runtime"),
+      path.join(
+        ROOT,
+        "..",
+        "soofi-xyz-team-kit",
+        "skills",
+        "use-oracle",
+        "runtime",
+      ),
   };
 }
 
@@ -115,11 +121,15 @@ async function prepareBaseArtifacts(counties) {
     const parquetPath = path.join(directory, "query-table.parquet");
     const parquetBody = await readFile(parquetPath);
     if (report.sha256 !== sha256(parquetBody)) {
-      throw new Error(`${county}: base Parquet hash disagrees with export report`);
+      throw new Error(
+        `${county}: base Parquet hash disagrees with export report`,
+      );
     }
     const rows = await readParquetRows(parquetPath);
     if (rows.length !== report.rowCount) {
-      throw new Error(`${county}: base Parquet row count disagrees with export report`);
+      throw new Error(
+        `${county}: base Parquet row count disagrees with export report`,
+      );
     }
     for (const row of rows) {
       const subdivision = String(row.subdivision ?? "").trim();
@@ -205,34 +215,48 @@ async function main() {
     publication,
     { publishFilebase },
     { QUERY_TABLE_BUCKET },
-  ] =
-    await Promise.all([
-      import(
-        pathToFileURL(
-          path.join(runtime, "src", "enrichment", "hoa-pm-sunbiz-index.mjs"),
-        )
-      ),
-      import(
-        pathToFileURL(
-          path.join(runtime, "src", "enrichment", "query-table-hoa-pm.mjs"),
-        )
-      ),
-      import(
-        pathToFileURL(
-          path.join(runtime, "src", "enrichment", "hoa-pm-object-publication.mjs"),
-        )
-      ),
-      import(pathToFileURL(path.join(runtime, "src", "core", "filebase.mjs"))),
-      import(
-        pathToFileURL(
-          path.join(runtime, "src", "core", "query-table-publication.mjs"),
-        )
-      ),
-    ]);
-  const { prepared, subdivisions } = await prepareBaseArtifacts(options.counties);
-  const workRoot = path.join(ROOT, "data", "artifacts", "hoa-pm", options.quarter);
+  ] = await Promise.all([
+    import(
+      pathToFileURL(
+        path.join(runtime, "src", "enrichment", "hoa-pm-sunbiz-index.mjs"),
+      )
+    ),
+    import(
+      pathToFileURL(
+        path.join(runtime, "src", "enrichment", "query-table-hoa-pm.mjs"),
+      )
+    ),
+    import(
+      pathToFileURL(
+        path.join(
+          runtime,
+          "src",
+          "enrichment",
+          "hoa-pm-object-publication.mjs",
+        ),
+      )
+    ),
+    import(pathToFileURL(path.join(runtime, "src", "core", "filebase.mjs"))),
+    import(
+      pathToFileURL(
+        path.join(runtime, "src", "core", "query-table-publication.mjs"),
+      )
+    ),
+  ]);
+  const { prepared, subdivisions } = await prepareBaseArtifacts(
+    options.counties,
+  );
+  const workRoot = path.join(
+    ROOT,
+    "data",
+    "artifacts",
+    "hoa-pm",
+    options.quarter,
+  );
   await mkdir(workRoot, { recursive: true });
-  const subdivisionsBody = Buffer.from(`${JSON.stringify(subdivisions, null, 2)}\n`);
+  const subdivisionsBody = Buffer.from(
+    `${JSON.stringify(subdivisions, null, 2)}\n`,
+  );
   const subdivisionsPath = path.join(workRoot, "subdivisions.json");
   await writeFile(subdivisionsPath, subdivisionsBody);
   let indexDir = options.sunbizIndexDir && path.resolve(options.sunbizIndexDir);
@@ -240,7 +264,10 @@ async function main() {
     if (!options.sunbizSourceDir) {
       throw new Error("Provide --sunbiz-source-dir or --sunbiz-index");
     }
-    indexDir = path.join(workRoot, `sunbiz-index-${sha256(subdivisionsBody).slice(0, 12)}`);
+    indexDir = path.join(
+      workRoot,
+      `sunbiz-index-${sha256(subdivisionsBody).slice(0, 12)}`,
+    );
     await buildHoaPmSunbizIndex({
       sourceDir: path.resolve(options.sunbizSourceDir),
       subdivisionsPath,
@@ -319,7 +346,10 @@ async function main() {
   console.log(JSON.stringify(summary, null, 2));
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
+if (
+  process.argv[1] &&
+  fileURLToPath(import.meta.url) === path.resolve(process.argv[1])
+) {
   main().catch((error) => {
     console.error(error instanceof Error ? error.stack : error);
     process.exitCode = 1;
