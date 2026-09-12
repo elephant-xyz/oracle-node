@@ -9,6 +9,8 @@ describe("OpenDoor Filebase batch publisher", () => {
   it("requires an explicit publication phase", () => {
     expect(() => parseOptions([])).toThrow(/--phase/);
     expect(parseOptions(["--phase", "base"]).phase).toBe("base");
+    expect(parseOptions(["--phase", "base"]).cidOnly).toBe(false);
+    expect(parseOptions(["--phase", "base", "--cid-only"]).cidOnly).toBe(true);
   });
 
   it("routes HOA/PM artifacts to distinct labels", () => {

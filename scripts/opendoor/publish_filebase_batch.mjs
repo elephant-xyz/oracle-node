@@ -29,6 +29,10 @@ function parseOptions(argv) {
     const token = argv[index];
     if (!token?.startsWith("--")) throw new Error(`Unexpected argument: ${token}`);
     const name = token.slice(2);
+    if (name === "cid-only") {
+      values.set(name, true);
+      continue;
+    }
     const value = argv[index + 1];
     if (!value || value.startsWith("--")) throw new Error(`Missing value for --${name}`);
     values.set(name, value);
@@ -40,6 +44,7 @@ function parseOptions(argv) {
   }
   return {
     phase,
+    cidOnly: values.get("cid-only") === true,
     envFile: values.get("env-file") ?? path.join(ROOT, ".env"),
     runtimeDir:
       values.get("runtime-dir") ??
@@ -150,7 +155,7 @@ async function main() {
         : {}),
       env: process.env,
       objectConcurrency: 8,
-      skipIpns: true,
+      skipIpns: options.cidOnly,
     });
     const verification = await verifyPublishedResult(county, result);
     const entry = { county, ...result, ...verification };
